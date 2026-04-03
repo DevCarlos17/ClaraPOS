@@ -1,0 +1,47 @@
+# Dependencias
+node_modules/
+
+# Build
+dist/
+build/
+
+# Variables de entorno
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# TypeScript
+*.tsbuildinfo
+
+# Vite
+*.local
+
+# PWA (generados en build)
+dev-dist/
+sw.js
+workbox-*.js
+
+# PowerSync local DB
+*.sqlite
+*.sqlite-journal
+
+# Claude Code
+.claude/settings.local.json
