@@ -9,7 +9,11 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { fileURLToPath, URL } from 'node:url'
 
+const isProd = process.env.NODE_ENV === 'production'
+const base = isProd ? '/Nexo21/' : '/'
+
 export default defineConfig({
+  base,
   plugins: [
     wasm(),
     topLevelAwait(),
@@ -25,7 +29,7 @@ export default defineConfig({
       workbox: {
         maximumFileSizeToCacheInBytes: 5000000,
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-        navigateFallback: '/index.html',
+        navigateFallback: `${base}index.html`,
         navigateFallbackAllowlist: [/.*/],
       },
       devOptions: {
