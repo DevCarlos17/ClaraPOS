@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface LineaVenta {
@@ -22,6 +23,7 @@ export interface CrearVentaParams {
   lineas: LineaVenta[]
   pagos: PagoEntry[]
   usuario_id: string
+  empresa_id: string
 }
 
 export interface CrearVentaResult {
@@ -30,18 +32,20 @@ export interface CrearVentaResult {
 }
 
 export function useBuscarProductosVenta(query: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
   const searchTerm = query.trim()
   const shouldSearch = searchTerm.length >= 2
   const pattern = `%${searchTerm}%`
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT * FROM productos WHERE activo = 1
+      ? `SELECT * FROM productos WHERE empresa_id = ? AND activo = 1
          AND (nombre LIKE ? OR codigo LIKE ?)
          AND (tipo = 'S' OR CAST(stock AS REAL) > 0)
          ORDER BY nombre ASC LIMIT 10`
       : '',
-    shouldSearch ? [pattern, pattern] : []
+    shouldSearch ? [empresaId, pattern, pattern] : []
   )
 
   return { productos: (data ?? []) as ProductoVenta[], isLoading }
@@ -58,7 +62,7 @@ export interface ProductoVenta {
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id } = params
 
   if (lineas.length === 0) {
     throw new Error('Debe agregar al menos una linea a la venta')
@@ -83,15 +87,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     totalUsd = Number(totalUsd.toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
 
-    // 2. Generar nro_factura
-    const countResult = await tx.execute('SELECT COUNT(*) as cnt FROM ventas')
+    // 2. Generar nro_factura (por empresa)
+    const countResult = await tx.execute(
+      'SELECT COUNT(*) as cnt FROM ventas WHERE empresa_id = ?',
+      [empresa_id]
+    )
     const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
     nroFactura = String(count + 1).padStart(6, '0')
 
     // 3. INSERT venta
     await tx.execute(
-      `INSERT INTO ventas (id, cliente_id, nro_factura, tasa, total_usd, total_bs, saldo_pend_usd, tipo, usuario_id, fecha, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ventas (id, cliente_id, nro_factura, tasa, total_usd, total_bs, saldo_pend_usd, tipo, usuario_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ventaId,
         cliente_id,
@@ -103,6 +110,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         tipo,
         usuario_id,
         now,
+        empresa_id,
         now,
       ]
     )
@@ -111,14 +119,15 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     for (const linea of lineas) {
       const detalleId = uuidv4()
       await tx.execute(
-        `INSERT INTO detalle_venta (id, venta_id, producto_id, cantidad, precio_unitario_usd, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO detalle_venta (id, venta_id, producto_id, cantidad, precio_unitario_usd, empresa_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           detalleId,
           ventaId,
           linea.producto_id,
           linea.cantidad.toFixed(3),
           linea.precio_unitario_usd.toFixed(2),
+          empresa_id,
           now,
         ]
       )
@@ -145,8 +154,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         const movId = uuidv4()
 
         await tx.execute(
-          `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, created_at)
-           VALUES (?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
+           VALUES (?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             movId,
             linea.producto_id,
@@ -156,6 +165,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             `Venta ${nroFactura}`,
             usuario_id,
             now,
+            empresa_id,
             now,
           ]
         )
@@ -194,8 +204,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const movIngId = uuidv4()
 
             await tx.execute(
-              `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, created_at)
-               VALUES (?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
+               VALUES (?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 movIngId,
                 ingrediente.producto_id,
@@ -205,6 +215,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 `Servicio "${producto.nombre}" - Venta ${nroFactura}`,
                 usuario_id,
                 now,
+                empresa_id,
                 now,
               ]
             )
@@ -226,8 +237,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
 
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoId,
           ventaId,
@@ -239,6 +250,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           montoUsd.toFixed(2),
           pago.referencia ?? null,
           now,
+          empresa_id,
           now,
         ]
       )
@@ -268,8 +280,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
       const movCuentaId = uuidv4()
       await tx.execute(
-        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, created_at)
-         VALUES (?, ?, 'FAC', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
+         VALUES (?, ?, 'FAC', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movCuentaId,
           cliente_id,
@@ -280,6 +292,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           `Venta a credito ${nroFactura}`,
           ventaId,
           now,
+          empresa_id,
           now,
         ]
       )

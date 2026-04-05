@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 // ─── Interfaces ─────────────────────────────────────────────
@@ -50,6 +51,7 @@ export interface CrearNotaCreditoParams {
   venta_id: string
   motivo: string
   usuario_id: string
+  empresa_id: string
 }
 
 export interface CrearNotaCreditoResult {
@@ -60,6 +62,9 @@ export interface CrearNotaCreditoResult {
 // ─── Listado de NCR ─────────────────────────────────────────
 
 export function useNotasCredito() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
     `SELECT
        nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.motivo,
@@ -69,7 +74,9 @@ export function useNotasCredito() {
      FROM notas_credito nc
      JOIN ventas v ON nc.venta_id = v.id
      JOIN clientes c ON nc.cliente_id = c.id
-     ORDER BY nc.fecha DESC`
+     WHERE nc.empresa_id = ?
+     ORDER BY nc.fecha DESC`,
+    [empresaId]
   )
 
   return { notas: (data ?? []) as NotaCreditoRow[], isLoading }
@@ -78,6 +85,8 @@ export function useNotasCredito() {
 // ─── Buscar factura para anular ─────────────────────────────
 
 export function useBuscarFacturaParaAnular(query: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
   const searchTerm = query.trim()
   const shouldSearch = searchTerm.length >= 1
 
@@ -90,12 +99,12 @@ export function useBuscarFacturaParaAnular(query: string) {
            c.identificacion as cliente_identificacion
          FROM ventas v
          JOIN clientes c ON v.cliente_id = c.id
-         WHERE v.anulada = 0
+         WHERE v.empresa_id = ? AND v.anulada = 0
            AND v.nro_factura LIKE ?
          ORDER BY v.fecha DESC
          LIMIT 10`
       : '',
-    shouldSearch ? [`%${searchTerm}%`] : []
+    shouldSearch ? [empresaId, `%${searchTerm}%`] : []
   )
 
   return { facturas: (data ?? []) as FacturaParaAnular[], isLoading }
@@ -136,7 +145,7 @@ export function useDetalleFactura(ventaId: string | null) {
 export async function crearNotaCredito(
   params: CrearNotaCreditoParams
 ): Promise<CrearNotaCreditoResult> {
-  const { venta_id, motivo, usuario_id } = params
+  const { venta_id, motivo, usuario_id, empresa_id } = params
 
   let ncrId = ''
   let nroNcr = ''
@@ -166,15 +175,18 @@ export async function crearNotaCredito(
       throw new Error('Esta factura ya fue anulada')
     }
 
-    // 2. Generar nro_ncr
-    const countResult = await tx.execute('SELECT COUNT(*) as cnt FROM notas_credito')
+    // 2. Generar nro_ncr (por empresa)
+    const countResult = await tx.execute(
+      'SELECT COUNT(*) as cnt FROM notas_credito WHERE empresa_id = ?',
+      [empresa_id]
+    )
     const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
     nroNcr = `NCR-${String(count + 1).padStart(6, '0')}`
 
     // 3. INSERT notas_credito (snapshot de la factura)
     await tx.execute(
-      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, motivo, tasa_historica, monto_total_usd, monto_total_bs, usuario_id, fecha, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, motivo, tasa_historica, monto_total_usd, monto_total_bs, usuario_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ncrId,
         nroNcr,
@@ -186,6 +198,7 @@ export async function crearNotaCredito(
         venta.total_bs,
         usuario_id,
         now,
+        empresa_id,
         now,
       ]
     )
@@ -225,8 +238,8 @@ export async function crearNotaCredito(
           const movId = uuidv4()
 
           await tx.execute(
-            `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, venta_id, created_at)
-             VALUES (?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, venta_id, empresa_id, created_at)
+             VALUES (?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               movId,
               linea.producto_id,
@@ -237,6 +250,7 @@ export async function crearNotaCredito(
               usuario_id,
               now,
               venta_id,
+              empresa_id,
               now,
             ]
           )
@@ -268,8 +282,8 @@ export async function crearNotaCredito(
               const movIngId = uuidv4()
 
               await tx.execute(
-                `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, venta_id, created_at)
-                 VALUES (?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, venta_id, empresa_id, created_at)
+                 VALUES (?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                   movIngId,
                   ingrediente.producto_id,
@@ -280,6 +294,7 @@ export async function crearNotaCredito(
                   usuario_id,
                   now,
                   venta_id,
+                  empresa_id,
                   now,
                 ]
               )
@@ -311,8 +326,8 @@ export async function crearNotaCredito(
 
       const movCuentaId = uuidv4()
       await tx.execute(
-        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, created_at)
-         VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
+         VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movCuentaId,
           venta.cliente_id,
@@ -323,6 +338,7 @@ export async function crearNotaCredito(
           `Anulacion de factura ${venta.nro_factura}`,
           venta_id,
           now,
+          empresa_id,
           now,
         ]
       )

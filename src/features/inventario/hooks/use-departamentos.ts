@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface Departamento {
@@ -12,18 +13,28 @@ export interface Departamento {
 }
 
 export function useDepartamentos() {
-  const { data, isLoading } = useQuery('SELECT * FROM departamentos ORDER BY nombre ASC')
-  return { departamentos: (data ?? []) as Departamento[], isLoading }
-}
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
 
-export function useDepartamentosActivos() {
   const { data, isLoading } = useQuery(
-    'SELECT * FROM departamentos WHERE activo = 1 ORDER BY nombre ASC'
+    'SELECT * FROM departamentos WHERE empresa_id = ? ORDER BY nombre ASC',
+    [empresaId]
   )
   return { departamentos: (data ?? []) as Departamento[], isLoading }
 }
 
-export async function crearDepartamento(codigo: string, nombre: string) {
+export function useDepartamentosActivos() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    'SELECT * FROM departamentos WHERE empresa_id = ? AND activo = 1 ORDER BY nombre ASC',
+    [empresaId]
+  )
+  return { departamentos: (data ?? []) as Departamento[], isLoading }
+}
+
+export async function crearDepartamento(codigo: string, nombre: string, empresaId: string) {
   const id = uuidv4()
   const now = new Date().toISOString()
 
@@ -34,6 +45,7 @@ export async function crearDepartamento(codigo: string, nombre: string) {
       codigo: codigo.toUpperCase(),
       nombre: nombre.toUpperCase(),
       activo: 1,
+      empresa_id: empresaId,
       created_at: now,
       updated_at: now,
     })

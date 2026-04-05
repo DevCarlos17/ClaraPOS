@@ -1,10 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { CuadrePage } from '@/features/reportes/components/cuadre-page'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_app/reportes')({
-  component: ReportesPage,
+  beforeLoad: () => {
+    throw redirect({ to: '/ventas/cuadre-de-caja' })
+  },
+  component: () => null,
 })
-
-function ReportesPage() {
-  return <CuadrePage />
-}

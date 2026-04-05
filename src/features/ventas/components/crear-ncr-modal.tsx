@@ -45,6 +45,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         venta_id: factura.id,
         motivo,
         usuario_id: user.id,
+        empresa_id: user.empresa_id!,
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()

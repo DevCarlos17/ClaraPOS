@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface VentaPendiente {
@@ -32,6 +33,7 @@ export interface PagoFacturaParams {
   tasa: number
   monto: number
   referencia?: string
+  empresa_id: string
 }
 
 export interface AbonoGlobalParams {
@@ -41,18 +43,23 @@ export interface AbonoGlobalParams {
   tasa: number
   monto: number
   referencia?: string
+  empresa_id: string
 }
 
 /**
  * Clientes con saldo pendiente > 0
  */
 export function useClientesConDeuda() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
     `SELECT c.id, c.identificacion, c.nombre_social, c.telefono, c.saldo_actual, c.limite_credito,
        (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
      FROM clientes c
-     WHERE CAST(c.saldo_actual AS REAL) > 0.01 AND c.activo = 1
-     ORDER BY CAST(c.saldo_actual AS REAL) DESC`
+     WHERE c.empresa_id = ? AND CAST(c.saldo_actual AS REAL) > 0.01 AND c.activo = 1
+     ORDER BY CAST(c.saldo_actual AS REAL) DESC`,
+    [empresaId]
   )
   return { clientes: (data ?? []) as ClienteConDeuda[], isLoading }
 }
@@ -61,6 +68,8 @@ export function useClientesConDeuda() {
  * Buscar clientes con deuda por nombre/identificacion
  */
 export function useBuscarClientesDeuda(query: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
   const searchTerm = query.trim()
   const shouldSearch = searchTerm.length >= 2
   const pattern = `%${searchTerm}%`
@@ -70,11 +79,11 @@ export function useBuscarClientesDeuda(query: string) {
       ? `SELECT c.id, c.identificacion, c.nombre_social, c.telefono, c.saldo_actual, c.limite_credito,
            (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
          FROM clientes c
-         WHERE c.activo = 1 AND CAST(c.saldo_actual AS REAL) > 0.01
+         WHERE c.empresa_id = ? AND c.activo = 1 AND CAST(c.saldo_actual AS REAL) > 0.01
            AND (c.identificacion LIKE ? OR c.nombre_social LIKE ?)
          ORDER BY c.nombre_social ASC LIMIT 20`
       : '',
-    shouldSearch ? [pattern, pattern] : []
+    shouldSearch ? [empresaId, pattern, pattern] : []
   )
   return { clientes: (data ?? []) as ClienteConDeuda[], isLoading }
 }
@@ -100,7 +109,7 @@ export function useFacturasPendientes(clienteId: string | null) {
  * Crea pago, reduce saldo factura, crea movimiento_cuenta (tipo PAG), actualiza saldo cliente.
  */
 export async function registrarPagoFactura(params: PagoFacturaParams): Promise<void> {
-  const { venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, referencia } = params
+  const { venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, referencia, empresa_id } = params
 
   if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
@@ -132,8 +141,8 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     // 4. INSERT pago
     const pagoId = uuidv4()
     await tx.execute(
-      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         pagoId,
         venta_id,
@@ -145,6 +154,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         montoUsd.toFixed(2),
         referencia ?? null,
         now,
+        empresa_id,
         now,
       ]
     )
@@ -170,8 +180,8 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
 
     const movId = uuidv4()
     await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, created_at)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         cliente_id,
@@ -182,6 +192,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         `Pago factura ${venta.nro_factura}`,
         venta_id,
         now,
+        empresa_id,
         now,
       ]
     )
@@ -204,7 +215,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
   facturasAfectadas: number
   montoAplicado: number
 }> {
-  const { cliente_id, metodo_pago_id, moneda, tasa, monto, referencia } = params
+  const { cliente_id, metodo_pago_id, moneda, tasa, monto, referencia, empresa_id } = params
 
   if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
@@ -241,8 +252,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         // INSERT pago vinculado a esta factura
         const pagoId = uuidv4()
         await tx.execute(
-          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             pagoId,
             factura.id,
@@ -254,6 +265,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
             montoAplicar.toFixed(2),
             referencia ?? null,
             now,
+            empresa_id,
             now,
           ]
         )
@@ -274,8 +286,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     if (montoRestante > 0.01) {
       const pagoAnticipoId = uuidv4()
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoAnticipoId,
           null,
@@ -287,6 +299,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           montoRestante.toFixed(2),
           referencia ? `${referencia} (anticipo)` : 'Anticipo',
           now,
+          empresa_id,
           now,
         ]
       )
@@ -308,8 +321,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
     const movId = uuidv4()
     await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, created_at)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         cliente_id,
@@ -320,6 +333,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         `Abono global: ${facturasAfectadas} factura(s) afectada(s)${montoRestante > 0.01 ? `, anticipo $${montoRestante.toFixed(2)}` : ''}`,
         null,
         now,
+        empresa_id,
         now,
       ]
     )

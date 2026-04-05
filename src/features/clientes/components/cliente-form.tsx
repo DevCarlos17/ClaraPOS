@@ -6,6 +6,7 @@ import {
   actualizarCliente,
   type Cliente,
 } from '@/features/clientes/hooks/use-clientes'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd } from '@/lib/currency'
 
 interface ClienteFormProps {
@@ -17,6 +18,7 @@ interface ClienteFormProps {
 export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!cliente
+  const { user } = useCurrentUser()
 
   const [identificacion, setIdentificacion] = useState('')
   const [nombreSocial, setNombreSocial] = useState('')
@@ -92,6 +94,7 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
           direccion: parsed.data.direccion,
           telefono: parsed.data.telefono,
           limite_credito: parsed.data.limite_credito,
+          empresa_id: user!.empresa_id!,
         })
         toast.success('Cliente creado correctamente')
       }

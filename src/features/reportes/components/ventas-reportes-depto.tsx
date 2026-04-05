@@ -1,0 +1,71 @@
+import { formatUsd } from '@/lib/currency'
+import { useVentasPorDeptoRango } from '../hooks/use-ventas-reportes'
+
+const COLORS = [
+  'bg-blue-500',
+  'bg-green-500',
+  'bg-amber-500',
+  'bg-purple-500',
+  'bg-pink-500',
+  'bg-cyan-500',
+  'bg-orange-500',
+  'bg-indigo-500',
+]
+
+interface VentasReportesDeptoProps {
+  fechaDesde: string
+  fechaHasta: string
+}
+
+export function VentasReportesDepto({ fechaDesde, fechaHasta }: VentasReportesDeptoProps) {
+  const { deptos, isLoading } = useVentasPorDeptoRango(fechaDesde, fechaHasta)
+
+  const maxValue = deptos.reduce((max, d) => Math.max(max, d.totalUsd), 0)
+  const totalUsd = deptos.reduce((sum, d) => sum + d.totalUsd, 0)
+
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      <h3 className="text-sm font-semibold mb-4">Ventas por Departamento</h3>
+
+      {isLoading ? (
+        <div className="space-y-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-8 bg-muted rounded animate-pulse" />
+          ))}
+        </div>
+      ) : deptos.length === 0 ? (
+        <div className="text-center py-8 text-muted-foreground">
+          <p className="text-sm">Sin ventas en este periodo</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {deptos.map((d, i) => {
+            const pct = maxValue > 0 ? (d.totalUsd / maxValue) * 100 : 0
+            const sharePct = totalUsd > 0 ? ((d.totalUsd / totalUsd) * 100).toFixed(1) : '0'
+            return (
+              <div key={d.departamento}>
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="font-medium truncate mr-2">{d.departamento}</span>
+                  <span className="text-muted-foreground whitespace-nowrap">
+                    {formatUsd(d.totalUsd)} ({sharePct}%)
+                  </span>
+                </div>
+                <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${COLORS[i % COLORS.length]}`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+
+          <div className="pt-3 mt-3 border-t flex justify-between text-sm font-semibold">
+            <span>Total</span>
+            <span>{formatUsd(totalUsd)}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

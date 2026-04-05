@@ -15,16 +15,30 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppReportesRouteImport } from './routes/_app/reportes'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppCxcRouteImport } from './routes/_app/cxc'
+import { Route as AppClinicaRouteImport } from './routes/_app/clinica'
 import { Route as AppClientesRouteImport } from './routes/_app/clientes'
 import { Route as authRegisterRouteImport } from './routes/(auth)/register'
 import { Route as authLoginRouteImport } from './routes/(auth)/login'
+import { Route as AppClientesIndexRouteImport } from './routes/_app/clientes/index'
+import { Route as AppVentasReportesRouteImport } from './routes/_app/ventas/reportes'
 import { Route as AppVentasNuevaRouteImport } from './routes/_app/ventas/nueva'
 import { Route as AppVentasNotasCreditoRouteImport } from './routes/_app/ventas/notas-credito'
+import { Route as AppVentasCuadreDeCajaRouteImport } from './routes/_app/ventas/cuadre-de-caja'
+import { Route as AppProveedoresGestionRouteImport } from './routes/_app/proveedores/gestion'
+import { Route as AppInventarioReportesRouteImport } from './routes/_app/inventario/reportes'
 import { Route as AppInventarioRecetasRouteImport } from './routes/_app/inventario/recetas'
 import { Route as AppInventarioProductosRouteImport } from './routes/_app/inventario/productos'
 import { Route as AppInventarioKardexRouteImport } from './routes/_app/inventario/kardex'
 import { Route as AppInventarioDepartamentosRouteImport } from './routes/_app/inventario/departamentos'
+import { Route as AppInventarioComprasRouteImport } from './routes/_app/inventario/compras'
+import { Route as AppConfiguracionUsuariosRouteImport } from './routes/_app/configuracion/usuarios'
 import { Route as AppConfiguracionTasaCambioRouteImport } from './routes/_app/configuracion/tasa-cambio'
+import { Route as AppConfiguracionMetodosPagoRouteImport } from './routes/_app/configuracion/metodos-pago'
+import { Route as AppConfiguracionDatosEmpresaRouteImport } from './routes/_app/configuracion/datos-empresa'
+import { Route as AppConfiguracionBancosRouteImport } from './routes/_app/configuracion/bancos'
+import { Route as AppClientesReportesRouteImport } from './routes/_app/clientes/reportes'
+import { Route as AppClientesGestionRouteImport } from './routes/_app/clientes/gestion'
+import { Route as AppClientesCuentasPorCobrarRouteImport } from './routes/_app/clientes/cuentas-por-cobrar'
 
 const AppRouteRoute = AppRouteRouteImport.update({
   id: '/_app',
@@ -54,6 +68,11 @@ const AppCxcRoute = AppCxcRouteImport.update({
   path: '/cxc',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppClinicaRoute = AppClinicaRouteImport.update({
+  id: '/clinica',
+  path: '/clinica',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppClientesRoute = AppClientesRouteImport.update({
   id: '/clientes',
   path: '/clientes',
@@ -69,6 +88,16 @@ const authLoginRoute = authLoginRouteImport.update({
   path: '/login',
   getParentRoute: () => authRouteRoute,
 } as any)
+const AppClientesIndexRoute = AppClientesIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppClientesRoute,
+} as any)
+const AppVentasReportesRoute = AppVentasReportesRouteImport.update({
+  id: '/ventas/reportes',
+  path: '/ventas/reportes',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppVentasNuevaRoute = AppVentasNuevaRouteImport.update({
   id: '/ventas/nueva',
   path: '/ventas/nueva',
@@ -77,6 +106,21 @@ const AppVentasNuevaRoute = AppVentasNuevaRouteImport.update({
 const AppVentasNotasCreditoRoute = AppVentasNotasCreditoRouteImport.update({
   id: '/ventas/notas-credito',
   path: '/ventas/notas-credito',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppVentasCuadreDeCajaRoute = AppVentasCuadreDeCajaRouteImport.update({
+  id: '/ventas/cuadre-de-caja',
+  path: '/ventas/cuadre-de-caja',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppProveedoresGestionRoute = AppProveedoresGestionRouteImport.update({
+  id: '/proveedores/gestion',
+  path: '/proveedores/gestion',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInventarioReportesRoute = AppInventarioReportesRouteImport.update({
+  id: '/inventario/reportes',
+  path: '/inventario/reportes',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppInventarioRecetasRoute = AppInventarioRecetasRouteImport.update({
@@ -100,44 +144,115 @@ const AppInventarioDepartamentosRoute =
     path: '/inventario/departamentos',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppInventarioComprasRoute = AppInventarioComprasRouteImport.update({
+  id: '/inventario/compras',
+  path: '/inventario/compras',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppConfiguracionUsuariosRoute =
+  AppConfiguracionUsuariosRouteImport.update({
+    id: '/configuracion/usuarios',
+    path: '/configuracion/usuarios',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppConfiguracionTasaCambioRoute =
   AppConfiguracionTasaCambioRouteImport.update({
     id: '/configuracion/tasa-cambio',
     path: '/configuracion/tasa-cambio',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppConfiguracionMetodosPagoRoute =
+  AppConfiguracionMetodosPagoRouteImport.update({
+    id: '/configuracion/metodos-pago',
+    path: '/configuracion/metodos-pago',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppConfiguracionDatosEmpresaRoute =
+  AppConfiguracionDatosEmpresaRouteImport.update({
+    id: '/configuracion/datos-empresa',
+    path: '/configuracion/datos-empresa',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppConfiguracionBancosRoute = AppConfiguracionBancosRouteImport.update({
+  id: '/configuracion/bancos',
+  path: '/configuracion/bancos',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppClientesReportesRoute = AppClientesReportesRouteImport.update({
+  id: '/reportes',
+  path: '/reportes',
+  getParentRoute: () => AppClientesRoute,
+} as any)
+const AppClientesGestionRoute = AppClientesGestionRouteImport.update({
+  id: '/gestion',
+  path: '/gestion',
+  getParentRoute: () => AppClientesRoute,
+} as any)
+const AppClientesCuentasPorCobrarRoute =
+  AppClientesCuentasPorCobrarRouteImport.update({
+    id: '/cuentas-por-cobrar',
+    path: '/cuentas-por-cobrar',
+    getParentRoute: () => AppClientesRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof authLoginRoute
   '/register': typeof authRegisterRoute
-  '/clientes': typeof AppClientesRoute
+  '/clientes': typeof AppClientesRouteWithChildren
+  '/clinica': typeof AppClinicaRoute
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
   '/reportes': typeof AppReportesRoute
+  '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
+  '/clientes/gestion': typeof AppClientesGestionRoute
+  '/clientes/reportes': typeof AppClientesReportesRoute
+  '/configuracion/bancos': typeof AppConfiguracionBancosRoute
+  '/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
+  '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
+  '/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/inventario/compras': typeof AppInventarioComprasRoute
   '/inventario/departamentos': typeof AppInventarioDepartamentosRoute
   '/inventario/kardex': typeof AppInventarioKardexRoute
   '/inventario/productos': typeof AppInventarioProductosRoute
   '/inventario/recetas': typeof AppInventarioRecetasRoute
+  '/inventario/reportes': typeof AppInventarioReportesRoute
+  '/proveedores/gestion': typeof AppProveedoresGestionRoute
+  '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
   '/ventas/nueva': typeof AppVentasNuevaRoute
+  '/ventas/reportes': typeof AppVentasReportesRoute
+  '/clientes/': typeof AppClientesIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof authLoginRoute
   '/register': typeof authRegisterRoute
-  '/clientes': typeof AppClientesRoute
+  '/clinica': typeof AppClinicaRoute
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
   '/reportes': typeof AppReportesRoute
+  '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
+  '/clientes/gestion': typeof AppClientesGestionRoute
+  '/clientes/reportes': typeof AppClientesReportesRoute
+  '/configuracion/bancos': typeof AppConfiguracionBancosRoute
+  '/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
+  '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
+  '/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/inventario/compras': typeof AppInventarioComprasRoute
   '/inventario/departamentos': typeof AppInventarioDepartamentosRoute
   '/inventario/kardex': typeof AppInventarioKardexRoute
   '/inventario/productos': typeof AppInventarioProductosRoute
   '/inventario/recetas': typeof AppInventarioRecetasRoute
+  '/inventario/reportes': typeof AppInventarioReportesRoute
+  '/proveedores/gestion': typeof AppProveedoresGestionRoute
+  '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
   '/ventas/nueva': typeof AppVentasNuevaRoute
+  '/ventas/reportes': typeof AppVentasReportesRoute
+  '/clientes': typeof AppClientesIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -146,17 +261,31 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteRouteWithChildren
   '/(auth)/login': typeof authLoginRoute
   '/(auth)/register': typeof authRegisterRoute
-  '/_app/clientes': typeof AppClientesRoute
+  '/_app/clientes': typeof AppClientesRouteWithChildren
+  '/_app/clinica': typeof AppClinicaRoute
   '/_app/cxc': typeof AppCxcRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/reportes': typeof AppReportesRoute
+  '/_app/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
+  '/_app/clientes/gestion': typeof AppClientesGestionRoute
+  '/_app/clientes/reportes': typeof AppClientesReportesRoute
+  '/_app/configuracion/bancos': typeof AppConfiguracionBancosRoute
+  '/_app/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
+  '/_app/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/_app/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
+  '/_app/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/_app/inventario/compras': typeof AppInventarioComprasRoute
   '/_app/inventario/departamentos': typeof AppInventarioDepartamentosRoute
   '/_app/inventario/kardex': typeof AppInventarioKardexRoute
   '/_app/inventario/productos': typeof AppInventarioProductosRoute
   '/_app/inventario/recetas': typeof AppInventarioRecetasRoute
+  '/_app/inventario/reportes': typeof AppInventarioReportesRoute
+  '/_app/proveedores/gestion': typeof AppProveedoresGestionRoute
+  '/_app/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/_app/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
   '/_app/ventas/nueva': typeof AppVentasNuevaRoute
+  '/_app/ventas/reportes': typeof AppVentasReportesRoute
+  '/_app/clientes/': typeof AppClientesIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -165,32 +294,59 @@ export interface FileRouteTypes {
     | '/login'
     | '/register'
     | '/clientes'
+    | '/clinica'
     | '/cxc'
     | '/dashboard'
     | '/reportes'
+    | '/clientes/cuentas-por-cobrar'
+    | '/clientes/gestion'
+    | '/clientes/reportes'
+    | '/configuracion/bancos'
+    | '/configuracion/datos-empresa'
+    | '/configuracion/metodos-pago'
     | '/configuracion/tasa-cambio'
+    | '/configuracion/usuarios'
+    | '/inventario/compras'
     | '/inventario/departamentos'
     | '/inventario/kardex'
     | '/inventario/productos'
     | '/inventario/recetas'
+    | '/inventario/reportes'
+    | '/proveedores/gestion'
+    | '/ventas/cuadre-de-caja'
     | '/ventas/notas-credito'
     | '/ventas/nueva'
+    | '/ventas/reportes'
+    | '/clientes/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/register'
-    | '/clientes'
+    | '/clinica'
     | '/cxc'
     | '/dashboard'
     | '/reportes'
+    | '/clientes/cuentas-por-cobrar'
+    | '/clientes/gestion'
+    | '/clientes/reportes'
+    | '/configuracion/bancos'
+    | '/configuracion/datos-empresa'
+    | '/configuracion/metodos-pago'
     | '/configuracion/tasa-cambio'
+    | '/configuracion/usuarios'
+    | '/inventario/compras'
     | '/inventario/departamentos'
     | '/inventario/kardex'
     | '/inventario/productos'
     | '/inventario/recetas'
+    | '/inventario/reportes'
+    | '/proveedores/gestion'
+    | '/ventas/cuadre-de-caja'
     | '/ventas/notas-credito'
     | '/ventas/nueva'
+    | '/ventas/reportes'
+    | '/clientes'
   id:
     | '__root__'
     | '/'
@@ -199,16 +355,30 @@ export interface FileRouteTypes {
     | '/(auth)/login'
     | '/(auth)/register'
     | '/_app/clientes'
+    | '/_app/clinica'
     | '/_app/cxc'
     | '/_app/dashboard'
     | '/_app/reportes'
+    | '/_app/clientes/cuentas-por-cobrar'
+    | '/_app/clientes/gestion'
+    | '/_app/clientes/reportes'
+    | '/_app/configuracion/bancos'
+    | '/_app/configuracion/datos-empresa'
+    | '/_app/configuracion/metodos-pago'
     | '/_app/configuracion/tasa-cambio'
+    | '/_app/configuracion/usuarios'
+    | '/_app/inventario/compras'
     | '/_app/inventario/departamentos'
     | '/_app/inventario/kardex'
     | '/_app/inventario/productos'
     | '/_app/inventario/recetas'
+    | '/_app/inventario/reportes'
+    | '/_app/proveedores/gestion'
+    | '/_app/ventas/cuadre-de-caja'
     | '/_app/ventas/notas-credito'
     | '/_app/ventas/nueva'
+    | '/_app/ventas/reportes'
+    | '/_app/clientes/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -261,6 +431,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCxcRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/clinica': {
+      id: '/_app/clinica'
+      path: '/clinica'
+      fullPath: '/clinica'
+      preLoaderRoute: typeof AppClinicaRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/clientes': {
       id: '/_app/clientes'
       path: '/clientes'
@@ -282,6 +459,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof authLoginRouteImport
       parentRoute: typeof authRouteRoute
     }
+    '/_app/clientes/': {
+      id: '/_app/clientes/'
+      path: '/'
+      fullPath: '/clientes/'
+      preLoaderRoute: typeof AppClientesIndexRouteImport
+      parentRoute: typeof AppClientesRoute
+    }
+    '/_app/ventas/reportes': {
+      id: '/_app/ventas/reportes'
+      path: '/ventas/reportes'
+      fullPath: '/ventas/reportes'
+      preLoaderRoute: typeof AppVentasReportesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/ventas/nueva': {
       id: '/_app/ventas/nueva'
       path: '/ventas/nueva'
@@ -294,6 +485,27 @@ declare module '@tanstack/react-router' {
       path: '/ventas/notas-credito'
       fullPath: '/ventas/notas-credito'
       preLoaderRoute: typeof AppVentasNotasCreditoRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/ventas/cuadre-de-caja': {
+      id: '/_app/ventas/cuadre-de-caja'
+      path: '/ventas/cuadre-de-caja'
+      fullPath: '/ventas/cuadre-de-caja'
+      preLoaderRoute: typeof AppVentasCuadreDeCajaRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/proveedores/gestion': {
+      id: '/_app/proveedores/gestion'
+      path: '/proveedores/gestion'
+      fullPath: '/proveedores/gestion'
+      preLoaderRoute: typeof AppProveedoresGestionRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/inventario/reportes': {
+      id: '/_app/inventario/reportes'
+      path: '/inventario/reportes'
+      fullPath: '/inventario/reportes'
+      preLoaderRoute: typeof AppInventarioReportesRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/inventario/recetas': {
@@ -324,12 +536,68 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppInventarioDepartamentosRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/inventario/compras': {
+      id: '/_app/inventario/compras'
+      path: '/inventario/compras'
+      fullPath: '/inventario/compras'
+      preLoaderRoute: typeof AppInventarioComprasRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/configuracion/usuarios': {
+      id: '/_app/configuracion/usuarios'
+      path: '/configuracion/usuarios'
+      fullPath: '/configuracion/usuarios'
+      preLoaderRoute: typeof AppConfiguracionUsuariosRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/configuracion/tasa-cambio': {
       id: '/_app/configuracion/tasa-cambio'
       path: '/configuracion/tasa-cambio'
       fullPath: '/configuracion/tasa-cambio'
       preLoaderRoute: typeof AppConfiguracionTasaCambioRouteImport
       parentRoute: typeof AppRouteRoute
+    }
+    '/_app/configuracion/metodos-pago': {
+      id: '/_app/configuracion/metodos-pago'
+      path: '/configuracion/metodos-pago'
+      fullPath: '/configuracion/metodos-pago'
+      preLoaderRoute: typeof AppConfiguracionMetodosPagoRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/configuracion/datos-empresa': {
+      id: '/_app/configuracion/datos-empresa'
+      path: '/configuracion/datos-empresa'
+      fullPath: '/configuracion/datos-empresa'
+      preLoaderRoute: typeof AppConfiguracionDatosEmpresaRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/configuracion/bancos': {
+      id: '/_app/configuracion/bancos'
+      path: '/configuracion/bancos'
+      fullPath: '/configuracion/bancos'
+      preLoaderRoute: typeof AppConfiguracionBancosRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/clientes/reportes': {
+      id: '/_app/clientes/reportes'
+      path: '/reportes'
+      fullPath: '/clientes/reportes'
+      preLoaderRoute: typeof AppClientesReportesRouteImport
+      parentRoute: typeof AppClientesRoute
+    }
+    '/_app/clientes/gestion': {
+      id: '/_app/clientes/gestion'
+      path: '/gestion'
+      fullPath: '/clientes/gestion'
+      preLoaderRoute: typeof AppClientesGestionRouteImport
+      parentRoute: typeof AppClientesRoute
+    }
+    '/_app/clientes/cuentas-por-cobrar': {
+      id: '/_app/clientes/cuentas-por-cobrar'
+      path: '/cuentas-por-cobrar'
+      fullPath: '/clientes/cuentas-por-cobrar'
+      preLoaderRoute: typeof AppClientesCuentasPorCobrarRouteImport
+      parentRoute: typeof AppClientesRoute
     }
   }
 }
@@ -348,32 +616,70 @@ const authRouteRouteWithChildren = authRouteRoute._addFileChildren(
   authRouteRouteChildren,
 )
 
+interface AppClientesRouteChildren {
+  AppClientesCuentasPorCobrarRoute: typeof AppClientesCuentasPorCobrarRoute
+  AppClientesGestionRoute: typeof AppClientesGestionRoute
+  AppClientesReportesRoute: typeof AppClientesReportesRoute
+  AppClientesIndexRoute: typeof AppClientesIndexRoute
+}
+
+const AppClientesRouteChildren: AppClientesRouteChildren = {
+  AppClientesCuentasPorCobrarRoute: AppClientesCuentasPorCobrarRoute,
+  AppClientesGestionRoute: AppClientesGestionRoute,
+  AppClientesReportesRoute: AppClientesReportesRoute,
+  AppClientesIndexRoute: AppClientesIndexRoute,
+}
+
+const AppClientesRouteWithChildren = AppClientesRoute._addFileChildren(
+  AppClientesRouteChildren,
+)
+
 interface AppRouteRouteChildren {
-  AppClientesRoute: typeof AppClientesRoute
+  AppClientesRoute: typeof AppClientesRouteWithChildren
+  AppClinicaRoute: typeof AppClinicaRoute
   AppCxcRoute: typeof AppCxcRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppReportesRoute: typeof AppReportesRoute
+  AppConfiguracionBancosRoute: typeof AppConfiguracionBancosRoute
+  AppConfiguracionDatosEmpresaRoute: typeof AppConfiguracionDatosEmpresaRoute
+  AppConfiguracionMetodosPagoRoute: typeof AppConfiguracionMetodosPagoRoute
   AppConfiguracionTasaCambioRoute: typeof AppConfiguracionTasaCambioRoute
+  AppConfiguracionUsuariosRoute: typeof AppConfiguracionUsuariosRoute
+  AppInventarioComprasRoute: typeof AppInventarioComprasRoute
   AppInventarioDepartamentosRoute: typeof AppInventarioDepartamentosRoute
   AppInventarioKardexRoute: typeof AppInventarioKardexRoute
   AppInventarioProductosRoute: typeof AppInventarioProductosRoute
   AppInventarioRecetasRoute: typeof AppInventarioRecetasRoute
+  AppInventarioReportesRoute: typeof AppInventarioReportesRoute
+  AppProveedoresGestionRoute: typeof AppProveedoresGestionRoute
+  AppVentasCuadreDeCajaRoute: typeof AppVentasCuadreDeCajaRoute
   AppVentasNotasCreditoRoute: typeof AppVentasNotasCreditoRoute
   AppVentasNuevaRoute: typeof AppVentasNuevaRoute
+  AppVentasReportesRoute: typeof AppVentasReportesRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
-  AppClientesRoute: AppClientesRoute,
+  AppClientesRoute: AppClientesRouteWithChildren,
+  AppClinicaRoute: AppClinicaRoute,
   AppCxcRoute: AppCxcRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppReportesRoute: AppReportesRoute,
+  AppConfiguracionBancosRoute: AppConfiguracionBancosRoute,
+  AppConfiguracionDatosEmpresaRoute: AppConfiguracionDatosEmpresaRoute,
+  AppConfiguracionMetodosPagoRoute: AppConfiguracionMetodosPagoRoute,
   AppConfiguracionTasaCambioRoute: AppConfiguracionTasaCambioRoute,
+  AppConfiguracionUsuariosRoute: AppConfiguracionUsuariosRoute,
+  AppInventarioComprasRoute: AppInventarioComprasRoute,
   AppInventarioDepartamentosRoute: AppInventarioDepartamentosRoute,
   AppInventarioKardexRoute: AppInventarioKardexRoute,
   AppInventarioProductosRoute: AppInventarioProductosRoute,
   AppInventarioRecetasRoute: AppInventarioRecetasRoute,
+  AppInventarioReportesRoute: AppInventarioReportesRoute,
+  AppProveedoresGestionRoute: AppProveedoresGestionRoute,
+  AppVentasCuadreDeCajaRoute: AppVentasCuadreDeCajaRoute,
   AppVentasNotasCreditoRoute: AppVentasNotasCreditoRoute,
   AppVentasNuevaRoute: AppVentasNuevaRoute,
+  AppVentasReportesRoute: AppVentasReportesRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

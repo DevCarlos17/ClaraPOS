@@ -3,9 +3,10 @@ import { X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
-import { useMetodosPagoActivos } from '@/features/ventas/hooks/use-metodos-pago'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { registrarAbonoGlobal, useFacturasPendientes } from '../hooks/use-cxc'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 interface AbonoGlobalModalProps {
   isOpen: boolean
@@ -26,6 +27,7 @@ export function AbonoGlobalModal({
 }: AbonoGlobalModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { tasaValor } = useTasaActual()
+  const { user } = useCurrentUser()
   const { metodos } = useMetodosPagoActivos()
   const { facturas } = useFacturasPendientes(isOpen ? clienteId : null)
 
@@ -91,6 +93,7 @@ export function AbonoGlobalModal({
         tasa: tasaValor,
         monto,
         referencia: referencia.trim() || undefined,
+        empresa_id: user!.empresa_id!,
       })
       toast.success(
         `Abono de ${formatUsd(result.montoAplicado)} registrado. ${result.facturasAfectadas} factura(s) afectada(s).`

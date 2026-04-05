@@ -2,10 +2,11 @@
 
 ## Identidad del Proyecto
 
-**Nexo21** es un sistema POS (Point of Sale) + Gestion de Negocio para clinica estetica, con operacion **bimonetaria** (USD base + Bolivares via tasa de cambio) y **auditoria inmutable** sobre todos los registros financieros. El sistema se construye como una **PWA offline-first** con sincronizacion eventual.
+**Nexo21** es un sistema POS (Point of Sale) + Gestion de Negocio **multi-tenant** para clinica estetica, con operacion **bimonetaria** (USD base + Bolivares via tasa de cambio) y **auditoria inmutable** sobre todos los registros financieros. El sistema se construye como una **PWA offline-first** con sincronizacion eventual.
 
 - **Idioma**: Solo espanol (sin i18n)
-- **Monorepo**: `front/` (React PWA) + `backend/` (Supabase + Edge Functions)
+- **Multi-tenant**: Cada empresa tiene sus datos aislados via `empresa_id` en todas las tablas y queries
+- **Niveles de usuario**: 1=Propietario, 2=Supervisor, 3=Cajero
 - **Referencia de negocio**: `WORKFLOW_CLARAPOS.md` (en directorio padre `Nexo/`)
 - **Referencia de arquitectura frontend**: `vytalis-frontend` (en `ContApp/vytalis-frontend`)
 - **Referencia de logica de negocio**: Proyecto Django `fran` (en `ContApp/fran`)
@@ -119,13 +120,16 @@ El proyecto usa agentes Claude especializados organizados por dominio. Cada carp
 
 | # | Modulo | Estado | Descripcion |
 |---|--------|--------|-------------|
-| 1 | **Configuracion** | Fase 1 | Tasas de cambio USD/Bs |
-| 2 | **Inventario** | Fase 1 | Departamentos, Productos/Servicios, Kardex, Recetas |
-| 3 | Clientes | Futuro | Ficha maestra + libro auxiliar de cuenta |
-| 4 | Ventas (POS) | Futuro | Facturacion bimonetaria + descuento de inventario |
-| 5 | Cuentas x Cobrar | Futuro | Pagos a facturas + abono global FIFO |
-| 6 | Clinica | Futuro | Historias clinicas, sesiones, fotos, mapas anatomicos |
-| 7 | Reportes | Futuro | Cuadre de caja, KPIs |
+| 1 | **Configuracion** | Implementado | Tasas de cambio, Metodos de pago, Usuarios (CRUD empleados) |
+| 2 | **Inventario** | Implementado | Departamentos, Productos/Servicios, Kardex, Recetas |
+| 3 | **Clientes** | Implementado | Ficha maestra + libro auxiliar de cuenta |
+| 4 | **Ventas (POS)** | Implementado | Facturacion bimonetaria + descuento de inventario + pagos multiples |
+| 5 | **Cuentas x Cobrar** | Implementado | Pagos a factura especifica + abono global FIFO |
+| 6 | **Notas de Credito** | Implementado | Anulacion de facturas |
+| 7 | **Dashboard** | Implementado | KPIs, graficos de ventas, inventario por depto, top rotacion |
+| 8 | **Proveedores** | Implementado | Ficha maestra |
+| 9 | **Reportes** | Implementado | Cuadre de caja |
+| 10 | Clinica | Futuro | Historias clinicas, sesiones, fotos, mapas anatomicos |
 
 ### Reglas de Negocio Criticas
 
@@ -154,25 +158,25 @@ Estas reglas son **inviolables** y deben respetarse en todo el codigo:
 
 10. **Precision decimal**: Campos financieros usan `NUMERIC` (nunca `float`). Precios: 2 decimales. Tasas: 4 decimales. Stock: 3 decimales.
 
+11. **Aislamiento multi-tenant**: **Todas** las queries de negocio deben filtrar por `empresa_id` del usuario actual. Nunca mostrar datos de otra empresa. El patron es: `const { user } = useCurrentUser()` y luego `WHERE empresa_id = ?` con `user.empresa_id`.
+
+12. **Numeracion por empresa**: Los consecutivos (nro_factura, nro_ncr) son **por empresa**, no globales. El COUNT para generar el siguiente numero filtra por `empresa_id`.
+
 ---
 
 ## Esquema de Base de Datos
 
-### Tablas (Fase 1)
+### Tablas Principales
 
 ```
-usuarios           - Enlaza con auth.users de Supabase
+empresas           - Tenant raiz. Cada empresa agrupa todos sus datos
+usuarios           - Enlaza con auth.users de Supabase. Tiene empresa_id y level (1/2/3)
 tasas_cambio       - Historial de tasas USD/Bs (inmutable)
 departamentos      - Categorias de productos
 productos          - Catalogo maestro (Productos tipo='P' y Servicios tipo='S')
 recetas            - BOM: que productos consume un servicio
 movimientos_inventario  - Kardex: toda entrada/salida de stock (inmutable)
 metodos_pago       - Catalogo de formas de pago
-```
-
-### Tablas (Fases Futuras)
-
-```
 clientes           - Ficha maestra con saldo_actual
 movimientos_cuenta - Libro auxiliar del cliente (inmutable)
 ventas             - Cabecera de factura con foto de tasa
@@ -180,6 +184,8 @@ detalle_venta      - Lineas de factura con precio historico
 pagos              - Pagos bimonetarios con conversion
 notas_credito      - Anulacion de facturas
 ```
+
+> **Todas** las tablas de negocio tienen columna `empresa_id` (FK a empresas).
 
 ### Triggers PostgreSQL
 
@@ -200,6 +206,26 @@ notas_credito      - Anulacion de facturas
 - Solo UPDATE permitido en: departamentos, productos, metodos_pago
 - Solo DELETE permitido en: recetas
 - Tablas inmutables no permiten UPDATE ni DELETE via RLS (+ triggers como segunda capa)
+- **Nota**: RLS no filtra por empresa_id actualmente. El aislamiento multi-tenant se hace a nivel de queries en el frontend (filtro `WHERE empresa_id = ?`)
+
+### Edge Functions (Supabase Deno)
+
+| Funcion | Metodo | Auth | Descripcion |
+|---------|--------|------|-------------|
+| `register-owner` | POST | Publica (apikey) | Crea empresa + usuario nivel 1 (Propietario) |
+| `create-employee` | POST | JWT (Propietario) | Crea usuario nivel 2 o 3 dentro de la empresa |
+| `update-employee` | PATCH | JWT (Propietario) | Modifica level, activo, nombre de un empleado |
+
+**Patron de auth en Edge Functions autenticadas**:
+1. Extraer token del header `Authorization: Bearer <token>`
+2. Verificar via `supabaseAdmin.auth.getUser(token)` (NO crear cliente anon separado)
+3. Consultar tabla `usuarios` para obtener `level` y `empresa_id` del caller
+4. Validar permisos (solo nivel 1 puede gestionar empleados)
+
+**Headers requeridos desde el frontend**:
+- `apikey: SUPABASE_ANON_KEY` (requerido por el API Gateway de Supabase)
+- `Authorization: Bearer <access_token>` (JWT del usuario logueado, o anon key para funciones publicas)
+- `Content-Type: application/json`
 
 ---
 
@@ -214,7 +240,7 @@ notas_credito      - Anulacion de facturas
 - **Escrituras locales**: Se ejecutan en SQLite via `db.writeTransaction()` (atomicidad local)
 - **Sync eventual**: PowerSync sincroniza cambios con Supabase en background
 - **Conflict resolution**: Last-write-wins (PowerSync default)
-- **Bucket strategy**: Un solo bucket `global` para Fase 1 (todos los usuarios ven todo)
+- **Bucket strategy**: Bucket parametrizado `empresa[]` que filtra por `empresa_id` del usuario (aislamiento a nivel de sync). Bucket `global` solo para `level_permissions` (permisos compartidos). El frontend tambien filtra por `empresa_id` como defensa en profundidad
 
 ### PowerSync Connector
 
@@ -284,7 +310,14 @@ src/
 ### Patrones Frontend
 
 - **Feature-based organization**: Cada modulo tiene sus hooks, schemas y components
-- **Hooks como data layer**: Cada feature expone hooks que encapsulan queries Kysely contra PowerSync
+- **Hooks como data layer**: Cada feature expone hooks que encapsulan queries PowerSync. **Todos** filtran por `empresa_id`
+- **useCurrentUser()**: Hook central que provee `{ user, loading }`. Usa datos de PowerSync con fallback a JWT `user_metadata` (disponible instantaneamente sin queries). Retorna `{ id, email, nombre, level, empresa_id }`
+- **Patron de query con empresa_id**:
+  ```typescript
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const { data } = useQuery('SELECT * FROM tabla WHERE empresa_id = ?', [empresaId])
+  ```
 - **Zod para validacion**: Schemas Zod en carpeta `schemas/` de cada feature, usados en formularios
 - **Componentes de presentacion**: Components reciben datos via props, hooks manejan la logica
 - **shadcn/ui como base**: Todos los componentes UI derivan de shadcn, customizados via Tailwind
@@ -407,13 +440,17 @@ npx shadcn@latest add [component]  # Agregar componente shadcn/ui
 7. **Respetar offline-first**: Usar `db.writeTransaction()` para operaciones atomicas locales
 8. **Validar con Zod**: Toda entrada de usuario pasa por schema Zod antes de llegar a la DB
 9. **Solo espanol**: Todos los textos, labels, mensajes, placeholders en espanol
+10. **Filtrar por empresa_id**: Toda query de negocio DEBE incluir `WHERE empresa_id = ?`. Usar `useCurrentUser()` para obtener el `empresa_id`. Nunca mostrar datos sin filtrar
+11. **Edge Functions con apikey**: Al llamar Edge Functions desde el connector, siempre enviar header `apikey: SUPABASE_ANON_KEY` ademas del `Authorization`
 
 ### Al revisar codigo:
 
-1. Verificar que las 10 reglas de negocio criticas se cumplen
+1. Verificar que las 12 reglas de negocio criticas se cumplen
 2. Verificar TypeScript estricto (no `any`)
 3. Verificar que registros inmutables no tienen UI de edicion/borrado
 4. Verificar que stock y saldos no se editan directamente
 5. Verificar precision decimal correcta en cada campo
 6. Verificar que la UI es responsive (mobile + desktop)
 7. Verificar que los estados loading/error/empty estan cubiertos
+8. **Verificar que TODA query filtra por `empresa_id`** - es la regla mas critica para multi-tenant
+9. Verificar que Edge Functions usan `supabaseAdmin.auth.getUser(token)` para verificar JWT

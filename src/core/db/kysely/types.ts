@@ -1,8 +1,23 @@
+export interface Empresas {
+  id: string
+  nombre: string
+  rif: string | null
+  direccion: string | null
+  telefono: string | null
+  email: string | null
+  nro_fiscal: string | null
+  regimen: string | null
+  activo: number
+  created_at: string
+  updated_at: string
+}
+
 export interface Usuarios {
   id: string
   email: string
   nombre: string
-  rol: string
+  level: number
+  empresa_id: string | null
   activo: number
   created_at: string
   updated_at: string
@@ -13,6 +28,7 @@ export interface TasasCambio {
   fecha: string
   valor: string
   moneda_destino: string
+  empresa_id: string | null
   created_at: string
 }
 
@@ -21,6 +37,7 @@ export interface Departamentos {
   codigo: string
   nombre: string
   activo: number
+  empresa_id: string | null
   created_at: string
   updated_at: string
 }
@@ -38,6 +55,7 @@ export interface Productos {
   stock_minimo: string
   medida: string
   activo: number
+  empresa_id: string | null
   created_at: string
   updated_at: string
 }
@@ -47,6 +65,7 @@ export interface Recetas {
   servicio_id: string
   producto_id: string
   cantidad: string
+  empresa_id: string | null
   created_at: string
 }
 
@@ -62,6 +81,7 @@ export interface MovimientosInventario {
   usuario_id: string
   fecha: string
   venta_id: string | null
+  empresa_id: string | null
   created_at: string
 }
 
@@ -70,6 +90,17 @@ export interface MetodosPago {
   nombre: string
   moneda: string
   activo: number
+  empresa_id: string | null
+  created_at: string
+}
+
+export interface Bancos {
+  id: string
+  banco: string
+  numero_cuenta: string
+  cedula_rif: string
+  activo: number
+  empresa_id: string | null
   created_at: string
 }
 
@@ -82,6 +113,7 @@ export interface Clientes {
   limite_credito: string
   saldo_actual: string
   activo: number
+  empresa_id: string | null
   created_at: string
   updated_at: string
 }
@@ -97,6 +129,7 @@ export interface MovimientosCuenta {
   observacion: string | null
   venta_id: string | null
   fecha: string
+  empresa_id: string | null
   created_at: string
 }
 
@@ -113,6 +146,7 @@ export interface Ventas {
   fecha: string
   created_at: string
   anulada: number
+  empresa_id: string | null
 }
 
 export interface DetalleVenta {
@@ -121,6 +155,7 @@ export interface DetalleVenta {
   producto_id: string
   cantidad: string
   precio_unitario_usd: string
+  empresa_id: string | null
   created_at: string
 }
 
@@ -135,6 +170,7 @@ export interface Pagos {
   monto_usd: string
   referencia: string | null
   fecha: string
+  empresa_id: string | null
   created_at: string
 }
 
@@ -149,10 +185,57 @@ export interface NotasCredito {
   monto_total_bs: string
   usuario_id: string
   fecha: string
+  empresa_id: string | null
+  created_at: string
+}
+
+export interface Proveedores {
+  id: string
+  razon_social: string
+  rif: string
+  direccion_fiscal: string | null
+  telefono: string | null
+  correo: string | null
+  retiene_iva: number
+  retiene_islr: number
+  activo: number
+  empresa_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Compras {
+  id: string
+  proveedor_id: string
+  nro_compra: string
+  tasa: string
+  total_usd: string
+  total_bs: string
+  usuario_id: string
+  fecha: string
+  empresa_id: string | null
+  created_at: string
+}
+
+export interface DetalleCompra {
+  id: string
+  compra_id: string
+  producto_id: string
+  cantidad: string
+  costo_unitario_usd: string
+  empresa_id: string | null
+  created_at: string
+}
+
+export interface LevelPermissions {
+  id: string
+  level: number
+  permission: string
   created_at: string
 }
 
 export interface DB {
+  empresas: Empresas
   usuarios: Usuarios
   tasas_cambio: TasasCambio
   departamentos: Departamentos
@@ -160,10 +243,15 @@ export interface DB {
   recetas: Recetas
   movimientos_inventario: MovimientosInventario
   metodos_pago: MetodosPago
+  bancos: Bancos
   clientes: Clientes
   movimientos_cuenta: MovimientosCuenta
   ventas: Ventas
   detalle_venta: DetalleVenta
   pagos: Pagos
   notas_credito: NotasCredito
+  proveedores: Proveedores
+  compras: Compras
+  detalle_compra: DetalleCompra
+  level_permissions: LevelPermissions
 }

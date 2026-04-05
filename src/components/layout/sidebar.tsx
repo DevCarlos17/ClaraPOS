@@ -17,12 +17,21 @@ import {
   DollarSign,
   LogOut,
   ChevronDown,
+  Truck,
+  Building2,
+  UserCog,
+  Landmark,
+  Wallet,
+  Receipt,
+  ClipboardList,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useSidebarStore } from '@/stores/sidebar-store'
 import { useAuth } from '@/core/auth/auth-provider'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePermissions, PERMISSIONS, type PermissionKey } from '@/core/hooks/use-permissions'
+import { getLevelName } from '@/lib/auth-utils'
 import { toast } from 'sonner'
 
 interface SidebarProps {
@@ -30,39 +39,80 @@ interface SidebarProps {
   onClose: () => void
 }
 
+interface ChildMenuItem {
+  title: string
+  url: string
+  icon: React.ComponentType<{ size?: number; className?: string }>
+  requiredPermission?: PermissionKey
+}
+
 interface MenuItem {
   title: string
   url?: string
   icon: React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>
   disabled?: boolean
-  children?: { title: string; url: string; icon: React.ComponentType<{ size?: number; className?: string }> }[]
+  requiredPermission?: PermissionKey
+  children?: ChildMenuItem[]
 }
 
 const menuItems: MenuItem[] = [
   { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
   {
+    title: 'Ventas',
+    icon: ShoppingCart,
+    children: [
+      { title: 'Nueva Venta', url: '/ventas/nueva', icon: ShoppingCart, requiredPermission: PERMISSIONS.SALES_CREATE },
+      { title: 'Nota de Credito', url: '/ventas/notas-credito', icon: FileX, requiredPermission: PERMISSIONS.SALES_VOID },
+      { title: 'Reportes', url: '/ventas/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.REPORTS_VIEW },
+      { title: 'Cuadre de Caja', url: '/ventas/cuadre-de-caja', icon: Receipt, requiredPermission: PERMISSIONS.REPORTS_CASHCLOSE },
+    ],
+  },
+  {
     title: 'Inventario',
     icon: Package,
     children: [
-      { title: 'Departamentos', url: '/inventario/departamentos', icon: FolderTree },
-      { title: 'Productos', url: '/inventario/productos', icon: ShoppingBag },
-      { title: 'Kardex', url: '/inventario/kardex', icon: ArrowLeftRight },
-      { title: 'Recetas', url: '/inventario/recetas', icon: BookOpen },
+      { title: 'Departamentos', url: '/inventario/departamentos', icon: FolderTree, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Compras', url: '/inventario/compras', icon: ClipboardList, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
+      { title: 'Productos / Servicios', url: '/inventario/productos', icon: ShoppingBag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Kardex', url: '/inventario/kardex', icon: ArrowLeftRight, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Recetas / Combos', url: '/inventario/recetas', icon: BookOpen, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Reportes de Inventario', url: '/inventario/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
     ],
   },
-  { title: 'Clientes', url: '/clientes', icon: Users },
-  { title: 'Nueva Venta', url: '/ventas/nueva', icon: ShoppingCart },
-  { title: 'Notas de Credito', url: '/ventas/notas-credito', icon: FileX },
-  { title: 'Cuentas x Cobrar', url: '/cxc', icon: CreditCard },
-  { title: 'Reportes', url: '/reportes', icon: BarChart3 },
-  { title: 'Clinica', url: '/clinica', icon: Heart, disabled: true },
+  {
+    title: 'Proveedores',
+    icon: Truck,
+    children: [
+      { title: 'Gestion de Proveedores', url: '/proveedores/gestion', icon: Truck, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
+    ],
+  },
+  {
+    title: 'Clientes',
+    icon: Users,
+    children: [
+      { title: 'Gestion de Clientes', url: '/clientes/gestion', icon: Users, requiredPermission: PERMISSIONS.CLIENTS_MANAGE },
+      { title: 'Cuentas por Cobrar', url: '/clientes/cuentas-por-cobrar', icon: CreditCard, requiredPermission: PERMISSIONS.CLIENTS_CREDIT },
+      { title: 'Reportes de CxC', url: '/clientes/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.CLIENTS_CREDIT },
+    ],
+  },
   {
     title: 'Configuracion',
     icon: Settings,
     children: [
-      { title: 'Tasas de Cambio', url: '/configuracion/tasa-cambio', icon: DollarSign },
+      { title: 'Datos Empresa', url: '/configuracion/datos-empresa', icon: Building2, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Tasa de Cambio', url: '/configuracion/tasa-cambio', icon: DollarSign, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Usuarios y Perfiles', url: '/configuracion/usuarios', icon: UserCog, requiredPermission: PERMISSIONS.CONFIG_USERS },
     ],
   },
+  {
+    title: 'Informacion Bancaria',
+    icon: Landmark,
+    children: [
+      { title: 'Bancos', url: '/configuracion/bancos', icon: Landmark, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Metodos de Pago', url: '/configuracion/metodos-pago', icon: Wallet, requiredPermission: PERMISSIONS.CONFIG_RATES },
+    ],
+  },
+  { title: 'Clinica', url: '/clinica', icon: Heart, requiredPermission: PERMISSIONS.CLINIC_ACCESS },
 ]
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
@@ -75,6 +125,24 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   const { signOut } = useAuth()
   const { user } = useCurrentUser()
+  const { hasPermission } = usePermissions()
+
+  // Filter menu items based on permissions
+  const filteredMenuItems = menuItems
+    .filter((item) => {
+      if (item.requiredPermission && !hasPermission(item.requiredPermission)) return false
+      if (item.children) {
+        return item.children.some((child) => !child.requiredPermission || hasPermission(child.requiredPermission))
+      }
+      return true
+    })
+    .map((item) => {
+      if (!item.children) return item
+      return {
+        ...item,
+        children: item.children.filter((child) => !child.requiredPermission || hasPermission(child.requiredPermission)),
+      }
+    })
 
   const isActive = (path: string) => {
     if (currentPath === path) return true
@@ -142,7 +210,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   // Auto-expand groups that have active children
   useEffect(() => {
     const newExpanded: Record<string, boolean> = {}
-    for (const item of menuItems) {
+    for (const item of filteredMenuItems) {
       if (item.children && isGroupActive(item.children)) {
         newExpanded[item.title] = true
       }
@@ -262,7 +330,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             </Link>
 
             <nav className="flex-1 space-y-1 overflow-y-auto">
-              {menuItems.map((item) => renderMenuItem(item, true))}
+              {filteredMenuItems.map((item) => renderMenuItem(item, true))}
             </nav>
 
             <div className="mt-4 pt-4 border-t border-border">
@@ -274,7 +342,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </div>
                 <div className="flex flex-col">
                   <span className="text-sm font-medium text-foreground">{user?.nombre ?? 'Usuario'}</span>
-                  <span className="text-xs text-muted-foreground">{user?.rol ?? 'cajero'}</span>
+                  <span className="text-xs text-muted-foreground">{getLevelName(user?.level ?? 3)}</span>
                 </div>
               </div>
 
@@ -320,7 +388,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
         {/* Nav */}
         <nav className="flex-1 space-y-1 px-3 overflow-y-auto">
-          {menuItems.map((item) => {
+          {filteredMenuItems.map((item) => {
             if (item.children) {
               const groupIsActive = isGroupActive(item.children)
               if (!isHovered) {
@@ -396,7 +464,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             </div>
             <div className={cn('flex flex-col transition-all duration-300 overflow-hidden', isHovered ? 'opacity-100 translate-x-0 ml-3.5' : 'opacity-0 -translate-x-4 w-0 h-0')}>
               <span className="text-[14px] font-bold text-foreground truncate tracking-tight">{user?.nombre ?? 'Usuario'}</span>
-              <span className="text-[11px] font-medium text-muted-foreground truncate uppercase tracking-widest leading-none mt-1">{user?.rol ?? 'cajero'}</span>
+              <span className="text-[11px] font-medium text-muted-foreground truncate uppercase tracking-widest leading-none mt-1">{getLevelName(user?.level ?? 3)}</span>
             </div>
           </div>
 

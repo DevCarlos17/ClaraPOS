@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface Producto {
@@ -20,28 +21,45 @@ export interface Producto {
 }
 
 export function useProductos() {
-  const { data, isLoading } = useQuery('SELECT * FROM productos ORDER BY nombre ASC')
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    'SELECT * FROM productos WHERE empresa_id = ? ORDER BY nombre ASC',
+    [empresaId]
+  )
   return { productos: (data ?? []) as Producto[], isLoading }
 }
 
 export function useProductosActivos() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM productos WHERE activo = 1 ORDER BY nombre ASC'
+    'SELECT * FROM productos WHERE empresa_id = ? AND activo = 1 ORDER BY nombre ASC',
+    [empresaId]
   )
   return { productos: (data ?? []) as Producto[], isLoading }
 }
 
 export function useProductosTipo(tipo: 'P' | 'S') {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM productos WHERE tipo = ? AND activo = 1 ORDER BY nombre ASC',
-    [tipo]
+    'SELECT * FROM productos WHERE empresa_id = ? AND tipo = ? AND activo = 1 ORDER BY nombre ASC',
+    [empresaId, tipo]
   )
   return { productos: (data ?? []) as Producto[], isLoading }
 }
 
 export function useResumenInventario() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data: productos } = useQuery(
-    'SELECT costo_usd, stock, stock_minimo, tipo FROM productos WHERE activo = 1'
+    'SELECT costo_usd, stock, stock_minimo, tipo FROM productos WHERE empresa_id = ? AND activo = 1',
+    [empresaId]
   )
 
   const items = (productos ?? []) as { costo_usd: string; stock: string; stock_minimo: string; tipo: string }[]
@@ -67,6 +85,7 @@ export async function crearProducto(data: {
   precio_mayor_usd: number | null
   stock_minimo: number
   medida: string
+  empresa_id: string
 }) {
   const id = uuidv4()
   const now = new Date().toISOString()
@@ -87,6 +106,7 @@ export async function crearProducto(data: {
       stock_minimo: isServicio ? '0.000' : data.stock_minimo.toFixed(3),
       medida: data.medida,
       activo: 1,
+      empresa_id: data.empresa_id,
       created_at: now,
       updated_at: now,
     })

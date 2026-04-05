@@ -93,6 +93,7 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
         cantidad: parsed.data.cantidad,
         motivo: parsed.data.motivo,
         usuario_id: user.id,
+        empresa_id: user.empresa_id!,
       })
       toast.success(
         tipo === 'E'

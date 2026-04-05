@@ -93,14 +93,62 @@ export class SupabaseConnector
     this.updateSession(session)
   }
 
-  async register(nombre: string, email: string, password: string) {
-    const { data, error } = await this.client.auth.signUp({
-      email,
-      password,
-      options: { data: { nombre } },
+  async registerOwner(nombre: string, email: string, password: string, nombreEmpresa: string) {
+    const res = await fetch(`${this.config.supabaseUrl}/functions/v1/register-owner`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: this.config.supabaseAnonKey,
+        Authorization: `Bearer ${this.config.supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ nombre, email, password, nombre_empresa: nombreEmpresa }),
     })
-    if (error) throw error
-    if (!data.user) throw new Error('No se pudo crear el usuario')
+
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Error al registrar')
+    }
+    return data as { success: boolean; userId: string; empresaId: string }
+  }
+
+  async createEmployee(nombre: string, email: string, password: string, level: number) {
+    if (!this.currentSession) throw new Error('No hay sesion activa')
+
+    const res = await fetch(`${this.config.supabaseUrl}/functions/v1/create-employee`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: this.config.supabaseAnonKey,
+        Authorization: `Bearer ${this.currentSession.access_token}`,
+      },
+      body: JSON.stringify({ nombre, email, password, level }),
+    })
+
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Error al crear empleado')
+    }
+    return data as { success: boolean; userId: string }
+  }
+
+  async updateEmployee(userId: string, updates: { level?: number; activo?: boolean; nombre?: string }) {
+    if (!this.currentSession) throw new Error('No hay sesion activa')
+
+    const res = await fetch(`${this.config.supabaseUrl}/functions/v1/update-employee`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: this.config.supabaseAnonKey,
+        Authorization: `Bearer ${this.currentSession.access_token}`,
+      },
+      body: JSON.stringify({ userId, ...updates }),
+    })
+
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Error al actualizar empleado')
+    }
+    return data as { success: boolean }
   }
 
   async logout() {

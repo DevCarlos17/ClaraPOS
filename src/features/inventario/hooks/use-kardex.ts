@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface MovimientoInventario {
@@ -18,16 +19,23 @@ export interface MovimientoInventario {
 }
 
 export function useMovimientos(limit = 50) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    `SELECT * FROM movimientos_inventario ORDER BY fecha DESC LIMIT ${limit}`
+    `SELECT * FROM movimientos_inventario WHERE empresa_id = ? ORDER BY fecha DESC LIMIT ${limit}`,
+    [empresaId]
   )
   return { movimientos: (data ?? []) as MovimientoInventario[], isLoading }
 }
 
 export function useMovimientosPorProducto(productoId: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM movimientos_inventario WHERE producto_id = ? ORDER BY fecha DESC',
-    [productoId]
+    'SELECT * FROM movimientos_inventario WHERE empresa_id = ? AND producto_id = ? ORDER BY fecha DESC',
+    [empresaId, productoId]
   )
   return { movimientos: (data ?? []) as MovimientoInventario[], isLoading }
 }
@@ -38,8 +46,9 @@ export async function registrarMovimiento(params: {
   cantidad: number
   motivo?: string
   usuario_id: string
+  empresa_id: string
 }) {
-  const { producto_id, tipo, cantidad, motivo, usuario_id } = params
+  const { producto_id, tipo, cantidad, motivo, usuario_id, empresa_id } = params
 
   // Transaccion atomica local via SQLite
   await db.writeTransaction(async (tx) => {
@@ -63,8 +72,8 @@ export async function registrarMovimiento(params: {
     const now = new Date().toISOString()
 
     await tx.execute(
-      `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, created_at)
-       VALUES (?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         producto_id,
@@ -75,6 +84,7 @@ export async function registrarMovimiento(params: {
         motivo ?? null,
         usuario_id,
         now,
+        empresa_id,
         now,
       ]
     )

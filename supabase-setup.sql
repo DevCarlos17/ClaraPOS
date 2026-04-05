@@ -621,3 +621,416 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_validate_movimiento_inventario_insert
   BEFORE INSERT ON movimientos_inventario
   FOR EACH ROW EXECUTE FUNCTION validate_movimiento_inventario_insert();
+
+-- ============================================
+-- FASE: PROVEEDORES
+-- ============================================
+
+CREATE TABLE proveedores (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  razon_social VARCHAR(200) NOT NULL,
+  rif VARCHAR(15) NOT NULL UNIQUE,
+  direccion_fiscal TEXT,
+  telefono VARCHAR(20),
+  correo VARCHAR(100),
+  retiene_iva BOOLEAN NOT NULL DEFAULT false,
+  retiene_islr BOOLEAN NOT NULL DEFAULT false,
+  activo BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Trigger updated_at
+CREATE TRIGGER trg_proveedores_updated
+  BEFORE UPDATE ON proveedores
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- RLS
+ALTER TABLE proveedores ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Authenticated read all" ON proveedores FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Authenticated insert" ON proveedores FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "Authenticated update" ON proveedores FOR UPDATE TO authenticated USING (true);
+
+-- Validacion: RIF inmutable
+CREATE OR REPLACE FUNCTION validate_proveedor_update()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.rif <> OLD.rif THEN
+    RAISE EXCEPTION 'El RIF del proveedor no puede modificarse';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_validate_proveedor_update
+  BEFORE UPDATE ON proveedores
+  FOR EACH ROW EXECUTE FUNCTION validate_proveedor_update();
+
+-- ============================================
+-- MIGRACION: SISTEMA DE PERMISOS POR NIVEL
+-- Reemplaza campo 'rol' TEXT por 'level' INTEGER
+-- 1=Dueno, 2=Supervisor, 3=Cajero
+-- ============================================
+
+-- 1. Agregar columna level
+ALTER TABLE usuarios ADD COLUMN level INTEGER NOT NULL DEFAULT 3 CHECK (level IN (1, 2, 3));
+
+-- 2. Migrar datos existentes: admin->1, gerente->2, cajero->3
+UPDATE usuarios SET level = 1 WHERE rol = 'admin';
+UPDATE usuarios SET level = 2 WHERE rol = 'gerente';
+UPDATE usuarios SET level = 3 WHERE rol = 'cajero';
+
+-- 3. Eliminar columna rol
+ALTER TABLE usuarios DROP COLUMN rol;
+
+-- 4. Actualizar handle_new_user() para usar level en vez de rol
+CREATE OR REPLACE FUNCTION handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.usuarios (id, email, nombre, level)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'nombre', NEW.email),
+    3
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 5. Tabla de permisos por nivel
+CREATE TABLE level_permissions (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  level INTEGER NOT NULL CHECK (level IN (1, 2, 3)),
+  permission TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(level, permission)
+);
+
+CREATE INDEX idx_level_permissions_level ON level_permissions(level);
+
+-- RLS: solo lectura para usuarios autenticados
+ALTER TABLE level_permissions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Authenticated read all" ON level_permissions FOR SELECT TO authenticated USING (true);
+
+-- Agregar a publicacion de PowerSync
+-- ALTER PUBLICATION powersync ADD TABLE level_permissions;
+
+-- 6. Seed de permisos
+-- Nivel 1 (Dueno): hardcoded return true, no necesita registros en DB
+-- Nivel 2 (Supervisor): todos los permisos operativos
+INSERT INTO level_permissions (level, permission) VALUES
+  (2, 'sales.create'),
+  (2, 'sales.void'),
+  (2, 'inventory.view'),
+  (2, 'inventory.adjust'),
+  (2, 'inventory.edit_prices'),
+  (2, 'reports.view'),
+  (2, 'reports.cashclose'),
+  (2, 'clients.manage'),
+  (2, 'clients.credit'),
+  (2, 'clinic.access');
+
+-- Nivel 3 (Cajero): permisos basicos
+INSERT INTO level_permissions (level, permission) VALUES
+  (3, 'sales.create'),
+  (3, 'inventory.view'),
+  (3, 'reports.view'),
+  (3, 'clients.manage');
+
+-- ============================================
+-- FASE: MULTI-TENANCY (EMPRESAS)
+-- ============================================
+
+-- 1. Tabla empresas
+CREATE TABLE empresas (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  nombre VARCHAR(200) NOT NULL,
+  rif VARCHAR(15),
+  activo BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TRIGGER trg_empresas_updated BEFORE UPDATE ON empresas
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+ALTER TABLE empresas ENABLE ROW LEVEL SECURITY;
+
+-- Solo puede ver su propia empresa
+CREATE POLICY "select_own_empresa" ON empresas FOR SELECT TO authenticated
+  USING (id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- 2. Agregar empresa_id a usuarios
+ALTER TABLE usuarios ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+CREATE INDEX idx_usuarios_empresa ON usuarios(empresa_id);
+
+-- Reemplazar RLS de usuarios: solo ver usuarios de tu empresa
+DROP POLICY "Authenticated read all" ON usuarios;
+CREATE POLICY "select_own_empresa_users" ON usuarios FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+CREATE POLICY "update_own_empresa_users" ON usuarios FOR UPDATE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- 3. Actualizar handle_new_user() para leer empresa_id y level de user_metadata
+CREATE OR REPLACE FUNCTION handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO public.usuarios (id, email, nombre, level, empresa_id)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    COALESCE(NEW.raw_user_meta_data->>'nombre', NEW.email),
+    COALESCE((NEW.raw_user_meta_data->>'level')::INTEGER, 3),
+    (NEW.raw_user_meta_data->>'empresa_id')::UUID
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- ============================================
+-- FASE 2: AISLAMIENTO COMPLETO (empresa_id en tablas de negocio)
+-- Agrega empresa_id a las 13 tablas de negocio,
+-- crea indices y reemplaza RLS policies para
+-- filtrar por empresa del usuario autenticado.
+-- ============================================
+
+-- 1. ALTER TABLE: agregar empresa_id a las 13 tablas
+ALTER TABLE tasas_cambio ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE departamentos ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE productos ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE recetas ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE movimientos_inventario ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE metodos_pago ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE clientes ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE movimientos_cuenta ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE ventas ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE detalle_venta ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE pagos ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE notas_credito ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+ALTER TABLE proveedores ADD COLUMN empresa_id UUID REFERENCES empresas(id);
+
+-- 2. Indices para filtrado por empresa_id
+CREATE INDEX idx_tasas_cambio_empresa ON tasas_cambio(empresa_id);
+CREATE INDEX idx_departamentos_empresa ON departamentos(empresa_id);
+CREATE INDEX idx_productos_empresa ON productos(empresa_id);
+CREATE INDEX idx_recetas_empresa ON recetas(empresa_id);
+CREATE INDEX idx_mov_inv_empresa ON movimientos_inventario(empresa_id);
+CREATE INDEX idx_metodos_pago_empresa ON metodos_pago(empresa_id);
+CREATE INDEX idx_clientes_empresa ON clientes(empresa_id);
+CREATE INDEX idx_mov_cuenta_empresa ON movimientos_cuenta(empresa_id);
+CREATE INDEX idx_ventas_empresa ON ventas(empresa_id);
+CREATE INDEX idx_detalle_venta_empresa ON detalle_venta(empresa_id);
+CREATE INDEX idx_pagos_empresa ON pagos(empresa_id);
+CREATE INDEX idx_notas_credito_empresa ON notas_credito(empresa_id);
+CREATE INDEX idx_proveedores_empresa ON proveedores(empresa_id);
+
+-- 3. Reemplazar RLS policies: SELECT filtrado por empresa
+
+-- tasas_cambio
+DROP POLICY "Authenticated read all" ON tasas_cambio;
+DROP POLICY "Authenticated insert" ON tasas_cambio;
+CREATE POLICY "select_own_empresa" ON tasas_cambio FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON tasas_cambio FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- departamentos
+DROP POLICY "Authenticated read all" ON departamentos;
+DROP POLICY "Authenticated insert" ON departamentos;
+DROP POLICY "Authenticated update" ON departamentos;
+CREATE POLICY "select_own_empresa" ON departamentos FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON departamentos FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "update_own_empresa" ON departamentos FOR UPDATE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- productos
+DROP POLICY "Authenticated read all" ON productos;
+DROP POLICY "Authenticated insert" ON productos;
+DROP POLICY "Authenticated update" ON productos;
+CREATE POLICY "select_own_empresa" ON productos FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON productos FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "update_own_empresa" ON productos FOR UPDATE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- recetas
+DROP POLICY "Authenticated read all" ON recetas;
+DROP POLICY "Authenticated insert" ON recetas;
+DROP POLICY "Authenticated delete" ON recetas;
+CREATE POLICY "select_own_empresa" ON recetas FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON recetas FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "delete_own_empresa" ON recetas FOR DELETE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- movimientos_inventario
+DROP POLICY "Authenticated read all" ON movimientos_inventario;
+DROP POLICY "Authenticated insert" ON movimientos_inventario;
+CREATE POLICY "select_own_empresa" ON movimientos_inventario FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON movimientos_inventario FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- metodos_pago
+DROP POLICY "Authenticated read all" ON metodos_pago;
+DROP POLICY "Authenticated insert" ON metodos_pago;
+DROP POLICY "Authenticated update" ON metodos_pago;
+CREATE POLICY "select_own_empresa" ON metodos_pago FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON metodos_pago FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "update_own_empresa" ON metodos_pago FOR UPDATE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- clientes
+DROP POLICY "Authenticated read all" ON clientes;
+DROP POLICY "Authenticated insert" ON clientes;
+DROP POLICY "Authenticated update" ON clientes;
+CREATE POLICY "select_own_empresa" ON clientes FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON clientes FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "update_own_empresa" ON clientes FOR UPDATE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- movimientos_cuenta
+DROP POLICY "Authenticated read all" ON movimientos_cuenta;
+DROP POLICY "Authenticated insert" ON movimientos_cuenta;
+CREATE POLICY "select_own_empresa" ON movimientos_cuenta FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON movimientos_cuenta FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- ventas
+DROP POLICY "Authenticated read all" ON ventas;
+DROP POLICY "Authenticated insert" ON ventas;
+DROP POLICY "Authenticated update" ON ventas;
+CREATE POLICY "select_own_empresa" ON ventas FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON ventas FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "update_own_empresa" ON ventas FOR UPDATE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- detalle_venta
+DROP POLICY "Authenticated read all" ON detalle_venta;
+DROP POLICY "Authenticated insert" ON detalle_venta;
+CREATE POLICY "select_own_empresa" ON detalle_venta FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON detalle_venta FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- pagos
+DROP POLICY "Authenticated read all" ON pagos;
+DROP POLICY "Authenticated insert" ON pagos;
+CREATE POLICY "select_own_empresa" ON pagos FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON pagos FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- notas_credito
+DROP POLICY "Authenticated read all" ON notas_credito;
+DROP POLICY "Authenticated insert" ON notas_credito;
+CREATE POLICY "select_own_empresa" ON notas_credito FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON notas_credito FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- proveedores
+DROP POLICY "Authenticated read all" ON proveedores;
+DROP POLICY "Authenticated insert" ON proveedores;
+DROP POLICY "Authenticated update" ON proveedores;
+CREATE POLICY "select_own_empresa" ON proveedores FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON proveedores FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "update_own_empresa" ON proveedores FOR UPDATE TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- ============================================
+-- FASE: DATOS EMPRESA (columnas adicionales)
+-- ============================================
+
+-- 1. Agregar columnas de contacto y datos fiscales
+ALTER TABLE empresas ADD COLUMN IF NOT EXISTS direccion TEXT;
+ALTER TABLE empresas ADD COLUMN IF NOT EXISTS telefono VARCHAR(20);
+ALTER TABLE empresas ADD COLUMN IF NOT EXISTS email VARCHAR(150);
+ALTER TABLE empresas ADD COLUMN IF NOT EXISTS nro_fiscal VARCHAR(30);
+ALTER TABLE empresas ADD COLUMN IF NOT EXISTS regimen VARCHAR(50);
+
+-- 2. Policy de UPDATE (no existia para empresas)
+CREATE POLICY "update_own_empresa" ON empresas FOR UPDATE TO authenticated
+  USING (id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- ============================================
+-- FASE: COMPRAS (Ordenes de Compra a Proveedores)
+-- ============================================
+
+-- Ampliar CHECK de origen en movimientos_inventario para incluir COM
+ALTER TABLE movimientos_inventario DROP CONSTRAINT movimientos_inventario_origen_check;
+ALTER TABLE movimientos_inventario ADD CONSTRAINT movimientos_inventario_origen_check
+  CHECK (origen IN ('MAN', 'FAC', 'VEN', 'AJU', 'NCR', 'COM'));
+
+-- Tabla compras (cabecera, inmutable)
+CREATE TABLE compras (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  proveedor_id UUID NOT NULL REFERENCES proveedores(id) ON DELETE RESTRICT,
+  nro_compra TEXT NOT NULL,
+  tasa NUMERIC(12,4) NOT NULL CHECK (tasa > 0),
+  total_usd NUMERIC(12,2) NOT NULL CHECK (total_usd >= 0),
+  total_bs NUMERIC(12,2) NOT NULL CHECK (total_bs >= 0),
+  usuario_id UUID NOT NULL REFERENCES usuarios(id),
+  fecha TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  empresa_id UUID REFERENCES empresas(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_compras_proveedor ON compras(proveedor_id);
+CREATE INDEX idx_compras_fecha ON compras(fecha);
+CREATE INDEX idx_compras_empresa ON compras(empresa_id);
+
+-- Tabla detalle_compra (lineas, inmutable)
+CREATE TABLE detalle_compra (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  compra_id UUID NOT NULL REFERENCES compras(id) ON DELETE CASCADE,
+  producto_id UUID NOT NULL REFERENCES productos(id) ON DELETE RESTRICT,
+  cantidad NUMERIC(12,3) NOT NULL CHECK (cantidad > 0),
+  costo_unitario_usd NUMERIC(12,2) NOT NULL CHECK (costo_unitario_usd >= 0),
+  empresa_id UUID REFERENCES empresas(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_detalle_compra_compra ON detalle_compra(compra_id);
+CREATE INDEX idx_detalle_compra_empresa ON detalle_compra(empresa_id);
+
+-- Inmutabilidad de compras
+CREATE TRIGGER trg_compras_no_update BEFORE UPDATE ON compras
+  FOR EACH ROW EXECUTE FUNCTION prevent_kardex_mutation();
+CREATE TRIGGER trg_compras_no_delete BEFORE DELETE ON compras
+  FOR EACH ROW EXECUTE FUNCTION prevent_kardex_mutation();
+
+-- Inmutabilidad de detalle_compra
+CREATE TRIGGER trg_detalle_compra_no_update BEFORE UPDATE ON detalle_compra
+  FOR EACH ROW EXECUTE FUNCTION prevent_kardex_mutation();
+CREATE TRIGGER trg_detalle_compra_no_delete BEFORE DELETE ON detalle_compra
+  FOR EACH ROW EXECUTE FUNCTION prevent_kardex_mutation();
+
+-- RLS para compras
+ALTER TABLE compras ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "select_own_empresa" ON compras FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON compras FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+
+-- RLS para detalle_compra
+ALTER TABLE detalle_compra ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "select_own_empresa" ON detalle_compra FOR SELECT TO authenticated
+  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+CREATE POLICY "insert_own_empresa" ON detalle_compra FOR INSERT TO authenticated
+  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));

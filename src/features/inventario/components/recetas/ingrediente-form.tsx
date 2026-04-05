@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { Plus } from 'lucide-react'
 import { useProductosTipo } from '@/features/inventario/hooks/use-productos'
 import { agregarIngrediente } from '@/features/inventario/hooks/use-recetas'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 interface IngredienteFormProps {
   servicioId: string
@@ -12,6 +13,7 @@ interface IngredienteFormProps {
 
 export function IngredienteForm({ servicioId, existingProductIds, onSuccess }: IngredienteFormProps) {
   const { productos, isLoading } = useProductosTipo('P')
+  const { user } = useCurrentUser()
   const [productoId, setProductoId] = useState('')
   const [cantidad, setCantidad] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -36,7 +38,7 @@ export function IngredienteForm({ servicioId, existingProductIds, onSuccess }: I
 
     setSubmitting(true)
     try {
-      await agregarIngrediente(servicioId, productoId, cantidadNum)
+      await agregarIngrediente(servicioId, productoId, cantidadNum, user!.empresa_id!)
       toast.success('Ingrediente agregado correctamente')
       setProductoId('')
       setCantidad('')

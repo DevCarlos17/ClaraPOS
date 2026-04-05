@@ -1,11 +1,16 @@
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export function useTasaActual() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM tasas_cambio ORDER BY fecha DESC LIMIT 1'
+    'SELECT * FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC LIMIT 1',
+    [empresaId]
   )
 
   const tasa = data?.[0] as { id: string; fecha: string; valor: string; moneda_destino: string; created_at: string } | undefined
@@ -18,8 +23,12 @@ export function useTasaActual() {
 }
 
 export function useTasasHistorial() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM tasas_cambio ORDER BY fecha DESC LIMIT 10'
+    'SELECT * FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC LIMIT 10',
+    [empresaId]
   )
 
   return {
@@ -28,7 +37,7 @@ export function useTasasHistorial() {
   }
 }
 
-export async function crearTasa(valor: number) {
+export async function crearTasa(valor: number, empresaId: string) {
   const id = uuidv4()
   const now = new Date().toISOString()
 
@@ -39,6 +48,7 @@ export async function crearTasa(valor: number) {
       fecha: now,
       valor: valor.toFixed(4),
       moneda_destino: 'USD',
+      empresa_id: empresaId,
       created_at: now,
     })
     .execute()
@@ -47,13 +57,13 @@ export async function crearTasa(valor: number) {
 }
 
 // Alternative using raw PowerSync for transaction safety
-export async function crearTasaRaw(valor: number) {
+export async function crearTasaRaw(valor: number, empresaId: string) {
   const id = uuidv4()
   const now = new Date().toISOString()
 
   await db.execute(
-    'INSERT INTO tasas_cambio (id, fecha, valor, moneda_destino, created_at) VALUES (?, ?, ?, ?, ?)',
-    [id, now, valor.toFixed(4), 'USD', now]
+    'INSERT INTO tasas_cambio (id, fecha, valor, moneda_destino, empresa_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [id, now, valor.toFixed(4), 'USD', empresaId, now]
   )
 
   return id

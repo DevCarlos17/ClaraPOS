@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
-import { useMetodosPagoActivos } from '../hooks/use-metodos-pago'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import type { PagoEntryForm } from '../schemas/venta-schema'
 
 interface PagoModalProps {

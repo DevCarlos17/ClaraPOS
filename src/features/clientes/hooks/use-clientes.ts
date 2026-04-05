@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface Cliente {
@@ -30,40 +31,53 @@ export interface MovimientoCuenta {
 }
 
 export function useClientes() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM clientes ORDER BY nombre_social ASC'
+    'SELECT * FROM clientes WHERE empresa_id = ? ORDER BY nombre_social ASC',
+    [empresaId]
   )
   return { clientes: (data ?? []) as Cliente[], isLoading }
 }
 
 export function useClientesActivos() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM clientes WHERE activo = 1 ORDER BY nombre_social ASC'
+    'SELECT * FROM clientes WHERE empresa_id = ? AND activo = 1 ORDER BY nombre_social ASC',
+    [empresaId]
   )
   return { clientes: (data ?? []) as Cliente[], isLoading }
 }
 
 export function useBuscarClientes(query: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
   const searchTerm = query.trim()
   const shouldSearch = searchTerm.length >= 2
   const pattern = `%${searchTerm}%`
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? 'SELECT * FROM clientes WHERE activo = 1 AND (identificacion LIKE ? OR nombre_social LIKE ?) ORDER BY nombre_social ASC LIMIT 10'
+      ? 'SELECT * FROM clientes WHERE empresa_id = ? AND activo = 1 AND (identificacion LIKE ? OR nombre_social LIKE ?) ORDER BY nombre_social ASC LIMIT 10'
       : '',
-    shouldSearch ? [pattern, pattern] : []
+    shouldSearch ? [empresaId, pattern, pattern] : []
   )
 
   return { clientes: (data ?? []) as Cliente[], isLoading }
 }
 
 export function useMovimientosCliente(clienteId: string | undefined) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
     clienteId
-      ? 'SELECT * FROM movimientos_cuenta WHERE cliente_id = ? ORDER BY fecha DESC'
+      ? 'SELECT * FROM movimientos_cuenta WHERE empresa_id = ? AND cliente_id = ? ORDER BY fecha DESC'
       : '',
-    clienteId ? [clienteId] : []
+    clienteId ? [empresaId, clienteId] : []
   )
   return { movimientos: (data ?? []) as MovimientoCuenta[], isLoading }
 }
@@ -74,6 +88,7 @@ export async function crearCliente(data: {
   direccion?: string
   telefono?: string
   limite_credito: number
+  empresa_id: string
 }) {
   const id = uuidv4()
   const now = new Date().toISOString()
@@ -89,6 +104,7 @@ export async function crearCliente(data: {
       limite_credito: data.limite_credito.toFixed(2),
       saldo_actual: '0.00',
       activo: 1,
+      empresa_id: data.empresa_id,
       created_at: now,
       updated_at: now,
     })

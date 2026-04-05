@@ -8,6 +8,7 @@ import {
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentosActivos } from '@/features/inventario/hooks/use-departamentos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 
 interface ProductoFormProps {
@@ -22,6 +23,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   const { departamentos } = useDepartamentosActivos()
   const { tasaValor } = useTasaActual()
+  const { user } = useCurrentUser()
 
   const [codigo, setCodigo] = useState('')
   const [tipo, setTipo] = useState<'P' | 'S'>('P')
@@ -136,6 +138,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
           medida: parsed.data.medida,
+          empresa_id: user!.empresa_id!,
         })
         toast.success('Producto creado correctamente')
       }

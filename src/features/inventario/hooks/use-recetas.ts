@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface Receta {
@@ -11,9 +12,12 @@ export interface Receta {
 }
 
 export function useRecetasPorServicio(servicioId: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    'SELECT * FROM recetas WHERE servicio_id = ? ORDER BY created_at ASC',
-    [servicioId]
+    'SELECT * FROM recetas WHERE empresa_id = ? AND servicio_id = ? ORDER BY created_at ASC',
+    [empresaId, servicioId]
   )
   return { recetas: (data ?? []) as Receta[], isLoading }
 }
@@ -21,7 +25,8 @@ export function useRecetasPorServicio(servicioId: string) {
 export async function agregarIngrediente(
   servicioId: string,
   productoId: string,
-  cantidad: number
+  cantidad: number,
+  empresaId: string
 ) {
   const id = uuidv4()
   const now = new Date().toISOString()
@@ -33,6 +38,7 @@ export async function agregarIngrediente(
       servicio_id: servicioId,
       producto_id: productoId,
       cantidad: cantidad.toFixed(3),
+      empresa_id: empresaId,
       created_at: now,
     })
     .execute()

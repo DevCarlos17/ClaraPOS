@@ -2,10 +2,12 @@ import { useState } from 'react'
 import { DollarSign } from 'lucide-react'
 import { toast } from 'sonner'
 import { useTasaActual, crearTasa } from '../hooks/use-tasas'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatTasa, formatBs } from '@/lib/currency'
 
 export function TasaForm() {
   const { tasa, tasaValor } = useTasaActual()
+  const { user } = useCurrentUser()
   const [valor, setValor] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -19,7 +21,7 @@ export function TasaForm() {
 
     setIsSubmitting(true)
     try {
-      await crearTasa(num)
+      await crearTasa(num, user!.empresa_id!)
       toast.success('Tasa de cambio registrada')
       setValor('')
     } catch {

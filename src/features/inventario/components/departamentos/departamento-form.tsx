@@ -6,6 +6,7 @@ import {
   actualizarDepartamento,
   type Departamento,
 } from '@/features/inventario/hooks/use-departamentos'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 interface DepartamentoFormProps {
   isOpen: boolean
@@ -16,6 +17,7 @@ interface DepartamentoFormProps {
 export function DepartamentoForm({ isOpen, onClose, departamento }: DepartamentoFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!departamento
+  const { user } = useCurrentUser()
 
   const [codigo, setCodigo] = useState('')
   const [nombre, setNombre] = useState('')
@@ -75,7 +77,7 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
         })
         toast.success('Departamento actualizado correctamente')
       } else {
-        await crearDepartamento(parsed.data.codigo, parsed.data.nombre)
+        await crearDepartamento(parsed.data.codigo, parsed.data.nombre, user!.empresa_id!)
         toast.success('Departamento creado correctamente')
       }
       onClose()

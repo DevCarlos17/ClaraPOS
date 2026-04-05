@@ -1,18 +1,29 @@
 bucket_definitions:
-  # Datos globales - todos los usuarios autenticados ven todo
-  # Multi-tenant se puede agregar en fases futuras
+  # Datos de empresa - usuarios, empresas y todas las tablas de negocio filtradas por empresa_id
+  empresa[]:
+    parameters:
+      - SELECT empresa_id FROM usuarios WHERE id = token_parameters.user_id
+    data:
+      - SELECT * FROM empresas WHERE id = bucket.empresa_id
+      - SELECT * FROM usuarios WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM tasas_cambio WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM departamentos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM productos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM recetas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM movimientos_inventario WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM metodos_pago WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM bancos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM clientes WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM movimientos_cuenta WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM ventas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM detalle_venta WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM pagos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM notas_credito WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM proveedores WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM compras WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM detalle_compra WHERE empresa_id = bucket.empresa_id
+
+  # Catalogo global - permisos por nivel (sin empresa_id)
   global:
     data:
-      - SELECT * FROM usuarios
-      - SELECT * FROM tasas_cambio
-      - SELECT * FROM departamentos
-      - SELECT * FROM productos
-      - SELECT * FROM recetas
-      - SELECT * FROM movimientos_inventario
-      - SELECT * FROM metodos_pago
-      - SELECT * FROM clientes
-      - SELECT * FROM movimientos_cuenta
-      - SELECT * FROM ventas
-      - SELECT * FROM detalle_venta
-      - SELECT * FROM pagos
-      - SELECT * FROM notas_credito
+      - SELECT * FROM level_permissions

@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { User, Mail, Lock, Eye, EyeOff } from 'lucide-react'
+import { User, Mail, Lock, Eye, EyeOff, Building2 } from 'lucide-react'
 import { connector } from '@/core/db/powersync/connector'
 import { toast } from 'sonner'
 
 export function RegisterPage() {
   const navigate = useNavigate()
   const [nombre, setNombre] = useState('')
+  const [nombreEmpresa, setNombreEmpresa] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -15,6 +16,7 @@ export function RegisterPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [errors, setErrors] = useState<{
     nombre?: string
+    nombreEmpresa?: string
     email?: string
     password?: string
     confirmPassword?: string
@@ -24,6 +26,9 @@ export function RegisterPage() {
     const newErrors: typeof errors = {}
     if (!nombre.trim()) {
       newErrors.nombre = 'El nombre es requerido'
+    }
+    if (!nombreEmpresa.trim()) {
+      newErrors.nombreEmpresa = 'El nombre de la empresa es requerido'
     }
     if (!email) {
       newErrors.email = 'El correo electronico es requerido'
@@ -50,7 +55,7 @@ export function RegisterPage() {
 
     setIsLoading(true)
     try {
-      await connector.register(nombre.trim(), email, password)
+      await connector.registerOwner(nombre.trim(), email, password, nombreEmpresa.trim())
       toast.success('Cuenta creada exitosamente. Inicia sesion para continuar.')
       navigate({ to: '/login' })
     } catch (error: unknown) {
@@ -84,20 +89,38 @@ export function RegisterPage() {
       <div className="lg:p-8">
         <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[350px]">
           <div className="flex flex-col space-y-2 text-left">
-            <h1 className="text-2xl font-semibold tracking-tight">Crear cuenta</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Registrar mi Negocio</h1>
             <p className="text-sm text-muted-foreground">
-              Completa los datos para registrarte en Nexo21.
+              Crea tu cuenta de propietario para comenzar a usar Nexo21.
             </p>
           </div>
 
           <form onSubmit={handleRegister} className="space-y-4">
             <div>
-              <label className="text-sm font-medium mb-1.5 block">Nombre</label>
+              <label className="text-sm font-medium mb-1.5 block">Nombre de tu Empresa</label>
+              <div className="relative">
+                <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  placeholder="Mi Negocio S.A."
+                  value={nombreEmpresa}
+                  onChange={(e) => setNombreEmpresa(e.target.value)}
+                  disabled={isLoading}
+                  className="flex h-10 w-full rounded-md border border-input bg-background pl-10 pr-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
+                />
+              </div>
+              {errors.nombreEmpresa && (
+                <p className="text-xs text-destructive mt-1">{errors.nombreEmpresa}</p>
+              )}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1.5 block">Tu Nombre</label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
-                  placeholder="Tu nombre"
+                  placeholder="Tu nombre completo"
                   value={nombre}
                   onChange={(e) => setNombre(e.target.value)}
                   disabled={isLoading}
@@ -178,7 +201,7 @@ export function RegisterPage() {
               disabled={isLoading}
               className="inline-flex items-center justify-center w-full h-10 px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none"
             >
-              {isLoading ? 'Creando cuenta...' : 'Crear cuenta'}
+              {isLoading ? 'Creando cuenta...' : 'Registrar mi Negocio'}
             </button>
           </form>
 

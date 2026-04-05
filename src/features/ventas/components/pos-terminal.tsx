@@ -110,6 +110,7 @@ export function PosTerminal() {
           referencia: p.referencia,
         })),
         usuario_id: user.id,
+        empresa_id: user.empresa_id!,
       })
 
       toast.success(`Venta #${result.nroFactura} creada exitosamente`)

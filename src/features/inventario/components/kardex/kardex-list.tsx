@@ -32,6 +32,8 @@ export function KardexList() {
         return 'Venta'
       case 'ANU':
         return 'Anulacion'
+      case 'COM':
+        return 'Compra'
       default:
         return origen
     }
