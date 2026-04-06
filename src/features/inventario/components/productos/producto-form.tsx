@@ -378,11 +378,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 id="prod-medida"
                 value={medida}
                 onChange={(e) => setMedida(e.target.value as 'UND' | 'GRA')}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                disabled={tipo === 'S'}
+                className={`w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  tipo === 'S' ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                }`}
               >
                 <option value="UND">Unidades (UND)</option>
                 <option value="GRA">Gramos (GRA)</option>
               </select>
+              {tipo === 'S' && (
+                <p className="text-gray-400 text-xs mt-1">No aplica para servicios</p>
+              )}
             </div>
           </div>
 

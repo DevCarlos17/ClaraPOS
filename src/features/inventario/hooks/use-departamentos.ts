@@ -12,15 +12,25 @@ export interface Departamento {
   updated_at: string
 }
 
+export interface DepartamentoConConteo extends Departamento {
+  articulos_activos: number
+}
+
 export function useDepartamentos() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM departamentos WHERE empresa_id = ? ORDER BY nombre ASC',
+    `SELECT d.*, (
+       SELECT COUNT(*) FROM productos p
+       WHERE p.departamento_id = d.id AND p.activo = 1
+     ) AS articulos_activos
+     FROM departamentos d
+     WHERE d.empresa_id = ?
+     ORDER BY d.nombre ASC`,
     [empresaId]
   )
-  return { departamentos: (data ?? []) as Departamento[], isLoading }
+  return { departamentos: (data ?? []) as DepartamentoConConteo[], isLoading }
 }
 
 export function useDepartamentosActivos() {
@@ -76,4 +86,39 @@ export async function tieneProductosActivos(departamentoId: string): Promise<boo
     .executeTakeFirst()
 
   return Number(result?.count ?? 0) > 0
+}
+
+export async function tieneProductosConExistencia(departamentoId: string): Promise<boolean> {
+  const productos = await kysely
+    .selectFrom('productos')
+    .select('stock')
+    .where('departamento_id', '=', departamentoId)
+    .where('activo', '=', 1)
+    .where('tipo', '=', 'P')
+    .execute()
+
+  return productos.some((p) => parseFloat(p.stock) > 0)
+}
+
+export function useProductosPorDepartamento(departamentoId: string | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `SELECT id, codigo, nombre, activo, created_at
+     FROM productos
+     WHERE empresa_id = ? AND departamento_id = ?
+     ORDER BY nombre ASC`,
+    [empresaId, departamentoId ?? '']
+  )
+
+  const productos = (data ?? []) as {
+    id: string
+    codigo: string
+    nombre: string
+    activo: number
+    created_at: string
+  }[]
+
+  return { productos, isLoading }
 }

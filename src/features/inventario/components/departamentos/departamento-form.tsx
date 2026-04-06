@@ -21,7 +21,6 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
 
   const [codigo, setCodigo] = useState('')
   const [nombre, setNombre] = useState('')
-  const [activo, setActivo] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -30,11 +29,9 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
       if (departamento) {
         setCodigo(departamento.codigo)
         setNombre(departamento.nombre)
-        setActivo(departamento.activo === 1)
       } else {
         setCodigo('')
         setNombre('')
-        setActivo(true)
       }
       setErrors({})
       dialogRef.current?.showModal()
@@ -56,7 +53,7 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
     e.preventDefault()
     setErrors({})
 
-    const parsed = departamentoSchema.safeParse({ codigo, nombre, activo })
+    const parsed = departamentoSchema.safeParse({ codigo, nombre, activo: true })
 
     if (!parsed.success) {
       const fieldErrors: Record<string, string> = {}
@@ -73,7 +70,6 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
       if (isEditing && departamento) {
         await actualizarDepartamento(departamento.id, {
           nombre: parsed.data.nombre,
-          activo: parsed.data.activo,
         })
         toast.success('Departamento actualizado correctamente')
       } else {
@@ -150,20 +146,6 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
             {errors.nombre && (
               <p className="text-red-500 text-xs mt-1">{errors.nombre}</p>
             )}
-          </div>
-
-          {/* Activo */}
-          <div className="flex items-center gap-2">
-            <input
-              id="dep-activo"
-              type="checkbox"
-              checked={activo}
-              onChange={(e) => setActivo(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <label htmlFor="dep-activo" className="text-sm font-medium text-gray-700">
-              Activo
-            </label>
           </div>
 
           {/* Acciones */}
