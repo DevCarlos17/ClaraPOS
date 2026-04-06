@@ -27,7 +27,7 @@ export function useDepartamentos() {
      ) AS articulos_activos
      FROM departamentos d
      WHERE d.empresa_id = ?
-     ORDER BY d.nombre ASC`,
+     ORDER BY CAST(d.codigo AS INTEGER) ASC`,
     [empresaId]
   )
   return { departamentos: (data ?? []) as DepartamentoConConteo[], isLoading }
@@ -38,21 +38,39 @@ export function useDepartamentosActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM departamentos WHERE empresa_id = ? AND activo = 1 ORDER BY nombre ASC',
+    'SELECT * FROM departamentos WHERE empresa_id = ? AND activo = 1 ORDER BY CAST(codigo AS INTEGER) ASC',
     [empresaId]
   )
   return { departamentos: (data ?? []) as Departamento[], isLoading }
 }
 
-export async function crearDepartamento(codigo: string, nombre: string, empresaId: string) {
+export async function getSiguienteCodigoDepartamento(empresaId: string): Promise<string> {
+  const rows = await kysely
+    .selectFrom('departamentos')
+    .select('codigo')
+    .where('empresa_id', '=', empresaId)
+    .execute()
+
+  let maxNum = 0
+  for (const r of rows) {
+    if (/^\d+$/.test(r.codigo)) {
+      const n = parseInt(r.codigo, 10)
+      if (n > maxNum) maxNum = n
+    }
+  }
+  return String(maxNum + 1)
+}
+
+export async function crearDepartamento(nombre: string, empresaId: string) {
   const id = uuidv4()
   const now = new Date().toISOString()
+  const codigo = await getSiguienteCodigoDepartamento(empresaId)
 
   await kysely
     .insertInto('departamentos')
     .values({
       id,
-      codigo: codigo.toUpperCase(),
+      codigo,
       nombre: nombre.toUpperCase(),
       activo: 1,
       empresa_id: empresaId,

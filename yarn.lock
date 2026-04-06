@@ -4348,7 +4348,7 @@ randombytes@^2.1.0:
   dependencies:
     scheduler "^0.27.0"
 
-"react-is@^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0":
+"react-is@^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", react-is@^19.2.4:
   version "19.2.4"
   resolved "https://registry.npmjs.org/react-is/-/react-is-19.2.4.tgz"
   integrity sha512-W+EWGn2v0ApPKgKKCy/7s7WHXkboGcsrXE+2joLyVxkbyVQfO3MUEaUQDHoSmb8TFFrSKYa9mw64WZHNHSDzYA==

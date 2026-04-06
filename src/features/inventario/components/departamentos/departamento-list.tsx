@@ -24,7 +24,7 @@ export function DepartamentoList() {
   const [selectedDepartamento, setSelectedDepartamento] = useState<Departamento | null>(null)
   const [reporteOpen, setReporteOpen] = useState(false)
 
-  const [sortKey, setSortKey] = useState<SortKey>('nombre')
+  const [sortKey, setSortKey] = useState<SortKey>('codigo')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   const sortedDepartamentos = useMemo(() => {
@@ -32,9 +32,17 @@ export function DepartamentoList() {
     items.sort((a, b) => {
       let cmp = 0
       switch (sortKey) {
-        case 'codigo':
-          cmp = a.codigo.localeCompare(b.codigo)
+        case 'codigo': {
+          const na = parseInt(a.codigo, 10)
+          const nb = parseInt(b.codigo, 10)
+          const aValid = !isNaN(na)
+          const bValid = !isNaN(nb)
+          if (aValid && bValid) cmp = na - nb
+          else if (aValid) cmp = -1
+          else if (bValid) cmp = 1
+          else cmp = a.codigo.localeCompare(b.codigo)
           break
+        }
         case 'nombre':
           cmp = a.nombre.localeCompare(b.nombre)
           break

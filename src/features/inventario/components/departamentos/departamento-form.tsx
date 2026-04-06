@@ -4,6 +4,7 @@ import { departamentoSchema } from '@/features/inventario/schemas/departamento-s
 import {
   crearDepartamento,
   actualizarDepartamento,
+  getSiguienteCodigoDepartamento,
   type Departamento,
 } from '@/features/inventario/hooks/use-departamentos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -32,18 +33,18 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
       } else {
         setCodigo('')
         setNombre('')
+        if (user?.empresa_id) {
+          getSiguienteCodigoDepartamento(user.empresa_id)
+            .then((next) => setCodigo(next))
+            .catch(() => setCodigo(''))
+        }
       }
       setErrors({})
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
     }
-  }, [isOpen, departamento])
-
-  function handleCodigoChange(value: string) {
-    const sanitized = value.toUpperCase().replace(/[^A-Z0-9-]/g, '')
-    setCodigo(sanitized)
-  }
+  }, [isOpen, departamento, user?.empresa_id])
 
   function handleNombreChange(value: string) {
     setNombre(value.toUpperCase())
@@ -73,7 +74,7 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
         })
         toast.success('Departamento actualizado correctamente')
       } else {
-        await crearDepartamento(parsed.data.codigo, parsed.data.nombre, user!.empresa_id!)
+        await crearDepartamento(parsed.data.nombre, user!.empresa_id!)
         toast.success('Departamento creado correctamente')
       }
       onClose()
@@ -113,19 +114,16 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
               id="dep-codigo"
               type="text"
               value={codigo}
-              onChange={(e) => handleCodigoChange(e.target.value)}
-              disabled={isEditing}
-              placeholder="Ej: DEP-001"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                isEditing ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
-              } ${errors.codigo ? 'border-red-500' : 'border-gray-300'}`}
+              readOnly
+              disabled
+              placeholder="Auto-generado"
+              className="w-full rounded-md border border-gray-300 bg-gray-100 text-gray-500 cursor-not-allowed px-3 py-2 text-sm"
             />
-            {errors.codigo && (
-              <p className="text-red-500 text-xs mt-1">{errors.codigo}</p>
-            )}
-            {isEditing && (
-              <p className="text-gray-400 text-xs mt-1">El codigo no puede modificarse</p>
-            )}
+            <p className="text-gray-400 text-xs mt-1">
+              {isEditing
+                ? 'El codigo no puede modificarse'
+                : 'El codigo se asigna automaticamente'}
+            </p>
           </div>
 
           {/* Nombre */}
