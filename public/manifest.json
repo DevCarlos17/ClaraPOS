@@ -1,6 +1,6 @@
 {
-  "name": "Nexo21",
-  "short_name": "Nexo21",
+  "name": "ClaraPOS",
+  "short_name": "ClaraPOS",
   "description": "Sistema POS y gestion de negocio offline-first",
   "display": "standalone",
   "scope": "./",

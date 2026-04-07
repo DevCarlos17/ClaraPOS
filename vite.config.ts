@@ -10,7 +10,7 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite'
 import { fileURLToPath, URL } from 'node:url'
 
 const isProd = process.env.NODE_ENV === 'production'
-const base = isProd ? '/Nexo21/' : '/'
+const base = isProd ? '/ClaraPOS/' : '/'
 
 export default defineConfig({
   base,

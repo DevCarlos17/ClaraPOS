@@ -1,8 +1,8 @@
-# Arquitectura de Carpetas - Nexo21
+# Arquitectura de Carpetas - ClaraPOS
 
 ## Tipo de Arquitectura
 
-Nexo21 utiliza una arquitectura **Feature-Based (por modulo de negocio)** combinada con **File-Based Routing** (TanStack Router). Este patron organiza el codigo por dominio funcional en lugar de por tipo de archivo, lo que significa que todo lo relacionado con "inventario" vive junto, en vez de tener todos los hooks en una carpeta, todos los schemas en otra, etc.
+ClaraPOS utiliza una arquitectura **Feature-Based (por modulo de negocio)** combinada con **File-Based Routing** (TanStack Router). Este patron organiza el codigo por dominio funcional en lugar de por tipo de archivo, lo que significa que todo lo relacionado con "inventario" vive junto, en vez de tener todos los hooks en una carpeta, todos los schemas en otra, etc.
 
 Esta arquitectura tambien se conoce como **"Screaming Architecture"** porque al ver la estructura de carpetas, el proyecto "grita" de que se trata: configuracion, inventario, ventas, clientes, etc.
 
@@ -11,7 +11,7 @@ Esta arquitectura tambien se conoce como **"Screaming Architecture"** porque al 
 ## Vista General del Proyecto
 
 ```
-Nexo21/
+ClaraPOS/
 ├── CLAUDE.md                 # Contexto maestro para agentes IA
 ├── PLANIFICACION.md          # Plan de implementacion por fases
 ├── instrucciones.md          # Especificaciones de UI/UX

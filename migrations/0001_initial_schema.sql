@@ -1,5 +1,5 @@
 -- =============================================
--- NEXO21: ESQUEMA COMPLETO DE BASE DE DATOS
+-- CLARAPOS: ESQUEMA COMPLETO DE BASE DE DATOS
 -- Ejecutar en Supabase SQL Editor
 -- =============================================
 
@@ -757,9 +757,32 @@ CREATE TRIGGER trg_empresas_updated BEFORE UPDATE ON empresas
 
 ALTER TABLE empresas ENABLE ROW LEVEL SECURITY;
 
+-- ============================================
+-- Helper SECURITY DEFINER para multi-tenant RLS
+-- ============================================
+-- IMPORTANTE: Esta funcion debe usarse en TODAS las policies que necesiten
+-- filtrar por empresa_id del usuario actual. NUNCA usar el subquery directo
+-- `SELECT empresa_id FROM usuarios WHERE id = auth.uid()` dentro de una
+-- policy, porque eso causa recursion infinita en las policies de `usuarios`
+-- (error 42P17).
+--
+-- SECURITY DEFINER hace que la funcion se ejecute con privilegios del owner
+-- (postgres), lo que ignora RLS y rompe la recursion.
+CREATE OR REPLACE FUNCTION public.current_empresa_id()
+RETURNS UUID
+LANGUAGE sql
+SECURITY DEFINER
+STABLE PARALLEL SAFE
+SET search_path = public
+AS $$
+  SELECT empresa_id FROM public.usuarios WHERE id = auth.uid()
+$$;
+
+GRANT EXECUTE ON FUNCTION public.current_empresa_id() TO authenticated;
+
 -- Solo puede ver su propia empresa
 CREATE POLICY "select_own_empresa" ON empresas FOR SELECT TO authenticated
-  USING (id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (id = public.current_empresa_id());
 
 -- 2. Agregar empresa_id a usuarios
 ALTER TABLE usuarios ADD COLUMN empresa_id UUID REFERENCES empresas(id);
@@ -768,10 +791,10 @@ CREATE INDEX idx_usuarios_empresa ON usuarios(empresa_id);
 -- Reemplazar RLS de usuarios: solo ver usuarios de tu empresa
 DROP POLICY "Authenticated read all" ON usuarios;
 CREATE POLICY "select_own_empresa_users" ON usuarios FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 CREATE POLICY "update_own_empresa_users" ON usuarios FOR UPDATE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- 3. Actualizar handle_new_user() para leer empresa_id y level de user_metadata
 CREATE OR REPLACE FUNCTION handle_new_user()
@@ -832,126 +855,126 @@ CREATE INDEX idx_proveedores_empresa ON proveedores(empresa_id);
 DROP POLICY "Authenticated read all" ON tasas_cambio;
 DROP POLICY "Authenticated insert" ON tasas_cambio;
 CREATE POLICY "select_own_empresa" ON tasas_cambio FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON tasas_cambio FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 
 -- departamentos
 DROP POLICY "Authenticated read all" ON departamentos;
 DROP POLICY "Authenticated insert" ON departamentos;
 DROP POLICY "Authenticated update" ON departamentos;
 CREATE POLICY "select_own_empresa" ON departamentos FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON departamentos FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 CREATE POLICY "update_own_empresa" ON departamentos FOR UPDATE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- productos
 DROP POLICY "Authenticated read all" ON productos;
 DROP POLICY "Authenticated insert" ON productos;
 DROP POLICY "Authenticated update" ON productos;
 CREATE POLICY "select_own_empresa" ON productos FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON productos FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 CREATE POLICY "update_own_empresa" ON productos FOR UPDATE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- recetas
 DROP POLICY "Authenticated read all" ON recetas;
 DROP POLICY "Authenticated insert" ON recetas;
 DROP POLICY "Authenticated delete" ON recetas;
 CREATE POLICY "select_own_empresa" ON recetas FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON recetas FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 CREATE POLICY "delete_own_empresa" ON recetas FOR DELETE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- movimientos_inventario
 DROP POLICY "Authenticated read all" ON movimientos_inventario;
 DROP POLICY "Authenticated insert" ON movimientos_inventario;
 CREATE POLICY "select_own_empresa" ON movimientos_inventario FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON movimientos_inventario FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 
 -- metodos_pago
 DROP POLICY "Authenticated read all" ON metodos_pago;
 DROP POLICY "Authenticated insert" ON metodos_pago;
 DROP POLICY "Authenticated update" ON metodos_pago;
 CREATE POLICY "select_own_empresa" ON metodos_pago FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON metodos_pago FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 CREATE POLICY "update_own_empresa" ON metodos_pago FOR UPDATE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- clientes
 DROP POLICY "Authenticated read all" ON clientes;
 DROP POLICY "Authenticated insert" ON clientes;
 DROP POLICY "Authenticated update" ON clientes;
 CREATE POLICY "select_own_empresa" ON clientes FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON clientes FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 CREATE POLICY "update_own_empresa" ON clientes FOR UPDATE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- movimientos_cuenta
 DROP POLICY "Authenticated read all" ON movimientos_cuenta;
 DROP POLICY "Authenticated insert" ON movimientos_cuenta;
 CREATE POLICY "select_own_empresa" ON movimientos_cuenta FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON movimientos_cuenta FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 
 -- ventas
 DROP POLICY "Authenticated read all" ON ventas;
 DROP POLICY "Authenticated insert" ON ventas;
 DROP POLICY "Authenticated update" ON ventas;
 CREATE POLICY "select_own_empresa" ON ventas FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON ventas FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 CREATE POLICY "update_own_empresa" ON ventas FOR UPDATE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- detalle_venta
 DROP POLICY "Authenticated read all" ON detalle_venta;
 DROP POLICY "Authenticated insert" ON detalle_venta;
 CREATE POLICY "select_own_empresa" ON detalle_venta FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON detalle_venta FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 
 -- pagos
 DROP POLICY "Authenticated read all" ON pagos;
 DROP POLICY "Authenticated insert" ON pagos;
 CREATE POLICY "select_own_empresa" ON pagos FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON pagos FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 
 -- notas_credito
 DROP POLICY "Authenticated read all" ON notas_credito;
 DROP POLICY "Authenticated insert" ON notas_credito;
 CREATE POLICY "select_own_empresa" ON notas_credito FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON notas_credito FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 
 -- proveedores
 DROP POLICY "Authenticated read all" ON proveedores;
 DROP POLICY "Authenticated insert" ON proveedores;
 DROP POLICY "Authenticated update" ON proveedores;
 CREATE POLICY "select_own_empresa" ON proveedores FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON proveedores FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 CREATE POLICY "update_own_empresa" ON proveedores FOR UPDATE TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 
 -- ============================================
 -- FASE: DATOS EMPRESA (columnas adicionales)
@@ -966,7 +989,7 @@ ALTER TABLE empresas ADD COLUMN IF NOT EXISTS regimen VARCHAR(50);
 
 -- 2. Policy de UPDATE (no existia para empresas)
 CREATE POLICY "update_own_empresa" ON empresas FOR UPDATE TO authenticated
-  USING (id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (id = public.current_empresa_id());
 
 -- ============================================
 -- FASE: COMPRAS (Ordenes de Compra a Proveedores)
@@ -1024,13 +1047,13 @@ CREATE TRIGGER trg_detalle_compra_no_delete BEFORE DELETE ON detalle_compra
 -- RLS para compras
 ALTER TABLE compras ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "select_own_empresa" ON compras FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON compras FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());
 
 -- RLS para detalle_compra
 ALTER TABLE detalle_compra ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "select_own_empresa" ON detalle_compra FOR SELECT TO authenticated
-  USING (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  USING (empresa_id = public.current_empresa_id());
 CREATE POLICY "insert_own_empresa" ON detalle_compra FOR INSERT TO authenticated
-  WITH CHECK (empresa_id IN (SELECT empresa_id FROM usuarios WHERE id = auth.uid()));
+  WITH CHECK (empresa_id = public.current_empresa_id());

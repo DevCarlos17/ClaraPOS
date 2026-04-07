@@ -23,7 +23,7 @@ export const useSidebarStore = create<SidebarState>()(
       toggle: () => set({ isOpen: !get().isOpen }),
     }),
     {
-      name: 'nexo21-sidebar',
+      name: 'clarapos-sidebar',
       partialize: (state) => ({ isOpen: state.isOpen }),
     }
   )

@@ -1,12 +1,12 @@
-# Nexo21 - POS + Business Management PWA
+# ClaraPOS - POS + Business Management PWA
 
 ## Contexto
 
-**Nexo21** es un sistema POS + Gestión de Negocio como PWA offline-first. Replica la arquitectura de `vytalis-frontend` (React 19 + Supabase + PowerSync) adaptada al dominio POS definido en `WORKFLOW_CLARAPOS.md`. La lógica de negocio está implementada y probada en el proyecto Django `fran` (ClaraPos) - usamos esa implementación como referencia exacta para validaciones, flujos atómicos, signals, y reglas de negocio.
+**ClaraPOS** es un sistema POS + Gestión de Negocio como PWA offline-first. Replica la arquitectura de `vytalis-frontend` (React 19 + Supabase + PowerSync) adaptada al dominio POS definido en `WORKFLOW_CLARAPOS.md`. La lógica de negocio está implementada y probada en el proyecto Django `fran` (ClaraPos) - usamos esa implementación como referencia exacta para validaciones, flujos atómicos, signals, y reglas de negocio.
 
 **Primera fase**: Shell de la app + Configuración (tasas de cambio) + Inventario (departamentos, productos, kardex, recetas).
 
-**Proyecto destino**: `C:\Users\Duarte\Desktop\ContApp\Nexo21`
+**Proyecto destino**: `C:\Users\Duarte\Desktop\ContApp\ClaraPOS`
 **Idioma**: Solo español (sin i18n)
 **Supabase**: Setup completo desde cero
 
@@ -24,7 +24,7 @@
 ### 1.1 Inicializar proyecto con Vite + React + TypeScript
 
 ```bash
-npm create vite@latest nexo21 -- --template react-ts
+npm create vite@latest clarapos -- --template react-ts
 ```
 
 ### 1.2 `package.json` - Dependencias
@@ -54,7 +54,7 @@ Replicar exactamente vytalis: wasm(), topLevelAwait(), TanStack Router (autoCode
 Copiar vytalis: ES2022, react-jsx, bundler mode, strict, path aliases `@/*`.
 
 ### 1.5 `index.html`
-Mismo patrón que vytalis, `<div id="app">`, lang="es", title="Nexo21", theme-color azul (#2563eb).
+Mismo patrón que vytalis, `<div id="app">`, lang="es", title="ClaraPOS", theme-color azul (#2563eb).
 
 ### 1.6 `.env.example`
 ```
@@ -70,8 +70,8 @@ VITE_POWERSYNC_URL=https://...
 ### 2.1 `public/manifest.json`
 ```json
 {
-  "name": "Nexo21",
-  "short_name": "Nexo21",
+  "name": "ClaraPOS",
+  "short_name": "ClaraPOS",
   "description": "Sistema POS y gestión de negocio offline-first",
   "display": "standalone",
   "scope": "/",
@@ -88,7 +88,7 @@ VITE_POWERSYNC_URL=https://...
 Copiar el patrón de vytalis: `beforeinstallprompt` listener + `display-mode: standalone` check.
 
 ### 2.3 `src/components/pwa/pwa-install-banner.tsx`
-Banner de instalación adaptado con branding Nexo21 (azul en vez de teal).
+Banner de instalación adaptado con branding ClaraPOS (azul en vez de teal).
 
 ---
 
@@ -98,7 +98,7 @@ Banner de instalación adaptado con branding Nexo21 (azul en vez de teal).
 
 ```sql
 -- =============================================
--- NEXO21: ESQUEMA COMPLETO DE BASE DE DATOS
+-- CLARAPOS: ESQUEMA COMPLETO DE BASE DE DATOS
 -- =============================================
 
 -- Extensión UUID
@@ -245,16 +245,16 @@ Copiar de vytalis, adaptar: quitar lógica de `clinical_entries` / `parseEntryDa
 ```typescript
 export const db = new PowerSyncDatabase({
   schema: AppSchema,
-  database: { dbFilename: 'nexo21.db' },
+  database: { dbFilename: 'clarapos.db' },
 });
 ```
 
 ### 3.6 PowerSync Provider (`src/core/db/powersync/provider.tsx`)
-Copiar de vytalis, cambiar branding (logo Nexo21, texto "Cargando...").
+Copiar de vytalis, cambiar branding (logo ClaraPOS, texto "Cargando...").
 
 ### 3.7 Kysely Wrapper (`src/core/db/kysely/`)
 - `kysely.ts`: `wrapPowerSyncWithKysely<DB>(powerSyncDb)`
-- `types.ts`: Tipos manuales para Nexo21
+- `types.ts`: Tipos manuales para ClaraPOS
 
 ### 3.8 Auth Provider (`src/core/auth/auth-provider.tsx`)
 Copiar de vytalis exactamente. Misma lógica de connector.registerListener.
@@ -293,7 +293,7 @@ src/routes/
 ```
 
 ### 4.4 Sidebar (`src/components/layout/sidebar.tsx`)
-Replicar el patrón de vytalis (hover-expand desktop + drawer mobile), con la navegación de Nexo21:
+Replicar el patrón de vytalis (hover-expand desktop + drawer mobile), con la navegación de ClaraPOS:
 
 ```typescript
 const menuItems = [
@@ -463,7 +463,7 @@ Componentes custom:
 ## Estructura Final de Archivos
 
 ```
-Nexo21/
+ClaraPOS/
 ├── src/
 │   ├── main.tsx
 │   ├── index.css
@@ -592,7 +592,7 @@ Nexo21/
 
 ## Archivos de Referencia en vytalis-frontend
 
-| Archivo Nexo21 | Basado en (vytalis) |
+| Archivo ClaraPOS | Basado en (vytalis) |
 |-----------------|---------------------|
 | `vite.config.ts` | `vytalis-frontend/vite.config.ts` (copiar, ajustar) |
 | `tsconfig.json` | `vytalis-frontend/tsconfig.json` (copiar) |

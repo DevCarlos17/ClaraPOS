@@ -1,10 +1,20 @@
 import { ShoppingCart, DollarSign, Package, CreditCard } from 'lucide-react'
 import { formatUsd, formatBs, formatTasa, usdToBs } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useResumenInventario } from '@/features/inventario/hooks/use-productos'
 import { useVentasDelDia } from '@/features/reportes/hooks/use-cuadre'
 import { useCxcTotal } from '@/features/dashboard/hooks/use-dashboard'
 import { todayStr } from '@/lib/dates'
+
+const TASA_STALE_HOURS = 24
+
+function isTasaDesactualizada(createdAt: string): boolean {
+  const createdMs = new Date(createdAt).getTime()
+  if (Number.isNaN(createdMs)) return false
+  const ageHours = (Date.now() - createdMs) / (1000 * 60 * 60)
+  return ageHours > TASA_STALE_HOURS
+}
 
 export function DashboardKpiCards() {
   const fecha = todayStr()
@@ -12,6 +22,13 @@ export function DashboardKpiCards() {
   const { tasa, tasaValor, isLoading: loadingTasa } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
   const { totalCxcUsd, isLoading: loadingCxc } = useCxcTotal()
+
+  const tasaDesactualizada = tasa ? isTasaDesactualizada(tasa.created_at) : false
+  const tasaSubtitulo = !tasa
+    ? loadingTasa
+      ? '...'
+      : 'Sin tasa registrada'
+    : `${tasaDesactualizada ? 'Desactualizada' : 'Actualizada'}: ${formatDateTime(tasa.created_at)}`
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -27,10 +44,11 @@ export function DashboardKpiCards() {
       {/* Tasa Actual */}
       <KpiCard
         titulo="Tasa Actual"
-        valor={loadingTasa || !tasa ? '--' : formatTasa(tasa.valor)}
-        subtitulo="Bs/$ - BCV: --"
+        valor={!tasa ? '--' : formatTasa(tasa.valor)}
+        subtitulo={tasaSubtitulo}
         icon={DollarSign}
-        color="amber"
+        color={tasaDesactualizada ? 'red' : 'amber'}
+        subtitleClassName={tasaDesactualizada ? 'text-red-600 font-medium' : undefined}
       />
 
       {/* Valor Inventario */}
@@ -60,12 +78,14 @@ function KpiCard({
   subtitulo,
   icon: Icon,
   color,
+  subtitleClassName,
 }: {
   titulo: string
   valor: string
   subtitulo: string
   icon: React.ComponentType<{ className?: string }>
   color: string
+  subtitleClassName?: string
 }) {
   const colorMap: Record<string, string> = {
     blue: 'bg-blue-50 text-blue-600',
@@ -85,7 +105,7 @@ function KpiCard({
       </div>
       <div className="mt-2">
         <p className="text-2xl font-bold">{valor}</p>
-        <p className="text-xs text-muted-foreground mt-1">{subtitulo}</p>
+        <p className={`text-xs mt-1 ${subtitleClassName ?? 'text-muted-foreground'}`}>{subtitulo}</p>
       </div>
     </div>
   )

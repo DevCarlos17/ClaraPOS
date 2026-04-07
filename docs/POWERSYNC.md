@@ -1,8 +1,8 @@
-# PowerSync - Sincronizacion Offline-First en Nexo21
+# PowerSync - Sincronizacion Offline-First en ClaraPOS
 
 ## Que es PowerSync
 
-PowerSync es el motor de sincronizacion que permite que Nexo21 funcione **sin conexion a internet**. Mantiene una copia completa de la base de datos dentro del navegador usando **SQLite** (via WebAssembly), y sincroniza automaticamente los cambios con **Supabase PostgreSQL** en la nube cuando hay conexion.
+PowerSync es el motor de sincronizacion que permite que ClaraPOS funcione **sin conexion a internet**. Mantiene una copia completa de la base de datos dentro del navegador usando **SQLite** (via WebAssembly), y sincroniza automaticamente los cambios con **Supabase PostgreSQL** en la nube cuando hay conexion.
 
 El usuario nunca espera por la red: todas las lecturas y escrituras ocurren contra la base de datos local. La sincronizacion es transparente y ocurre en segundo plano.
 
@@ -18,7 +18,7 @@ El usuario nunca espera por la red: todas las lecturas y escrituras ocurren cont
 │  │  React    │───>│  PowerSync Web Database   │   │
 │  │  App      │<───│  (SQLite via wa-sqlite)   │   │
 │  │           │    │                           │   │
-│  │ useQuery  │    │  Archivo: nexo21.db       │   │
+│  │ useQuery  │    │  Archivo: clarapos.db       │   │
 │  │ kysely    │    │  Almacenado en: OPFS /    │   │
 │  │ hooks     │    │  IndexedDB del navegador  │   │
 │  └───────────┘    └────────────┬──────────────┘   │
@@ -68,7 +68,7 @@ PowerSync usa **wa-sqlite**, una compilacion de SQLite a WebAssembly, para crear
 export const db = new PowerSyncDatabase({
   schema: AppSchema,
   database: {
-    dbFilename: 'nexo21.db',  // Nombre del archivo SQLite
+    dbFilename: 'clarapos.db',  // Nombre del archivo SQLite
   },
 })
 ```
@@ -205,7 +205,7 @@ import { AppSchema } from './schema'
 export const db = new PowerSyncDatabase({
   schema: AppSchema,
   database: {
-    dbFilename: 'nexo21.db',
+    dbFilename: 'clarapos.db',
   },
 })
 ```
@@ -342,7 +342,7 @@ App inicia
 navigator.storage.persist()     ← Pedir al navegador que no borre datos
   │
   ▼
-db.init()                       ← Crear/abrir nexo21.db en SQLite local
+db.init()                       ← Crear/abrir clarapos.db en SQLite local
   │
   ▼
 connector.init()                ← Leer sesion de localStorage
@@ -848,7 +848,7 @@ export function useMetodosPagoActivos() {
 
 Uno de los problemas mas importantes en un sistema financiero es la precision de los numeros decimales. JavaScript usa `float64` que puede perder precision (`0.1 + 0.2 = 0.30000000000000004`).
 
-**Solucion en Nexo21**:
+**Solucion en ClaraPOS**:
 
 ```
 PostgreSQL (NUMERIC)  →  PowerSync (TEXT)  →  JavaScript (string)
@@ -874,7 +874,7 @@ Al guardar:  (1234.56).toFixed(2)  = "1234.56"
 │                                                              │
 │   ┌──────────┐   useQuery()   ┌──────────────┐              │
 │   │ React    │◄──────────────│  SQLite       │              │
-│   │ Component│               │  (nexo21.db)  │              │
+│   │ Component│               │  (clarapos.db)  │              │
 │   │          │──────────────>│               │              │
 │   └──────────┘   insert/     │  14 tablas    │              │
 │                  update/     │  completas    │              │

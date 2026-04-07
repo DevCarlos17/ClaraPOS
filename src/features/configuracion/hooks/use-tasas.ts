@@ -1,24 +1,78 @@
+import { useEffect, useState } from 'react'
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
+interface TasaRow {
+  id: string
+  fecha: string
+  valor: string
+  moneda_destino: string
+  created_at: string
+}
+
+interface TasaCache extends TasaRow {
+  empresa_id: string
+}
+
+const TASA_CACHE_KEY = 'clarapos:last-tasa'
+
+function readTasaCache(empresaId: string): TasaRow | undefined {
+  if (!empresaId) return undefined
+  try {
+    const raw = localStorage.getItem(TASA_CACHE_KEY)
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw) as TasaCache
+    if (parsed.empresa_id !== empresaId) return undefined
+    return parsed
+  } catch {
+    return undefined
+  }
+}
+
+function writeTasaCache(tasa: TasaRow, empresaId: string) {
+  try {
+    const payload: TasaCache = { ...tasa, empresa_id: empresaId }
+    localStorage.setItem(TASA_CACHE_KEY, JSON.stringify(payload))
+  } catch {
+    // ignore quota or serialization errors
+  }
+}
+
 export function useTasaActual() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
+
+  const [cachedTasa, setCachedTasa] = useState<TasaRow | undefined>(() => readTasaCache(empresaId))
+
+  useEffect(() => {
+    setCachedTasa(readTasaCache(empresaId))
+  }, [empresaId])
 
   const { data, isLoading } = useQuery(
     'SELECT * FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC LIMIT 1',
     [empresaId]
   )
 
-  const tasa = data?.[0] as { id: string; fecha: string; valor: string; moneda_destino: string; created_at: string } | undefined
+  const liveTasa = data?.[0] as TasaRow | undefined
+
+  useEffect(() => {
+    if (liveTasa && empresaId) {
+      writeTasaCache(liveTasa, empresaId)
+      setCachedTasa(liveTasa)
+    }
+  }, [liveTasa, empresaId])
+
+  const tasa = liveTasa ?? cachedTasa
+  const isFromCache = !liveTasa && !!cachedTasa
 
   return {
     tasa,
     tasaValor: tasa ? parseFloat(tasa.valor) : 0,
-    isLoading,
+    isLoading: isLoading && !cachedTasa,
+    isFromCache,
   }
 }
 

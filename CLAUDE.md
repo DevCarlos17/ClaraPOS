@@ -1,8 +1,8 @@
-# CLAUDE.md - Nexo21: Sistema POS + Gestion de Negocio
+# CLAUDE.md - ClaraPOS: Sistema POS + Gestion de Negocio
 
 ## Identidad del Proyecto
 
-**Nexo21** es un sistema POS (Point of Sale) + Gestion de Negocio **multi-tenant** para clinica estetica, con operacion **bimonetaria** (USD base + Bolivares via tasa de cambio) y **auditoria inmutable** sobre todos los registros financieros. El sistema se construye como una **PWA offline-first** con sincronizacion eventual.
+**ClaraPOS** es un sistema POS (Point of Sale) + Gestion de Negocio **multi-tenant** para clinica estetica, con operacion **bimonetaria** (USD base + Bolivares via tasa de cambio) y **auditoria inmutable** sobre todos los registros financieros. El sistema se construye como una **PWA offline-first** con sincronizacion eventual.
 
 - **Idioma**: Solo espanol (sin i18n)
 - **Multi-tenant**: Cada empresa tiene sus datos aislados via `empresa_id` en todas las tablas y queries
@@ -16,7 +16,7 @@
 ## Estructura del Monorepo
 
 ```
-Nexo21/
+ClaraPOS/
 ├── CLAUDE.md                 # (este archivo) Contexto maestro del proyecto
 ├── PLANIFICACION.md          # Plan detallado de implementacion por fases
 ├── front/                    # Frontend: React 19 PWA offline-first
@@ -422,7 +422,11 @@ npm run type-check   # Verificacion de tipos TypeScript
 npx shadcn@latest add [component]  # Agregar componente shadcn/ui
 
 # Supabase SQL
-# Ejecutar supabase-setup.sql en el SQL Editor de Supabase Dashboard
+# Las migraciones viven en migrations/ con numeracion secuencial.
+# Aplicar en orden desde el SQL Editor de Supabase Dashboard:
+#   migrations/0001_initial_schema.sql        (setup base + RLS + triggers)
+#   migrations/0002_fix_rls_recursion.sql     (patch idempotente para DBs antiguas)
+# Ver migrations/README.md para convenciones y como agregar nuevas migraciones.
 ```
 
 ---

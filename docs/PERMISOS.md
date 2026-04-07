@@ -1,4 +1,4 @@
-# Sistema de Permisos por Nivel — Nexo21
+# Sistema de Permisos por Nivel — ClaraPOS
 
 ## Resumen
 

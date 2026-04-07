@@ -25,7 +25,7 @@ export function PWAInstallBanner() {
           </div>
 
           <div className="flex-1">
-            <h3 className="text-white font-bold text-sm mb-1">Instalar Nexo21</h3>
+            <h3 className="text-white font-bold text-sm mb-1">Instalar ClaraPOS</h3>
             <p className="text-white/90 text-xs mb-3">
               Instala la app para acceso rapido y funcionamiento offline completo.
             </p>

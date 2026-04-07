@@ -195,7 +195,7 @@ export class SupabaseConnector
       for (const op of transaction.crud) {
         lastOp = op
         const table = this.client.from(op.table)
-        let result: { error: { message: string; code?: string } | null }
+        let result: { error: { message: string; code?: string; details?: string; hint?: string } | null }
 
         switch (op.op) {
           case UpdateType.PUT: {
@@ -214,23 +214,40 @@ export class SupabaseConnector
         }
 
         if (result.error) {
-          console.error(result.error)
-          result.error.message = `Error al sincronizar con Supabase: ${result.error.message}`
+          console.error('[PowerSync upload] Supabase error', {
+            table: op.table,
+            op: op.op,
+            id: op.id,
+            opData: op.opData,
+            code: result.error.code,
+            message: result.error.message,
+            details: result.error.details,
+            hint: result.error.hint,
+          })
           throw result.error
         }
       }
 
       await transaction.complete()
     } catch (ex: unknown) {
-      console.debug(ex)
-      const error = ex as { code?: string }
-      if (
+      const error = ex as { code?: string; message?: string }
+      const isFatal =
         typeof error.code === 'string' &&
         FATAL_RESPONSE_CODES.some((regex) => regex.test(error.code!))
-      ) {
-        console.error('Error fatal de sincronizacion - descartando:', lastOp, ex)
+
+      if (isFatal) {
+        console.error('[PowerSync upload] FATAL - descartando operacion:', {
+          op: lastOp,
+          code: error.code,
+          message: error.message,
+        })
         await transaction.complete()
       } else {
+        console.error('[PowerSync upload] Error transitorio - reintentando:', {
+          op: lastOp,
+          code: error.code,
+          message: error.message,
+        })
         throw ex
       }
     }

@@ -70,11 +70,11 @@ export function PowerSyncProvider({ children }: { children: React.ReactNode }) {
           <div className="relative">
             <div className="absolute inset-0 rounded-2xl bg-primary/20 blur-xl animate-pulse" />
             <div className="relative flex h-24 w-24 items-center justify-center animate-pulse">
-              <span className="text-4xl font-bold text-primary">N21</span>
+              <span className="text-4xl font-bold text-primary">CP</span>
             </div>
           </div>
           <div className="flex flex-col items-center gap-1">
-            <p className="text-base font-semibold text-foreground">Nexo21</p>
+            <p className="text-base font-semibold text-foreground">ClaraPOS</p>
             <p className="text-xs text-muted-foreground">Cargando aplicacion...</p>
           </div>
         </div>

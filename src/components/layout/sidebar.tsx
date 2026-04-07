@@ -325,8 +325,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         >
           <div className="flex flex-col h-full py-6 px-4">
             <Link to="/dashboard" className="flex items-center gap-3 mb-8" onClick={handleLinkClick}>
-              <span className="text-2xl font-bold text-primary">N21</span>
-              <span className="font-bold text-xl text-card-foreground">Nexo21</span>
+              <span className="text-2xl font-bold text-primary">CP</span>
+              <span className="font-bold text-xl text-card-foreground">ClaraPOS</span>
             </Link>
 
             <nav className="flex-1 space-y-1 overflow-y-auto">
@@ -374,7 +374,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
         {/* Logo */}
         <div className={cn('flex items-center mb-10 transition-all duration-300', isHovered ? 'px-6' : 'justify-center px-0')}>
           <Link to="/dashboard" className="shrink-0 transition-transform duration-300 hover:scale-105">
-            <span className="text-xl font-bold text-primary">N21</span>
+            <span className="text-xl font-bold text-primary">CP</span>
           </Link>
           <span
             className={cn(
@@ -382,7 +382,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               isHovered ? 'opacity-100 translate-x-0 ml-3' : 'opacity-0 -translate-x-4 w-0 h-0'
             )}
           >
-            Nexo21
+            ClaraPOS
           </span>
         </div>
 

@@ -72,8 +72,8 @@ export function RegisterPage() {
       <div className="relative hidden h-full flex-col bg-muted p-10 text-white lg:flex">
         <div className="absolute inset-0 bg-primary" />
         <div className="relative z-20 flex items-center gap-2 text-lg font-medium">
-          <span className="text-3xl font-bold">N21</span>
-          Nexo21
+          <span className="text-3xl font-bold">CP</span>
+          ClaraPOS
         </div>
         <div className="relative z-20 mt-auto">
           <blockquote className="space-y-2">
@@ -91,7 +91,7 @@ export function RegisterPage() {
           <div className="flex flex-col space-y-2 text-left">
             <h1 className="text-2xl font-semibold tracking-tight">Registrar mi Negocio</h1>
             <p className="text-sm text-muted-foreground">
-              Crea tu cuenta de propietario para comenzar a usar Nexo21.
+              Crea tu cuenta de propietario para comenzar a usar ClaraPOS.
             </p>
           </div>
 
@@ -136,7 +136,7 @@ export function RegisterPage() {
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="email"
-                  placeholder="usuario@nexo21.com"
+                  placeholder="usuario@clarapos.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   disabled={isLoading}
