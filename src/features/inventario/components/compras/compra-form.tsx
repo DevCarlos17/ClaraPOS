@@ -144,7 +144,7 @@ export function CompraForm({ isOpen, onClose }: CompraFormProps) {
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
       })
-      toast.success(`Compra ${result.nroCompra} registrada exitosamente`)
+      toast.success(`Compra ${result.nroFactura} registrada exitosamente`)
       onClose()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'

@@ -6,6 +6,7 @@ import {
   actualizarProveedor,
   type Proveedor,
 } from '@/features/proveedores/hooks/use-proveedores'
+import { formatUsd } from '@/lib/currency'
 import { ProveedorForm } from './proveedor-form'
 
 export function ProveedorList() {
@@ -30,10 +31,10 @@ export function ProveedorList() {
   }
 
   async function handleToggleActivo(proveedor: Proveedor) {
-    const nuevoEstado = proveedor.activo !== 1
+    const nuevoEstado = proveedor.is_active !== 1
     setTogglingId(proveedor.id)
     try {
-      await actualizarProveedor(proveedor.id, { activo: nuevoEstado })
+      await actualizarProveedor(proveedor.id, { is_active: nuevoEstado })
       toast.success(nuevoEstado ? 'Proveedor activado' : 'Proveedor desactivado')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
@@ -86,6 +87,7 @@ export function ProveedorList() {
                 <th className="text-left px-4 py-3 font-medium text-gray-700 hidden lg:table-cell">Correo</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-700 hidden sm:table-cell">IVA</th>
                 <th className="text-center px-4 py-3 font-medium text-gray-700 hidden sm:table-cell">ISLR</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700 hidden xl:table-cell">Credito</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
               </tr>
@@ -96,7 +98,7 @@ export function ProveedorList() {
                   <td className="px-4 py-3 font-mono text-xs text-gray-900">{prov.rif}</td>
                   <td className="px-4 py-3 text-gray-900 font-medium">{prov.razon_social}</td>
                   <td className="px-4 py-3 text-gray-600 hidden md:table-cell">{prov.telefono || '-'}</td>
-                  <td className="px-4 py-3 text-gray-600 hidden lg:table-cell">{prov.correo || '-'}</td>
+                  <td className="px-4 py-3 text-gray-600 hidden lg:table-cell">{prov.email || '-'}</td>
                   <td className="px-4 py-3 text-center hidden sm:table-cell">
                     {prov.retiene_iva === 1 ? (
                       <span className="text-green-600 font-medium">Si</span>
@@ -111,13 +113,23 @@ export function ProveedorList() {
                       <span className="text-gray-400">No</span>
                     )}
                   </td>
+                  <td className="px-4 py-3 hidden xl:table-cell">
+                    <span className="text-gray-900 text-xs">
+                      {prov.dias_credito > 0 ? `${prov.dias_credito}d` : '—'}
+                    </span>
+                    {parseFloat(prov.limite_credito_usd) > 0 && (
+                      <span className="block text-gray-400 text-xs">
+                        {formatUsd(prov.limite_credito_usd)}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <button
                       onClick={() => handleToggleActivo(prov)}
                       disabled={togglingId === prov.id}
                       className="disabled:opacity-50"
                     >
-                      {prov.activo === 1 ? (
+                      {prov.is_active === 1 ? (
                         <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
                           Activo
                         </span>

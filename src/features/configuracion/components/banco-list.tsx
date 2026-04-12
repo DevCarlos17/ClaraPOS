@@ -30,10 +30,10 @@ export function BancoList() {
   }
 
   async function handleToggleActivo(banco: Banco) {
-    const nuevoEstado = banco.activo !== 1
+    const nuevoEstado = banco.is_active !== 1
     setTogglingId(banco.id)
     try {
-      await updateBanco(banco.id, { activo: nuevoEstado })
+      await updateBanco(banco.id, { is_active: nuevoEstado })
       toast.success(nuevoEstado ? 'Banco activado' : 'Banco desactivado')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
@@ -99,7 +99,7 @@ export function BancoList() {
                       disabled={togglingId === b.id}
                       className="disabled:opacity-50"
                     >
-                      {b.activo === 1 ? (
+                      {b.is_active === 1 ? (
                         <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
                           Activo
                         </span>

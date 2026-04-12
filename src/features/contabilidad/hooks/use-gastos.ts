@@ -1,0 +1,193 @@
+import { useQuery } from '@powersync/react'
+import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { v4 as uuidv4 } from 'uuid'
+
+// ─── Interfaces ─────────────────────────────────────────────
+
+export interface Gasto {
+  id: string
+  empresa_id: string
+  nro_gasto: string
+  cuenta_id: string
+  proveedor_id: string | null
+  descripcion: string
+  fecha: string
+  moneda_id: string
+  tasa: string
+  monto_usd: string
+  monto_bs: string
+  metodo_cobro_id: string | null
+  banco_empresa_id: string | null
+  referencia: string | null
+  observaciones: string | null
+  status: string
+  created_at: string
+  updated_at: string
+  created_by: string | null
+}
+
+// ─── Helpers ────────────────────────────────────────────────
+
+function buildDateRange(
+  fechaDesde: string,
+  fechaHasta: string
+): { start: string; end: string } {
+  return {
+    start: `${fechaDesde}T00:00:00.000Z`,
+    end: `${fechaHasta}T23:59:59.999Z`,
+  }
+}
+
+// ─── Hooks ──────────────────────────────────────────────────
+
+/**
+ * Lista de gastos con nombre de cuenta y proveedor via JOIN.
+ * Filtra por rango de fechas cuando ambos parametros estan presentes.
+ * Ordenados por fecha descendente.
+ */
+export function useGastos(fechaDesde?: string, fechaHasta?: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const hasDateFilter = Boolean(fechaDesde && fechaHasta)
+
+  const params = hasDateFilter
+    ? (() => {
+        const { start, end } = buildDateRange(fechaDesde!, fechaHasta!)
+        return [empresaId, start, end]
+      })()
+    : [empresaId]
+
+  const { data, isLoading } = useQuery(
+    hasDateFilter
+      ? `SELECT g.*,
+           pc.nombre as cuenta_nombre,
+           p.razon_social as proveedor_nombre
+         FROM gastos g
+         LEFT JOIN plan_cuentas pc ON g.cuenta_id = pc.id
+         LEFT JOIN proveedores p ON g.proveedor_id = p.id
+         WHERE g.empresa_id = ?
+           AND g.fecha >= ?
+           AND g.fecha <= ?
+         ORDER BY g.fecha DESC`
+      : `SELECT g.*,
+           pc.nombre as cuenta_nombre,
+           p.razon_social as proveedor_nombre
+         FROM gastos g
+         LEFT JOIN plan_cuentas pc ON g.cuenta_id = pc.id
+         LEFT JOIN proveedores p ON g.proveedor_id = p.id
+         WHERE g.empresa_id = ?
+         ORDER BY g.fecha DESC`,
+    params
+  )
+
+  return {
+    gastos: (data ?? []) as (Gasto & {
+      cuenta_nombre: string
+      proveedor_nombre: string | null
+    })[],
+    isLoading,
+  }
+}
+
+// ─── Funciones de escritura ──────────────────────────────────
+
+/**
+ * Crea un nuevo gasto.
+ * Genera nro_gasto con formato GTO-XXXX (secuencial por empresa).
+ * El gasto queda en status REGISTRADO (no se puede editar, solo anular).
+ */
+export async function crearGasto(data: {
+  cuenta_id: string
+  proveedor_id?: string
+  descripcion: string
+  fecha: string
+  moneda_id: string
+  tasa: number
+  monto_usd: number
+  metodo_cobro_id?: string
+  banco_empresa_id?: string
+  referencia?: string
+  observaciones?: string
+  empresa_id: string
+  created_by?: string
+}): Promise<{ gastoId: string; nroGasto: string }> {
+  let gastoId = ''
+  let nroGasto = ''
+
+  await db.writeTransaction(async (tx) => {
+    const now = new Date().toISOString()
+    gastoId = uuidv4()
+
+    // Calcular monto en Bs a partir del USD y la tasa
+    const montoBs = Number((data.monto_usd * data.tasa).toFixed(2))
+
+    // Generar nro_gasto secuencial por empresa (formato GTO-XXXX)
+    const countResult = await tx.execute(
+      'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
+      [data.empresa_id]
+    )
+    const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
+    nroGasto = `GTO-${String(count + 1).padStart(4, '0')}`
+
+    await tx.execute(
+      `INSERT INTO gastos (
+         id, empresa_id, nro_gasto, cuenta_id, proveedor_id, descripcion,
+         fecha, moneda_id, tasa, monto_usd, monto_bs,
+         metodo_cobro_id, banco_empresa_id, referencia, observaciones,
+         status, created_at, updated_at, created_by
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADO', ?, ?, ?)`,
+      [
+        gastoId,
+        data.empresa_id,
+        nroGasto,
+        data.cuenta_id,
+        data.proveedor_id ?? null,
+        data.descripcion,
+        data.fecha,
+        data.moneda_id,
+        data.tasa.toFixed(4),
+        data.monto_usd.toFixed(2),
+        montoBs.toFixed(2),
+        data.metodo_cobro_id ?? null,
+        data.banco_empresa_id ?? null,
+        data.referencia ?? null,
+        data.observaciones ?? null,
+        now,
+        now,
+        data.created_by ?? null,
+      ]
+    )
+  })
+
+  return { gastoId, nroGasto }
+}
+
+/**
+ * Anula un gasto cambiando su status a ANULADO.
+ * El registro es inmutable: solo se puede anular, no editar ni eliminar.
+ */
+export async function anularGasto(id: string): Promise<void> {
+  await db.writeTransaction(async (tx) => {
+    const now = new Date().toISOString()
+
+    // Verificar que el gasto existe y no esta ya anulado
+    const gastoResult = await tx.execute(
+      'SELECT status FROM gastos WHERE id = ?',
+      [id]
+    )
+    if (!gastoResult.rows || gastoResult.rows.length === 0) {
+      throw new Error('Gasto no encontrado')
+    }
+    const gasto = gastoResult.rows.item(0) as { status: string }
+    if (gasto.status === 'ANULADO') {
+      throw new Error('Este gasto ya fue anulado')
+    }
+
+    await tx.execute(
+      "UPDATE gastos SET status = 'ANULADO', updated_at = ? WHERE id = ?",
+      [now, id]
+    )
+  })
+}

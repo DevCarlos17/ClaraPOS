@@ -4,14 +4,17 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 export interface Company {
   id: string
+  tenant_id: string
   nombre: string
   rif: string | null
   direccion: string | null
   telefono: string | null
   email: string | null
-  nro_fiscal: string | null
-  regimen: string | null
-  activo: number
+  logo_url: string | null
+  timezone: string
+  moneda_base: string
+  config: string
+  is_active: number
   created_at: string
   updated_at: string
 }
@@ -39,8 +42,10 @@ export async function updateCompany(
     direccion?: string
     telefono?: string
     email?: string
-    nro_fiscal?: string
-    regimen?: string
+    logo_url?: string
+    timezone?: string
+    moneda_base?: string
+    config?: string
   }
 ) {
   const updates: Record<string, unknown> = {}
@@ -50,8 +55,10 @@ export async function updateCompany(
   if (data.direccion !== undefined) updates.direccion = data.direccion || null
   if (data.telefono !== undefined) updates.telefono = data.telefono || null
   if (data.email !== undefined) updates.email = data.email || null
-  if (data.nro_fiscal !== undefined) updates.nro_fiscal = data.nro_fiscal || null
-  if (data.regimen !== undefined) updates.regimen = data.regimen || null
+  if (data.logo_url !== undefined) updates.logo_url = data.logo_url || null
+  if (data.timezone !== undefined) updates.timezone = data.timezone
+  if (data.moneda_base !== undefined) updates.moneda_base = data.moneda_base
+  if (data.config !== undefined) updates.config = data.config
 
   await kysely.updateTable('empresas').set(updates).where('id', '=', id).execute()
 }

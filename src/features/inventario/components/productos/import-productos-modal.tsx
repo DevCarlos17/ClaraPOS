@@ -24,7 +24,7 @@ interface ParsedRow {
   precio_venta_usd: string
   precio_mayor_usd: string
   stock_minimo: string
-  medida: string
+  tipo_impuesto: string
   errors: string[]
   isValid: boolean
 }
@@ -88,7 +88,7 @@ export function ImportProductosModal({
     } else {
       const dep = departamentos.find((d) => d.codigo === row.departamento)
       if (!dep) errors.push('departamento no encontrado')
-      else if (dep.activo !== 1) errors.push('departamento inactivo')
+      else if (dep.is_active !== 1) errors.push('departamento inactivo')
     }
 
     // Costo
@@ -123,9 +123,9 @@ export function ImportProductosModal({
       }
     }
 
-    // Medida
-    if (row.tipo === 'P' && !['UND', 'GRA'].includes(row.medida)) {
-      errors.push('medida debe ser UND o GRA')
+    // Tipo impuesto
+    if (!['GRAVABLE', 'EXENTO', 'EXONERADO'].includes(row.tipo_impuesto)) {
+      errors.push('tipo_impuesto debe ser GRAVABLE, EXENTO o EXONERADO')
     }
 
     return errors
@@ -161,7 +161,7 @@ export function ImportProductosModal({
           precio_venta_usd: String(r.precio_venta_usd ?? '').trim(),
           precio_mayor_usd: String(r.precio_mayor_usd ?? '').trim(),
           stock_minimo: String(r.stock_minimo ?? '').trim(),
-          medida: String(r.medida ?? 'UND').trim().toUpperCase(),
+          tipo_impuesto: String(r.tipo_impuesto ?? 'EXENTO').trim().toUpperCase(),
           errors: [],
           isValid: false,
         }
@@ -232,7 +232,6 @@ export function ImportProductosModal({
               ? null
               : parseFloat(row.precio_mayor_usd),
           stock_minimo: row.tipo === 'S' ? 0 : parseFloat(row.stock_minimo),
-          medida: row.tipo === 'S' ? 'UND' : row.medida,
           empresa_id: user.empresa_id,
         })
         exitosos++
@@ -261,7 +260,7 @@ export function ImportProductosModal({
         'precio_venta_usd',
         'precio_mayor_usd',
         'stock_minimo',
-        'medida',
+        'tipo_impuesto',
       ],
     ]
     const ejemplo = [
@@ -274,7 +273,7 @@ export function ImportProductosModal({
         '15.00',
         '13.00',
         '5',
-        'UND',
+        'EXENTO',
       ],
     ]
     const ws = XLSX.utils.aoa_to_sheet([...headers, ...ejemplo])
@@ -413,9 +412,9 @@ export function ImportProductosModal({
                         <td className="px-2 py-1.5">Numero (ej: 5)</td>
                       </tr>
                       <tr>
-                        <td className="px-2 py-1.5 font-mono">medida</td>
-                        <td className="px-2 py-1.5">Solo tipo P</td>
-                        <td className="px-2 py-1.5">UND o GRA</td>
+                        <td className="px-2 py-1.5 font-mono">tipo_impuesto</td>
+                        <td className="px-2 py-1.5">No</td>
+                        <td className="px-2 py-1.5">GRAVABLE, EXENTO o EXONERADO (por defecto: EXENTO)</td>
                       </tr>
                     </tbody>
                   </table>

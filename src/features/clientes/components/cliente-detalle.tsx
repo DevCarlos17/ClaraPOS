@@ -71,7 +71,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
           <div>
             <div className="flex items-center gap-2">
               <span className="font-mono text-sm text-gray-500">{cliente.identificacion}</span>
-              {cliente.activo === 1 ? (
+              {cliente.is_active === 1 ? (
                 <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
                   Activo
                 </span>
@@ -81,7 +81,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                 </span>
               )}
             </div>
-            <h2 className="text-xl font-semibold text-gray-900 mt-1">{cliente.nombre_social}</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mt-1">{cliente.nombre}</h2>
           </div>
           <button
             onClick={onClose}
@@ -107,7 +107,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
           )}
           <div className="flex items-center gap-2 text-sm text-gray-600">
             <CreditCard className="h-4 w-4 text-gray-400" />
-            Limite: {formatUsd(cliente.limite_credito)}
+            Limite: {formatUsd(cliente.limite_credito_usd)}
           </div>
         </div>
 

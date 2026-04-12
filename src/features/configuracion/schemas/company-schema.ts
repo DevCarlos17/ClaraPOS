@@ -17,16 +17,6 @@ export const companySchema = z.object({
     .email('Email invalido')
     .optional()
     .or(z.literal('')),
-  nro_fiscal: z
-    .string()
-    .transform((v) => v.toUpperCase())
-    .optional()
-    .or(z.literal('')),
-  regimen: z
-    .string()
-    .transform((v) => v.toUpperCase())
-    .optional()
-    .or(z.literal('')),
 })
 
 export type CompanyFormValues = z.infer<typeof companySchema>

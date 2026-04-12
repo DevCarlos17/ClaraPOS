@@ -88,7 +88,7 @@ export function AbonoGlobalModal({
     try {
       const result = await registrarAbonoGlobal({
         cliente_id: clienteId,
-        metodo_pago_id: metodoPagoId,
+        metodo_cobro_id: metodoPagoId,
         moneda: moneda as 'USD' | 'BS',
         tasa: tasaValor,
         monto,

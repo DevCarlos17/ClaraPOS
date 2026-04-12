@@ -58,9 +58,9 @@ export function useCxcKpis() {
     `SELECT
        COALESCE(SUM(CAST(saldo_actual AS REAL)), 0) as deuda_total,
        SUM(CASE WHEN CAST(saldo_actual AS REAL) > 0.01 THEN 1 ELSE 0 END) as con_deuda,
-       SUM(CASE WHEN CAST(limite_credito AS REAL) > 0 AND CAST(saldo_actual AS REAL) > CAST(limite_credito AS REAL) THEN 1 ELSE 0 END) as sobre_limite
+       SUM(CASE WHEN CAST(limite_credito_usd AS REAL) > 0 AND CAST(saldo_actual AS REAL) > CAST(limite_credito_usd AS REAL) THEN 1 ELSE 0 END) as sobre_limite
      FROM clientes
-     WHERE empresa_id = ? AND activo = 1`,
+     WHERE empresa_id = ? AND is_active = 1`,
     [empresaId]
   )
 
@@ -105,7 +105,7 @@ export function useAntiguedadSaldos() {
        v.fecha,
        CAST(v.saldo_pend_usd AS REAL) as saldo_pend
      FROM ventas v
-     WHERE v.empresa_id = ? AND CAST(v.saldo_pend_usd AS REAL) > 0.01 AND v.anulada = 0`,
+     WHERE v.empresa_id = ? AND CAST(v.saldo_pend_usd AS REAL) > 0.01 AND v.status != 'ANULADA'`,
     [empresaId]
   )
 
@@ -142,19 +142,19 @@ export function useTopDeudores(limit = 10) {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT nombre_social, identificacion, saldo_actual, limite_credito
+    `SELECT nombre, identificacion, saldo_actual, limite_credito_usd
      FROM clientes
-     WHERE empresa_id = ? AND CAST(saldo_actual AS REAL) > 0.01 AND activo = 1
+     WHERE empresa_id = ? AND CAST(saldo_actual AS REAL) > 0.01 AND is_active = 1
      ORDER BY CAST(saldo_actual AS REAL) DESC
      LIMIT ${limit}`,
     [empresaId]
   )
 
   const items: TopDeudor[] = (data ?? []).map((row: Record<string, unknown>) => ({
-    nombre: String(row.nombre_social ?? ''),
+    nombre: String(row.nombre ?? ''),
     identificacion: String(row.identificacion ?? ''),
     saldoActual: Number(Number(row.saldo_actual ?? 0).toFixed(2)),
-    limiteCredito: Number(Number(row.limite_credito ?? 0).toFixed(2)),
+    limiteCredito: Number(Number(row.limite_credito_usd ?? 0).toFixed(2)),
   }))
 
   return { deudores: items, isLoading }
@@ -167,21 +167,21 @@ export function useUtilizacionCredito(limit = 10) {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT nombre_social, saldo_actual, limite_credito
+    `SELECT nombre, saldo_actual, limite_credito_usd
      FROM clientes
-     WHERE empresa_id = ? AND activo = 1
-       AND CAST(limite_credito AS REAL) > 0
+     WHERE empresa_id = ? AND is_active = 1
+       AND CAST(limite_credito_usd AS REAL) > 0
        AND CAST(saldo_actual AS REAL) > 0
-     ORDER BY (CAST(saldo_actual AS REAL) / CAST(limite_credito AS REAL)) DESC
+     ORDER BY (CAST(saldo_actual AS REAL) / CAST(limite_credito_usd AS REAL)) DESC
      LIMIT ${limit}`,
     [empresaId]
   )
 
   const items: UtilizacionCreditoItem[] = (data ?? []).map((row: Record<string, unknown>) => {
     const saldo = Number(Number(row.saldo_actual ?? 0).toFixed(2))
-    const limite = Number(Number(row.limite_credito ?? 0).toFixed(2))
+    const limite = Number(Number(row.limite_credito_usd ?? 0).toFixed(2))
     return {
-      nombre: String(row.nombre_social ?? ''),
+      nombre: String(row.nombre ?? ''),
       saldoActual: saldo,
       limiteCredito: limite,
       porcentaje: limite > 0 ? Number(((saldo / limite) * 100).toFixed(1)) : 0,
@@ -201,7 +201,7 @@ export function useMovimientosCxcPeriodo(fechaDesde: string, fechaHasta: string)
   const { data, isLoading } = useQuery(
     `SELECT
        mc.id, mc.fecha, mc.tipo, mc.referencia, mc.monto, mc.saldo_nuevo,
-       c.nombre_social as cliente_nombre
+       c.nombre as cliente_nombre
      FROM movimientos_cuenta mc
      JOIN clientes c ON mc.cliente_id = c.id
      WHERE mc.empresa_id = ? AND mc.fecha >= ? AND mc.fecha <= ?

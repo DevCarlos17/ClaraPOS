@@ -178,7 +178,6 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
           {productoSeleccionado && (
             <div className="text-xs text-gray-500 bg-gray-50 rounded-md px-3 py-2">
               Stock actual: <span className="font-medium text-gray-700">{parseFloat(productoSeleccionado.stock).toFixed(3)}</span>
-              {' '}{productoSeleccionado.medida}
             </div>
           )}
 

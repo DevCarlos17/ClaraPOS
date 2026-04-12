@@ -25,20 +25,34 @@ import { Route as AppVentasNuevaRouteImport } from './routes/_app/ventas/nueva'
 import { Route as AppVentasNotasCreditoRouteImport } from './routes/_app/ventas/notas-credito'
 import { Route as AppVentasCuadreDeCajaRouteImport } from './routes/_app/ventas/cuadre-de-caja'
 import { Route as AppProveedoresGestionRouteImport } from './routes/_app/proveedores/gestion'
+import { Route as AppInventarioUnidadesRouteImport } from './routes/_app/inventario/unidades'
 import { Route as AppInventarioReportesRouteImport } from './routes/_app/inventario/reportes'
 import { Route as AppInventarioRecetasRouteImport } from './routes/_app/inventario/recetas'
 import { Route as AppInventarioProductosRouteImport } from './routes/_app/inventario/productos'
+import { Route as AppInventarioMarcasRouteImport } from './routes/_app/inventario/marcas'
+import { Route as AppInventarioLotesRouteImport } from './routes/_app/inventario/lotes'
 import { Route as AppInventarioKardexRouteImport } from './routes/_app/inventario/kardex'
+import { Route as AppInventarioDepositosRouteImport } from './routes/_app/inventario/depositos'
 import { Route as AppInventarioDepartamentosRouteImport } from './routes/_app/inventario/departamentos'
 import { Route as AppInventarioComprasRouteImport } from './routes/_app/inventario/compras'
+import { Route as AppInventarioAjustesRouteImport } from './routes/_app/inventario/ajustes'
+import { Route as AppContabilidadPlanCuentasRouteImport } from './routes/_app/contabilidad/plan-cuentas'
+import { Route as AppContabilidadGastosRouteImport } from './routes/_app/contabilidad/gastos'
 import { Route as AppConfiguracionUsuariosRouteImport } from './routes/_app/configuracion/usuarios'
 import { Route as AppConfiguracionTasaCambioRouteImport } from './routes/_app/configuracion/tasa-cambio'
 import { Route as AppConfiguracionMetodosPagoRouteImport } from './routes/_app/configuracion/metodos-pago'
+import { Route as AppConfiguracionImpuestosRouteImport } from './routes/_app/configuracion/impuestos'
 import { Route as AppConfiguracionDatosEmpresaRouteImport } from './routes/_app/configuracion/datos-empresa'
+import { Route as AppConfiguracionCajasRouteImport } from './routes/_app/configuracion/cajas'
 import { Route as AppConfiguracionBancosRouteImport } from './routes/_app/configuracion/bancos'
+import { Route as AppComprasRetencionesRouteImport } from './routes/_app/compras/retenciones'
+import { Route as AppComprasNotasFiscalesRouteImport } from './routes/_app/compras/notas-fiscales'
+import { Route as AppComprasFacturasRouteImport } from './routes/_app/compras/facturas'
 import { Route as AppClientesReportesRouteImport } from './routes/_app/clientes/reportes'
 import { Route as AppClientesGestionRouteImport } from './routes/_app/clientes/gestion'
 import { Route as AppClientesCuentasPorCobrarRouteImport } from './routes/_app/clientes/cuentas-por-cobrar'
+import { Route as AppCajaSesionesRouteImport } from './routes/_app/caja/sesiones'
+import { Route as AppCajaMovimientosRouteImport } from './routes/_app/caja/movimientos'
 
 const AppRouteRoute = AppRouteRouteImport.update({
   id: '/_app',
@@ -118,6 +132,11 @@ const AppProveedoresGestionRoute = AppProveedoresGestionRouteImport.update({
   path: '/proveedores/gestion',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppInventarioUnidadesRoute = AppInventarioUnidadesRouteImport.update({
+  id: '/inventario/unidades',
+  path: '/inventario/unidades',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppInventarioReportesRoute = AppInventarioReportesRouteImport.update({
   id: '/inventario/reportes',
   path: '/inventario/reportes',
@@ -133,9 +152,24 @@ const AppInventarioProductosRoute = AppInventarioProductosRouteImport.update({
   path: '/inventario/productos',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppInventarioMarcasRoute = AppInventarioMarcasRouteImport.update({
+  id: '/inventario/marcas',
+  path: '/inventario/marcas',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInventarioLotesRoute = AppInventarioLotesRouteImport.update({
+  id: '/inventario/lotes',
+  path: '/inventario/lotes',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppInventarioKardexRoute = AppInventarioKardexRouteImport.update({
   id: '/inventario/kardex',
   path: '/inventario/kardex',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInventarioDepositosRoute = AppInventarioDepositosRouteImport.update({
+  id: '/inventario/depositos',
+  path: '/inventario/depositos',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppInventarioDepartamentosRoute =
@@ -147,6 +181,22 @@ const AppInventarioDepartamentosRoute =
 const AppInventarioComprasRoute = AppInventarioComprasRouteImport.update({
   id: '/inventario/compras',
   path: '/inventario/compras',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInventarioAjustesRoute = AppInventarioAjustesRouteImport.update({
+  id: '/inventario/ajustes',
+  path: '/inventario/ajustes',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppContabilidadPlanCuentasRoute =
+  AppContabilidadPlanCuentasRouteImport.update({
+    id: '/contabilidad/plan-cuentas',
+    path: '/contabilidad/plan-cuentas',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
+const AppContabilidadGastosRoute = AppContabilidadGastosRouteImport.update({
+  id: '/contabilidad/gastos',
+  path: '/contabilidad/gastos',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppConfiguracionUsuariosRoute =
@@ -167,15 +217,41 @@ const AppConfiguracionMetodosPagoRoute =
     path: '/configuracion/metodos-pago',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppConfiguracionImpuestosRoute =
+  AppConfiguracionImpuestosRouteImport.update({
+    id: '/configuracion/impuestos',
+    path: '/configuracion/impuestos',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppConfiguracionDatosEmpresaRoute =
   AppConfiguracionDatosEmpresaRouteImport.update({
     id: '/configuracion/datos-empresa',
     path: '/configuracion/datos-empresa',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppConfiguracionCajasRoute = AppConfiguracionCajasRouteImport.update({
+  id: '/configuracion/cajas',
+  path: '/configuracion/cajas',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppConfiguracionBancosRoute = AppConfiguracionBancosRouteImport.update({
   id: '/configuracion/bancos',
   path: '/configuracion/bancos',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppComprasRetencionesRoute = AppComprasRetencionesRouteImport.update({
+  id: '/compras/retenciones',
+  path: '/compras/retenciones',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppComprasNotasFiscalesRoute = AppComprasNotasFiscalesRouteImport.update({
+  id: '/compras/notas-fiscales',
+  path: '/compras/notas-fiscales',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppComprasFacturasRoute = AppComprasFacturasRouteImport.update({
+  id: '/compras/facturas',
+  path: '/compras/facturas',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppClientesReportesRoute = AppClientesReportesRouteImport.update({
@@ -194,6 +270,16 @@ const AppClientesCuentasPorCobrarRoute =
     path: '/cuentas-por-cobrar',
     getParentRoute: () => AppClientesRoute,
   } as any)
+const AppCajaSesionesRoute = AppCajaSesionesRouteImport.update({
+  id: '/caja/sesiones',
+  path: '/caja/sesiones',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppCajaMovimientosRoute = AppCajaMovimientosRouteImport.update({
+  id: '/caja/movimientos',
+  path: '/caja/movimientos',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -204,20 +290,34 @@ export interface FileRoutesByFullPath {
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
   '/reportes': typeof AppReportesRoute
+  '/caja/movimientos': typeof AppCajaMovimientosRoute
+  '/caja/sesiones': typeof AppCajaSesionesRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
   '/clientes/reportes': typeof AppClientesReportesRoute
+  '/compras/facturas': typeof AppComprasFacturasRoute
+  '/compras/notas-fiscales': typeof AppComprasNotasFiscalesRoute
+  '/compras/retenciones': typeof AppComprasRetencionesRoute
   '/configuracion/bancos': typeof AppConfiguracionBancosRoute
+  '/configuracion/cajas': typeof AppConfiguracionCajasRoute
   '/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
+  '/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/contabilidad/gastos': typeof AppContabilidadGastosRoute
+  '/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
+  '/inventario/ajustes': typeof AppInventarioAjustesRoute
   '/inventario/compras': typeof AppInventarioComprasRoute
   '/inventario/departamentos': typeof AppInventarioDepartamentosRoute
+  '/inventario/depositos': typeof AppInventarioDepositosRoute
   '/inventario/kardex': typeof AppInventarioKardexRoute
+  '/inventario/lotes': typeof AppInventarioLotesRoute
+  '/inventario/marcas': typeof AppInventarioMarcasRoute
   '/inventario/productos': typeof AppInventarioProductosRoute
   '/inventario/recetas': typeof AppInventarioRecetasRoute
   '/inventario/reportes': typeof AppInventarioReportesRoute
+  '/inventario/unidades': typeof AppInventarioUnidadesRoute
   '/proveedores/gestion': typeof AppProveedoresGestionRoute
   '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
@@ -233,20 +333,34 @@ export interface FileRoutesByTo {
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
   '/reportes': typeof AppReportesRoute
+  '/caja/movimientos': typeof AppCajaMovimientosRoute
+  '/caja/sesiones': typeof AppCajaSesionesRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
   '/clientes/reportes': typeof AppClientesReportesRoute
+  '/compras/facturas': typeof AppComprasFacturasRoute
+  '/compras/notas-fiscales': typeof AppComprasNotasFiscalesRoute
+  '/compras/retenciones': typeof AppComprasRetencionesRoute
   '/configuracion/bancos': typeof AppConfiguracionBancosRoute
+  '/configuracion/cajas': typeof AppConfiguracionCajasRoute
   '/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
+  '/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/contabilidad/gastos': typeof AppContabilidadGastosRoute
+  '/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
+  '/inventario/ajustes': typeof AppInventarioAjustesRoute
   '/inventario/compras': typeof AppInventarioComprasRoute
   '/inventario/departamentos': typeof AppInventarioDepartamentosRoute
+  '/inventario/depositos': typeof AppInventarioDepositosRoute
   '/inventario/kardex': typeof AppInventarioKardexRoute
+  '/inventario/lotes': typeof AppInventarioLotesRoute
+  '/inventario/marcas': typeof AppInventarioMarcasRoute
   '/inventario/productos': typeof AppInventarioProductosRoute
   '/inventario/recetas': typeof AppInventarioRecetasRoute
   '/inventario/reportes': typeof AppInventarioReportesRoute
+  '/inventario/unidades': typeof AppInventarioUnidadesRoute
   '/proveedores/gestion': typeof AppProveedoresGestionRoute
   '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
@@ -266,20 +380,34 @@ export interface FileRoutesById {
   '/_app/cxc': typeof AppCxcRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/reportes': typeof AppReportesRoute
+  '/_app/caja/movimientos': typeof AppCajaMovimientosRoute
+  '/_app/caja/sesiones': typeof AppCajaSesionesRoute
   '/_app/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/_app/clientes/gestion': typeof AppClientesGestionRoute
   '/_app/clientes/reportes': typeof AppClientesReportesRoute
+  '/_app/compras/facturas': typeof AppComprasFacturasRoute
+  '/_app/compras/notas-fiscales': typeof AppComprasNotasFiscalesRoute
+  '/_app/compras/retenciones': typeof AppComprasRetencionesRoute
   '/_app/configuracion/bancos': typeof AppConfiguracionBancosRoute
+  '/_app/configuracion/cajas': typeof AppConfiguracionCajasRoute
   '/_app/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
+  '/_app/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
   '/_app/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/_app/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/_app/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/_app/contabilidad/gastos': typeof AppContabilidadGastosRoute
+  '/_app/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
+  '/_app/inventario/ajustes': typeof AppInventarioAjustesRoute
   '/_app/inventario/compras': typeof AppInventarioComprasRoute
   '/_app/inventario/departamentos': typeof AppInventarioDepartamentosRoute
+  '/_app/inventario/depositos': typeof AppInventarioDepositosRoute
   '/_app/inventario/kardex': typeof AppInventarioKardexRoute
+  '/_app/inventario/lotes': typeof AppInventarioLotesRoute
+  '/_app/inventario/marcas': typeof AppInventarioMarcasRoute
   '/_app/inventario/productos': typeof AppInventarioProductosRoute
   '/_app/inventario/recetas': typeof AppInventarioRecetasRoute
   '/_app/inventario/reportes': typeof AppInventarioReportesRoute
+  '/_app/inventario/unidades': typeof AppInventarioUnidadesRoute
   '/_app/proveedores/gestion': typeof AppProveedoresGestionRoute
   '/_app/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/_app/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
@@ -298,20 +426,34 @@ export interface FileRouteTypes {
     | '/cxc'
     | '/dashboard'
     | '/reportes'
+    | '/caja/movimientos'
+    | '/caja/sesiones'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
     | '/clientes/reportes'
+    | '/compras/facturas'
+    | '/compras/notas-fiscales'
+    | '/compras/retenciones'
     | '/configuracion/bancos'
+    | '/configuracion/cajas'
     | '/configuracion/datos-empresa'
+    | '/configuracion/impuestos'
     | '/configuracion/metodos-pago'
     | '/configuracion/tasa-cambio'
     | '/configuracion/usuarios'
+    | '/contabilidad/gastos'
+    | '/contabilidad/plan-cuentas'
+    | '/inventario/ajustes'
     | '/inventario/compras'
     | '/inventario/departamentos'
+    | '/inventario/depositos'
     | '/inventario/kardex'
+    | '/inventario/lotes'
+    | '/inventario/marcas'
     | '/inventario/productos'
     | '/inventario/recetas'
     | '/inventario/reportes'
+    | '/inventario/unidades'
     | '/proveedores/gestion'
     | '/ventas/cuadre-de-caja'
     | '/ventas/notas-credito'
@@ -327,20 +469,34 @@ export interface FileRouteTypes {
     | '/cxc'
     | '/dashboard'
     | '/reportes'
+    | '/caja/movimientos'
+    | '/caja/sesiones'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
     | '/clientes/reportes'
+    | '/compras/facturas'
+    | '/compras/notas-fiscales'
+    | '/compras/retenciones'
     | '/configuracion/bancos'
+    | '/configuracion/cajas'
     | '/configuracion/datos-empresa'
+    | '/configuracion/impuestos'
     | '/configuracion/metodos-pago'
     | '/configuracion/tasa-cambio'
     | '/configuracion/usuarios'
+    | '/contabilidad/gastos'
+    | '/contabilidad/plan-cuentas'
+    | '/inventario/ajustes'
     | '/inventario/compras'
     | '/inventario/departamentos'
+    | '/inventario/depositos'
     | '/inventario/kardex'
+    | '/inventario/lotes'
+    | '/inventario/marcas'
     | '/inventario/productos'
     | '/inventario/recetas'
     | '/inventario/reportes'
+    | '/inventario/unidades'
     | '/proveedores/gestion'
     | '/ventas/cuadre-de-caja'
     | '/ventas/notas-credito'
@@ -359,20 +515,34 @@ export interface FileRouteTypes {
     | '/_app/cxc'
     | '/_app/dashboard'
     | '/_app/reportes'
+    | '/_app/caja/movimientos'
+    | '/_app/caja/sesiones'
     | '/_app/clientes/cuentas-por-cobrar'
     | '/_app/clientes/gestion'
     | '/_app/clientes/reportes'
+    | '/_app/compras/facturas'
+    | '/_app/compras/notas-fiscales'
+    | '/_app/compras/retenciones'
     | '/_app/configuracion/bancos'
+    | '/_app/configuracion/cajas'
     | '/_app/configuracion/datos-empresa'
+    | '/_app/configuracion/impuestos'
     | '/_app/configuracion/metodos-pago'
     | '/_app/configuracion/tasa-cambio'
     | '/_app/configuracion/usuarios'
+    | '/_app/contabilidad/gastos'
+    | '/_app/contabilidad/plan-cuentas'
+    | '/_app/inventario/ajustes'
     | '/_app/inventario/compras'
     | '/_app/inventario/departamentos'
+    | '/_app/inventario/depositos'
     | '/_app/inventario/kardex'
+    | '/_app/inventario/lotes'
+    | '/_app/inventario/marcas'
     | '/_app/inventario/productos'
     | '/_app/inventario/recetas'
     | '/_app/inventario/reportes'
+    | '/_app/inventario/unidades'
     | '/_app/proveedores/gestion'
     | '/_app/ventas/cuadre-de-caja'
     | '/_app/ventas/notas-credito'
@@ -501,6 +671,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProveedoresGestionRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/inventario/unidades': {
+      id: '/_app/inventario/unidades'
+      path: '/inventario/unidades'
+      fullPath: '/inventario/unidades'
+      preLoaderRoute: typeof AppInventarioUnidadesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/inventario/reportes': {
       id: '/_app/inventario/reportes'
       path: '/inventario/reportes'
@@ -522,11 +699,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppInventarioProductosRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/inventario/marcas': {
+      id: '/_app/inventario/marcas'
+      path: '/inventario/marcas'
+      fullPath: '/inventario/marcas'
+      preLoaderRoute: typeof AppInventarioMarcasRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/inventario/lotes': {
+      id: '/_app/inventario/lotes'
+      path: '/inventario/lotes'
+      fullPath: '/inventario/lotes'
+      preLoaderRoute: typeof AppInventarioLotesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/inventario/kardex': {
       id: '/_app/inventario/kardex'
       path: '/inventario/kardex'
       fullPath: '/inventario/kardex'
       preLoaderRoute: typeof AppInventarioKardexRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/inventario/depositos': {
+      id: '/_app/inventario/depositos'
+      path: '/inventario/depositos'
+      fullPath: '/inventario/depositos'
+      preLoaderRoute: typeof AppInventarioDepositosRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/inventario/departamentos': {
@@ -541,6 +739,27 @@ declare module '@tanstack/react-router' {
       path: '/inventario/compras'
       fullPath: '/inventario/compras'
       preLoaderRoute: typeof AppInventarioComprasRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/inventario/ajustes': {
+      id: '/_app/inventario/ajustes'
+      path: '/inventario/ajustes'
+      fullPath: '/inventario/ajustes'
+      preLoaderRoute: typeof AppInventarioAjustesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/contabilidad/plan-cuentas': {
+      id: '/_app/contabilidad/plan-cuentas'
+      path: '/contabilidad/plan-cuentas'
+      fullPath: '/contabilidad/plan-cuentas'
+      preLoaderRoute: typeof AppContabilidadPlanCuentasRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/contabilidad/gastos': {
+      id: '/_app/contabilidad/gastos'
+      path: '/contabilidad/gastos'
+      fullPath: '/contabilidad/gastos'
+      preLoaderRoute: typeof AppContabilidadGastosRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/configuracion/usuarios': {
@@ -564,6 +783,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConfiguracionMetodosPagoRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/configuracion/impuestos': {
+      id: '/_app/configuracion/impuestos'
+      path: '/configuracion/impuestos'
+      fullPath: '/configuracion/impuestos'
+      preLoaderRoute: typeof AppConfiguracionImpuestosRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/configuracion/datos-empresa': {
       id: '/_app/configuracion/datos-empresa'
       path: '/configuracion/datos-empresa'
@@ -571,11 +797,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConfiguracionDatosEmpresaRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/configuracion/cajas': {
+      id: '/_app/configuracion/cajas'
+      path: '/configuracion/cajas'
+      fullPath: '/configuracion/cajas'
+      preLoaderRoute: typeof AppConfiguracionCajasRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/configuracion/bancos': {
       id: '/_app/configuracion/bancos'
       path: '/configuracion/bancos'
       fullPath: '/configuracion/bancos'
       preLoaderRoute: typeof AppConfiguracionBancosRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/compras/retenciones': {
+      id: '/_app/compras/retenciones'
+      path: '/compras/retenciones'
+      fullPath: '/compras/retenciones'
+      preLoaderRoute: typeof AppComprasRetencionesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/compras/notas-fiscales': {
+      id: '/_app/compras/notas-fiscales'
+      path: '/compras/notas-fiscales'
+      fullPath: '/compras/notas-fiscales'
+      preLoaderRoute: typeof AppComprasNotasFiscalesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/compras/facturas': {
+      id: '/_app/compras/facturas'
+      path: '/compras/facturas'
+      fullPath: '/compras/facturas'
+      preLoaderRoute: typeof AppComprasFacturasRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/clientes/reportes': {
@@ -598,6 +852,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/clientes/cuentas-por-cobrar'
       preLoaderRoute: typeof AppClientesCuentasPorCobrarRouteImport
       parentRoute: typeof AppClientesRoute
+    }
+    '/_app/caja/sesiones': {
+      id: '/_app/caja/sesiones'
+      path: '/caja/sesiones'
+      fullPath: '/caja/sesiones'
+      preLoaderRoute: typeof AppCajaSesionesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/caja/movimientos': {
+      id: '/_app/caja/movimientos'
+      path: '/caja/movimientos'
+      fullPath: '/caja/movimientos'
+      preLoaderRoute: typeof AppCajaMovimientosRouteImport
+      parentRoute: typeof AppRouteRoute
     }
   }
 }
@@ -640,17 +908,31 @@ interface AppRouteRouteChildren {
   AppCxcRoute: typeof AppCxcRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppReportesRoute: typeof AppReportesRoute
+  AppCajaMovimientosRoute: typeof AppCajaMovimientosRoute
+  AppCajaSesionesRoute: typeof AppCajaSesionesRoute
+  AppComprasFacturasRoute: typeof AppComprasFacturasRoute
+  AppComprasNotasFiscalesRoute: typeof AppComprasNotasFiscalesRoute
+  AppComprasRetencionesRoute: typeof AppComprasRetencionesRoute
   AppConfiguracionBancosRoute: typeof AppConfiguracionBancosRoute
+  AppConfiguracionCajasRoute: typeof AppConfiguracionCajasRoute
   AppConfiguracionDatosEmpresaRoute: typeof AppConfiguracionDatosEmpresaRoute
+  AppConfiguracionImpuestosRoute: typeof AppConfiguracionImpuestosRoute
   AppConfiguracionMetodosPagoRoute: typeof AppConfiguracionMetodosPagoRoute
   AppConfiguracionTasaCambioRoute: typeof AppConfiguracionTasaCambioRoute
   AppConfiguracionUsuariosRoute: typeof AppConfiguracionUsuariosRoute
+  AppContabilidadGastosRoute: typeof AppContabilidadGastosRoute
+  AppContabilidadPlanCuentasRoute: typeof AppContabilidadPlanCuentasRoute
+  AppInventarioAjustesRoute: typeof AppInventarioAjustesRoute
   AppInventarioComprasRoute: typeof AppInventarioComprasRoute
   AppInventarioDepartamentosRoute: typeof AppInventarioDepartamentosRoute
+  AppInventarioDepositosRoute: typeof AppInventarioDepositosRoute
   AppInventarioKardexRoute: typeof AppInventarioKardexRoute
+  AppInventarioLotesRoute: typeof AppInventarioLotesRoute
+  AppInventarioMarcasRoute: typeof AppInventarioMarcasRoute
   AppInventarioProductosRoute: typeof AppInventarioProductosRoute
   AppInventarioRecetasRoute: typeof AppInventarioRecetasRoute
   AppInventarioReportesRoute: typeof AppInventarioReportesRoute
+  AppInventarioUnidadesRoute: typeof AppInventarioUnidadesRoute
   AppProveedoresGestionRoute: typeof AppProveedoresGestionRoute
   AppVentasCuadreDeCajaRoute: typeof AppVentasCuadreDeCajaRoute
   AppVentasNotasCreditoRoute: typeof AppVentasNotasCreditoRoute
@@ -664,17 +946,31 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppCxcRoute: AppCxcRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppReportesRoute: AppReportesRoute,
+  AppCajaMovimientosRoute: AppCajaMovimientosRoute,
+  AppCajaSesionesRoute: AppCajaSesionesRoute,
+  AppComprasFacturasRoute: AppComprasFacturasRoute,
+  AppComprasNotasFiscalesRoute: AppComprasNotasFiscalesRoute,
+  AppComprasRetencionesRoute: AppComprasRetencionesRoute,
   AppConfiguracionBancosRoute: AppConfiguracionBancosRoute,
+  AppConfiguracionCajasRoute: AppConfiguracionCajasRoute,
   AppConfiguracionDatosEmpresaRoute: AppConfiguracionDatosEmpresaRoute,
+  AppConfiguracionImpuestosRoute: AppConfiguracionImpuestosRoute,
   AppConfiguracionMetodosPagoRoute: AppConfiguracionMetodosPagoRoute,
   AppConfiguracionTasaCambioRoute: AppConfiguracionTasaCambioRoute,
   AppConfiguracionUsuariosRoute: AppConfiguracionUsuariosRoute,
+  AppContabilidadGastosRoute: AppContabilidadGastosRoute,
+  AppContabilidadPlanCuentasRoute: AppContabilidadPlanCuentasRoute,
+  AppInventarioAjustesRoute: AppInventarioAjustesRoute,
   AppInventarioComprasRoute: AppInventarioComprasRoute,
   AppInventarioDepartamentosRoute: AppInventarioDepartamentosRoute,
+  AppInventarioDepositosRoute: AppInventarioDepositosRoute,
   AppInventarioKardexRoute: AppInventarioKardexRoute,
+  AppInventarioLotesRoute: AppInventarioLotesRoute,
+  AppInventarioMarcasRoute: AppInventarioMarcasRoute,
   AppInventarioProductosRoute: AppInventarioProductosRoute,
   AppInventarioRecetasRoute: AppInventarioRecetasRoute,
   AppInventarioReportesRoute: AppInventarioReportesRoute,
+  AppInventarioUnidadesRoute: AppInventarioUnidadesRoute,
   AppProveedoresGestionRoute: AppProveedoresGestionRoute,
   AppVentasCuadreDeCajaRoute: AppVentasCuadreDeCajaRoute,
   AppVentasNotasCreditoRoute: AppVentasNotasCreditoRoute,

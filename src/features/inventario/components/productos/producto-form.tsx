@@ -33,8 +33,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [precioVentaUsd, setPrecioVentaUsd] = useState('')
   const [precioMayorUsd, setPrecioMayorUsd] = useState('')
   const [stockMinimo, setStockMinimo] = useState('')
-  const [medida, setMedida] = useState<'UND' | 'GRA'>('UND')
-  const [activo, setActivo] = useState(true)
+  const [tipoImpuesto, setTipoImpuesto] = useState<'GRAVABLE' | 'EXENTO' | 'EXONERADO'>('EXENTO')
+  const [isActive, setIsActive] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -49,8 +49,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioVentaUsd(producto.precio_venta_usd)
         setPrecioMayorUsd(producto.precio_mayor_usd ?? '')
         setStockMinimo(producto.stock_minimo)
-        setMedida(producto.medida as 'UND' | 'GRA')
-        setActivo(producto.activo === 1)
+        setTipoImpuesto((producto.tipo_impuesto as 'GRAVABLE' | 'EXENTO' | 'EXONERADO') ?? 'EXENTO')
+        setIsActive(producto.is_active === 1)
       } else {
         setCodigo('')
         setTipo('P')
@@ -60,8 +60,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioVentaUsd('')
         setPrecioMayorUsd('')
         setStockMinimo('')
-        setMedida('UND')
-        setActivo(true)
+        setTipoImpuesto('EXENTO')
+        setIsActive(true)
       }
       setErrors({})
       dialogRef.current?.showModal()
@@ -96,8 +96,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       precio_venta_usd: parseNumOrZero(precioVentaUsd),
       precio_mayor_usd: precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd),
       stock_minimo: tipo === 'S' ? 0 : parseNumOrZero(stockMinimo),
-      medida,
-      activo,
+      tipo_impuesto: tipoImpuesto,
+      is_active: isActive,
     }
 
     const parsed = productoSchema.safeParse(data)
@@ -122,8 +122,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           precio_venta_usd: parsed.data.precio_venta_usd,
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
-          medida: parsed.data.medida,
-          activo: parsed.data.activo,
+          tipo_impuesto: parsed.data.tipo_impuesto,
+          is_active: parsed.data.is_active,
           tipo: parsed.data.tipo,
         })
         toast.success('Producto actualizado correctamente')
@@ -137,7 +137,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           precio_venta_usd: parsed.data.precio_venta_usd,
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
-          medida: parsed.data.medida,
           empresa_id: user!.empresa_id!,
         })
         toast.success('Producto creado correctamente')
@@ -343,53 +342,48 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             )}
           </div>
 
-          {/* Stock Minimo y Medida */}
-          <div className="grid grid-cols-2 gap-4">
-            {/* Stock Minimo */}
-            <div>
-              <label htmlFor="prod-stock-min" className="block text-sm font-medium text-gray-700 mb-1">
-                Stock Minimo
-              </label>
-              <input
-                id="prod-stock-min"
-                type="number"
-                step="0.001"
-                min="0"
-                value={tipo === 'S' ? '0' : stockMinimo}
-                onChange={(e) => setStockMinimo(e.target.value)}
-                disabled={tipo === 'S'}
-                placeholder="0"
-                className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  tipo === 'S' ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
-                } ${errors.stock_minimo ? 'border-red-500' : 'border-gray-300'}`}
-              />
-              {errors.stock_minimo && <p className="text-red-500 text-xs mt-1">{errors.stock_minimo}</p>}
-              {tipo === 'S' && (
-                <p className="text-gray-400 text-xs mt-1">Servicios no manejan stock</p>
-              )}
-            </div>
+          {/* Stock Minimo */}
+          <div>
+            <label htmlFor="prod-stock-min" className="block text-sm font-medium text-gray-700 mb-1">
+              Stock Minimo
+            </label>
+            <input
+              id="prod-stock-min"
+              type="number"
+              step="0.001"
+              min="0"
+              value={tipo === 'S' ? '0' : stockMinimo}
+              onChange={(e) => setStockMinimo(e.target.value)}
+              disabled={tipo === 'S'}
+              placeholder="0"
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                tipo === 'S' ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+              } ${errors.stock_minimo ? 'border-red-500' : 'border-gray-300'}`}
+            />
+            {errors.stock_minimo && <p className="text-red-500 text-xs mt-1">{errors.stock_minimo}</p>}
+            {tipo === 'S' && (
+              <p className="text-gray-400 text-xs mt-1">Servicios no manejan stock</p>
+            )}
+          </div>
 
-            {/* Medida */}
-            <div>
-              <label htmlFor="prod-medida" className="block text-sm font-medium text-gray-700 mb-1">
-                Unidad de Medida
-              </label>
-              <select
-                id="prod-medida"
-                value={medida}
-                onChange={(e) => setMedida(e.target.value as 'UND' | 'GRA')}
-                disabled={tipo === 'S'}
-                className={`w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  tipo === 'S' ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
-                }`}
-              >
-                <option value="UND">Unidades (UND)</option>
-                <option value="GRA">Gramos (GRA)</option>
-              </select>
-              {tipo === 'S' && (
-                <p className="text-gray-400 text-xs mt-1">No aplica para servicios</p>
-              )}
-            </div>
+          {/* Tipo Impuesto */}
+          <div>
+            <label htmlFor="prod-tipo-impuesto" className="block text-sm font-medium text-gray-700 mb-1">
+              Tipo Impuesto
+            </label>
+            <select
+              id="prod-tipo-impuesto"
+              value={tipoImpuesto}
+              onChange={(e) => setTipoImpuesto(e.target.value as 'GRAVABLE' | 'EXENTO' | 'EXONERADO')}
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="EXENTO">Exento</option>
+              <option value="GRAVABLE">Gravable</option>
+              <option value="EXONERADO">Exonerado</option>
+            </select>
+            {errors.tipo_impuesto && (
+              <p className="text-red-500 text-xs mt-1">{errors.tipo_impuesto}</p>
+            )}
           </div>
 
           {/* Activo */}
@@ -398,8 +392,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               <input
                 id="prod-activo"
                 type="checkbox"
-                checked={activo}
-                onChange={(e) => setActivo(e.target.checked)}
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
                 className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <label htmlFor="prod-activo" className="text-sm font-medium text-gray-700">

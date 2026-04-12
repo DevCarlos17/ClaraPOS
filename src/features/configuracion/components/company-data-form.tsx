@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Building2, Mail, Phone, MapPin, FileText } from 'lucide-react'
+import { Building2, Mail, Phone, MapPin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -16,9 +16,6 @@ export function CompanyDataForm() {
   const [direccion, setDireccion] = useState('')
   const [telefono, setTelefono] = useState('')
   const [email, setEmail] = useState('')
-  const [nroFiscal, setNroFiscal] = useState('')
-  const [regimen, setRegimen] = useState('')
-
   useEffect(() => {
     if (!company) return
     setNombre(company.nombre ?? '')
@@ -26,8 +23,6 @@ export function CompanyDataForm() {
     setDireccion(company.direccion ?? '')
     setTelefono(company.telefono ?? '')
     setEmail(company.email ?? '')
-    setNroFiscal(company.nro_fiscal ?? '')
-    setRegimen(company.regimen ?? '')
   }, [company])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -40,8 +35,6 @@ export function CompanyDataForm() {
       direccion,
       telefono,
       email,
-      nro_fiscal: nroFiscal,
-      regimen,
     })
 
     if (!result.success) {
@@ -58,8 +51,6 @@ export function CompanyDataForm() {
         direccion: result.data.direccion,
         telefono: result.data.telefono,
         email: result.data.email,
-        nro_fiscal: result.data.nro_fiscal,
-        regimen: result.data.regimen,
       })
       toast.success('Datos de empresa actualizados')
     } catch {
@@ -109,13 +100,6 @@ export function CompanyDataForm() {
             </div>
           </div>
 
-          <div className="border-t pt-3">
-            <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Datos Fiscales</p>
-            <div className="space-y-2">
-              <DataRowIcon icon={FileText} value={company.nro_fiscal} placeholder="Sin nro. fiscal" />
-              <DataRow label="Regimen" value={company.regimen} />
-            </div>
-          </div>
         </div>
       </div>
 
@@ -179,31 +163,6 @@ export function CompanyDataForm() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="empresa@email.com"
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="nro_fiscal">Nro. Fiscal</Label>
-              <Input
-                id="nro_fiscal"
-                value={nroFiscal}
-                onChange={(e) => setNroFiscal(e.target.value)}
-                onBlur={() => setNroFiscal((v) => v.toUpperCase())}
-                placeholder="Registro fiscal"
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="regimen">Regimen</Label>
-              <Input
-                id="regimen"
-                value={regimen}
-                onChange={(e) => setRegimen(e.target.value)}
-                onBlur={() => setRegimen((v) => v.toUpperCase())}
-                placeholder="Tipo de regimen"
                 disabled={isSubmitting}
               />
             </div>

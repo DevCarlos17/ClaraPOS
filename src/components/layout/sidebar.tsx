@@ -24,6 +24,19 @@ import {
   Wallet,
   Receipt,
   ClipboardList,
+  Calculator,
+  Tag,
+  Ruler,
+  Warehouse,
+  ClipboardCheck,
+  Layers,
+  Monitor,
+  ArrowDownUp,
+  FileSpreadsheet,
+  FileCheck,
+  FileMinus,
+  BookOpenCheck,
+  HandCoins,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -31,7 +44,6 @@ import { useSidebarStore } from '@/stores/sidebar-store'
 import { useAuth } from '@/core/auth/auth-provider'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS, type PermissionKey } from '@/core/hooks/use-permissions'
-import { getLevelName } from '@/lib/auth-utils'
 import { toast } from 'sonner'
 
 interface SidebarProps {
@@ -68,15 +80,27 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
+    title: 'Caja',
+    icon: Wallet,
+    children: [
+      { title: 'Sesiones', url: '/caja/sesiones', icon: Monitor, requiredPermission: PERMISSIONS.CAJA_ACCESS },
+      { title: 'Movimientos', url: '/caja/movimientos', icon: ArrowDownUp, requiredPermission: PERMISSIONS.CAJA_ACCESS },
+    ],
+  },
+  {
     title: 'Inventario',
     icon: Package,
     children: [
       { title: 'Departamentos', url: '/inventario/departamentos', icon: FolderTree, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
-      { title: 'Compras', url: '/inventario/compras', icon: ClipboardList, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
       { title: 'Productos / Servicios', url: '/inventario/productos', icon: ShoppingBag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Kardex', url: '/inventario/kardex', icon: ArrowLeftRight, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Recetas / Combos', url: '/inventario/recetas', icon: BookOpen, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Reportes de Inventario', url: '/inventario/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Marcas', url: '/inventario/marcas', icon: Tag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Unidades', url: '/inventario/unidades', icon: Ruler, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Depositos', url: '/inventario/depositos', icon: Warehouse, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Ajustes', url: '/inventario/ajustes', icon: ClipboardCheck, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
+      { title: 'Lotes', url: '/inventario/lotes', icon: Layers, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
     ],
   },
   {
@@ -84,6 +108,23 @@ const menuItems: MenuItem[] = [
     icon: Truck,
     children: [
       { title: 'Gestion de Proveedores', url: '/proveedores/gestion', icon: Truck, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
+    ],
+  },
+  {
+    title: 'Compras',
+    icon: ClipboardList,
+    children: [
+      { title: 'Facturas', url: '/compras/facturas', icon: FileSpreadsheet, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Retenciones', url: '/compras/retenciones', icon: FileCheck, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Notas Fiscales', url: '/compras/notas-fiscales', icon: FileMinus, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+    ],
+  },
+  {
+    title: 'Contabilidad',
+    icon: BookOpenCheck,
+    children: [
+      { title: 'Plan de Cuentas', url: '/contabilidad/plan-cuentas', icon: BookOpenCheck, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
+      { title: 'Gastos', url: '/contabilidad/gastos', icon: HandCoins, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
     ],
   },
   {
@@ -102,6 +143,8 @@ const menuItems: MenuItem[] = [
       { title: 'Datos Empresa', url: '/configuracion/datos-empresa', icon: Building2, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Tasa de Cambio', url: '/configuracion/tasa-cambio', icon: DollarSign, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Usuarios y Perfiles', url: '/configuracion/usuarios', icon: UserCog, requiredPermission: PERMISSIONS.CONFIG_USERS },
+      { title: 'Cajas', url: '/configuracion/cajas', icon: Monitor, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Impuestos', url: '/configuracion/impuestos', icon: Calculator, requiredPermission: PERMISSIONS.CONFIG_RATES },
     ],
   },
   {
@@ -342,7 +385,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 </div>
                 <div className="flex flex-col">
                   <span className="text-sm font-medium text-foreground">{user?.nombre ?? 'Usuario'}</span>
-                  <span className="text-xs text-muted-foreground">{getLevelName(user?.level ?? 3)}</span>
+                  <span className="text-xs text-muted-foreground">{user?.rol_nombre ?? 'Usuario'}</span>
                 </div>
               </div>
 
@@ -464,7 +507,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             </div>
             <div className={cn('flex flex-col transition-all duration-300 overflow-hidden', isHovered ? 'opacity-100 translate-x-0 ml-3.5' : 'opacity-0 -translate-x-4 w-0 h-0')}>
               <span className="text-[14px] font-bold text-foreground truncate tracking-tight">{user?.nombre ?? 'Usuario'}</span>
-              <span className="text-[11px] font-medium text-muted-foreground truncate uppercase tracking-widest leading-none mt-1">{getLevelName(user?.level ?? 3)}</span>
+              <span className="text-[11px] font-medium text-muted-foreground truncate uppercase tracking-widest leading-none mt-1">{user?.rol_nombre ?? 'Usuario'}</span>
             </div>
           </div>
 

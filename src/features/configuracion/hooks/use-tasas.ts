@@ -9,7 +9,7 @@ interface TasaRow {
   id: string
   fecha: string
   valor: string
-  moneda_destino: string
+  moneda_id: string
   created_at: string
 }
 
@@ -86,7 +86,7 @@ export function useTasasHistorial() {
   )
 
   return {
-    tasas: (data ?? []) as { id: string; fecha: string; valor: string; moneda_destino: string; created_at: string }[],
+    tasas: (data ?? []) as { id: string; fecha: string; valor: string; moneda_id: string; created_at: string }[],
     isLoading,
   }
 }
@@ -101,7 +101,7 @@ export async function crearTasa(valor: number, empresaId: string) {
       id,
       fecha: now,
       valor: valor.toFixed(4),
-      moneda_destino: 'USD',
+      moneda_id: 'USD',
       empresa_id: empresaId,
       created_at: now,
     })
@@ -116,7 +116,7 @@ export async function crearTasaRaw(valor: number, empresaId: string) {
   const now = new Date().toISOString()
 
   await db.execute(
-    'INSERT INTO tasas_cambio (id, fecha, valor, moneda_destino, empresa_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    'INSERT INTO tasas_cambio (id, fecha, valor, moneda_id, empresa_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
     [id, now, valor.toFixed(4), 'USD', empresaId, now]
   )
 

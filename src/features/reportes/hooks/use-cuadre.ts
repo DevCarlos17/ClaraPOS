@@ -40,7 +40,7 @@ export interface VentaAudit {
   tasa: string
   tipo: string
   fecha: string
-  anulada: number
+  status: string
 }
 
 export interface DetalleCxc {
@@ -105,7 +105,7 @@ export function useGananciaEstimada(fecha: string) {
        COALESCE(SUM(
          (CAST(dv.precio_unitario_usd AS REAL) - CAST(p.costo_usd AS REAL)) * CAST(dv.cantidad AS REAL)
        ), 0) as ganancia
-     FROM detalle_venta dv
+     FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?`,
@@ -151,7 +151,7 @@ export function useVentasPorDepto(fecha: string) {
     `SELECT
        d.nombre as departamento,
        COALESCE(SUM(CAST(dv.precio_unitario_usd AS REAL) * CAST(dv.cantidad AS REAL)), 0) as total_usd
-     FROM detalle_venta dv
+     FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      JOIN departamentos d ON p.departamento_id = d.id
@@ -179,13 +179,14 @@ export function usePagosPorMetodo(fecha: string) {
   const { data, isLoading } = useQuery(
     `SELECT
        mp.nombre,
-       mp.moneda,
+       mon.codigo_iso as moneda,
        COALESCE(SUM(CAST(pg.monto_usd AS REAL)), 0) as total_usd,
        COALESCE(SUM(CAST(pg.monto AS REAL)), 0) as total_original
      FROM pagos pg
-     JOIN metodos_pago mp ON pg.metodo_pago_id = mp.id
+     JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+     LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      WHERE pg.empresa_id = ? AND pg.fecha >= ? AND pg.fecha <= ?
-     GROUP BY mp.id, mp.nombre, mp.moneda
+     GROUP BY mp.id, mp.nombre, mon.codigo_iso
      ORDER BY total_usd DESC`,
     [empresaId, start, end]
   )
@@ -213,7 +214,7 @@ export function useTopProductos(fecha: string, limit = 15) {
        p.codigo,
        COALESCE(SUM(CAST(dv.cantidad AS REAL)), 0) as cantidad,
        COALESCE(SUM(CAST(dv.precio_unitario_usd AS REAL) * CAST(dv.cantidad AS REAL)), 0) as total_usd
-     FROM detalle_venta dv
+     FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
@@ -242,8 +243,8 @@ export function useVentasAudit(fecha: string) {
 
   const { data, isLoading } = useQuery(
     `SELECT
-       v.id, v.nro_factura, v.total_usd, v.total_bs, v.tasa, v.tipo, v.fecha, v.anulada,
-       c.nombre_social as cliente_nombre,
+       v.id, v.nro_factura, v.total_usd, v.total_bs, v.tasa, v.tipo, v.fecha, v.status,
+       c.nombre as cliente_nombre,
        c.identificacion as cliente_identificacion
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
@@ -277,7 +278,7 @@ export function useDetalleVenta(ventaId: string | null) {
   const { data: detalles, isLoading: loadingDetalles } = useQuery(
     ventaId
       ? `SELECT p.nombre as producto_nombre, p.codigo as producto_codigo, dv.cantidad, dv.precio_unitario_usd
-         FROM detalle_venta dv
+         FROM ventas_det dv
          JOIN productos p ON dv.producto_id = p.id
          WHERE dv.venta_id = ?`
       : '',
@@ -286,9 +287,10 @@ export function useDetalleVenta(ventaId: string | null) {
 
   const { data: pagos, isLoading: loadingPagos } = useQuery(
     ventaId
-      ? `SELECT mp.nombre as metodo_nombre, pg.moneda, pg.monto, pg.monto_usd, pg.tasa, pg.referencia
+      ? `SELECT mp.nombre as metodo_nombre, mon.codigo_iso as moneda, pg.monto, pg.monto_usd, pg.tasa, pg.referencia
          FROM pagos pg
-         JOIN metodos_pago mp ON pg.metodo_pago_id = mp.id
+         JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+         LEFT JOIN monedas mon ON pg.moneda_id = mon.id
          WHERE pg.venta_id = ?`
       : '',
     ventaId ? [ventaId] : []
@@ -311,7 +313,7 @@ export function useDetalleCxcDia(fecha: string) {
   const { data, isLoading } = useQuery(
     `SELECT
        v.id, v.nro_factura, v.saldo_pend_usd, v.tasa, v.fecha,
-       c.nombre_social as cliente_nombre,
+       c.nombre as cliente_nombre,
        c.identificacion as cliente_identificacion
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id

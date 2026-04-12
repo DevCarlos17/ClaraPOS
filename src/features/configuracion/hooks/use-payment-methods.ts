@@ -10,7 +10,7 @@ export interface PaymentMethod {
   id: string
   nombre: string
   moneda: string
-  activo: number
+  is_active: number
   empresa_id: string
   created_at: string
 }
@@ -20,7 +20,7 @@ export function usePaymentMethods() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM metodos_pago WHERE empresa_id = ? ORDER BY nombre ASC',
+    'SELECT * FROM metodos_cobro WHERE empresa_id = ? ORDER BY nombre ASC',
     [empresaId]
   )
   return { methods: (data ?? []) as PaymentMethod[], isLoading }
@@ -31,7 +31,7 @@ export function useMetodosPagoActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM metodos_pago WHERE empresa_id = ? AND activo = 1 ORDER BY nombre ASC',
+    'SELECT * FROM metodos_cobro WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre ASC',
     [empresaId]
   )
   const seeded = useRef(false)
@@ -43,9 +43,9 @@ export function useMetodosPagoActivos() {
 
     Promise.resolve(
       connector.client
-        .from('metodos_pago')
+        .from('metodos_cobro')
         .select('*')
-        .eq('activo', true)
+        .eq('is_active', true)
         .eq('empresa_id', empresaId)
         .order('nombre')
     )
@@ -55,17 +55,17 @@ export function useMetodosPagoActivos() {
           await db.writeTransaction(async (tx) => {
             for (const m of remote) {
               await tx.execute(
-                'INSERT INTO metodos_pago (id, nombre, moneda, activo, empresa_id, created_at) VALUES (?, ?, ?, 1, ?, ?)',
+                'INSERT INTO metodos_cobro (id, nombre, moneda, is_active, empresa_id, created_at) VALUES (?, ?, ?, 1, ?, ?)',
                 [m.id, m.nombre, m.moneda, empresaId, m.created_at]
               )
             }
           })
         } catch (err) {
-          console.warn('[metodos_pago] Error al insertar localmente:', err)
+          console.warn('[metodos_cobro] Error al insertar localmente:', err)
         }
       })
       .catch((err: unknown) => {
-        console.warn('[metodos_pago] Error al cargar desde Supabase:', err)
+        console.warn('[metodos_cobro] Error al cargar desde Supabase:', err)
         seeded.current = false
       })
   }, [isLoading, metodos.length, empresaId])
@@ -82,14 +82,18 @@ export async function createPaymentMethod(
   const now = new Date().toISOString()
 
   await kysely
-    .insertInto('metodos_pago')
+    .insertInto('metodos_cobro')
     .values({
       id,
       nombre: name.toUpperCase(),
-      moneda: currency,
-      activo: 1,
+      moneda_id: currency,
+      tipo: 'EFECTIVO',
+      requiere_referencia: 0,
+      saldo_actual: '0.00',
+      is_active: 1,
       empresa_id: companyId,
       created_at: now,
+      updated_at: now,
     })
     .execute()
 
@@ -98,12 +102,12 @@ export async function createPaymentMethod(
 
 export async function updatePaymentMethod(
   id: string,
-  data: { nombre?: string; activo?: boolean }
+  data: { nombre?: string; is_active?: boolean }
 ) {
   const updates: Record<string, unknown> = {}
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()
-  if (data.activo !== undefined) updates.activo = data.activo ? 1 : 0
+  if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
 
-  await kysely.updateTable('metodos_pago').set(updates).where('id', '=', id).execute()
+  await kysely.updateTable('metodos_cobro').set(updates).where('id', '=', id).execute()
 }

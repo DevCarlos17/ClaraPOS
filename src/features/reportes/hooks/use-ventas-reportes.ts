@@ -84,7 +84,7 @@ export function useGananciaRango(fechaDesde: string, fechaHasta: string) {
        COALESCE(SUM(
          (CAST(dv.precio_unitario_usd AS REAL) - CAST(p.costo_usd AS REAL)) * CAST(dv.cantidad AS REAL)
        ), 0) as ganancia
-     FROM detalle_venta dv
+     FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?`,
@@ -132,7 +132,7 @@ export function useVentasPorDeptoRango(fechaDesde: string, fechaHasta: string) {
     `SELECT
        d.nombre as departamento,
        COALESCE(SUM(CAST(dv.precio_unitario_usd AS REAL) * CAST(dv.cantidad AS REAL)), 0) as total_usd
-     FROM detalle_venta dv
+     FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      JOIN departamentos d ON p.departamento_id = d.id
@@ -160,13 +160,14 @@ export function usePagosPorMetodoRango(fechaDesde: string, fechaHasta: string) {
   const { data, isLoading } = useQuery(
     `SELECT
        mp.nombre,
-       mp.moneda,
+       mon.codigo_iso as moneda,
        COALESCE(SUM(CAST(pg.monto_usd AS REAL)), 0) as total_usd,
        COALESCE(SUM(CAST(pg.monto AS REAL)), 0) as total_original
      FROM pagos pg
-     JOIN metodos_pago mp ON pg.metodo_pago_id = mp.id
+     JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+     LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      WHERE pg.empresa_id = ? AND pg.fecha >= ? AND pg.fecha <= ?
-     GROUP BY mp.id, mp.nombre, mp.moneda
+     GROUP BY mp.id, mp.nombre, mon.codigo_iso
      ORDER BY total_usd DESC`,
     [empresaId, start, end]
   )
@@ -194,7 +195,7 @@ export function useTopProductosVentas(fechaDesde: string, fechaHasta: string, li
        p.nombre,
        COALESCE(SUM(CAST(dv.cantidad AS REAL)), 0) as cantidad,
        COALESCE(SUM(CAST(dv.precio_unitario_usd AS REAL) * CAST(dv.cantidad AS REAL)), 0) as total_usd
-     FROM detalle_venta dv
+     FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
@@ -223,14 +224,14 @@ export function useTopClientesVentas(fechaDesde: string, fechaHasta: string, lim
 
   const { data, isLoading } = useQuery(
     `SELECT
-       c.nombre_social as nombre,
+       c.nombre as nombre,
        c.identificacion,
        COUNT(*) as facturas,
        COALESCE(SUM(CAST(v.total_usd AS REAL)), 0) as total_usd
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
      WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
-     GROUP BY c.id, c.nombre_social, c.identificacion
+     GROUP BY c.id, c.nombre, c.identificacion
      ORDER BY total_usd DESC
      LIMIT ${limit}`,
     [empresaId, start, end]

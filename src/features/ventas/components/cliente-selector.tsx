@@ -28,7 +28,7 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
   }, [])
 
   const handleSelect = (cliente: Cliente) => {
-    setSelectedNombre(cliente.nombre_social)
+    setSelectedNombre(cliente.nombre)
     setSelectedInfo(`${cliente.identificacion} | Saldo: ${formatUsd(cliente.saldo_actual)}`)
     setQuery('')
     setOpen(false)
@@ -93,7 +93,7 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
               >
                 <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{c.nombre_social}</p>
+                    <p className="text-sm font-medium truncate">{c.nombre}</p>
                     <p className="text-xs text-muted-foreground">{c.identificacion}</p>
                   </div>
                   <span className="text-xs text-muted-foreground shrink-0">

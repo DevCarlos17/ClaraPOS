@@ -48,7 +48,7 @@ export function useInventarioPorDepto() {
        COALESCE(SUM(CAST(p.costo_usd AS REAL) * CAST(p.stock AS REAL)), 0) as valor_usd
      FROM productos p
      JOIN departamentos d ON p.departamento_id = d.id
-     WHERE p.empresa_id = ? AND p.activo = 1 AND p.tipo = 'P'
+     WHERE p.empresa_id = ? AND p.is_active = 1 AND p.tipo = 'P'
      GROUP BY d.id, d.nombre
      HAVING valor_usd > 0
      ORDER BY valor_usd DESC`,
@@ -111,7 +111,7 @@ export function useTopProductosRango(
        p.codigo,
        COALESCE(SUM(CAST(dv.cantidad AS REAL)), 0) as cantidad,
        COALESCE(SUM(CAST(dv.precio_unitario_usd AS REAL) * CAST(dv.cantidad AS REAL)), 0) as total_usd
-     FROM detalle_venta dv
+     FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?

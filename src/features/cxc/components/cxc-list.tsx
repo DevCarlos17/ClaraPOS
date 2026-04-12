@@ -112,7 +112,7 @@ export function CxcList() {
             <tbody>
               {clientes.map((c) => {
                 const saldo = parseFloat(c.saldo_actual)
-                const limite = parseFloat(c.limite_credito)
+                const limite = parseFloat(c.limite_credito_usd)
                 const excedido = limite > 0 && saldo > limite
                 return (
                   <tr
@@ -121,7 +121,7 @@ export function CxcList() {
                     onClick={() => handleSelectCliente(c)}
                   >
                     <td className="px-4 py-3 font-mono text-xs">{c.identificacion}</td>
-                    <td className="px-4 py-3 font-medium">{c.nombre_social}</td>
+                    <td className="px-4 py-3 font-medium">{c.nombre}</td>
                     <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">
                       {c.telefono || '-'}
                     </td>

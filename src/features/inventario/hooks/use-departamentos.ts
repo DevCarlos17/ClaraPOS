@@ -7,7 +7,10 @@ export interface Departamento {
   id: string
   codigo: string
   nombre: string
-  activo: number
+  parent_id: string | null
+  descripcion: string | null
+  prioridad_visual: number
+  is_active: number
   created_at: string
   updated_at: string
 }
@@ -23,7 +26,7 @@ export function useDepartamentos() {
   const { data, isLoading } = useQuery(
     `SELECT d.*, (
        SELECT COUNT(*) FROM productos p
-       WHERE p.departamento_id = d.id AND p.activo = 1
+       WHERE p.departamento_id = d.id AND p.is_active = 1
      ) AS articulos_activos
      FROM departamentos d
      WHERE d.empresa_id = ?
@@ -38,7 +41,7 @@ export function useDepartamentosActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM departamentos WHERE empresa_id = ? AND activo = 1 ORDER BY CAST(codigo AS INTEGER) ASC',
+    'SELECT * FROM departamentos WHERE empresa_id = ? AND is_active = 1 ORDER BY CAST(codigo AS INTEGER) ASC',
     [empresaId]
   )
   return { departamentos: (data ?? []) as Departamento[], isLoading }
@@ -72,7 +75,8 @@ export async function crearDepartamento(nombre: string, empresaId: string) {
       id,
       codigo,
       nombre: nombre.toUpperCase(),
-      activo: 1,
+      prioridad_visual: 0,
+      is_active: 1,
       empresa_id: empresaId,
       created_at: now,
       updated_at: now,
@@ -84,13 +88,15 @@ export async function crearDepartamento(nombre: string, empresaId: string) {
 
 export async function actualizarDepartamento(
   id: string,
-  data: { nombre?: string; activo?: boolean }
+  data: { nombre?: string; descripcion?: string; prioridad_visual?: number; is_active?: boolean }
 ) {
   const now = new Date().toISOString()
   const updates: Record<string, unknown> = { updated_at: now }
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()
-  if (data.activo !== undefined) updates.activo = data.activo ? 1 : 0
+  if (data.descripcion !== undefined) updates.descripcion = data.descripcion
+  if (data.prioridad_visual !== undefined) updates.prioridad_visual = data.prioridad_visual
+  if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
 
   await kysely.updateTable('departamentos').set(updates).where('id', '=', id).execute()
 }
@@ -100,7 +106,7 @@ export async function tieneProductosActivos(departamentoId: string): Promise<boo
     .selectFrom('productos')
     .select(kysely.fn.count('id').as('count'))
     .where('departamento_id', '=', departamentoId)
-    .where('activo', '=', 1)
+    .where('is_active', '=', 1)
     .executeTakeFirst()
 
   return Number(result?.count ?? 0) > 0
@@ -111,7 +117,7 @@ export async function tieneProductosConExistencia(departamentoId: string): Promi
     .selectFrom('productos')
     .select('stock')
     .where('departamento_id', '=', departamentoId)
-    .where('activo', '=', 1)
+    .where('is_active', '=', 1)
     .where('tipo', '=', 'P')
     .execute()
 
@@ -123,7 +129,7 @@ export function useProductosPorDepartamento(departamentoId: string | null) {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT id, codigo, nombre, activo, created_at
+    `SELECT id, codigo, nombre, is_active, created_at
      FROM productos
      WHERE empresa_id = ? AND departamento_id = ?
      ORDER BY nombre ASC`,
@@ -134,7 +140,7 @@ export function useProductosPorDepartamento(departamentoId: string | null) {
     id: string
     codigo: string
     nombre: string
-    activo: number
+    is_active: number
     created_at: string
   }[]
 

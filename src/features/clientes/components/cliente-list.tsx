@@ -25,21 +25,21 @@ export function ClienteList() {
   const clientesFiltrados = useMemo(() => {
     let resultado = clientes
     if (filtroActivos) {
-      resultado = resultado.filter((c) => c.activo === 1)
+      resultado = resultado.filter((c) => c.is_active === 1)
     }
     if (busqueda.trim().length >= 2) {
       const term = busqueda.toUpperCase()
       resultado = resultado.filter(
         (c) =>
           c.identificacion.toUpperCase().includes(term) ||
-          c.nombre_social.toUpperCase().includes(term)
+          c.nombre.toUpperCase().includes(term)
       )
     }
     return resultado
   }, [clientes, busqueda, filtroActivos])
 
   const resumen = useMemo(() => {
-    const activos = clientes.filter((c) => c.activo === 1)
+    const activos = clientes.filter((c) => c.is_active === 1)
     const totalSaldo = activos.reduce(
       (sum, c) => sum + parseFloat(c.saldo_actual || '0'),
       0
@@ -67,7 +67,7 @@ export function ClienteList() {
   }
 
   async function handleToggleActivo(cliente: Cliente) {
-    const nuevoEstado = cliente.activo !== 1
+    const nuevoEstado = cliente.is_active !== 1
 
     if (!nuevoEstado) {
       setTogglingId(cliente.id)
@@ -77,7 +77,7 @@ export function ClienteList() {
           toast.error('No se puede desactivar: tiene saldo pendiente')
           return
         }
-        await actualizarCliente(cliente.id, { activo: false })
+        await actualizarCliente(cliente.id, { is_active: false })
         toast.success('Cliente desactivado')
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Error inesperado'
@@ -88,7 +88,7 @@ export function ClienteList() {
     } else {
       setTogglingId(cliente.id)
       try {
-        await actualizarCliente(cliente.id, { activo: true })
+        await actualizarCliente(cliente.id, { is_active: true })
         toast.success('Cliente activado')
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Error inesperado'
@@ -200,12 +200,12 @@ export function ClienteList() {
                     onClick={() => handleVerDetalle(cli)}
                   >
                     <td className="px-4 py-3 font-mono text-gray-900">{cli.identificacion}</td>
-                    <td className="px-4 py-3 text-gray-900">{cli.nombre_social}</td>
+                    <td className="px-4 py-3 text-gray-900">{cli.nombre}</td>
                     <td className="px-4 py-3 text-gray-600 hidden sm:table-cell">
                       {cli.telefono || '-'}
                     </td>
                     <td className="px-4 py-3 text-right text-gray-600">
-                      {formatUsd(cli.limite_credito)}
+                      {formatUsd(cli.limite_credito_usd)}
                     </td>
                     <td className={`px-4 py-3 text-right font-medium ${saldo > 0 ? 'text-red-600' : 'text-green-600'}`}>
                       {formatUsd(saldo)}
@@ -219,7 +219,7 @@ export function ClienteList() {
                         disabled={togglingId === cli.id}
                         className="disabled:opacity-50"
                       >
-                        {cli.activo === 1 ? (
+                        {cli.is_active === 1 ? (
                           <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
                             Activo
                           </span>

@@ -47,7 +47,7 @@ export function DepartamentoList() {
           cmp = a.nombre.localeCompare(b.nombre)
           break
         case 'estado':
-          cmp = a.activo - b.activo
+          cmp = a.is_active - b.is_active
           break
         case 'articulos':
           cmp = a.articulos_activos - b.articulos_activos
@@ -95,7 +95,7 @@ export function DepartamentoList() {
 
   async function handleToggleActivo(e: React.MouseEvent, departamento: DepartamentoConConteo) {
     e.stopPropagation()
-    const nuevoEstado = departamento.activo !== 1
+    const nuevoEstado = departamento.is_active !== 1
 
     setTogglingId(departamento.id)
     try {
@@ -105,10 +105,10 @@ export function DepartamentoList() {
           toast.error('No se puede desactivar: tiene productos con existencia actual')
           return
         }
-        await actualizarDepartamento(departamento.id, { activo: false })
+        await actualizarDepartamento(departamento.id, { is_active: false })
         toast.success('Departamento desactivado')
       } else {
-        await actualizarDepartamento(departamento.id, { activo: true })
+        await actualizarDepartamento(departamento.id, { is_active: true })
         toast.success('Departamento activado')
       }
     } catch (error) {
@@ -231,7 +231,7 @@ export function DepartamentoList() {
                       disabled={togglingId === dep.id}
                       className="disabled:opacity-50"
                     >
-                      {dep.activo === 1 ? (
+                      {dep.is_active === 1 ? (
                         <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
                           Activo
                         </span>

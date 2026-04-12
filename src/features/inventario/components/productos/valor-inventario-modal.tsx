@@ -67,7 +67,7 @@ export function ValorInventarioModal({
     const acc = new Map<string, DeptoData>()
 
     for (const p of productos) {
-      if (p.tipo !== 'P' || p.activo !== 1) continue
+      if (p.tipo !== 'P' || p.is_active !== 1) continue
       const costo = parseFloat(p.costo_usd)
       const stock = parseFloat(p.stock)
       if (isNaN(costo) || isNaN(stock) || stock <= 0) continue

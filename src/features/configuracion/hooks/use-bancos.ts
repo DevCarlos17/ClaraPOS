@@ -8,7 +8,7 @@ export interface Banco {
   banco: string
   numero_cuenta: string
   cedula_rif: string
-  activo: number
+  is_active: number
   empresa_id: string
   created_at: string
 }
@@ -18,7 +18,7 @@ export function useBancos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM bancos WHERE empresa_id = ? ORDER BY banco ASC',
+    'SELECT * FROM bancos_empresa WHERE empresa_id = ? ORDER BY banco ASC',
     [empresaId]
   )
   return { bancos: (data ?? []) as Banco[], isLoading }
@@ -34,13 +34,16 @@ export async function createBanco(
   const now = new Date().toISOString()
 
   await kysely
-    .insertInto('bancos')
+    .insertInto('bancos_empresa')
     .values({
       id,
-      banco: banco.toUpperCase(),
-      numero_cuenta: numeroCuenta,
-      cedula_rif: cedulaRif.toUpperCase(),
-      activo: 1,
+      nombre_banco: banco.toUpperCase(),
+      nro_cuenta: numeroCuenta,
+      titular: cedulaRif.toUpperCase(),
+      moneda_id: 'USD',
+      saldo_actual: '0.00',
+      updated_at: now,
+      is_active: 1,
       empresa_id: companyId,
       created_at: now,
     })
@@ -51,14 +54,14 @@ export async function createBanco(
 
 export async function updateBanco(
   id: string,
-  data: { banco?: string; numero_cuenta?: string; cedula_rif?: string; activo?: boolean }
+  data: { nombre_banco?: string; nro_cuenta?: string; titular?: string; is_active?: boolean }
 ) {
   const updates: Record<string, unknown> = {}
 
-  if (data.banco !== undefined) updates.banco = data.banco.toUpperCase()
-  if (data.numero_cuenta !== undefined) updates.numero_cuenta = data.numero_cuenta
-  if (data.cedula_rif !== undefined) updates.cedula_rif = data.cedula_rif.toUpperCase()
-  if (data.activo !== undefined) updates.activo = data.activo ? 1 : 0
+  if (data.nombre_banco !== undefined) updates.nombre_banco = data.nombre_banco.toUpperCase()
+  if (data.nro_cuenta !== undefined) updates.nro_cuenta = data.nro_cuenta
+  if (data.titular !== undefined) updates.titular = data.titular.toUpperCase()
+  if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
 
-  await kysely.updateTable('bancos').set(updates).where('id', '=', id).execute()
+  await kysely.updateTable('bancos_empresa').set(updates).where('id', '=', id).execute()
 }

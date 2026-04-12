@@ -70,7 +70,7 @@ export function useNotasCredito() {
        nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.motivo,
        nc.tasa_historica, nc.monto_total_usd, nc.monto_total_bs, nc.fecha,
        v.nro_factura,
-       c.nombre_social as cliente_nombre
+       c.nombre as cliente_nombre
      FROM notas_credito nc
      JOIN ventas v ON nc.venta_id = v.id
      JOIN clientes c ON nc.cliente_id = c.id
@@ -95,11 +95,11 @@ export function useBuscarFacturaParaAnular(query: string) {
       ? `SELECT
            v.id, v.nro_factura, v.cliente_id, v.tasa, v.total_usd, v.total_bs,
            v.saldo_pend_usd, v.tipo, v.fecha,
-           c.nombre_social as cliente_nombre,
+           c.nombre as cliente_nombre,
            c.identificacion as cliente_identificacion
          FROM ventas v
          JOIN clientes c ON v.cliente_id = c.id
-         WHERE v.empresa_id = ? AND v.anulada = 0
+         WHERE v.empresa_id = ? AND v.status != 'ANULADA'
            AND v.nro_factura LIKE ?
          ORDER BY v.fecha DESC
          LIMIT 10`
@@ -116,7 +116,7 @@ export function useDetalleFactura(ventaId: string | null) {
   const { data: detalles, isLoading: loadingDetalles } = useQuery(
     ventaId
       ? `SELECT p.nombre as producto_nombre, p.codigo as producto_codigo, dv.cantidad, dv.precio_unitario_usd
-         FROM detalle_venta dv
+         FROM ventas_det dv
          JOIN productos p ON dv.producto_id = p.id
          WHERE dv.venta_id = ?`
       : '',
@@ -125,9 +125,10 @@ export function useDetalleFactura(ventaId: string | null) {
 
   const { data: pagos, isLoading: loadingPagos } = useQuery(
     ventaId
-      ? `SELECT mp.nombre as metodo_nombre, pg.moneda, pg.monto, pg.monto_usd
+      ? `SELECT mp.nombre as metodo_nombre, mon.codigo_iso as moneda, pg.monto, pg.monto_usd
          FROM pagos pg
-         JOIN metodos_pago mp ON pg.metodo_pago_id = mp.id
+         JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+         LEFT JOIN monedas mon ON pg.moneda_id = mon.id
          WHERE pg.venta_id = ?`
       : '',
     ventaId ? [ventaId] : []
@@ -168,10 +169,10 @@ export async function crearNotaCredito(
       total_bs: string
       saldo_pend_usd: string
       tipo: string
-      anulada: number
+      status: string
     }
 
-    if (venta.anulada === 1) {
+    if (venta.status === 'ANULADA') {
       throw new Error('Esta factura ya fue anulada')
     }
 
@@ -203,9 +204,9 @@ export async function crearNotaCredito(
       ]
     )
 
-    // 4. Reversion de stock — leer detalle_venta
+    // 4. Reversion de stock — leer ventas_det
     const detalleResult = await tx.execute(
-      'SELECT producto_id, cantidad FROM detalle_venta WHERE venta_id = ?',
+      'SELECT producto_id, cantidad FROM ventas_det WHERE venta_id = ?',
       [venta_id]
     )
 
@@ -351,7 +352,7 @@ export async function crearNotaCredito(
     }
 
     // 6. Marcar factura como anulada
-    await tx.execute('UPDATE ventas SET anulada = 1, saldo_pend_usd = ? WHERE id = ?', [
+    await tx.execute("UPDATE ventas SET status = 'ANULADA', saldo_pend_usd = ? WHERE id = ?", [
       '0.00',
       venta_id,
     ])

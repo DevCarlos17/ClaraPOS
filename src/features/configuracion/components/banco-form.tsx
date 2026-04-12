@@ -32,7 +32,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setBancoName(banco.banco)
         setNumeroCuenta(banco.numero_cuenta)
         setCedulaRif(banco.cedula_rif)
-        setActive(banco.activo === 1)
+        setActive(banco.is_active === 1)
       } else {
         setBancoName('')
         setNumeroCuenta('')
@@ -79,10 +79,10 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     try {
       if (isEditing && banco) {
         await updateBanco(banco.id, {
-          banco: parsed.data.banco,
-          numero_cuenta: parsed.data.numero_cuenta,
-          cedula_rif: parsed.data.cedula_rif,
-          activo: parsed.data.active,
+          nombre_banco: parsed.data.banco,
+          nro_cuenta: parsed.data.numero_cuenta,
+          titular: parsed.data.cedula_rif,
+          is_active: parsed.data.active,
         })
         toast.success('Banco actualizado correctamente')
       } else {

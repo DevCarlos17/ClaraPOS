@@ -21,11 +21,11 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
   const { user } = useCurrentUser()
 
   const [identificacion, setIdentificacion] = useState('')
-  const [nombreSocial, setNombreSocial] = useState('')
+  const [nombre, setNombre] = useState('')
   const [direccion, setDireccion] = useState('')
   const [telefono, setTelefono] = useState('')
   const [limiteCredito, setLimiteCredito] = useState('0')
-  const [activo, setActivo] = useState(true)
+  const [isActive, setIsActive] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -33,18 +33,18 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
     if (isOpen) {
       if (cliente) {
         setIdentificacion(cliente.identificacion)
-        setNombreSocial(cliente.nombre_social)
+        setNombre(cliente.nombre)
         setDireccion(cliente.direccion ?? '')
         setTelefono(cliente.telefono ?? '')
-        setLimiteCredito(cliente.limite_credito)
-        setActivo(cliente.activo === 1)
+        setLimiteCredito(cliente.limite_credito_usd)
+        setIsActive(cliente.is_active === 1)
       } else {
         setIdentificacion('')
-        setNombreSocial('')
+        setNombre('')
         setDireccion('')
         setTelefono('')
         setLimiteCredito('0')
-        setActivo(true)
+        setIsActive(true)
       }
       setErrors({})
       dialogRef.current?.showModal()
@@ -59,11 +59,11 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
 
     const parsed = clienteSchema.safeParse({
       identificacion,
-      nombre_social: nombreSocial,
+      nombre,
       direccion: direccion || undefined,
       telefono: telefono || undefined,
-      limite_credito: parseFloat(limiteCredito) || 0,
-      activo,
+      limite_credito_usd: parseFloat(limiteCredito) || 0,
+      is_active: isActive,
     })
 
     if (!parsed.success) {
@@ -80,20 +80,20 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
     try {
       if (isEditing && cliente) {
         await actualizarCliente(cliente.id, {
-          nombre_social: parsed.data.nombre_social,
+          nombre: parsed.data.nombre,
           direccion: parsed.data.direccion ?? null,
           telefono: parsed.data.telefono ?? null,
-          limite_credito: parsed.data.limite_credito,
-          activo: parsed.data.activo,
+          limite_credito_usd: parsed.data.limite_credito_usd,
+          is_active: parsed.data.is_active,
         })
         toast.success('Cliente actualizado correctamente')
       } else {
         await crearCliente({
           identificacion: parsed.data.identificacion,
-          nombre_social: parsed.data.nombre_social,
+          nombre: parsed.data.nombre,
           direccion: parsed.data.direccion,
           telefono: parsed.data.telefono,
-          limite_credito: parsed.data.limite_credito,
+          limite_credito_usd: parsed.data.limite_credito_usd,
           empresa_id: user!.empresa_id!,
         })
         toast.success('Cliente creado correctamente')
@@ -158,15 +158,15 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
             <input
               id="cli-nombre"
               type="text"
-              value={nombreSocial}
-              onChange={(e) => setNombreSocial(e.target.value.toUpperCase())}
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value.toUpperCase())}
               placeholder="Nombre del cliente o empresa"
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.nombre_social ? 'border-red-500' : 'border-gray-300'
+                errors.nombre ? 'border-red-500' : 'border-gray-300'
               }`}
             />
-            {errors.nombre_social && (
-              <p className="text-red-500 text-xs mt-1">{errors.nombre_social}</p>
+            {errors.nombre && (
+              <p className="text-red-500 text-xs mt-1">{errors.nombre}</p>
             )}
           </div>
 
@@ -213,11 +213,11 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
               value={limiteCredito}
               onChange={(e) => setLimiteCredito(e.target.value)}
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.limite_credito ? 'border-red-500' : 'border-gray-300'
+                errors.limite_credito_usd ? 'border-red-500' : 'border-gray-300'
               }`}
             />
-            {errors.limite_credito && (
-              <p className="text-red-500 text-xs mt-1">{errors.limite_credito}</p>
+            {errors.limite_credito_usd && (
+              <p className="text-red-500 text-xs mt-1">{errors.limite_credito_usd}</p>
             )}
           </div>
 
@@ -227,8 +227,8 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
               <input
                 id="cli-activo"
                 type="checkbox"
-                checked={activo}
-                onChange={(e) => setActivo(e.target.checked)}
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
                 className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <label htmlFor="cli-activo" className="text-sm font-medium text-gray-700">

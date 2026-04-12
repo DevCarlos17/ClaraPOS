@@ -9,13 +9,18 @@ export interface Producto {
   tipo: string
   nombre: string
   departamento_id: string
+  marca_id: string | null
+  unidad_base_id: string | null
   costo_usd: string
   precio_venta_usd: string
   precio_mayor_usd: string | null
+  costo_promedio: string
+  costo_ultimo: string
   stock: string
   stock_minimo: string
-  medida: string
-  activo: number
+  tipo_impuesto: string
+  maneja_lotes: number
+  is_active: number
   created_at: string
   updated_at: string
 }
@@ -36,7 +41,7 @@ export function useProductosActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM productos WHERE empresa_id = ? AND activo = 1 ORDER BY nombre ASC',
+    'SELECT * FROM productos WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre ASC',
     [empresaId]
   )
   return { productos: (data ?? []) as Producto[], isLoading }
@@ -47,7 +52,7 @@ export function useProductosTipo(tipo: 'P' | 'S') {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM productos WHERE empresa_id = ? AND tipo = ? AND activo = 1 ORDER BY nombre ASC',
+    'SELECT * FROM productos WHERE empresa_id = ? AND tipo = ? AND is_active = 1 ORDER BY nombre ASC',
     [empresaId, tipo]
   )
   return { productos: (data ?? []) as Producto[], isLoading }
@@ -58,7 +63,7 @@ export function useResumenInventario() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data: productos } = useQuery(
-    'SELECT costo_usd, stock, stock_minimo, tipo FROM productos WHERE empresa_id = ? AND activo = 1',
+    'SELECT costo_usd, stock, stock_minimo, tipo FROM productos WHERE empresa_id = ? AND is_active = 1',
     [empresaId]
   )
 
@@ -84,7 +89,6 @@ export async function crearProducto(data: {
   precio_venta_usd: number
   precio_mayor_usd: number | null
   stock_minimo: number
-  medida: string
   empresa_id: string
 }) {
   const id = uuidv4()
@@ -104,8 +108,11 @@ export async function crearProducto(data: {
       precio_mayor_usd: data.precio_mayor_usd?.toFixed(2) ?? null,
       stock: '0.000',
       stock_minimo: isServicio ? '0.000' : data.stock_minimo.toFixed(3),
-      medida: data.medida,
-      activo: 1,
+      costo_promedio: '0.00',
+      costo_ultimo: data.costo_usd.toFixed(2),
+      tipo_impuesto: 'EXENTO',
+      maneja_lotes: 0,
+      is_active: 1,
       empresa_id: data.empresa_id,
       created_at: now,
       updated_at: now,
@@ -124,8 +131,8 @@ export async function actualizarProducto(
     precio_venta_usd?: number
     precio_mayor_usd?: number | null
     stock_minimo?: number
-    medida?: string
-    activo?: boolean
+    tipo_impuesto?: string
+    is_active?: boolean
     tipo?: string
   }
 ) {
@@ -138,8 +145,8 @@ export async function actualizarProducto(
   if (data.precio_venta_usd !== undefined) updates.precio_venta_usd = data.precio_venta_usd.toFixed(2)
   if (data.precio_mayor_usd !== undefined) updates.precio_mayor_usd = data.precio_mayor_usd?.toFixed(2) ?? null
   if (data.stock_minimo !== undefined) updates.stock_minimo = data.stock_minimo.toFixed(3)
-  if (data.medida !== undefined) updates.medida = data.medida
-  if (data.activo !== undefined) updates.activo = data.activo ? 1 : 0
+  if (data.tipo_impuesto !== undefined) updates.tipo_impuesto = data.tipo_impuesto
+  if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
 
   // Si cambia a servicio, limpiar stock
   if (data.tipo === 'S') {

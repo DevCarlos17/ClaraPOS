@@ -86,7 +86,7 @@ export function PagoFacturaModal({
       await registrarPagoFactura({
         venta_id: factura.id,
         cliente_id: clienteId,
-        metodo_pago_id: metodoPagoId,
+        metodo_cobro_id: metodoPagoId,
         moneda: moneda as 'USD' | 'BS',
         tasa: tasaValor,
         monto,

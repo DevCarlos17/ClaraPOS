@@ -29,7 +29,7 @@ export function StockCriticoModal({
   const productosCriticos = productos.filter(
     (p) =>
       p.tipo === 'P' &&
-      p.activo === 1 &&
+      p.is_active === 1 &&
       parseFloat(p.stock_minimo) > 0 &&
       parseFloat(p.stock) < parseFloat(p.stock_minimo)
   )
@@ -113,9 +113,9 @@ export function StockCriticoModal({
           p.codigo,
           p.nombre,
           depMap.get(p.departamento_id) ?? '-',
-          stock.toFixed(p.medida === 'GRA' ? 3 : 0),
-          minimo.toFixed(p.medida === 'GRA' ? 3 : 0),
-          faltante.toFixed(p.medida === 'GRA' ? 3 : 0),
+          stock.toFixed(3),
+          minimo.toFixed(3),
+          faltante.toFixed(3),
         ]
       }),
       styles: { fontSize: 8 },
@@ -222,7 +222,7 @@ export function StockCriticoModal({
                   const stock = parseFloat(p.stock)
                   const minimo = parseFloat(p.stock_minimo)
                   const faltante = Math.max(0, minimo - stock)
-                  const dec = p.medida === 'GRA' ? 3 : 0
+                  const dec = 3
                   return (
                     <tr key={p.id} className="border-b border-gray-200">
                       <td className="px-3 py-2 text-gray-600">{i + 1}</td>

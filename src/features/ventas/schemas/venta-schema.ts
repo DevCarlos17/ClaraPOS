@@ -12,7 +12,7 @@ export const lineaVentaSchema = z.object({
 export type LineaVentaForm = z.infer<typeof lineaVentaSchema>
 
 export const pagoEntrySchema = z.object({
-  metodo_pago_id: z.string().min(1, 'Metodo de pago requerido'),
+  metodo_cobro_id: z.string().min(1, 'Metodo de pago requerido'),
   metodo_nombre: z.string(),
   moneda: z.enum(['USD', 'BS']),
   monto: z.number().positive('El monto debe ser mayor a 0'),

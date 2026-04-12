@@ -10,40 +10,16 @@ import {
 import { UsuarioForm } from './usuario-form'
 import { PageHeader } from '@/components/layout/page-header'
 
-const LEVEL_CONFIG: Record<number, { label: string; bgClass: string; textClass: string; ringClass: string }> = {
-  1: {
-    label: 'Propietario',
-    bgClass: 'bg-blue-50',
-    textClass: 'text-blue-700',
-    ringClass: 'ring-blue-600/20',
-  },
-  2: {
-    label: 'Supervisor',
-    bgClass: 'bg-green-50',
-    textClass: 'text-green-700',
-    ringClass: 'ring-green-600/20',
-  },
-  3: {
-    label: 'Cajero',
-    bgClass: 'bg-gray-50',
-    textClass: 'text-gray-700',
-    ringClass: 'ring-gray-600/20',
-  },
-}
-
-function LevelBadge({ level }: { level: number }) {
-  const config = LEVEL_CONFIG[level] ?? LEVEL_CONFIG[3]
+function RolBadge({ rolNombre }: { rolNombre: string | null }) {
   return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${config.bgClass} ${config.textClass} ${config.ringClass}`}
-    >
-      {config.label}
+    <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+      {rolNombre ?? 'Sin rol'}
     </span>
   )
 }
 
-function EstadoBadge({ activo }: { activo: number }) {
-  if (activo === 1) {
+function EstadoBadge({ isActive }: { isActive: number }) {
+  if (isActive === 1) {
     return (
       <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
         Activo
@@ -56,6 +32,8 @@ function EstadoBadge({ activo }: { activo: number }) {
     </span>
   )
 }
+
+type UsuarioWithRol = Usuario & { rol_nombre: string | null }
 
 export function UsuarioList() {
   const { user: currentUser } = useCurrentUser()
@@ -79,8 +57,8 @@ export function UsuarioList() {
     setEditingUsuario(undefined)
   }
 
-  async function handleToggleActivo(usuario: Usuario) {
-    const nuevoEstado = usuario.activo !== 1
+  async function handleToggleActivo(usuario: UsuarioWithRol) {
+    const nuevoEstado = usuario.is_active !== 1
     setTogglingId(usuario.id)
     try {
       await toggleEmpleado(usuario.id, nuevoEstado)
@@ -93,8 +71,8 @@ export function UsuarioList() {
     }
   }
 
-  const isOwnerRow = (usuario: Usuario) => usuario.level === 1
-  const isSelf = (usuario: Usuario) => usuario.id === currentUser?.id
+  const isOwnerRow = (usuario: UsuarioWithRol) => usuario.rol_nombre === 'Propietario'
+  const isSelf = (usuario: UsuarioWithRol) => usuario.id === currentUser?.id
 
   if (isLoading) {
     return (
@@ -133,7 +111,7 @@ export function UsuarioList() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Nombre</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Correo</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Nivel</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Rol</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700 hidden sm:table-cell">
                   Fecha
@@ -150,18 +128,18 @@ export function UsuarioList() {
                   <td className="px-4 py-3 text-gray-900 font-medium">{usr.nombre}</td>
                   <td className="px-4 py-3 text-gray-600">{usr.email}</td>
                   <td className="px-4 py-3">
-                    <LevelBadge level={usr.level} />
+                    <RolBadge rolNombre={usr.rol_nombre} />
                   </td>
                   <td className="px-4 py-3">
                     {isOwnerRow(usr) || isSelf(usr) ? (
-                      <EstadoBadge activo={usr.activo} />
+                      <EstadoBadge isActive={usr.is_active} />
                     ) : (
                       <button
                         onClick={() => handleToggleActivo(usr)}
                         disabled={togglingId === usr.id}
                         className="disabled:opacity-50"
                       >
-                        <EstadoBadge activo={usr.activo} />
+                        <EstadoBadge isActive={usr.is_active} />
                       </button>
                     )}
                   </td>

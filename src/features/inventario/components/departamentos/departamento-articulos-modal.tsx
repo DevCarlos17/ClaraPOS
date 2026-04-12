@@ -98,7 +98,7 @@ export function DepartamentoArticulosModal({
                       </td>
                       <td className="px-3 py-2 text-gray-900">{p.nombre}</td>
                       <td className="px-3 py-2">
-                        {p.activo === 1 ? (
+                        {p.is_active === 1 ? (
                           <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
                             Activo
                           </span>

@@ -30,7 +30,7 @@ export function PosTerminal() {
 
   const handleSelectCliente = (cliente: Cliente) => {
     setClienteId(cliente.id)
-    setClienteNombre(cliente.nombre_social)
+    setClienteNombre(cliente.nombre)
   }
 
   const handleClearCliente = () => {
@@ -104,7 +104,7 @@ export function PosTerminal() {
           precio_unitario_usd: l.precio_unitario_usd,
         })),
         pagos: pagos.map((p) => ({
-          metodo_pago_id: p.metodo_pago_id,
+          metodo_cobro_id: p.metodo_cobro_id,
           moneda: p.moneda,
           monto: p.monto,
           referencia: p.referencia,

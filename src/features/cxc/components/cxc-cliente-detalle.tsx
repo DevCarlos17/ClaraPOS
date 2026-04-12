@@ -77,7 +77,7 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
                   {cliente.identificacion}
                 </span>
               </div>
-              <h2 className="text-xl font-semibold mt-1">{cliente.nombre_social}</h2>
+              <h2 className="text-xl font-semibold mt-1">{cliente.nombre}</h2>
             </div>
             <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
               <X className="h-5 w-5 text-muted-foreground" />
@@ -190,7 +190,7 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
         isOpen={abonoGlobalOpen}
         onClose={() => setAbonoGlobalOpen(false)}
         clienteId={cliente.id}
-        clienteNombre={cliente.nombre_social}
+        clienteNombre={cliente.nombre}
         saldoActual={saldo}
         onSuccess={handlePaymentSuccess}
       />

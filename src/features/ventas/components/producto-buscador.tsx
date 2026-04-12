@@ -71,7 +71,7 @@ export function ProductoBuscador({ onSelect }: ProductoBuscadorProps) {
                       {p.nombre}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {p.tipo === 'S' ? 'Servicio' : `Stock: ${parseFloat(p.stock).toFixed(3)} ${p.medida}`}
+                      {p.tipo === 'S' ? 'Servicio' : `Stock: ${parseFloat(p.stock).toFixed(3)}`}
                     </p>
                   </div>
                   <span className="text-sm font-medium shrink-0">

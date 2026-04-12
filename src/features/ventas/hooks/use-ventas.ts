@@ -10,7 +10,7 @@ export interface LineaVenta {
 }
 
 export interface PagoEntry {
-  metodo_pago_id: string
+  metodo_cobro_id: string
   moneda: 'USD' | 'BS'
   monto: number
   referencia?: string
@@ -40,7 +40,7 @@ export function useBuscarProductosVenta(query: string) {
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT * FROM productos WHERE empresa_id = ? AND activo = 1
+      ? `SELECT * FROM productos WHERE empresa_id = ? AND is_active = 1
          AND (nombre LIKE ? OR codigo LIKE ?)
          AND (tipo = 'S' OR CAST(stock AS REAL) > 0)
          ORDER BY nombre ASC LIMIT 10`
@@ -58,7 +58,6 @@ export interface ProductoVenta {
   nombre: string
   precio_venta_usd: string
   stock: string
-  medida: string
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
@@ -97,8 +96,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
     // 3. INSERT venta
     await tx.execute(
-      `INSERT INTO ventas (id, cliente_id, nro_factura, tasa, total_usd, total_bs, saldo_pend_usd, tipo, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO ventas (id, cliente_id, nro_factura, tasa, total_usd, total_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PROCESADA', ?, ?, ?, ?)`,
       [
         ventaId,
         cliente_id,
@@ -119,7 +118,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     for (const linea of lineas) {
       const detalleId = uuidv4()
       await tx.execute(
-        `INSERT INTO detalle_venta (id, venta_id, producto_id, cantidad, precio_unitario_usd, empresa_id, created_at)
+        `INSERT INTO ventas_det (id, venta_id, producto_id, cantidad, precio_unitario_usd, empresa_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           detalleId,
@@ -237,13 +236,13 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
 
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_pago_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoId,
           ventaId,
           cliente_id,
-          pago.metodo_pago_id,
+          pago.metodo_cobro_id,
           pago.moneda,
           tasa.toFixed(4),
           pago.monto.toFixed(2),

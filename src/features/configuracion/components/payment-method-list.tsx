@@ -30,10 +30,10 @@ export function PaymentMethodList() {
   }
 
   async function handleToggleActivo(method: PaymentMethod) {
-    const nuevoEstado = method.activo !== 1
+    const nuevoEstado = method.is_active !== 1
     setTogglingId(method.id)
     try {
-      await updatePaymentMethod(method.id, { activo: nuevoEstado })
+      await updatePaymentMethod(method.id, { is_active: nuevoEstado })
       toast.success(nuevoEstado ? 'Metodo de pago activado' : 'Metodo de pago desactivado')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
@@ -107,7 +107,7 @@ export function PaymentMethodList() {
                       disabled={togglingId === m.id}
                       className="disabled:opacity-50"
                     >
-                      {m.activo === 1 ? (
+                      {m.is_active === 1 ? (
                         <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
                           Activo
                         </span>

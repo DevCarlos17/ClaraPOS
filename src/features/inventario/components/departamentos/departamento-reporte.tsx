@@ -48,8 +48,8 @@ export function DepartamentoReporte({
     if (e.target === dialogRef.current) onClose()
   }
 
-  const totalActivos = departamentosOrdenados.filter((d) => d.activo === 1).length
-  const totalInactivos = departamentosOrdenados.filter((d) => d.activo === 0).length
+  const totalActivos = departamentosOrdenados.filter((d) => d.is_active === 1).length
+  const totalInactivos = departamentosOrdenados.filter((d) => d.is_active === 0).length
   const totalArticulos = departamentosOrdenados.reduce(
     (sum, d) => sum + d.articulos_activos,
     0
@@ -111,7 +111,7 @@ export function DepartamentoReporte({
         d.codigo,
         d.nombre,
         String(d.articulos_activos),
-        d.activo === 1 ? 'Activo' : 'Inactivo',
+        d.is_active === 1 ? 'Activo' : 'Inactivo',
       ]),
       styles: { fontSize: 9 },
       headStyles: { fillColor: [37, 99, 235] },
@@ -252,7 +252,7 @@ export function DepartamentoReporte({
                       {dep.articulos_activos}
                     </td>
                     <td className="px-3 py-2">
-                      {dep.activo === 1 ? 'Activo' : 'Inactivo'}
+                      {dep.is_active === 1 ? 'Activo' : 'Inactivo'}
                     </td>
                   </tr>
                 ))}

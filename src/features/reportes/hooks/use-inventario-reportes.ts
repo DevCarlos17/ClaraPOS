@@ -60,7 +60,7 @@ export function useInventarioKpis(fechaDesde: string, fechaHasta: string) {
        COUNT(*) as activos,
        SUM(CASE WHEN tipo = 'P' AND CAST(stock AS REAL) < CAST(stock_minimo AS REAL) AND CAST(stock_minimo AS REAL) > 0 THEN 1 ELSE 0 END) as criticos
      FROM productos
-     WHERE empresa_id = ? AND activo = 1`,
+     WHERE empresa_id = ? AND is_active = 1`,
     [empresaId]
   )
 
@@ -96,7 +96,7 @@ export function useValorPorDepto() {
        COALESCE(SUM(CAST(p.costo_usd AS REAL) * CAST(p.stock AS REAL)), 0) as valor_usd
      FROM productos p
      JOIN departamentos d ON p.departamento_id = d.id
-     WHERE p.empresa_id = ? AND p.activo = 1 AND p.tipo = 'P'
+     WHERE p.empresa_id = ? AND p.is_active = 1 AND p.tipo = 'P'
      GROUP BY d.id, d.nombre
      HAVING valor_usd > 0
      ORDER BY valor_usd DESC`,
@@ -126,7 +126,7 @@ export function useProductosStockCritico() {
        CAST(p.stock_minimo AS REAL) as stock_minimo
      FROM productos p
      JOIN departamentos d ON p.departamento_id = d.id
-     WHERE p.empresa_id = ? AND p.activo = 1 AND p.tipo = 'P'
+     WHERE p.empresa_id = ? AND p.is_active = 1 AND p.tipo = 'P'
        AND CAST(p.stock AS REAL) < CAST(p.stock_minimo AS REAL)
        AND CAST(p.stock_minimo AS REAL) > 0
      ORDER BY (CAST(p.stock_minimo AS REAL) - CAST(p.stock AS REAL)) DESC`,

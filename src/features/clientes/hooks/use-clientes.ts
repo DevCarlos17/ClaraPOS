@@ -6,12 +6,12 @@ import { v4 as uuidv4 } from 'uuid'
 export interface Cliente {
   id: string
   identificacion: string
-  nombre_social: string
+  nombre: string
   direccion: string | null
   telefono: string | null
-  limite_credito: string
+  limite_credito_usd: string
   saldo_actual: string
-  activo: number
+  is_active: number
   created_at: string
   updated_at: string
 }
@@ -35,7 +35,7 @@ export function useClientes() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM clientes WHERE empresa_id = ? ORDER BY nombre_social ASC',
+    'SELECT * FROM clientes WHERE empresa_id = ? ORDER BY nombre ASC',
     [empresaId]
   )
   return { clientes: (data ?? []) as Cliente[], isLoading }
@@ -46,7 +46,7 @@ export function useClientesActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM clientes WHERE empresa_id = ? AND activo = 1 ORDER BY nombre_social ASC',
+    'SELECT * FROM clientes WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre ASC',
     [empresaId]
   )
   return { clientes: (data ?? []) as Cliente[], isLoading }
@@ -61,7 +61,7 @@ export function useBuscarClientes(query: string) {
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? 'SELECT * FROM clientes WHERE empresa_id = ? AND activo = 1 AND (identificacion LIKE ? OR nombre_social LIKE ?) ORDER BY nombre_social ASC LIMIT 10'
+      ? 'SELECT * FROM clientes WHERE empresa_id = ? AND is_active = 1 AND (identificacion LIKE ? OR nombre LIKE ?) ORDER BY nombre ASC LIMIT 10'
       : '',
     shouldSearch ? [empresaId, pattern, pattern] : []
   )
@@ -84,10 +84,10 @@ export function useMovimientosCliente(clienteId: string | undefined) {
 
 export async function crearCliente(data: {
   identificacion: string
-  nombre_social: string
+  nombre: string
   direccion?: string
   telefono?: string
-  limite_credito: number
+  limite_credito_usd: number
   empresa_id: string
 }) {
   const id = uuidv4()
@@ -98,12 +98,15 @@ export async function crearCliente(data: {
     .values({
       id,
       identificacion: data.identificacion.toUpperCase(),
-      nombre_social: data.nombre_social.toUpperCase(),
+      nombre: data.nombre.toUpperCase(),
       direccion: data.direccion || null,
       telefono: data.telefono || null,
-      limite_credito: data.limite_credito.toFixed(2),
+      limite_credito_usd: data.limite_credito_usd.toFixed(2),
       saldo_actual: '0.00',
-      activo: 1,
+      es_contribuyente_especial: 0,
+      es_agente_retencion_iva: 0,
+      es_agente_retencion_islr: 0,
+      is_active: 1,
       empresa_id: data.empresa_id,
       created_at: now,
       updated_at: now,
@@ -116,23 +119,23 @@ export async function crearCliente(data: {
 export async function actualizarCliente(
   id: string,
   data: {
-    nombre_social?: string
+    nombre?: string
     direccion?: string | null
     telefono?: string | null
-    limite_credito?: number
-    activo?: boolean
+    limite_credito_usd?: number
+    is_active?: boolean
   }
 ) {
   const now = new Date().toISOString()
   const updates: Record<string, unknown> = { updated_at: now }
 
-  if (data.nombre_social !== undefined)
-    updates.nombre_social = data.nombre_social.toUpperCase()
+  if (data.nombre !== undefined)
+    updates.nombre = data.nombre.toUpperCase()
   if (data.direccion !== undefined) updates.direccion = data.direccion || null
   if (data.telefono !== undefined) updates.telefono = data.telefono || null
-  if (data.limite_credito !== undefined)
-    updates.limite_credito = data.limite_credito.toFixed(2)
-  if (data.activo !== undefined) updates.activo = data.activo ? 1 : 0
+  if (data.limite_credito_usd !== undefined)
+    updates.limite_credito_usd = data.limite_credito_usd.toFixed(2)
+  if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
 
   await kysely
     .updateTable('clientes')

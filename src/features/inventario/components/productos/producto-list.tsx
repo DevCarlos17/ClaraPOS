@@ -72,8 +72,8 @@ export function ProductoList() {
 
   const productosFiltrados = useMemo(() => {
     return productos.filter((p) => {
-      if (filtroActivo && p.activo !== 1) return false
-      if (!filtroActivo && p.activo === 1) return false
+      if (filtroActivo && p.is_active !== 1) return false
+      if (!filtroActivo && p.is_active === 1) return false
       if (filtroDepartamento && p.departamento_id !== filtroDepartamento) return false
       if (filtroTipo && p.tipo !== filtroTipo) return false
       return true
@@ -434,7 +434,7 @@ export function ProductoList() {
                       ) : (
                         <div className="flex items-center justify-end gap-1.5">
                           <span className={stockBajo ? 'text-red-600 font-medium' : 'text-gray-900'}>
-                            {parseFloat(prod.stock).toFixed(prod.medida === 'GRA' ? 3 : 0)}
+                            {parseFloat(prod.stock).toFixed(3)}
                           </span>
                           {stockBajo && (
                             <span className="inline-flex items-center rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700 ring-1 ring-red-600/20 ring-inset">

@@ -6,7 +6,7 @@ import { v4 as uuidv4 } from 'uuid'
 export interface Compra {
   id: string
   proveedor_id: string
-  nro_compra: string
+  nro_factura: string
   tasa: string
   total_usd: string
   total_bs: string
@@ -17,7 +17,7 @@ export interface Compra {
 
 export interface DetalleCompra {
   id: string
-  compra_id: string
+  factura_compra_id: string
   producto_id: string
   cantidad: string
   costo_unitario_usd: string
@@ -40,7 +40,7 @@ export interface CrearCompraParams {
 
 export interface CrearCompraResult {
   compraId: string
-  nroCompra: string
+  nroFactura: string
 }
 
 export function useCompras() {
@@ -49,7 +49,7 @@ export function useCompras() {
 
   const { data, isLoading } = useQuery(
     `SELECT c.*, p.razon_social as proveedor_nombre
-     FROM compras c
+     FROM facturas_compra c
      LEFT JOIN proveedores p ON c.proveedor_id = p.id
      WHERE c.empresa_id = ?
      ORDER BY c.fecha DESC`,
@@ -65,9 +65,9 @@ export function useDetalleCompra(compraId: string) {
   const { data, isLoading } = useQuery(
     compraId
       ? `SELECT dc.*, p.codigo as producto_codigo, p.nombre as producto_nombre
-         FROM detalle_compra dc
+         FROM facturas_compra_det dc
          LEFT JOIN productos p ON dc.producto_id = p.id
-         WHERE dc.compra_id = ? AND dc.empresa_id = ?`
+         WHERE dc.factura_compra_id = ? AND dc.empresa_id = ?`
       : '',
     compraId ? [compraId, empresaId] : []
   )
@@ -89,7 +89,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   }
 
   let compraId = ''
-  let nroCompra = ''
+  let nroFactura = ''
 
   await db.writeTransaction(async (tx) => {
     const now = new Date().toISOString()
@@ -103,22 +103,22 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     totalUsd = Number(totalUsd.toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
 
-    // 2. Generar nro_compra (por empresa)
+    // 2. Generar nro_factura (por empresa)
     const countResult = await tx.execute(
-      'SELECT COUNT(*) as cnt FROM compras WHERE empresa_id = ?',
+      'SELECT COUNT(*) as cnt FROM facturas_compra WHERE empresa_id = ?',
       [empresa_id]
     )
     const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
-    nroCompra = String(count + 1).padStart(6, '0')
+    nroFactura = String(count + 1).padStart(6, '0')
 
-    // 3. INSERT compra (cabecera)
+    // 3. INSERT facturas_compra (cabecera)
     await tx.execute(
-      `INSERT INTO compras (id, proveedor_id, nro_compra, tasa, total_usd, total_bs, usuario_id, fecha, empresa_id, created_at)
+      `INSERT INTO facturas_compra (id, proveedor_id, nro_factura, tasa, total_usd, total_bs, usuario_id, fecha, empresa_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         compraId,
         proveedor_id,
-        nroCompra,
+        nroFactura,
         tasa.toFixed(4),
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
@@ -133,9 +133,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     for (const linea of lineas) {
       const detalleId = uuidv4()
 
-      // 4a. INSERT detalle_compra
+      // 4a. INSERT facturas_compra_det
       await tx.execute(
-        `INSERT INTO detalle_compra (id, compra_id, producto_id, cantidad, costo_unitario_usd, empresa_id, created_at)
+        `INSERT INTO facturas_compra_det (id, factura_compra_id, producto_id, cantidad, costo_unitario_usd, empresa_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           detalleId,
@@ -172,7 +172,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           linea.cantidad.toFixed(3),
           stockActual.toFixed(3),
           stockNuevo.toFixed(3),
-          `Compra ${nroCompra}`,
+          `Compra ${nroFactura}`,
           usuario_id,
           now,
           empresa_id,
@@ -193,5 +193,5 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     }
   })
 
-  return { compraId, nroCompra }
+  return { compraId, nroFactura }
 }

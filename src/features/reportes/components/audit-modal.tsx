@@ -93,7 +93,7 @@ export function AuditModal({ isOpen, onClose, fecha }: AuditModalProps) {
                               CR
                             </span>
                           )}
-                          {v.anulada === 1 && (
+                          {v.status === 'ANULADA' && (
                             <span className="inline-flex items-center rounded-full bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 ring-1 ring-gray-500/20 ring-inset">
                               ANULADA
                             </span>

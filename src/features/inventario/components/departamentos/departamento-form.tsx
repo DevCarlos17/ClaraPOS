@@ -54,7 +54,7 @@ export function DepartamentoForm({ isOpen, onClose, departamento }: Departamento
     e.preventDefault()
     setErrors({})
 
-    const parsed = departamentoSchema.safeParse({ codigo, nombre, activo: true })
+    const parsed = departamentoSchema.safeParse({ codigo, nombre, is_active: true })
 
     if (!parsed.success) {
       const fieldErrors: Record<string, string> = {}

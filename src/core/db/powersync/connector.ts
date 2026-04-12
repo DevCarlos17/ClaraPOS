@@ -111,7 +111,7 @@ export class SupabaseConnector
     return data as { success: boolean; userId: string; empresaId: string }
   }
 
-  async createEmployee(nombre: string, email: string, password: string, level: number) {
+  async createEmployee(nombre: string, email: string, password: string, rolId: string) {
     if (!this.currentSession) throw new Error('No hay sesion activa')
 
     const res = await fetch(`${this.config.supabaseUrl}/functions/v1/create-employee`, {
@@ -121,7 +121,7 @@ export class SupabaseConnector
         apikey: this.config.supabaseAnonKey,
         Authorization: `Bearer ${this.currentSession.access_token}`,
       },
-      body: JSON.stringify({ nombre, email, password, level }),
+      body: JSON.stringify({ nombre, email, password, rol_id: rolId }),
     })
 
     const data = await res.json()
@@ -131,7 +131,7 @@ export class SupabaseConnector
     return data as { success: boolean; userId: string }
   }
 
-  async updateEmployee(userId: string, updates: { level?: number; activo?: boolean; nombre?: string }) {
+  async updateEmployee(userId: string, updates: { rol_id?: string; is_active?: boolean; nombre?: string }) {
     if (!this.currentSession) throw new Error('No hay sesion activa')
 
     const res = await fetch(`${this.config.supabaseUrl}/functions/v1/update-employee`, {

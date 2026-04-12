@@ -12,8 +12,8 @@ interface ExportRow {
   precio_mayor_usd: number | null
   stock: number
   stock_minimo: number
-  medida: string
-  activo: string
+  tipo_impuesto: string
+  is_active: string
 }
 
 function buildRows(productos: Producto[], departamentos: Departamento[]): ExportRow[] {
@@ -30,8 +30,8 @@ function buildRows(productos: Producto[], departamentos: Departamento[]): Export
     precio_mayor_usd: p.precio_mayor_usd ? parseFloat(p.precio_mayor_usd) : null,
     stock: parseFloat(p.stock),
     stock_minimo: parseFloat(p.stock_minimo),
-    medida: p.medida,
-    activo: p.activo === 1 ? 'Si' : 'No',
+    tipo_impuesto: p.tipo_impuesto,
+    is_active: p.is_active === 1 ? 'Si' : 'No',
   }))
 }
 
@@ -61,8 +61,8 @@ export function exportarProductosCsv(
     'precio_mayor_usd',
     'stock',
     'stock_minimo',
-    'medida',
-    'activo',
+    'tipo_impuesto',
+    'is_active',
   ]
 
   const escape = (val: unknown): string => {
@@ -105,8 +105,8 @@ export function exportarProductosExcel(
       'precio_mayor_usd',
       'stock',
       'stock_minimo',
-      'medida',
-      'activo',
+      'tipo_impuesto',
+      'is_active',
     ],
   })
 
@@ -121,8 +121,8 @@ export function exportarProductosExcel(
     { wch: 14 }, // precio_mayor
     { wch: 10 }, // stock
     { wch: 14 }, // stock_minimo
-    { wch: 8 }, // medida
-    { wch: 8 }, // activo
+    { wch: 14 }, // tipo_impuesto
+    { wch: 8 },  // is_active
   ]
 
   const workbook = XLSX.utils.book_new()

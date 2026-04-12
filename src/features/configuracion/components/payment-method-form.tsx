@@ -30,7 +30,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
       if (method) {
         setName(method.nombre)
         setCurrency(method.moneda as 'USD' | 'BS')
-        setActive(method.activo === 1)
+        setActive(method.is_active === 1)
       } else {
         setName('')
         setCurrency('USD')
@@ -68,7 +68,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
       if (isEditing && method) {
         await updatePaymentMethod(method.id, {
           nombre: parsed.data.name,
-          activo: parsed.data.active,
+          is_active: parsed.data.active,
         })
         toast.success('Metodo de pago actualizado correctamente')
       } else {

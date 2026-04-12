@@ -65,7 +65,7 @@ export function PagoModal({
     setPagos((prev) => [
       ...prev,
       {
-        metodo_pago_id: metodoId,
+        metodo_cobro_id: metodoId,
         metodo_nombre: selectedMetodo!.nombre,
         moneda: monedaMetodo,
         monto: montoNum,
