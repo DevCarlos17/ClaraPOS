@@ -23,10 +23,10 @@ export function UsuarioForm({ isOpen, onClose, usuario }: UsuarioFormProps) {
   const empresaId = currentUser?.empresa_id ?? ''
 
   const { data: rolesData } = useQuery(
-    'SELECT id, nombre FROM roles WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre ASC',
+    'SELECT id, nombre, descripcion FROM roles WHERE empresa_id = ? AND is_active = 1 AND is_system = 0 ORDER BY nombre ASC',
     [empresaId]
   )
-  const roles = (rolesData ?? []) as { id: string; nombre: string }[]
+  const roles = (rolesData ?? []) as { id: string; nombre: string; descripcion: string | null }[]
 
   const [nombre, setNombre] = useState('')
   const [email, setEmail] = useState('')
@@ -34,6 +34,21 @@ export function UsuarioForm({ isOpen, onClose, usuario }: UsuarioFormProps) {
   const [rolId, setRolId] = useState<string>('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+
+  const { data: permisosData } = useQuery(
+    rolId
+      ? 'SELECT p.modulo, p.nombre FROM rol_permisos rp JOIN permisos p ON rp.permiso_id = p.id WHERE rp.rol_id = ? ORDER BY p.modulo, p.nombre'
+      : '',
+    rolId ? [rolId] : []
+  )
+  const permisosList = (permisosData ?? []) as { modulo: string; nombre: string }[]
+
+  const permisosAgrupados = permisosList.reduce<Record<string, string[]>>((acc, p) => {
+    const mod = p.modulo.charAt(0).toUpperCase() + p.modulo.slice(1)
+    if (!acc[mod]) acc[mod] = []
+    acc[mod].push(p.nombre)
+    return acc
+  }, {})
 
   useEffect(() => {
     if (isOpen) {
@@ -214,6 +229,32 @@ export function UsuarioForm({ isOpen, onClose, usuario }: UsuarioFormProps) {
             </select>
             {errors.rol_id && (
               <p className="text-red-500 text-xs mt-1">{errors.rol_id}</p>
+            )}
+            {rolId && Object.keys(permisosAgrupados).length > 0 ? (
+              <div className="mt-3 rounded-md border border-gray-200 bg-gray-50 p-3">
+                <p className="text-xs font-medium text-gray-600 mb-2">Permisos del rol:</p>
+                <div className="space-y-2">
+                  {Object.entries(permisosAgrupados).map(([modulo, permisos]) => (
+                    <div key={modulo}>
+                      <p className="text-xs font-medium text-gray-500 mb-1">{modulo}</p>
+                      <div className="flex flex-wrap gap-1">
+                        {permisos.map((p) => (
+                          <span
+                            key={p}
+                            className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700"
+                          >
+                            {p}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : rolId ? (
+              <p className="text-xs text-gray-400 mt-2">Sin permisos asignados</p>
+            ) : (
+              <p className="text-xs text-gray-400 mt-2">Selecciona un rol para ver sus permisos</p>
             )}
           </div>
 

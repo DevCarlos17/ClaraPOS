@@ -1,5 +1,5 @@
 const LEVEL_NAMES: Record<number, string> = {
-  1: 'Propietario',
+  1: 'Administrador',
   2: 'Supervisor',
   3: 'Cajero',
 }

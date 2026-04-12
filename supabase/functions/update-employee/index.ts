@@ -68,7 +68,7 @@ serve(async (req) => {
       );
     }
 
-    // Verificar que el caller es Propietario (is_system=true)
+    // Verificar que el caller es Administrador (is_system=true)
     if (callerUser.rol_id) {
       const { data: callerRole } = await supabaseAdmin
         .from("roles")
@@ -78,13 +78,13 @@ serve(async (req) => {
 
       if (!callerRole?.is_system) {
         return jsonResponse(
-          { error: "Solo el propietario puede modificar empleados" },
+          { error: "Solo el administrador puede modificar empleados" },
           403,
         );
       }
     } else {
       return jsonResponse(
-        { error: "Solo el propietario puede modificar empleados" },
+        { error: "Solo el administrador puede modificar empleados" },
         403,
       );
     }

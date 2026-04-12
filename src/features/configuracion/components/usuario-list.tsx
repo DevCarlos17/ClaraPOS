@@ -71,7 +71,7 @@ export function UsuarioList() {
     }
   }
 
-  const isOwnerRow = (usuario: UsuarioWithRol) => usuario.rol_nombre === 'Propietario'
+  const isOwnerRow = (usuario: UsuarioWithRol) => usuario.rol_nombre === 'Administrador'
   const isSelf = (usuario: UsuarioWithRol) => usuario.id === currentUser?.id
 
   if (isLoading) {

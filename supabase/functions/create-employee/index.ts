@@ -63,7 +63,7 @@ serve(async (req) => {
       return jsonResponse({ error: "Token invalido" }, 401);
     }
 
-    // Obtener datos del caller: empresa_id y verificar que es Propietario
+    // Obtener datos del caller: empresa_id y verificar que es Administrador
     const { data: callerUser, error: callerError } = await supabaseAdmin
       .from("usuarios")
       .select("empresa_id, rol_id")
@@ -84,7 +84,7 @@ serve(async (req) => {
       );
     }
 
-    // Verificar que el caller es Propietario (is_system=true)
+    // Verificar que el caller es Administrador (is_system=true)
     if (callerUser.rol_id) {
       const { data: callerRole } = await supabaseAdmin
         .from("roles")
@@ -94,13 +94,13 @@ serve(async (req) => {
 
       if (!callerRole?.is_system) {
         return jsonResponse(
-          { error: "Solo el propietario puede crear empleados" },
+          { error: "Solo el administrador puede crear empleados" },
           403,
         );
       }
     } else {
       return jsonResponse(
-        { error: "Solo el propietario puede crear empleados" },
+        { error: "Solo el administrador puede crear empleados" },
         403,
       );
     }
@@ -108,7 +108,7 @@ serve(async (req) => {
     // Verificar que el rol asignado pertenece a la misma empresa
     const { data: targetRole, error: roleError } = await supabaseAdmin
       .from("roles")
-      .select("id, empresa_id")
+      .select("id, empresa_id, is_system")
       .eq("id", rol_id)
       .single();
 
@@ -120,6 +120,13 @@ serve(async (req) => {
       return jsonResponse(
         { error: "El rol no pertenece a tu empresa" },
         403,
+      );
+    }
+
+    if (targetRole.is_system) {
+      return jsonResponse(
+        { error: "No puedes asignar el rol de administrador a un empleado" },
+        400,
       );
     }
 

@@ -103,7 +103,7 @@ serve(async (req) => {
       .insert([
         {
           empresa_id: empresa.id,
-          nombre: "Propietario",
+          nombre: "Administrador",
           descripcion: "Rol de sistema con acceso total",
           is_system: true,
         },
@@ -135,7 +135,7 @@ serve(async (req) => {
       );
     }
 
-    const rol = rolesData.find((r: { nombre: string }) => r.nombre === "Propietario")!;
+    const rol = rolesData.find((r: { nombre: string }) => r.nombre === "Administrador")!;
 
     // 5. Habilitar todos los permisos para el tenant
     const { data: permisos, error: permisosError } = await supabaseAdmin
@@ -185,7 +185,113 @@ serve(async (req) => {
       }
     }
 
-    // 6. Crear usuario auth con metadata
+    // 6. Seed rol_permisos para Supervisor y Cajero
+    const supervisorRol = rolesData.find(
+      (r: { nombre: string }) => r.nombre === "Supervisor",
+    );
+    const cajeroRol = rolesData.find(
+      (r: { nombre: string }) => r.nombre === "Cajero",
+    );
+
+    if (supervisorRol && cajeroRol && permisos && permisos.length > 0) {
+      const supervisorSlugs = [
+        "inventario.ver",
+        "inventario.crear",
+        "inventario.editar",
+        "inventario.ajustar",
+        "inventario.editar_precios",
+        "ventas.crear",
+        "ventas.anular",
+        "clientes.gestionar",
+        "clientes.credito",
+        "compras.crear",
+        "caja.abrir",
+        "caja.cerrar",
+        "caja.movimientos",
+        "reportes.ver",
+        "reportes.cuadre_caja",
+        "config.tasas",
+        "config.metodos_cobro",
+        "contabilidad.gastos",
+        "cxc.ver",
+        "cxp.ver",
+        "cxp.pagar",
+        "clinica.acceso",
+      ];
+
+      const cajeroSlugs = [
+        "inventario.ver",
+        "ventas.crear",
+        "clientes.gestionar",
+        "caja.abrir",
+        "caja.cerrar",
+        "reportes.ver",
+      ];
+
+      const { data: allPermisos } = await supabaseAdmin
+        .from("permisos")
+        .select("id, slug")
+        .eq("is_active", true);
+
+      if (allPermisos) {
+        const permisosBySlug = new Map(
+          allPermisos.map((p: { id: string; slug: string }) => [p.slug, p.id]),
+        );
+
+        const supervisorPermisos = supervisorSlugs
+          .filter((slug) => permisosBySlug.has(slug))
+          .map((slug) => ({
+            rol_id: supervisorRol.id,
+            permiso_id: permisosBySlug.get(slug)!,
+          }));
+
+        const cajeroPermisos = cajeroSlugs
+          .filter((slug) => permisosBySlug.has(slug))
+          .map((slug) => ({
+            rol_id: cajeroRol.id,
+            permiso_id: permisosBySlug.get(slug)!,
+          }));
+
+        const rolPermisos = [...supervisorPermisos, ...cajeroPermisos];
+
+        if (rolPermisos.length > 0) {
+          const { error: rpError } = await supabaseAdmin
+            .from("rol_permisos")
+            .insert(rolPermisos);
+
+          if (rpError) {
+            await supabaseAdmin
+              .from("tenant_permisos")
+              .delete()
+              .eq("tenant_id", tenant.id);
+            await supabaseAdmin
+              .from("roles")
+              .delete()
+              .eq("empresa_id", empresa.id);
+            await supabaseAdmin
+              .from("empresas_fiscal_ve")
+              .delete()
+              .eq("empresa_id", empresa.id);
+            await supabaseAdmin
+              .from("empresas")
+              .delete()
+              .eq("id", empresa.id);
+            await supabaseAdmin
+              .from("tenants")
+              .delete()
+              .eq("id", tenant.id);
+            return jsonResponse(
+              {
+                error: `Error al asignar permisos a roles: ${rpError.message}`,
+              },
+              500,
+            );
+          }
+        }
+      }
+    }
+
+    // 7. Crear usuario auth con metadata
     //    El trigger handle_new_user() insertara en la tabla usuarios
     //    usando empresa_id y rol_id del user_metadata
     const { data: authData, error: authError } =

@@ -4,21 +4,21 @@ import { useCurrentUser } from './use-current-user'
 import { connector } from '@/core/db/powersync/connector'
 
 export const PERMISSIONS = {
-  SALES_CREATE: 'sales.create',
-  SALES_VOID: 'sales.void',
-  INVENTORY_VIEW: 'inventory.view',
-  INVENTORY_ADJUST: 'inventory.adjust',
-  INVENTORY_EDIT_PRICES: 'inventory.edit_prices',
-  REPORTS_VIEW: 'reports.view',
-  REPORTS_CASHCLOSE: 'reports.cashclose',
-  CONFIG_RATES: 'config.rates',
-  CONFIG_USERS: 'config.users',
-  CLIENTS_MANAGE: 'clients.manage',
-  CLIENTS_CREDIT: 'clients.credit',
-  CLINIC_ACCESS: 'clinic.access',
-  CAJA_ACCESS: 'caja.access',
-  PURCHASES_VIEW: 'purchases.view',
-  ACCOUNTING_VIEW: 'accounting.view',
+  SALES_CREATE: 'ventas.crear',
+  SALES_VOID: 'ventas.anular',
+  INVENTORY_VIEW: 'inventario.ver',
+  INVENTORY_ADJUST: 'inventario.ajustar',
+  INVENTORY_EDIT_PRICES: 'inventario.editar_precios',
+  REPORTS_VIEW: 'reportes.ver',
+  REPORTS_CASHCLOSE: 'reportes.cuadre_caja',
+  CONFIG_RATES: 'config.tasas',
+  CONFIG_USERS: 'config.usuarios',
+  CLIENTS_MANAGE: 'clientes.gestionar',
+  CLIENTS_CREDIT: 'clientes.credito',
+  CLINIC_ACCESS: 'clinica.acceso',
+  CAJA_ACCESS: 'caja.abrir',
+  PURCHASES_VIEW: 'compras.crear',
+  ACCOUNTING_VIEW: 'contabilidad.gastos',
 } as const
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]
@@ -58,8 +58,8 @@ export function usePermissions() {
   }, [rolId, roleLoading, roleData])
 
   const localRole = roleData?.[0] as { nombre: string; is_system: number } | undefined
-  const isOwnerLocal = localRole?.nombre === 'Propietario' && localRole?.is_system === 1
-  const isOwnerDirect = directRole?.nombre === 'Propietario' && directRole?.is_system === true
+  const isOwnerLocal = localRole?.is_system === 1
+  const isOwnerDirect = directRole?.is_system === true
   const isOwner = isOwnerLocal || isOwnerDirect
 
   const role = localRole ?? (directRole ? { nombre: directRole.nombre, is_system: directRole.is_system ? 1 : 0 } : undefined)
