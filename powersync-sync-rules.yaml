@@ -1,29 +1,102 @@
-bucket_definitions:
-  # Datos de empresa - usuarios, empresas y todas las tablas de negocio filtradas por empresa_id
-  empresa[]:
-    parameters:
-      - SELECT empresa_id FROM usuarios WHERE id = token_parameters.user_id
-    data:
-      - SELECT * FROM empresas WHERE id = bucket.empresa_id
-      - SELECT * FROM usuarios WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM tasas_cambio WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM departamentos WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM productos WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM recetas WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM movimientos_inventario WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM metodos_pago WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM bancos WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM clientes WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM movimientos_cuenta WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM ventas WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM detalle_venta WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM pagos WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM notas_credito WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM proveedores WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM compras WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM detalle_compra WHERE empresa_id = bucket.empresa_id
+# =============================================
+# CLARAPOS: PowerSync Sync Rules
+# =============================================
+# Pegar este contenido en PowerSync Cloud Dashboard > Sync Rules
+#
+# Arquitectura de buckets:
+#   - global: Catalogos de referencia (monedas, tipos persona, etc.)
+#   - by_empresa: Datos de negocio filtrados por empresa_id del usuario
+#
+# El user_id viene del JWT de Supabase (claim "sub")
+# =============================================
 
-  # Catalogo global - permisos por nivel (sin empresa_id)
+bucket_definitions:
+
+  # ==========================================
+  # BUCKET GLOBAL: Catalogos compartidos
+  # Datos de solo lectura, sin empresa_id
+  # ==========================================
   global:
     data:
-      - SELECT * FROM level_permissions
+      - SELECT * FROM monedas
+      - SELECT * FROM tipos_persona_ve
+      - SELECT * FROM islr_conceptos_ve
+      - SELECT * FROM tipos_movimiento
+      - SELECT * FROM permisos
+
+  # ==========================================
+  # BUCKET POR EMPRESA: Datos de negocio
+  # Parametrizado por empresa_id del usuario autenticado
+  # ==========================================
+  by_empresa:
+    parameters: SELECT empresa_id FROM usuarios WHERE id = token_parameters.user_id
+    data:
+
+      # --- CORE: Empresa y usuarios ---
+      - SELECT * FROM empresas WHERE id = bucket.empresa_id
+      - SELECT * FROM empresas_fiscal_ve WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM usuarios WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM roles WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM rol_permisos WHERE rol_id IN (SELECT id FROM roles WHERE empresa_id = bucket.empresa_id)
+      - SELECT * FROM tenant_permisos WHERE tenant_id IN (SELECT tenant_id FROM empresas WHERE id = bucket.empresa_id)
+
+      # --- CONFIGURACION ---
+      - SELECT * FROM tasas_cambio WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM metodos_cobro WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM bancos_empresa WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM cajas WHERE empresa_id = bucket.empresa_id
+
+      # --- INVENTARIO ---
+      - SELECT * FROM departamentos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM marcas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM unidades WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM unidades_conversion WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM depositos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM productos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM inventario_stock WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM recetas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM movimientos_inventario WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM ajuste_motivos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM ajustes WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM ajustes_det WHERE ajuste_id IN (SELECT id FROM ajustes WHERE empresa_id = bucket.empresa_id)
+      - SELECT * FROM lotes WHERE empresa_id = bucket.empresa_id
+
+      # --- CLIENTES / CXC ---
+      - SELECT * FROM clientes WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM movimientos_cuenta WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM vencimientos_cobrar WHERE empresa_id = bucket.empresa_id
+
+      # --- VENTAS ---
+      - SELECT * FROM ventas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM ventas_det WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM pagos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM notas_credito WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM notas_credito_det WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM notas_debito WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM notas_debito_det WHERE empresa_id = bucket.empresa_id
+
+      # --- CAJA / TESORERIA ---
+      - SELECT * FROM sesiones_caja WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM sesiones_caja_detalle WHERE sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE empresa_id = bucket.empresa_id)
+      - SELECT * FROM movimientos_metodo_cobro WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM movimientos_bancarios WHERE empresa_id = bucket.empresa_id
+
+      # --- RETENCIONES VENTAS ---
+      - SELECT * FROM retenciones_iva_ventas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM retenciones_islr_ventas WHERE empresa_id = bucket.empresa_id
+
+      # --- PROVEEDORES / COMPRAS / CXP ---
+      - SELECT * FROM proveedores WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM proveedores_bancos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM facturas_compra WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM facturas_compra_det WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM retenciones_iva WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM retenciones_islr WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM notas_fiscales_compra WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM notas_fiscales_compra_det WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM movimientos_cuenta_proveedor WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM vencimientos_pagar WHERE empresa_id = bucket.empresa_id
+
+      # --- CONTABILIDAD ---
+      - SELECT * FROM plan_cuentas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM gastos WHERE empresa_id = bucket.empresa_id

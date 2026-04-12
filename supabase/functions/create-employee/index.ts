@@ -8,65 +8,46 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
 };
 
+function jsonResponse(body: Record<string, unknown>, status: number) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonResponse({}, 200);
   }
 
   try {
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: "No autorizado" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "No autorizado" }, 401);
     }
 
-    const { nombre, email, password, level } = await req.json();
+    const { nombre, email, password, rol_id } = await req.json();
 
     // Validaciones
     if (!nombre?.trim() || nombre.trim().length < 2) {
-      return new Response(
-        JSON.stringify({ error: "El nombre debe tener al menos 2 caracteres" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      return jsonResponse(
+        { error: "El nombre debe tener al menos 2 caracteres" },
+        400,
       );
     }
     if (!email?.trim()) {
-      return new Response(JSON.stringify({ error: "El email es requerido" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "El email es requerido" }, 400);
     }
     if (!password || password.length < 6) {
-      return new Response(
-        JSON.stringify({
-          error: "La contrasena debe tener al menos 6 caracteres",
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      return jsonResponse(
+        { error: "La contrasena debe tener al menos 6 caracteres" },
+        400,
       );
     }
-    if (![2, 3].includes(level)) {
-      return new Response(
-        JSON.stringify({
-          error: "El nivel debe ser 2 (Supervisor) o 3 (Cajero)",
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
+    if (!rol_id) {
+      return jsonResponse({ error: "El rol es requerido" }, 400);
     }
 
-    // Crear cliente admin
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
@@ -79,50 +60,71 @@ serve(async (req) => {
       error: authError,
     } = await supabaseAdmin.auth.getUser(token);
     if (authError || !caller) {
-      return new Response(JSON.stringify({ error: "Token invalido" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "Token invalido" }, 401);
     }
 
+    // Obtener datos del caller: empresa_id y verificar que es Propietario
     const { data: callerUser, error: callerError } = await supabaseAdmin
       .from("usuarios")
-      .select("level, empresa_id")
+      .select("empresa_id, rol_id")
       .eq("id", caller.id)
       .single();
 
     if (callerError || !callerUser) {
-      return new Response(
-        JSON.stringify({ error: "No se pudo verificar el usuario" }),
-        {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    // Solo nivel 1 (Owner) puede crear empleados
-    if (callerUser.level !== 1) {
-      return new Response(
-        JSON.stringify({ error: "Solo el propietario puede crear empleados" }),
-        {
-          status: 403,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      return jsonResponse(
+        { error: "No se pudo verificar el usuario" },
+        403,
       );
     }
 
     if (!callerUser.empresa_id) {
-      return new Response(
-        JSON.stringify({ error: "El usuario no tiene empresa asociada" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      return jsonResponse(
+        { error: "El usuario no tiene empresa asociada" },
+        400,
       );
     }
 
-    // Crear usuario auth con metadata (el trigger creara la fila en usuarios)
+    // Verificar que el caller es Propietario (is_system=true)
+    if (callerUser.rol_id) {
+      const { data: callerRole } = await supabaseAdmin
+        .from("roles")
+        .select("is_system")
+        .eq("id", callerUser.rol_id)
+        .single();
+
+      if (!callerRole?.is_system) {
+        return jsonResponse(
+          { error: "Solo el propietario puede crear empleados" },
+          403,
+        );
+      }
+    } else {
+      return jsonResponse(
+        { error: "Solo el propietario puede crear empleados" },
+        403,
+      );
+    }
+
+    // Verificar que el rol asignado pertenece a la misma empresa
+    const { data: targetRole, error: roleError } = await supabaseAdmin
+      .from("roles")
+      .select("id, empresa_id")
+      .eq("id", rol_id)
+      .single();
+
+    if (roleError || !targetRole) {
+      return jsonResponse({ error: "El rol especificado no existe" }, 400);
+    }
+
+    if (targetRole.empresa_id !== callerUser.empresa_id) {
+      return jsonResponse(
+        { error: "El rol no pertenece a tu empresa" },
+        403,
+      );
+    }
+
+    // Crear usuario auth con metadata
+    // El trigger handle_new_user() insertara en la tabla usuarios
     const { data: authData, error: createError } =
       await supabaseAdmin.auth.admin.createUser({
         email: email.trim(),
@@ -130,37 +132,23 @@ serve(async (req) => {
         email_confirm: true,
         user_metadata: {
           nombre: nombre.trim(),
-          level,
           empresa_id: callerUser.empresa_id,
+          rol_id,
         },
       });
 
     if (createError) {
-      return new Response(
-        JSON.stringify({
-          error: `Error al crear empleado: ${createError.message}`,
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      return jsonResponse(
+        { error: `Error al crear empleado: ${createError.message}` },
+        400,
       );
     }
 
-    return new Response(
-      JSON.stringify({ success: true, userId: authData.user.id }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
-    );
+    return jsonResponse({ success: true, userId: authData.user.id }, 200);
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: error.message ?? "Error interno del servidor" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+    return jsonResponse(
+      { error: error.message ?? "Error interno del servidor" },
+      500,
     );
   }
 });

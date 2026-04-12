@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { PageHeader } from '@/components/layout/page-header'
+import { LoteList } from '@/features/inventario/components/lotes/lote-list'
 import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
@@ -13,9 +14,7 @@ function LotesPage() {
     <RequirePermission permission={PERMISSIONS.INVENTORY_VIEW} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
         <PageHeader titulo="Lotes" descripcion="Gestion de lotes y vencimientos" />
-        <div className="rounded-xl border bg-card p-6 text-center text-muted-foreground">
-          Modulo en desarrollo
-        </div>
+        <LoteList />
       </div>
     </RequirePermission>
   )

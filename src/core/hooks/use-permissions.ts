@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from './use-current-user'
+import { connector } from '@/core/db/powersync/connector'
 
 export const PERMISSIONS = {
   SALES_CREATE: 'sales.create',
@@ -25,13 +27,42 @@ export function usePermissions() {
   const { user, loading: userLoading } = useCurrentUser()
   const rolId = user?.rol_id ?? ''
 
+  // 1. Intentar obtener rol desde PowerSync (SQLite local)
   const { data: roleData, isLoading: roleLoading } = useQuery(
     rolId ? 'SELECT nombre, is_system FROM roles WHERE id = ?' : '',
     rolId ? [rolId] : []
   )
 
-  const role = roleData?.[0] as { nombre: string; is_system: number } | undefined
-  const isOwner = role?.nombre === 'Propietario' && role?.is_system === 1
+  // 2. Fallback: consultar Supabase directamente si PowerSync no tiene el rol
+  const [directRole, setDirectRole] = useState<{ nombre: string; is_system: boolean } | null>(null)
+  const [directLoading, setDirectLoading] = useState(false)
+
+  useEffect(() => {
+    if (rolId && !roleLoading && (!roleData || roleData.length === 0)) {
+      setDirectLoading(true)
+      const fetchRole = async () => {
+        try {
+          const { data } = await connector.client
+            .from('roles')
+            .select('nombre, is_system')
+            .eq('id', rolId)
+            .single()
+          if (data) setDirectRole(data)
+        } catch {
+          // Silenciar error - sin conexion no podemos verificar
+        }
+        setDirectLoading(false)
+      }
+      fetchRole()
+    }
+  }, [rolId, roleLoading, roleData])
+
+  const localRole = roleData?.[0] as { nombre: string; is_system: number } | undefined
+  const isOwnerLocal = localRole?.nombre === 'Propietario' && localRole?.is_system === 1
+  const isOwnerDirect = directRole?.nombre === 'Propietario' && directRole?.is_system === true
+  const isOwner = isOwnerLocal || isOwnerDirect
+
+  const role = localRole ?? (directRole ? { nombre: directRole.nombre, is_system: directRole.is_system ? 1 : 0 } : undefined)
 
   const { data: permData, isLoading: permLoading } = useQuery(
     rolId && !isOwner
@@ -66,6 +97,6 @@ export function usePermissions() {
     isOwner,
     rolId,
     rolNombre: role?.nombre ?? '',
-    loading: userLoading || roleLoading || (!isOwner && permLoading),
+    loading: userLoading || roleLoading || directLoading || (!isOwner && permLoading),
   }
 }

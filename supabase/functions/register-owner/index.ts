@@ -8,15 +8,16 @@ export const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, GET, OPTIONS, PUT, DELETE",
 };
 
+function jsonResponse(body: Record<string, unknown>, status: number) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response(null, {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "application/json",
-      },
-    });
+    return jsonResponse({}, 200);
   }
 
   try {
@@ -24,64 +25,154 @@ serve(async (req) => {
 
     // Validacion de inputs
     if (!nombre?.trim()) {
-      return new Response(JSON.stringify({ error: "El nombre es requerido" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "El nombre es requerido" }, 400);
     }
     if (!email?.trim()) {
-      return new Response(JSON.stringify({ error: "El email es requerido" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonResponse({ error: "El email es requerido" }, 400);
     }
     if (!password || password.length < 6) {
-      return new Response(
-        JSON.stringify({
-          error: "La contrasena debe tener al menos 6 caracteres",
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      return jsonResponse(
+        { error: "La contrasena debe tener al menos 6 caracteres" },
+        400,
       );
     }
     if (!nombre_empresa?.trim()) {
-      return new Response(
-        JSON.stringify({ error: "El nombre de la empresa es requerido" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      return jsonResponse(
+        { error: "El nombre de la empresa es requerido" },
+        400,
       );
     }
 
-    // Crear cliente Supabase con service_role para operaciones admin
     const supabaseAdmin = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // 1. Crear la empresa
+    // 1. Crear tenant
+    const { data: tenant, error: tenantError } = await supabaseAdmin
+      .from("tenants")
+      .insert({
+        nombre: nombre_empresa.trim(),
+        email_contacto: email.trim(),
+      })
+      .select("id")
+      .single();
+
+    if (tenantError) {
+      return jsonResponse(
+        { error: `Error al crear tenant: ${tenantError.message}` },
+        500,
+      );
+    }
+
+    // 2. Crear empresa bajo el tenant
     const { data: empresa, error: empresaError } = await supabaseAdmin
       .from("empresas")
-      .insert({ nombre: nombre_empresa.trim() })
+      .insert({
+        tenant_id: tenant.id,
+        nombre: nombre_empresa.trim(),
+      })
       .select("id")
       .single();
 
     if (empresaError) {
-      return new Response(
-        JSON.stringify({
-          error: `Error al crear empresa: ${empresaError.message}`,
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
+      return jsonResponse(
+        { error: `Error al crear empresa: ${empresaError.message}` },
+        500,
       );
     }
 
-    // 2. Crear usuario auth con metadata (el trigger creara la fila en usuarios)
+    // 3. Crear registro fiscal VE con defaults
+    const { error: fiscalError } = await supabaseAdmin
+      .from("empresas_fiscal_ve")
+      .insert({ empresa_id: empresa.id });
+
+    if (fiscalError) {
+      await supabaseAdmin.from("empresas").delete().eq("id", empresa.id);
+      await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
+      return jsonResponse(
+        { error: `Error al crear datos fiscales: ${fiscalError.message}` },
+        500,
+      );
+    }
+
+    // 4. Crear rol "Propietario" (is_system=true) para la empresa
+    const { data: rol, error: rolError } = await supabaseAdmin
+      .from("roles")
+      .insert({
+        empresa_id: empresa.id,
+        nombre: "Propietario",
+        descripcion: "Rol de sistema con acceso total",
+        is_system: true,
+      })
+      .select("id")
+      .single();
+
+    if (rolError) {
+      await supabaseAdmin
+        .from("empresas_fiscal_ve")
+        .delete()
+        .eq("empresa_id", empresa.id);
+      await supabaseAdmin.from("empresas").delete().eq("id", empresa.id);
+      await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
+      return jsonResponse(
+        { error: `Error al crear rol: ${rolError.message}` },
+        500,
+      );
+    }
+
+    // 5. Habilitar todos los permisos para el tenant
+    const { data: permisos, error: permisosError } = await supabaseAdmin
+      .from("permisos")
+      .select("id")
+      .eq("is_active", true);
+
+    if (permisosError) {
+      await supabaseAdmin.from("roles").delete().eq("id", rol.id);
+      await supabaseAdmin
+        .from("empresas_fiscal_ve")
+        .delete()
+        .eq("empresa_id", empresa.id);
+      await supabaseAdmin.from("empresas").delete().eq("id", empresa.id);
+      await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
+      return jsonResponse(
+        { error: `Error al obtener permisos: ${permisosError.message}` },
+        500,
+      );
+    }
+
+    if (permisos && permisos.length > 0) {
+      const tenantPermisos = permisos.map((p: { id: string }) => ({
+        tenant_id: tenant.id,
+        permiso_id: p.id,
+        habilitado: true,
+      }));
+
+      const { error: tpError } = await supabaseAdmin
+        .from("tenant_permisos")
+        .insert(tenantPermisos);
+
+      if (tpError) {
+        await supabaseAdmin.from("roles").delete().eq("id", rol.id);
+        await supabaseAdmin
+          .from("empresas_fiscal_ve")
+          .delete()
+          .eq("empresa_id", empresa.id);
+        await supabaseAdmin.from("empresas").delete().eq("id", empresa.id);
+        await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
+        return jsonResponse(
+          {
+            error: `Error al asignar permisos al tenant: ${tpError.message}`,
+          },
+          500,
+        );
+      }
+    }
+
+    // 6. Crear usuario auth con metadata
+    //    El trigger handle_new_user() insertara en la tabla usuarios
+    //    usando empresa_id y rol_id del user_metadata
     const { data: authData, error: authError } =
       await supabaseAdmin.auth.admin.createUser({
         email: email.trim(),
@@ -89,43 +180,43 @@ serve(async (req) => {
         email_confirm: true,
         user_metadata: {
           nombre: nombre.trim(),
-          level: 1,
           empresa_id: empresa.id,
+          rol_id: rol.id,
         },
       });
 
     if (authError) {
-      // Rollback: eliminar la empresa creada
+      // Rollback completo
+      await supabaseAdmin
+        .from("tenant_permisos")
+        .delete()
+        .eq("tenant_id", tenant.id);
+      await supabaseAdmin.from("roles").delete().eq("id", rol.id);
+      await supabaseAdmin
+        .from("empresas_fiscal_ve")
+        .delete()
+        .eq("empresa_id", empresa.id);
       await supabaseAdmin.from("empresas").delete().eq("id", empresa.id);
-      return new Response(
-        JSON.stringify({
-          error: `Error al crear usuario: ${authError.message}`,
-        }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        },
+      await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
+      return jsonResponse(
+        { error: `Error al crear usuario: ${authError.message}` },
+        400,
       );
     }
 
-    return new Response(
-      JSON.stringify({
+    return jsonResponse(
+      {
         success: true,
         userId: authData.user.id,
         empresaId: empresa.id,
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        tenantId: tenant.id,
       },
+      200,
     );
   } catch (error) {
-    return new Response(
-      JSON.stringify({ error: error.message ?? "Error interno del servidor" }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      },
+    return jsonResponse(
+      { error: error.message ?? "Error interno del servidor" },
+      500,
     );
   }
 });
