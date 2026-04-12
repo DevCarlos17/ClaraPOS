@@ -5,7 +5,7 @@ export const impuestoSchema = z.object({
     .string()
     .min(1, 'Requerido')
     .transform((v) => v.toUpperCase()),
-  tipo_tributo: z.enum(['IVA', 'IGTF'], { message: 'Debe ser IVA o IGTF' }),
+  tipo_tributo: z.enum(['IVA', 'IGTF', 'INCO'], { message: 'Debe ser IVA, IGTF o INCO' }),
   porcentaje: z
     .number({ message: 'Debe ser un numero' })
     .min(0, 'No puede ser negativo')

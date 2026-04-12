@@ -124,8 +124,8 @@ export function ImportProductosModal({
     }
 
     // Tipo impuesto
-    if (!['GRAVABLE', 'EXENTO', 'EXONERADO'].includes(row.tipo_impuesto)) {
-      errors.push('tipo_impuesto debe ser GRAVABLE, EXENTO o EXONERADO')
+    if (!['Gravable', 'Exento', 'Exonerado'].includes(row.tipo_impuesto)) {
+      errors.push('tipo_impuesto debe ser Gravable, Exento o Exonerado')
     }
 
     return errors
@@ -161,7 +161,12 @@ export function ImportProductosModal({
           precio_venta_usd: String(r.precio_venta_usd ?? '').trim(),
           precio_mayor_usd: String(r.precio_mayor_usd ?? '').trim(),
           stock_minimo: String(r.stock_minimo ?? '').trim(),
-          tipo_impuesto: String(r.tipo_impuesto ?? 'EXENTO').trim().toUpperCase(),
+          tipo_impuesto: (() => {
+            const raw = String(r.tipo_impuesto ?? 'Exento').trim().toLowerCase()
+            if (raw === 'gravable') return 'Gravable'
+            if (raw === 'exonerado') return 'Exonerado'
+            return 'Exento'
+          })(),
           errors: [],
           isValid: false,
         }
@@ -273,7 +278,7 @@ export function ImportProductosModal({
         '15.00',
         '13.00',
         '5',
-        'EXENTO',
+        'Exento',
       ],
     ]
     const ws = XLSX.utils.aoa_to_sheet([...headers, ...ejemplo])
@@ -414,7 +419,7 @@ export function ImportProductosModal({
                       <tr>
                         <td className="px-2 py-1.5 font-mono">tipo_impuesto</td>
                         <td className="px-2 py-1.5">No</td>
-                        <td className="px-2 py-1.5">GRAVABLE, EXENTO o EXONERADO (por defecto: EXENTO)</td>
+                        <td className="px-2 py-1.5">Gravable, Exento o Exonerado (por defecto: Exento)</td>
                       </tr>
                     </tbody>
                   </table>

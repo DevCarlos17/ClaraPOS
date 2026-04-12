@@ -99,13 +99,17 @@ export function AjusteMotivoList() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    {m.operacion_base === 'ENTRADA' ? (
+                    {m.operacion_base === 'SUMA' ? (
                       <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
-                        ENTRADA
+                        SUMA
+                      </span>
+                    ) : m.operacion_base === 'RESTA' ? (
+                      <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
+                        RESTA
                       </span>
                     ) : (
-                      <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
-                        SALIDA
+                      <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-500/20 ring-inset">
+                        NEUTRO
                       </span>
                     )}
                   </td>

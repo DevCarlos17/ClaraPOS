@@ -6,7 +6,7 @@ export const lineaNotaDebitoSchema = z.object({
   descripcion: z.string().min(1, 'La descripcion es requerida'),
   cantidad: z.number().positive('La cantidad debe ser mayor a 0'),
   precio_unitario_usd: z.number().positive('El precio debe ser mayor a 0'),
-  tipo_impuesto: z.enum(['GRAVABLE', 'EXENTO', 'EXONERADO']).optional(),
+  tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).optional(),
   impuesto_pct: z.number().min(0, 'El porcentaje no puede ser negativo').optional(),
 })
 

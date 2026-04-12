@@ -95,7 +95,7 @@ export function useRetencionesIvaVentas(fechaDesde?: string, fechaHasta?: string
 
 /**
  * Registra una retencion de IVA sobre una venta.
- * El status inicial es 'REGISTRADA'.
+ * El status inicial es 'PENDIENTE'.
  */
 export async function crearRetencionIvaVenta(
   params: CrearRetencionIvaVentaParams
@@ -130,7 +130,7 @@ export async function crearRetencionIvaVenta(
          periodo_fiscal, base_imponible, porcentaje_iva, monto_iva,
          porcentaje_retencion, monto_retenido, status, observaciones,
          created_at, created_by
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADA', ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?)`,
       [
         id,
         empresa_id,

@@ -33,7 +33,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [precioVentaUsd, setPrecioVentaUsd] = useState('')
   const [precioMayorUsd, setPrecioMayorUsd] = useState('')
   const [stockMinimo, setStockMinimo] = useState('')
-  const [tipoImpuesto, setTipoImpuesto] = useState<'GRAVABLE' | 'EXENTO' | 'EXONERADO'>('EXENTO')
+  const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [isActive, setIsActive] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -49,7 +49,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioVentaUsd(producto.precio_venta_usd)
         setPrecioMayorUsd(producto.precio_mayor_usd ?? '')
         setStockMinimo(producto.stock_minimo)
-        setTipoImpuesto((producto.tipo_impuesto as 'GRAVABLE' | 'EXENTO' | 'EXONERADO') ?? 'EXENTO')
+        setTipoImpuesto((producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento')
         setIsActive(producto.is_active === 1)
       } else {
         setCodigo('')
@@ -60,7 +60,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioVentaUsd('')
         setPrecioMayorUsd('')
         setStockMinimo('')
-        setTipoImpuesto('EXENTO')
+        setTipoImpuesto('Exento')
         setIsActive(true)
       }
       setErrors({})
@@ -374,12 +374,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             <select
               id="prod-tipo-impuesto"
               value={tipoImpuesto}
-              onChange={(e) => setTipoImpuesto(e.target.value as 'GRAVABLE' | 'EXENTO' | 'EXONERADO')}
+              onChange={(e) => setTipoImpuesto(e.target.value as 'Gravable' | 'Exento' | 'Exonerado')}
               className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="EXENTO">Exento</option>
-              <option value="GRAVABLE">Gravable</option>
-              <option value="EXONERADO">Exonerado</option>
+              <option value="Exento">Exento</option>
+              <option value="Gravable">Gravable</option>
+              <option value="Exonerado">Exonerado</option>
             </select>
             {errors.tipo_impuesto && (
               <p className="text-red-500 text-xs mt-1">{errors.tipo_impuesto}</p>

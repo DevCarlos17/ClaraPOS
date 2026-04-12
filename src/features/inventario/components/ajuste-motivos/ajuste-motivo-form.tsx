@@ -20,7 +20,7 @@ export function AjusteMotivoForm({ isOpen, onClose, motivo }: AjusteMotivoFormPr
   const { user } = useCurrentUser()
 
   const [nombre, setNombre] = useState('')
-  const [operacionBase, setOperacionBase] = useState<'ENTRADA' | 'SALIDA'>('ENTRADA')
+  const [operacionBase, setOperacionBase] = useState<'SUMA' | 'RESTA' | 'NEUTRO'>('SUMA')
   const [afectaCosto, setAfectaCosto] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -29,11 +29,11 @@ export function AjusteMotivoForm({ isOpen, onClose, motivo }: AjusteMotivoFormPr
     if (isOpen) {
       if (motivo) {
         setNombre(motivo.nombre)
-        setOperacionBase(motivo.operacion_base as 'ENTRADA' | 'SALIDA')
+        setOperacionBase(motivo.operacion_base as 'SUMA' | 'RESTA' | 'NEUTRO')
         setAfectaCosto(motivo.afecta_costo === 1)
       } else {
         setNombre('')
-        setOperacionBase('ENTRADA')
+        setOperacionBase('SUMA')
         setAfectaCosto(false)
       }
       setErrors({})
@@ -137,13 +137,14 @@ export function AjusteMotivoForm({ isOpen, onClose, motivo }: AjusteMotivoFormPr
             <select
               id="motivo-operacion"
               value={operacionBase}
-              onChange={(e) => setOperacionBase(e.target.value as 'ENTRADA' | 'SALIDA')}
+              onChange={(e) => setOperacionBase(e.target.value as 'SUMA' | 'RESTA' | 'NEUTRO')}
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
                 errors.operacion_base ? 'border-red-500' : 'border-gray-300'
               }`}
             >
-              <option value="ENTRADA">ENTRADA</option>
-              <option value="SALIDA">SALIDA</option>
+              <option value="SUMA">Suma (Entrada)</option>
+              <option value="RESTA">Resta (Salida)</option>
+              <option value="NEUTRO">Neutro</option>
             </select>
             {errors.operacion_base && (
               <p className="text-red-500 text-xs mt-1">{errors.operacion_base}</p>

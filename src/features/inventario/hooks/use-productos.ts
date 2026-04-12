@@ -110,7 +110,7 @@ export async function crearProducto(data: {
       stock_minimo: isServicio ? '0.000' : data.stock_minimo.toFixed(3),
       costo_promedio: '0.00',
       costo_ultimo: data.costo_usd.toFixed(2),
-      tipo_impuesto: 'EXENTO',
+      tipo_impuesto: 'Exento',
       maneja_lotes: 0,
       is_active: 1,
       empresa_id: data.empresa_id,

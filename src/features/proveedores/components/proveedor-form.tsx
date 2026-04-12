@@ -16,9 +16,9 @@ interface ProveedorFormProps {
 
 const TIPOS_CONTRIBUYENTE = [
   { value: '', label: 'Sin clasificar' },
-  { value: 'ORDINARIO', label: 'Ordinario' },
-  { value: 'ESPECIAL', label: 'Especial' },
-  { value: 'FORMAL', label: 'Formal' },
+  { value: 'Ordinario', label: 'Ordinario' },
+  { value: 'Especial', label: 'Especial' },
+  { value: 'Formal', label: 'Formal' },
 ] as const
 
 const inputClass = (hasError: boolean) =>

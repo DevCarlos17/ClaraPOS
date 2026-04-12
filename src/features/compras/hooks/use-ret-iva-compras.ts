@@ -113,7 +113,7 @@ export async function crearRetencionIva(data: {
       monto_iva: data.monto_iva.toFixed(2),
       porcentaje_retencion: data.porcentaje_retencion.toFixed(2),
       monto_retenido: data.monto_retenido.toFixed(2),
-      status: 'REGISTRADA',
+      status: 'PENDIENTE',
       observaciones: data.observaciones ?? null,
       created_at: now,
       created_by: data.created_by ?? null,

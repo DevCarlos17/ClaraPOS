@@ -10,7 +10,7 @@ export const productoSchema = z
     precio_venta_usd: z.number().min(0, 'El precio no puede ser negativo'),
     precio_mayor_usd: z.number().nullable().optional(),
     stock_minimo: z.number().min(0, 'No puede ser negativo'),
-    tipo_impuesto: z.enum(['GRAVABLE', 'EXENTO', 'EXONERADO']).default('EXENTO'),
+    tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
     is_active: z.boolean().default(true),
   })
   .refine((data) => data.precio_venta_usd >= data.costo_usd, {

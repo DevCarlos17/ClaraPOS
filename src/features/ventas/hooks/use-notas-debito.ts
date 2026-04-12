@@ -41,7 +41,7 @@ export interface LineaNotaDebito {
   descripcion: string
   cantidad: number
   precio_unitario_usd: number
-  tipo_impuesto?: 'GRAVABLE' | 'EXENTO' | 'EXONERADO'
+  tipo_impuesto?: 'Gravable' | 'Exento' | 'Exonerado'
   impuesto_pct?: number
 }
 
@@ -139,10 +139,10 @@ export async function crearNotaDebito(
     for (const linea of lineas) {
       const subtotal = linea.cantidad * linea.precio_unitario_usd
 
-      if (!linea.tipo_impuesto || linea.tipo_impuesto === 'EXENTO' || linea.tipo_impuesto === 'EXONERADO') {
+      if (!linea.tipo_impuesto || linea.tipo_impuesto === 'Exento' || linea.tipo_impuesto === 'Exonerado') {
         totalExentoUsd += subtotal
       } else {
-        // GRAVABLE: calcular IVA sobre el subtotal
+        // Gravable: calcular IVA sobre el subtotal
         totalBaseUsd += subtotal
         const pct = linea.impuesto_pct ?? 0
         totalIvaUsd += subtotal * (pct / 100)

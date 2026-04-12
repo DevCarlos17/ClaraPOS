@@ -6,16 +6,23 @@ import { AjusteForm } from './ajuste-form'
 import { AjusteDetalleModal } from './ajuste-detalle-modal'
 
 function OperacionBadge({ operacion }: { operacion: string | null }) {
-  if (operacion === 'ENTRADA') {
+  if (operacion === 'SUMA') {
     return (
       <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
-        ENTRADA
+        SUMA
+      </span>
+    )
+  }
+  if (operacion === 'NEUTRO') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-500/20 ring-inset">
+        NEUTRO
       </span>
     )
   }
   return (
     <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
-      SALIDA
+      RESTA
     </span>
   )
 }

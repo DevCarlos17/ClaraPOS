@@ -119,13 +119,17 @@ export function RetIvaCompraList() {
                     {parseFloat(ret.monto_retenido).toFixed(2)}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    {ret.status === 'REGISTRADA' ? (
+                    {ret.status === 'PENDIENTE' ? (
+                      <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-600/20 ring-inset">
+                        PENDIENTE
+                      </span>
+                    ) : ret.status === 'DECLARADO' ? (
                       <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
-                        REGISTRADA
+                        DECLARADO
                       </span>
                     ) : (
                       <span className="inline-flex items-center rounded-full bg-red-50 px-2.5 py-0.5 text-xs font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
-                        ANULADA
+                        ANULADO
                       </span>
                     )}
                   </td>

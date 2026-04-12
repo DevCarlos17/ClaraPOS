@@ -97,7 +97,7 @@ export function useRetencionesIslrVentas(fechaDesde?: string, fechaHasta?: strin
 /**
  * Registra una retencion de ISLR sobre una venta.
  * Los montos se manejan en Bolivares (moneda local).
- * El status inicial es 'REGISTRADA' salvo que se especifique otro.
+ * El status inicial es 'PENDIENTE' salvo que se especifique otro.
  */
 export async function crearRetencionIslrVenta(
   params: CrearRetencionIslrVentaParams
@@ -124,7 +124,7 @@ export async function crearRetencionIslrVenta(
 
   const id = uuidv4()
   const now = new Date().toISOString()
-  const statusFinal = status ?? 'REGISTRADA'
+  const statusFinal = status ?? 'PENDIENTE'
 
   await db.writeTransaction(async (tx) => {
     await tx.execute(

@@ -97,19 +97,32 @@ serve(async (req) => {
       );
     }
 
-    // 4. Crear rol "Propietario" (is_system=true) para la empresa
-    const { data: rol, error: rolError } = await supabaseAdmin
+    // 4. Crear roles por defecto para la empresa
+    const { data: rolesData, error: rolError } = await supabaseAdmin
       .from("roles")
-      .insert({
-        empresa_id: empresa.id,
-        nombre: "Propietario",
-        descripcion: "Rol de sistema con acceso total",
-        is_system: true,
-      })
-      .select("id")
-      .single();
+      .insert([
+        {
+          empresa_id: empresa.id,
+          nombre: "Propietario",
+          descripcion: "Rol de sistema con acceso total",
+          is_system: true,
+        },
+        {
+          empresa_id: empresa.id,
+          nombre: "Supervisor",
+          descripcion: "Acceso amplio con restricciones administrativas",
+          is_system: false,
+        },
+        {
+          empresa_id: empresa.id,
+          nombre: "Cajero",
+          descripcion: "Acceso limitado a operaciones de caja y ventas",
+          is_system: false,
+        },
+      ])
+      .select("id, nombre");
 
-    if (rolError) {
+    if (rolError || !rolesData) {
       await supabaseAdmin
         .from("empresas_fiscal_ve")
         .delete()
@@ -117,10 +130,12 @@ serve(async (req) => {
       await supabaseAdmin.from("empresas").delete().eq("id", empresa.id);
       await supabaseAdmin.from("tenants").delete().eq("id", tenant.id);
       return jsonResponse(
-        { error: `Error al crear rol: ${rolError.message}` },
+        { error: `Error al crear roles: ${rolError?.message}` },
         500,
       );
     }
+
+    const rol = rolesData.find((r: { nombre: string }) => r.nombre === "Propietario")!;
 
     // 5. Habilitar todos los permisos para el tenant
     const { data: permisos, error: permisosError } = await supabaseAdmin
@@ -129,7 +144,7 @@ serve(async (req) => {
       .eq("is_active", true);
 
     if (permisosError) {
-      await supabaseAdmin.from("roles").delete().eq("id", rol.id);
+      await supabaseAdmin.from("roles").delete().eq("empresa_id", empresa.id);
       await supabaseAdmin
         .from("empresas_fiscal_ve")
         .delete()
@@ -154,7 +169,7 @@ serve(async (req) => {
         .insert(tenantPermisos);
 
       if (tpError) {
-        await supabaseAdmin.from("roles").delete().eq("id", rol.id);
+        await supabaseAdmin.from("roles").delete().eq("empresa_id", empresa.id);
         await supabaseAdmin
           .from("empresas_fiscal_ve")
           .delete()
@@ -191,7 +206,7 @@ serve(async (req) => {
         .from("tenant_permisos")
         .delete()
         .eq("tenant_id", tenant.id);
-      await supabaseAdmin.from("roles").delete().eq("id", rol.id);
+      await supabaseAdmin.from("roles").delete().eq("empresa_id", empresa.id);
       await supabaseAdmin
         .from("empresas_fiscal_ve")
         .delete()

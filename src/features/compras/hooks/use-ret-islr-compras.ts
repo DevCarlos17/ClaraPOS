@@ -113,7 +113,7 @@ export async function crearRetencionIslr(data: {
       porcentaje_retencion: data.porcentaje_retencion.toFixed(2),
       monto_retenido_bs: data.monto_retenido_bs.toFixed(2),
       sustraendo_bs: data.sustraendo_bs != null ? data.sustraendo_bs.toFixed(2) : null,
-      status: 'REGISTRADA',
+      status: 'PENDIENTE',
       observaciones: data.observaciones ?? null,
       created_at: now,
       created_by: data.created_by ?? null,

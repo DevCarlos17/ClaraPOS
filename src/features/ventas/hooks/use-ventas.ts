@@ -97,7 +97,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     // 3. INSERT venta
     await tx.execute(
       `INSERT INTO ventas (id, cliente_id, nro_factura, tasa, total_usd, total_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PROCESADA', ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?)`,
       [
         ventaId,
         cliente_id,

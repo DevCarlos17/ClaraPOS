@@ -20,7 +20,7 @@ export function ImpuestoForm({ isOpen, onClose, impuesto }: ImpuestoFormProps) {
   const { user } = useCurrentUser()
 
   const [nombre, setNombre] = useState('')
-  const [tipoTributo, setTipoTributo] = useState<'IVA' | 'IGTF'>('IVA')
+  const [tipoTributo, setTipoTributo] = useState<'IVA' | 'IGTF' | 'INCO'>('IVA')
   const [porcentaje, setPorcentaje] = useState('')
   const [codigoSeniat, setCodigoSeniat] = useState('')
   const [descripcion, setDescripcion] = useState('')
@@ -32,7 +32,7 @@ export function ImpuestoForm({ isOpen, onClose, impuesto }: ImpuestoFormProps) {
     if (isOpen) {
       if (impuesto) {
         setNombre(impuesto.nombre)
-        setTipoTributo(impuesto.tipo_tributo as 'IVA' | 'IGTF')
+        setTipoTributo(impuesto.tipo_tributo as 'IVA' | 'IGTF' | 'INCO')
         setPorcentaje(impuesto.porcentaje)
         setCodigoSeniat(impuesto.codigo_seniat ?? '')
         setDescripcion(impuesto.descripcion ?? '')
@@ -158,13 +158,14 @@ export function ImpuestoForm({ isOpen, onClose, impuesto }: ImpuestoFormProps) {
             <select
               id="imp-tipo"
               value={tipoTributo}
-              onChange={(e) => setTipoTributo(e.target.value as 'IVA' | 'IGTF')}
+              onChange={(e) => setTipoTributo(e.target.value as 'IVA' | 'IGTF' | 'INCO')}
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
                 errors.tipo_tributo ? 'border-red-500' : 'border-gray-300'
               }`}
             >
               <option value="IVA">IVA - Impuesto al Valor Agregado</option>
               <option value="IGTF">IGTF - Impuesto a las Grandes Transacciones Financieras</option>
+              <option value="INCO">INCO - Impuesto No Constitutivo</option>
             </select>
             {errors.tipo_tributo && (
               <p className="text-red-500 text-xs mt-1">{errors.tipo_tributo}</p>

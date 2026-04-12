@@ -5,7 +5,7 @@ export const ajusteMotivoSchema = z.object({
     .string()
     .min(1, 'Requerido')
     .transform((v) => v.toUpperCase()),
-  operacion_base: z.enum(['ENTRADA', 'SALIDA'], { message: 'Debe ser ENTRADA o SALIDA' }),
+  operacion_base: z.enum(['SUMA', 'RESTA', 'NEUTRO'], { message: 'Debe ser SUMA, RESTA o NEUTRO' }),
   afecta_costo: z.boolean().default(false),
 })
 
