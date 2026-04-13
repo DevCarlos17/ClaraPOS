@@ -26,26 +26,20 @@ serve(async (req) => {
       return jsonResponse({ error: "No autorizado" }, 401);
     }
 
-    const { nombre, email, password, rol_id, telefono } = await req.json();
+    const { nombre, descripcion, permiso_ids } = await req.json();
 
     // Validaciones
     if (!nombre?.trim() || nombre.trim().length < 2) {
       return jsonResponse(
-        { error: "El nombre debe tener al menos 2 caracteres" },
+        { error: "El nombre del rol debe tener al menos 2 caracteres" },
         400,
       );
     }
-    if (!email?.trim()) {
-      return jsonResponse({ error: "El email es requerido" }, 400);
-    }
-    if (!password || password.length < 6) {
+    if (!Array.isArray(permiso_ids) || permiso_ids.length === 0) {
       return jsonResponse(
-        { error: "La contrasena debe tener al menos 6 caracteres" },
+        { error: "Debes seleccionar al menos un permiso" },
         400,
       );
-    }
-    if (!rol_id) {
-      return jsonResponse({ error: "El rol es requerido" }, 400);
     }
 
     const supabaseAdmin = createClient(
@@ -94,65 +88,74 @@ serve(async (req) => {
 
       if (!callerRole?.is_system) {
         return jsonResponse(
-          { error: "Solo el administrador puede crear empleados" },
+          { error: "Solo el administrador puede crear roles" },
           403,
         );
       }
     } else {
       return jsonResponse(
-        { error: "Solo el administrador puede crear empleados" },
+        { error: "Solo el administrador puede crear roles" },
         403,
       );
     }
 
-    // Verificar que el rol asignado pertenece a la misma empresa
-    const { data: targetRole, error: roleError } = await supabaseAdmin
+    // Verificar nombre unico en la empresa
+    const { data: existingRole } = await supabaseAdmin
       .from("roles")
-      .select("id, empresa_id, is_system")
-      .eq("id", rol_id)
+      .select("id")
+      .eq("empresa_id", callerUser.empresa_id)
+      .ilike("nombre", nombre.trim())
+      .maybeSingle();
+
+    if (existingRole) {
+      return jsonResponse(
+        { error: "Ya existe un rol con ese nombre en tu empresa" },
+        400,
+      );
+    }
+
+    // Crear el rol
+    const { data: newRole, error: roleError } = await supabaseAdmin
+      .from("roles")
+      .insert({
+        empresa_id: callerUser.empresa_id,
+        nombre: nombre.trim(),
+        descripcion: descripcion?.trim() || null,
+        is_system: false,
+        is_active: true,
+        created_by: caller.id,
+        updated_by: caller.id,
+      })
+      .select("id")
       .single();
 
-    if (roleError || !targetRole) {
-      return jsonResponse({ error: "El rol especificado no existe" }, 400);
-    }
-
-    if (targetRole.empresa_id !== callerUser.empresa_id) {
+    if (roleError || !newRole) {
       return jsonResponse(
-        { error: "El rol no pertenece a tu empresa" },
-        403,
+        { error: `Error al crear rol: ${roleError?.message ?? "desconocido"}` },
+        500,
       );
     }
 
-    if (targetRole.is_system) {
+    // Insertar permisos del rol
+    const rolPermisos = permiso_ids.map((permisoId: string) => ({
+      empresa_id: callerUser.empresa_id,
+      rol_id: newRole.id,
+      permiso_id: permisoId,
+      granted_by: caller.id,
+    }));
+
+    const { error: permisosError } = await supabaseAdmin
+      .from("rol_permisos")
+      .insert(rolPermisos);
+
+    if (permisosError) {
       return jsonResponse(
-        { error: "No puedes asignar el rol de administrador a un empleado" },
-        400,
+        { error: `Error al asignar permisos: ${permisosError.message}` },
+        500,
       );
     }
 
-    // Crear usuario auth con metadata
-    // El trigger handle_new_user() insertara en la tabla usuarios
-    const { data: authData, error: createError } =
-      await supabaseAdmin.auth.admin.createUser({
-        email: email.trim(),
-        password,
-        email_confirm: true,
-        user_metadata: {
-          nombre: nombre.trim(),
-          empresa_id: callerUser.empresa_id,
-          rol_id,
-          telefono: telefono?.trim() || null,
-        },
-      });
-
-    if (createError) {
-      return jsonResponse(
-        { error: `Error al crear empleado: ${createError.message}` },
-        400,
-      );
-    }
-
-    return jsonResponse({ success: true, userId: authData.user.id }, 200);
+    return jsonResponse({ success: true, roleId: newRole.id }, 200);
   } catch (error) {
     return jsonResponse(
       { error: error.message ?? "Error interno del servidor" },

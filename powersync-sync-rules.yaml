@@ -35,8 +35,8 @@ bucket_definitions:
       - SELECT * FROM empresas_fiscal_ve WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM usuarios WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM roles WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM rol_permisos WHERE rol_id IN (SELECT id FROM roles WHERE empresa_id = bucket.empresa_id)
-      - SELECT * FROM tenant_permisos WHERE tenant_id IN (SELECT tenant_id FROM empresas WHERE id = bucket.empresa_id)
+      - SELECT * FROM rol_permisos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM tenant_permisos WHERE empresa_id = bucket.empresa_id
 
       # --- CONFIGURACION ---
       - SELECT * FROM tasas_cambio WHERE empresa_id = bucket.empresa_id
@@ -57,7 +57,7 @@ bucket_definitions:
       - SELECT * FROM movimientos_inventario WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM ajuste_motivos WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM ajustes WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM ajustes_det WHERE ajuste_id IN (SELECT id FROM ajustes WHERE empresa_id = bucket.empresa_id)
+      - SELECT * FROM ajustes_det WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM lotes WHERE empresa_id = bucket.empresa_id
 
       # --- CLIENTES / CXC ---
@@ -76,7 +76,7 @@ bucket_definitions:
 
       # --- CAJA / TESORERIA ---
       - SELECT * FROM sesiones_caja WHERE empresa_id = bucket.empresa_id
-      - SELECT * FROM sesiones_caja_detalle WHERE sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE empresa_id = bucket.empresa_id)
+      - SELECT * FROM sesiones_caja_detalle WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_metodo_cobro WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_bancarios WHERE empresa_id = bucket.empresa_id
 

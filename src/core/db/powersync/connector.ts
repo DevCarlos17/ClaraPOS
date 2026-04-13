@@ -111,7 +111,13 @@ export class SupabaseConnector
     return data as { success: boolean; userId: string; empresaId: string }
   }
 
-  async createEmployee(nombre: string, email: string, password: string, rolId: string) {
+  async createEmployee(
+    nombre: string,
+    email: string,
+    password: string,
+    rolId: string,
+    telefono?: string
+  ) {
     if (!this.currentSession) throw new Error('No hay sesion activa')
 
     const res = await fetch(`${this.config.supabaseUrl}/functions/v1/create-employee`, {
@@ -121,7 +127,7 @@ export class SupabaseConnector
         apikey: this.config.supabaseAnonKey,
         Authorization: `Bearer ${this.currentSession.access_token}`,
       },
-      body: JSON.stringify({ nombre, email, password, rol_id: rolId }),
+      body: JSON.stringify({ nombre, email, password, rol_id: rolId, telefono }),
     })
 
     const data = await res.json()
@@ -131,7 +137,10 @@ export class SupabaseConnector
     return data as { success: boolean; userId: string }
   }
 
-  async updateEmployee(userId: string, updates: { rol_id?: string; is_active?: boolean; nombre?: string }) {
+  async updateEmployee(
+    userId: string,
+    updates: { rol_id?: string; is_active?: boolean; nombre?: string; telefono?: string }
+  ) {
     if (!this.currentSession) throw new Error('No hay sesion activa')
 
     const res = await fetch(`${this.config.supabaseUrl}/functions/v1/update-employee`, {
@@ -149,6 +158,26 @@ export class SupabaseConnector
       throw new Error(data.error ?? 'Error al actualizar empleado')
     }
     return data as { success: boolean }
+  }
+
+  async createRole(nombre: string, descripcion: string, permisoIds: string[]) {
+    if (!this.currentSession) throw new Error('No hay sesion activa')
+
+    const res = await fetch(`${this.config.supabaseUrl}/functions/v1/create-role`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: this.config.supabaseAnonKey,
+        Authorization: `Bearer ${this.currentSession.access_token}`,
+      },
+      body: JSON.stringify({ nombre, descripcion, permiso_ids: permisoIds }),
+    })
+
+    const data = await res.json()
+    if (!res.ok) {
+      throw new Error(data.error ?? 'Error al crear rol')
+    }
+    return data as { success: boolean; roleId: string }
   }
 
   async logout() {

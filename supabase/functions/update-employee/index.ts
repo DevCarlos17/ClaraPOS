@@ -26,7 +26,7 @@ serve(async (req) => {
       return jsonResponse({ error: "No autorizado" }, 401);
     }
 
-    const { userId, rol_id, is_active, nombre } = await req.json();
+    const { userId, rol_id, is_active, nombre, telefono } = await req.json();
 
     if (!userId) {
       return jsonResponse({ error: "userId es requerido" }, 400);
@@ -147,6 +147,7 @@ serve(async (req) => {
     if (rol_id !== undefined) updates.rol_id = rol_id;
     if (is_active !== undefined) updates.is_active = is_active;
     if (nombre !== undefined) updates.nombre = nombre.trim();
+    if (telefono !== undefined) updates.telefono = telefono?.trim() || null;
 
     if (Object.keys(updates).length === 0) {
       return jsonResponse(

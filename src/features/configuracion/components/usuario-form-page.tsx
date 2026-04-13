@@ -1,0 +1,500 @@
+import { useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { toast } from 'sonner'
+import { ArrowLeft, Loader2 } from 'lucide-react'
+import {
+  createEmployeeSchema,
+  updateEmployeeSchema,
+  createRoleSchema,
+} from '@/features/configuracion/schemas/usuario-schema'
+import {
+  crearEmpleado,
+  actualizarEmpleado,
+  type Usuario,
+} from '@/features/configuracion/hooks/use-usuarios'
+import {
+  useRoles,
+  usePermisos,
+  useRolPermisos,
+  crearRolPersonalizado,
+} from '@/features/configuracion/hooks/use-roles'
+import { RoleCardSelector } from './role-card-selector'
+import { PermisosDisplay } from './permisos-display'
+
+interface UsuarioFormPageProps {
+  mode: 'create' | 'edit'
+  usuario?: Usuario
+}
+
+export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
+  const navigate = useNavigate()
+  const isEditing = mode === 'edit'
+
+  const { roles, isLoading: rolesLoading } = useRoles()
+  const { permisosByModule, isLoading: permisosLoading } = usePermisos()
+
+  const [nombre, setNombre] = useState(usuario?.nombre ?? '')
+  const [email, setEmail] = useState(usuario?.email ?? '')
+  const [password, setPassword] = useState('')
+  const [telefono, setTelefono] = useState(usuario?.telefono ?? '')
+  const [rolId, setRolId] = useState(usuario?.rol_id ?? '')
+  const [isCustomRole, setIsCustomRole] = useState(false)
+  const [customRolNombre, setCustomRolNombre] = useState('')
+  const [customRolDescripcion, setCustomRolDescripcion] = useState('')
+  const [selectedPermisoIds, setSelectedPermisoIds] = useState<Set<string>>(new Set())
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [submitting, setSubmitting] = useState(false)
+
+  const { permisosAgrupados, isLoading: rolPermisosLoading } = useRolPermisos(
+    !isCustomRole ? rolId : ''
+  )
+
+  function handleSelectRole(id: string) {
+    setIsCustomRole(false)
+    setRolId(id)
+    setErrors((prev) => {
+      const next = { ...prev }
+      delete next.rol_id
+      return next
+    })
+  }
+
+  function handleCustomToggle() {
+    setIsCustomRole(!isCustomRole)
+    if (!isCustomRole) {
+      setRolId('')
+    }
+    setErrors((prev) => {
+      const next = { ...prev }
+      delete next.rol_id
+      return next
+    })
+  }
+
+  function goBack() {
+    navigate({ to: '/configuracion/usuarios' })
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setErrors({})
+
+    if (isEditing && usuario) {
+      const effectiveRolId = isCustomRole ? '' : rolId
+      const parsed = updateEmployeeSchema.safeParse({ nombre, telefono, rol_id: effectiveRolId })
+      if (!parsed.success) {
+        const fieldErrors: Record<string, string> = {}
+        for (const issue of parsed.error.issues) {
+          const field = issue.path[0]?.toString()
+          if (field) fieldErrors[field] = issue.message
+        }
+        setErrors(fieldErrors)
+        return
+      }
+
+      if (isCustomRole) {
+        const rolParsed = createRoleSchema.safeParse({
+          nombre: customRolNombre,
+          descripcion: customRolDescripcion,
+          permiso_ids: Array.from(selectedPermisoIds),
+        })
+        if (!rolParsed.success) {
+          const fieldErrors: Record<string, string> = {}
+          for (const issue of rolParsed.error.issues) {
+            const field = issue.path[0]?.toString()
+            if (field) fieldErrors[`custom_${field}`] = issue.message
+          }
+          setErrors(fieldErrors)
+          return
+        }
+      }
+
+      if (!isCustomRole && !rolId) {
+        setErrors({ rol_id: 'Selecciona un rol' })
+        return
+      }
+
+      setSubmitting(true)
+      try {
+        let finalRolId = rolId
+
+        if (isCustomRole) {
+          const result = await crearRolPersonalizado(
+            customRolNombre,
+            customRolDescripcion,
+            Array.from(selectedPermisoIds)
+          )
+          finalRolId = result.roleId
+        }
+
+        await actualizarEmpleado(usuario.id, {
+          nombre,
+          telefono: telefono || undefined,
+          rol_id: finalRolId,
+        })
+        toast.success('Empleado actualizado correctamente')
+        goBack()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Error inesperado'
+        toast.error(message)
+      } finally {
+        setSubmitting(false)
+      }
+    } else {
+      const effectiveRolId = isCustomRole ? 'custom' : rolId
+      const parsed = createEmployeeSchema.safeParse({
+        nombre,
+        email,
+        password,
+        telefono,
+        rol_id: effectiveRolId,
+      })
+      if (!parsed.success) {
+        const fieldErrors: Record<string, string> = {}
+        for (const issue of parsed.error.issues) {
+          const field = issue.path[0]?.toString()
+          if (field) fieldErrors[field] = issue.message
+        }
+        setErrors(fieldErrors)
+        return
+      }
+
+      if (isCustomRole) {
+        const rolParsed = createRoleSchema.safeParse({
+          nombre: customRolNombre,
+          descripcion: customRolDescripcion,
+          permiso_ids: Array.from(selectedPermisoIds),
+        })
+        if (!rolParsed.success) {
+          const fieldErrors: Record<string, string> = {}
+          for (const issue of rolParsed.error.issues) {
+            const field = issue.path[0]?.toString()
+            if (field) fieldErrors[`custom_${field}`] = issue.message
+          }
+          setErrors(fieldErrors)
+          return
+        }
+      }
+
+      if (!isCustomRole && !rolId) {
+        setErrors({ rol_id: 'Selecciona un rol' })
+        return
+      }
+
+      setSubmitting(true)
+      try {
+        let finalRolId = rolId
+
+        if (isCustomRole) {
+          const result = await crearRolPersonalizado(
+            customRolNombre,
+            customRolDescripcion,
+            Array.from(selectedPermisoIds)
+          )
+          finalRolId = result.roleId
+        }
+
+        await crearEmpleado(nombre, email, password, finalRolId, telefono || undefined)
+        toast.success('Empleado creado correctamente')
+        goBack()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Error inesperado'
+        toast.error(message)
+      } finally {
+        setSubmitting(false)
+      }
+    }
+  }
+
+  const isLoadingData = rolesLoading || permisosLoading
+  const showRolPermisos = !isCustomRole && rolId && !rolPermisosLoading
+
+  return (
+    <div className="max-w-6xl mx-auto space-y-6">
+      {/* Header */}
+      <div>
+        <button
+          type="button"
+          onClick={goBack}
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-700 transition-colors mb-4"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Volver a usuarios
+        </button>
+        <h1 className="text-2xl font-bold tracking-tight">
+          {isEditing ? 'Editar Empleado' : 'Nuevo Empleado'}
+        </h1>
+        <p className="text-sm text-gray-500 mt-1">
+          {isEditing
+            ? 'Modifica los datos y el rol del empleado'
+            : 'Completa los datos para agregar un nuevo empleado'}
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit}>
+        {/* Two-column layout: employee info (left) + role/permisos (right) */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+          {/* LEFT COLUMN - Employee info (sticky on desktop) */}
+          <div className="lg:col-span-2 lg:sticky lg:top-6 space-y-6">
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="text-base font-semibold text-gray-900 mb-4">
+                Informacion del empleado
+              </h2>
+              <div className="space-y-4">
+                <div>
+                  <label
+                    htmlFor="usr-nombre"
+                    className="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Nombre
+                  </label>
+                  <input
+                    id="usr-nombre"
+                    type="text"
+                    value={nombre}
+                    onChange={(e) => setNombre(e.target.value)}
+                    placeholder="Nombre completo"
+                    className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                      errors.nombre ? 'border-red-500' : 'border-gray-300'
+                    }`}
+                  />
+                  {errors.nombre && (
+                    <p className="text-red-500 text-xs mt-1">{errors.nombre}</p>
+                  )}
+                </div>
+
+                {!isEditing && (
+                  <div>
+                    <label
+                      htmlFor="usr-email"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      Correo electronico
+                    </label>
+                    <input
+                      id="usr-email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="empleado@ejemplo.com"
+                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                        errors.email ? 'border-red-500' : 'border-gray-300'
+                      }`}
+                    />
+                    {errors.email && (
+                      <p className="text-red-500 text-xs mt-1">{errors.email}</p>
+                    )}
+                  </div>
+                )}
+
+                {!isEditing && (
+                  <div>
+                    <label
+                      htmlFor="usr-password"
+                      className="block text-sm font-medium text-gray-700 mb-1"
+                    >
+                      Contrasena
+                    </label>
+                    <input
+                      id="usr-password"
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Minimo 6 caracteres"
+                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                        errors.password ? 'border-red-500' : 'border-gray-300'
+                      }`}
+                    />
+                    {errors.password && (
+                      <p className="text-red-500 text-xs mt-1">{errors.password}</p>
+                    )}
+                  </div>
+                )}
+
+                <div>
+                  <label
+                    htmlFor="usr-telefono"
+                    className="block text-sm font-medium text-gray-700 mb-1"
+                  >
+                    Telefono
+                    <span className="text-gray-400 font-normal ml-1">(opcional)</span>
+                  </label>
+                  <input
+                    id="usr-telefono"
+                    type="tel"
+                    value={telefono}
+                    onChange={(e) => setTelefono(e.target.value)}
+                    placeholder="0412-1234567"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Actions - visible on desktop under the left card */}
+            <div className="hidden lg:flex items-center gap-3">
+              <button
+                type="button"
+                onClick={goBack}
+                disabled={submitting}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {submitting
+                  ? 'Guardando...'
+                  : isEditing
+                    ? 'Actualizar Empleado'
+                    : 'Crear Empleado'}
+              </button>
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN - Role + permissions */}
+          <div className="lg:col-span-3 space-y-6">
+            {/* Role selector */}
+            <div className="rounded-lg border border-gray-200 bg-white p-5">
+              <h2 className="text-base font-semibold text-gray-900 mb-4">Asignar rol</h2>
+
+              {isLoadingData ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Cargando roles...
+                </div>
+              ) : (
+                <>
+                  <RoleCardSelector
+                    roles={roles}
+                    selectedRolId={rolId}
+                    onSelect={handleSelectRole}
+                    isCustom={isCustomRole}
+                    onCustomToggle={handleCustomToggle}
+                  />
+                  {errors.rol_id && (
+                    <p className="text-red-500 text-xs mt-2">{errors.rol_id}</p>
+                  )}
+                </>
+              )}
+
+              {/* Permissions for selected existing role */}
+              {showRolPermisos && (
+                <div className="mt-5 pt-4 border-t border-gray-100">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">Permisos del rol</h3>
+                  <PermisosDisplay mode="readonly" permisosAgrupados={permisosAgrupados} />
+                </div>
+              )}
+            </div>
+
+            {/* Custom role form */}
+            {isCustomRole && (
+              <div className="rounded-lg border border-blue-200 bg-white p-5 space-y-5">
+                <div>
+                  <h3 className="text-base font-semibold text-gray-900 mb-3">
+                    Datos del nuevo rol
+                  </h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label
+                        htmlFor="custom-rol-nombre"
+                        className="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        Nombre del rol
+                      </label>
+                      <input
+                        id="custom-rol-nombre"
+                        type="text"
+                        value={customRolNombre}
+                        onChange={(e) => setCustomRolNombre(e.target.value)}
+                        placeholder="Ej: Recepcionista"
+                        className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                          errors.custom_nombre ? 'border-red-500' : 'border-gray-300'
+                        }`}
+                      />
+                      {errors.custom_nombre && (
+                        <p className="text-red-500 text-xs mt-1">{errors.custom_nombre}</p>
+                      )}
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="custom-rol-desc"
+                        className="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        Descripcion
+                        <span className="text-gray-400 font-normal ml-1">(opcional)</span>
+                      </label>
+                      <input
+                        id="custom-rol-desc"
+                        type="text"
+                        value={customRolDescripcion}
+                        onChange={(e) => setCustomRolDescripcion(e.target.value)}
+                        placeholder="Breve descripcion del rol"
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-blue-100 pt-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-1">
+                    Seleccionar permisos
+                  </h3>
+                  <p className="text-xs text-gray-400 mb-3">
+                    {selectedPermisoIds.size > 0
+                      ? `${selectedPermisoIds.size} seleccionados`
+                      : 'Elige los permisos que tendra este rol'}
+                  </p>
+                  {errors.custom_permiso_ids && (
+                    <p className="text-red-500 text-xs mb-2">{errors.custom_permiso_ids}</p>
+                  )}
+                  {permisosLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Cargando permisos...
+                    </div>
+                  ) : (
+                    <PermisosDisplay
+                      mode="editable"
+                      permisosByModule={permisosByModule}
+                      selectedIds={selectedPermisoIds}
+                      onChange={setSelectedPermisoIds}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Mobile-only bottom actions */}
+        <div className="lg:hidden flex items-center justify-between pt-6">
+          <button
+            type="button"
+            onClick={goBack}
+            disabled={submitting}
+            className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
+          >
+            Cancelar
+          </button>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+          >
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {submitting
+              ? 'Guardando...'
+              : isEditing
+                ? 'Actualizar Empleado'
+                : 'Crear Empleado'}
+          </button>
+        </div>
+      </form>
+    </div>
+  )
+}

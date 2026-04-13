@@ -113,6 +113,7 @@ const usuarios = new Table(
     empresa_id: column.text,
     email: column.text,
     nombre: column.text,
+    telefono: column.text,
     rol_id: column.text,
     is_active: column.integer,
     created_at: column.text,
@@ -140,6 +141,7 @@ const roles = new Table(
 
 const rol_permisos = new Table(
   {
+    empresa_id: column.text,
     rol_id: column.text,
     permiso_id: column.text,
     granted_by: column.text,
@@ -150,6 +152,7 @@ const rol_permisos = new Table(
 
 const tenant_permisos = new Table(
   {
+    empresa_id: column.text,
     tenant_id: column.text,
     permiso_id: column.text,
     habilitado: column.integer,
@@ -708,6 +711,7 @@ const sesiones_caja = new Table(
 
 const sesiones_caja_detalle = new Table(
   {
+    empresa_id: column.text,
     sesion_caja_id: column.text,
     metodo_cobro_id: column.text,
     moneda_id: column.text,

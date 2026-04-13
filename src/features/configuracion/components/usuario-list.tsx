@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { toast } from 'sonner'
 import { Plus, Pencil } from 'lucide-react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -7,7 +8,6 @@ import {
   toggleEmpleado,
   type Usuario,
 } from '@/features/configuracion/hooks/use-usuarios'
-import { UsuarioForm } from './usuario-form'
 import { PageHeader } from '@/components/layout/page-header'
 
 function RolBadge({ rolNombre }: { rolNombre: string | null }) {
@@ -38,24 +38,8 @@ type UsuarioWithRol = Usuario & { rol_nombre: string | null }
 export function UsuarioList() {
   const { user: currentUser } = useCurrentUser()
   const { usuarios, isLoading } = useUsuarios()
-  const [formOpen, setFormOpen] = useState(false)
-  const [editingUsuario, setEditingUsuario] = useState<Usuario | undefined>(undefined)
+  const navigate = useNavigate()
   const [togglingId, setTogglingId] = useState<string | null>(null)
-
-  function handleNuevo() {
-    setEditingUsuario(undefined)
-    setFormOpen(true)
-  }
-
-  function handleEditar(usuario: Usuario) {
-    setEditingUsuario(usuario)
-    setFormOpen(true)
-  }
-
-  function handleCloseForm() {
-    setFormOpen(false)
-    setEditingUsuario(undefined)
-  }
 
   async function handleToggleActivo(usuario: UsuarioWithRol) {
     const nuevoEstado = usuario.is_active !== 1
@@ -91,7 +75,7 @@ export function UsuarioList() {
     <div className="space-y-6">
       <PageHeader titulo="Usuarios" descripcion="Gestion de empleados de tu empresa">
         <button
-          onClick={handleNuevo}
+          onClick={() => navigate({ to: '/configuracion/usuarios/nuevo' })}
           className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
         >
           <Plus className="h-4 w-4" />
@@ -149,7 +133,12 @@ export function UsuarioList() {
                   <td className="px-4 py-3 text-right">
                     {!isOwnerRow(usr) && !isSelf(usr) && (
                       <button
-                        onClick={() => handleEditar(usr)}
+                        onClick={() =>
+                          navigate({
+                            to: '/configuracion/usuarios/$usuarioId/editar',
+                            params: { usuarioId: usr.id },
+                          })
+                        }
                         className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
                       >
                         <Pencil className="h-3.5 w-3.5" />
@@ -163,12 +152,6 @@ export function UsuarioList() {
           </table>
         </div>
       )}
-
-      <UsuarioForm
-        isOpen={formOpen}
-        onClose={handleCloseForm}
-        usuario={editingUsuario}
-      />
     </div>
   )
 }

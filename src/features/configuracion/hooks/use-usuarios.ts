@@ -6,6 +6,7 @@ export interface Usuario {
   id: string
   email: string
   nombre: string
+  telefono: string | null
   rol_id: string | null
   empresa_id: string | null
   is_active: number
@@ -17,13 +18,35 @@ export function useUsuarios() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
-  const { data, isLoading } = useQuery(
-    `SELECT u.*, r.nombre as rol_nombre FROM usuarios u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.empresa_id = ? ORDER BY u.nombre ASC`,
+  // Queries separadas para que PowerSync reaccione
+  // independientemente a cambios en cada tabla
+  const { data: usersData, isLoading } = useQuery(
+    `SELECT * FROM usuarios WHERE empresa_id = ? ORDER BY nombre ASC`,
     [empresaId]
   )
 
+  const { data: rolesData } = useQuery(
+    empresaId ? `SELECT id, nombre FROM roles WHERE empresa_id = ?` : '',
+    empresaId ? [empresaId] : []
+  )
+
+  const rolesMap = new Map(
+    (rolesData ?? []).map((r) => {
+      const row = r as Record<string, unknown>
+      return [row.id as string, row.nombre as string]
+    })
+  )
+
+  const usuarios = (usersData ?? []).map((u) => {
+    const row = u as Usuario
+    return {
+      ...row,
+      rol_nombre: row.rol_id ? (rolesMap.get(row.rol_id) ?? null) : null,
+    }
+  })
+
   return {
-    usuarios: (data ?? []) as (Usuario & { rol_nombre: string | null })[],
+    usuarios: usuarios as (Usuario & { rol_nombre: string | null })[],
     isLoading,
   }
 }
@@ -32,14 +55,15 @@ export async function crearEmpleado(
   nombre: string,
   email: string,
   password: string,
-  rolId: string
+  rolId: string,
+  telefono?: string
 ) {
-  return connector.createEmployee(nombre, email, password, rolId)
+  return connector.createEmployee(nombre, email, password, rolId, telefono)
 }
 
 export async function actualizarEmpleado(
   userId: string,
-  updates: { rol_id?: string; is_active?: boolean; nombre?: string }
+  updates: { rol_id?: string; is_active?: boolean; nombre?: string; telefono?: string }
 ) {
   return connector.updateEmployee(userId, updates)
 }

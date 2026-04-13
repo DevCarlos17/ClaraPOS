@@ -53,6 +53,9 @@ import { Route as AppClientesGestionRouteImport } from './routes/_app/clientes/g
 import { Route as AppClientesCuentasPorCobrarRouteImport } from './routes/_app/clientes/cuentas-por-cobrar'
 import { Route as AppCajaSesionesRouteImport } from './routes/_app/caja/sesiones'
 import { Route as AppCajaMovimientosRouteImport } from './routes/_app/caja/movimientos'
+import { Route as AppConfiguracionUsuariosIndexRouteImport } from './routes/_app/configuracion/usuarios/index'
+import { Route as AppConfiguracionUsuariosNuevoRouteImport } from './routes/_app/configuracion/usuarios/nuevo'
+import { Route as AppConfiguracionUsuariosUsuarioIdEditarRouteImport } from './routes/_app/configuracion/usuarios/$usuarioId.editar'
 
 const AppRouteRoute = AppRouteRouteImport.update({
   id: '/_app',
@@ -280,6 +283,24 @@ const AppCajaMovimientosRoute = AppCajaMovimientosRouteImport.update({
   path: '/caja/movimientos',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppConfiguracionUsuariosIndexRoute =
+  AppConfiguracionUsuariosIndexRouteImport.update({
+    id: '/',
+    path: '/',
+    getParentRoute: () => AppConfiguracionUsuariosRoute,
+  } as any)
+const AppConfiguracionUsuariosNuevoRoute =
+  AppConfiguracionUsuariosNuevoRouteImport.update({
+    id: '/nuevo',
+    path: '/nuevo',
+    getParentRoute: () => AppConfiguracionUsuariosRoute,
+  } as any)
+const AppConfiguracionUsuariosUsuarioIdEditarRoute =
+  AppConfiguracionUsuariosUsuarioIdEditarRouteImport.update({
+    id: '/$usuarioId/editar',
+    path: '/$usuarioId/editar',
+    getParentRoute: () => AppConfiguracionUsuariosRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -304,7 +325,7 @@ export interface FileRoutesByFullPath {
   '/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
-  '/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
   '/contabilidad/gastos': typeof AppContabilidadGastosRoute
   '/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
   '/inventario/ajustes': typeof AppInventarioAjustesRoute
@@ -324,6 +345,9 @@ export interface FileRoutesByFullPath {
   '/ventas/nueva': typeof AppVentasNuevaRoute
   '/ventas/reportes': typeof AppVentasReportesRoute
   '/clientes/': typeof AppClientesIndexRoute
+  '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
+  '/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
+  '/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -347,7 +371,6 @@ export interface FileRoutesByTo {
   '/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
-  '/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
   '/contabilidad/gastos': typeof AppContabilidadGastosRoute
   '/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
   '/inventario/ajustes': typeof AppInventarioAjustesRoute
@@ -367,6 +390,9 @@ export interface FileRoutesByTo {
   '/ventas/nueva': typeof AppVentasNuevaRoute
   '/ventas/reportes': typeof AppVentasReportesRoute
   '/clientes': typeof AppClientesIndexRoute
+  '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
+  '/configuracion/usuarios': typeof AppConfiguracionUsuariosIndexRoute
+  '/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -394,7 +420,7 @@ export interface FileRoutesById {
   '/_app/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
   '/_app/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/_app/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
-  '/_app/configuracion/usuarios': typeof AppConfiguracionUsuariosRoute
+  '/_app/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
   '/_app/contabilidad/gastos': typeof AppContabilidadGastosRoute
   '/_app/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
   '/_app/inventario/ajustes': typeof AppInventarioAjustesRoute
@@ -414,6 +440,9 @@ export interface FileRoutesById {
   '/_app/ventas/nueva': typeof AppVentasNuevaRoute
   '/_app/ventas/reportes': typeof AppVentasReportesRoute
   '/_app/clientes/': typeof AppClientesIndexRoute
+  '/_app/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
+  '/_app/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
+  '/_app/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -460,6 +489,9 @@ export interface FileRouteTypes {
     | '/ventas/nueva'
     | '/ventas/reportes'
     | '/clientes/'
+    | '/configuracion/usuarios/nuevo'
+    | '/configuracion/usuarios/'
+    | '/configuracion/usuarios/$usuarioId/editar'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -483,7 +515,6 @@ export interface FileRouteTypes {
     | '/configuracion/impuestos'
     | '/configuracion/metodos-pago'
     | '/configuracion/tasa-cambio'
-    | '/configuracion/usuarios'
     | '/contabilidad/gastos'
     | '/contabilidad/plan-cuentas'
     | '/inventario/ajustes'
@@ -503,6 +534,9 @@ export interface FileRouteTypes {
     | '/ventas/nueva'
     | '/ventas/reportes'
     | '/clientes'
+    | '/configuracion/usuarios/nuevo'
+    | '/configuracion/usuarios'
+    | '/configuracion/usuarios/$usuarioId/editar'
   id:
     | '__root__'
     | '/'
@@ -549,6 +583,9 @@ export interface FileRouteTypes {
     | '/_app/ventas/nueva'
     | '/_app/ventas/reportes'
     | '/_app/clientes/'
+    | '/_app/configuracion/usuarios/nuevo'
+    | '/_app/configuracion/usuarios/'
+    | '/_app/configuracion/usuarios/$usuarioId/editar'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -867,6 +904,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCajaMovimientosRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/configuracion/usuarios/': {
+      id: '/_app/configuracion/usuarios/'
+      path: '/'
+      fullPath: '/configuracion/usuarios/'
+      preLoaderRoute: typeof AppConfiguracionUsuariosIndexRouteImport
+      parentRoute: typeof AppConfiguracionUsuariosRoute
+    }
+    '/_app/configuracion/usuarios/nuevo': {
+      id: '/_app/configuracion/usuarios/nuevo'
+      path: '/nuevo'
+      fullPath: '/configuracion/usuarios/nuevo'
+      preLoaderRoute: typeof AppConfiguracionUsuariosNuevoRouteImport
+      parentRoute: typeof AppConfiguracionUsuariosRoute
+    }
+    '/_app/configuracion/usuarios/$usuarioId/editar': {
+      id: '/_app/configuracion/usuarios/$usuarioId/editar'
+      path: '/$usuarioId/editar'
+      fullPath: '/configuracion/usuarios/$usuarioId/editar'
+      preLoaderRoute: typeof AppConfiguracionUsuariosUsuarioIdEditarRouteImport
+      parentRoute: typeof AppConfiguracionUsuariosRoute
+    }
   }
 }
 
@@ -902,6 +960,25 @@ const AppClientesRouteWithChildren = AppClientesRoute._addFileChildren(
   AppClientesRouteChildren,
 )
 
+interface AppConfiguracionUsuariosRouteChildren {
+  AppConfiguracionUsuariosNuevoRoute: typeof AppConfiguracionUsuariosNuevoRoute
+  AppConfiguracionUsuariosIndexRoute: typeof AppConfiguracionUsuariosIndexRoute
+  AppConfiguracionUsuariosUsuarioIdEditarRoute: typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
+}
+
+const AppConfiguracionUsuariosRouteChildren: AppConfiguracionUsuariosRouteChildren =
+  {
+    AppConfiguracionUsuariosNuevoRoute: AppConfiguracionUsuariosNuevoRoute,
+    AppConfiguracionUsuariosIndexRoute: AppConfiguracionUsuariosIndexRoute,
+    AppConfiguracionUsuariosUsuarioIdEditarRoute:
+      AppConfiguracionUsuariosUsuarioIdEditarRoute,
+  }
+
+const AppConfiguracionUsuariosRouteWithChildren =
+  AppConfiguracionUsuariosRoute._addFileChildren(
+    AppConfiguracionUsuariosRouteChildren,
+  )
+
 interface AppRouteRouteChildren {
   AppClientesRoute: typeof AppClientesRouteWithChildren
   AppClinicaRoute: typeof AppClinicaRoute
@@ -919,7 +996,7 @@ interface AppRouteRouteChildren {
   AppConfiguracionImpuestosRoute: typeof AppConfiguracionImpuestosRoute
   AppConfiguracionMetodosPagoRoute: typeof AppConfiguracionMetodosPagoRoute
   AppConfiguracionTasaCambioRoute: typeof AppConfiguracionTasaCambioRoute
-  AppConfiguracionUsuariosRoute: typeof AppConfiguracionUsuariosRoute
+  AppConfiguracionUsuariosRoute: typeof AppConfiguracionUsuariosRouteWithChildren
   AppContabilidadGastosRoute: typeof AppContabilidadGastosRoute
   AppContabilidadPlanCuentasRoute: typeof AppContabilidadPlanCuentasRoute
   AppInventarioAjustesRoute: typeof AppInventarioAjustesRoute
@@ -957,7 +1034,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppConfiguracionImpuestosRoute: AppConfiguracionImpuestosRoute,
   AppConfiguracionMetodosPagoRoute: AppConfiguracionMetodosPagoRoute,
   AppConfiguracionTasaCambioRoute: AppConfiguracionTasaCambioRoute,
-  AppConfiguracionUsuariosRoute: AppConfiguracionUsuariosRoute,
+  AppConfiguracionUsuariosRoute: AppConfiguracionUsuariosRouteWithChildren,
   AppContabilidadGastosRoute: AppContabilidadGastosRoute,
   AppContabilidadPlanCuentasRoute: AppContabilidadPlanCuentasRoute,
   AppInventarioAjustesRoute: AppInventarioAjustesRoute,
