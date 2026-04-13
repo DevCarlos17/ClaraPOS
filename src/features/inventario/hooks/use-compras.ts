@@ -52,6 +52,8 @@ export interface CrearCompraResult {
   nroFactura: string
 }
 
+export type CompraConProveedor = Compra & { proveedor_nombre: string }
+
 export function useCompras() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
@@ -64,7 +66,56 @@ export function useCompras() {
      ORDER BY c.fecha_factura DESC`,
     [empresaId]
   )
-  return { compras: (data ?? []) as (Compra & { proveedor_nombre: string })[], isLoading }
+  return { compras: (data ?? []) as CompraConProveedor[], isLoading }
+}
+
+export function useComprasPorFecha(fechaDesde: string, fechaHasta: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const enabled = Boolean(fechaDesde && fechaHasta && empresaId)
+
+  const { data, isLoading } = useQuery(
+    enabled
+      ? `SELECT c.*, p.razon_social as proveedor_nombre
+         FROM facturas_compra c
+         LEFT JOIN proveedores p ON c.proveedor_id = p.id
+         WHERE c.empresa_id = ?
+           AND c.fecha_factura >= ?
+           AND c.fecha_factura <= ?
+         ORDER BY c.fecha_factura DESC`
+      : '',
+    enabled ? [empresaId, fechaDesde, fechaHasta] : []
+  )
+  return { compras: (data ?? []) as CompraConProveedor[], isLoading: enabled && isLoading }
+}
+
+export function useAbonosCompra(facturaCompraId: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const enabled = Boolean(facturaCompraId && empresaId)
+
+  const { data, isLoading } = useQuery(
+    enabled
+      ? `SELECT * FROM movimientos_cuenta_proveedor
+         WHERE empresa_id = ? AND factura_compra_id = ?
+         ORDER BY fecha ASC`
+      : '',
+    enabled ? [empresaId, facturaCompraId] : []
+  )
+  return {
+    abonos: (data ?? []) as {
+      id: string
+      tipo: string
+      referencia: string
+      monto: string
+      fecha: string
+      observacion: string | null
+      created_at: string
+    }[],
+    isLoading: enabled && isLoading,
+  }
 }
 
 export function useDetalleCompra(compraId: string) {
