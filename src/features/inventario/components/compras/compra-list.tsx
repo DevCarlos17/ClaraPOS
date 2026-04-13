@@ -155,9 +155,9 @@ export function CompraList() {
               fechaHasta={consultaActiva.hasta}
             />
           </div>
-          <div className="overflow-x-auto rounded-lg border border-border">
+          <div className="overflow-auto rounded-lg border border-border max-h-[60vh]">
             <table className="min-w-full divide-y divide-border">
-              <thead className="bg-muted/50">
+              <thead className="bg-muted/50 sticky top-0 z-[1]">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Nro Factura</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Fecha</th>

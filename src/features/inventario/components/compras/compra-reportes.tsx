@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { FileText, ChevronDown, Loader2 } from 'lucide-react'
 import { type CompraConProveedor, fetchDetalleParaReporte, type DetalleConProducto } from '@/features/inventario/hooks/use-compras'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate, formatDateTime } from '@/lib/format'
 
@@ -13,6 +14,12 @@ interface CompraReportesProps {
   fechaHasta: string
 }
 
+interface EmpresaInfo {
+  nombre: string
+  rif: string
+  direccion: string
+}
+
 const PRINT_STYLES = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -22,13 +29,23 @@ const PRINT_STYLES = `
     font-size: 11px;
     line-height: 1.4;
   }
+  .empresa-header {
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  .empresa-header .empresa-nombre { font-size: 15px; font-weight: 700; text-transform: uppercase; }
+  .empresa-header .empresa-rif { font-size: 10px; color: #444; font-weight: 600; }
+  .empresa-header .empresa-direccion { font-size: 9px; color: #666; margin-top: 2px; }
   .report-header {
     text-align: center;
     margin-bottom: 16px;
     border-bottom: 2px solid #333;
     padding-bottom: 10px;
+    margin-top: 10px;
+    border-top: 1px solid #d1d5db;
+    padding-top: 10px;
   }
-  .report-header h1 { font-size: 16px; font-weight: 700; margin-bottom: 2px; }
+  .report-header h1 { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
   .report-header p { font-size: 10px; color: #666; }
   .report-meta {
     display: flex;
@@ -41,19 +58,19 @@ const PRINT_STYLES = `
   }
   .summary-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-    margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
   }
   .summary-card {
     border: 1px solid #d1d5db;
     border-radius: 6px;
-    padding: 12px;
+    padding: 10px;
     text-align: center;
   }
   .summary-card .label { font-size: 9px; text-transform: uppercase; color: #666; font-weight: 600; margin-bottom: 4px; }
-  .summary-card .value { font-size: 16px; font-weight: 700; }
-  .summary-card .value-sm { font-size: 12px; color: #555; }
+  .summary-card .value { font-size: 15px; font-weight: 700; }
+  .summary-card .value-sm { font-size: 11px; color: #555; }
   .value-green { color: #166534; }
   .value-red { color: #dc2626; }
   .value-blue { color: #1e40af; }
@@ -88,7 +105,6 @@ const PRINT_STYLES = `
   .detail-products { background: #fafbfc; }
   .detail-products td { padding: 3px 6px 3px 30px; font-size: 9px; color: #555; border-bottom: 1px dashed #e5e7eb; }
   .detail-products .prod-header td { font-weight: 600; font-size: 8px; text-transform: uppercase; color: #888; }
-  .section-divider { margin: 12px 0; border-top: 1px solid #e5e7eb; }
   .report-footer {
     margin-top: 20px;
     padding-top: 10px;
@@ -104,6 +120,16 @@ const PRINT_STYLES = `
     @page { margin: 0.8cm; size: letter; }
   }
 `
+
+function buildEmpresaHeader(empresa: EmpresaInfo) {
+  return `
+    <div class="empresa-header">
+      <div class="empresa-nombre">${empresa.nombre}</div>
+      ${empresa.rif ? `<div class="empresa-rif">RIF: ${empresa.rif}</div>` : ''}
+      ${empresa.direccion ? `<div class="empresa-direccion">${empresa.direccion}</div>` : ''}
+    </div>
+  `
+}
 
 function calcTotals(compras: CompraConProveedor[]) {
   let totalUsd = 0
@@ -135,12 +161,14 @@ function buildSummaryHtml(
   compras: CompraConProveedor[],
   fechaDesde: string,
   fechaHasta: string,
-  usuario: string
+  usuario: string,
+  empresa: EmpresaInfo
 ) {
   const t = calcTotals(compras)
   const now = formatDateTime(new Date().toISOString())
 
   return `
+    ${buildEmpresaHeader(empresa)}
     <div class="report-header">
       <h1>REPORTE DE COMPRAS - RESUMEN</h1>
       <p>Periodo: ${formatDate(fechaDesde)} al ${formatDate(fechaHasta)}</p>
@@ -216,7 +244,8 @@ function buildDetailHtml(
   compras: CompraConProveedor[],
   fechaDesde: string,
   fechaHasta: string,
-  usuario: string
+  usuario: string,
+  empresa: EmpresaInfo
 ) {
   const t = calcTotals(compras)
   const now = formatDateTime(new Date().toISOString())
@@ -239,6 +268,7 @@ function buildDetailHtml(
   }).join('')
 
   return `
+    ${buildEmpresaHeader(empresa)}
     <div class="report-header">
       <h1>REPORTE DE COMPRAS - DETALLADO</h1>
       <p>Periodo: ${formatDate(fechaDesde)} al ${formatDate(fechaHasta)}</p>
@@ -301,7 +331,8 @@ function buildProductsHtml(
   detalleMap: Map<string, DetalleConProducto[]>,
   fechaDesde: string,
   fechaHasta: string,
-  usuario: string
+  usuario: string,
+  empresa: EmpresaInfo
 ) {
   const t = calcTotals(compras)
   const now = formatDateTime(new Date().toISOString())
@@ -348,8 +379,8 @@ function buildProductsHtml(
       const cant = parseFloat(d.cantidad)
       const costo = parseFloat(d.costo_unitario_usd)
       const subtUsd = cant * costo
-      const tasa = parseFloat(c.tasa)
-      const subtBs = subtUsd * tasa
+      const tasaVal = parseFloat(c.tasa)
+      const subtBs = subtUsd * tasaVal
       return `
         <tr class="detail-products">
           <td></td>
@@ -368,6 +399,7 @@ function buildProductsHtml(
   }).join('')
 
   return `
+    ${buildEmpresaHeader(empresa)}
     <div class="report-header">
       <h1>REPORTE DE COMPRAS - CON PRODUCTOS</h1>
       <p>Periodo: ${formatDate(fechaDesde)} al ${formatDate(fechaHasta)}</p>
@@ -450,23 +482,30 @@ function openPrintWindow(title: string, html: string) {
 
 export function CompraReportes({ compras, fechaDesde, fechaHasta }: CompraReportesProps) {
   const { user } = useCurrentUser()
+  const { company } = useCompany()
   const [menuOpen, setMenuOpen] = useState(false)
   const [generating, setGenerating] = useState(false)
 
   const usuario = user?.nombre ?? user?.email ?? 'Desconocido'
   const empresaId = user?.empresa_id ?? ''
 
+  const empresaInfo: EmpresaInfo = {
+    nombre: company?.nombre ?? '',
+    rif: company?.rif ?? '',
+    direccion: company?.direccion ?? '',
+  }
+
   async function handleGenerarReporte(tipo: TipoReporte) {
     setMenuOpen(false)
 
     if (tipo === 'resumen') {
-      const html = buildSummaryHtml(compras, fechaDesde, fechaHasta, usuario)
+      const html = buildSummaryHtml(compras, fechaDesde, fechaHasta, usuario, empresaInfo)
       openPrintWindow('Reporte Compras - Resumen', html)
       return
     }
 
     if (tipo === 'detallado') {
-      const html = buildDetailHtml(compras, fechaDesde, fechaHasta, usuario)
+      const html = buildDetailHtml(compras, fechaDesde, fechaHasta, usuario, empresaInfo)
       openPrintWindow('Reporte Compras - Detallado', html)
       return
     }
@@ -476,7 +515,7 @@ export function CompraReportes({ compras, fechaDesde, fechaHasta }: CompraReport
       try {
         const compraIds = compras.map(c => c.id)
         const detalleMap = await fetchDetalleParaReporte(compraIds, empresaId)
-        const html = buildProductsHtml(compras, detalleMap, fechaDesde, fechaHasta, usuario)
+        const html = buildProductsHtml(compras, detalleMap, fechaDesde, fechaHasta, usuario, empresaInfo)
         openPrintWindow('Reporte Compras - Con Productos', html)
       } finally {
         setGenerating(false)
@@ -502,12 +541,10 @@ export function CompraReportes({ compras, fechaDesde, fechaHasta }: CompraReport
 
       {menuOpen && (
         <>
-          {/* Backdrop */}
           <div
             className="fixed inset-0 z-10"
             onClick={() => setMenuOpen(false)}
           />
-          {/* Menu */}
           <div className="absolute right-0 mt-1 w-72 z-20 rounded-lg border border-border bg-background shadow-lg overflow-hidden">
             <button
               onClick={() => handleGenerarReporte('resumen')}

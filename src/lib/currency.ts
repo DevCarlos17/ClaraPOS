@@ -10,13 +10,13 @@ export function bsToUsd(bs: number, tasa: number): number {
 export function formatUsd(val: number | string): string {
   const num = typeof val === 'string' ? parseFloat(val) : val
   if (isNaN(num)) return '$0.00'
-  return `$${num.toFixed(2)}`
+  return `$${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function formatBs(val: number | string): string {
   const num = typeof val === 'string' ? parseFloat(val) : val
   if (isNaN(num)) return 'Bs. 0,00'
-  return `Bs. ${num.toFixed(2).replace('.', ',')}`
+  return `Bs. ${num.toLocaleString('es-VE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
 export function formatTasa(val: number | string): string {
