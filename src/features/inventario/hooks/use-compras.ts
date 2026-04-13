@@ -7,9 +7,13 @@ export interface Compra {
   id: string
   proveedor_id: string
   nro_factura: string
+  nro_control: string | null
   tasa: string
   total_usd: string
   total_bs: string
+  saldo_pend_usd: string
+  tipo: string
+  status: string
   usuario_id: string
   fecha_factura: string
   created_at: string
@@ -33,6 +37,11 @@ export interface LineaCompra {
 export interface CrearCompraParams {
   proveedor_id: string
   tasa: number
+  fecha_factura: string
+  nro_factura: string
+  nro_control?: string
+  moneda: 'USD' | 'BS'
+  tipo: 'CONTADO' | 'CREDITO'
   lineas: LineaCompra[]
   usuario_id: string
   empresa_id: string
@@ -78,7 +87,18 @@ export function useDetalleCompra(compraId: string) {
 }
 
 export async function crearCompra(params: CrearCompraParams): Promise<CrearCompraResult> {
-  const { proveedor_id, tasa, lineas, usuario_id, empresa_id } = params
+  const {
+    proveedor_id,
+    tasa,
+    fecha_factura,
+    nro_factura,
+    nro_control,
+    moneda,
+    tipo,
+    lineas,
+    usuario_id,
+    empresa_id,
+  } = params
 
   if (lineas.length === 0) {
     throw new Error('Debe agregar al menos una linea a la compra')
@@ -89,7 +109,6 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   }
 
   let compraId = ''
-  let nroFactura = ''
 
   await db.writeTransaction(async (tx) => {
     const now = new Date().toISOString()
@@ -104,7 +123,6 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     if (depResult.rows && depResult.rows.length > 0) {
       depositoId = (depResult.rows.item(0) as { id: string }).id
     } else {
-      // Fallback: primer deposito activo
       const depFallback = await tx.execute(
         'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
         [empresa_id]
@@ -115,7 +133,18 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       depositoId = (depFallback.rows.item(0) as { id: string }).id
     }
 
-    // 1. Calcular totales
+    // 0b. Obtener UUID de moneda
+    const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
+    const monedaResult = await tx.execute(
+      'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+      [monedaCode]
+    )
+    if (!monedaResult.rows?.length) {
+      throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
+    }
+    const monedaId = (monedaResult.rows.item(0) as { id: string }).id
+
+    // 1. Calcular totales (lineas ya vienen en USD)
     let totalUsd = 0
     for (const linea of lineas) {
       totalUsd += linea.cantidad * linea.costo_unitario_usd
@@ -123,39 +152,37 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     totalUsd = Number(totalUsd.toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
 
-    // 2. Generar nro_factura (por empresa)
-    const countResult = await tx.execute(
-      'SELECT COUNT(*) as cnt FROM facturas_compra WHERE empresa_id = ?',
-      [empresa_id]
-    )
-    const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
-    nroFactura = String(count + 1).padStart(6, '0')
+    // 2. Determinar saldo pendiente segun tipo
+    const saldoPendUsd = tipo === 'CREDITO' ? totalUsd : 0
 
     // 3. INSERT facturas_compra (cabecera)
     await tx.execute(
-      `INSERT INTO facturas_compra (id, proveedor_id, nro_factura, deposito_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, fecha_factura, usuario_id, empresa_id, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO facturas_compra (id, proveedor_id, nro_factura, nro_control, deposito_id, moneda_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, fecha_factura, fecha_recepcion, usuario_id, empresa_id, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         compraId,
         proveedor_id,
-        nroFactura,
+        nro_factura,
+        nro_control ?? null,
         depositoId,
+        monedaId,
         tasa.toFixed(4),
-        '0.00',          // total_exento_usd
-        totalUsd.toFixed(2), // total_base_usd
-        '0.00',          // total_iva_usd
-        '0.00',          // total_igtf_usd
+        '0.00',
+        totalUsd.toFixed(2),
+        '0.00',
+        '0.00',
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
-        '0.00',          // saldo_pend_usd (contado)
-        'CONTADO',
+        saldoPendUsd.toFixed(2),
+        tipo,
         'PROCESADA',
+        fecha_factura,
         now,
         usuario_id,
         empresa_id,
         now,
         now,
-        usuario_id,      // created_by
+        usuario_id,
       ]
     )
 
@@ -212,8 +239,8 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           stockNuevo.toFixed(3),
           linea.costo_unitario_usd.toFixed(4),
           compraId,
-          `COM-${nroFactura}`,
-          `Compra ${nroFactura}`,
+          `COM-${nro_factura}`,
+          `Compra ${nro_factura}`,
           usuario_id,
           now,
           empresa_id,
@@ -234,5 +261,5 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     }
   })
 
-  return { compraId, nroFactura }
+  return { compraId, nroFactura: nro_factura }
 }

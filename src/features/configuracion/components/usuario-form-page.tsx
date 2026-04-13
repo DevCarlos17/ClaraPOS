@@ -80,8 +80,11 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
     setErrors({})
 
     if (isEditing && usuario) {
-      const effectiveRolId = isCustomRole ? '' : rolId
-      const parsed = updateEmployeeSchema.safeParse({ nombre, telefono, rol_id: effectiveRolId })
+      const parsed = updateEmployeeSchema.safeParse({
+        nombre,
+        telefono,
+        rol_id: isCustomRole ? undefined : rolId,
+      })
       if (!parsed.success) {
         const fieldErrors: Record<string, string> = {}
         for (const issue of parsed.error.issues) {
@@ -147,14 +150,14 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
         setSubmitting(false)
       }
     } else {
-      const effectiveRolId = isCustomRole ? 'custom' : rolId
-      const parsed = createEmployeeSchema.safeParse({
-        nombre,
-        email,
-        password,
-        telefono,
-        rol_id: effectiveRolId,
-      })
+      // Validar datos del empleado (sin rol_id si es personalizado)
+      const schemaData: Record<string, unknown> = { nombre, email, password, telefono }
+      if (!isCustomRole) {
+        schemaData.rol_id = rolId
+      } else {
+        schemaData.rol_id = 'placeholder'
+      }
+      const parsed = createEmployeeSchema.safeParse(schemaData)
       if (!parsed.success) {
         const fieldErrors: Record<string, string> = {}
         for (const issue of parsed.error.issues) {
@@ -176,6 +179,9 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
           for (const issue of rolParsed.error.issues) {
             const field = issue.path[0]?.toString()
             if (field) fieldErrors[`custom_${field}`] = issue.message
+          }
+          if (selectedPermisoIds.size === 0) {
+            fieldErrors.rol_id = 'Completa los datos del rol personalizado'
           }
           setErrors(fieldErrors)
           return

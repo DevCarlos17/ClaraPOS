@@ -10,15 +10,19 @@ export function CompraList() {
   const [showForm, setShowForm] = useState(false)
   const [detalleCompraId, setDetalleCompraId] = useState<string | null>(null)
 
+  if (showForm) {
+    return <CompraForm onClose={() => setShowForm(false)} />
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-3">
         <div className="flex justify-between items-center mb-4">
-          <div className="h-8 w-48 bg-gray-200 rounded animate-pulse" />
-          <div className="h-9 w-40 bg-gray-200 rounded animate-pulse" />
+          <div className="h-8 w-48 bg-muted rounded animate-pulse" />
+          <div className="h-9 w-40 bg-muted rounded animate-pulse" />
         </div>
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted/50 rounded animate-pulse" />
         ))}
       </div>
     )
@@ -27,13 +31,13 @@ export function CompraList() {
   return (
     <div>
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">
+        <h2 className="text-lg font-semibold text-foreground">
           Historial de Compras
-          <span className="text-sm font-normal text-gray-500 ml-2">({compras.length})</span>
+          <span className="text-sm font-normal text-muted-foreground ml-2">({compras.length})</span>
         </h2>
         <button
           onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Plus className="h-4 w-4" />
           Nueva Compra
@@ -41,45 +45,57 @@ export function CompraList() {
       </div>
 
       {compras.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-muted-foreground">
           <p className="text-lg font-medium">Sin compras registradas</p>
-          <p className="text-sm mt-1">Haz clic en "Nueva Compra" para registrar una orden de compra</p>
+          <p className="text-sm mt-1">Haz clic en "Nueva Compra" para registrar una factura de compra</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="min-w-full divide-y divide-border">
+            <thead className="bg-muted/50">
               <tr>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nro</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fecha</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Proveedor</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total USD</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total Bs</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Tasa</th>
-                <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Acciones</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Nro Factura</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Fecha</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Proveedor</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Tipo</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total USD</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Bs</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Tasa</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">Acciones</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-background divide-y divide-border">
               {compras.map((compra) => (
-                <tr key={compra.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 font-mono text-sm text-gray-900">{compra.nro_factura}</td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
+                <tr key={compra.id} className="hover:bg-muted/30 transition-colors">
+                  <td className="px-4 py-3 font-mono text-sm text-foreground">{compra.nro_factura}</td>
+                  <td className="px-4 py-3 text-sm text-muted-foreground">
                     {new Date(compra.fecha_factura).toLocaleDateString('es-VE')}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-900">{compra.proveedor_nombre}</td>
-                  <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">
+                  <td className="px-4 py-3 text-sm text-foreground">{compra.proveedor_nombre}</td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+                        compra.tipo === 'CREDITO'
+                          ? 'bg-orange-50 text-orange-700 ring-orange-600/20 dark:bg-orange-950 dark:text-orange-300'
+                          : 'bg-green-50 text-green-700 ring-green-600/20 dark:bg-green-950 dark:text-green-300'
+                      }`}
+                    >
+                      {compra.tipo}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-right font-medium text-foreground">
                     {formatUsd(compra.total_usd)}
                   </td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-600">
+                  <td className="px-4 py-3 text-sm text-right text-muted-foreground">
                     {formatBs(compra.total_bs)}
                   </td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-500">
+                  <td className="px-4 py-3 text-sm text-right text-muted-foreground">
                     {parseFloat(compra.tasa).toFixed(4)}
                   </td>
                   <td className="px-4 py-3 text-center">
                     <button
                       onClick={() => setDetalleCompraId(compra.id)}
-                      className="inline-flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800 transition-colors"
+                      className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
                     >
                       <Eye className="h-4 w-4" />
                       Ver
@@ -91,8 +107,6 @@ export function CompraList() {
           </table>
         </div>
       )}
-
-      <CompraForm isOpen={showForm} onClose={() => setShowForm(false)} />
 
       {detalleCompraId && (
         <CompraDetalleModal

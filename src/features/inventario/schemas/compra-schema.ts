@@ -9,6 +9,11 @@ export const lineaCompraSchema = z.object({
 export const compraHeaderSchema = z.object({
   proveedor_id: z.string().min(1, 'Selecciona un proveedor'),
   tasa: z.number().positive('La tasa debe ser mayor a 0'),
+  fecha_factura: z.string().min(1, 'La fecha es requerida'),
+  nro_factura: z.string().min(1, 'El numero de factura es requerido'),
+  nro_control: z.string().optional(),
+  moneda: z.enum(['USD', 'BS']),
+  tipo: z.enum(['CONTADO', 'CREDITO']),
 })
 
 export type LineaCompraValues = z.infer<typeof lineaCompraSchema>
