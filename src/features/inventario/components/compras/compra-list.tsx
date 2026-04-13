@@ -4,6 +4,7 @@ import { useComprasPorFecha, type CompraConProveedor } from '@/features/inventar
 import { formatUsd, formatBs } from '@/lib/currency'
 import { CompraForm } from './compra-form'
 import { CompraDetalleModal } from './compra-detalle-modal'
+import { CompraReportes } from './compra-reportes'
 
 const MAX_RANGE_DAYS = 62 // ~2 meses
 
@@ -144,9 +145,16 @@ export function CompraList() {
         </div>
       ) : (
         <>
-          <p className="text-sm text-muted-foreground mb-2">
-            {compras.length} factura{compras.length !== 1 ? 's' : ''} encontrada{compras.length !== 1 ? 's' : ''}
-          </p>
+          <div className="flex justify-between items-center mb-2">
+            <p className="text-sm text-muted-foreground">
+              {compras.length} factura{compras.length !== 1 ? 's' : ''} encontrada{compras.length !== 1 ? 's' : ''}
+            </p>
+            <CompraReportes
+              compras={compras}
+              fechaDesde={consultaActiva.desde}
+              fechaHasta={consultaActiva.hasta}
+            />
+          </div>
           <div className="overflow-x-auto rounded-lg border border-border">
             <table className="min-w-full divide-y divide-border">
               <thead className="bg-muted/50">
