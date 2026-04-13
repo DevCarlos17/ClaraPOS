@@ -63,7 +63,7 @@ export async function crearEmpleado(
 
 export async function actualizarEmpleado(
   userId: string,
-  updates: { rol_id?: string; is_active?: boolean; nombre?: string; telefono?: string }
+  updates: { rol_id?: string; is_active?: boolean; nombre?: string; telefono?: string; password?: string }
 ) {
   return connector.updateEmployee(userId, updates)
 }

@@ -421,6 +421,7 @@ const ajustes = new Table(
 
 const ajustes_det = new Table(
   {
+    empresa_id: column.text,
     ajuste_id: column.text,
     producto_id: column.text,
     deposito_id: column.text,

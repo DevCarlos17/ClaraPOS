@@ -139,7 +139,7 @@ export class SupabaseConnector
 
   async updateEmployee(
     userId: string,
-    updates: { rol_id?: string; is_active?: boolean; nombre?: string; telefono?: string }
+    updates: { rol_id?: string; is_active?: boolean; nombre?: string; telefono?: string; password?: string }
   ) {
     if (!this.currentSession) throw new Error('No hay sesion activa')
 

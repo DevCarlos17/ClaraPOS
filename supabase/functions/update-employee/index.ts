@@ -26,7 +26,7 @@ serve(async (req) => {
       return jsonResponse({ error: "No autorizado" }, 401);
     }
 
-    const { userId, rol_id, is_active, nombre, telefono } = await req.json();
+    const { userId, rol_id, is_active, nombre, telefono, password } = await req.json();
 
     if (!userId) {
       return jsonResponse({ error: "userId es requerido" }, 400);
@@ -35,6 +35,13 @@ serve(async (req) => {
     if (nombre !== undefined && nombre.trim().length < 2) {
       return jsonResponse(
         { error: "El nombre debe tener al menos 2 caracteres" },
+        400,
+      );
+    }
+
+    if (password !== undefined && password.length < 6) {
+      return jsonResponse(
+        { error: "La contrasena debe tener al menos 6 caracteres" },
         400,
       );
     }
@@ -149,24 +156,40 @@ serve(async (req) => {
     if (nombre !== undefined) updates.nombre = nombre.trim();
     if (telefono !== undefined) updates.telefono = telefono?.trim() || null;
 
-    if (Object.keys(updates).length === 0) {
+    // Cambiar contrasena via Supabase Auth
+    if (password !== undefined) {
+      const { error: pwError } = await supabaseAdmin.auth.admin.updateUserById(
+        userId,
+        { password },
+      );
+      if (pwError) {
+        return jsonResponse(
+          { error: `Error al cambiar contrasena: ${pwError.message}` },
+          500,
+        );
+      }
+    }
+
+    if (Object.keys(updates).length === 0 && password === undefined) {
       return jsonResponse(
         { error: "No se especificaron campos a actualizar" },
         400,
       );
     }
 
-    // Actualizar usuario
-    const { error: updateError } = await supabaseAdmin
-      .from("usuarios")
-      .update(updates)
-      .eq("id", userId);
+    // Actualizar usuario en la tabla (si hay campos de tabla)
+    if (Object.keys(updates).length > 0) {
+      const { error: updateError } = await supabaseAdmin
+        .from("usuarios")
+        .update(updates)
+        .eq("id", userId);
 
-    if (updateError) {
-      return jsonResponse(
-        { error: `Error al actualizar: ${updateError.message}` },
-        500,
-      );
+      if (updateError) {
+        return jsonResponse(
+          { error: `Error al actualizar: ${updateError.message}` },
+          500,
+        );
+      }
     }
 
     // Si se desactiva, banear en Supabase Auth para bloquear login

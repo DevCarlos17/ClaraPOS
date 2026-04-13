@@ -11,7 +11,7 @@ export interface Compra {
   total_usd: string
   total_bs: string
   usuario_id: string
-  fecha: string
+  fecha_factura: string
   created_at: string
 }
 
@@ -52,7 +52,7 @@ export function useCompras() {
      FROM facturas_compra c
      LEFT JOIN proveedores p ON c.proveedor_id = p.id
      WHERE c.empresa_id = ?
-     ORDER BY c.fecha DESC`,
+     ORDER BY c.fecha_factura DESC`,
     [empresaId]
   )
   return { compras: (data ?? []) as (Compra & { proveedor_nombre: string })[], isLoading }
@@ -95,6 +95,26 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     const now = new Date().toISOString()
     compraId = uuidv4()
 
+    // 0. Obtener deposito principal de la empresa
+    const depResult = await tx.execute(
+      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+      [empresa_id]
+    )
+    let depositoId: string
+    if (depResult.rows && depResult.rows.length > 0) {
+      depositoId = (depResult.rows.item(0) as { id: string }).id
+    } else {
+      // Fallback: primer deposito activo
+      const depFallback = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+        [empresa_id]
+      )
+      if (!depFallback.rows || depFallback.rows.length === 0) {
+        throw new Error('No hay depositos configurados. Cree un deposito primero.')
+      }
+      depositoId = (depFallback.rows.item(0) as { id: string }).id
+    }
+
     // 1. Calcular totales
     let totalUsd = 0
     for (const linea of lineas) {
@@ -113,36 +133,53 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
     // 3. INSERT facturas_compra (cabecera)
     await tx.execute(
-      `INSERT INTO facturas_compra (id, proveedor_id, nro_factura, tasa, total_usd, total_bs, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO facturas_compra (id, proveedor_id, nro_factura, deposito_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, fecha_factura, usuario_id, empresa_id, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         compraId,
         proveedor_id,
         nroFactura,
+        depositoId,
         tasa.toFixed(4),
+        '0.00',          // total_exento_usd
+        totalUsd.toFixed(2), // total_base_usd
+        '0.00',          // total_iva_usd
+        '0.00',          // total_igtf_usd
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
-        usuario_id,
+        '0.00',          // saldo_pend_usd (contado)
+        'CONTADO',
+        'PROCESADA',
         now,
+        usuario_id,
         empresa_id,
         now,
+        now,
+        usuario_id,      // created_by
       ]
     )
 
     // 4. Por cada linea: detalle + kardex + actualizar producto
     for (const linea of lineas) {
       const detalleId = uuidv4()
+      const subtotalUsd = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
+      const subtotalBs = Number((subtotalUsd * tasa).toFixed(2))
 
       // 4a. INSERT facturas_compra_det
       await tx.execute(
-        `INSERT INTO facturas_compra_det (id, factura_compra_id, producto_id, cantidad, costo_unitario_usd, empresa_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facturas_compra_det (id, factura_compra_id, producto_id, deposito_id, cantidad, costo_unitario_usd, tipo_impuesto, impuesto_pct, subtotal_usd, subtotal_bs, empresa_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           detalleId,
           compraId,
           linea.producto_id,
+          depositoId,
           linea.cantidad.toFixed(3),
           linea.costo_unitario_usd.toFixed(2),
+          'Exento',
+          '0.00',
+          subtotalUsd.toFixed(2),
+          subtotalBs.toFixed(2),
           empresa_id,
           now,
         ]
@@ -164,14 +201,18 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // 4d. INSERT movimiento de inventario (entrada por compra)
       const movId = uuidv4()
       await tx.execute(
-        `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
-         VALUES (?, ?, 'E', 'COM', ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+         VALUES (?, ?, ?, 'E', 'COM', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movId,
           linea.producto_id,
+          depositoId,
           linea.cantidad.toFixed(3),
           stockActual.toFixed(3),
           stockNuevo.toFixed(3),
+          linea.costo_unitario_usd.toFixed(4),
+          compraId,
+          `COM-${nroFactura}`,
           `Compra ${nroFactura}`,
           usuario_id,
           now,

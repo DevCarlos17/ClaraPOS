@@ -55,7 +55,7 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
 
     setIsSubmitting(true)
     try {
-      await crearTasa(num, user.empresa_id)
+      await crearTasa(num, user.empresa_id, user.id)
       toast.success('Tasa de cambio actualizada')
       setValor('')
       onOpenChange(false)

@@ -21,7 +21,7 @@ export function TasaForm() {
 
     setIsSubmitting(true)
     try {
-      await crearTasa(num, user!.empresa_id!)
+      await crearTasa(num, user!.empresa_id!, user!.id)
       toast.success('Tasa de cambio registrada')
       setValor('')
     } catch {

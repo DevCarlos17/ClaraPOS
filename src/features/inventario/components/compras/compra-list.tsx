@@ -64,7 +64,7 @@ export function CompraList() {
                 <tr key={compra.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3 font-mono text-sm text-gray-900">{compra.nro_factura}</td>
                   <td className="px-4 py-3 text-sm text-gray-600">
-                    {new Date(compra.fecha).toLocaleDateString('es-VE')}
+                    {new Date(compra.fecha_factura).toLocaleDateString('es-VE')}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">{compra.proveedor_nombre}</td>
                   <td className="px-4 py-3 text-sm text-right font-medium text-gray-900">

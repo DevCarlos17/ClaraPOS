@@ -91,9 +91,20 @@ export function useTasasHistorial() {
   }
 }
 
-export async function crearTasa(valor: number, empresaId: string) {
+export async function crearTasa(valor: number, empresaId: string, userId?: string) {
   const id = uuidv4()
   const now = new Date().toISOString()
+
+  // Buscar el UUID real de la moneda USD
+  const moneda = await kysely
+    .selectFrom('monedas')
+    .select('id')
+    .where('codigo_iso', '=', 'USD')
+    .executeTakeFirst()
+
+  if (!moneda) {
+    throw new Error('No se encontro la moneda USD en el catalogo')
+  }
 
   await kysely
     .insertInto('tasas_cambio')
@@ -101,9 +112,10 @@ export async function crearTasa(valor: number, empresaId: string) {
       id,
       fecha: now,
       valor: valor.toFixed(4),
-      moneda_id: 'USD',
+      moneda_id: moneda.id,
       empresa_id: empresaId,
       created_at: now,
+      created_by: userId ?? null,
     })
     .execute()
 
@@ -111,13 +123,23 @@ export async function crearTasa(valor: number, empresaId: string) {
 }
 
 // Alternative using raw PowerSync for transaction safety
-export async function crearTasaRaw(valor: number, empresaId: string) {
+export async function crearTasaRaw(valor: number, empresaId: string, userId?: string) {
   const id = uuidv4()
   const now = new Date().toISOString()
 
+  // Buscar el UUID real de la moneda USD
+  const rows = await db.getAll<{ id: string }>(
+    'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+    ['USD']
+  )
+
+  if (!rows.length) {
+    throw new Error('No se encontro la moneda USD en el catalogo')
+  }
+
   await db.execute(
-    'INSERT INTO tasas_cambio (id, fecha, valor, moneda_id, empresa_id, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [id, now, valor.toFixed(4), 'USD', empresaId, now]
+    'INSERT INTO tasas_cambio (id, fecha, valor, moneda_id, empresa_id, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [id, now, valor.toFixed(4), rows[0].id, empresaId, now, userId ?? null]
   )
 
   return id
