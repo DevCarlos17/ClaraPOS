@@ -78,6 +78,40 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     const now = new Date().toISOString()
     ventaId = uuidv4()
 
+    // 0. Obtener deposito principal de la empresa
+    const depResult = await tx.execute(
+      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+      [empresa_id]
+    )
+    let depositoId: string
+    if (depResult.rows && depResult.rows.length > 0) {
+      depositoId = (depResult.rows.item(0) as { id: string }).id
+    } else {
+      const depFallback = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+        [empresa_id]
+      )
+      if (!depFallback.rows || depFallback.rows.length === 0) {
+        throw new Error('No hay depositos configurados. Cree un deposito primero.')
+      }
+      depositoId = (depFallback.rows.item(0) as { id: string }).id
+    }
+
+    // 0b. Obtener UUIDs de monedas
+    const monedaUsdResult = await tx.execute(
+      "SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1",
+      []
+    )
+    const monedaBsResult = await tx.execute(
+      "SELECT id FROM monedas WHERE codigo_iso = 'VES' LIMIT 1",
+      []
+    )
+    if (!monedaUsdResult.rows?.length || !monedaBsResult.rows?.length) {
+      throw new Error('No se encontraron las monedas USD/VES en el catalogo')
+    }
+    const monedaUsdId = (monedaUsdResult.rows.item(0) as { id: string }).id
+    const monedaBsId = (monedaBsResult.rows.item(0) as { id: string }).id
+
     // 1. Calcular totales
     let totalUsd = 0
     for (const linea of lineas) {
@@ -96,13 +130,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
     // 3. INSERT venta
     await tx.execute(
-      `INSERT INTO ventas (id, cliente_id, nro_factura, tasa, total_usd, total_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?)`,
+      `INSERT INTO ventas (id, cliente_id, nro_factura, deposito_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?, ?)`,
       [
         ventaId,
         cliente_id,
         nroFactura,
+        depositoId,
         tasa.toFixed(4),
+        '0.00',
+        totalUsd.toFixed(2),
+        '0.00',
+        '0.00',
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
         totalUsd.toFixed(2),
@@ -111,21 +150,30 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         now,
         empresa_id,
         now,
+        usuario_id,
       ]
     )
 
     // 4. Por cada linea: detalle + kardex
     for (const linea of lineas) {
       const detalleId = uuidv4()
+      const subtotalUsd = Number((linea.cantidad * linea.precio_unitario_usd).toFixed(2))
+      const subtotalBs = Number((subtotalUsd * tasa).toFixed(2))
+
       await tx.execute(
-        `INSERT INTO ventas_det (id, venta_id, producto_id, cantidad, precio_unitario_usd, empresa_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ventas_det (id, venta_id, producto_id, deposito_id, cantidad, precio_unitario_usd, tipo_impuesto, impuesto_pct, subtotal_usd, subtotal_bs, empresa_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           detalleId,
           ventaId,
           linea.producto_id,
+          depositoId,
           linea.cantidad.toFixed(3),
           linea.precio_unitario_usd.toFixed(2),
+          'Exento',
+          '0.00',
+          subtotalUsd.toFixed(2),
+          subtotalBs.toFixed(2),
           empresa_id,
           now,
         ]
@@ -153,14 +201,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         const movId = uuidv4()
 
         await tx.execute(
-          `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
-           VALUES (?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+           VALUES (?, ?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             movId,
             linea.producto_id,
+            depositoId,
             linea.cantidad.toFixed(3),
             stockActual.toFixed(3),
             stockNuevo.toFixed(3),
+            linea.precio_unitario_usd.toFixed(4),
+            ventaId,
+            `VEN-${nroFactura}`,
             `Venta ${nroFactura}`,
             usuario_id,
             now,
@@ -203,14 +255,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const movIngId = uuidv4()
 
             await tx.execute(
-              `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
-               VALUES (?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+               VALUES (?, ?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
                 movIngId,
                 ingrediente.producto_id,
+                depositoId,
                 cantidadNecesaria.toFixed(3),
                 stockIngrediente.toFixed(3),
                 stockNuevoIng.toFixed(3),
+                '0.0000',
+                ventaId,
+                `VEN-${nroFactura}`,
                 `Servicio "${producto.nombre}" - Venta ${nroFactura}`,
                 usuario_id,
                 now,
@@ -234,16 +290,17 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     for (const pago of pagos) {
       const pagoId = uuidv4()
       const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
+      const pagoMonedaId = pago.moneda === 'BS' ? monedaBsId : monedaUsdId
 
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoId,
           ventaId,
           cliente_id,
           pago.metodo_cobro_id,
-          pago.moneda,
+          pagoMonedaId,
           tasa.toFixed(4),
           pago.monto.toFixed(2),
           montoUsd.toFixed(2),

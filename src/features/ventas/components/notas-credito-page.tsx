@@ -120,10 +120,10 @@ export function NotasCreditoPage() {
                     <td className="px-4 py-3 font-mono text-xs">#{n.nro_factura}</td>
                     <td className="px-4 py-3 text-sm">{n.cliente_nombre}</td>
                     <td className="px-4 py-3 text-right font-bold">
-                      {formatUsd(n.monto_total_usd)}
+                      {formatUsd(n.total_usd)}
                     </td>
                     <td className="px-4 py-3 text-right text-muted-foreground">
-                      {formatBs(n.monto_total_bs)}
+                      {formatBs(n.total_bs)}
                     </td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">
                       {formatDateTime(n.fecha)}

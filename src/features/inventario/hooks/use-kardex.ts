@@ -52,6 +52,25 @@ export async function registrarMovimiento(params: {
 
   // Transaccion atomica local via SQLite
   await db.writeTransaction(async (tx) => {
+    // 0. Obtener deposito principal de la empresa
+    const depResult = await tx.execute(
+      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+      [empresa_id]
+    )
+    let depositoId: string
+    if (depResult.rows && depResult.rows.length > 0) {
+      depositoId = (depResult.rows.item(0) as { id: string }).id
+    } else {
+      const depFallback = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+        [empresa_id]
+      )
+      if (!depFallback.rows || depFallback.rows.length === 0) {
+        throw new Error('No hay depositos configurados. Cree un deposito primero.')
+      }
+      depositoId = (depFallback.rows.item(0) as { id: string }).id
+    }
+
     // 1. Leer stock actual
     const result = await tx.execute('SELECT stock FROM productos WHERE id = ?', [producto_id])
     if (!result.rows || result.rows.length === 0) {
@@ -72,11 +91,12 @@ export async function registrarMovimiento(params: {
     const now = new Date().toISOString()
 
     await tx.execute(
-      `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         producto_id,
+        depositoId,
         tipo,
         cantidad.toFixed(3),
         stockActual.toFixed(3),

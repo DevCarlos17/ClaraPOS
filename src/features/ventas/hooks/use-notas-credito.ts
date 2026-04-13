@@ -10,10 +10,11 @@ export interface NotaCreditoRow {
   nro_ncr: string
   venta_id: string
   cliente_id: string
+  tipo: string
   motivo: string
   tasa_historica: string
-  monto_total_usd: string
-  monto_total_bs: string
+  total_usd: string
+  total_bs: string
   fecha: string
   nro_factura: string
   cliente_nombre: string
@@ -67,8 +68,8 @@ export function useNotasCredito() {
 
   const { data, isLoading } = useQuery(
     `SELECT
-       nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.motivo,
-       nc.tasa_historica, nc.monto_total_usd, nc.monto_total_bs, nc.fecha,
+       nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.tipo, nc.motivo,
+       nc.tasa_historica, nc.total_usd, nc.total_bs, nc.fecha,
        v.nro_factura,
        c.nombre as cliente_nombre
      FROM notas_credito nc
@@ -155,6 +156,25 @@ export async function crearNotaCredito(
     const now = new Date().toISOString()
     ncrId = uuidv4()
 
+    // 0. Obtener deposito principal de la empresa
+    const depResult = await tx.execute(
+      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+      [empresa_id]
+    )
+    let depositoId: string
+    if (depResult.rows && depResult.rows.length > 0) {
+      depositoId = (depResult.rows.item(0) as { id: string }).id
+    } else {
+      const depFallback = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+        [empresa_id]
+      )
+      if (!depFallback.rows || depFallback.rows.length === 0) {
+        throw new Error('No hay depositos configurados. Cree un deposito primero.')
+      }
+      depositoId = (depFallback.rows.item(0) as { id: string }).id
+    }
+
     // 1. Leer factura y validar
     const ventaResult = await tx.execute('SELECT * FROM ventas WHERE id = ?', [venta_id])
     if (!ventaResult.rows || ventaResult.rows.length === 0) {
@@ -186,21 +206,24 @@ export async function crearNotaCredito(
 
     // 3. INSERT notas_credito (snapshot de la factura)
     await tx.execute(
-      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, motivo, tasa_historica, monto_total_usd, monto_total_bs, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, tipo, motivo, tasa_historica, total_usd, total_bs, afecta_inventario, usuario_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ncrId,
         nroNcr,
         venta_id,
         venta.cliente_id,
+        'TOTAL',
         motivo,
         venta.tasa,
         venta.total_usd,
         venta.total_bs,
+        1,
         usuario_id,
         now,
         empresa_id,
         now,
+        usuario_id,
       ]
     )
 
@@ -239,18 +262,20 @@ export async function crearNotaCredito(
           const movId = uuidv4()
 
           await tx.execute(
-            `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, venta_id, empresa_id, created_at)
-             VALUES (?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+             VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               movId,
               linea.producto_id,
+              depositoId,
               cantidadVendida.toFixed(3),
               stockActual.toFixed(3),
               stockNuevo.toFixed(3),
+              ncrId,
+              `NCR-${nroNcr}`,
               `${nroNcr} - Reintegro ${producto.nombre}`,
               usuario_id,
               now,
-              venta_id,
               empresa_id,
               now,
             ]
@@ -283,18 +308,20 @@ export async function crearNotaCredito(
               const movIngId = uuidv4()
 
               await tx.execute(
-                `INSERT INTO movimientos_inventario (id, producto_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, venta_id, empresa_id, created_at)
-                 VALUES (?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+                 VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                   movIngId,
                   ingrediente.producto_id,
+                  depositoId,
                   cantidadConsumida.toFixed(3),
                   stockIngrediente.toFixed(3),
                   stockNuevoIng.toFixed(3),
+                  ncrId,
+                  `NCR-${nroNcr}`,
                   `${nroNcr} - Reintegro ingrediente "${ingrediente.nombre}" (servicio "${producto.nombre}")`,
                   usuario_id,
                   now,
-                  venta_id,
                   empresa_id,
                   now,
                 ]

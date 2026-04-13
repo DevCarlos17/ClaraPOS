@@ -117,6 +117,17 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
   await db.writeTransaction(async (tx) => {
     const now = new Date().toISOString()
 
+    // 0. Obtener UUID de moneda
+    const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
+    const monedaResult = await tx.execute(
+      'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+      [monedaCode]
+    )
+    if (!monedaResult.rows?.length) {
+      throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
+    }
+    const monedaId = (monedaResult.rows.item(0) as { id: string }).id
+
     // 1. Leer factura
     const ventaResult = await tx.execute(
       'SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ?',
@@ -141,14 +152,14 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     // 4. INSERT pago
     const pagoId = uuidv4()
     await tx.execute(
-      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         pagoId,
         venta_id,
         cliente_id,
         metodo_cobro_id,
-        moneda,
+        monedaId,
         tasa.toFixed(4),
         monto.toFixed(2),
         montoUsd.toFixed(2),
@@ -226,6 +237,17 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
   await db.writeTransaction(async (tx) => {
     const now = new Date().toISOString()
 
+    // 0. Obtener UUID de moneda
+    const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
+    const monedaResult = await tx.execute(
+      'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+      [monedaCode]
+    )
+    if (!monedaResult.rows?.length) {
+      throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
+    }
+    const monedaId = (monedaResult.rows.item(0) as { id: string }).id
+
     // 1. Calcular monto total en USD
     const montoTotalUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
     let montoRestante = montoTotalUsd
@@ -252,14 +274,14 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         // INSERT pago vinculado a esta factura
         const pagoId = uuidv4()
         await tx.execute(
-          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             pagoId,
             factura.id,
             cliente_id,
             metodo_cobro_id,
-            moneda,
+            monedaId,
             tasa.toFixed(4),
             (moneda === 'BS' ? montoAplicar * tasa : montoAplicar).toFixed(2),
             montoAplicar.toFixed(2),
@@ -286,14 +308,14 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     if (montoRestante > 0.01) {
       const pagoAnticipoId = uuidv4()
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoAnticipoId,
           null,
           cliente_id,
           metodo_cobro_id,
-          moneda,
+          monedaId,
           tasa.toFixed(4),
           (moneda === 'BS' ? montoRestante * tasa : montoRestante).toFixed(2),
           montoRestante.toFixed(2),
