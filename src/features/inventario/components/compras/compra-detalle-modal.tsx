@@ -205,6 +205,10 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                     {compra.status}
                   </span>
                 </div>
+                <div className="info-item flex gap-1">
+                  <span className="info-label text-sm font-medium text-muted-foreground">Registrado por:</span>
+                  <span className="info-value text-sm text-foreground">{compra.creado_por_nombre ?? '-'}</span>
+                </div>
               </div>
             </div>
 

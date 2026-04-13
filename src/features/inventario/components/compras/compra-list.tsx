@@ -158,6 +158,7 @@ export function CompraList() {
                   <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total USD</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Bs</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Tasa</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Registrado por</th>
                   <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">Acciones</th>
                 </tr>
               </thead>
@@ -188,6 +189,9 @@ export function CompraList() {
                     </td>
                     <td className="px-4 py-3 text-sm text-right text-muted-foreground">
                       {parseFloat(compra.tasa).toFixed(4)}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-muted-foreground">
+                      {compra.creado_por_nombre ?? '-'}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button

@@ -15,6 +15,7 @@ export interface Compra {
   tipo: string
   status: string
   usuario_id: string
+  created_by: string | null
   fecha_factura: string
   created_at: string
 }
@@ -52,16 +53,17 @@ export interface CrearCompraResult {
   nroFactura: string
 }
 
-export type CompraConProveedor = Compra & { proveedor_nombre: string }
+export type CompraConProveedor = Compra & { proveedor_nombre: string; creado_por_nombre: string | null }
 
 export function useCompras() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT c.*, p.razon_social as proveedor_nombre
+    `SELECT c.*, p.razon_social as proveedor_nombre, u.nombre as creado_por_nombre
      FROM facturas_compra c
      LEFT JOIN proveedores p ON c.proveedor_id = p.id
+     LEFT JOIN usuarios u ON c.created_by = u.id
      WHERE c.empresa_id = ?
      ORDER BY c.fecha_factura DESC`,
     [empresaId]
@@ -77,9 +79,10 @@ export function useComprasPorFecha(fechaDesde: string, fechaHasta: string) {
 
   const { data, isLoading } = useQuery(
     enabled
-      ? `SELECT c.*, p.razon_social as proveedor_nombre
+      ? `SELECT c.*, p.razon_social as proveedor_nombre, u.nombre as creado_por_nombre
          FROM facturas_compra c
          LEFT JOIN proveedores p ON c.proveedor_id = p.id
+         LEFT JOIN usuarios u ON c.created_by = u.id
          WHERE c.empresa_id = ?
            AND c.fecha_factura >= ?
            AND c.fecha_factura <= ?
@@ -135,6 +138,34 @@ export function useDetalleCompra(compraId: string) {
     detalle: (data ?? []) as (DetalleCompra & { producto_codigo: string; producto_nombre: string })[],
     isLoading,
   }
+}
+
+export type DetalleConProducto = DetalleCompra & { producto_codigo: string; producto_nombre: string }
+
+export async function fetchDetalleParaReporte(
+  compraIds: string[],
+  empresaId: string
+): Promise<Map<string, DetalleConProducto[]>> {
+  const result = new Map<string, DetalleConProducto[]>()
+  if (compraIds.length === 0) return result
+
+  for (const compraId of compraIds) {
+    const { rows } = await db.execute(
+      `SELECT dc.*, p.codigo as producto_codigo, p.nombre as producto_nombre
+       FROM facturas_compra_det dc
+       LEFT JOIN productos p ON dc.producto_id = p.id
+       WHERE dc.factura_compra_id = ? AND dc.empresa_id = ?`,
+      [compraId, empresaId]
+    )
+    const items: DetalleConProducto[] = []
+    if (rows) {
+      for (let i = 0; i < rows.length; i++) {
+        items.push(rows.item(i) as DetalleConProducto)
+      }
+    }
+    result.set(compraId, items)
+  }
+  return result
 }
 
 export async function crearCompra(params: CrearCompraParams): Promise<CrearCompraResult> {
