@@ -34,21 +34,11 @@ export interface TopClienteVentas {
   totalUsd: number
 }
 
-// ─── Helpers ────────────────────────────────────────────────
-
-function buildRange(desde: string, hasta: string): { start: string; end: string } {
-  return {
-    start: `${desde}T00:00:00.000Z`,
-    end: `${hasta}T23:59:59.999Z`,
-  }
-}
-
 // ─── KPIs ───────────────────────────────────────────────────
 
 export function useVentasKpisRango(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -56,8 +46,8 @@ export function useVentasKpisRango(fechaDesde: string, fechaHasta: string) {
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as sum_usd,
        COALESCE(SUM(CAST(total_bs AS REAL)), 0) as sum_bs
      FROM ventas
-     WHERE empresa_id = ? AND fecha >= ? AND fecha <= ?`,
-    [empresaId, start, end]
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?`,
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const row = (data?.[0] ?? {}) as { cnt: number; sum_usd: number; sum_bs: number }
@@ -77,7 +67,6 @@ export function useVentasKpisRango(fechaDesde: string, fechaHasta: string) {
 export function useGananciaRango(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -87,8 +76,8 @@ export function useGananciaRango(fechaDesde: string, fechaHasta: string) {
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?`,
-    [empresaId, start, end]
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) >= ? AND SUBSTR(v.fecha, 1, 10) <= ?`,
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const ganancia = Number((data?.[0] as { ganancia: number })?.ganancia ?? 0)
@@ -100,17 +89,16 @@ export function useGananciaRango(fechaDesde: string, fechaHasta: string) {
 export function useVentasDiarias(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
        SUBSTR(fecha, 1, 10) as dia,
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_usd
      FROM ventas
-     WHERE empresa_id = ? AND fecha >= ? AND fecha <= ?
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?
      GROUP BY SUBSTR(fecha, 1, 10)
      ORDER BY dia ASC`,
-    [empresaId, start, end]
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const items: VentaDiaria[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -126,7 +114,6 @@ export function useVentasDiarias(fechaDesde: string, fechaHasta: string) {
 export function useVentasPorDeptoRango(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -136,10 +123,10 @@ export function useVentasPorDeptoRango(fechaDesde: string, fechaHasta: string) {
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      JOIN departamentos d ON p.departamento_id = d.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) >= ? AND SUBSTR(v.fecha, 1, 10) <= ?
      GROUP BY d.id, d.nombre
      ORDER BY total_usd DESC`,
-    [empresaId, start, end]
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const items: VentaDeptItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -155,7 +142,6 @@ export function useVentasPorDeptoRango(fechaDesde: string, fechaHasta: string) {
 export function usePagosPorMetodoRango(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -166,10 +152,10 @@ export function usePagosPorMetodoRango(fechaDesde: string, fechaHasta: string) {
      FROM pagos pg
      JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
-     WHERE pg.empresa_id = ? AND pg.fecha >= ? AND pg.fecha <= ?
+     WHERE pg.empresa_id = ? AND SUBSTR(pg.fecha, 1, 10) >= ? AND SUBSTR(pg.fecha, 1, 10) <= ?
      GROUP BY mp.id, mp.nombre, moneda
      ORDER BY total_usd DESC`,
-    [empresaId, start, end]
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const items: MetodoPagoResumen[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -187,7 +173,6 @@ export function usePagosPorMetodoRango(fechaDesde: string, fechaHasta: string) {
 export function useTopProductosVentas(fechaDesde: string, fechaHasta: string, limit = 10) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -198,11 +183,11 @@ export function useTopProductosVentas(fechaDesde: string, fechaHasta: string, li
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) >= ? AND SUBSTR(v.fecha, 1, 10) <= ?
      GROUP BY p.id, p.codigo, p.nombre
      ORDER BY cantidad DESC
      LIMIT ${limit}`,
-    [empresaId, start, end]
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const items: TopProductoVentas[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -220,7 +205,6 @@ export function useTopProductosVentas(fechaDesde: string, fechaHasta: string, li
 export function useTopClientesVentas(fechaDesde: string, fechaHasta: string, limit = 10) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -230,11 +214,11 @@ export function useTopClientesVentas(fechaDesde: string, fechaHasta: string, lim
        COALESCE(SUM(CAST(v.total_usd AS REAL)), 0) as total_usd
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) >= ? AND SUBSTR(v.fecha, 1, 10) <= ?
      GROUP BY c.id, c.nombre, c.identificacion
      ORDER BY total_usd DESC
      LIMIT ${limit}`,
-    [empresaId, start, end]
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const items: TopClienteVentas[] = (data ?? []).map((row: Record<string, unknown>) => ({

@@ -68,18 +68,15 @@ export function useInventarioPorDepto() {
 export function useVentasRango(fechaInicio: string, fechaFin: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const start = `${fechaInicio}T00:00:00.000Z`
-  const end = `${fechaFin}T23:59:59.999Z`
-
   const { data, isLoading } = useQuery(
     `SELECT
        SUBSTR(fecha, 1, 10) as dia,
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_usd
      FROM ventas
-     WHERE empresa_id = ? AND fecha >= ? AND fecha <= ?
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?
      GROUP BY SUBSTR(fecha, 1, 10)
      ORDER BY dia ASC`,
-    [empresaId, start, end]
+    [empresaId, fechaInicio, fechaFin]
   )
 
   const items: VentaDiaria[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -102,8 +99,8 @@ export function useTopProductosRango(
   const now = new Date()
   const start = new Date(now)
   start.setDate(start.getDate() - dias)
-  const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}T00:00:00.000Z`
-  const endStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T23:59:59.999Z`
+  const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+  const endStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -114,7 +111,7 @@ export function useTopProductosRango(
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) >= ? AND SUBSTR(v.fecha, 1, 10) <= ?
      GROUP BY p.id, p.nombre, p.codigo
      ORDER BY cantidad ${order}
      LIMIT ${limit}`,

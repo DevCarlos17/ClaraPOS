@@ -39,15 +39,6 @@ export interface MovimientoCxc {
   saldo_nuevo: string
 }
 
-// ─── Helpers ────────────────────────────────────────────────
-
-function buildRange(desde: string, hasta: string): { start: string; end: string } {
-  return {
-    start: `${desde}T00:00:00.000Z`,
-    end: `${hasta}T23:59:59.999Z`,
-  }
-}
-
 // ─── KPIs (snapshot actual, sin rango de fechas) ────────────
 
 export function useCxcKpis() {
@@ -79,13 +70,12 @@ export function useCxcKpis() {
 export function useCobrosDelPeriodo(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT COALESCE(SUM(CAST(monto_usd AS REAL)), 0) as total
      FROM pagos
-     WHERE empresa_id = ? AND fecha >= ? AND fecha <= ?`,
-    [empresaId, start, end]
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?`,
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const total = Number((data?.[0] as { total: number })?.total ?? 0)
@@ -196,7 +186,6 @@ export function useUtilizacionCredito(limit = 10) {
 export function useMovimientosCxcPeriodo(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildRange(fechaDesde, fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -204,10 +193,10 @@ export function useMovimientosCxcPeriodo(fechaDesde: string, fechaHasta: string)
        c.nombre as cliente_nombre
      FROM movimientos_cuenta mc
      JOIN clientes c ON mc.cliente_id = c.id
-     WHERE mc.empresa_id = ? AND mc.fecha >= ? AND mc.fecha <= ?
+     WHERE mc.empresa_id = ? AND SUBSTR(mc.fecha, 1, 10) >= ? AND SUBSTR(mc.fecha, 1, 10) <= ?
      ORDER BY mc.fecha DESC
      LIMIT 100`,
-    [empresaId, start, end]
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   return { movimientos: (data ?? []) as MovimientoCxc[], isLoading }

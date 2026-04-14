@@ -44,7 +44,7 @@ export function useMovMetodoCobro(
     if (hayFiltroFechas && fechaDesde && fechaHasta) {
       return `SELECT * FROM movimientos_metodo_cobro
               WHERE empresa_id = ? AND metodo_cobro_id = ?
-                AND fecha >= ? AND fecha <= ?
+                AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?
               ORDER BY fecha DESC
               LIMIT 100`
     }
@@ -52,7 +52,7 @@ export function useMovMetodoCobro(
     if (hayFiltroFechas && fechaDesde) {
       return `SELECT * FROM movimientos_metodo_cobro
               WHERE empresa_id = ? AND metodo_cobro_id = ?
-                AND fecha >= ?
+                AND SUBSTR(fecha, 1, 10) >= ?
               ORDER BY fecha DESC
               LIMIT 100`
     }
@@ -60,7 +60,7 @@ export function useMovMetodoCobro(
     if (hayFiltroFechas && fechaHasta) {
       return `SELECT * FROM movimientos_metodo_cobro
               WHERE empresa_id = ? AND metodo_cobro_id = ?
-                AND fecha <= ?
+                AND SUBSTR(fecha, 1, 10) <= ?
               ORDER BY fecha DESC
               LIMIT 100`
     }

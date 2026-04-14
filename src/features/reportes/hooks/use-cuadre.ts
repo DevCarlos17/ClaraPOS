@@ -53,23 +53,11 @@ export interface DetalleCxc {
   fecha: string
 }
 
-/**
- * Builds date range for local date filtering.
- * fecha is a YYYY-MM-DD string in local time.
- * Returns ISO strings for start and end of that local day.
- */
-function buildDateRange(fecha: string): { start: string; end: string } {
-  const start = `${fecha}T00:00:00.000Z`
-  const end = `${fecha}T23:59:59.999Z`
-  return { start, end }
-}
-
 // ─── KPIs ──────────────────────────────────────────────────
 
 export function useVentasDelDia(fecha: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -77,8 +65,8 @@ export function useVentasDelDia(fecha: string) {
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as sum_usd,
        COALESCE(SUM(CAST(total_bs AS REAL)), 0) as sum_bs
      FROM ventas
-     WHERE empresa_id = ? AND fecha >= ? AND fecha <= ?`,
-    [empresaId, start, end]
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) = ?`,
+    [empresaId, fecha]
   )
 
   const row = (data?.[0] ?? {}) as { cnt: number; sum_usd: number; sum_bs: number }
@@ -98,7 +86,6 @@ export function useVentasDelDia(fecha: string) {
 export function useGananciaEstimada(fecha: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -108,8 +95,8 @@ export function useGananciaEstimada(fecha: string) {
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?`,
-    [empresaId, start, end]
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) = ?`,
+    [empresaId, fecha]
   )
 
   const ganancia = Number((data?.[0] as { ganancia: number })?.ganancia ?? 0)
@@ -119,17 +106,16 @@ export function useGananciaEstimada(fecha: string) {
 export function useCxcDelDia(fecha: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
        COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0) as cxc_usd,
        COALESCE(SUM(CAST(saldo_pend_usd AS REAL) * CAST(tasa AS REAL)), 0) as cxc_bs
      FROM ventas
-     WHERE empresa_id = ? AND fecha >= ? AND fecha <= ?
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) = ?
        AND tipo = 'CREDITO'
        AND CAST(saldo_pend_usd AS REAL) > 0.01`,
-    [empresaId, start, end]
+    [empresaId, fecha]
   )
 
   const row = (data?.[0] ?? {}) as { cxc_usd: number; cxc_bs: number }
@@ -145,7 +131,6 @@ export function useCxcDelDia(fecha: string) {
 export function useVentasPorDepto(fecha: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -155,10 +140,10 @@ export function useVentasPorDepto(fecha: string) {
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
      JOIN departamentos d ON p.departamento_id = d.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) = ?
      GROUP BY d.id, d.nombre
      ORDER BY total_usd DESC`,
-    [empresaId, start, end]
+    [empresaId, fecha]
   )
 
   const items: VentaDeptItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -174,7 +159,6 @@ export function useVentasPorDepto(fecha: string) {
 export function usePagosPorMetodo(fecha: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -185,10 +169,10 @@ export function usePagosPorMetodo(fecha: string) {
      FROM pagos pg
      JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
-     WHERE pg.empresa_id = ? AND pg.fecha >= ? AND pg.fecha <= ?
+     WHERE pg.empresa_id = ? AND SUBSTR(pg.fecha, 1, 10) = ?
      GROUP BY mp.id, mp.nombre, moneda
      ORDER BY total_usd DESC`,
-    [empresaId, start, end]
+    [empresaId, fecha]
   )
 
   const items: MetodoPagoResumen[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -206,7 +190,6 @@ export function usePagosPorMetodo(fecha: string) {
 export function useTopProductos(fecha: string, limit = 15) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -217,11 +200,11 @@ export function useTopProductos(fecha: string, limit = 15) {
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) = ?
      GROUP BY p.id, p.nombre, p.codigo
      ORDER BY cantidad DESC
      LIMIT ${limit}`,
-    [empresaId, start, end]
+    [empresaId, fecha]
   )
 
   const items: TopProducto[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -239,7 +222,6 @@ export function useTopProductos(fecha: string, limit = 15) {
 export function useVentasAudit(fecha: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -248,9 +230,9 @@ export function useVentasAudit(fecha: string) {
        c.identificacion as cliente_identificacion
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) = ?
      ORDER BY v.fecha DESC`,
-    [empresaId, start, end]
+    [empresaId, fecha]
   )
 
   return { ventas: (data ?? []) as VentaAudit[], isLoading }
@@ -308,7 +290,6 @@ export function useDetalleVenta(ventaId: string | null) {
 export function useDetalleCxcDia(fecha: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start, end } = buildDateRange(fecha)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -317,11 +298,11 @@ export function useDetalleCxcDia(fecha: string) {
        c.identificacion as cliente_identificacion
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
-     WHERE v.empresa_id = ? AND v.fecha >= ? AND v.fecha <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) = ?
        AND v.tipo = 'CREDITO'
        AND CAST(v.saldo_pend_usd AS REAL) > 0.01
      ORDER BY v.fecha ASC`,
-    [empresaId, start, end]
+    [empresaId, fecha]
   )
 
   return { facturas: (data ?? []) as DetalleCxc[], isLoading }

@@ -49,7 +49,7 @@ export function useMovBancarios(
     if (hayFiltroFechas && fechaDesde && fechaHasta) {
       return `SELECT * FROM movimientos_bancarios
               WHERE empresa_id = ? AND banco_empresa_id = ?
-                AND fecha >= ? AND fecha <= ?
+                AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?
               ORDER BY fecha DESC
               LIMIT 100`
     }
@@ -57,7 +57,7 @@ export function useMovBancarios(
     if (hayFiltroFechas && fechaDesde) {
       return `SELECT * FROM movimientos_bancarios
               WHERE empresa_id = ? AND banco_empresa_id = ?
-                AND fecha >= ?
+                AND SUBSTR(fecha, 1, 10) >= ?
               ORDER BY fecha DESC
               LIMIT 100`
     }
@@ -65,7 +65,7 @@ export function useMovBancarios(
     if (hayFiltroFechas && fechaHasta) {
       return `SELECT * FROM movimientos_bancarios
               WHERE empresa_id = ? AND banco_empresa_id = ?
-                AND fecha <= ?
+                AND SUBSTR(fecha, 1, 10) <= ?
               ORDER BY fecha DESC
               LIMIT 100`
     }

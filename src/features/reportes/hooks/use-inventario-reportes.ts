@@ -37,21 +37,11 @@ export interface MovimientoPeriodo {
   motivo: string | null
 }
 
-// ─── Helpers ────────────────────────────────────────────────
-
-function buildDateRange(fecha: string): { start: string; end: string } {
-  const start = `${fecha}T00:00:00.000Z`
-  const end = `${fecha}T23:59:59.999Z`
-  return { start, end }
-}
-
 // ─── KPIs ───────────────────────────────────────────────────
 
 export function useInventarioKpis(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start } = buildDateRange(fechaDesde)
-  const { end } = buildDateRange(fechaHasta)
 
   // Valor total + productos activos + stock critico
   const { data: resumenData, isLoading: loadingResumen } = useQuery(
@@ -68,8 +58,8 @@ export function useInventarioKpis(fechaDesde: string, fechaHasta: string) {
   const { data: movData, isLoading: loadingMov } = useQuery(
     `SELECT COUNT(*) as cnt
      FROM movimientos_inventario
-     WHERE empresa_id = ? AND fecha >= ? AND fecha <= ?`,
-    [empresaId, start, end]
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?`,
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   const resumen = (resumenData?.[0] ?? {}) as { valor_total: number; activos: number; criticos: number }
@@ -154,8 +144,6 @@ export function useProductosStockCritico() {
 export function useMovimientosPeriodo(fechaDesde: string, fechaHasta: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { start } = buildDateRange(fechaDesde)
-  const { end } = buildDateRange(fechaHasta)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -164,10 +152,10 @@ export function useMovimientosPeriodo(fechaDesde: string, fechaHasta: string) {
        p.nombre as producto_nombre
      FROM movimientos_inventario m
      JOIN productos p ON m.producto_id = p.id
-     WHERE m.empresa_id = ? AND m.fecha >= ? AND m.fecha <= ?
+     WHERE m.empresa_id = ? AND SUBSTR(m.fecha, 1, 10) >= ? AND SUBSTR(m.fecha, 1, 10) <= ?
      ORDER BY m.fecha DESC
      LIMIT 100`,
-    [empresaId, start, end]
+    [empresaId, fechaDesde, fechaHasta]
   )
 
   return { movimientos: (data ?? []) as MovimientoPeriodo[], isLoading }
