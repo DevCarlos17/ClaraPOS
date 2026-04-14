@@ -126,7 +126,7 @@ export function useDetalleFactura(ventaId: string | null) {
 
   const { data: pagos, isLoading: loadingPagos } = useQuery(
     ventaId
-      ? `SELECT mp.nombre as metodo_nombre, mon.codigo_iso as moneda, pg.monto, pg.monto_usd
+      ? `SELECT mp.nombre as metodo_nombre, CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda, pg.monto, pg.monto_usd
          FROM pagos pg
          JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
          LEFT JOIN monedas mon ON pg.moneda_id = mon.id
