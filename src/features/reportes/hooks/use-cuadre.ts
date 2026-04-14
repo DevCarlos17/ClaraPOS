@@ -179,14 +179,14 @@ export function usePagosPorMetodo(fecha: string) {
   const { data, isLoading } = useQuery(
     `SELECT
        mp.nombre,
-       mon.codigo_iso as moneda,
+       CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
        COALESCE(SUM(CAST(pg.monto_usd AS REAL)), 0) as total_usd,
        COALESCE(SUM(CAST(pg.monto AS REAL)), 0) as total_original
      FROM pagos pg
      JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      WHERE pg.empresa_id = ? AND pg.fecha >= ? AND pg.fecha <= ?
-     GROUP BY mp.id, mp.nombre, mon.codigo_iso
+     GROUP BY mp.id, mp.nombre, moneda
      ORDER BY total_usd DESC`,
     [empresaId, start, end]
   )
@@ -287,7 +287,7 @@ export function useDetalleVenta(ventaId: string | null) {
 
   const { data: pagos, isLoading: loadingPagos } = useQuery(
     ventaId
-      ? `SELECT mp.nombre as metodo_nombre, mon.codigo_iso as moneda, pg.monto, pg.monto_usd, pg.tasa, pg.referencia
+      ? `SELECT mp.nombre as metodo_nombre, CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda, pg.monto, pg.monto_usd, pg.tasa, pg.referencia
          FROM pagos pg
          JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
          LEFT JOIN monedas mon ON pg.moneda_id = mon.id
