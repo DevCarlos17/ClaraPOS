@@ -10,6 +10,7 @@ import { VentasReportesTrend } from '@/features/reportes/components/ventas-repor
 import { VentasReportesDepto } from '@/features/reportes/components/ventas-reportes-depto'
 import { VentasReportesPagos } from '@/features/reportes/components/ventas-reportes-pagos'
 import { VentasReportesRankings } from '@/features/reportes/components/ventas-reportes-rankings'
+import { useDebugVentasReportes } from '@/features/reportes/hooks/use-ventas-reportes'
 
 export const Route = createFileRoute('/_app/ventas/reportes')({
   component: VentasReportesPage,
@@ -18,6 +19,9 @@ export const Route = createFileRoute('/_app/ventas/reportes')({
 function VentasReportesPage() {
   const [fechaDesde, setFechaDesde] = useState(startOfMonth)
   const [fechaHasta, setFechaHasta] = useState(todayStr)
+
+  // TODO: Remover debug hook cuando se resuelva el problema
+  useDebugVentasReportes(fechaDesde, fechaHasta)
 
   return (
     <RequirePermission permission={PERMISSIONS.REPORTS_VIEW} fallback={<AccessDeniedPage />}>

@@ -34,6 +34,46 @@ export interface TopClienteVentas {
   totalUsd: number
 }
 
+// ─── DEBUG: Diagnostico de datos en reportes de ventas ─────
+// TODO: Remover cuando se resuelva el problema de visualizacion
+
+export function useDebugVentasReportes(fechaDesde: string, fechaHasta: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data: allVentas } = useQuery(
+    `SELECT COUNT(*) as cnt FROM ventas`,
+    []
+  )
+
+  const { data: empresaVentas } = useQuery(
+    empresaId ? `SELECT COUNT(*) as cnt FROM ventas WHERE empresa_id = ?` : '',
+    empresaId ? [empresaId] : []
+  )
+
+  const { data: sampleVentas } = useQuery(
+    `SELECT id, empresa_id, fecha, total_usd, SUBSTR(fecha, 1, 10) as fecha_corta FROM ventas ORDER BY fecha DESC LIMIT 5`,
+    []
+  )
+
+  const { data: ventasEnRango } = useQuery(
+    empresaId
+      ? `SELECT COUNT(*) as cnt FROM ventas WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?`
+      : '',
+    empresaId ? [empresaId, fechaDesde, fechaHasta] : []
+  )
+
+  console.group('🔍 DEBUG REPORTES VENTAS')
+  console.log('empresa_id del usuario:', empresaId)
+  console.log('user completo:', user)
+  console.log('Rango de fechas:', { fechaDesde, fechaHasta })
+  console.log('Total ventas (sin filtro):', (allVentas?.[0] as Record<string, unknown>)?.cnt)
+  console.log('Total ventas (con empresa_id):', (empresaVentas?.[0] as Record<string, unknown>)?.cnt)
+  console.log('Total ventas (en rango):', (ventasEnRango?.[0] as Record<string, unknown>)?.cnt)
+  console.log('Sample ventas (ultimas 5):', sampleVentas)
+  console.groupEnd()
+}
+
 // ─── KPIs ───────────────────────────────────────────────────
 
 export function useVentasKpisRango(fechaDesde: string, fechaHasta: string) {
@@ -49,6 +89,8 @@ export function useVentasKpisRango(fechaDesde: string, fechaHasta: string) {
      WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?`,
     [empresaId, fechaDesde, fechaHasta]
   )
+
+  console.log('📋 useVentasKpisRango:', { empresaId, fechaDesde, fechaHasta, rawData: data, isLoading })
 
   const row = (data?.[0] ?? {}) as { cnt: number; sum_usd: number; sum_bs: number }
   const count = Number(row.cnt ?? 0)

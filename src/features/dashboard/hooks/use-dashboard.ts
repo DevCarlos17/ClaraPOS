@@ -18,6 +18,55 @@ export interface TopProductoRango {
   totalUsd: number
 }
 
+// ─── DEBUG: Diagnostico de datos ───────────────────────────
+// TODO: Remover cuando se resuelva el problema de visualizacion
+
+export function useDebugVentas() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  // 1. Total de ventas SIN ningun filtro
+  const { data: allVentas } = useQuery(
+    `SELECT COUNT(*) as cnt FROM ventas`,
+    []
+  )
+
+  // 2. Total de ventas con filtro de empresa_id
+  const { data: empresaVentas } = useQuery(
+    empresaId ? `SELECT COUNT(*) as cnt FROM ventas WHERE empresa_id = ?` : '',
+    empresaId ? [empresaId] : []
+  )
+
+  // 3. Primeros 5 registros de ventas para ver el formato de fecha
+  const { data: sampleVentas } = useQuery(
+    `SELECT id, empresa_id, fecha, total_usd, SUBSTR(fecha, 1, 10) as fecha_corta FROM ventas ORDER BY fecha DESC LIMIT 5`,
+    []
+  )
+
+  // 4. Empresas distintas en ventas
+  const { data: empresasEnVentas } = useQuery(
+    `SELECT DISTINCT empresa_id FROM ventas LIMIT 10`,
+    []
+  )
+
+  console.group('🔍 DEBUG VENTAS')
+  console.log('empresa_id del usuario:', empresaId)
+  console.log('user completo:', user)
+  console.log('Total ventas (sin filtro):', (allVentas?.[0] as Record<string, unknown>)?.cnt)
+  console.log('Total ventas (con empresa_id):', (empresaVentas?.[0] as Record<string, unknown>)?.cnt)
+  console.log('Sample ventas (ultimas 5):', sampleVentas)
+  console.log('Empresas distintas en ventas:', empresasEnVentas)
+  console.groupEnd()
+
+  return {
+    totalSinFiltro: Number((allVentas?.[0] as Record<string, unknown>)?.cnt ?? 0),
+    totalConEmpresa: Number((empresaVentas?.[0] as Record<string, unknown>)?.cnt ?? 0),
+    sampleVentas: sampleVentas ?? [],
+    empresasEnVentas: empresasEnVentas ?? [],
+    empresaIdUsado: empresaId,
+  }
+}
+
 // ─── CxC Total Global ─────────────────────────────────────
 
 export function useCxcTotal() {
@@ -78,6 +127,8 @@ export function useVentasRango(fechaInicio: string, fechaFin: string) {
      ORDER BY dia ASC`,
     [empresaId, fechaInicio, fechaFin]
   )
+
+  console.log('📊 useVentasRango:', { empresaId, fechaInicio, fechaFin, rawData: data, isLoading })
 
   const items: VentaDiaria[] = (data ?? []).map((row: Record<string, unknown>) => ({
     dia: String(row.dia ?? ''),

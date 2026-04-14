@@ -219,10 +219,13 @@ export class SupabaseConnector
       return
     }
 
+    console.log('⬆️ [PowerSync upload] Procesando transaccion con', transaction.crud.length, 'operaciones')
+
     let lastOp: CrudEntry | null = null
     try {
       for (const op of transaction.crud) {
         lastOp = op
+        console.log('⬆️ [PowerSync upload] Op:', op.op, op.table, op.id)
         const table = this.client.from(op.table)
         let result: { error: { message: string; code?: string; details?: string; hint?: string } | null }
 

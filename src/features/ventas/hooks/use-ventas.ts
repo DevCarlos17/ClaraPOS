@@ -77,6 +77,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
   await db.writeTransaction(async (tx) => {
     const now = new Date().toISOString()
     ventaId = uuidv4()
+    console.log('🛒 CREAR VENTA - inicio writeTransaction', { ventaId, empresa_id, now })
 
     // 0. Obtener deposito principal de la empresa
     const depResult = await tx.execute(
@@ -361,6 +362,16 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       ])
     }
   })
+
+  // Debug: verificar que la venta se guardo en SQLite local
+  try {
+    const check = await db.execute('SELECT id, fecha, total_usd, empresa_id FROM ventas WHERE id = ?', [ventaId])
+    console.log('🛒 CREAR VENTA - verificacion post-write:', check.rows?._array ?? check.rows)
+    const countCheck = await db.execute('SELECT COUNT(*) as cnt FROM ventas')
+    console.log('🛒 CREAR VENTA - total ventas en SQLite:', (countCheck.rows?.item(0) as Record<string, unknown>)?.cnt)
+  } catch (e) {
+    console.error('🛒 CREAR VENTA - error en verificacion:', e)
+  }
 
   return { ventaId, nroFactura }
 }

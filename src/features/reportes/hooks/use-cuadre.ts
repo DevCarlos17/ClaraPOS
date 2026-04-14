@@ -69,6 +69,8 @@ export function useVentasDelDia(fecha: string) {
     [empresaId, fecha]
   )
 
+  console.log('📋 useVentasDelDia:', { empresaId, fecha, rawData: data, isLoading })
+
   const row = (data?.[0] ?? {}) as { cnt: number; sum_usd: number; sum_bs: number }
   const count = Number(row.cnt ?? 0)
   const totalUsd = Number(row.sum_usd ?? 0)

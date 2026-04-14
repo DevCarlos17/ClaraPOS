@@ -3,8 +3,12 @@ import { DashboardKpiCards } from './dashboard-kpi-cards'
 import { DashboardInventarioChart } from './dashboard-inventario-chart'
 import { DashboardVentasChart } from './dashboard-ventas-chart'
 import { DashboardTopRotacion } from './dashboard-top-rotacion'
+import { useDebugVentas } from '../hooks/use-dashboard'
 
 export function DashboardPage() {
+  // TODO: Remover debug hook cuando se resuelva el problema
+  useDebugVentas()
+
   return (
     <div className="space-y-6">
       <DashboardWelcome />
