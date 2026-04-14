@@ -82,7 +82,8 @@ export function BancoList() {
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Banco</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Numero de Cuenta</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Cedula / RIF</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Tipo</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Titular</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
               </tr>
@@ -90,9 +91,10 @@ export function BancoList() {
             <tbody>
               {bancos.map((b) => (
                 <tr key={b.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 text-gray-900">{b.banco}</td>
-                  <td className="px-4 py-3 text-gray-900 font-mono text-xs">{b.numero_cuenta}</td>
-                  <td className="px-4 py-3 text-gray-900">{b.cedula_rif}</td>
+                  <td className="px-4 py-3 text-gray-900 font-medium">{b.nombre_banco}</td>
+                  <td className="px-4 py-3 text-gray-900 font-mono text-xs">{b.nro_cuenta}</td>
+                  <td className="px-4 py-3 text-gray-600 text-xs">{b.tipo_cuenta ?? '-'}</td>
+                  <td className="px-4 py-3 text-gray-900">{b.titular}</td>
                   <td className="px-4 py-3">
                     <button
                       onClick={() => handleToggleActivo(b)}

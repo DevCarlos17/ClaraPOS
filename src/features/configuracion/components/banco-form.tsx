@@ -19,9 +19,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const isEditing = !!banco
   const { user } = useCurrentUser()
 
-  const [bancoName, setBancoName] = useState('')
-  const [numeroCuenta, setNumeroCuenta] = useState('')
-  const [cedulaRif, setCedulaRif] = useState('')
+  const [nombreBanco, setNombreBanco] = useState('')
+  const [nroCuenta, setNroCuenta] = useState('')
+  const [tipoCuenta, setTipoCuenta] = useState<string>('')
+  const [titular, setTitular] = useState('')
+  const [titularDocumento, setTitularDocumento] = useState('')
   const [active, setActive] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -29,14 +31,18 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   useEffect(() => {
     if (isOpen) {
       if (banco) {
-        setBancoName(banco.banco)
-        setNumeroCuenta(banco.numero_cuenta)
-        setCedulaRif(banco.cedula_rif)
+        setNombreBanco(banco.nombre_banco)
+        setNroCuenta(banco.nro_cuenta)
+        setTipoCuenta(banco.tipo_cuenta ?? '')
+        setTitular(banco.titular)
+        setTitularDocumento(banco.titular_documento ?? '')
         setActive(banco.is_active === 1)
       } else {
-        setBancoName('')
-        setNumeroCuenta('')
-        setCedulaRif('')
+        setNombreBanco('')
+        setNroCuenta('')
+        setTipoCuenta('')
+        setTitular('')
+        setTitularDocumento('')
         setActive(true)
       }
       setErrors({})
@@ -46,22 +52,16 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     }
   }, [isOpen, banco])
 
-  function handleBancoChange(value: string) {
-    setBancoName(value.toUpperCase())
-  }
-
-  function handleCedulaRifChange(value: string) {
-    setCedulaRif(value.toUpperCase())
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErrors({})
 
     const parsed = bancoSchema.safeParse({
-      banco: bancoName,
-      numero_cuenta: numeroCuenta,
-      cedula_rif: cedulaRif,
+      nombre_banco: nombreBanco,
+      nro_cuenta: nroCuenta,
+      tipo_cuenta: tipoCuenta || undefined,
+      titular,
+      titular_documento: titularDocumento || undefined,
       active,
     })
 
@@ -79,19 +79,24 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     try {
       if (isEditing && banco) {
         await updateBanco(banco.id, {
-          nombre_banco: parsed.data.banco,
-          nro_cuenta: parsed.data.numero_cuenta,
-          titular: parsed.data.cedula_rif,
+          nombre_banco: parsed.data.nombre_banco,
+          nro_cuenta: parsed.data.nro_cuenta,
+          tipo_cuenta: parsed.data.tipo_cuenta,
+          titular: parsed.data.titular,
+          titular_documento: parsed.data.titular_documento,
           is_active: parsed.data.active,
         })
         toast.success('Banco actualizado correctamente')
       } else {
-        await createBanco(
-          parsed.data.banco,
-          parsed.data.numero_cuenta,
-          parsed.data.cedula_rif,
-          user!.empresa_id!
-        )
+        await createBanco({
+          nombre_banco: parsed.data.nombre_banco,
+          nro_cuenta: parsed.data.nro_cuenta,
+          tipo_cuenta: parsed.data.tipo_cuenta,
+          titular: parsed.data.titular,
+          titular_documento: parsed.data.titular_documento,
+          empresa_id: user!.empresa_id!,
+          usuario_id: user!.id,
+        })
         toast.success('Banco creado correctamente')
       }
       onClose()
@@ -122,7 +127,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Banco */}
+          {/* Nombre del Banco */}
           <div>
             <label htmlFor="banco-name" className="block text-sm font-medium text-gray-700 mb-1">
               Banco
@@ -130,15 +135,15 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             <input
               id="banco-name"
               type="text"
-              value={bancoName}
-              onChange={(e) => handleBancoChange(e.target.value)}
+              value={nombreBanco}
+              onChange={(e) => setNombreBanco(e.target.value.toUpperCase())}
               placeholder="Ej: BANESCO"
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.banco ? 'border-red-500' : 'border-gray-300'
+                errors.nombre_banco ? 'border-red-500' : 'border-gray-300'
               }`}
             />
-            {errors.banco && (
-              <p className="text-red-500 text-xs mt-1">{errors.banco}</p>
+            {errors.nombre_banco && (
+              <p className="text-red-500 text-xs mt-1">{errors.nombre_banco}</p>
             )}
           </div>
 
@@ -150,36 +155,69 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             <input
               id="banco-cuenta"
               type="text"
-              value={numeroCuenta}
-              onChange={(e) => setNumeroCuenta(e.target.value)}
+              value={nroCuenta}
+              onChange={(e) => setNroCuenta(e.target.value)}
               placeholder="Ej: 0134-0000-00-0000000000"
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.numero_cuenta ? 'border-red-500' : 'border-gray-300'
+                errors.nro_cuenta ? 'border-red-500' : 'border-gray-300'
               }`}
             />
-            {errors.numero_cuenta && (
-              <p className="text-red-500 text-xs mt-1">{errors.numero_cuenta}</p>
+            {errors.nro_cuenta && (
+              <p className="text-red-500 text-xs mt-1">{errors.nro_cuenta}</p>
             )}
           </div>
 
-          {/* Cedula / RIF */}
+          {/* Tipo de Cuenta */}
           <div>
-            <label htmlFor="banco-rif" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="banco-tipo" className="block text-sm font-medium text-gray-700 mb-1">
+              Tipo de Cuenta
+            </label>
+            <select
+              id="banco-tipo"
+              value={tipoCuenta}
+              onChange={(e) => setTipoCuenta(e.target.value)}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Sin especificar --</option>
+              <option value="CORRIENTE">Corriente</option>
+              <option value="AHORRO">Ahorro</option>
+              <option value="DIGITAL">Digital</option>
+            </select>
+          </div>
+
+          {/* Titular */}
+          <div>
+            <label htmlFor="banco-titular" className="block text-sm font-medium text-gray-700 mb-1">
+              Titular
+            </label>
+            <input
+              id="banco-titular"
+              type="text"
+              value={titular}
+              onChange={(e) => setTitular(e.target.value.toUpperCase())}
+              placeholder="Ej: CLINICA CLARA C.A."
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.titular ? 'border-red-500' : 'border-gray-300'
+              }`}
+            />
+            {errors.titular && (
+              <p className="text-red-500 text-xs mt-1">{errors.titular}</p>
+            )}
+          </div>
+
+          {/* Cedula / RIF del Titular */}
+          <div>
+            <label htmlFor="banco-doc" className="block text-sm font-medium text-gray-700 mb-1">
               Cedula / RIF del Titular
             </label>
             <input
-              id="banco-rif"
+              id="banco-doc"
               type="text"
-              value={cedulaRif}
-              onChange={(e) => handleCedulaRifChange(e.target.value)}
+              value={titularDocumento}
+              onChange={(e) => setTitularDocumento(e.target.value.toUpperCase())}
               placeholder="Ej: J-12345678-9"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.cedula_rif ? 'border-red-500' : 'border-gray-300'
-              }`}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            {errors.cedula_rif && (
-              <p className="text-red-500 text-xs mt-1">{errors.cedula_rif}</p>
-            )}
           </div>
 
           {/* Activo */}

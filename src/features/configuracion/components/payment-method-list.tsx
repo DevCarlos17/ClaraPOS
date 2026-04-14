@@ -81,7 +81,9 @@ export function PaymentMethodList() {
             <thead>
               <tr className="border-b border-gray-200 bg-gray-50">
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Nombre</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Tipo</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Moneda</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Banco</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
               </tr>
@@ -89,7 +91,10 @@ export function PaymentMethodList() {
             <tbody>
               {methods.map((m) => (
                 <tr key={m.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 text-gray-900">{m.nombre}</td>
+                  <td className="px-4 py-3 text-gray-900 font-medium">{m.nombre}</td>
+                  <td className="px-4 py-3 text-gray-600 text-xs">
+                    {m.tipo?.replace('_', ' ') ?? '-'}
+                  </td>
                   <td className="px-4 py-3">
                     {m.moneda === 'USD' ? (
                       <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20 ring-inset">
@@ -100,6 +105,9 @@ export function PaymentMethodList() {
                         BS
                       </span>
                     )}
+                  </td>
+                  <td className="px-4 py-3 text-gray-600 text-xs">
+                    {m.banco_nombre ?? '-'}
                   </td>
                   <td className="px-4 py-3">
                     <button

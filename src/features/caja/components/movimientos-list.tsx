@@ -273,7 +273,7 @@ function TabBancarios() {
             <option value="">Seleccionar banco...</option>
             {bancos.map((b) => (
               <option key={b.id} value={b.id}>
-                {b.banco}
+                {b.nombre_banco}
               </option>
             ))}
           </select>

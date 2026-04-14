@@ -1,16 +1,22 @@
 import { useQuery } from '@powersync/react'
-import { kysely } from '@/core/db/kysely/kysely'
+import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface Banco {
   id: string
-  banco: string
-  numero_cuenta: string
-  cedula_rif: string
+  nombre_banco: string
+  nro_cuenta: string
+  tipo_cuenta: string | null
+  titular: string
+  titular_documento: string | null
+  moneda_id: string
+  saldo_actual: string
   is_active: number
   empresa_id: string
   created_at: string
+  updated_at: string
+  created_by: string | null
 }
 
 export function useBancos() {
@@ -18,50 +24,107 @@ export function useBancos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM bancos_empresa WHERE empresa_id = ? ORDER BY banco ASC',
+    'SELECT * FROM bancos_empresa WHERE empresa_id = ? ORDER BY nombre_banco ASC',
     [empresaId]
   )
   return { bancos: (data ?? []) as Banco[], isLoading }
 }
 
-export async function createBanco(
-  banco: string,
-  numeroCuenta: string,
-  cedulaRif: string,
-  companyId: string
-) {
+export function useBancosActivos() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    'SELECT * FROM bancos_empresa WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre_banco ASC',
+    [empresaId]
+  )
+  return { bancos: (data ?? []) as Banco[], isLoading }
+}
+
+export async function createBanco(params: {
+  nombre_banco: string
+  nro_cuenta: string
+  tipo_cuenta?: string
+  titular: string
+  titular_documento?: string
+  empresa_id: string
+  usuario_id: string
+}) {
   const id = uuidv4()
   const now = new Date().toISOString()
 
-  await kysely
-    .insertInto('bancos_empresa')
-    .values({
-      id,
-      nombre_banco: banco.toUpperCase(),
-      nro_cuenta: numeroCuenta,
-      titular: cedulaRif.toUpperCase(),
-      moneda_id: 'USD',
-      saldo_actual: '0.00',
-      updated_at: now,
-      is_active: 1,
-      empresa_id: companyId,
-      created_at: now,
-    })
-    .execute()
+  await db.writeTransaction(async (tx) => {
+    // Buscar UUID de moneda USD
+    const monedaResult = await tx.execute(
+      "SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1",
+      []
+    )
+    if (!monedaResult.rows?.length) {
+      throw new Error('No se encontro la moneda USD en el catalogo')
+    }
+    const monedaId = (monedaResult.rows.item(0) as { id: string }).id
+
+    await tx.execute(
+      `INSERT INTO bancos_empresa (id, empresa_id, nombre_banco, nro_cuenta, tipo_cuenta, titular, titular_documento, moneda_id, saldo_actual, is_active, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        params.empresa_id,
+        params.nombre_banco.toUpperCase(),
+        params.nro_cuenta,
+        params.tipo_cuenta ?? null,
+        params.titular.toUpperCase(),
+        params.titular_documento ?? null,
+        monedaId,
+        '0.00',
+        1,
+        now,
+        now,
+        params.usuario_id,
+      ]
+    )
+  })
 
   return id
 }
 
 export async function updateBanco(
   id: string,
-  data: { nombre_banco?: string; nro_cuenta?: string; titular?: string; is_active?: boolean }
+  data: { nombre_banco?: string; nro_cuenta?: string; tipo_cuenta?: string; titular?: string; titular_documento?: string; is_active?: boolean }
 ) {
-  const updates: Record<string, unknown> = {}
+  const sets: string[] = []
+  const values: unknown[] = []
 
-  if (data.nombre_banco !== undefined) updates.nombre_banco = data.nombre_banco.toUpperCase()
-  if (data.nro_cuenta !== undefined) updates.nro_cuenta = data.nro_cuenta
-  if (data.titular !== undefined) updates.titular = data.titular.toUpperCase()
-  if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
+  if (data.nombre_banco !== undefined) {
+    sets.push('nombre_banco = ?')
+    values.push(data.nombre_banco.toUpperCase())
+  }
+  if (data.nro_cuenta !== undefined) {
+    sets.push('nro_cuenta = ?')
+    values.push(data.nro_cuenta)
+  }
+  if (data.tipo_cuenta !== undefined) {
+    sets.push('tipo_cuenta = ?')
+    values.push(data.tipo_cuenta)
+  }
+  if (data.titular !== undefined) {
+    sets.push('titular = ?')
+    values.push(data.titular.toUpperCase())
+  }
+  if (data.titular_documento !== undefined) {
+    sets.push('titular_documento = ?')
+    values.push(data.titular_documento)
+  }
+  if (data.is_active !== undefined) {
+    sets.push('is_active = ?')
+    values.push(data.is_active ? 1 : 0)
+  }
 
-  await kysely.updateTable('bancos_empresa').set(updates).where('id', '=', id).execute()
+  if (sets.length === 0) return
+
+  sets.push('updated_at = ?')
+  values.push(new Date().toISOString())
+  values.push(id)
+
+  await db.execute(`UPDATE bancos_empresa SET ${sets.join(', ')} WHERE id = ?`, values)
 }

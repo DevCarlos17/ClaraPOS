@@ -341,7 +341,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
               </option>
               {bancos.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.banco}
+                  {b.nombre_banco}
                 </option>
               ))}
             </select>
