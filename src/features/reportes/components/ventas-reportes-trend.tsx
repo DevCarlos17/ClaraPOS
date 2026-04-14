@@ -13,8 +13,10 @@ export function VentasReportesTrend({ fechaDesde, fechaHasta }: VentasReportesTr
   const allDays = useMemo(() => {
     const days: { dia: string; totalUsd: number }[] = []
     const ventasMap = new Map(ventas.map((v) => [v.dia, v.totalUsd]))
-    const start = new Date(fechaDesde)
-    const end = new Date(fechaHasta)
+    const [sy, sm, sd] = fechaDesde.split('-').map(Number)
+    const [ey, em, ed] = fechaHasta.split('-').map(Number)
+    const start = new Date(sy, sm - 1, sd)
+    const end = new Date(ey, em - 1, ed)
 
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -45,26 +47,32 @@ export function VentasReportesTrend({ fechaDesde, fechaHasta }: VentasReportesTr
           <p className="text-sm">Sin datos para este periodo</p>
         </div>
       ) : (
-        <div className="flex items-end gap-1 h-40">
-          {allDays.map((d) => {
-            const heightPct = maxValue > 0 ? (d.totalUsd / maxValue) * 100 : 0
-            return (
-              <div key={d.dia} className="flex-1 flex flex-col items-center gap-1 group">
-                <div className="relative w-full flex justify-center">
+        <div>
+          <div className="flex items-end gap-1" style={{ height: 144 }}>
+            {allDays.map((d) => {
+              const barHeight = maxValue > 0 ? (d.totalUsd / maxValue) * 132 : 0
+              return (
+                <div key={d.dia} className="flex-1 flex items-end justify-center group relative">
                   <div className="absolute bottom-full mb-1 hidden group-hover:block bg-foreground text-background text-xs rounded px-2 py-1 whitespace-nowrap z-10">
                     {formatUsd(d.totalUsd)}
                   </div>
                   <div
                     className="w-full max-w-8 bg-primary/80 hover:bg-primary rounded-t transition-all duration-300"
-                    style={{ height: `${Math.max(heightPct, d.totalUsd > 0 ? 4 : 1)}%`, minHeight: d.totalUsd > 0 ? '4px' : '1px' }}
+                    style={{ height: Math.max(barHeight, d.totalUsd > 0 ? 4 : 1) }}
                   />
                 </div>
+              )
+            })}
+          </div>
+          <div className="flex gap-1 mt-1">
+            {allDays.map((d) => (
+              <div key={d.dia} className="flex-1 text-center">
                 <span className="text-[10px] text-muted-foreground whitespace-nowrap">
                   {formatDayLabel(d.dia)}
                 </span>
               </div>
-            )
-          })}
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -1,5 +1,5 @@
 import { formatUsd } from '@/lib/currency'
-import { useVentasPorDepto } from '../hooks/use-cuadre'
+import { useVentasPorDepto, type CuadreFilters } from '../hooks/use-cuadre'
 
 const COLORS = [
   'bg-blue-500',
@@ -13,11 +13,12 @@ const COLORS = [
 ]
 
 interface VentasDeptChartProps {
-  fecha: string
+  filters: CuadreFilters
+  onDeptoClick?: (deptoNombre: string) => void
 }
 
-export function VentasDeptChart({ fecha }: VentasDeptChartProps) {
-  const { deptos, isLoading } = useVentasPorDepto(fecha)
+export function VentasDeptChart({ filters, onDeptoClick }: VentasDeptChartProps) {
+  const { deptos, isLoading } = useVentasPorDepto(filters)
 
   const maxValue = deptos.reduce((max, d) => Math.max(max, d.totalUsd), 0)
   const totalUsd = deptos.reduce((sum, d) => sum + d.totalUsd, 0)
@@ -41,8 +42,15 @@ export function VentasDeptChart({ fecha }: VentasDeptChartProps) {
           {deptos.map((d, i) => {
             const pct = maxValue > 0 ? (d.totalUsd / maxValue) * 100 : 0
             const sharePct = totalUsd > 0 ? ((d.totalUsd / totalUsd) * 100).toFixed(1) : '0'
+            const clickable = !!onDeptoClick
             return (
-              <div key={d.departamento}>
+              <button
+                key={d.departamento}
+                type="button"
+                disabled={!clickable}
+                onClick={() => onDeptoClick?.(d.departamento)}
+                className={`w-full text-left ${clickable ? 'hover:bg-muted/50 rounded-md px-1 -mx-1 py-0.5 transition-colors cursor-pointer' : ''}`}
+              >
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-medium truncate mr-2">{d.departamento}</span>
                   <span className="text-muted-foreground whitespace-nowrap">
@@ -55,7 +63,7 @@ export function VentasDeptChart({ fecha }: VentasDeptChartProps) {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-              </div>
+              </button>
             )
           })}
 

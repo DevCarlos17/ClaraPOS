@@ -1,18 +1,18 @@
 import { useRef, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { formatUsd } from '@/lib/currency'
-import { formatDateTime } from '@/lib/format'
-import { useDetalleCxcDia, type CuadreFilters } from '../hooks/use-cuadre'
+import { useFacturasPorMetodo, type CuadreFilters } from '../hooks/use-cuadre'
 
-interface CxcModalProps {
+interface CuadreMetodoModalProps {
   isOpen: boolean
   onClose: () => void
   filters: CuadreFilters
+  metodoNombre: string
 }
 
-export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
+export function CuadreMetodoModal({ isOpen, onClose, filters, metodoNombre }: CuadreMetodoModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const { facturas, isLoading } = useDetalleCxcDia(filters)
+  const { facturas, isLoading } = useFacturasPorMetodo(filters, isOpen ? metodoNombre : null)
 
   useEffect(() => {
     if (isOpen) {
@@ -26,10 +26,7 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
     if (e.target === dialogRef.current) onClose()
   }
 
-  const totalPendiente = facturas.reduce(
-    (sum, f) => sum + parseFloat(f.saldo_pend_usd),
-    0
-  )
+  const totalUsd = facturas.reduce((sum, f) => sum + parseFloat(f.monto_usd), 0)
 
   return (
     <dialog
@@ -42,9 +39,9 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
         {/* Header */}
         <div className="flex items-start justify-between mb-4 shrink-0">
           <div>
-            <h2 className="text-lg font-semibold">Cuentas por Cobrar del Dia</h2>
+            <h2 className="text-lg font-semibold">Cobros: {metodoNombre}</h2>
             <p className="text-sm text-muted-foreground">
-              {filters.fecha} &middot; {facturas.length} factura(s) con saldo pendiente
+              {filters.fecha} &middot; {facturas.length} pago(s)
             </p>
           </div>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
@@ -60,7 +57,7 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
           </div>
         ) : facturas.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground flex-1">
-            <p className="text-sm">Sin cuentas por cobrar en esta fecha</p>
+            <p className="text-sm">Sin pagos con este metodo</p>
           </div>
         ) : (
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
@@ -70,33 +67,28 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
                   <tr className="border-b bg-muted/50">
                     <th className="text-left px-3 py-2 font-medium">Factura</th>
                     <th className="text-left px-3 py-2 font-medium">Cliente</th>
-                    <th className="text-left px-3 py-2 font-medium">Fecha</th>
-                    <th className="text-right px-3 py-2 font-medium">Pendiente</th>
+                    <th className="text-right px-3 py-2 font-medium">Monto</th>
+                    <th className="text-right px-3 py-2 font-medium">USD</th>
+                    <th className="text-left px-3 py-2 font-medium">Ref.</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {facturas.map((f) => (
-                    <tr key={f.id} className="border-b border-muted">
+                  {facturas.map((f, i) => (
+                    <tr key={`${f.venta_id}-${i}`} className="border-b border-muted">
                       <td className="px-3 py-2">
                         <span className="font-mono text-xs">#{f.nro_factura}</span>
                       </td>
-                      <td className="px-3 py-2">
-                        <div>
-                          <p className="text-xs font-medium truncate max-w-[180px]">
-                            {f.cliente_nombre}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            {f.cliente_identificacion}
-                          </p>
-                        </div>
+                      <td className="px-3 py-2 text-xs truncate max-w-[150px]">
+                        {f.cliente_nombre}
                       </td>
-                      <td className="px-3 py-2 text-xs text-muted-foreground">
-                        {formatDateTime(f.fecha)}
+                      <td className="px-3 py-2 text-right text-xs">
+                        {formatUsd(parseFloat(f.monto))}
                       </td>
                       <td className="px-3 py-2 text-right">
-                        <span className="font-bold text-xs text-red-600">
-                          {formatUsd(parseFloat(f.saldo_pend_usd))}
-                        </span>
+                        <span className="font-bold text-xs">{formatUsd(parseFloat(f.monto_usd))}</span>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-muted-foreground truncate max-w-[100px]">
+                        {f.referencia ?? '-'}
                       </td>
                     </tr>
                   ))}
@@ -106,8 +98,8 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
 
             {/* Total */}
             <div className="pt-3 mt-3 border-t flex justify-between text-sm font-semibold shrink-0">
-              <span>Total pendiente</span>
-              <span className="text-red-600">{formatUsd(totalPendiente)}</span>
+              <span>Total</span>
+              <span>{formatUsd(totalUsd)}</span>
             </div>
           </div>
         )}

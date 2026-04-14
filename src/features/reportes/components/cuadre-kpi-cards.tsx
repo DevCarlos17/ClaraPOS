@@ -4,19 +4,20 @@ import {
   useVentasDelDia,
   useGananciaEstimada,
   useCxcDelDia,
+  type CuadreFilters,
 } from '../hooks/use-cuadre'
 
 interface CuadreKpiCardsProps {
-  fecha: string
+  filters: CuadreFilters
   onClickVentas: () => void
   onClickCxc: () => void
 }
 
-export function CuadreKpiCards({ fecha, onClickVentas, onClickCxc }: CuadreKpiCardsProps) {
+export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpiCardsProps) {
   const { totalVentasUsd, totalVentasBs, facturasCount, ticketPromedio, isLoading: loadingVentas } =
-    useVentasDelDia(fecha)
-  const { ganancia, isLoading: loadingGanancia } = useGananciaEstimada(fecha)
-  const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(fecha)
+    useVentasDelDia(filters)
+  const { ganancia, isLoading: loadingGanancia } = useGananciaEstimada(filters)
+  const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
 
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

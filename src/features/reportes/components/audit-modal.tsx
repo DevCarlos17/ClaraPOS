@@ -2,17 +2,29 @@ import { useState, useRef, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
-import { useVentasAudit, useDetalleVenta } from '../hooks/use-cuadre'
+import { useVentasAudit, useDetalleVenta, type CuadreFilters } from '../hooks/use-cuadre'
+
+function formatHora(fechaStr: string): string {
+  try {
+    const parts = fechaStr.split(' ')
+    if (parts.length >= 2) {
+      return parts[1].substring(0, 5)
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
 
 interface AuditModalProps {
   isOpen: boolean
   onClose: () => void
-  fecha: string
+  filters: CuadreFilters
 }
 
-export function AuditModal({ isOpen, onClose, fecha }: AuditModalProps) {
+export function AuditModal({ isOpen, onClose, filters }: AuditModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  const { ventas, isLoading } = useVentasAudit(fecha)
+  const { ventas, isLoading } = useVentasAudit(filters)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { detalles, pagos, isLoading: loadingDetalle } = useDetalleVenta(selectedId)
 
@@ -44,7 +56,7 @@ export function AuditModal({ isOpen, onClose, fecha }: AuditModalProps) {
           <div>
             <h2 className="text-lg font-semibold">Auditoria de Ventas</h2>
             <p className="text-sm text-muted-foreground">
-              {fecha} &middot; {ventas.length} factura(s)
+              {filters.fecha} &middot; {ventas.length} factura(s)
             </p>
           </div>
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
@@ -69,9 +81,11 @@ export function AuditModal({ isOpen, onClose, fecha }: AuditModalProps) {
               <table className="w-full text-sm">
                 <thead className="sticky top-0">
                   <tr className="border-b bg-muted/50">
-                    <th className="text-left px-3 py-2 font-medium">Factura</th>
-                    <th className="text-left px-3 py-2 font-medium">Cliente</th>
-                    <th className="text-right px-3 py-2 font-medium">Total</th>
+                    <th className="text-left px-2 py-2 font-medium">Hora</th>
+                    <th className="text-left px-2 py-2 font-medium">Factura</th>
+                    <th className="text-left px-2 py-2 font-medium">Cliente</th>
+                    <th className="text-right px-2 py-2 font-medium">Bs</th>
+                    <th className="text-right px-2 py-2 font-medium">USD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -85,12 +99,19 @@ export function AuditModal({ isOpen, onClose, fecha }: AuditModalProps) {
                           : 'hover:bg-muted/30'
                       }`}
                     >
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-1.5">
+                      <td className="px-2 py-2 text-xs text-muted-foreground">
+                        {formatHora(v.fecha)}
+                      </td>
+                      <td className="px-2 py-2">
+                        <div className="flex items-center gap-1">
                           <span className="font-mono text-xs">#{v.nro_factura}</span>
-                          {v.tipo === 'CREDITO' && (
+                          {v.tipo === 'CREDITO' ? (
                             <span className="inline-flex items-center rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
                               CR
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
+                              CT
                             </span>
                           )}
                           {v.status === 'ANULADA' && (
@@ -100,10 +121,13 @@ export function AuditModal({ isOpen, onClose, fecha }: AuditModalProps) {
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-2 text-xs truncate max-w-[140px]">
+                      <td className="px-2 py-2 text-xs truncate max-w-[100px]">
                         {v.cliente_nombre}
                       </td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-2 py-2 text-right text-xs text-muted-foreground">
+                        {formatBs(v.total_bs)}
+                      </td>
+                      <td className="px-2 py-2 text-right">
                         <span className="font-bold text-xs">{formatUsd(v.total_usd)}</span>
                       </td>
                     </tr>

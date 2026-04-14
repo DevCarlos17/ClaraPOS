@@ -1,13 +1,14 @@
 import { Banknote } from 'lucide-react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo } from '../hooks/use-cuadre'
+import { usePagosPorMetodo, type CuadreFilters } from '../hooks/use-cuadre'
 
 interface PagosResumenProps {
-  fecha: string
+  filters: CuadreFilters
+  onMetodoClick?: (metodoNombre: string) => void
 }
 
-export function PagosResumen({ fecha }: PagosResumenProps) {
-  const { metodos, isLoading } = usePagosPorMetodo(fecha)
+export function PagosResumen({ filters, onMetodoClick }: PagosResumenProps) {
+  const { metodos, isLoading } = usePagosPorMetodo(filters)
 
   const totalCobradoUsd = metodos.reduce((sum, m) => sum + m.totalUsd, 0)
   const totalCobradoBs = metodos
@@ -30,25 +31,31 @@ export function PagosResumen({ fecha }: PagosResumenProps) {
         </div>
       ) : (
         <div className="space-y-2">
-          {metodos.map((m) => (
-            <div
-              key={m.nombre}
-              className="flex items-center justify-between rounded-lg border px-3 py-2.5"
-            >
-              <div className="flex items-center gap-2">
-                <Banknote size={16} className="text-muted-foreground" />
-                <div>
-                  <p className="text-sm font-medium">{m.nombre}</p>
-                  {m.moneda === 'BS' && (
-                    <p className="text-xs text-muted-foreground">
-                      {formatBs(m.totalOriginal)}
-                    </p>
-                  )}
+          {metodos.map((m) => {
+            const clickable = !!onMetodoClick
+            return (
+              <button
+                key={m.nombre}
+                type="button"
+                disabled={!clickable}
+                onClick={() => onMetodoClick?.(m.nombre)}
+                className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 text-left ${clickable ? 'hover:bg-muted/50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
+              >
+                <div className="flex items-center gap-2">
+                  <Banknote size={16} className="text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">{m.nombre}</p>
+                    {m.moneda === 'BS' && (
+                      <p className="text-xs text-muted-foreground">
+                        {formatBs(m.totalOriginal)}
+                      </p>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <span className="text-sm font-bold">{formatUsd(m.totalUsd)}</span>
-            </div>
-          ))}
+                <span className="text-sm font-bold">{formatUsd(m.totalUsd)}</span>
+              </button>
+            )
+          })}
 
           {/* Totales */}
           <div className="pt-3 mt-2 border-t space-y-1">

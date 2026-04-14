@@ -10,7 +10,10 @@ import { VentasReportesTrend } from '@/features/reportes/components/ventas-repor
 import { VentasReportesDepto } from '@/features/reportes/components/ventas-reportes-depto'
 import { VentasReportesPagos } from '@/features/reportes/components/ventas-reportes-pagos'
 import { VentasReportesRankings } from '@/features/reportes/components/ventas-reportes-rankings'
-import { useDebugVentasReportes } from '@/features/reportes/hooks/use-ventas-reportes'
+import { VentasReportesPdfButton } from '@/features/reportes/components/ventas-reportes-pdf'
+import { VentasConsultasModal } from '@/features/reportes/components/ventas-consultas-modal'
+import { Button } from '@/components/ui/button'
+import { Search } from 'lucide-react'
 
 export const Route = createFileRoute('/_app/ventas/reportes')({
   component: VentasReportesPage,
@@ -19,15 +22,13 @@ export const Route = createFileRoute('/_app/ventas/reportes')({
 function VentasReportesPage() {
   const [fechaDesde, setFechaDesde] = useState(startOfMonth)
   const [fechaHasta, setFechaHasta] = useState(todayStr)
-
-  // TODO: Remover debug hook cuando se resuelva el problema
-  useDebugVentasReportes(fechaDesde, fechaHasta)
+  const [consultasOpen, setConsultasOpen] = useState(false)
 
   return (
     <RequirePermission permission={PERMISSIONS.REPORTS_VIEW} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
-        <PageHeader titulo="Reportes de Ventas" descripcion="Analisis de ventas por periodo">
-          <div className="flex items-center gap-2">
+        <PageHeader titulo="Dashboard de Ventas" descripcion="Analisis de ventas por periodo">
+          <div className="flex items-center gap-2 flex-wrap">
             <label className="text-sm text-muted-foreground">Desde</label>
             <input
               type="date"
@@ -42,6 +43,11 @@ function VentasReportesPage() {
               onChange={(e) => setFechaHasta(e.target.value)}
               className="rounded-md border border-input bg-background px-3 py-2 text-sm"
             />
+            <VentasReportesPdfButton fechaDesde={fechaDesde} fechaHasta={fechaHasta} />
+            <Button variant="outline" size="sm" onClick={() => setConsultasOpen(true)}>
+              <Search className="size-4" />
+              Consultas
+            </Button>
           </div>
         </PageHeader>
 
@@ -55,6 +61,8 @@ function VentasReportesPage() {
         </div>
 
         <VentasReportesRankings fechaDesde={fechaDesde} fechaHasta={fechaHasta} />
+
+        <VentasConsultasModal open={consultasOpen} onOpenChange={setConsultasOpen} />
       </div>
     </RequirePermission>
   )

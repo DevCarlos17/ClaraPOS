@@ -18,7 +18,7 @@ function isTasaDesactualizada(createdAt: string): boolean {
 
 export function DashboardKpiCards() {
   const fecha = todayStr()
-  const { totalVentasUsd, isLoading: loadingVentas } = useVentasDelDia(fecha)
+  const { totalVentasUsd, isLoading: loadingVentas } = useVentasDelDia({ fecha, cajaId: null, sesionCajaId: null })
   const { tasa, tasaValor, isLoading: loadingTasa } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
   const { totalCxcUsd, isLoading: loadingCxc } = useCxcTotal()
