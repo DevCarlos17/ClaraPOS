@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface Producto {
   id: string
@@ -92,7 +93,7 @@ export async function crearProducto(data: {
   empresa_id: string
 }) {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
   const isServicio = data.tipo === 'S'
 
   await kysely
@@ -136,7 +137,7 @@ export async function actualizarProducto(
     tipo?: string
   }
 ) {
-  const now = new Date().toISOString()
+  const now = localNow()
   const updates: Record<string, unknown> = { updated_at: now }
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()

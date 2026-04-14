@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -117,7 +118,7 @@ export async function crearGasto(data: {
   let nroGasto = ''
 
   await db.writeTransaction(async (tx) => {
-    const now = new Date().toISOString()
+    const now = localNow()
     gastoId = uuidv4()
 
     // Calcular monto en Bs a partir del USD y la tasa
@@ -170,7 +171,7 @@ export async function crearGasto(data: {
  */
 export async function anularGasto(id: string): Promise<void> {
   await db.writeTransaction(async (tx) => {
-    const now = new Date().toISOString()
+    const now = localNow()
 
     // Verificar que el gasto existe y no esta ya anulado
     const gastoResult = await tx.execute(

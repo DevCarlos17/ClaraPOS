@@ -1,6 +1,7 @@
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { localNow } from '@/lib/dates'
 import { v4 as uuidv4 } from 'uuid'
 
 export interface LineaVenta {
@@ -75,7 +76,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
   let nroFactura = ''
 
   await db.writeTransaction(async (tx) => {
-    const now = new Date().toISOString()
+    const now = localNow()
     ventaId = uuidv4()
     console.log('🛒 CREAR VENTA - inicio writeTransaction', { ventaId, empresa_id, now })
 

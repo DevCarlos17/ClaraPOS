@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -120,7 +121,7 @@ export async function crearNotaDebito(
   let nroNdb = ''
 
   await db.writeTransaction(async (tx) => {
-    const now = new Date().toISOString()
+    const now = localNow()
     notaDebitoId = uuidv4()
 
     // 1. Generar nro_ndb (consecutivo por empresa, formato NDB-XXXX)

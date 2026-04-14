@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface AjusteMotivo {
   id: string
@@ -47,7 +48,7 @@ export async function crearAjusteMotivo(data: {
   created_by?: string
 }) {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
 
   await kysely
     .insertInto('ajuste_motivos')
@@ -78,7 +79,7 @@ export async function actualizarAjusteMotivo(
     updated_by?: string
   }
 ) {
-  const now = new Date().toISOString()
+  const now = localNow()
   const updates: Record<string, unknown> = { updated_at: now }
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()

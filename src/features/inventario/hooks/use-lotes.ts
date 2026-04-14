@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface Lote {
   id: string
@@ -56,7 +57,7 @@ export async function crearLote(data: {
   created_by?: string
 }): Promise<string> {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
 
   await kysely
     .insertInto('lotes')

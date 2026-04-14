@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface Compra {
   id: string
@@ -193,7 +194,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   let compraId = ''
 
   await db.writeTransaction(async (tx) => {
-    const now = new Date().toISOString()
+    const now = localNow()
     compraId = uuidv4()
 
     // 0. Obtener deposito principal de la empresa

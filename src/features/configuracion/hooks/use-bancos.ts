@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface Banco {
   id: string
@@ -51,7 +52,7 @@ export async function createBanco(params: {
   usuario_id: string
 }) {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
 
   await db.writeTransaction(async (tx) => {
     // Buscar UUID de moneda USD
@@ -123,7 +124,7 @@ export async function updateBanco(
   if (sets.length === 0) return
 
   sets.push('updated_at = ?')
-  values.push(new Date().toISOString())
+  values.push(localNow())
   values.push(id)
 
   await db.execute(`UPDATE bancos_empresa SET ${sets.join(', ')} WHERE id = ?`, values)

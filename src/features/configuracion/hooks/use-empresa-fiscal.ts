@@ -1,6 +1,7 @@
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { localNow } from '@/lib/dates'
 
 export interface EmpresaFiscal {
   id: string
@@ -47,7 +48,7 @@ export async function actualizarEmpresaFiscal(
     aplica_igtf?: boolean
   }
 ) {
-  const now = new Date().toISOString()
+  const now = localNow()
   const updates: Record<string, unknown> = { updated_at: now }
 
   if (data.tipo_contribuyente !== undefined) updates.tipo_contribuyente = data.tipo_contribuyente || null

@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface MovimientoInventario {
   id: string
@@ -88,7 +89,7 @@ export async function registrarMovimiento(params: {
 
     // 4. Crear movimiento
     const id = uuidv4()
-    const now = new Date().toISOString()
+    const now = localNow()
 
     await tx.execute(
       `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)

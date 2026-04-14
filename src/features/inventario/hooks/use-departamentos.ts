@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface Departamento {
   id: string
@@ -66,7 +67,7 @@ export async function getSiguienteCodigoDepartamento(empresaId: string): Promise
 
 export async function crearDepartamento(nombre: string, empresaId: string) {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
   const codigo = await getSiguienteCodigoDepartamento(empresaId)
 
   await kysely
@@ -90,7 +91,7 @@ export async function actualizarDepartamento(
   id: string,
   data: { nombre?: string; descripcion?: string; prioridad_visual?: number; is_active?: boolean }
 ) {
-  const now = new Date().toISOString()
+  const now = localNow()
   const updates: Record<string, unknown> = { updated_at: now }
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()

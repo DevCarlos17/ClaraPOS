@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -91,7 +92,7 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
   }
 
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
 
   await db.writeTransaction(async (tx) => {
     // Validar que no haya ya una sesion abierta para esta caja
@@ -134,7 +135,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     throw new Error('El monto fisico no puede ser negativo')
   }
 
-  const now = new Date().toISOString()
+  const now = localNow()
 
   await db.writeTransaction(async (tx) => {
     // 1. Leer sesion y validar que este abierta

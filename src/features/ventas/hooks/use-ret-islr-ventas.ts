@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -123,7 +124,7 @@ export async function crearRetencionIslrVenta(
   if (monto_retenido_bs <= 0) throw new Error('El monto retenido debe ser mayor a 0')
 
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
   const statusFinal = status ?? 'PENDIENTE'
 
   await db.writeTransaction(async (tx) => {

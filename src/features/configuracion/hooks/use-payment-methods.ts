@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface PaymentMethod {
   id: string
@@ -69,7 +70,7 @@ export async function createPaymentMethod(params: {
   usuario_id: string
 }) {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
 
   await db.writeTransaction(async (tx) => {
     // Buscar UUID de moneda
@@ -133,7 +134,7 @@ export async function updatePaymentMethod(
   if (sets.length === 0) return
 
   sets.push('updated_at = ?')
-  values.push(new Date().toISOString())
+  values.push(localNow())
   values.push(id)
 
   await db.execute(`UPDATE metodos_cobro SET ${sets.join(', ')} WHERE id = ?`, values)

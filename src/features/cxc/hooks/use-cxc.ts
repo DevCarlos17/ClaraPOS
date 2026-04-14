@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface VentaPendiente {
   id: string
@@ -115,7 +116,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
 
   await db.writeTransaction(async (tx) => {
-    const now = new Date().toISOString()
+    const now = localNow()
 
     // 0. Obtener UUID de moneda
     const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
@@ -235,7 +236,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
   let montoAplicado = 0
 
   await db.writeTransaction(async (tx) => {
-    const now = new Date().toISOString()
+    const now = localNow()
 
     // 0. Obtener UUID de moneda
     const monedaCode = moneda === 'BS' ? 'VES' : 'USD'

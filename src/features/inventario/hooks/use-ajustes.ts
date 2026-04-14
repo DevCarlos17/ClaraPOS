@@ -3,6 +3,7 @@ import { db } from '@/core/db/powersync/db'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 export interface Ajuste {
   id: string
@@ -102,7 +103,7 @@ export async function crearAjuste(data: {
   created_by?: string
 }): Promise<string> {
   const ajusteId = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
   const numAjuste = await getSiguienteNumAjuste(data.empresa_id)
 
   await db.writeTransaction(async (tx) => {

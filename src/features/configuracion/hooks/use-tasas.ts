@@ -4,6 +4,7 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 
 interface TasaRow {
   id: string
@@ -93,7 +94,7 @@ export function useTasasHistorial() {
 
 export async function crearTasa(valor: number, empresaId: string, userId?: string) {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
 
   // Buscar el UUID real de la moneda USD
   const moneda = await kysely
@@ -125,7 +126,7 @@ export async function crearTasa(valor: number, empresaId: string, userId?: strin
 // Alternative using raw PowerSync for transaction safety
 export async function crearTasaRaw(valor: number, empresaId: string, userId?: string) {
   const id = uuidv4()
-  const now = new Date().toISOString()
+  const now = localNow()
 
   // Buscar el UUID real de la moneda USD
   const rows = await db.getAll<{ id: string }>(
