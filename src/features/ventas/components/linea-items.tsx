@@ -6,11 +6,10 @@ interface LineaItemsProps {
   lineas: LineaVentaForm[]
   tasa: number
   onUpdateCantidad: (index: number, cantidad: number) => void
-  onUpdatePrecio: (index: number, precio: number) => void
   onRemove: (index: number) => void
 }
 
-export function LineaItems({ lineas, tasa, onUpdateCantidad, onUpdatePrecio, onRemove }: LineaItemsProps) {
+export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaItemsProps) {
   const totalUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
   const totalBs = usdToBs(totalUsd, tasa)
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
@@ -44,6 +43,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onUpdatePrecio, onR
               {lineas.map((linea, index) => {
                 const subtotalUsd = linea.cantidad * linea.precio_unitario_usd
                 const subtotalBs = usdToBs(subtotalUsd, tasa)
+                const cantidadInvalida = linea.cantidad <= 0
 
                 return (
                   <tr key={index} className="border-b last:border-b-0 hover:bg-muted/30">
@@ -60,26 +60,23 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onUpdatePrecio, onR
                         type="number"
                         min="0.001"
                         step="any"
-                        value={linea.cantidad}
+                        value={linea.cantidad === 0 ? '' : linea.cantidad}
                         onChange={(e) => {
-                          const val = parseFloat(e.target.value)
-                          if (!isNaN(val) && val > 0) onUpdateCantidad(index, val)
+                          const raw = e.target.value
+                          if (raw === '') {
+                            onUpdateCantidad(index, 0)
+                            return
+                          }
+                          const val = parseFloat(raw)
+                          if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
                         }}
-                        className="w-full text-center rounded border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className={`w-full text-center rounded border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+                          cantidadInvalida ? 'border-destructive text-destructive' : ''
+                        }`}
                       />
                     </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={linea.precio_unitario_usd}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value)
-                          if (!isNaN(val) && val >= 0) onUpdatePrecio(index, val)
-                        }}
-                        className="w-full text-right rounded border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                      />
+                    <td className="px-3 py-2 text-right text-muted-foreground">
+                      {formatUsd(linea.precio_unitario_usd)}
                     </td>
                     <td className="px-3 py-2 text-right font-medium">{formatUsd(subtotalUsd)}</td>
                     <td className="px-3 py-2 text-right text-muted-foreground">{formatBs(subtotalBs)}</td>

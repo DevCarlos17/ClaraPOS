@@ -1,32 +1,53 @@
 import { useState } from 'react'
-import { ShoppingCart } from 'lucide-react'
+import { Plus, ShoppingCart, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { formatUsd, formatTasa, usdToBs } from '@/lib/currency'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { crearVenta, type ProductoVenta } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import { ClienteSelector } from './cliente-selector'
 import { ProductoBuscador } from './producto-buscador'
 import { LineaItems } from './linea-items'
-import { PagoModal } from './pago-modal'
 
 export function PosTerminal() {
   const { tasaValor, isLoading: tasaLoading } = useTasaActual()
   const { user } = useCurrentUser()
+  const { metodos } = useMetodosPagoActivos()
 
+  // Factura
   const [clienteId, setClienteId] = useState<string | null>(null)
   const [clienteNombre, setClienteNombre] = useState('')
-  const [tipoVenta, setTipoVenta] = useState<'CONTADO' | 'CREDITO'>('CONTADO')
   const [lineas, setLineas] = useState<LineaVentaForm[]>([])
-  const [pagoModalOpen, setPagoModalOpen] = useState(false)
+
+  // Pagos
+  const [pagos, setPagos] = useState<PagoEntryForm[]>([])
+  const [metodoId, setMetodoId] = useState('')
+  const [monto, setMonto] = useState('')
+  const [referencia, setReferencia] = useState('')
+
   const [submitting, setSubmitting] = useState(false)
 
+  // Totales de la factura
   const totalUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
   const totalBs = usdToBs(totalUsd, tasaValor)
+
+  // Cálculos de pago
+  const selectedMetodo = metodos.find((m) => m.id === metodoId)
+  const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
+
+  const totalAbonadoUsd = pagos.reduce((sum, p) => {
+    const montoUsd = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
+    return sum + montoUsd
+  }, 0)
+  const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
+  const pendienteBs = usdToBs(pendienteUsd, tasaValor)
+  const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
+
+  // --- Handlers ---
 
   const handleSelectCliente = (cliente: Cliente) => {
     setClienteId(cliente.id)
@@ -39,7 +60,6 @@ export function PosTerminal() {
   }
 
   const handleSelectProducto = (producto: ProductoVenta) => {
-    // Si ya existe, incrementar cantidad
     const existing = lineas.findIndex((l) => l.producto_id === producto.id)
     if (existing >= 0) {
       setLineas((prev) =>
@@ -47,7 +67,6 @@ export function PosTerminal() {
       )
       return
     }
-
     setLineas((prev) => [
       ...prev,
       {
@@ -65,15 +84,33 @@ export function PosTerminal() {
     setLineas((prev) => prev.map((l, i) => (i === index ? { ...l, cantidad } : l)))
   }
 
-  const handleUpdatePrecio = (index: number, precio: number) => {
-    setLineas((prev) => prev.map((l, i) => (i === index ? { ...l, precio_unitario_usd: precio } : l)))
-  }
-
   const handleRemoveLinea = (index: number) => {
     setLineas((prev) => prev.filter((_, i) => i !== index))
   }
 
-  const handleOpenPago = () => {
+  const handleAddPago = () => {
+    const montoNum = parseFloat(monto)
+    if (!metodoId || isNaN(montoNum) || montoNum <= 0 || !monedaMetodo) return
+    setPagos((prev) => [
+      ...prev,
+      {
+        metodo_cobro_id: metodoId,
+        metodo_nombre: selectedMetodo!.nombre,
+        moneda: monedaMetodo,
+        monto: montoNum,
+        referencia: referencia.trim() || undefined,
+      },
+    ])
+    setMetodoId('')
+    setMonto('')
+    setReferencia('')
+  }
+
+  const handleRemovePago = (index: number) => {
+    setPagos((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleConfirmVenta = async () => {
     if (!clienteId) {
       toast.error('Selecciona un cliente')
       return
@@ -82,21 +119,21 @@ export function PosTerminal() {
       toast.error('Agrega al menos un producto')
       return
     }
-    if (tasaValor <= 0) {
-      toast.error('No hay tasa de cambio configurada')
+    if (lineas.some((l) => l.cantidad <= 0)) {
+      toast.error('Hay artículos con cantidad inválida')
       return
     }
-    setPagoModalOpen(true)
-  }
-
-  const handleConfirmVenta = async (pagos: PagoEntryForm[]) => {
-    if (!clienteId || !user) return
+    if (pagos.length === 0) {
+      toast.error('Agrega al menos un pago')
+      return
+    }
+    if (!user) return
 
     setSubmitting(true)
     try {
       const result = await crearVenta({
         cliente_id: clienteId,
-        tipo: tipoVenta,
+        tipo: tipoDetectado,
         tasa: tasaValor,
         lineas: lineas.map((l) => ({
           producto_id: l.producto_id,
@@ -115,12 +152,13 @@ export function PosTerminal() {
 
       toast.success(`Venta #${result.nroFactura} creada exitosamente`)
 
-      // Reset POS
       setClienteId(null)
       setClienteNombre('')
-      setTipoVenta('CONTADO')
       setLineas([])
-      setPagoModalOpen(false)
+      setPagos([])
+      setMetodoId('')
+      setMonto('')
+      setReferencia('')
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Error al crear la venta')
     } finally {
@@ -131,8 +169,11 @@ export function PosTerminal() {
   const handleCancelar = () => {
     setClienteId(null)
     setClienteNombre('')
-    setTipoVenta('CONTADO')
     setLineas([])
+    setPagos([])
+    setMetodoId('')
+    setMonto('')
+    setReferencia('')
   }
 
   if (tasaLoading) {
@@ -154,104 +195,188 @@ export function PosTerminal() {
   }
 
   return (
-    <div className="space-y-4">
-      {/* Header: Cliente + Tipo + Tasa */}
-      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-4 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 items-start">
+
+      {/* ── COLUMNA IZQUIERDA: buscador + tabla de productos ── */}
+      <div className="space-y-4">
         <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Cliente</label>
-          <ClienteSelector
-            clienteId={clienteId}
-            onSelect={handleSelectCliente}
-            onClear={handleClearCliente}
-          />
+          <label className="text-xs font-medium text-muted-foreground">Agregar producto</label>
+          <ProductoBuscador onSelect={handleSelectProducto} />
         </div>
 
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Tipo</label>
-          <div className="flex rounded-lg border overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setTipoVenta('CONTADO')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                tipoVenta === 'CONTADO'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-background text-muted-foreground hover:bg-muted'
-              }`}
-            >
-              Contado
-            </button>
-            <button
-              type="button"
-              onClick={() => setTipoVenta('CREDITO')}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                tipoVenta === 'CREDITO'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-background text-muted-foreground hover:bg-muted'
-              }`}
-            >
-              Credito
-            </button>
+        <LineaItems
+          lineas={lineas}
+          tasa={tasaValor}
+          onUpdateCantidad={handleUpdateCantidad}
+          onRemove={handleRemoveLinea}
+        />
+      </div>
+
+      {/* ── COLUMNA DERECHA: cliente + totales + pagos + acciones ── */}
+      <div className="space-y-4 lg:sticky lg:top-6">
+
+        {/* Bloque: cliente y totales */}
+        <div className="rounded-lg border p-4 space-y-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Cliente</label>
+            <ClienteSelector
+              clienteId={clienteId}
+              onSelect={handleSelectCliente}
+              onClear={handleClearCliente}
+            />
+          </div>
+
+          <div className="rounded-lg bg-muted/50 px-3 py-2.5 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Total USD</span>
+              <span className="text-xl font-bold">{formatUsd(totalUsd)}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">Total Bs</span>
+              <span className="text-sm font-semibold text-muted-foreground">{formatBs(totalBs)}</span>
+            </div>
           </div>
         </div>
 
-        <div className="space-y-1">
-          <label className="text-xs font-medium text-muted-foreground">Tasa</label>
-          <div className="rounded-lg border bg-muted/50 px-4 py-2 text-sm">
-            <span className="font-medium">{formatTasa(tasaValor)}</span>
-            <span className="text-muted-foreground ml-1">Bs/USD</span>
-          </div>
-        </div>
-      </div>
+        {/* Bloque: pagos */}
+        <div className="rounded-lg border p-4 space-y-3">
+          <p className="text-sm font-semibold">Pagos</p>
 
-      {/* Buscar producto */}
-      <div className="space-y-1">
-        <label className="text-xs font-medium text-muted-foreground">Agregar producto</label>
-        <ProductoBuscador onSelect={handleSelectProducto} />
-      </div>
-
-      {/* Lineas */}
-      <LineaItems
-        lineas={lineas}
-        tasa={tasaValor}
-        onUpdateCantidad={handleUpdateCantidad}
-        onUpdatePrecio={handleUpdatePrecio}
-        onRemove={handleRemoveLinea}
-      />
-
-      {/* Barra de acciones */}
-      <div className="flex items-center justify-between border-t pt-4">
-        <Button variant="outline" onClick={handleCancelar} disabled={submitting}>
-          Cancelar
-        </Button>
-
-        <div className="flex items-center gap-4">
-          {clienteId && (
-            <div className="hidden sm:flex items-center gap-2 text-sm">
-              <Badge variant="outline">{clienteNombre}</Badge>
-              <Badge variant={tipoVenta === 'CREDITO' ? 'destructive' : 'default'}>
-                {tipoVenta}
-              </Badge>
+          {/* Lista de pagos registrados */}
+          {pagos.length > 0 && (
+            <div className="space-y-1.5">
+              {pagos.map((p, i) => {
+                const equiv = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
+                return (
+                  <div
+                    key={i}
+                    className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-medium">{p.metodo_nombre}</span>
+                      {p.referencia && (
+                        <span className="ml-2 text-xs text-muted-foreground">Ref: {p.referencia}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span>
+                        {p.moneda === 'BS' ? formatBs(p.monto) : formatUsd(p.monto)}
+                        {p.moneda === 'BS' && (
+                          <span className="ml-1 text-xs text-muted-foreground">({formatUsd(equiv)})</span>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemovePago(i)}
+                        className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
-          <Button onClick={handleOpenPago} disabled={submitting || lineas.length === 0}>
+
+          {/* Formulario para agregar un pago */}
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">Método</label>
+                <select
+                  value={metodoId}
+                  onChange={(e) => setMetodoId(e.target.value)}
+                  className="w-full rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  <option value="">Seleccionar...</option>
+                  {metodos.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.nombre} ({m.moneda})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">
+                  Monto{monedaMetodo ? ` (${monedaMetodo})` : ''}
+                </label>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={referencia}
+                onChange={(e) => setReferencia(e.target.value)}
+                placeholder="Referencia (opcional)"
+                className="flex-1 rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleAddPago}
+                disabled={!metodoId || !monto || parseFloat(monto) <= 0}
+              >
+                <Plus size={14} className="mr-1" />
+                Agregar
+              </Button>
+            </div>
+          </div>
+
+          {/* Resumen abonado / pendiente / tipo */}
+          {pagos.length > 0 && (
+            <div className="rounded-lg bg-muted/50 px-3 py-2.5 space-y-1.5 text-sm border-t pt-3">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Abonado</span>
+                <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Pendiente</span>
+                <span className={`font-medium ${pendienteUsd > 0.01 ? 'text-orange-600' : 'text-green-600'}`}>
+                  {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between border-t pt-1.5">
+                <span className="text-muted-foreground">Estado</span>
+                <span className={`font-semibold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
+                  {tipoDetectado}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Botones de acción */}
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            onClick={handleCancelar}
+            disabled={submitting}
+            className="flex-1"
+          >
+            Cancelar
+          </Button>
+          <Button
+            onClick={handleConfirmVenta}
+            disabled={submitting || !clienteId || lineas.length === 0 || pagos.length === 0}
+            className="flex-1"
+          >
             <ShoppingCart size={16} className="mr-2" />
-            Procesar Pago - {formatUsd(totalUsd)}
+            {submitting ? 'Procesando...' : 'Confirmar Venta'}
           </Button>
         </div>
-      </div>
 
-      {/* Modal de pago */}
-      <PagoModal
-        open={pagoModalOpen}
-        onClose={() => setPagoModalOpen(false)}
-        totalUsd={totalUsd}
-        totalBs={totalBs}
-        tasa={tasaValor}
-        tipoVenta={tipoVenta}
-        nroFacturaPreview="(nuevo)"
-        onConfirm={handleConfirmVenta}
-        submitting={submitting}
-      />
+      </div>
     </div>
   )
 }
