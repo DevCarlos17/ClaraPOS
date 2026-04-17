@@ -25,6 +25,7 @@ export interface CrearVentaParams {
   pagos: PagoEntry[]
   usuario_id: string
   empresa_id: string
+  sesion_caja_id: string | null
 }
 
 export interface CrearVentaResult {
@@ -41,10 +42,14 @@ export function useBuscarProductosVenta(query: string) {
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT * FROM productos WHERE empresa_id = ? AND is_active = 1
-         AND (nombre LIKE ? OR codigo LIKE ?)
-         AND (tipo = 'S' OR CAST(stock AS REAL) > 0)
-         ORDER BY nombre ASC LIMIT 10`
+      ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
+                COALESCE(u.es_decimal, 1) as es_decimal
+         FROM productos p
+         LEFT JOIN unidades u ON p.unidad_base_id = u.id
+         WHERE p.empresa_id = ? AND p.is_active = 1
+         AND (p.nombre LIKE ? OR p.codigo LIKE ?)
+         AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
+         ORDER BY p.nombre ASC LIMIT 10`
       : '',
     shouldSearch ? [empresaId, pattern, pattern] : []
   )
@@ -59,10 +64,11 @@ export interface ProductoVenta {
   nombre: string
   precio_venta_usd: string
   stock: string
+  es_decimal: number
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id } = params
 
   if (lineas.length === 0) {
     throw new Error('Debe agregar al menos una linea a la venta')
@@ -132,13 +138,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
     // 3. INSERT venta
     await tx.execute(
-      `INSERT INTO ventas (id, cliente_id, nro_factura, deposito_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?, ?)`,
+      `INSERT INTO ventas (id, cliente_id, nro_factura, deposito_id, sesion_caja_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?, ?)`,
       [
         ventaId,
         cliente_id,
         nroFactura,
         depositoId,
+        sesion_caja_id ?? null,
         tasa.toFixed(4),
         '0.00',
         totalUsd.toFixed(2),

@@ -7,6 +7,8 @@ export const lineaVentaSchema = z.object({
   tipo: z.string(),
   cantidad: z.number().positive('La cantidad debe ser mayor a 0'),
   precio_unitario_usd: z.number().min(0, 'El precio no puede ser negativo'),
+  stock_actual: z.number().min(0).default(0),
+  es_decimal: z.boolean().default(true),
 })
 
 export type LineaVentaForm = z.infer<typeof lineaVentaSchema>

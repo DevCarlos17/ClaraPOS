@@ -30,11 +30,11 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
         <div className="flex items-center gap-3 px-5 py-4 border-b">
           <Clock size={18} className="text-primary" />
           <div className="flex-1">
-            <h3 className="text-base font-semibold">Facturas en Espera</h3>
+            <h3 className="text-base font-semibold">Facturas Guardadas</h3>
             <p className="text-xs text-muted-foreground">
               {facturas.length === 0
-                ? 'No hay facturas en espera'
-                : `${facturas.length} factura${facturas.length !== 1 ? 's' : ''} en espera`}
+                ? 'No hay facturas guardadas'
+                : `${facturas.length} factura${facturas.length !== 1 ? 's' : ''} guardada${facturas.length !== 1 ? 's' : ''}`}
             </p>
           </div>
           <button
@@ -53,7 +53,7 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
               <ShoppingBag size={40} className="text-muted-foreground/30 mb-3" />
               <p className="text-sm text-muted-foreground">No hay facturas en espera</p>
               <p className="text-xs text-muted-foreground/60 mt-1">
-                Usa "En Espera" para guardar una venta temporalmente
+                Usa "Guardar Factura" para guardar una venta temporalmente
               </p>
             </div>
           ) : (

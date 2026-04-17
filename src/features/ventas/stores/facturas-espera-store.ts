@@ -17,18 +17,33 @@ export interface FacturaEnEspera {
   fecha: string
 }
 
+export interface FacturaBorrador {
+  clienteId: string | null
+  clienteNombre: string
+  lineas: LineaVentaForm[]
+  pagos: PagoEntryForm[]
+  tasa: number
+  usuarioId: string
+  empresaId: string
+  ultimaActualizacion: string
+}
+
 interface FacturasEsperaState {
   facturas: FacturaEnEspera[]
+  borradorActual: FacturaBorrador | null
   agregar: (f: FacturaEnEspera) => void
   recuperar: (id: string) => FacturaEnEspera | undefined
   eliminar: (id: string) => void
   limpiar: () => void
+  guardarBorrador: (f: FacturaBorrador) => void
+  limpiarBorrador: () => void
 }
 
 export const useFacturasEsperaStore = create<FacturasEsperaState>()(
   persist(
     (set, get) => ({
       facturas: [],
+      borradorActual: null,
       agregar: (f) =>
         set((state) => ({
           facturas: [...state.facturas, f],
@@ -46,6 +61,8 @@ export const useFacturasEsperaStore = create<FacturasEsperaState>()(
           facturas: state.facturas.filter((f) => f.id !== id),
         })),
       limpiar: () => set({ facturas: [] }),
+      guardarBorrador: (f) => set({ borradorActual: f }),
+      limpiarBorrador: () => set({ borradorActual: null }),
     }),
     {
       name: 'clarapos-facturas-espera',
