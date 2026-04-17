@@ -10,9 +10,6 @@ interface LineaItemsProps {
 }
 
 export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaItemsProps) {
-  const totalUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
-  const totalBs = usdToBs(totalUsd, tasa)
-  const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
   if (lineas.length === 0) {
     return (
@@ -97,22 +94,6 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
         </div>
       </div>
 
-      {/* Footer totales */}
-      <div className="flex items-center justify-between rounded-lg bg-muted/50 px-4 py-3">
-        <div className="text-sm text-muted-foreground">
-          <span className="font-medium text-foreground">{totalItems}</span> items
-        </div>
-        <div className="flex items-center gap-6 text-sm">
-          <div>
-            <span className="text-muted-foreground">Total USD: </span>
-            <span className="font-bold text-foreground">{formatUsd(totalUsd)}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Total Bs: </span>
-            <span className="font-bold text-foreground">{formatBs(totalBs)}</span>
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

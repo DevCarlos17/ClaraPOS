@@ -9,6 +9,7 @@ export interface Usuario {
   telefono: string | null
   rol_id: string | null
   empresa_id: string | null
+  pin_supervisor_hash: string | null
   is_active: number
   created_at: string
   updated_at: string
@@ -71,3 +72,5 @@ export async function actualizarEmpleado(
 export async function toggleEmpleado(userId: string, isActive: boolean) {
   return connector.updateEmployee(userId, { is_active: isActive })
 }
+
+export { setSupervisorPin } from './use-supervisor-pin'
