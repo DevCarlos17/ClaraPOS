@@ -20,6 +20,7 @@ export const PERMISSIONS = {
   CAJA_ACCESS: 'caja.abrir',
   PURCHASES_VIEW: 'compras.crear',
   ACCOUNTING_VIEW: 'contabilidad.gastos',
+  CXC_REVERSE: 'cxc.reversar_abono',
 } as const
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]

@@ -10,6 +10,7 @@ interface SupervisorPinDialogProps {
   onAuthorized: (supervisorId: string) => void
   titulo?: string
   mensaje?: string
+  requiredPermission?: string
 }
 
 export function SupervisorPinDialog({
@@ -18,6 +19,7 @@ export function SupervisorPinDialog({
   onAuthorized,
   titulo = 'Autorización de Supervisor',
   mensaje = 'Ingresa el PIN de supervisor para autorizar esta acción.',
+  requiredPermission = 'ventas.anular',
 }: SupervisorPinDialogProps) {
   const db = usePowerSync()
   const { user } = useCurrentUser()
@@ -76,12 +78,12 @@ export function SupervisorPinDialog({
       const isSystem = rolResult?.[0]?.is_system === 1
 
       if (!isSystem) {
-        // Verificar permiso ventas.anular
+        // Verificar permiso requerido
         const permResult = await db.getAll<{ id: string }>(
           `SELECT rp.id FROM rol_permisos rp
            JOIN permisos p ON rp.permiso_id = p.id
-           WHERE rp.rol_id = ? AND p.slug = 'ventas.anular'`,
-          [supervisor.rol_id]
+           WHERE rp.rol_id = ? AND p.slug = ?`,
+          [supervisor.rol_id, requiredPermission]
         )
 
         if (!permResult || permResult.length === 0) {

@@ -35,6 +35,8 @@ export interface PagoFacturaParams {
   monto: number
   referencia?: string
   empresa_id: string
+  procesado_por: string
+  procesado_por_nombre: string
 }
 
 export interface AbonoGlobalParams {
@@ -45,6 +47,8 @@ export interface AbonoGlobalParams {
   monto: number
   referencia?: string
   empresa_id: string
+  procesado_por: string
+  procesado_por_nombre: string
 }
 
 /**
@@ -128,6 +132,12 @@ export interface PagoFacturaCxc {
   fecha: string
   metodo_nombre: string
   moneda_label: string
+  is_reversed: number
+  reversed_at: string | null
+  reversed_by: string | null
+  reversed_reason: string | null
+  procesado_por_nombre: string | null
+  created_by: string | null
 }
 
 /**
@@ -154,7 +164,8 @@ export function usePagosFactura(ventaId: string | null) {
   const { data, isLoading } = useQuery(
     ventaId
       ? `SELECT pg.id, pg.venta_id, pg.metodo_cobro_id, pg.moneda_id, pg.tasa, pg.monto, pg.monto_usd,
-           pg.referencia, pg.fecha,
+           pg.referencia, pg.fecha, pg.created_by,
+           pg.is_reversed, pg.reversed_at, pg.reversed_by, pg.reversed_reason, pg.procesado_por_nombre,
            mc.nombre as metodo_nombre,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE 'USD' END as moneda_label
          FROM pagos pg
@@ -174,7 +185,7 @@ export function usePagosFactura(ventaId: string | null) {
  * Crea pago, reduce saldo factura, crea movimiento_cuenta (tipo PAG), actualiza saldo cliente.
  */
 export async function registrarPagoFactura(params: PagoFacturaParams): Promise<void> {
-  const { venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id } = params
+  const { venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre } = params
 
   if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
@@ -217,8 +228,8 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     // 4. INSERT pago
     const pagoId = uuidv4()
     await tx.execute(
-      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         pagoId,
         venta_id,
@@ -232,6 +243,8 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         now,
         empresa_id,
         now,
+        procesado_por,
+        procesado_por_nombre,
       ]
     )
 
@@ -291,7 +304,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
   facturasAfectadas: number
   montoAplicado: number
 }> {
-  const { cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id } = params
+  const { cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre } = params
 
   if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
@@ -339,8 +352,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         // INSERT pago vinculado a esta factura
         const pagoId = uuidv4()
         await tx.execute(
-          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             pagoId,
             factura.id,
@@ -354,6 +367,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
             now,
             empresa_id,
             now,
+            procesado_por,
+            procesado_por_nombre,
           ]
         )
 
@@ -373,8 +388,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     if (montoRestante > 0.01) {
       const pagoAnticipoId = uuidv4()
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoAnticipoId,
           null,
@@ -388,6 +403,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           now,
           empresa_id,
           now,
+          procesado_por,
+          procesado_por_nombre,
         ]
       )
     }
@@ -433,4 +450,118 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
   })
 
   return { facturasAfectadas, montoAplicado }
+}
+
+/**
+ * Reverso de un abono/pago.
+ * Marca el pago como reversado, restaura el saldo de la factura
+ * y del cliente, e inserta un movimiento_cuenta tipo REV.
+ */
+export async function registrarReversoAbono(params: {
+  pago_id: string
+  reason: string
+  reversed_by: string
+  reversed_by_nombre: string
+  empresa_id: string
+}): Promise<void> {
+  const { pago_id, reason, reversed_by, reversed_by_nombre, empresa_id } = params
+
+  if (!reason.trim()) throw new Error('Debe ingresar una razon para el reverso')
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // 1. Leer el pago original
+    const pagoResult = await tx.execute(
+      `SELECT id, venta_id, cliente_id, monto_usd, is_reversed FROM pagos WHERE id = ? AND empresa_id = ?`,
+      [pago_id, empresa_id]
+    )
+    if (!pagoResult.rows || pagoResult.rows.length === 0) {
+      throw new Error('Pago no encontrado')
+    }
+    const pago = pagoResult.rows.item(0) as {
+      id: string
+      venta_id: string | null
+      cliente_id: string
+      monto_usd: string
+      is_reversed: number
+    }
+
+    if (pago.is_reversed === 1) {
+      throw new Error('Este pago ya fue reversado anteriormente')
+    }
+
+    const montoUsd = parseFloat(pago.monto_usd)
+
+    // 2. Marcar el pago como reversado
+    await tx.execute(
+      `UPDATE pagos SET is_reversed = 1, reversed_at = ?, reversed_by = ?, reversed_reason = ? WHERE id = ?`,
+      [now, reversed_by, reason.trim(), pago_id]
+    )
+
+    // 3. Si tiene factura: restaurar saldo_pend_usd
+    let nroFactura = ''
+    if (pago.venta_id) {
+      const ventaResult = await tx.execute(
+        `SELECT nro_factura, saldo_pend_usd, total_usd FROM ventas WHERE id = ?`,
+        [pago.venta_id]
+      )
+      if (ventaResult.rows && ventaResult.rows.length > 0) {
+        const venta = ventaResult.rows.item(0) as {
+          nro_factura: string
+          saldo_pend_usd: string
+          total_usd: string
+        }
+        nroFactura = venta.nro_factura
+        const saldoPendActual = parseFloat(venta.saldo_pend_usd)
+        const totalFactura = parseFloat(venta.total_usd)
+        const nuevoSaldoFactura = Math.min(totalFactura, Number((saldoPendActual + montoUsd).toFixed(2)))
+        await tx.execute(`UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?`, [
+          nuevoSaldoFactura.toFixed(2),
+          pago.venta_id,
+        ])
+      }
+    }
+
+    // 4. Restaurar saldo del cliente
+    const clienteResult = await tx.execute(
+      `SELECT saldo_actual FROM clientes WHERE id = ?`,
+      [pago.cliente_id]
+    )
+    if (!clienteResult.rows || clienteResult.rows.length === 0) {
+      throw new Error('Cliente no encontrado')
+    }
+    const saldoActual = parseFloat(
+      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+    )
+    const saldoNuevo = Number((saldoActual + montoUsd).toFixed(2))
+
+    await tx.execute(`UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?`, [
+      saldoNuevo.toFixed(2),
+      now,
+      pago.cliente_id,
+    ])
+
+    // 5. Insertar movimiento_cuenta tipo REV
+    const movId = uuidv4()
+    const referencia = nroFactura ? `REV-${nroFactura}` : 'REV-ABONO'
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, 'REV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        movId,
+        pago.cliente_id,
+        referencia,
+        montoUsd.toFixed(2),
+        saldoActual.toFixed(2),
+        saldoNuevo.toFixed(2),
+        `Reverso de abono${nroFactura ? ` factura ${nroFactura}` : ''}: ${reason.trim()} (por ${reversed_by_nombre})`,
+        pago.venta_id ?? null,
+        now,
+        empresa_id,
+        now,
+        reversed_by,
+      ]
+    )
+  })
 }

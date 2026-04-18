@@ -94,6 +94,8 @@ export function AbonoGlobalModal({
         monto,
         referencia: referencia.trim() || undefined,
         empresa_id: user!.empresa_id!,
+        procesado_por: user!.id,
+        procesado_por_nombre: user!.nombre,
       })
       toast.success(
         `Abono de ${formatUsd(result.montoAplicado)} registrado. ${result.facturasAfectadas} factura(s) afectada(s).`

@@ -605,6 +605,11 @@ const pagos = new Table(
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,
+    is_reversed: column.integer,
+    reversed_at: column.text,
+    reversed_by: column.text,
+    reversed_reason: column.text,
+    procesado_por_nombre: column.text,
   },
   { indexes: {} }
 )

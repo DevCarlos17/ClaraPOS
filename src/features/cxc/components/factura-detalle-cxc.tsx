@@ -1,9 +1,13 @@
-import { useRef, useEffect } from 'react'
-import { X, Package, CreditCard } from 'lucide-react'
+import { useRef, useEffect, useState } from 'react'
+import { X, Package, CreditCard, RotateCcw } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
-import { useDetalleFactura, usePagosFactura, type VentaPendiente } from '../hooks/use-cxc'
+import { useDetalleFactura, usePagosFactura, registrarReversoAbono, type VentaPendiente, type PagoFacturaCxc } from '../hooks/use-cxc'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 
 interface FacturaDetalleCxcProps {
   isOpen: boolean
@@ -37,11 +41,110 @@ function formatFechaHora(fecha: string): string {
   }
 }
 
+// =============================================
+// ReversarAbonoDialog — inline
+// =============================================
+
+interface ReversarAbonoDialogProps {
+  isOpen: boolean
+  pago: PagoFacturaCxc | null
+  onClose: () => void
+  onConfirm: (reason: string) => void
+  loading: boolean
+}
+
+function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: ReversarAbonoDialogProps) {
+  const [reason, setReason] = useState('')
+
+  useEffect(() => {
+    if (isOpen) setReason('')
+  }, [isOpen])
+
+  if (!isOpen || !pago) return null
+
+  const montoUsd = parseFloat(pago.monto_usd)
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center">
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-card rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4 border">
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={loading}
+          className="absolute top-4 right-4 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+        >
+          <X size={16} />
+        </button>
+
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
+            <RotateCcw size={18} className="text-destructive" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold">Reversar abono</h3>
+            <p className="text-xs text-muted-foreground">
+              {formatUsd(montoUsd)} — {pago.metodo_nombre}
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium mb-1.5">
+              Razon del reverso <span className="text-destructive">*</span>
+            </label>
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Ej: Error en el monto registrado, pago duplicado..."
+              rows={3}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={loading}
+              className="flex-1 px-4 py-2 text-sm font-medium rounded-md border hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              onClick={() => onConfirm(reason)}
+              disabled={loading || !reason.trim()}
+              className="flex-1 px-4 py-2 text-sm font-medium rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+            >
+              {loading ? 'Reversando...' : 'Confirmar reverso'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// =============================================
+// FacturaDetalleCxc
+// =============================================
+
 export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCxcProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { tasaValor } = useTasaActual()
+  const { user } = useCurrentUser()
+  const { hasPermission } = usePermissions()
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(factura?.id ?? null)
   const { pagos, isLoading: loadingPagos } = usePagosFactura(factura?.id ?? null)
+
+  // Reverso state
+  const [pagoAReverse, setPagoAReverse] = useState<PagoFacturaCxc | null>(null)
+  const [showPinDialog, setShowPinDialog] = useState(false)
+  const [showReasonDialog, setShowReasonDialog] = useState(false)
+  const [supervisorId, setSupervisorId] = useState<string | null>(null)
+  const [reversing, setReversing] = useState(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -62,199 +165,317 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const saldoPend = parseFloat(factura.saldo_pend_usd)
   const totalAbonado = totalUsd - saldoPend
 
-  const totalPagado = pagos.reduce((sum, p) => sum + parseFloat(p.monto_usd), 0)
+  // Solo pagos activos (no reversados) cuentan para el total pagado
+  const totalPagado = pagos
+    .filter((p) => !p.is_reversed)
+    .reduce((sum, p) => sum + parseFloat(p.monto_usd), 0)
+
+  // ---- Flujo de reverso ----
+  function handleReversar(pago: PagoFacturaCxc) {
+    setPagoAReverse(pago)
+    if (hasPermission(PERMISSIONS.CXC_REVERSE)) {
+      // Tiene permiso directo → pedir razon
+      setSupervisorId(user!.id)
+      setShowReasonDialog(true)
+    } else {
+      // Sin permiso → pedir PIN supervisor
+      setShowPinDialog(true)
+    }
+  }
+
+  function handlePinAuthorized(supId: string) {
+    setSupervisorId(supId)
+    setShowPinDialog(false)
+    setShowReasonDialog(true)
+  }
+
+  async function handleConfirmReverso(reason: string) {
+    if (!pagoAReverse || !supervisorId || !user) return
+
+    setReversing(true)
+    try {
+      // Obtener nombre del que autoriza
+      const reversedByNombre = hasPermission(PERMISSIONS.CXC_REVERSE)
+        ? user.nombre
+        : 'Supervisor'
+
+      await registrarReversoAbono({
+        pago_id: pagoAReverse.id,
+        reason,
+        reversed_by: supervisorId,
+        reversed_by_nombre: reversedByNombre,
+        empresa_id: user.empresa_id!,
+      })
+
+      toast.success(`Abono de ${formatUsd(parseFloat(pagoAReverse.monto_usd))} reversado exitosamente`)
+      setShowReasonDialog(false)
+      setPagoAReverse(null)
+      setSupervisorId(null)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Error al reversar el abono')
+    } finally {
+      setReversing(false)
+    }
+  }
+
+  function handleCloseReason() {
+    if (reversing) return
+    setShowReasonDialog(false)
+    setPagoAReverse(null)
+    setSupervisorId(null)
+  }
+
+  function handleClosePin() {
+    setShowPinDialog(false)
+    setPagoAReverse(null)
+  }
 
   return (
-    <dialog
-      ref={dialogRef}
-      onClose={onClose}
-      onClick={handleBackdropClick}
-      className="backdrop:bg-black/60 rounded-lg p-0 w-full max-w-2xl shadow-xl"
-    >
-      <div className="p-6 max-h-[85vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold">Factura #{factura.nro_factura}</h2>
-            <p className="text-sm text-muted-foreground">{formatFecha(factura.fecha)}</p>
+    <>
+      <dialog
+        ref={dialogRef}
+        onClose={onClose}
+        onClick={handleBackdropClick}
+        className="backdrop:bg-black/60 rounded-lg p-0 w-full max-w-3xl shadow-xl"
+      >
+        <div className="p-6 max-h-[85vh] overflow-y-auto">
+          {/* Header */}
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h2 className="text-lg font-semibold">Factura #{factura.nro_factura}</h2>
+              <p className="text-sm text-muted-foreground">{formatFecha(factura.fecha)}</p>
+            </div>
+            <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
+              <X className="h-5 w-5 text-muted-foreground" />
+            </button>
           </div>
-          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
-            <X className="h-5 w-5 text-muted-foreground" />
-          </button>
-        </div>
 
-        {/* Resumen de montos */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-          <div className="rounded-lg border bg-card p-3 text-center">
-            <p className="text-xs text-muted-foreground mb-0.5">Total</p>
-            <p className="font-bold">{formatUsd(totalUsd)}</p>
-            {tasaValor > 0 && <p className="text-xs text-muted-foreground">{formatBs(totalBs)}</p>}
+          {/* Resumen de montos */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            <div className="rounded-lg border bg-card p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-0.5">Total</p>
+              <p className="font-bold">{formatUsd(totalUsd)}</p>
+              {tasaValor > 0 && <p className="text-xs text-muted-foreground">{formatBs(totalBs)}</p>}
+            </div>
+            <div className="rounded-lg border bg-card p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-0.5">Tasa usada</p>
+              <p className="font-bold text-sm">{parseFloat(factura.tasa).toFixed(4)}</p>
+            </div>
+            <div className="rounded-lg border bg-green-50 p-3 text-center">
+              <p className="text-xs text-green-700/70 mb-0.5">Abonado</p>
+              <p className="font-bold text-green-700">{formatUsd(totalAbonado)}</p>
+            </div>
+            <div className="rounded-lg border bg-red-50 p-3 text-center">
+              <p className="text-xs text-red-700/70 mb-0.5">Pendiente</p>
+              <p className="font-bold text-red-600">{formatUsd(saldoPend)}</p>
+              {tasaValor > 0 && (
+                <p className="text-xs text-red-700/50">{formatBs(usdToBs(saldoPend, tasaValor))}</p>
+              )}
+            </div>
           </div>
-          <div className="rounded-lg border bg-card p-3 text-center">
-            <p className="text-xs text-muted-foreground mb-0.5">Tasa usada</p>
-            <p className="font-bold text-sm">{parseFloat(factura.tasa).toFixed(4)}</p>
-          </div>
-          <div className="rounded-lg border bg-green-50 p-3 text-center">
-            <p className="text-xs text-green-700/70 mb-0.5">Abonado</p>
-            <p className="font-bold text-green-700">{formatUsd(totalAbonado)}</p>
-          </div>
-          <div className="rounded-lg border bg-red-50 p-3 text-center">
-            <p className="text-xs text-red-700/70 mb-0.5">Pendiente</p>
-            <p className="font-bold text-red-600">{formatUsd(saldoPend)}</p>
-            {tasaValor > 0 && (
-              <p className="text-xs text-red-700/50">{formatBs(usdToBs(saldoPend, tasaValor))}</p>
+
+          {/* Articulos */}
+          <div className="mb-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Package size={14} className="text-muted-foreground" />
+              <h3 className="text-sm font-semibold">Articulos</h3>
+            </div>
+            {loadingDetalle ? (
+              <div className="h-20 bg-muted rounded animate-pulse" />
+            ) : detalle.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">Sin detalle disponible</p>
+            ) : (
+              <div className="overflow-x-auto border rounded-lg">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left px-3 py-2 font-medium text-xs">Codigo</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs">Producto</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs">Cant</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs">P.Unit</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detalle.map((d) => {
+                      const cant = parseFloat(d.cantidad)
+                      const precio = parseFloat(d.precio_unitario_usd)
+                      const subt = parseFloat(d.subtotal_usd)
+                      return (
+                        <tr key={d.id} className="border-b border-muted">
+                          <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                            {d.producto_codigo}
+                          </td>
+                          <td className="px-3 py-2">{d.producto_nombre}</td>
+                          <td className="px-3 py-2 text-right">
+                            {cant % 1 === 0 ? cant.toFixed(0) : cant.toFixed(3)}
+                          </td>
+                          <td className="px-3 py-2 text-right">{formatUsd(precio)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{formatUsd(subt)}</td>
+                        </tr>
+                      )
+                    })}
+                    <tr className="bg-muted/30">
+                      <td colSpan={4} className="px-3 py-2 text-right font-semibold text-xs uppercase">
+                        Total
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold">{formatUsd(totalUsd)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
-        </div>
 
-        {/* Articulos */}
-        <div className="mb-5">
-          <div className="flex items-center gap-2 mb-2">
-            <Package size={14} className="text-muted-foreground" />
-            <h3 className="text-sm font-semibold">Articulos</h3>
-          </div>
-          {loadingDetalle ? (
-            <div className="h-20 bg-muted rounded animate-pulse" />
-          ) : detalle.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">Sin detalle disponible</p>
-          ) : (
-            <div className="overflow-x-auto border rounded-lg">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left px-3 py-2 font-medium text-xs">Codigo</th>
-                    <th className="text-left px-3 py-2 font-medium text-xs">Producto</th>
-                    <th className="text-right px-3 py-2 font-medium text-xs">Cant</th>
-                    <th className="text-right px-3 py-2 font-medium text-xs">P.Unit</th>
-                    <th className="text-right px-3 py-2 font-medium text-xs">Subtotal</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {detalle.map((d) => {
-                    const cant = parseFloat(d.cantidad)
-                    const precio = parseFloat(d.precio_unitario_usd)
-                    const subt = parseFloat(d.subtotal_usd)
-                    return (
-                      <tr key={d.id} className="border-b border-muted">
-                        <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
-                          {d.producto_codigo}
-                        </td>
-                        <td className="px-3 py-2">{d.producto_nombre}</td>
-                        <td className="px-3 py-2 text-right">
-                          {cant % 1 === 0 ? cant.toFixed(0) : cant.toFixed(3)}
-                        </td>
-                        <td className="px-3 py-2 text-right">{formatUsd(precio)}</td>
-                        <td className="px-3 py-2 text-right font-medium">{formatUsd(subt)}</td>
-                      </tr>
-                    )
-                  })}
-                  <tr className="bg-muted/30">
-                    <td colSpan={4} className="px-3 py-2 text-right font-semibold text-xs uppercase">
-                      Total
-                    </td>
-                    <td className="px-3 py-2 text-right font-bold">{formatUsd(totalUsd)}</td>
-                  </tr>
-                </tbody>
-              </table>
+          {/* Abonos recibidos */}
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <CreditCard size={14} className="text-muted-foreground" />
+              <h3 className="text-sm font-semibold">Abonos recibidos</h3>
             </div>
-          )}
-        </div>
+            {loadingPagos ? (
+              <div className="h-16 bg-muted rounded animate-pulse" />
+            ) : pagos.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">
+                Sin pagos registrados
+              </p>
+            ) : (
+              <div className="overflow-x-auto border rounded-lg">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50">
+                      <th className="text-left px-3 py-2 font-medium text-xs">Fecha</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs">Metodo</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs">Moneda</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs">Monto orig.</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs">Equiv. USD</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs">Tasa</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs">Ref.</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs">Procesado por</th>
+                      <th className="px-3 py-2 font-medium text-xs"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagos.map((p) => {
+                      const montoOrig = parseFloat(p.monto)
+                      const montoUsdVal = parseFloat(p.monto_usd)
+                      const tasaPago = parseFloat(p.tasa)
+                      const isReversed = p.is_reversed === 1
+                      return (
+                        <tr
+                          key={p.id}
+                          className={`border-b border-muted transition-opacity ${isReversed ? 'opacity-50' : ''}`}
+                        >
+                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                            {formatFechaHora(p.fecha)}
+                          </td>
+                          <td className={`px-3 py-2 ${isReversed ? 'line-through text-muted-foreground' : ''}`}>
+                            {p.metodo_nombre}
+                          </td>
+                          <td className="px-3 py-2">
+                            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                              p.moneda_label === 'BS' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'
+                            }`}>
+                              {p.moneda_label}
+                            </span>
+                          </td>
+                          <td className={`px-3 py-2 text-right font-medium ${isReversed ? 'line-through text-muted-foreground' : ''}`}>
+                            {p.moneda_label === 'BS' ? formatBs(montoOrig) : formatUsd(montoOrig)}
+                          </td>
+                          <td className={`px-3 py-2 text-right font-medium ${isReversed ? 'line-through text-muted-foreground' : 'text-green-700'}`}>
+                            {formatUsd(montoUsdVal)}
+                          </td>
+                          <td className="px-3 py-2 text-right text-xs text-muted-foreground">
+                            {tasaPago.toFixed(4)}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-muted-foreground">
+                            {p.referencia || '-'}
+                          </td>
+                          <td className="px-3 py-2 text-xs text-muted-foreground">
+                            {p.procesado_por_nombre || '-'}
+                          </td>
+                          <td className="px-3 py-2">
+                            {isReversed ? (
+                              <div className="flex flex-col items-start gap-0.5">
+                                <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-destructive/10 text-destructive whitespace-nowrap">
+                                  REVERSADO
+                                </span>
+                                {p.reversed_reason && (
+                                  <span className="text-xs text-muted-foreground max-w-[120px] truncate" title={p.reversed_reason}>
+                                    {p.reversed_reason}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleReversar(p)}
+                                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors whitespace-nowrap"
+                              >
+                                <RotateCcw size={12} />
+                                Reversar
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    <tr className="bg-muted/30">
+                      <td colSpan={4} className="px-3 py-2 text-right font-semibold text-xs uppercase">
+                        Total pagado
+                      </td>
+                      <td className="px-3 py-2 text-right font-bold text-green-700">
+                        {formatUsd(totalPagado)}
+                      </td>
+                      <td colSpan={4} />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-        {/* Abonos recibidos */}
-        <div>
-          <div className="flex items-center gap-2 mb-2">
-            <CreditCard size={14} className="text-muted-foreground" />
-            <h3 className="text-sm font-semibold">Abonos recibidos</h3>
-          </div>
-          {loadingPagos ? (
-            <div className="h-16 bg-muted rounded animate-pulse" />
-          ) : pagos.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">
-              Sin pagos registrados
-            </p>
-          ) : (
-            <div className="overflow-x-auto border rounded-lg">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/50">
-                    <th className="text-left px-3 py-2 font-medium text-xs">Fecha</th>
-                    <th className="text-left px-3 py-2 font-medium text-xs">Metodo</th>
-                    <th className="text-left px-3 py-2 font-medium text-xs">Moneda</th>
-                    <th className="text-right px-3 py-2 font-medium text-xs">Monto orig.</th>
-                    <th className="text-right px-3 py-2 font-medium text-xs">Equiv. USD</th>
-                    <th className="text-right px-3 py-2 font-medium text-xs">Tasa</th>
-                    <th className="text-left px-3 py-2 font-medium text-xs">Ref.</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pagos.map((p) => {
-                    const montoOrig = parseFloat(p.monto)
-                    const montoUsd = parseFloat(p.monto_usd)
-                    const tasaPago = parseFloat(p.tasa)
-                    return (
-                      <tr key={p.id} className="border-b border-muted">
-                        <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                          {formatFechaHora(p.fecha)}
-                        </td>
-                        <td className="px-3 py-2">{p.metodo_nombre}</td>
-                        <td className="px-3 py-2">
-                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                            p.moneda_label === 'BS' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'
-                          }`}>
-                            {p.moneda_label}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 text-right font-medium">
-                          {p.moneda_label === 'BS' ? formatBs(montoOrig) : formatUsd(montoOrig)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-green-700 font-medium">
-                          {formatUsd(montoUsd)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-xs text-muted-foreground">
-                          {tasaPago.toFixed(4)}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground">
-                          {p.referencia || '-'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                  <tr className="bg-muted/30">
-                    <td colSpan={4} className="px-3 py-2 text-right font-semibold text-xs uppercase">
-                      Total pagado
-                    </td>
-                    <td className="px-3 py-2 text-right font-bold text-green-700">
-                      {formatUsd(totalPagado)}
-                    </td>
-                    <td colSpan={2} />
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          {/* Resumen saldo */}
-          {pagos.length > 0 && (
-            <div className="mt-3 flex justify-end gap-6 text-sm">
-              <span className="text-muted-foreground">
-                Pagado: <span className="font-medium text-green-700">{formatUsd(totalPagado)}</span>
-              </span>
-              <span className="text-muted-foreground">
-                Pendiente:{' '}
-                <span className={`font-bold ${saldoPend > 0.001 ? 'text-red-600' : 'text-green-700'}`}>
-                  {formatUsd(saldoPend)}
+            {/* Resumen saldo */}
+            {pagos.length > 0 && (
+              <div className="mt-3 flex justify-end gap-6 text-sm">
+                <span className="text-muted-foreground">
+                  Pagado: <span className="font-medium text-green-700">{formatUsd(totalPagado)}</span>
                 </span>
-              </span>
-            </div>
-          )}
-        </div>
+                <span className="text-muted-foreground">
+                  Pendiente:{' '}
+                  <span className={`font-bold ${saldoPend > 0.001 ? 'text-red-600' : 'text-green-700'}`}>
+                    {formatUsd(saldoPend)}
+                  </span>
+                </span>
+              </div>
+            )}
+          </div>
 
-        <div className="flex justify-end pt-5">
-          <Button variant="outline" onClick={onClose}>
-            Cerrar
-          </Button>
+          <div className="flex justify-end pt-5">
+            <Button variant="outline" onClick={onClose}>
+              Cerrar
+            </Button>
+          </div>
         </div>
-      </div>
-    </dialog>
+      </dialog>
+
+      {/* PIN supervisor dialog */}
+      <SupervisorPinDialog
+        isOpen={showPinDialog}
+        onClose={handleClosePin}
+        onAuthorized={handlePinAuthorized}
+        titulo="Autorización requerida"
+        mensaje="Ingresa el PIN de supervisor para reversar este abono."
+        requiredPermission={PERMISSIONS.CXC_REVERSE}
+      />
+
+      {/* Reason dialog */}
+      <ReversarAbonoDialog
+        isOpen={showReasonDialog}
+        pago={pagoAReverse}
+        onClose={handleCloseReason}
+        onConfirm={handleConfirmReverso}
+        loading={reversing}
+      />
+    </>
   )
 }
