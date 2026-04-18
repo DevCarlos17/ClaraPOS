@@ -140,6 +140,34 @@ export interface PagoFacturaCxc {
   created_by: string | null
 }
 
+export interface PagoClienteCxc extends PagoFacturaCxc {
+  nro_factura: string | null
+}
+
+/**
+ * Todos los pagos de un cliente (para vista de estado de cuenta del cliente)
+ */
+export function usePagosCliente(clienteId: string | null) {
+  const { data, isLoading } = useQuery(
+    clienteId
+      ? `SELECT pg.id, pg.venta_id, pg.metodo_cobro_id, pg.moneda_id, pg.tasa, pg.monto, pg.monto_usd,
+           pg.referencia, pg.fecha, pg.created_by,
+           pg.is_reversed, pg.reversed_at, pg.reversed_by, pg.reversed_reason, pg.procesado_por_nombre,
+           v.nro_factura,
+           mc.nombre as metodo_nombre,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE 'USD' END as moneda_label
+         FROM pagos pg
+         LEFT JOIN ventas v ON pg.venta_id = v.id
+         JOIN metodos_cobro mc ON pg.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mon ON pg.moneda_id = mon.id
+         WHERE pg.cliente_id = ?
+         ORDER BY pg.fecha DESC`
+      : '',
+    clienteId ? [clienteId] : []
+  )
+  return { pagos: (data ?? []) as PagoClienteCxc[], isLoading }
+}
+
 /**
  * Detalle de articulos de una venta
  */

@@ -83,6 +83,58 @@ export function useMovimientosCliente(clienteId: string | undefined) {
   return { movimientos: (data ?? []) as MovimientoCuenta[], isLoading }
 }
 
+/**
+ * Movimientos con filtro de fechas opcional.
+ * Sin filtros: devuelve los ultimos 5.
+ * Con al menos un filtro de fecha: devuelve todos en el rango (sin limite).
+ */
+export function useMovimientosClienteFiltrados(
+  clienteId: string | undefined,
+  opts: { fechaDesde?: string; fechaHasta?: string }
+) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const { fechaDesde, fechaHasta } = opts
+  const hasFilter = !!fechaDesde || !!fechaHasta
+
+  // Build SQL and params
+  const base = 'SELECT * FROM movimientos_cuenta WHERE empresa_id = ? AND cliente_id = ?'
+  let sql = ''
+  let params: unknown[] = []
+
+  if (clienteId) {
+    sql = base
+    params = [empresaId, clienteId]
+    if (fechaDesde) {
+      sql += ' AND fecha >= ?'
+      params.push(fechaDesde)
+    }
+    if (fechaHasta) {
+      sql += ' AND fecha <= ?'
+      params.push(`${fechaHasta}T23:59:59`)
+    }
+    sql += ' ORDER BY fecha DESC'
+    if (!hasFilter) sql += ' LIMIT 5'
+  }
+
+  const { data, isLoading } = useQuery(sql, params)
+  return { movimientos: (data ?? []) as MovimientoCuenta[], isLoading }
+}
+
+export function useCountMovimientosCliente(clienteId: string | undefined) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data } = useQuery(
+    clienteId
+      ? 'SELECT COUNT(*) as total FROM movimientos_cuenta WHERE empresa_id = ? AND cliente_id = ?'
+      : '',
+    clienteId ? [empresaId, clienteId] : []
+  )
+  const total = (data?.[0] as { total: number } | undefined)?.total ?? 0
+  return { total }
+}
+
 export async function crearCliente(data: {
   identificacion: string
   nombre: string

@@ -54,29 +54,34 @@ interface ReversarAbonoDialogProps {
 }
 
 function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: ReversarAbonoDialogProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
   const [reason, setReason] = useState('')
 
   useEffect(() => {
-    if (isOpen) setReason('')
+    if (isOpen) {
+      dialogRef.current?.showModal()
+      setReason('')
+    } else {
+      dialogRef.current?.close()
+    }
   }, [isOpen])
 
-  if (!isOpen || !pago) return null
+  if (!pago) return null
 
   const montoUsd = parseFloat(pago.monto_usd)
 
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-card rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4 border">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={loading}
-          className="absolute top-4 right-4 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-          <X size={16} />
-        </button>
+  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+    if (e.target === dialogRef.current && !loading) onClose()
+  }
 
+  return (
+    <dialog
+      ref={dialogRef}
+      onClose={onClose}
+      onClick={handleBackdropClick}
+      className="backdrop:bg-black/60 rounded-xl shadow-2xl p-0 w-full max-w-sm mx-4 border bg-card"
+    >
+      <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
             <RotateCcw size={18} className="text-destructive" />
@@ -123,7 +128,7 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   )
 }
 

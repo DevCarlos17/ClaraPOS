@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { ShieldCheck, X } from 'lucide-react'
+import { ShieldCheck } from 'lucide-react'
 import { hashPin } from '@/lib/crypto'
 import { usePowerSync } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -21,6 +21,7 @@ export function SupervisorPinDialog({
   mensaje = 'Ingresa el PIN de supervisor para autorizar esta acción.',
   requiredPermission = 'ventas.anular',
 }: SupervisorPinDialogProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
   const db = usePowerSync()
   const { user } = useCurrentUser()
   const [pin, setPin] = useState('')
@@ -30,13 +31,14 @@ export function SupervisorPinDialog({
 
   useEffect(() => {
     if (isOpen) {
+      dialogRef.current?.showModal()
       setPin('')
       setError('')
       setTimeout(() => inputRef.current?.focus(), 50)
+    } else {
+      dialogRef.current?.close()
     }
   }, [isOpen])
-
-  if (!isOpen) return null
 
   const handleVerificar = async () => {
     if (!pin) {
@@ -54,7 +56,6 @@ export function SupervisorPinDialog({
     try {
       const hash = await hashPin(pin, user.empresa_id)
 
-      // Buscar usuario con ese hash en la misma empresa
       const result = await db.getAll<{ id: string; rol_id: string }>(
         `SELECT id, rol_id FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
         [user.empresa_id, hash]
@@ -69,7 +70,6 @@ export function SupervisorPinDialog({
 
       const supervisor = result[0]
 
-      // Verificar permisos del rol
       const rolResult = await db.getAll<{ is_system: number }>(
         `SELECT is_system FROM roles WHERE id = ?`,
         [supervisor.rol_id]
@@ -78,7 +78,6 @@ export function SupervisorPinDialog({
       const isSystem = rolResult?.[0]?.is_system === 1
 
       if (!isSystem) {
-        // Verificar permiso requerido
         const permResult = await db.getAll<{ id: string }>(
           `SELECT rp.id FROM rol_permisos rp
            JOIN permisos p ON rp.permiso_id = p.id
@@ -94,7 +93,6 @@ export function SupervisorPinDialog({
         }
       }
 
-      // Autorizado
       onAuthorized(supervisor.id)
       onClose()
     } catch {
@@ -109,18 +107,18 @@ export function SupervisorPinDialog({
     if (e.key === 'Escape') onClose()
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-card rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4 border">
-        <button
-          type="button"
-          onClick={onClose}
-          className="absolute top-4 right-4 rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-        >
-          <X size={16} />
-        </button>
+  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+    if (e.target === dialogRef.current) onClose()
+  }
 
+  return (
+    <dialog
+      ref={dialogRef}
+      onClose={onClose}
+      onClick={handleBackdropClick}
+      className="backdrop:bg-black/50 backdrop:backdrop-blur-sm rounded-xl shadow-2xl p-0 w-full max-w-sm mx-4 border bg-card"
+    >
+      <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
             <ShieldCheck size={20} className="text-primary" />
@@ -179,6 +177,6 @@ export function SupervisorPinDialog({
           </div>
         </div>
       </div>
-    </div>
+    </dialog>
   )
 }
