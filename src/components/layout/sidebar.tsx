@@ -94,7 +94,7 @@ const menuItems: MenuItem[] = [
       { title: 'Departamentos', url: '/inventario/departamentos', icon: FolderTree, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Productos / Servicios', url: '/inventario/productos', icon: ShoppingBag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Kardex', url: '/inventario/kardex', icon: ArrowLeftRight, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
-      { title: 'Recetas / Combos', url: '/inventario/recetas', icon: BookOpen, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Servicios y Recetas', url: '/inventario/recetas', icon: BookOpen, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Reportes de Inventario', url: '/inventario/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Marcas', url: '/inventario/marcas', icon: Tag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Unidades', url: '/inventario/unidades', icon: Ruler, requiredPermission: PERMISSIONS.INVENTORY_VIEW },

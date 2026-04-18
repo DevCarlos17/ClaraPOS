@@ -93,6 +93,8 @@ export async function crearProducto(data: {
   stock_minimo: number
   empresa_id: string
   ubicacion?: string
+  unidad_base_id?: string
+  maneja_lotes?: boolean
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -114,12 +116,13 @@ export async function crearProducto(data: {
       costo_promedio: '0.00',
       costo_ultimo: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
       tipo_impuesto: 'Exento',
-      maneja_lotes: 0,
+      maneja_lotes: isServicioOCombo ? 0 : (data.maneja_lotes ? 1 : 0),
       is_active: 1,
       empresa_id: data.empresa_id,
       created_at: now,
       updated_at: now,
       ubicacion: data.ubicacion?.toUpperCase() || null,
+      unidad_base_id: isServicioOCombo ? null : (data.unidad_base_id ?? null),
     })
     .execute()
 
@@ -139,6 +142,8 @@ export async function actualizarProducto(
     is_active?: boolean
     tipo?: string
     ubicacion?: string | null
+    unidad_base_id?: string | null
+    maneja_lotes?: boolean
   }
 ) {
   const now = localNow()
@@ -153,11 +158,15 @@ export async function actualizarProducto(
   if (data.tipo_impuesto !== undefined) updates.tipo_impuesto = data.tipo_impuesto
   if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
   if (data.ubicacion !== undefined) updates.ubicacion = data.ubicacion ? data.ubicacion.toUpperCase() : null
+  if (data.unidad_base_id !== undefined) updates.unidad_base_id = data.unidad_base_id ?? null
+  if (data.maneja_lotes !== undefined) updates.maneja_lotes = data.maneja_lotes ? 1 : 0
 
   // Servicios y Combos no manejan stock
   if (data.tipo === 'S' || data.tipo === 'C') {
     updates.stock = '0.000'
     updates.stock_minimo = '0.000'
+    updates.maneja_lotes = 0
+    updates.unidad_base_id = null
   }
 
   await kysely.updateTable('productos').set(updates).where('id', '=', id).execute()

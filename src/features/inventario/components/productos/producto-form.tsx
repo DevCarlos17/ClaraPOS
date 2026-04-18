@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { v4 as uuidv4 } from 'uuid'
 import { productoSchema } from '@/features/inventario/schemas/producto-schema'
 import {
   crearProducto,
@@ -7,9 +8,13 @@ import {
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentosActivos } from '@/features/inventario/hooks/use-departamentos'
+import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
+import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { db } from '@/core/db/powersync/db'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { localNow } from '@/lib/dates'
 
 interface ProductoFormProps {
   isOpen: boolean
@@ -22,6 +27,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const isEditing = !!producto
 
   const { departamentos } = useDepartamentosActivos()
+  const { unidades } = useUnidadesActivas()
+  const { depositos } = useDepositosActivos()
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
 
@@ -36,6 +43,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [isActive, setIsActive] = useState(true)
   const [ubicacion, setUbicacion] = useState('')
+  const [unidadBaseId, setUnidadBaseId] = useState('')
+  const [manejaLotes, setManejaLotes] = useState(false)
+  const [depositoId, setDepositoId] = useState('')
+  const [stockInicial, setStockInicial] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -53,6 +64,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setTipoImpuesto((producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento')
         setIsActive(producto.is_active === 1)
         setUbicacion(producto.ubicacion ?? '')
+        setUnidadBaseId(producto.unidad_base_id ?? '')
+        setManejaLotes(producto.maneja_lotes === 1)
+        setDepositoId('')
+        setStockInicial('')
       } else {
         setCodigo('')
         setTipo('P')
@@ -65,6 +80,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setTipoImpuesto('Exento')
         setIsActive(true)
         setUbicacion('')
+        setUnidadBaseId('')
+        setManejaLotes(false)
+        setDepositoId('')
+        setStockInicial('')
       }
       setErrors({})
       dialogRef.current?.showModal()
@@ -90,6 +109,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (nuevoTipo === 'S' || nuevoTipo === 'C') {
       setUbicacion('')
       setStockMinimo('0')
+      setUnidadBaseId('')
+      setManejaLotes(false)
+      setDepositoId('')
+      setStockInicial('')
     }
     if (nuevoTipo === 'C') {
       setCostoUsd('0')
@@ -107,6 +130,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
     const esCombo = tipo === 'C'
     const esServicioOCombo = tipo === 'S' || tipo === 'C'
+
+    // Validar deposito para productos fisicos en modo creacion
+    const newErrors: Record<string, string> = {}
+    if (!isEditing && tipo === 'P' && !depositoId) {
+      newErrors.deposito_id = 'Selecciona un deposito'
+    }
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors)
+      return
+    }
 
     const data = {
       codigo,
@@ -148,10 +181,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           is_active: parsed.data.is_active,
           tipo: parsed.data.tipo,
           ubicacion: esServicioOCombo ? null : (parsed.data.ubicacion || null),
+          unidad_base_id: esServicioOCombo ? null : (unidadBaseId || null),
+          maneja_lotes: esServicioOCombo ? false : manejaLotes,
         })
         toast.success('Producto actualizado correctamente')
       } else {
-        await crearProducto({
+        const productoId = await crearProducto({
           codigo: parsed.data.codigo,
           tipo: parsed.data.tipo,
           nombre: parsed.data.nombre,
@@ -162,7 +197,54 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           stock_minimo: parsed.data.stock_minimo,
           empresa_id: user!.empresa_id!,
           ubicacion: esServicioOCombo ? undefined : (parsed.data.ubicacion || undefined),
+          unidad_base_id: esServicioOCombo ? undefined : (unidadBaseId || undefined),
+          maneja_lotes: esServicioOCombo ? false : manejaLotes,
         })
+
+        // Si es producto fisico con stock inicial, crear movimiento y actualizar stock
+        const stockInicialNum = parseNumOrZero(stockInicial)
+        if (tipo === 'P' && depositoId && stockInicialNum > 0) {
+          const now = localNow()
+          const fecha = now.split('T')[0] ?? now.substring(0, 10)
+          await db.writeTransaction(async (tx) => {
+            await tx.execute(
+              `INSERT INTO movimientos_inventario
+               (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad,
+                stock_anterior, stock_nuevo, motivo, usuario_id, fecha, created_at)
+               VALUES (?, ?, ?, ?, 'E', 'MAN', ?, '0.000', ?, 'Stock inicial', ?, ?, ?)`,
+              [
+                uuidv4(),
+                user!.empresa_id!,
+                productoId,
+                depositoId,
+                stockInicialNum.toFixed(3),
+                stockInicialNum.toFixed(3),
+                user!.id,
+                fecha,
+                now,
+              ]
+            )
+            await tx.execute(
+              'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
+              [stockInicialNum.toFixed(3), now, productoId]
+            )
+            await tx.execute(
+              `INSERT INTO inventario_stock
+               (id, empresa_id, producto_id, deposito_id, cantidad_actual, stock_reservado, updated_at, updated_by)
+               VALUES (?, ?, ?, ?, ?, '0.000', ?, ?)`,
+              [
+                uuidv4(),
+                user!.empresa_id!,
+                productoId,
+                depositoId,
+                stockInicialNum.toFixed(3),
+                now,
+                user!.id,
+              ]
+            )
+          })
+        }
+
         toast.success('Producto creado correctamente')
       }
       onClose()
@@ -314,6 +396,28 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             )}
           </div>
 
+          {/* Unidad Base - solo para tipo P */}
+          {!esServicioOComboLocal && (
+            <div>
+              <label htmlFor="prod-unidad" className="block text-sm font-medium text-gray-700 mb-1">
+                Unidad de Medida <span className="text-gray-400 font-normal">(Opcional)</span>
+              </label>
+              <select
+                id="prod-unidad"
+                value={unidadBaseId}
+                onChange={(e) => setUnidadBaseId(e.target.value)}
+                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Sin unidad</option>
+                {unidades.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nombre} ({u.abreviatura})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Precios */}
           <div className="grid grid-cols-2 gap-4">
             {/* Costo USD */}
@@ -421,6 +525,84 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               <p className="text-gray-400 text-xs mt-1">Combos no manejan stock propio</p>
             )}
           </div>
+
+          {/* Maneja Lotes - solo para tipo P */}
+          {!esServicioOComboLocal && (
+            <div className="flex items-center gap-2">
+              <input
+                id="prod-maneja-lotes"
+                type="checkbox"
+                checked={manejaLotes}
+                onChange={(e) => setManejaLotes(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor="prod-maneja-lotes" className="text-sm font-medium text-gray-700">
+                Maneja Lotes
+              </label>
+              <span className="text-xs text-gray-400">(Habilita control FEFO)</span>
+            </div>
+          )}
+
+          {/* Deposito + Stock Inicial - solo en creacion para tipo P */}
+          {!isEditing && !esServicioOComboLocal && (
+            <div className="border border-gray-200 rounded-md p-3 space-y-3 bg-gray-50">
+              <p className="text-xs font-medium text-gray-600">Inventario Inicial</p>
+
+              <div>
+                <label htmlFor="prod-deposito" className="block text-sm font-medium text-gray-700 mb-1">
+                  Deposito <span className="text-red-500">*</span>
+                </label>
+                <select
+                  id="prod-deposito"
+                  value={depositoId}
+                  onChange={(e) => setDepositoId(e.target.value)}
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                    errors.deposito_id ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                >
+                  <option value="">Seleccionar deposito</option>
+                  {depositos.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.nombre}
+                    </option>
+                  ))}
+                </select>
+                {errors.deposito_id && (
+                  <p className="text-red-500 text-xs mt-1">{errors.deposito_id}</p>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="prod-stock-inicial" className="block text-sm font-medium text-gray-700 mb-1">
+                  Stock Inicial <span className="text-gray-400 font-normal">(Opcional)</span>
+                </label>
+                <input
+                  id="prod-stock-inicial"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={stockInicial}
+                  onChange={(e) => setStockInicial(e.target.value)}
+                  placeholder="0.000"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Los movimientos posteriores se gestionan via Compras o Ajustes
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Stock actual en modo edicion para tipo P */}
+          {isEditing && producto && tipo === 'P' && (
+            <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-md border border-gray-200">
+              <span className="text-sm text-gray-500">Stock actual:</span>
+              <span className="text-sm font-semibold text-gray-900">
+                {parseFloat(producto.stock).toFixed(3)}
+              </span>
+              <span className="text-xs text-gray-400">(modificar via Compras o Ajustes)</span>
+            </div>
+          )}
 
           {/* Ubicacion */}
           <div>

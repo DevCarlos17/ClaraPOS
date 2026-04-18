@@ -44,6 +44,77 @@ export function useLotesPorProducto(productoId: string) {
   }
 }
 
+/**
+ * Actualiza cantidad_actual y/o status de un lote.
+ */
+export async function actualizarLote(
+  id: string,
+  data: {
+    cantidad_actual?: number
+    status?: string
+  }
+) {
+  const now = localNow()
+  const updates: Record<string, unknown> = { updated_at: now }
+  if (data.cantidad_actual !== undefined) updates.cantidad_actual = data.cantidad_actual.toFixed(3)
+  if (data.status !== undefined) updates.status = data.status
+
+  await kysely.updateTable('lotes').set(updates).where('id', '=', id).execute()
+}
+
+/**
+ * Descuenta stock de lotes FEFO (First Expired First Out) para un producto.
+ * Retorna array de { lote_id, cantidad_descontada } para registrar en detalles.
+ * Lanza error si no hay suficiente stock en lotes activos.
+ */
+export async function descontarLotesFEFO(
+  productoId: string,
+  depositoId: string,
+  cantidadRequerida: number,
+  empresaId: string
+): Promise<{ lote_id: string; cantidad_descontada: number }[]> {
+  // Leer lotes ACTIVOS ordenados por FEFO
+  const lotes = await kysely
+    .selectFrom('lotes')
+    .selectAll()
+    .where('empresa_id', '=', empresaId)
+    .where('producto_id', '=', productoId)
+    .where('deposito_id', '=', depositoId)
+    .where('status', '=', 'ACTIVO')
+    .orderBy('fecha_vencimiento asc')
+    .orderBy('created_at asc')
+    .execute()
+
+  let pendiente = cantidadRequerida
+  const resultado: { lote_id: string; cantidad_descontada: number }[] = []
+
+  for (const lote of lotes) {
+    if (pendiente <= 0) break
+
+    const disponible = parseFloat(lote.cantidad_actual)
+    if (disponible <= 0) continue
+
+    const aDescontar = Math.min(disponible, pendiente)
+    const nuevaCantidad = disponible - aDescontar
+
+    await actualizarLote(lote.id, {
+      cantidad_actual: nuevaCantidad,
+      status: nuevaCantidad <= 0 ? 'AGOTADO' : 'ACTIVO',
+    })
+
+    resultado.push({ lote_id: lote.id, cantidad_descontada: aDescontar })
+    pendiente -= aDescontar
+  }
+
+  if (pendiente > 0) {
+    throw new Error(
+      `Stock insuficiente en lotes activos. Faltaron ${pendiente.toFixed(3)} unidades.`
+    )
+  }
+
+  return resultado
+}
+
 export async function crearLote(data: {
   producto_id: string
   deposito_id: string

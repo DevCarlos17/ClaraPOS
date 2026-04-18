@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Pencil } from 'lucide-react'
+import { Plus, Pencil, Printer } from 'lucide-react'
 import {
   useDepositos,
   actualizarDeposito,
@@ -43,6 +43,57 @@ export function DepositoList() {
     }
   }
 
+  function handleReporte() {
+    const w = window.open('', '_blank')
+    if (!w) return
+
+    const filas = depositos
+      .map((d) => `<tr>
+        <td>${d.nombre}</td>
+        <td>${d.direccion ?? '—'}</td>
+        <td style="text-align:center">${d.es_principal === 1 ? 'Si' : 'No'}</td>
+        <td style="text-align:center">${d.permite_venta === 1 ? 'Si' : 'No'}</td>
+        <td style="text-align:center">${d.is_active === 1 ? 'Activo' : 'Inactivo'}</td>
+      </tr>`)
+      .join('')
+
+    w.document.write(`<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Reporte Depositos</title>
+  <style>
+    body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; }
+    h1 { font-size: 16px; margin-bottom: 4px; }
+    p { margin: 2px 0 12px; color: #666; font-size: 11px; }
+    table { border-collapse: collapse; width: 100%; }
+    th { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; font-weight: 600; }
+    td { border: 1px solid #e5e7eb; padding: 5px 8px; }
+    tr:nth-child(even) td { background: #f9fafb; }
+    @media print { body { margin: 0; } }
+  </style>
+</head>
+<body>
+  <h1>Reporte de Depositos</h1>
+  <p>Total: ${depositos.length} depositos &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Nombre</th>
+        <th>Direccion</th>
+        <th style="text-align:center">Principal</th>
+        <th style="text-align:center">Permite Venta</th>
+        <th style="text-align:center">Estado</th>
+      </tr>
+    </thead>
+    <tbody>${filas}</tbody>
+  </table>
+</body>
+</html>`)
+    w.document.close()
+    w.print()
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -59,15 +110,25 @@ export function DepositoList() {
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-4">
+      <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
         <h2 className="text-lg font-semibold text-gray-900">Depositos</h2>
-        <button
-          onClick={handleNuevo}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          Nuevo Deposito
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={handleReporte}
+            disabled={depositos.length === 0}
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            <Printer className="h-4 w-4" />
+            Reporte
+          </button>
+          <button
+            onClick={handleNuevo}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Nuevo Deposito
+          </button>
+        </div>
       </div>
 
       {depositos.length === 0 ? (
