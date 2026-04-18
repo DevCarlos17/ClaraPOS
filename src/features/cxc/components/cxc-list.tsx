@@ -1,9 +1,20 @@
 import { useState } from 'react'
-import { Search, Users, DollarSign, FileText } from 'lucide-react'
+import { Search, Users, DollarSign, FileText, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { useClientesConDeuda, useBuscarClientesDeuda, type ClienteConDeuda } from '../hooks/use-cxc'
 import { CxcClienteDetalle } from './cxc-cliente-detalle'
+import { CxcReportesGeneral } from './cxc-reportes-general'
+
+type SortField = 'identificacion' | 'nombre' | 'facturas_pendientes' | 'saldo_actual' | 'limite_credito_usd'
+type SortDir = 'asc' | 'desc'
+
+function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
+  if (field !== sortField) return <ChevronsUpDown size={12} className="ml-1 text-muted-foreground/50" />
+  return sortDir === 'asc'
+    ? <ArrowUp size={12} className="ml-1 text-primary" />
+    : <ArrowDown size={12} className="ml-1 text-primary" />
+}
 
 export function CxcList() {
   const [searchQuery, setSearchQuery] = useState('')
@@ -13,15 +24,52 @@ export function CxcList() {
 
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteConDeuda | null>(null)
   const [detalleOpen, setDetalleOpen] = useState(false)
+  const [sortField, setSortField] = useState<SortField>('saldo_actual')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
 
   const isSearching = searchQuery.trim().length >= 2
   const clientes = isSearching ? searchResults : allClientes
   const isLoading = isSearching ? loadingSearch : loadingAll
 
+  const handleSort = (field: SortField) => {
+    if (field === sortField) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDir('desc')
+    }
+  }
+
+  const clientesSorted = [...clientes].sort((a, b) => {
+    let aVal: number | string
+    let bVal: number | string
+    switch (sortField) {
+      case 'identificacion': aVal = a.identificacion; bVal = b.identificacion; break
+      case 'nombre': aVal = a.nombre; bVal = b.nombre; break
+      case 'facturas_pendientes': aVal = Number(a.facturas_pendientes); bVal = Number(b.facturas_pendientes); break
+      case 'saldo_actual': aVal = parseFloat(a.saldo_actual); bVal = parseFloat(b.saldo_actual); break
+      case 'limite_credito_usd': aVal = parseFloat(a.limite_credito_usd); bVal = parseFloat(b.limite_credito_usd); break
+    }
+    const cmp = typeof aVal === 'string' ? aVal.localeCompare(bVal as string) : (aVal as number) - (bVal as number)
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+
   // Totales
   const totalDeuda = clientes.reduce((sum, c) => sum + parseFloat(c.saldo_actual), 0)
   const totalClientes = clientes.length
   const totalFacturas = clientes.reduce((sum, c) => sum + Number(c.facturas_pendientes), 0)
+
+  const thSort = (field: SortField, label: string, align: string = 'left', extra?: string) => (
+    <th
+      className={`text-${align} px-4 py-3 font-medium cursor-pointer select-none hover:bg-muted/70 transition-colors${extra ? ` ${extra}` : ''}`}
+      onClick={() => handleSort(field)}
+    >
+      <span className="inline-flex items-center gap-0.5">
+        {label}
+        <SortIcon field={field} sortField={sortField} sortDir={sortDir} />
+      </span>
+    </th>
+  )
 
   const handleSelectCliente = (cliente: ClienteConDeuda) => {
     setClienteSeleccionado(cliente)
@@ -60,19 +108,22 @@ export function CxcList() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search
-          size={16}
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-        />
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Buscar cliente por nombre o identificacion..."
-          className="w-full rounded-md border border-input bg-background pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground"
-        />
+      {/* Search + Reportes */}
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search
+            size={16}
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar cliente por nombre o identificacion..."
+            className="w-full rounded-md border border-input bg-background pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground"
+          />
+        </div>
+        <CxcReportesGeneral clientes={clientesSorted} />
       </div>
 
       {/* Table */}
@@ -99,18 +150,17 @@ export function CxcList() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left px-4 py-3 font-medium">Identificacion</th>
-                <th className="text-left px-4 py-3 font-medium">Cliente</th>
+                {thSort('identificacion', 'Identificacion', 'left')}
+                {thSort('nombre', 'Cliente', 'left')}
                 <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Telefono</th>
-                <th className="text-center px-4 py-3 font-medium">Facturas</th>
-                <th className="text-right px-4 py-3 font-medium">Deuda USD</th>
+                {thSort('facturas_pendientes', 'Facturas', 'center')}
+                {thSort('saldo_actual', 'Deuda USD', 'right')}
                 <th className="text-right px-4 py-3 font-medium hidden md:table-cell">Deuda Bs</th>
-                <th className="text-right px-4 py-3 font-medium hidden lg:table-cell">Limite</th>
-                <th className="px-4 py-3"></th>
+                {thSort('limite_credito_usd', 'Limite', 'right', 'hidden lg:table-cell')}
               </tr>
             </thead>
             <tbody>
-              {clientes.map((c) => {
+              {clientesSorted.map((c) => {
                 const saldo = parseFloat(c.saldo_actual)
                 const limite = parseFloat(c.limite_credito_usd)
                 const excedido = limite > 0 && saldo > limite
@@ -143,17 +193,6 @@ export function CxcList() {
                       {excedido && (
                         <span className="ml-1 text-xs text-destructive">Excedido</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleSelectCliente(c)
-                        }}
-                        className="text-xs text-primary hover:underline font-medium"
-                      >
-                        Ver detalles
-                      </button>
                     </td>
                   </tr>
                 )

@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, DollarSign } from 'lucide-react'
+import { X, DollarSign, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { useFacturasPendientes, type ClienteConDeuda } from '../hooks/use-cxc'
 import { PagoFacturaModal } from './pago-factura-modal'
 import { AbonoGlobalModal } from './abono-global-modal'
+import { FacturaDetalleCxc } from './factura-detalle-cxc'
+import { CxcClienteReporte } from './cxc-cliente-reporte'
 import type { VentaPendiente } from '../hooks/use-cxc'
 
 interface CxcClienteDetalleProps {
@@ -13,6 +15,9 @@ interface CxcClienteDetalleProps {
   onClose: () => void
   cliente: ClienteConDeuda | null
 }
+
+type SortField = 'nro_factura' | 'fecha' | 'total_usd' | 'saldo_pend_usd'
+type SortDir = 'asc' | 'desc'
 
 function formatFecha(fecha: string): string {
   try {
@@ -26,6 +31,13 @@ function formatFecha(fecha: string): string {
   }
 }
 
+function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
+  if (field !== sortField) return <ChevronsUpDown size={11} className="ml-1 text-muted-foreground/50 inline" />
+  return sortDir === 'asc'
+    ? <ArrowUp size={11} className="ml-1 text-primary inline" />
+    : <ArrowDown size={11} className="ml-1 text-primary inline" />
+}
+
 export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetalleProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { tasaValor } = useTasaActual()
@@ -34,6 +46,10 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
   const [pagoFacturaOpen, setPagoFacturaOpen] = useState(false)
   const [abonoGlobalOpen, setAbonoGlobalOpen] = useState(false)
+  const [detalleOpen, setDetalleOpen] = useState(false)
+
+  const [sortField, setSortField] = useState<SortField>('fecha')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
 
   useEffect(() => {
     if (isOpen) {
@@ -47,18 +63,59 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
     if (e.target === dialogRef.current) onClose()
   }
 
-  const handlePagarFactura = (factura: VentaPendiente) => {
+  const handlePagarFactura = (factura: VentaPendiente, e: React.MouseEvent) => {
+    e.stopPropagation()
     setFacturaSeleccionada(factura)
     setPagoFacturaOpen(true)
+  }
+
+  const handleVerDetalleFactura = (factura: VentaPendiente) => {
+    setFacturaSeleccionada(factura)
+    setDetalleOpen(true)
   }
 
   const handlePaymentSuccess = () => {
     // Data refreshes reactively via PowerSync queries
   }
 
+  const handleSort = (field: SortField) => {
+    if (field === sortField) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortField(field)
+      setSortDir('asc')
+    }
+  }
+
+  const facturasSorted = [...facturas].sort((a, b) => {
+    let aVal: number | string
+    let bVal: number | string
+    switch (sortField) {
+      case 'nro_factura':
+        aVal = parseInt(a.nro_factura, 10) || 0
+        bVal = parseInt(b.nro_factura, 10) || 0
+        break
+      case 'fecha': aVal = a.fecha; bVal = b.fecha; break
+      case 'total_usd': aVal = parseFloat(a.total_usd); bVal = parseFloat(b.total_usd); break
+      case 'saldo_pend_usd': aVal = parseFloat(a.saldo_pend_usd); bVal = parseFloat(b.saldo_pend_usd); break
+    }
+    const cmp = typeof aVal === 'string' ? aVal.localeCompare(bVal as string) : (aVal as number) - (bVal as number)
+    return sortDir === 'asc' ? cmp : -cmp
+  })
+
   if (!cliente) return null
 
   const saldo = parseFloat(cliente.saldo_actual)
+
+  const thSort = (field: SortField, label: string, align: string = 'left') => (
+    <th
+      className={`text-${align} px-3 py-2 font-medium cursor-pointer select-none hover:bg-muted/70 transition-colors`}
+      onClick={() => handleSort(field)}
+    >
+      {label}
+      <SortIcon field={field} sortField={sortField} sortDir={sortDir} />
+    </th>
+  )
 
   return (
     <>
@@ -79,9 +136,12 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
               </div>
               <h2 className="text-xl font-semibold mt-1">{cliente.nombre}</h2>
             </div>
-            <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
-              <X className="h-5 w-5 text-muted-foreground" />
-            </button>
+            <div className="flex items-center gap-2">
+              <CxcClienteReporte cliente={cliente} facturas={facturas} />
+              <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
+                <X className="h-5 w-5 text-muted-foreground" />
+              </button>
+            </div>
           </div>
 
           {/* Saldo */}
@@ -107,6 +167,9 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
           <div>
             <h3 className="text-sm font-semibold mb-3">
               Facturas Pendientes ({facturas.length})
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                — haz click en una fila para ver el detalle
+              </span>
             </h3>
 
             {isLoading ? (
@@ -124,19 +187,23 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
                 <table className="w-full text-sm">
                   <thead className="sticky top-0">
                     <tr className="border-b bg-muted/50">
-                      <th className="text-left px-3 py-2 font-medium">Factura</th>
-                      <th className="text-left px-3 py-2 font-medium">Fecha</th>
-                      <th className="text-right px-3 py-2 font-medium">Total</th>
-                      <th className="text-right px-3 py-2 font-medium">Pendiente</th>
+                      {thSort('nro_factura', 'Factura', 'left')}
+                      {thSort('fecha', 'Fecha', 'left')}
+                      {thSort('total_usd', 'Total', 'right')}
+                      {thSort('saldo_pend_usd', 'Pendiente', 'right')}
                       <th className="text-right px-3 py-2 font-medium">Bs</th>
                       <th className="px-3 py-2"></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {facturas.map((f) => {
+                    {facturasSorted.map((f) => {
                       const saldoPend = parseFloat(f.saldo_pend_usd)
                       return (
-                        <tr key={f.id} className="border-b border-muted">
+                        <tr
+                          key={f.id}
+                          className="border-b border-muted hover:bg-muted/30 transition-colors cursor-pointer"
+                          onClick={() => handleVerDetalleFactura(f)}
+                        >
                           <td className="px-3 py-2 font-mono font-medium">#{f.nro_factura}</td>
                           <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                             {formatFecha(f.fecha)}
@@ -154,7 +221,7 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handlePagarFactura(f)}
+                              onClick={(e) => handlePagarFactura(f, e)}
                             >
                               Pagar
                             </Button>
@@ -193,6 +260,12 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
         clienteNombre={cliente.nombre}
         saldoActual={saldo}
         onSuccess={handlePaymentSuccess}
+      />
+
+      <FacturaDetalleCxc
+        isOpen={detalleOpen}
+        onClose={() => setDetalleOpen(false)}
+        factura={facturaSeleccionada}
       />
     </>
   )

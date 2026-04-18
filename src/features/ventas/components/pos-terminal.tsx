@@ -35,6 +35,7 @@ export function PosTerminal() {
   // Factura
   const [clienteId, setClienteId] = useState<string | null>(null)
   const [clienteNombre, setClienteNombre] = useState('')
+  const [clienteData, setClienteData] = useState<Cliente | null>(null)
   const [lineas, setLineas] = useState<LineaVentaForm[]>([])
 
   // Pagos
@@ -173,16 +174,19 @@ export function PosTerminal() {
   const handleSelectCliente = (cliente: Cliente) => {
     setClienteId(cliente.id)
     setClienteNombre(cliente.nombre)
+    setClienteData(cliente)
   }
 
   const handleClearCliente = () => {
     setClienteId(null)
     setClienteNombre('')
+    setClienteData(null)
   }
 
   const handleNuevoClienteCreado = (cliente: { id: string; nombre: string; identificacion: string }) => {
     setClienteId(cliente.id)
     setClienteNombre(cliente.nombre)
+    setClienteData(null) // Nuevo cliente: sin limite de credito por defecto
   }
 
   const handleSelectProducto = (producto: ProductoVenta) => {
@@ -249,6 +253,7 @@ export function PosTerminal() {
   const resetForm = () => {
     setClienteId(null)
     setClienteNombre('')
+    setClienteData(null)
     setLineas([])
     setPagos([])
     setMetodoId('')
@@ -324,6 +329,23 @@ export function PosTerminal() {
     if (lineas.some((l) => l.cantidad <= 0)) {
       toast.error('Hay articulos con cantidad invalida')
       return
+    }
+
+    // Validacion de limite de credito
+    if (tipoDetectado === 'CREDITO' && clienteData) {
+      const limite = parseFloat(clienteData.limite_credito_usd)
+      const saldoActual = parseFloat(clienteData.saldo_actual)
+      if (limite <= 0) {
+        toast.error('Este cliente no tiene credito asignado. Registra un pago para facturar a contado.')
+        return
+      }
+      const creditoDisponible = Math.max(0, limite - saldoActual)
+      if (pendienteUsd > creditoDisponible + 0.01) {
+        toast.error(
+          `El monto a credito (${formatUsd(pendienteUsd)}) excede el credito disponible (${formatUsd(creditoDisponible)})`
+        )
+        return
+      }
     }
 
     // Validacion de stock negativo

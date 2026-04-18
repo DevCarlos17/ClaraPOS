@@ -9,11 +9,31 @@ interface ClienteSelectorProps {
   onClear: () => void
 }
 
+function CreditoBadge({ cliente }: { cliente: Cliente }) {
+  const limite = parseFloat(cliente.limite_credito_usd)
+  const saldo = parseFloat(cliente.saldo_actual)
+
+  if (limite <= 0) {
+    return (
+      <span className="text-xs text-muted-foreground">Sin credito asignado</span>
+    )
+  }
+
+  const disponible = Math.max(0, limite - saldo)
+  const excedido = saldo > limite
+
+  return (
+    <span className={`text-xs ${excedido ? 'text-destructive' : disponible < limite * 0.2 ? 'text-orange-600' : 'text-green-700'}`}>
+      Limite: {formatUsd(limite)} | Disponible: {excedido ? <span className="text-destructive font-medium">Excedido</span> : formatUsd(disponible)}
+    </span>
+  )
+}
+
 export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelectorProps) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [selectedNombre, setSelectedNombre] = useState('')
-  const [selectedInfo, setSelectedInfo] = useState('')
+  const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null)
   const { clientes, isLoading } = useBuscarClientes(query)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
@@ -29,7 +49,7 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
 
   const handleSelect = (cliente: Cliente) => {
     setSelectedNombre(cliente.nombre)
-    setSelectedInfo(`${cliente.identificacion} | Saldo: ${formatUsd(cliente.saldo_actual)}`)
+    setSelectedCliente(cliente)
     setQuery('')
     setOpen(false)
     onSelect(cliente)
@@ -37,7 +57,7 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
 
   const handleClear = () => {
     setSelectedNombre('')
-    setSelectedInfo('')
+    setSelectedCliente(null)
     setQuery('')
     onClear()
   }
@@ -47,7 +67,14 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
       <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">{selectedNombre}</p>
-          <p className="text-xs text-muted-foreground truncate">{selectedInfo}</p>
+          {selectedCliente && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs text-muted-foreground">
+                {selectedCliente.identificacion} | Saldo: {formatUsd(selectedCliente.saldo_actual)}
+              </p>
+              <CreditoBadge cliente={selectedCliente} />
+            </div>
+          )}
         </div>
         <button
           type="button"
@@ -84,24 +111,36 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
           ) : clientes.length === 0 ? (
             <div className="p-3 text-sm text-muted-foreground text-center">Sin resultados</div>
           ) : (
-            clientes.map((c) => (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => handleSelect(c)}
-                className="w-full text-left px-3 py-2 hover:bg-muted transition-colors border-b last:border-b-0"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{c.nombre}</p>
-                    <p className="text-xs text-muted-foreground">{c.identificacion}</p>
+            clientes.map((c) => {
+              const limite = parseFloat(c.limite_credito_usd)
+              const saldo = parseFloat(c.saldo_actual)
+              const disponible = limite > 0 ? Math.max(0, limite - saldo) : null
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => handleSelect(c)}
+                  className="w-full text-left px-3 py-2 hover:bg-muted transition-colors border-b last:border-b-0"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">{c.nombre}</p>
+                      <p className="text-xs text-muted-foreground">{c.identificacion}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-xs text-muted-foreground">
+                        Saldo: {formatUsd(c.saldo_actual)}
+                      </p>
+                      {disponible !== null && (
+                        <p className={`text-xs ${disponible === 0 && saldo > limite ? 'text-destructive' : 'text-green-700'}`}>
+                          Disp: {formatUsd(disponible)}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    Saldo: {formatUsd(c.saldo_actual)}
-                  </span>
-                </div>
-              </button>
-            ))
+                </button>
+              )
+            })
           )}
         </div>
       )}

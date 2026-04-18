@@ -3,6 +3,8 @@ import { Clock, ShoppingBag, Trash2, RotateCcw } from 'lucide-react'
 import { formatDateTime } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
+import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
 
 interface FacturasEsperaModalProps {
@@ -13,13 +15,33 @@ interface FacturasEsperaModalProps {
 
 export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEsperaModalProps) {
   const { facturas, eliminar } = useFacturasEsperaStore()
-  const [confirmId, setConfirmId] = useState<string | null>(null)
+  const { hasPermission } = usePermissions()
+
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [showPin, setShowPin] = useState(false)
 
   if (!isOpen) return null
 
   const handleRecuperar = (factura: FacturaEnEspera) => {
     onRecuperar(factura)
     onClose()
+  }
+
+  const handleEliminarClick = (id: string) => {
+    setPendingDeleteId(id)
+    if (hasPermission(PERMISSIONS.SALES_VOID)) {
+      setShowConfirm(true)
+    } else {
+      setShowPin(true)
+    }
+  }
+
+  const executarEliminar = () => {
+    if (pendingDeleteId) {
+      eliminar(pendingDeleteId)
+      setPendingDeleteId(null)
+    }
   }
 
   return (
@@ -71,7 +93,7 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
               </thead>
               <tbody>
                 {facturas.map((f) => (
-                  <tr key={f.id} className="border-b last:border-b-0 hover:bg-muted/30">
+                  <tr key={f.id} className="border-b last:border-b-0 hover:bg-muted/30 cursor-pointer">
                     <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                       {formatDateTime(f.fecha)}
                     </td>
@@ -98,7 +120,7 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
                         </button>
                         <button
                           type="button"
-                          onClick={() => setConfirmId(f.id)}
+                          onClick={() => handleEliminarClick(f.id)}
                           title="Eliminar factura"
                           className="rounded-md p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                         >
@@ -115,16 +137,21 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
       </div>
 
       <ConfirmDialog
-        isOpen={confirmId !== null}
-        onClose={() => setConfirmId(null)}
-        onConfirm={() => {
-          if (confirmId) eliminar(confirmId)
-          setConfirmId(null)
-        }}
+        isOpen={showConfirm}
+        onClose={() => { setShowConfirm(false); setPendingDeleteId(null) }}
+        onConfirm={() => { executarEliminar(); setShowConfirm(false) }}
         titulo="Eliminar factura en espera"
-        mensaje="¿Seguro que deseas eliminar esta factura? Se perderán todos los items registrados."
+        mensaje="¿Seguro que deseas eliminar esta factura? Se perderan todos los items registrados."
         confirmarTexto="Eliminar"
         destructive
+      />
+
+      <SupervisorPinDialog
+        isOpen={showPin}
+        onClose={() => { setShowPin(false); setPendingDeleteId(null) }}
+        onAuthorized={() => { executarEliminar(); setShowPin(false) }}
+        titulo="Autorizar eliminacion"
+        mensaje="Esta accion requiere autorizacion de un supervisor."
       />
     </div>
   )
