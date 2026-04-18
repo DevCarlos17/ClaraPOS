@@ -16,9 +16,10 @@ export type SupabaseConfig = {
 }
 
 const FATAL_RESPONSE_CODES = [
-  new RegExp('^22...$'),
-  new RegExp('^23...$'),
-  new RegExp('^42501$'),
+  new RegExp('^22...$'),  // Data exception (valor inválido, overflow, etc.)
+  new RegExp('^23...$'),  // Integrity constraint violation (FK, unique, not null)
+  new RegExp('^42501$'),  // Insufficient privilege (RLS)
+  new RegExp('^P0001$'),  // RAISE EXCEPTION de trigger/función PL/pgSQL (rechazo de lógica de negocio)
 ]
 
 export type SupabaseConnectorListener = {

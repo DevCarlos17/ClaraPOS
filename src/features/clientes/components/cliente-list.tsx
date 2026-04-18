@@ -21,6 +21,7 @@ export function ClienteList() {
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [busqueda, setBusqueda] = useState('')
   const [filtroActivos, setFiltroActivos] = useState(false)
+  const [searchActive, setSearchActive] = useState(false)
 
   const clientesFiltrados = useMemo(() => {
     let resultado = clientes
@@ -136,8 +137,11 @@ export function ClienteList() {
           <div className="relative flex-1 sm:max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
-              type="search"
+              type="text"
               value={busqueda}
+              readOnly={!searchActive}
+              onFocus={() => setSearchActive(true)}
+              onBlur={() => setSearchActive(false)}
               onChange={(e) => setBusqueda(e.target.value)}
               placeholder="Buscar por nombre o identificacion..."
               autoComplete="off"

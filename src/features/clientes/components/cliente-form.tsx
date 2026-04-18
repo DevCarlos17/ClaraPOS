@@ -125,7 +125,7 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
           {isEditing ? 'Editar Cliente' : 'Nuevo Cliente'}
         </h2>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} autoComplete="off" className="space-y-4">
           {/* Identificacion */}
           <div>
             <label htmlFor="cli-identificacion" className="block text-sm font-medium text-gray-700 mb-1">
