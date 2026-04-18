@@ -76,6 +76,11 @@ export function CxcList() {
     setDetalleOpen(true)
   }
 
+  // Derivar cliente desde el array reactivo para que saldo_actual se actualice en tiempo real
+  const clienteActual = clienteSeleccionado
+    ? (allClientes.find(c => c.id === clienteSeleccionado.id) ?? clienteSeleccionado)
+    : null
+
   return (
     <div className="space-y-4">
       {/* Summary cards */}
@@ -206,7 +211,7 @@ export function CxcList() {
       <CxcClienteDetalle
         isOpen={detalleOpen}
         onClose={() => setDetalleOpen(false)}
-        cliente={clienteSeleccionado}
+        cliente={clienteActual}
       />
     </div>
   )

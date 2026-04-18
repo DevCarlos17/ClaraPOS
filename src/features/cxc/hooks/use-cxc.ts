@@ -204,13 +204,13 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
     const saldoFactura = parseFloat(venta.saldo_pend_usd)
 
-    // 2. Calcular monto en USD (4dp para mayor precision en conversiones Bs→USD)
-    const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(4)) : monto
+    // 2. Calcular monto en USD
+    const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
 
     // 3. Validar que no exceda saldo pendiente
     if (montoUsd > saldoFactura + 0.01) {
       throw new Error(
-        `El pago ($${montoUsd.toFixed(4)}) excede el saldo pendiente ($${saldoFactura.toFixed(4)}) de la factura ${venta.nro_factura}`
+        `El pago ($${montoUsd.toFixed(2)}) excede el saldo pendiente ($${saldoFactura.toFixed(2)}) de la factura ${venta.nro_factura}`
       )
     }
 
@@ -227,7 +227,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         monedaId,
         tasa.toFixed(4),
         monto.toFixed(2),
-        montoUsd.toFixed(4),
+        montoUsd.toFixed(2),
         referencia ?? null,
         now,
         empresa_id,
@@ -235,10 +235,10 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       ]
     )
 
-    // 5. Reducir saldo pendiente de factura (4dp para evitar rounding en reconversiones)
-    const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(4)))
+    // 5. Reducir saldo pendiente de factura
+    const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
     await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-      nuevoSaldoFactura.toFixed(4),
+      nuevoSaldoFactura.toFixed(2),
       venta_id,
     ])
 
@@ -252,7 +252,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     const saldoActual = parseFloat(
       (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
     )
-    const saldoNuevo = Math.max(0, Number((saldoActual - montoUsd).toFixed(4)))
+    const saldoNuevo = Math.max(0, Number((saldoActual - montoUsd).toFixed(2)))
 
     const movId = uuidv4()
     await tx.execute(
@@ -262,9 +262,9 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         movId,
         cliente_id,
         `PAG-${venta.nro_factura}`,
-        montoUsd.toFixed(4),
-        saldoActual.toFixed(4),
-        saldoNuevo.toFixed(4),
+        montoUsd.toFixed(2),
+        saldoActual.toFixed(2),
+        saldoNuevo.toFixed(2),
         `Pago factura ${venta.nro_factura}`,
         venta_id,
         now,
@@ -274,7 +274,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     )
 
     await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-      saldoNuevo.toFixed(4),
+      saldoNuevo.toFixed(2),
       now,
       cliente_id,
     ])
@@ -313,8 +313,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     }
     const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
-    // 1. Calcular monto total en USD (4dp para mayor precision en conversiones Bs→USD)
-    const montoTotalUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(4)) : monto
+    // 1. Calcular monto total en USD
+    const montoTotalUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
     let montoRestante = montoTotalUsd
 
     // 2. Obtener facturas pendientes FIFO (ORDER BY fecha ASC)
@@ -349,7 +349,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
             monedaId,
             tasa.toFixed(4),
             (moneda === 'BS' ? montoAplicar * tasa : montoAplicar).toFixed(2),
-            montoAplicar.toFixed(4),
+            montoAplicar.toFixed(2),
             referencia ?? null,
             now,
             empresa_id,
@@ -357,14 +357,14 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           ]
         )
 
-        // Reducir saldo de esta factura (4dp para mayor precision)
-        const nuevoSaldo = Math.max(0, Number((saldoFactura - montoAplicar).toFixed(4)))
+        // Reducir saldo de esta factura
+        const nuevoSaldo = Math.max(0, Number((saldoFactura - montoAplicar).toFixed(2)))
         await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-          nuevoSaldo.toFixed(4),
+          nuevoSaldo.toFixed(2),
           factura.id,
         ])
 
-        montoRestante = Number((montoRestante - montoAplicar).toFixed(4))
+        montoRestante = Number((montoRestante - montoAplicar).toFixed(2))
         facturasAfectadas++
       }
     }
@@ -383,7 +383,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           monedaId,
           tasa.toFixed(4),
           (moneda === 'BS' ? montoRestante * tasa : montoRestante).toFixed(2),
-          montoRestante.toFixed(4),
+          montoRestante.toFixed(2),
           referencia ? `${referencia} (anticipo)` : 'Anticipo',
           now,
           empresa_id,
@@ -404,7 +404,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     const saldoActual = parseFloat(
       (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
     )
-    const saldoNuevo = Math.max(0, Number((saldoActual - montoTotalUsd).toFixed(4)))
+    const saldoNuevo = Math.max(0, Number((saldoActual - montoTotalUsd).toFixed(2)))
 
     const movId = uuidv4()
     await tx.execute(
@@ -414,10 +414,10 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         movId,
         cliente_id,
         `ABONO-GLOBAL`,
-        montoTotalUsd.toFixed(4),
-        saldoActual.toFixed(4),
-        saldoNuevo.toFixed(4),
-        `Abono global: ${facturasAfectadas} factura(s) afectada(s)${montoRestante > 0.01 ? `, anticipo $${montoRestante.toFixed(4)}` : ''}`,
+        montoTotalUsd.toFixed(2),
+        saldoActual.toFixed(2),
+        saldoNuevo.toFixed(2),
+        `Abono global: ${facturasAfectadas} factura(s) afectada(s)${montoRestante > 0.01 ? `, anticipo $${montoRestante.toFixed(2)}` : ''}`,
         null,
         now,
         empresa_id,
@@ -426,7 +426,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     )
 
     await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-      saldoNuevo.toFixed(4),
+      saldoNuevo.toFixed(2),
       now,
       cliente_id,
     ])
