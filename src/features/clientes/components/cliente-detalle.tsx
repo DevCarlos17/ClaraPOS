@@ -453,6 +453,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                 type="date"
                 value={fechaDesde}
                 onChange={(e) => setFechaDesde(e.target.value)}
+                autoComplete="off"
                 className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
@@ -462,6 +463,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                 type="date"
                 value={fechaHasta}
                 onChange={(e) => setFechaHasta(e.target.value)}
+                autoComplete="off"
                 className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>

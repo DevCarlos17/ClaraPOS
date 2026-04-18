@@ -140,6 +140,8 @@ export function ClienteList() {
               value={busqueda}
               onChange={(e) => setBusqueda(e.target.value)}
               placeholder="Buscar por nombre o identificacion..."
+              autoComplete="off"
+              name="busqueda-clientes"
               className="w-full pl-9 pr-3 py-2 rounded-md border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>

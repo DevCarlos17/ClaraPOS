@@ -11,7 +11,6 @@
 # =============================================
 
 bucket_definitions:
-
   # ==========================================
   # BUCKET GLOBAL: Catalogos compartidos
   # Datos de solo lectura, sin empresa_id
@@ -31,7 +30,6 @@ bucket_definitions:
   by_empresa:
     parameters: SELECT empresa_id FROM usuarios WHERE id = token_parameters.user_id
     data:
-
       # --- CORE: Empresa y usuarios ---
       - SELECT * FROM empresas WHERE id = bucket.empresa_id
       - SELECT * FROM empresas_fiscal_ve WHERE empresa_id = bucket.empresa_id
