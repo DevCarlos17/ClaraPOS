@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import {
   Plus,
   Pencil,
+  Layers,
   DollarSign,
   AlertTriangle,
   ArrowUp,
@@ -24,6 +25,7 @@ import { ProductoForm } from './producto-form'
 import { StockCriticoModal } from './stock-critico-modal'
 import { ValorInventarioModal } from './valor-inventario-modal'
 import { ImportProductosModal } from './import-productos-modal'
+import { ComboDetalleModal } from '@/features/inventario/components/recetas/combo-detalle-modal'
 import {
   exportarProductosCsv,
   exportarProductosExcel,
@@ -48,6 +50,7 @@ export function ProductoList() {
 
   const [formOpen, setFormOpen] = useState(false)
   const [editingProducto, setEditingProducto] = useState<Producto | undefined>(undefined)
+  const [comboDetalle, setComboDetalle] = useState<Producto | null>(null)
   const [stockCriticoOpen, setStockCriticoOpen] = useState(false)
   const [valorInventarioOpen, setValorInventarioOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -452,13 +455,24 @@ export function ProductoList() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => handleEditar(prod)}
-                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        Editar
-                      </button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => handleEditar(prod)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          Editar
+                        </button>
+                        {prod.tipo === 'C' && (
+                          <button
+                            onClick={() => setComboDetalle(prod)}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 rounded-md hover:bg-green-100 transition-colors"
+                          >
+                            <Layers className="h-3.5 w-3.5" />
+                            Componentes
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
@@ -493,6 +507,11 @@ export function ProductoList() {
         onClose={() => setImportOpen(false)}
         productos={productos}
         departamentos={departamentos}
+      />
+
+      <ComboDetalleModal
+        combo={comboDetalle}
+        onClose={() => setComboDetalle(null)}
       />
     </div>
   )
