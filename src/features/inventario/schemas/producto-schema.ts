@@ -3,7 +3,7 @@ import { z } from 'zod'
 export const productoSchema = z
   .object({
     codigo: z.string().min(1, 'El codigo es requerido').transform((v) => v.toUpperCase()),
-    tipo: z.enum(['P', 'S'], { message: 'Selecciona Producto o Servicio' }),
+    tipo: z.enum(['P', 'S', 'C'], { message: 'Selecciona Producto, Servicio o Combo' }),
     nombre: z.string().min(3, 'Minimo 3 caracteres').transform((v) => v.toUpperCase()),
     departamento_id: z.string().min(1, 'Selecciona un departamento'),
     costo_usd: z.number().min(0, 'El costo no puede ser negativo'),
@@ -12,11 +12,18 @@ export const productoSchema = z
     stock_minimo: z.number().min(0, 'No puede ser negativo'),
     tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
     is_active: z.boolean().default(true),
+    ubicacion: z.string().optional().default(''),
   })
-  .refine((data) => data.precio_venta_usd >= data.costo_usd, {
-    message: 'El precio de venta debe ser mayor o igual al costo',
-    path: ['precio_venta_usd'],
-  })
+  .refine(
+    (data) => {
+      if (data.tipo === 'C') return true
+      return data.precio_venta_usd >= data.costo_usd
+    },
+    {
+      message: 'El precio de venta debe ser mayor o igual al costo',
+      path: ['precio_venta_usd'],
+    }
+  )
   .refine(
     (data) => {
       if (data.precio_mayor_usd == null) return true

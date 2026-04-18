@@ -55,7 +55,7 @@ export function ProductoList() {
 
   // Filtros
   const [filtroDepartamento, setFiltroDepartamento] = useState('')
-  const [filtroTipo, setFiltroTipo] = useState<'P' | 'S' | ''>('')
+  const [filtroTipo, setFiltroTipo] = useState<'P' | 'S' | 'C' | ''>('')
   const [filtroActivo, setFiltroActivo] = useState(true)
 
   // Sort
@@ -171,7 +171,7 @@ export function ProductoList() {
   }
 
   function isStockBajo(producto: Producto): boolean {
-    if (producto.tipo === 'S') return false
+    if (producto.tipo === 'S' || producto.tipo === 'C') return false
     const stock = parseFloat(producto.stock)
     const minimo = parseFloat(producto.stock_minimo)
     return minimo > 0 && stock < minimo
@@ -252,12 +252,13 @@ export function ProductoList() {
 
           <select
             value={filtroTipo}
-            onChange={(e) => setFiltroTipo(e.target.value as 'P' | 'S' | '')}
+            onChange={(e) => setFiltroTipo(e.target.value as 'P' | 'S' | 'C' | '')}
             className="rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             <option value="">Todos los tipos</option>
             <option value="P">Productos</option>
             <option value="S">Servicios</option>
+            <option value="C">Combos / Recetas</option>
           </select>
 
           <label className="inline-flex items-center gap-1.5 text-sm cursor-pointer">
@@ -412,9 +413,13 @@ export function ProductoList() {
                         <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-blue-600/20 ring-inset">
                           Producto
                         </span>
-                      ) : (
+                      ) : prod.tipo === 'S' ? (
                         <span className="inline-flex items-center rounded-full bg-purple-50 px-2.5 py-0.5 text-xs font-medium text-purple-700 ring-1 ring-purple-600/20 ring-inset">
                           Servicio
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
+                          Combo
                         </span>
                       )}
                     </td>
@@ -431,6 +436,8 @@ export function ProductoList() {
                     <td className="px-4 py-3 text-right">
                       {prod.tipo === 'S' ? (
                         <span className="text-gray-400">N/A</span>
+                      ) : prod.tipo === 'C' ? (
+                        <span className="text-gray-400 text-xs">Ver Combos</span>
                       ) : (
                         <div className="flex items-center justify-end gap-1.5">
                           <span className={stockBajo ? 'text-red-600 font-medium' : 'text-gray-900'}>

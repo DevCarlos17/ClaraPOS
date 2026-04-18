@@ -26,7 +26,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const { user } = useCurrentUser()
 
   const [codigo, setCodigo] = useState('')
-  const [tipo, setTipo] = useState<'P' | 'S'>('P')
+  const [tipo, setTipo] = useState<'P' | 'S' | 'C'>('P')
   const [nombre, setNombre] = useState('')
   const [departamentoId, setDepartamentoId] = useState('')
   const [costoUsd, setCostoUsd] = useState('')
@@ -35,6 +35,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [stockMinimo, setStockMinimo] = useState('')
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [isActive, setIsActive] = useState(true)
+  const [ubicacion, setUbicacion] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -42,7 +43,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (isOpen) {
       if (producto) {
         setCodigo(producto.codigo)
-        setTipo(producto.tipo as 'P' | 'S')
+        setTipo(producto.tipo as 'P' | 'S' | 'C')
         setNombre(producto.nombre)
         setDepartamentoId(producto.departamento_id)
         setCostoUsd(producto.costo_usd)
@@ -51,6 +52,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setStockMinimo(producto.stock_minimo)
         setTipoImpuesto((producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento')
         setIsActive(producto.is_active === 1)
+        setUbicacion(producto.ubicacion ?? '')
       } else {
         setCodigo('')
         setTipo('P')
@@ -62,6 +64,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setStockMinimo('')
         setTipoImpuesto('Exento')
         setIsActive(true)
+        setUbicacion('')
       }
       setErrors({})
       dialogRef.current?.showModal()
@@ -78,6 +81,21 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setNombre(value.toUpperCase())
   }
 
+  function handleUbicacionChange(value: string) {
+    setUbicacion(value.toUpperCase())
+  }
+
+  function handleTipoChange(nuevoTipo: 'P' | 'S' | 'C') {
+    setTipo(nuevoTipo)
+    if (nuevoTipo === 'S' || nuevoTipo === 'C') {
+      setUbicacion('')
+      setStockMinimo('0')
+    }
+    if (nuevoTipo === 'C') {
+      setCostoUsd('0')
+    }
+  }
+
   function parseNumOrZero(val: string): number {
     const n = parseFloat(val)
     return isNaN(n) ? 0 : n
@@ -87,17 +105,21 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     e.preventDefault()
     setErrors({})
 
+    const esCombo = tipo === 'C'
+    const esServicioOCombo = tipo === 'S' || tipo === 'C'
+
     const data = {
       codigo,
       tipo,
       nombre,
       departamento_id: departamentoId,
-      costo_usd: parseNumOrZero(costoUsd),
+      costo_usd: esCombo ? 0 : parseNumOrZero(costoUsd),
       precio_venta_usd: parseNumOrZero(precioVentaUsd),
       precio_mayor_usd: precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd),
-      stock_minimo: tipo === 'S' ? 0 : parseNumOrZero(stockMinimo),
+      stock_minimo: esServicioOCombo ? 0 : parseNumOrZero(stockMinimo),
       tipo_impuesto: tipoImpuesto,
       is_active: isActive,
+      ubicacion: esServicioOCombo ? '' : ubicacion,
     }
 
     const parsed = productoSchema.safeParse(data)
@@ -118,13 +140,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         await actualizarProducto(producto.id, {
           nombre: parsed.data.nombre,
           departamento_id: parsed.data.departamento_id,
-          costo_usd: parsed.data.costo_usd,
+          costo_usd: esCombo ? 0 : parsed.data.costo_usd,
           precio_venta_usd: parsed.data.precio_venta_usd,
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
           tipo_impuesto: parsed.data.tipo_impuesto,
           is_active: parsed.data.is_active,
           tipo: parsed.data.tipo,
+          ubicacion: esServicioOCombo ? null : (parsed.data.ubicacion || null),
         })
         toast.success('Producto actualizado correctamente')
       } else {
@@ -133,11 +156,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           tipo: parsed.data.tipo,
           nombre: parsed.data.nombre,
           departamento_id: parsed.data.departamento_id,
-          costo_usd: parsed.data.costo_usd,
+          costo_usd: esCombo ? 0 : parsed.data.costo_usd,
           precio_venta_usd: parsed.data.precio_venta_usd,
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
           empresa_id: user!.empresa_id!,
+          ubicacion: esServicioOCombo ? undefined : (parsed.data.ubicacion || undefined),
         })
         toast.success('Producto creado correctamente')
       }
@@ -150,13 +174,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     }
   }
 
+  const esServicioOComboLocal = tipo === 'S' || tipo === 'C'
+  const esComboLocal = tipo === 'C'
+
   function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
     if (e.target === dialogRef.current) {
       onClose()
     }
   }
 
-  const costoNum = parseNumOrZero(costoUsd)
+  const costoNum = esComboLocal ? 0 : parseNumOrZero(costoUsd)
   const ventaNum = parseNumOrZero(precioVentaUsd)
   const mayorNum = precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd)
 
@@ -185,6 +212,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               onChange={(e) => handleCodigoChange(e.target.value)}
               disabled={isEditing}
               placeholder="Ej: PROD-001"
+              autoComplete="off"
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 isEditing ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
               } ${errors.codigo ? 'border-red-500' : 'border-gray-300'}`}
@@ -203,7 +231,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   name="tipo"
                   value="P"
                   checked={tipo === 'P'}
-                  onChange={() => setTipo('P')}
+                  onChange={() => handleTipoChange('P')}
+                  disabled={isEditing}
                   className="h-4 w-4 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm">Producto</span>
@@ -214,13 +243,31 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   name="tipo"
                   value="S"
                   checked={tipo === 'S'}
-                  onChange={() => setTipo('S')}
+                  onChange={() => handleTipoChange('S')}
+                  disabled={isEditing}
                   className="h-4 w-4 text-purple-600 focus:ring-purple-500"
                 />
                 <span className="text-sm">Servicio</span>
               </label>
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="tipo"
+                  value="C"
+                  checked={tipo === 'C'}
+                  onChange={() => handleTipoChange('C')}
+                  disabled={isEditing}
+                  className="h-4 w-4 text-green-600 focus:ring-green-500"
+                />
+                <span className="text-sm">Combo / Receta</span>
+              </label>
             </div>
             {errors.tipo && <p className="text-red-500 text-xs mt-1">{errors.tipo}</p>}
+            {esComboLocal && (
+              <p className="text-green-700 text-xs mt-1 bg-green-50 px-2 py-1 rounded">
+                El costo se calcula automaticamente desde los ingredientes del combo
+              </p>
+            )}
           </div>
 
           {/* Nombre */}
@@ -234,6 +281,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               value={nombre}
               onChange={(e) => handleNombreChange(e.target.value)}
               placeholder="Nombre del producto"
+              autoComplete="off"
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 errors.nombre ? 'border-red-500' : 'border-gray-300'
               }`}
@@ -278,16 +326,21 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 type="number"
                 step="0.01"
                 min="0"
-                value={costoUsd}
+                value={esComboLocal ? '0' : costoUsd}
                 onChange={(e) => setCostoUsd(e.target.value)}
+                disabled={esComboLocal}
                 placeholder="0.00"
                 className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.costo_usd ? 'border-red-500' : 'border-gray-300'
-                }`}
+                  esComboLocal ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                } ${errors.costo_usd ? 'border-red-500' : 'border-gray-300'}`}
               />
               {errors.costo_usd && <p className="text-red-500 text-xs mt-1">{errors.costo_usd}</p>}
-              {tasaValor > 0 && (
-                <p className="text-xs text-gray-400 mt-1">{formatBs(usdToBs(costoNum, tasaValor))}</p>
+              {esComboLocal ? (
+                <p className="text-gray-400 text-xs mt-1">Se calcula desde ingredientes</p>
+              ) : (
+                tasaValor > 0 && (
+                  <p className="text-xs text-gray-400 mt-1">{formatBs(usdToBs(costoNum, tasaValor))}</p>
+                )
               )}
             </div>
 
@@ -352,17 +405,44 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               type="number"
               step="0.001"
               min="0"
-              value={tipo === 'S' ? '0' : stockMinimo}
+              value={esServicioOComboLocal ? '0' : stockMinimo}
               onChange={(e) => setStockMinimo(e.target.value)}
-              disabled={tipo === 'S'}
+              disabled={esServicioOComboLocal}
               placeholder="0"
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                tipo === 'S' ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                esServicioOComboLocal ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
               } ${errors.stock_minimo ? 'border-red-500' : 'border-gray-300'}`}
             />
             {errors.stock_minimo && <p className="text-red-500 text-xs mt-1">{errors.stock_minimo}</p>}
             {tipo === 'S' && (
               <p className="text-gray-400 text-xs mt-1">Servicios no manejan stock</p>
+            )}
+            {tipo === 'C' && (
+              <p className="text-gray-400 text-xs mt-1">Combos no manejan stock propio</p>
+            )}
+          </div>
+
+          {/* Ubicacion */}
+          <div>
+            <label htmlFor="prod-ubicacion" className="block text-sm font-medium text-gray-700 mb-1">
+              Ubicacion <span className="text-gray-400 font-normal">(Opcional)</span>
+            </label>
+            <input
+              id="prod-ubicacion"
+              type="text"
+              value={esServicioOComboLocal ? '' : ubicacion}
+              onChange={(e) => handleUbicacionChange(e.target.value)}
+              disabled={esServicioOComboLocal}
+              placeholder="Ej: ESTANTE A-3"
+              autoComplete="off"
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                esServicioOComboLocal ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+              } border-gray-300`}
+            />
+            {esServicioOComboLocal && (
+              <p className="text-gray-400 text-xs mt-1">
+                {tipo === 'S' ? 'Servicios' : 'Combos'} no tienen ubicacion fisica
+              </p>
             )}
           </div>
 
@@ -403,15 +483,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           )}
 
           {/* Preview de precios en Bs */}
-          {tasaValor > 0 && (costoNum > 0 || ventaNum > 0) && (
+          {tasaValor > 0 && (!esComboLocal ? costoNum > 0 : false || ventaNum > 0) && (
             <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
               <p className="text-xs font-medium text-blue-700 mb-2">Vista previa en Bolivares (Tasa: {tasaValor.toFixed(4)})</p>
               <div className="grid grid-cols-3 gap-2 text-xs">
-                <div>
-                  <span className="text-blue-600">Costo:</span>
-                  <p className="font-medium text-blue-900">{formatUsd(costoNum)}</p>
-                  <p className="text-blue-600">{formatBs(usdToBs(costoNum, tasaValor))}</p>
-                </div>
+                {!esComboLocal && costoNum > 0 && (
+                  <div>
+                    <span className="text-blue-600">Costo:</span>
+                    <p className="font-medium text-blue-900">{formatUsd(costoNum)}</p>
+                    <p className="text-blue-600">{formatBs(usdToBs(costoNum, tasaValor))}</p>
+                  </div>
+                )}
                 <div>
                   <span className="text-blue-600">Venta:</span>
                   <p className="font-medium text-blue-900">{formatUsd(ventaNum)}</p>

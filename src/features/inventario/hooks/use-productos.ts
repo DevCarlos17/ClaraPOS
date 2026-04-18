@@ -24,6 +24,7 @@ export interface Producto {
   is_active: number
   created_at: string
   updated_at: string
+  ubicacion: string | null
 }
 
 export function useProductos() {
@@ -48,7 +49,7 @@ export function useProductosActivos() {
   return { productos: (data ?? []) as Producto[], isLoading }
 }
 
-export function useProductosTipo(tipo: 'P' | 'S') {
+export function useProductosTipo(tipo: 'P' | 'S' | 'C') {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
@@ -91,10 +92,11 @@ export async function crearProducto(data: {
   precio_mayor_usd: number | null
   stock_minimo: number
   empresa_id: string
+  ubicacion?: string
 }) {
   const id = uuidv4()
   const now = localNow()
-  const isServicio = data.tipo === 'S'
+  const isServicioOCombo = data.tipo === 'S' || data.tipo === 'C'
 
   await kysely
     .insertInto('productos')
@@ -104,19 +106,20 @@ export async function crearProducto(data: {
       tipo: data.tipo,
       nombre: data.nombre.toUpperCase(),
       departamento_id: data.departamento_id,
-      costo_usd: data.costo_usd.toFixed(2),
+      costo_usd: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
       precio_venta_usd: data.precio_venta_usd.toFixed(2),
       precio_mayor_usd: data.precio_mayor_usd?.toFixed(2) ?? null,
       stock: '0.000',
-      stock_minimo: isServicio ? '0.000' : data.stock_minimo.toFixed(3),
+      stock_minimo: isServicioOCombo ? '0.000' : data.stock_minimo.toFixed(3),
       costo_promedio: '0.00',
-      costo_ultimo: data.costo_usd.toFixed(2),
+      costo_ultimo: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
       tipo_impuesto: 'Exento',
       maneja_lotes: 0,
       is_active: 1,
       empresa_id: data.empresa_id,
       created_at: now,
       updated_at: now,
+      ubicacion: data.ubicacion?.toUpperCase() || null,
     })
     .execute()
 
@@ -135,6 +138,7 @@ export async function actualizarProducto(
     tipo_impuesto?: string
     is_active?: boolean
     tipo?: string
+    ubicacion?: string | null
   }
 ) {
   const now = localNow()
@@ -148,12 +152,22 @@ export async function actualizarProducto(
   if (data.stock_minimo !== undefined) updates.stock_minimo = data.stock_minimo.toFixed(3)
   if (data.tipo_impuesto !== undefined) updates.tipo_impuesto = data.tipo_impuesto
   if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
+  if (data.ubicacion !== undefined) updates.ubicacion = data.ubicacion ? data.ubicacion.toUpperCase() : null
 
-  // Si cambia a servicio, limpiar stock
-  if (data.tipo === 'S') {
+  // Servicios y Combos no manejan stock
+  if (data.tipo === 'S' || data.tipo === 'C') {
     updates.stock = '0.000'
     updates.stock_minimo = '0.000'
   }
 
   await kysely.updateTable('productos').set(updates).where('id', '=', id).execute()
+}
+
+export async function actualizarCostoCombo(comboId: string, costoTotal: number) {
+  const now = localNow()
+  await kysely
+    .updateTable('productos')
+    .set({ costo_usd: costoTotal.toFixed(2), updated_at: now })
+    .where('id', '=', comboId)
+    .execute()
 }
