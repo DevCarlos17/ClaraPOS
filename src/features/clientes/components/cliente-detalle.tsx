@@ -1,4 +1,5 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useMemo } from 'react'
+import { useQuery } from '@powersync/react'
 import { X, Phone, MapPin, CreditCard, RotateCcw, Printer, Calendar } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -61,10 +62,9 @@ function formatFechaCorta(fecha: string): string {
 function generarReporteEstadoCuenta(
   cliente: Cliente,
   movimientos: MovimientoCuenta[],
-  opts: { fechaDesde?: string; fechaHasta?: string; tasaValor: number }
+  opts: { fechaDesde?: string; fechaHasta?: string; tasaValor: number; saldoActual: number }
 ) {
-  const { fechaDesde, fechaHasta, tasaValor } = opts
-  const saldo = parseFloat(cliente.saldo_actual || '0')
+  const { fechaDesde, fechaHasta, tasaValor, saldoActual } = opts
   const periodoLabel = fechaDesde || fechaHasta
     ? `${fechaDesde ? formatFechaCorta(fechaDesde) : 'Inicio'} — ${fechaHasta ? formatFechaCorta(fechaHasta) : 'Hoy'}`
     : 'Todos los registros'
@@ -132,8 +132,8 @@ function generarReporteEstadoCuenta(
   <div class="info-grid">
     <div class="info-box">
       <div class="label">Saldo actual</div>
-      <div class="value ${saldo > 0 ? 'deuda' : 'ok'}">${formatUsd(saldo)}</div>
-      ${tasaValor > 0 ? `<div style="color:#999;font-size:10px;margin-top:2px">${formatBs(usdToBs(saldo, tasaValor))}</div>` : ''}
+      <div class="value ${saldoActual > 0 ? 'deuda' : 'ok'}">${formatUsd(saldoActual)}</div>
+      ${tasaValor > 0 ? `<div style="color:#999;font-size:10px;margin-top:2px">${formatBs(usdToBs(saldoActual, tasaValor))}</div>` : ''}
     </div>
     <div class="info-box">
       <div class="label">Limite de credito</div>
@@ -289,7 +289,31 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
     { fechaDesde: fechaDesde || undefined, fechaHasta: fechaHasta || undefined }
   )
   const { total: totalMovimientos } = useCountMovimientosCliente(isOpen ? cliente?.id : undefined)
-  const { pagos, isLoading: loadingPagos } = usePagosCliente(isOpen ? (cliente?.id ?? null) : null)
+  const { pagos } = usePagosCliente(isOpen ? (cliente?.id ?? null) : null)
+
+  // Live saldo — reacts to changes after reversals
+  const { data: saldoData } = useQuery(
+    cliente?.id ? 'SELECT saldo_actual FROM clientes WHERE id = ?' : '',
+    cliente?.id ? [cliente.id] : []
+  )
+  const saldo = parseFloat(
+    (saldoData?.[0] as { saldo_actual: string } | undefined)?.saldo_actual ??
+    cliente?.saldo_actual ??
+    '0'
+  )
+
+  // Build pago lookup: key = "venta_id:fecha" → pago
+  // Matches PAG movements (from registrarPagoFactura) to their individual pago record.
+  // ABONO-GLOBAL movements have venta_id = null so they won't match — no reversal for those.
+  const pagoMap = useMemo(() => {
+    const map = new Map<string, PagoClienteCxc>()
+    pagos.forEach((p) => {
+      if (p.venta_id) {
+        map.set(`${p.venta_id}:${p.fecha}`, p)
+      }
+    })
+    return map
+  }, [pagos])
 
   // Reverso state
   const [pagoAReverse, setPagoAReverse] = useState<PagoClienteCxc | null>(null)
@@ -303,7 +327,6 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
-      // Reset filters on close
       setFechaDesde('')
       setFechaHasta('')
     }
@@ -372,12 +395,12 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
       fechaDesde: fechaDesde || undefined,
       fechaHasta: fechaHasta || undefined,
       tasaValor,
+      saldoActual: saldo,
     })
   }
 
   if (!cliente) return null
 
-  const saldo = parseFloat(cliente.saldo_actual || '0')
   const hasFilter = !!fechaDesde || !!fechaHasta
 
   return (
@@ -488,12 +511,10 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
             </div>
           </div>
 
-          {/* Estado de Cuenta (movimientos) */}
+          {/* Estado de Cuenta */}
           <div className="mb-5">
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-semibold">
-                Estado de Cuenta
-              </h3>
+              <h3 className="text-sm font-semibold">Estado de Cuenta</h3>
               <span className="text-xs text-muted-foreground">
                 {hasFilter
                   ? `${movimientos.length} movimiento(s) en el periodo`
@@ -521,12 +542,14 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                 <table className="w-full text-sm">
                   <thead className="sticky top-0">
                     <tr className="border-b bg-muted/50">
-                      <th className="text-left px-3 py-2 font-medium text-xs">Fecha</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs whitespace-nowrap">Fecha</th>
                       <th className="text-left px-3 py-2 font-medium text-xs">Tipo</th>
                       <th className="text-left px-3 py-2 font-medium text-xs">Referencia</th>
                       <th className="text-right px-3 py-2 font-medium text-xs">Monto</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Saldo</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs whitespace-nowrap">Saldo</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs whitespace-nowrap">Procesado por</th>
                       <th className="text-left px-3 py-2 font-medium text-xs">Observacion</th>
+                      <th className="px-3 py-2 font-medium text-xs w-28"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -535,125 +558,73 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                         label: mov.tipo,
                         color: 'bg-gray-50 text-gray-700 ring-gray-600/20',
                       }
+                      // Match PAG movements with venta_id to their individual pago record
+                      const matchedPago =
+                        mov.tipo === 'PAG' && mov.venta_id
+                          ? pagoMap.get(`${mov.venta_id}:${mov.fecha}`)
+                          : undefined
+                      const isReversed = matchedPago?.is_reversed === 1
+
                       return (
-                        <tr key={mov.id} className="border-b border-muted">
+                        <tr
+                          key={mov.id}
+                          className={`border-b border-muted ${isReversed ? 'opacity-50' : ''}`}
+                        >
                           <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                             {formatFecha(mov.fecha)}
                           </td>
                           <td className="px-3 py-2">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tipo.color}`}>
+                            <span
+                              className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tipo.color}`}
+                            >
                               {tipo.label}
                             </span>
                           </td>
                           <td className="px-3 py-2 font-mono text-xs">{mov.referencia}</td>
-                          <td className="px-3 py-2 text-right font-medium">
+                          <td
+                            className={`px-3 py-2 text-right font-medium text-xs ${isReversed ? 'line-through text-muted-foreground' : ''}`}
+                          >
                             {formatUsd(mov.monto)}
                           </td>
                           <td className="px-3 py-2 text-right text-xs text-muted-foreground whitespace-nowrap">
                             {formatUsd(mov.saldo_anterior)} → {formatUsd(mov.saldo_nuevo)}
                           </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground max-w-xs">
+                          <td className="px-3 py-2 text-xs text-muted-foreground">
+                            {matchedPago?.procesado_por_nombre ?? '-'}
+                          </td>
+                          <td
+                            className="px-3 py-2 text-xs text-muted-foreground max-w-[160px] truncate"
+                            title={mov.observacion ?? ''}
+                          >
                             {mov.observacion || '-'}
                           </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Abonos registrados */}
-          <div>
-            <h3 className="text-sm font-semibold mb-2">Abonos registrados</h3>
-            {loadingPagos ? (
-              <div className="h-16 bg-muted rounded animate-pulse" />
-            ) : pagos.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">
-                Sin abonos registrados
-              </p>
-            ) : (
-              <div className="overflow-x-auto border rounded-lg">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="text-left px-3 py-2 font-medium text-xs">Fecha</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Factura</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Metodo</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Mon.</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Monto</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">USD</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Ref.</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Procesado por</th>
-                      <th className="px-3 py-2 font-medium text-xs"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagos.map((p) => {
-                      const montoOrig = parseFloat(p.monto)
-                      const montoUsdVal = parseFloat(p.monto_usd)
-                      const isReversed = p.is_reversed === 1
-                      return (
-                        <tr
-                          key={p.id}
-                          className={`border-b border-muted ${isReversed ? 'opacity-50' : ''}`}
-                        >
-                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                            {formatFecha(p.fecha)}
-                          </td>
-                          <td className="px-3 py-2 font-mono text-xs">
-                            {p.nro_factura ? `#${p.nro_factura}` : <span className="text-amber-600">Anticipo</span>}
-                          </td>
-                          <td className={`px-3 py-2 text-xs ${isReversed ? 'line-through text-muted-foreground' : ''}`}>
-                            {p.metodo_nombre}
-                          </td>
                           <td className="px-3 py-2">
-                            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                              p.moneda_label === 'BS' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'
-                            }`}>
-                              {p.moneda_label}
-                            </span>
-                          </td>
-                          <td className={`px-3 py-2 text-right font-medium text-xs ${isReversed ? 'line-through text-muted-foreground' : ''}`}>
-                            {p.moneda_label === 'BS'
-                              ? formatBs(montoOrig)
-                              : formatUsd(montoOrig)}
-                          </td>
-                          <td className={`px-3 py-2 text-right text-xs font-medium ${isReversed ? 'line-through text-muted-foreground' : 'text-green-700'}`}>
-                            {formatUsd(montoUsdVal)}
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {p.referencia || '-'}
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {p.procesado_por_nombre || '-'}
-                          </td>
-                          <td className="px-3 py-2">
-                            {isReversed ? (
-                              <div className="flex flex-col items-start gap-0.5">
-                                <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-destructive/10 text-destructive whitespace-nowrap">
-                                  REVERSADO
-                                </span>
-                                {p.reversed_reason && (
-                                  <span
-                                    className="text-xs text-muted-foreground max-w-[100px] truncate"
-                                    title={p.reversed_reason}
-                                  >
-                                    {p.reversed_reason}
+                            {matchedPago ? (
+                              isReversed ? (
+                                <div className="flex flex-col items-start gap-0.5">
+                                  <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-destructive/10 text-destructive whitespace-nowrap">
+                                    REVERSADO
                                   </span>
-                                )}
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleReversar(p)}
-                                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors whitespace-nowrap"
-                              >
-                                <RotateCcw size={12} />
-                                Reversar
-                              </button>
-                            )}
+                                  {matchedPago.reversed_reason && (
+                                    <span
+                                      className="text-xs text-muted-foreground max-w-[100px] truncate"
+                                      title={matchedPago.reversed_reason}
+                                    >
+                                      {matchedPago.reversed_reason}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleReversar(matchedPago)}
+                                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors whitespace-nowrap"
+                                >
+                                  <RotateCcw size={12} />
+                                  Reversar
+                                </button>
+                              )
+                            ) : null}
                           </td>
                         </tr>
                       )
@@ -665,7 +636,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
           </div>
 
           {/* Footer */}
-          <div className="flex justify-end pt-5">
+          <div className="flex justify-end pt-2">
             <button
               onClick={onClose}
               className="px-4 py-2 text-sm font-medium rounded-md border hover:bg-muted transition-colors"

@@ -297,8 +297,8 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
 
     const movId = uuidv4()
     await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         cliente_id,
@@ -311,6 +311,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         now,
         empresa_id,
         now,
+        procesado_por,
       ]
     )
 
@@ -453,8 +454,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
     const movId = uuidv4()
     await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         cliente_id,
@@ -467,6 +468,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         now,
         empresa_id,
         now,
+        procesado_por,
       ]
     )
 

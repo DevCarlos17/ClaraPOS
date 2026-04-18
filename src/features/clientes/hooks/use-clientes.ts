@@ -29,6 +29,7 @@ export interface MovimientoCuenta {
   venta_id: string | null
   fecha: string
   created_at: string
+  created_by: string | null
 }
 
 export function useClientes() {
