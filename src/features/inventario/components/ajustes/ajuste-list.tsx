@@ -57,7 +57,11 @@ function StatusBadge({ status }: { status: string }) {
   }
 }
 
-export function AjusteList() {
+interface AjusteListProps {
+  ocultarNuevo?: boolean
+}
+
+export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
   const { ajustes, isLoading } = useAjustes()
   const [formOpen, setFormOpen] = useState(false)
   const [detalleAjusteId, setDetalleAjusteId] = useState<string | null>(null)
@@ -145,13 +149,15 @@ export function AjusteList() {
             <Printer className="h-4 w-4" />
             Reporte
           </button>
-          <button
-            onClick={() => setFormOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0"
-          >
-            <Plus className="h-4 w-4" />
-            Nuevo Ajuste
-          </button>
+          {!ocultarNuevo && (
+            <button
+              onClick={() => setFormOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0"
+            >
+              <Plus className="h-4 w-4" />
+              Nuevo Ajuste
+            </button>
+          )}
         </div>
       </div>
 

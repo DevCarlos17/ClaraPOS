@@ -40,10 +40,8 @@ function buildRows(productos: Producto[], departamentos: Departamento[]): Export
   const depMap = new Map<string, string>()
   for (const d of departamentos) depMap.set(d.id, d.codigo)
 
-  // Solo exportar P y S (los combos tienen su propia hoja de componentes)
-  return productos
-    .filter((p) => p.tipo === 'P' || p.tipo === 'S')
-    .map((p) => ({
+  // Exportar P, S y C — todos incluidos en la hoja principal
+  return productos.map((p) => ({
       codigo: p.codigo,
       tipo: p.tipo, // P o S (valor raw, igual al formato de importacion)
       nombre: p.nombre,

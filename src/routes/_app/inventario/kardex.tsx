@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
 import { KardexList } from '@/features/inventario/components/kardex/kardex-list'
-import { AjusteList } from '@/features/inventario/components/ajustes/ajuste-list'
+import { AjusteMasivo } from '@/features/inventario/components/ajustes/ajuste-masivo'
 import { AjusteMotivoList } from '@/features/inventario/components/ajuste-motivos/ajuste-motivo-list'
 import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
@@ -42,7 +42,7 @@ function KardexPage() {
                   : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              Ajustes
+              Ajuste Masivo
             </button>
             <button
               onClick={() => setTabActiva('motivos')}
@@ -60,7 +60,7 @@ function KardexPage() {
         {tabActiva === 'movimientos' && <KardexList />}
         {tabActiva === 'ajustes' && (
           <RequirePermission permission={PERMISSIONS.INVENTORY_ADJUST} fallback={<AccessDeniedPage />}>
-            <AjusteList />
+            <AjusteMasivo />
           </RequirePermission>
         )}
         {tabActiva === 'motivos' && (
