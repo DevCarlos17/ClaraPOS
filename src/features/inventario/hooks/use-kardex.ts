@@ -69,28 +69,41 @@ export async function registrarMovimiento(params: {
   motivo?: string
   usuario_id: string
   empresa_id: string
+  /** Si se provee, se usa en lugar del deposito principal auto-detectado */
+  deposito_id?: string
+  /** Lote existente a actualizar (SALIDA: descuenta; ENTRADA: incrementa) */
+  lote_id?: string
+  /** Nuevo lote a crear al registrar una ENTRADA */
+  lote_nro?: string
+  lote_fecha_fab?: string
+  lote_fecha_venc?: string
 }) {
   const { producto_id, tipo, cantidad, motivo, usuario_id, empresa_id } = params
 
-  // Transaccion atomica local via SQLite
   await db.writeTransaction(async (tx) => {
-    // 0. Obtener deposito principal de la empresa
-    const depResult = await tx.execute(
-      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
-      [empresa_id]
-    )
+    const now = localNow()
+
+    // 0. Resolver deposito
     let depositoId: string
-    if (depResult.rows && depResult.rows.length > 0) {
-      depositoId = (depResult.rows.item(0) as { id: string }).id
+    if (params.deposito_id) {
+      depositoId = params.deposito_id
     } else {
-      const depFallback = await tx.execute(
-        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+      const depResult = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
         [empresa_id]
       )
-      if (!depFallback.rows || depFallback.rows.length === 0) {
-        throw new Error('No hay depositos configurados. Cree un deposito primero.')
+      if (depResult.rows && depResult.rows.length > 0) {
+        depositoId = (depResult.rows.item(0) as { id: string }).id
+      } else {
+        const depFallback = await tx.execute(
+          'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+          [empresa_id]
+        )
+        if (!depFallback.rows || depFallback.rows.length === 0) {
+          throw new Error('No hay depositos configurados. Cree un deposito primero.')
+        }
+        depositoId = (depFallback.rows.item(0) as { id: string }).id
       }
-      depositoId = (depFallback.rows.item(0) as { id: string }).id
     }
 
     // 1. Leer stock actual
@@ -108,13 +121,74 @@ export async function registrarMovimiento(params: {
       throw new Error(`Stock insuficiente. Stock actual: ${stockActual}, intentando sacar: ${cantidad}`)
     }
 
-    // 4. Crear movimiento
+    // 4. Manejar lote (atomico dentro de la transaccion)
+    let loteIdMovimiento: string | null = params.lote_id ?? null
+
+    if (tipo === 'S' && params.lote_id) {
+      // SALIDA: descontar del lote especificado
+      const loteResult = await tx.execute(
+        'SELECT cantidad_actual FROM lotes WHERE id = ?',
+        [params.lote_id]
+      )
+      if (loteResult.rows && loteResult.rows.length > 0) {
+        const cantLote = parseFloat((loteResult.rows.item(0) as { cantidad_actual: string }).cantidad_actual)
+        if (cantLote < cantidad) {
+          throw new Error(
+            `Stock insuficiente en lote. Disponible: ${cantLote.toFixed(3)}, Solicitado: ${cantidad.toFixed(3)}`
+          )
+        }
+        const nuevaCant = cantLote - cantidad
+        await tx.execute(
+          'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+          [nuevaCant.toFixed(3), nuevaCant <= 0 ? 'AGOTADO' : 'ACTIVO', now, params.lote_id]
+        )
+      }
+    } else if (tipo === 'E' && params.lote_id) {
+      // ENTRADA en lote existente: incrementar cantidad_actual
+      const loteResult = await tx.execute(
+        'SELECT cantidad_actual FROM lotes WHERE id = ?',
+        [params.lote_id]
+      )
+      if (loteResult.rows && loteResult.rows.length > 0) {
+        const cantLote = parseFloat((loteResult.rows.item(0) as { cantidad_actual: string }).cantidad_actual)
+        await tx.execute(
+          'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+          [(cantLote + cantidad).toFixed(3), 'ACTIVO', now, params.lote_id]
+        )
+      }
+    } else if (tipo === 'E' && params.lote_nro) {
+      // ENTRADA con nuevo lote: crear el lote y registrar el movimiento apuntando a el
+      loteIdMovimiento = uuidv4()
+      await tx.execute(
+        `INSERT INTO lotes (id, empresa_id, producto_id, deposito_id, nro_lote, fecha_fabricacion,
+           fecha_vencimiento, cantidad_inicial, cantidad_actual, costo_unitario, factura_compra_id,
+           status, created_at, updated_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'ACTIVO', ?, ?, ?)`,
+        [
+          loteIdMovimiento,
+          empresa_id,
+          producto_id,
+          depositoId,
+          params.lote_nro.trim().toUpperCase(),
+          params.lote_fecha_fab ?? null,
+          params.lote_fecha_venc ?? null,
+          cantidad.toFixed(3),
+          cantidad.toFixed(3),
+          now,
+          now,
+          usuario_id,
+        ]
+      )
+    }
+
+    // 5. Crear movimiento de inventario
     const id = uuidv4()
-    const now = localNow()
 
     await tx.execute(
-      `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, motivo, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_inventario
+         (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
+          lote_id, motivo, usuario_id, fecha, empresa_id, created_at)
+       VALUES (?, ?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         producto_id,
@@ -123,6 +197,7 @@ export async function registrarMovimiento(params: {
         cantidad.toFixed(3),
         stockActual.toFixed(3),
         stockNuevo.toFixed(3),
+        loteIdMovimiento,
         motivo ?? null,
         usuario_id,
         now,
@@ -131,7 +206,7 @@ export async function registrarMovimiento(params: {
       ]
     )
 
-    // 5. Actualizar stock del producto
+    // 6. Actualizar stock del producto
     await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
       stockNuevo.toFixed(3),
       now,
