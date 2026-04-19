@@ -1,18 +1,49 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { toast } from 'sonner'
 import { Plus, Pencil, Printer } from 'lucide-react'
+import { useQuery } from '@powersync/react'
 import {
   useDepositos,
   actualizarDeposito,
   type Deposito,
 } from '@/features/inventario/hooks/use-depositos'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { DepositoForm } from './deposito-form'
+import { DepositoProductosModal } from './deposito-productos-modal'
+
+interface ConteoDeposito {
+  deposito_id: string
+  total: number
+}
 
 export function DepositoList() {
   const { depositos, isLoading } = useDepositos()
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const [formOpen, setFormOpen] = useState(false)
   const [editingDeposito, setEditingDeposito] = useState<Deposito | undefined>(undefined)
   const [togglingId, setTogglingId] = useState<string | null>(null)
+  const [productoModalDeposito, setProductoModalDeposito] = useState<Deposito | null>(null)
+
+  // Cantidad de articulos por deposito (agrupado desde movimientos)
+  const { data: conteosData } = useQuery(
+    empresaId
+      ? `SELECT deposito_id, COUNT(DISTINCT producto_id) as total
+         FROM movimientos_inventario
+         WHERE empresa_id = ?
+         GROUP BY deposito_id`
+      : '',
+    empresaId ? [empresaId] : []
+  )
+
+  const conteosMap = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const c of (conteosData ?? []) as ConteoDeposito[]) {
+      map.set(c.deposito_id, c.total)
+    }
+    return map
+  }, [conteosData])
 
   function handleNuevo() {
     setEditingDeposito(undefined)
@@ -48,14 +79,20 @@ export function DepositoList() {
     if (!w) return
 
     const filas = depositos
-      .map((d) => `<tr>
-        <td>${d.nombre}</td>
-        <td>${d.direccion ?? '—'}</td>
-        <td style="text-align:center">${d.es_principal === 1 ? 'Si' : 'No'}</td>
-        <td style="text-align:center">${d.permite_venta === 1 ? 'Si' : 'No'}</td>
-        <td style="text-align:center">${d.is_active === 1 ? 'Activo' : 'Inactivo'}</td>
-      </tr>`)
+      .map((d) => {
+        const total = conteosMap.get(d.id) ?? 0
+        return `<tr>
+          <td>${d.nombre}</td>
+          <td>${d.direccion ?? '—'}</td>
+          <td style="text-align:center">${d.es_principal === 1 ? 'Si' : 'No'}</td>
+          <td style="text-align:center">${d.permite_venta === 1 ? 'Si' : 'No'}</td>
+          <td style="text-align:right">${total}</td>
+          <td style="text-align:center">${d.is_active === 1 ? 'Activo' : 'Inactivo'}</td>
+        </tr>`
+      })
       .join('')
+
+    const totalArticulos = depositos.reduce((s, d) => s + (conteosMap.get(d.id) ?? 0), 0)
 
     w.document.write(`<!DOCTYPE html>
 <html lang="es">
@@ -70,12 +107,17 @@ export function DepositoList() {
     th { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; font-weight: 600; }
     td { border: 1px solid #e5e7eb; padding: 5px 8px; }
     tr:nth-child(even) td { background: #f9fafb; }
+    tfoot td { background: #f3f4f6; font-weight: 600; }
     @media print { body { margin: 0; } }
   </style>
 </head>
 <body>
   <h1>Reporte de Depositos</h1>
-  <p>Total: ${depositos.length} depositos &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p>
+    Total: ${depositos.length} depositos &nbsp;|&nbsp;
+    Articulos totales: ${totalArticulos} &nbsp;|&nbsp;
+    Generado: ${new Date().toLocaleString('es-VE')}
+  </p>
   <table>
     <thead>
       <tr>
@@ -83,10 +125,18 @@ export function DepositoList() {
         <th>Direccion</th>
         <th style="text-align:center">Principal</th>
         <th style="text-align:center">Permite Venta</th>
+        <th style="text-align:right">Articulos</th>
         <th style="text-align:center">Estado</th>
       </tr>
     </thead>
     <tbody>${filas}</tbody>
+    <tfoot>
+      <tr>
+        <td colspan="4">Total</td>
+        <td style="text-align:right">${totalArticulos}</td>
+        <td></td>
+      </tr>
+    </tfoot>
   </table>
 </body>
 </html>`)
@@ -145,14 +195,20 @@ export function DepositoList() {
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Direccion</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Principal</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Permite Venta</th>
+                <th className="text-right px-4 py-3 font-medium text-gray-700">Articulos</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {depositos.map((d) => (
-                <tr key={d.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 text-gray-900">{d.nombre}</td>
+                <tr
+                  key={d.id}
+                  onClick={() => setProductoModalDeposito(d)}
+                  className="border-b border-gray-100 hover:bg-blue-50 transition-colors cursor-pointer"
+                  title="Clic para ver articulos en este deposito"
+                >
+                  <td className="px-4 py-3 text-gray-900 font-medium">{d.nombre}</td>
                   <td className="px-4 py-3 text-gray-600">{d.direccion ?? '—'}</td>
                   <td className="px-4 py-3">
                     {d.es_principal === 1 ? (
@@ -172,9 +228,13 @@ export function DepositoList() {
                       <span className="text-gray-400 text-xs">—</span>
                     )}
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    <span className="font-medium text-gray-900">{conteosMap.get(d.id) ?? 0}</span>
+                    <span className="text-xs text-gray-400 ml-1">artículos</span>
+                  </td>
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => handleToggleActivo(d)}
+                      onClick={(e) => { e.stopPropagation(); handleToggleActivo(d) }}
                       disabled={togglingId === d.id}
                       className="disabled:opacity-50"
                     >
@@ -191,7 +251,7 @@ export function DepositoList() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
-                      onClick={() => handleEditar(d)}
+                      onClick={(e) => { e.stopPropagation(); handleEditar(d) }}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -209,6 +269,11 @@ export function DepositoList() {
         isOpen={formOpen}
         onClose={handleCloseForm}
         deposito={editingDeposito}
+      />
+
+      <DepositoProductosModal
+        deposito={productoModalDeposito}
+        onClose={() => setProductoModalDeposito(null)}
       />
     </div>
   )

@@ -18,6 +18,7 @@ import {
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
+import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { PrecioDisplay } from './precio-display'
@@ -47,6 +48,13 @@ export function ProductoList() {
   const { departamentos } = useDepartamentos()
   const { tasaValor } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
+  const { recetas } = useTodasLasRecetas()
+
+  const productosMap = useMemo(() => {
+    const map = new Map<string, Producto>()
+    for (const p of productos) map.set(p.id, p)
+    return map
+  }, [productos])
 
   const [formOpen, setFormOpen] = useState(false)
   const [editingProducto, setEditingProducto] = useState<Producto | undefined>(undefined)
@@ -158,7 +166,7 @@ export function ProductoList() {
       toast.error('No hay productos para exportar')
       return
     }
-    exportarProductosCsv(productos, departamentos)
+    exportarProductosCsv(productos, departamentos, recetas, productosMap)
     toast.success('Inventario exportado a CSV')
     setExportMenuOpen(false)
   }
@@ -168,7 +176,7 @@ export function ProductoList() {
       toast.error('No hay productos para exportar')
       return
     }
-    exportarProductosExcel(productos, departamentos)
+    exportarProductosExcel(productos, departamentos, recetas, productosMap)
     toast.success('Inventario exportado a Excel')
     setExportMenuOpen(false)
   }
@@ -456,13 +464,6 @@ export function ProductoList() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => handleEditar(prod)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                          Editar
-                        </button>
                         {prod.tipo === 'C' && (
                           <button
                             onClick={() => setComboDetalle(prod)}
@@ -472,6 +473,13 @@ export function ProductoList() {
                             Componentes
                           </button>
                         )}
+                        <button
+                          onClick={() => handleEditar(prod)}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          Editar
+                        </button>
                       </div>
                     </td>
                   </tr>

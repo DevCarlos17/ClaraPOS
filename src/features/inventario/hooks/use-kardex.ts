@@ -19,6 +19,12 @@ export interface MovimientoInventario {
   created_at: string
 }
 
+export interface MovimientoConProducto extends MovimientoInventario {
+  prod_codigo: string
+  prod_nombre: string
+  departamento_id: string
+}
+
 export function useMovimientos(limit = 50) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
@@ -28,6 +34,21 @@ export function useMovimientos(limit = 50) {
     [empresaId]
   )
   return { movimientos: (data ?? []) as MovimientoInventario[], isLoading }
+}
+
+export function useMovimientosFiltrados(fechaDesde: string, fechaHasta: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `SELECT mi.*, p.codigo as prod_codigo, p.nombre as prod_nombre, p.departamento_id
+     FROM movimientos_inventario mi
+     LEFT JOIN productos p ON p.id = mi.producto_id
+     WHERE mi.empresa_id = ? AND mi.fecha >= ? AND mi.fecha <= ?
+     ORDER BY mi.fecha DESC LIMIT 500`,
+    [empresaId, fechaDesde, fechaHasta + ' 23:59:59']
+  )
+  return { movimientos: (data ?? []) as MovimientoConProducto[], isLoading }
 }
 
 export function useMovimientosPorProducto(productoId: string) {

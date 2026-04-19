@@ -1,6 +1,20 @@
 import * as XLSX from 'xlsx'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
+import type { Receta } from '@/features/inventario/hooks/use-recetas'
+
+// Columnas del formato de importacion/exportacion (identicas para facilitar re-importacion)
+const COLUMNAS = [
+  'codigo',
+  'tipo',
+  'nombre',
+  'departamento',
+  'costo_usd',
+  'precio_venta_usd',
+  'precio_mayor_usd',
+  'stock_minimo',
+  'tipo_impuesto',
+] as const
 
 interface ExportRow {
   codigo: string
@@ -10,29 +24,62 @@ interface ExportRow {
   costo_usd: number
   precio_venta_usd: number
   precio_mayor_usd: number | null
-  stock: number
   stock_minimo: number
   tipo_impuesto: string
-  is_active: string
+}
+
+interface ComponenteRow {
+  combo_codigo: string
+  combo_nombre: string
+  componente_codigo: string
+  componente_nombre: string
+  cantidad: number
 }
 
 function buildRows(productos: Producto[], departamentos: Departamento[]): ExportRow[] {
   const depMap = new Map<string, string>()
   for (const d of departamentos) depMap.set(d.id, d.codigo)
 
-  return productos.map((p) => ({
-    codigo: p.codigo,
-    tipo: p.tipo === 'P' ? 'Producto' : 'Servicio',
-    nombre: p.nombre,
-    departamento: depMap.get(p.departamento_id) ?? '',
-    costo_usd: parseFloat(p.costo_usd),
-    precio_venta_usd: parseFloat(p.precio_venta_usd),
-    precio_mayor_usd: p.precio_mayor_usd ? parseFloat(p.precio_mayor_usd) : null,
-    stock: parseFloat(p.stock),
-    stock_minimo: parseFloat(p.stock_minimo),
-    tipo_impuesto: p.tipo_impuesto,
-    is_active: p.is_active === 1 ? 'Si' : 'No',
-  }))
+  // Solo exportar P y S (los combos tienen su propia hoja de componentes)
+  return productos
+    .filter((p) => p.tipo === 'P' || p.tipo === 'S')
+    .map((p) => ({
+      codigo: p.codigo,
+      tipo: p.tipo, // P o S (valor raw, igual al formato de importacion)
+      nombre: p.nombre,
+      departamento: depMap.get(p.departamento_id) ?? '',
+      costo_usd: parseFloat(p.costo_usd),
+      precio_venta_usd: parseFloat(p.precio_venta_usd),
+      precio_mayor_usd: p.precio_mayor_usd ? parseFloat(p.precio_mayor_usd) : null,
+      stock_minimo: parseFloat(p.stock_minimo),
+      tipo_impuesto: p.tipo_impuesto,
+    }))
+}
+
+function buildComponenteRows(
+  productos: Producto[],
+  recetas: Receta[],
+  productosMap: Map<string, Producto>
+): ComponenteRow[] {
+  const combos = productos.filter((p) => p.tipo === 'C')
+  const rows: ComponenteRow[] = []
+
+  for (const combo of combos) {
+    const ingredientes = recetas.filter((r) => r.servicio_id === combo.id)
+    for (const ing of ingredientes) {
+      const componente = productosMap.get(ing.producto_id)
+      if (!componente) continue
+      rows.push({
+        combo_codigo: combo.codigo,
+        combo_nombre: combo.nombre,
+        componente_codigo: componente.codigo,
+        componente_nombre: componente.nombre,
+        cantidad: parseFloat(ing.cantidad),
+      })
+    }
+  }
+
+  return rows
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -48,22 +95,12 @@ function triggerDownload(blob: Blob, filename: string) {
 
 export function exportarProductosCsv(
   productos: Producto[],
-  departamentos: Departamento[]
+  departamentos: Departamento[],
+  recetas: Receta[] = [],
+  productosMap: Map<string, Producto> = new Map()
 ) {
   const rows = buildRows(productos, departamentos)
-  const headers = [
-    'codigo',
-    'tipo',
-    'nombre',
-    'departamento',
-    'costo_usd',
-    'precio_venta_usd',
-    'precio_mayor_usd',
-    'stock',
-    'stock_minimo',
-    'tipo_impuesto',
-    'is_active',
-  ]
+  const componenteRows = buildComponenteRows(productos, recetas, productosMap)
 
   const escape = (val: unknown): string => {
     if (val === null || val === undefined) return ''
@@ -74,14 +111,25 @@ export function exportarProductosCsv(
     return str
   }
 
-  const csvLines = [
-    headers.join(','),
-    ...rows.map((r) =>
-      headers.map((h) => escape(r[h as keyof ExportRow])).join(',')
-    ),
+  const csvLines: string[] = [
+    COLUMNAS.join(','),
+    ...rows.map((r) => COLUMNAS.map((h) => escape(r[h as keyof ExportRow])).join(',')),
   ]
 
-  // BOM para compatibilidad con Excel (caracteres especiales)
+  // Seccion de componentes de combos al final del CSV
+  if (componenteRows.length > 0) {
+    csvLines.push('')
+    csvLines.push('# COMPONENTES DE COMBOS (informativo - no importable)')
+    csvLines.push('combo_codigo,combo_nombre,componente_codigo,componente_nombre,cantidad')
+    for (const cr of componenteRows) {
+      csvLines.push(
+        [cr.combo_codigo, cr.combo_nombre, cr.componente_codigo, cr.componente_nombre, cr.cantidad]
+          .map((v) => escape(v))
+          .join(',')
+      )
+    }
+  }
+
   const csv = '\uFEFF' + csvLines.join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const fecha = new Date().toISOString().slice(0, 10)
@@ -90,48 +138,46 @@ export function exportarProductosCsv(
 
 export function exportarProductosExcel(
   productos: Producto[],
-  departamentos: Departamento[]
+  departamentos: Departamento[],
+  recetas: Receta[] = [],
+  productosMap: Map<string, Producto> = new Map()
 ) {
   const rows = buildRows(productos, departamentos)
+  const componenteRows = buildComponenteRows(productos, recetas, productosMap)
 
-  const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: [
-      'codigo',
-      'tipo',
-      'nombre',
-      'departamento',
-      'costo_usd',
-      'precio_venta_usd',
-      'precio_mayor_usd',
-      'stock',
-      'stock_minimo',
-      'tipo_impuesto',
-      'is_active',
-    ],
-  })
+  const workbook = XLSX.utils.book_new()
 
-  // Anchos de columnas
+  // Hoja 1: Inventario (P y S) - formato identico al de importacion
+  const worksheet = XLSX.utils.json_to_sheet(rows, { header: [...COLUMNAS] })
   worksheet['!cols'] = [
     { wch: 14 }, // codigo
-    { wch: 10 }, // tipo
+    { wch: 6 },  // tipo
     { wch: 32 }, // nombre
     { wch: 14 }, // departamento
     { wch: 12 }, // costo
     { wch: 14 }, // precio_venta
     { wch: 14 }, // precio_mayor
-    { wch: 10 }, // stock
     { wch: 14 }, // stock_minimo
     { wch: 14 }, // tipo_impuesto
-    { wch: 8 },  // is_active
   ]
-
-  const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario')
 
-  const excelBuffer = XLSX.write(workbook, {
-    bookType: 'xlsx',
-    type: 'array',
-  })
+  // Hoja 2: Componentes de combos (si existen)
+  if (componenteRows.length > 0) {
+    const wsComponentes = XLSX.utils.json_to_sheet(componenteRows, {
+      header: ['combo_codigo', 'combo_nombre', 'componente_codigo', 'componente_nombre', 'cantidad'],
+    })
+    wsComponentes['!cols'] = [
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 14 },
+      { wch: 28 },
+      { wch: 10 },
+    ]
+    XLSX.utils.book_append_sheet(workbook, wsComponentes, 'Componentes Combos')
+  }
+
+  const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' })
   const blob = new Blob([excelBuffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })

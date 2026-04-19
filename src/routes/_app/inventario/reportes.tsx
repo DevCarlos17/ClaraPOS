@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Printer } from 'lucide-react'
 import { createFileRoute } from '@tanstack/react-router'
+import { useQuery } from '@powersync/react'
 import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
@@ -9,13 +10,13 @@ import { startOfMonth, todayStr } from '@/lib/dates'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   useInventarioKpis,
   useValorPorDepto,
   useProductosStockCritico,
 } from '@/features/reportes/hooks/use-inventario-reportes'
 import { InventarioKpiCards } from '@/features/reportes/components/inventario-kpi-cards'
-import { InventarioStockCritico } from '@/features/reportes/components/inventario-stock-critico'
 import { DashboardTopRotacion } from '@/features/dashboard/components/dashboard-top-rotacion'
 import { InventarioMovimientosModal } from '@/features/reportes/components/inventario-movimientos-modal'
 import { InventarioValorModal } from '@/features/reportes/components/inventario-valor-modal'
@@ -32,6 +33,16 @@ function InventarioReportesPage() {
   const [valorOpen, setValorOpen] = useState(false)
   const [movimientosOpen, setMovimientosOpen] = useState(false)
   const [rotacionModal, setRotacionModal] = useState<'mayor' | 'menor' | null>(null)
+
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  // Datos de la empresa para cabecera del PDF
+  const { data: empresaData } = useQuery(
+    empresaId ? 'SELECT nombre, rif, direccion, telefono FROM empresas WHERE id = ?' : '',
+    empresaId ? [empresaId] : []
+  )
+  const empresa = empresaData?.[0] as { nombre: string; rif: string; direccion: string; telefono: string } | undefined
 
   // Datos para PDF general
   const { valorTotalUsd, productosActivos, stockCritico, movimientosPeriodo } = useInventarioKpis(fechaDesde, fechaHasta)
@@ -70,7 +81,13 @@ function InventarioReportesPage() {
   <title>Reporte de Inventario</title>
   <style>
     body { font-family: Arial, sans-serif; font-size: 12px; margin: 20px; }
-    h1 { font-size: 18px; margin-bottom: 4px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #1d4ed8; padding-bottom: 10px; margin-bottom: 12px; }
+    .header-empresa { }
+    .header-empresa h1 { font-size: 18px; margin: 0 0 2px; color: #1d4ed8; }
+    .header-empresa p { margin: 1px 0; color: #6b7280; font-size: 11px; }
+    .header-reporte { text-align: right; }
+    .header-reporte h2 { font-size: 14px; margin: 0 0 2px; }
+    .header-reporte p { margin: 1px 0; color: #6b7280; font-size: 11px; }
     h2 { font-size: 14px; margin: 20px 0 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 4px; }
     .kpis { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 8px; }
     .kpi { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; }
@@ -81,13 +98,24 @@ function InventarioReportesPage() {
     th { background: #f3f4f6; border: 1px solid #e5e7eb; padding: 6px 8px; text-align: left; font-weight: 600; }
     td { border: 1px solid #e5e7eb; padding: 5px 8px; }
     tr:nth-child(even) td { background: #f9fafb; }
-    .periodo { color: #6b7280; font-size: 11px; margin-bottom: 16px; }
     @media print { body { margin: 0; } }
   </style>
 </head>
 <body>
-  <h1>Reporte de Inventario</h1>
-  <p class="periodo">Periodo: ${fechaDesde} al ${fechaHasta} &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <div class="header">
+    <div class="header-empresa">
+      <h1>${empresa?.nombre ?? 'ClaraPOS'}</h1>
+      ${empresa?.rif ? `<p>RIF: ${empresa.rif}</p>` : ''}
+      ${empresa?.direccion ? `<p>${empresa.direccion}</p>` : ''}
+      ${empresa?.telefono ? `<p>Tel: ${empresa.telefono}</p>` : ''}
+    </div>
+    <div class="header-reporte">
+      <h2>Reporte de Inventario</h2>
+      <p>Periodo: ${fechaDesde} al ${fechaHasta}</p>
+      <p>Generado: ${new Date().toLocaleString('es-VE')}</p>
+      <p>Usuario: ${user?.nombre ?? ''}</p>
+    </div>
+  </div>
 
   <div class="kpis">
     <div class="kpi">
@@ -166,8 +194,6 @@ function InventarioReportesPage() {
           onValorClick={() => setValorOpen(true)}
           onMovimientosClick={() => setMovimientosOpen(true)}
         />
-
-        <InventarioStockCritico />
 
         <DashboardTopRotacion
           onMayorClick={() => setRotacionModal('mayor')}
