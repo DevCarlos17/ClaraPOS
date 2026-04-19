@@ -235,17 +235,32 @@ export async function aplicarAjuste(
       if (operacion === 'SUMA') {
         stockNuevo = stockAnterior + cantidad
 
-        // Si la linea tiene datos de lote, crear el registro en lotes
-        let loteIdCreado: string | null = null
-        if (linea.lote_nro) {
-          loteIdCreado = uuidv4()
+        let loteIdParaMovimiento: string | null = null
+
+        if (linea.lote_id) {
+          // Agregar cantidad a un lote existente seleccionado por el usuario
+          const loteResult = await tx.execute(
+            'SELECT cantidad_actual FROM lotes WHERE id = ?',
+            [linea.lote_id]
+          )
+          if (loteResult.rows && loteResult.rows.length > 0) {
+            const cantLote = parseFloat((loteResult.rows.item(0) as { cantidad_actual: string }).cantidad_actual)
+            await tx.execute(
+              'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+              [(cantLote + cantidad).toFixed(3), 'ACTIVO', now, linea.lote_id]
+            )
+          }
+          loteIdParaMovimiento = linea.lote_id
+        } else if (linea.lote_nro) {
+          // Crear nuevo lote con datos capturados en el ajuste
+          loteIdParaMovimiento = uuidv4()
           await tx.execute(
             `INSERT INTO lotes (id, empresa_id, producto_id, deposito_id, nro_lote, fecha_fabricacion,
                fecha_vencimiento, cantidad_inicial, cantidad_actual, costo_unitario, factura_compra_id,
                status, created_at, updated_at, created_by)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'ACTIVO', ?, ?, ?)`,
             [
-              loteIdCreado, empresaId, linea.producto_id, linea.deposito_id,
+              loteIdParaMovimiento, empresaId, linea.producto_id, linea.deposito_id,
               linea.lote_nro.toUpperCase(),
               linea.lote_fecha_fab ?? null,
               linea.lote_fecha_venc ?? null,
@@ -264,7 +279,7 @@ export async function aplicarAjuste(
           [
             uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
-            linea.costo_unitario ?? null, loteIdCreado,
+            linea.costo_unitario ?? null, loteIdParaMovimiento,
             ajusteId, ajuste.num_ajuste,
             userId, fechaHoy, now,
           ]

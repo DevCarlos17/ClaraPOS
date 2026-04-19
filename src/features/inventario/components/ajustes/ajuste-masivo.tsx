@@ -22,6 +22,17 @@ interface ProductoConteo {
 type OrdenCol = 'departamento' | 'nombre' | 'stock' | 'diferencia'
 type OrdenDir = 'asc' | 'desc'
 
+interface LoteDisponible {
+  id: string
+  producto_id: string
+  deposito_id: string
+  nro_lote: string
+  cantidad_actual: string
+  fecha_vencimiento: string | null
+}
+
+type CambioItem = { id: string; stockActual: number; stockNuevo: number; lote_id?: string }
+
 export function AjusteMasivo() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
@@ -34,6 +45,7 @@ export function AjusteMasivo() {
   const [filtroDepto, setFiltroDepto] = useState('')
   const [soloConCambios, setSoloConCambios] = useState(false)
   const [conteos, setConteos] = useState<Record<string, string>>({})
+  const [lotesSeleccionados, setLotesSeleccionados] = useState<Record<string, string>>({})
   const [, setConfirmando] = useState(false)
   const [motivoSumaId, setMotivoSumaId] = useState('')
   const [motivoRestaId, setMotivoRestaId] = useState('')
@@ -57,6 +69,21 @@ export function AjusteMasivo() {
   )
 
   const productos = (productosRaw ?? []) as ProductoConteo[]
+
+  const { data: lotesActivosData } = useQuery(
+    `SELECT id, producto_id, deposito_id, nro_lote, cantidad_actual, fecha_vencimiento
+     FROM lotes
+     WHERE empresa_id = ? AND status = 'ACTIVO'
+     ORDER BY fecha_vencimiento ASC, created_at ASC`,
+    [empresaId]
+  )
+  const lotesActivos = (lotesActivosData ?? []) as LoteDisponible[]
+
+  function getLotesParaProducto(productoId: string): LoteDisponible[] {
+    return lotesActivos.filter(
+      (l) => l.producto_id === productoId && l.deposito_id === depositoId
+    )
+  }
 
   const deptoOpciones = useMemo(() => {
     const set = new Map<string, string>()
@@ -130,9 +157,15 @@ export function AjusteMasivo() {
     return lista
   }, [productos, filtroDepto, busqueda, soloConCambios, conteos, orden])
 
+  const hayProductosConLotes = useMemo(
+    () => productosFiltrados.some((p) => p.maneja_lotes === 1),
+    [productosFiltrados]
+  )
+  const mostrarColumnaLotes = hayProductosConLotes && !!depositoId && depositoId !== '__ALL__'
+
   const cambios = useMemo(() => {
-    const sumas: Array<{ id: string; stockActual: number; stockNuevo: number }> = []
-    const restas: Array<{ id: string; stockActual: number; stockNuevo: number }> = []
+    const sumas: CambioItem[] = []
+    const restas: CambioItem[] = []
     for (const p of productos) {
       const val = conteos[p.id]
       if (!val || val === '') continue
@@ -141,11 +174,12 @@ export function AjusteMasivo() {
       const actual = parseFloat(p.stock)
       const diff = nuevo - actual
       if (Math.abs(diff) < 0.0001) continue
-      if (diff > 0) sumas.push({ id: p.id, stockActual: actual, stockNuevo: nuevo })
-      else restas.push({ id: p.id, stockActual: actual, stockNuevo: nuevo })
+      const loteId = p.maneja_lotes === 1 ? (lotesSeleccionados[p.id] || undefined) : undefined
+      if (diff > 0) sumas.push({ id: p.id, stockActual: actual, stockNuevo: nuevo, lote_id: loteId })
+      else restas.push({ id: p.id, stockActual: actual, stockNuevo: nuevo, lote_id: loteId })
     }
     return { sumas, restas, total: sumas.length + restas.length }
-  }, [productos, conteos])
+  }, [productos, conteos, lotesSeleccionados])
 
   function handleCambioConteo(productoId: string, valor: string) {
     setConteos((prev) => ({ ...prev, [productoId]: valor }))
@@ -153,6 +187,7 @@ export function AjusteMasivo() {
 
   function handleLimpiar() {
     setConteos({})
+    setLotesSeleccionados({})
     setSoloConCambios(false)
   }
 
@@ -175,6 +210,17 @@ export function AjusteMasivo() {
     }
     if (depositoId === '__ALL__') {
       toast.error('Selecciona un deposito especifico (no "Todos") para aplicar el conteo')
+      return
+    }
+    const sinLote = [...cambios.sumas, ...cambios.restas].filter((c) => {
+      const p = productos.find((prod) => prod.id === c.id)
+      return p?.maneja_lotes === 1 && !c.lote_id
+    })
+    if (sinLote.length > 0) {
+      const nombres = sinLote
+        .map((c) => productos.find((p) => p.id === c.id)?.nombre ?? c.id)
+        .join(', ')
+      toast.error(`Selecciona el lote para: ${nombres}`)
       return
     }
     setConfirmando(true)
@@ -211,6 +257,7 @@ export function AjusteMasivo() {
           producto_id: c.id,
           deposito_id: depositoId,
           cantidad: c.stockNuevo - c.stockActual,
+          lote_id: c.lote_id,
         }))
         const ajusteId = await crearAjuste({
           motivo_id: motivoSumaId,
@@ -230,6 +277,7 @@ export function AjusteMasivo() {
           producto_id: c.id,
           deposito_id: depositoId,
           cantidad: Math.abs(c.stockNuevo - c.stockActual),
+          lote_id: c.lote_id,
         }))
         const ajusteId = await crearAjuste({
           motivo_id: motivoRestaId,
@@ -248,6 +296,7 @@ export function AjusteMasivo() {
       )
       cerrarConfirmacion()
       setConteos({})
+      setLotesSeleccionados({})
       setSoloConCambios(false)
       setObservaciones('')
     } catch (err) {
@@ -515,6 +564,9 @@ export function AjusteMasivo() {
                     <ThSort col="stock" label="Stock Actual" />
                     <th className="text-left px-4 py-3 font-medium text-gray-700">Nuevo Stock</th>
                     <ThSort col="diferencia" label="Diferencia" />
+                    {mostrarColumnaLotes && (
+                      <th className="text-left px-3 py-3 font-medium text-gray-700 whitespace-nowrap">Lote</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -579,6 +631,49 @@ export function AjusteMasivo() {
                             <span className="font-medium text-red-700">{diff.toFixed(3)}</span>
                           )}
                         </td>
+                        {mostrarColumnaLotes && (
+                          <td className="px-3 py-2">
+                            {p.maneja_lotes === 1 && hayCambio ? (
+                              (() => {
+                                const lotes = getLotesParaProducto(p.id)
+                                if (lotes.length === 0) {
+                                  return (
+                                    <span className="text-xs text-amber-600 whitespace-nowrap">
+                                      Sin lotes activos
+                                    </span>
+                                  )
+                                }
+                                const loteSeleccionado = lotesSeleccionados[p.id] ?? ''
+                                return (
+                                  <select
+                                    value={loteSeleccionado}
+                                    onChange={(e) =>
+                                      setLotesSeleccionados((prev) => ({
+                                        ...prev,
+                                        [p.id]: e.target.value,
+                                      }))
+                                    }
+                                    className={`h-8 px-2 text-xs border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[150px] ${
+                                      loteSeleccionado
+                                        ? 'border-green-400 bg-green-50'
+                                        : 'border-amber-400 bg-amber-50'
+                                    }`}
+                                  >
+                                    <option value="">Seleccionar lote...</option>
+                                    {lotes.map((l) => (
+                                      <option key={l.id} value={l.id}>
+                                        {l.nro_lote} — {parseFloat(l.cantidad_actual).toFixed(3)} uds
+                                        {l.fecha_vencimiento ? ` (venc: ${l.fecha_vencimiento})` : ''}
+                                      </option>
+                                    ))}
+                                  </select>
+                                )
+                              })()
+                            ) : (
+                              <span className="text-gray-300 text-xs">—</span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     )
                   })}
