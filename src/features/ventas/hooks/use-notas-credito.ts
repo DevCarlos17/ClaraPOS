@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
+import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -407,6 +409,24 @@ export async function crearNotaCredito(
       '0.00',
       venta_id,
     ])
+
+    // 7. Generar asientos contables NCR
+    try {
+      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      await generarAsientosNCR(tx, {
+        empresaId: empresa_id,
+        ncrId,
+        nroNcr,
+        ventaId: venta_id,
+        totalUsd: parseFloat(venta.total_usd),
+        afectaCxC: saldoPend > 0.01,
+        banco_empresa_id: null,
+        cuentas,
+        usuarioId: usuario_id,
+      })
+    } catch {
+      // Fallo en contabilidad no bloquea la NCR
+    }
   })
 
   return { ncrId, nroNcr }

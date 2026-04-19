@@ -10,22 +10,38 @@ import { CuentaForm } from './cuenta-form'
 
 // ─── Badge de tipo ────────────────────────────────────────────
 
+const TIPO_COLORS: Record<string, { bg: string; text: string; ring: string }> = {
+  ACTIVO:     { bg: 'bg-blue-50',   text: 'text-blue-700',   ring: 'ring-blue-600/20' },
+  PASIVO:     { bg: 'bg-red-50',    text: 'text-red-700',    ring: 'ring-red-600/20' },
+  PATRIMONIO: { bg: 'bg-purple-50', text: 'text-purple-700', ring: 'ring-purple-600/20' },
+  INGRESO:    { bg: 'bg-green-50',  text: 'text-green-700',  ring: 'ring-green-600/20' },
+  COSTO:      { bg: 'bg-orange-50', text: 'text-orange-700', ring: 'ring-orange-600/20' },
+  GASTO:      { bg: 'bg-amber-50',  text: 'text-amber-700',  ring: 'ring-amber-600/20' },
+}
+
 function TipoBadge({ tipo }: { tipo: string }) {
-  if (tipo === 'GASTO') {
-    return (
-      <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-600/20 ring-inset">
-        GASTO
-      </span>
-    )
-  }
+  const colors = TIPO_COLORS[tipo] ?? { bg: 'bg-gray-50', text: 'text-gray-700', ring: 'ring-gray-600/20' }
   return (
-    <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-blue-600/20 ring-inset">
-      INGRESO OTRO
+    <span className={`inline-flex items-center rounded-full ${colors.bg} px-2.5 py-0.5 text-xs font-medium ${colors.text} ring-1 ${colors.ring} ring-inset`}>
+      {tipo}
     </span>
   )
 }
 
-// ─── Badge de tipo de cuenta (detalle / grupo) ────────────────
+function NaturalezaBadge({ naturaleza }: { naturaleza: string }) {
+  if (naturaleza === 'DEUDORA') {
+    return (
+      <span className="inline-flex items-center rounded-full bg-cyan-50 px-2.5 py-0.5 text-xs font-medium text-cyan-700 ring-1 ring-cyan-600/20 ring-inset">
+        DEUDORA
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-medium text-rose-700 ring-1 ring-rose-600/20 ring-inset">
+      ACREEDORA
+    </span>
+  )
+}
 
 function DetalleBadge({ esCuentaDetalle }: { esCuentaDetalle: number }) {
   if (esCuentaDetalle === 1) {
@@ -41,8 +57,6 @@ function DetalleBadge({ esCuentaDetalle }: { esCuentaDetalle: number }) {
     </span>
   )
 }
-
-// ─── Skeleton de carga ────────────────────────────────────────
 
 function TablaSkeleton() {
   return (
@@ -130,7 +144,8 @@ export function PlanCuentasList() {
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Codigo</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Nombre</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Tipo</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Detalle</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Naturaleza</th>
+                <th className="text-left px-4 py-3 font-medium text-gray-700">Nivel</th>
                 <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
                 <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
               </tr>
@@ -144,7 +159,7 @@ export function PlanCuentasList() {
                   {/* Codigo con sangria por nivel */}
                   <td
                     className="px-4 py-3"
-                    style={{ paddingLeft: `${16 + (c.nivel - 1) * 24}px` }}
+                    style={{ paddingLeft: `${16 + (c.nivel - 1) * 20}px` }}
                   >
                     <span
                       className={`font-mono text-gray-900 ${
@@ -159,6 +174,10 @@ export function PlanCuentasList() {
 
                   <td className="px-4 py-3">
                     <TipoBadge tipo={c.tipo} />
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <NaturalezaBadge naturaleza={c.naturaleza} />
                   </td>
 
                   <td className="px-4 py-3">

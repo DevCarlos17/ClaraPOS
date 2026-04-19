@@ -206,6 +206,7 @@ const bancos_empresa = new Table(
     titular_documento: column.text,
     moneda_id: column.text,
     saldo_actual: column.text,
+    cuenta_contable_id: column.text,
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,
@@ -1047,6 +1048,7 @@ const plan_cuentas = new Table(
     codigo: column.text,
     nombre: column.text,
     tipo: column.text,
+    naturaleza: column.text,
     parent_id: column.text,
     nivel: column.integer,
     es_cuenta_detalle: column.integer,
@@ -1079,6 +1081,40 @@ const gastos = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const cuentas_config = new Table(
+  {
+    empresa_id: column.text,
+    clave: column.text,
+    cuenta_contable_id: column.text,
+    descripcion: column.text,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
+    updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const libro_contable = new Table(
+  {
+    empresa_id: column.text,
+    nro_asiento: column.text,
+    fecha_registro: column.text,
+    modulo_origen: column.text,
+    doc_origen_id: column.text,
+    doc_origen_ref: column.text,
+    cuenta_contable_id: column.text,
+    banco_empresa_id: column.text,
+    monto: column.text,
+    detalle: column.text,
+    estado: column.text,
+    parent_id: column.text,
+    usuario_id: column.text,
+    created_at: column.text,
   },
   { indexes: {} }
 )
@@ -1155,6 +1191,8 @@ export const AppSchema = new Schema({
   // Contabilidad
   plan_cuentas,
   gastos,
+  cuentas_config,
+  libro_contable,
 })
 
 export type Database = (typeof AppSchema)['types']

@@ -98,3 +98,5 @@ bucket_definitions:
       # --- CONTABILIDAD ---
       - SELECT * FROM plan_cuentas WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM gastos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM cuentas_config WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM libro_contable WHERE empresa_id = bucket.empresa_id

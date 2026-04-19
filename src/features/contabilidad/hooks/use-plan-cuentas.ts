@@ -3,6 +3,7 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import type { TipoCuenta, NaturalezaCuenta } from '@/features/contabilidad/schemas/cuenta-schema'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -12,6 +13,7 @@ export interface CuentaContable {
   codigo: string
   nombre: string
   tipo: string
+  naturaleza: string
   parent_id: string | null
   nivel: number
   es_cuenta_detalle: number
@@ -41,7 +43,7 @@ export function usePlanCuentas() {
 
 /**
  * Solo cuentas de detalle activas (es_cuenta_detalle = 1 AND is_active = 1).
- * Estas son las unicas que pueden usarse en transacciones como gastos.
+ * Estas son las unicas que pueden usarse en transacciones.
  */
 export function useCuentasDetalle() {
   const { user } = useCurrentUser()
@@ -57,12 +59,33 @@ export function useCuentasDetalle() {
   return { cuentas: (data ?? []) as CuentaContable[], isLoading }
 }
 
+/**
+ * Cuentas de detalle activas filtradas por tipo.
+ */
+export function useCuentasDetallePorTipo(tipo: TipoCuenta | TipoCuenta[]) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const tipos = Array.isArray(tipo) ? tipo : [tipo]
+  const placeholders = tipos.map(() => '?').join(',')
+
+  const { data, isLoading } = useQuery(
+    `SELECT * FROM plan_cuentas
+     WHERE empresa_id = ? AND es_cuenta_detalle = 1 AND is_active = 1
+       AND tipo IN (${placeholders})
+     ORDER BY codigo ASC`,
+    [empresaId, ...tipos]
+  )
+
+  return { cuentas: (data ?? []) as CuentaContable[], isLoading }
+}
+
 // ─── Funciones de escritura ──────────────────────────────────
 
 export async function crearCuenta(data: {
   codigo: string
   nombre: string
-  tipo: 'GASTO' | 'INGRESO_OTRO'
+  tipo: TipoCuenta
+  naturaleza: NaturalezaCuenta
   parent_id?: string
   nivel: number
   es_cuenta_detalle: boolean
@@ -80,6 +103,7 @@ export async function crearCuenta(data: {
       codigo: data.codigo.toUpperCase(),
       nombre: data.nombre.toUpperCase(),
       tipo: data.tipo,
+      naturaleza: data.naturaleza,
       parent_id: data.parent_id ?? null,
       nivel: data.nivel,
       es_cuenta_detalle: data.es_cuenta_detalle ? 1 : 0,
@@ -96,13 +120,14 @@ export async function crearCuenta(data: {
 
 /**
  * Actualiza una cuenta contable.
- * NOTA: El codigo es inmutable despues de la creacion y no se incluye aqui.
+ * NOTA: El codigo es inmutable despues de la creacion.
  */
 export async function actualizarCuenta(
   id: string,
   data: {
     nombre?: string
-    tipo?: 'GASTO' | 'INGRESO_OTRO'
+    tipo?: TipoCuenta
+    naturaleza?: NaturalezaCuenta
     parent_id?: string | null
     nivel?: number
     es_cuenta_detalle?: boolean
@@ -115,6 +140,7 @@ export async function actualizarCuenta(
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()
   if (data.tipo !== undefined) updates.tipo = data.tipo
+  if (data.naturaleza !== undefined) updates.naturaleza = data.naturaleza
   if (data.parent_id !== undefined) updates.parent_id = data.parent_id ?? null
   if (data.nivel !== undefined) updates.nivel = data.nivel
   if (data.es_cuenta_detalle !== undefined)

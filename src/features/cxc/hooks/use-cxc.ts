@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
+import { generarAsientosPagoCxC } from '@/features/contabilidad/lib/generar-asientos'
 
 export interface VentaPendiente {
   id: string
@@ -320,6 +322,22 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       now,
       cliente_id,
     ])
+
+    // 7. Generar asientos contables (cobro CxC)
+    try {
+      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      await generarAsientosPagoCxC(tx, {
+        empresaId: empresa_id,
+        pagoId,
+        pagoRef: `PAG-${venta.nro_factura}`,
+        monto_usd: montoUsd,
+        banco_empresa_id: null,
+        cuentas,
+        usuarioId: procesado_por,
+      })
+    } catch {
+      // Fallo en contabilidad no bloquea el pago
+    }
   })
 }
 
@@ -477,6 +495,22 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       now,
       cliente_id,
     ])
+
+    // 6. Generar asientos contables (abono global CxC)
+    try {
+      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      await generarAsientosPagoCxC(tx, {
+        empresaId: empresa_id,
+        pagoId: movId,
+        pagoRef: 'ABONO-GLOBAL',
+        monto_usd: montoTotalUsd,
+        banco_empresa_id: null,
+        cuentas,
+        usuarioId: procesado_por,
+      })
+    } catch {
+      // Fallo en contabilidad no bloquea el abono
+    }
   })
 
   return { facturasAfectadas, montoAplicado }

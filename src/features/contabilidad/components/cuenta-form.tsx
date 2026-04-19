@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { cuentaSchema } from '@/features/contabilidad/schemas/cuenta-schema'
+import { cuentaSchema, TIPOS_CUENTA, NATURALEZAS_CUENTA, NATURALEZA_POR_TIPO } from '@/features/contabilidad/schemas/cuenta-schema'
+import type { TipoCuenta, NaturalezaCuenta } from '@/features/contabilidad/schemas/cuenta-schema'
 import {
   crearCuenta,
   actualizarCuenta,
@@ -17,6 +18,15 @@ interface CuentaFormProps {
   cuentas: CuentaContable[]
 }
 
+const TIPO_LABELS: Record<string, string> = {
+  ACTIVO: 'Activo',
+  PASIVO: 'Pasivo',
+  PATRIMONIO: 'Patrimonio',
+  INGRESO: 'Ingreso',
+  COSTO: 'Costo',
+  GASTO: 'Gasto',
+}
+
 // ─── Componente ───────────────────────────────────────────────
 
 export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps) {
@@ -28,7 +38,8 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
 
   const [codigo, setCodigo] = useState('')
   const [nombre, setNombre] = useState('')
-  const [tipo, setTipo] = useState<'GASTO' | 'INGRESO_OTRO'>('GASTO')
+  const [tipo, setTipo] = useState<TipoCuenta>('GASTO')
+  const [naturaleza, setNaturaleza] = useState<NaturalezaCuenta>('DEUDORA')
   const [parentId, setParentId] = useState('')
   const [nivel, setNivel] = useState('1')
   const [esCuentaDetalle, setEsCuentaDetalle] = useState(false)
@@ -46,7 +57,8 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
       if (cuenta) {
         setCodigo(cuenta.codigo)
         setNombre(cuenta.nombre)
-        setTipo(cuenta.tipo as 'GASTO' | 'INGRESO_OTRO')
+        setTipo(cuenta.tipo as TipoCuenta)
+        setNaturaleza((cuenta.naturaleza as NaturalezaCuenta) ?? 'DEUDORA')
         setParentId(cuenta.parent_id ?? '')
         setNivel(String(cuenta.nivel))
         setEsCuentaDetalle(cuenta.es_cuenta_detalle === 1)
@@ -55,6 +67,7 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
         setCodigo('')
         setNombre('')
         setTipo('GASTO')
+        setNaturaleza('DEUDORA')
         setParentId('')
         setNivel('1')
         setEsCuentaDetalle(false)
@@ -67,6 +80,12 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
     }
   }, [isOpen, cuenta])
 
+  // Auto-completar naturaleza cuando cambia el tipo
+  function handleTipoChange(nuevoTipo: TipoCuenta) {
+    setTipo(nuevoTipo)
+    setNaturaleza(NATURALEZA_POR_TIPO[nuevoTipo])
+  }
+
   // ─── Submit ───────────────────────────────────────────────
 
   async function handleSubmit(e: React.FormEvent) {
@@ -77,6 +96,7 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
       codigo: codigo.trim(),
       nombre: nombre.trim(),
       tipo,
+      naturaleza,
       parent_id: parentId || undefined,
       nivel: parseInt(nivel, 10) || 0,
       es_cuenta_detalle: esCuentaDetalle,
@@ -103,6 +123,7 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
         await actualizarCuenta(cuenta.id, {
           nombre: parsed.data.nombre,
           tipo: parsed.data.tipo,
+          naturaleza: parsed.data.naturaleza,
           parent_id: parsed.data.parent_id ?? null,
           nivel: parsed.data.nivel,
           es_cuenta_detalle: parsed.data.es_cuenta_detalle,
@@ -115,6 +136,7 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
           codigo: parsed.data.codigo,
           nombre: parsed.data.nombre,
           tipo: parsed.data.tipo,
+          naturaleza: parsed.data.naturaleza,
           parent_id: parsed.data.parent_id,
           nivel: parsed.data.nivel,
           es_cuenta_detalle: parsed.data.es_cuenta_detalle,
@@ -206,16 +228,39 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
             <select
               id="cuenta-tipo"
               value={tipo}
-              onChange={(e) => setTipo(e.target.value as 'GASTO' | 'INGRESO_OTRO')}
+              onChange={(e) => handleTipoChange(e.target.value as TipoCuenta)}
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 errors.tipo ? 'border-red-500' : 'border-gray-300'
               }`}
             >
-              <option value="GASTO">Gasto</option>
-              <option value="INGRESO_OTRO">Ingreso Otro</option>
+              {TIPOS_CUENTA.map((t) => (
+                <option key={t} value={t}>{TIPO_LABELS[t]}</option>
+              ))}
             </select>
             {errors.tipo && (
               <p className="text-red-500 text-xs mt-1">{errors.tipo}</p>
+            )}
+          </div>
+
+          {/* Naturaleza */}
+          <div>
+            <label htmlFor="cuenta-naturaleza" className="block text-sm font-medium text-gray-700 mb-1">
+              Naturaleza
+            </label>
+            <select
+              id="cuenta-naturaleza"
+              value={naturaleza}
+              onChange={(e) => setNaturaleza(e.target.value as NaturalezaCuenta)}
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                errors.naturaleza ? 'border-red-500' : 'border-gray-300'
+              }`}
+            >
+              {NATURALEZAS_CUENTA.map((n) => (
+                <option key={n} value={n}>{n === 'DEUDORA' ? 'Deudora (aumenta con DEBE)' : 'Acreedora (aumenta con HABER)'}</option>
+              ))}
+            </select>
+            {errors.naturaleza && (
+              <p className="text-red-500 text-xs mt-1">{errors.naturaleza}</p>
             )}
           </div>
 

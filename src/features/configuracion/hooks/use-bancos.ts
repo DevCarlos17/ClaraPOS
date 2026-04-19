@@ -13,6 +13,7 @@ export interface Banco {
   titular_documento: string | null
   moneda_id: string
   saldo_actual: string
+  cuenta_contable_id: string | null
   is_active: number
   empresa_id: string
   created_at: string
@@ -48,6 +49,7 @@ export async function createBanco(params: {
   tipo_cuenta?: string
   titular: string
   titular_documento?: string
+  cuenta_contable_id?: string
   empresa_id: string
   usuario_id: string
 }) {
@@ -66,8 +68,8 @@ export async function createBanco(params: {
     const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
     await tx.execute(
-      `INSERT INTO bancos_empresa (id, empresa_id, nombre_banco, nro_cuenta, tipo_cuenta, titular, titular_documento, moneda_id, saldo_actual, is_active, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO bancos_empresa (id, empresa_id, nombre_banco, nro_cuenta, tipo_cuenta, titular, titular_documento, moneda_id, saldo_actual, cuenta_contable_id, is_active, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         params.empresa_id,
@@ -78,6 +80,7 @@ export async function createBanco(params: {
         params.titular_documento ?? null,
         monedaId,
         '0.00',
+        params.cuenta_contable_id ?? null,
         1,
         now,
         now,
@@ -91,7 +94,7 @@ export async function createBanco(params: {
 
 export async function updateBanco(
   id: string,
-  data: { nombre_banco?: string; nro_cuenta?: string; tipo_cuenta?: string; titular?: string; titular_documento?: string; is_active?: boolean }
+  data: { nombre_banco?: string; nro_cuenta?: string; tipo_cuenta?: string; titular?: string; titular_documento?: string; cuenta_contable_id?: string | null; is_active?: boolean }
 ) {
   const sets: string[] = []
   const values: unknown[] = []
@@ -115,6 +118,10 @@ export async function updateBanco(
   if (data.titular_documento !== undefined) {
     sets.push('titular_documento = ?')
     values.push(data.titular_documento)
+  }
+  if (data.cuenta_contable_id !== undefined) {
+    sets.push('cuenta_contable_id = ?')
+    values.push(data.cuenta_contable_id)
   }
   if (data.is_active !== undefined) {
     sets.push('is_active = ?')

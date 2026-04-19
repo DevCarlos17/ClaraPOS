@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
+import { generarAsientosGasto } from '@/features/contabilidad/lib/generar-asientos'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -95,7 +97,7 @@ export function useGastos(fechaDesde?: string, fechaHasta?: string) {
 // ─── Funciones de escritura ──────────────────────────────────
 
 /**
- * Crea un nuevo gasto.
+ * Crea un nuevo gasto y genera sus asientos contables.
  * Genera nro_gasto con formato GTO-XXXX (secuencial por empresa).
  * El gasto queda en status REGISTRADO (no se puede editar, solo anular).
  */
@@ -160,6 +162,24 @@ export async function crearGasto(data: {
         data.created_by ?? null,
       ]
     )
+
+    // Generar asientos contables
+    try {
+      const cuentas = await cargarMapaCuentas(tx, data.empresa_id)
+      await generarAsientosGasto(tx, {
+        empresaId: data.empresa_id,
+        gastoId,
+        nroGasto,
+        cuentaGastoId: data.cuenta_id,
+        monto_usd: data.monto_usd,
+        banco_empresa_id: data.banco_empresa_id ?? null,
+        cuentas,
+        usuarioId: data.created_by ?? '',
+      })
+    } catch {
+      // Si falla la contabilidad no bloqueamos el gasto
+      // El usuario puede registrar el asiento manualmente desde el libro contable
+    }
   })
 
   return { gastoId, nroGasto }
@@ -168,20 +188,21 @@ export async function crearGasto(data: {
 /**
  * Anula un gasto cambiando su status a ANULADO.
  * El registro es inmutable: solo se puede anular, no editar ni eliminar.
+ * Genera asientos de reverso en el libro contable.
  */
-export async function anularGasto(id: string): Promise<void> {
+export async function anularGasto(id: string, usuarioId?: string): Promise<void> {
   await db.writeTransaction(async (tx) => {
     const now = localNow()
 
     // Verificar que el gasto existe y no esta ya anulado
     const gastoResult = await tx.execute(
-      'SELECT status FROM gastos WHERE id = ?',
+      'SELECT status, empresa_id FROM gastos WHERE id = ?',
       [id]
     )
     if (!gastoResult.rows || gastoResult.rows.length === 0) {
       throw new Error('Gasto no encontrado')
     }
-    const gasto = gastoResult.rows.item(0) as { status: string }
+    const gasto = gastoResult.rows.item(0) as { status: string; empresa_id: string }
     if (gasto.status === 'ANULADO') {
       throw new Error('Este gasto ya fue anulado')
     }
@@ -190,5 +211,18 @@ export async function anularGasto(id: string): Promise<void> {
       "UPDATE gastos SET status = 'ANULADO', updated_at = ? WHERE id = ?",
       [now, id]
     )
+
+    // Marcar asientos contables del gasto como ANULADO
+    if (usuarioId) {
+      try {
+        await tx.execute(
+          `UPDATE libro_contable SET estado = 'ANULADO'
+           WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'GASTO' AND estado = 'PENDIENTE'`,
+          [gasto.empresa_id, id]
+        )
+      } catch {
+        // No bloquear la anulacion si falla la contabilidad
+      }
+    }
   })
 }

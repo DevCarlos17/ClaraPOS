@@ -174,6 +174,7 @@ export interface BancosEmpresa {
   titular_documento: string | null
   moneda_id: string
   saldo_actual: string
+  cuenta_contable_id: string | null
   is_active: number
   created_at: string
   updated_at: string
@@ -920,6 +921,7 @@ export interface PlanCuentas {
   codigo: string
   nombre: string
   tipo: string
+  naturaleza: string
   parent_id: string | null
   nivel: number
   es_cuenta_detalle: number
@@ -950,6 +952,36 @@ export interface Gastos {
   created_at: string
   updated_at: string
   created_by: string | null
+}
+
+export interface CuentasConfig {
+  id: string
+  empresa_id: string
+  clave: string
+  cuenta_contable_id: string
+  descripcion: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export interface LibroContable {
+  id: string
+  empresa_id: string
+  nro_asiento: string
+  fecha_registro: string
+  modulo_origen: string
+  doc_origen_id: string | null
+  doc_origen_ref: string | null
+  cuenta_contable_id: string
+  banco_empresa_id: string | null
+  monto: string
+  detalle: string
+  estado: string
+  parent_id: string | null
+  usuario_id: string
+  created_at: string
 }
 
 // =============================================
@@ -1024,4 +1056,6 @@ export interface DB {
   // Contabilidad
   plan_cuentas: PlanCuentas
   gastos: Gastos
+  cuentas_config: CuentasConfig
+  libro_contable: LibroContable
 }

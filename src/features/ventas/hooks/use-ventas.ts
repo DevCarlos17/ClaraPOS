@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { localNow } from '@/lib/dates'
 import { v4 as uuidv4 } from 'uuid'
+import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
+import { generarAsientosVenta } from '@/features/contabilidad/lib/generar-asientos'
 
 export interface LineaVenta {
   producto_id: string
@@ -164,6 +166,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     )
 
     // 4. Por cada linea: detalle + kardex
+    let montoProductos = 0
+    let montoServicios = 0
     for (const linea of lineas) {
       const detalleId = uuidv4()
       const subtotalUsd = Number((linea.cantidad * linea.precio_unitario_usd).toFixed(2))
@@ -202,6 +206,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         nombre: string
         maneja_lotes: number
       }
+
+      // Acumular subtotales por tipo para contabilidad
+      if (producto.tipo === 'P') montoProductos = Number((montoProductos + subtotalUsd).toFixed(2))
+      else if (producto.tipo === 'S') montoServicios = Number((montoServicios + subtotalUsd).toFixed(2))
 
       if (producto.tipo === 'P') {
         const stockActual = parseFloat(producto.stock)
@@ -454,6 +462,28 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         now,
         cliente_id,
       ])
+    }
+
+    // 8. Generar asientos contables
+    try {
+      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      const pagosContadoContab = pagos.map((p) => ({
+        monto_usd: p.moneda === 'BS' ? Number((p.monto / tasa).toFixed(2)) : p.monto,
+        banco_empresa_id: null as string | null,
+      }))
+      await generarAsientosVenta(tx, {
+        empresaId: empresa_id,
+        ventaId,
+        nroFactura,
+        pagosContado: pagosContadoContab,
+        montoCredito: saldoPend,
+        montoProductos,
+        montoServicios,
+        cuentas,
+        usuarioId: usuario_id,
+      })
+    } catch {
+      // Fallo en contabilidad no bloquea la venta
     }
   })
 

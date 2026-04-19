@@ -8,6 +8,7 @@ import {
 } from '@/features/contabilidad/hooks/use-gastos'
 import { GastoForm } from './gasto-form'
 import { formatDate } from '@/lib/format'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 // ─── Tipo extendido con joins ─────────────────────────────────
 
@@ -52,6 +53,7 @@ function TablaSkeleton() {
 // ─── Componente principal ─────────────────────────────────────
 
 export function GastoList() {
+  const { user } = useCurrentUser()
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -70,7 +72,7 @@ export function GastoList() {
 
     setAnulandoId(gasto.id)
     try {
-      await anularGasto(gasto.id)
+      await anularGasto(gasto.id, user?.id)
       toast.success(`Gasto ${gasto.nro_gasto} anulado`)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'

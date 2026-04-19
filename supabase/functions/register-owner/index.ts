@@ -325,6 +325,17 @@ serve(async (req) => {
       );
     }
 
+    // 8. Seed plan de cuentas y configuracion contable
+    // No-critico: si falla el usuario ya esta creado y puede configurarlo manualmente
+    await supabaseAdmin.rpc("seed_plan_cuentas", {
+      p_empresa_id: empresa.id,
+      p_created_by: null,
+    });
+    await supabaseAdmin.rpc("seed_cuentas_config", {
+      p_empresa_id: empresa.id,
+      p_created_by: null,
+    });
+
     return jsonResponse(
       {
         success: true,

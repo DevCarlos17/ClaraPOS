@@ -7,6 +7,7 @@ import {
   type Banco,
 } from '@/features/configuracion/hooks/use-bancos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useCuentasDetalle } from '@/features/contabilidad/hooks/use-plan-cuentas'
 
 interface BancoFormProps {
   isOpen: boolean
@@ -18,12 +19,14 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!banco
   const { user } = useCurrentUser()
+  const { cuentas } = useCuentasDetalle()
 
   const [nombreBanco, setNombreBanco] = useState('')
   const [nroCuenta, setNroCuenta] = useState('')
   const [tipoCuenta, setTipoCuenta] = useState<string>('')
   const [titular, setTitular] = useState('')
   const [titularDocumento, setTitularDocumento] = useState('')
+  const [cuentaContableId, setCuentaContableId] = useState('')
   const [active, setActive] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -36,6 +39,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTipoCuenta(banco.tipo_cuenta ?? '')
         setTitular(banco.titular)
         setTitularDocumento(banco.titular_documento ?? '')
+        setCuentaContableId(banco.cuenta_contable_id ?? '')
         setActive(banco.is_active === 1)
       } else {
         setNombreBanco('')
@@ -43,6 +47,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTipoCuenta('')
         setTitular('')
         setTitularDocumento('')
+        setCuentaContableId('')
         setActive(true)
       }
       setErrors({})
@@ -62,6 +67,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       tipo_cuenta: tipoCuenta || undefined,
       titular,
       titular_documento: titularDocumento || undefined,
+      cuenta_contable_id: cuentaContableId || undefined,
       active,
     })
 
@@ -84,6 +90,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           tipo_cuenta: parsed.data.tipo_cuenta,
           titular: parsed.data.titular,
           titular_documento: parsed.data.titular_documento,
+          cuenta_contable_id: parsed.data.cuenta_contable_id ?? null,
           is_active: parsed.data.active,
         })
         toast.success('Banco actualizado correctamente')
@@ -94,6 +101,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           tipo_cuenta: parsed.data.tipo_cuenta,
           titular: parsed.data.titular,
           titular_documento: parsed.data.titular_documento,
+          cuenta_contable_id: parsed.data.cuenta_contable_id,
           empresa_id: user!.empresa_id!,
           usuario_id: user!.id,
         })
@@ -218,6 +226,27 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
               placeholder="Ej: J-12345678-9"
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          {/* Cuenta Contable */}
+          <div>
+            <label htmlFor="banco-cuenta-contable" className="block text-sm font-medium text-gray-700 mb-1">
+              Cuenta Contable <span className="text-gray-400 font-normal">(opcional)</span>
+            </label>
+            <select
+              id="banco-cuenta-contable"
+              value={cuentaContableId}
+              onChange={(e) => setCuentaContableId(e.target.value)}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">-- Sin asignar --</option>
+              {cuentas.map((c) => (
+                <option key={c.id} value={c.id}>{c.codigo} - {c.nombre}</option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">
+              Vincula este banco a una cuenta del plan contable para automatizar asientos.
+            </p>
           </div>
 
           {/* Activo */}

@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
+import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
 
 export interface Compra {
   id: string
@@ -372,6 +374,23 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           linea.producto_id,
         ]
       )
+    }
+
+    // 5. Generar asientos contables
+    try {
+      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      await generarAsientosCompra(tx, {
+        empresaId: empresa_id,
+        compraId,
+        nroFactura: nro_factura,
+        totalUsd,
+        esContado: tipo === 'CONTADO',
+        banco_empresa_id: null,
+        cuentas,
+        usuarioId: usuario_id,
+      })
+    } catch {
+      // Fallo en contabilidad no bloquea la compra
     }
   })
 

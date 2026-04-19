@@ -20,6 +20,7 @@ export const bancoSchema = z.object({
     .optional()
     .transform((v) => v?.toUpperCase()),
   active: z.boolean().default(true),
+  cuenta_contable_id: z.string().optional(),
 })
 
 export type BancoFormValues = z.infer<typeof bancoSchema>
