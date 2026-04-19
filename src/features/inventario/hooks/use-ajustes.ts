@@ -26,6 +26,10 @@ export interface AjusteDetalle {
   deposito_id: string
   cantidad: string
   costo_unitario: string | null
+  lote_id: string | null
+  lote_nro: string | null
+  lote_fecha_fab: string | null
+  lote_fecha_venc: string | null
   created_at: string
   created_by: string | null
 }
@@ -35,6 +39,12 @@ export interface AjusteLineaInput {
   deposito_id: string
   cantidad: number
   costo_unitario?: number
+  /** Para operacion RESTA: lote existente a descontar */
+  lote_id?: string
+  /** Para operacion SUMA: datos del nuevo lote a crear al aplicar */
+  lote_nro?: string
+  lote_fecha_fab?: string
+  lote_fecha_venc?: string
 }
 
 export function useAjustes() {
@@ -148,8 +158,9 @@ export async function crearAjuste(data: {
     for (const linea of data.lineas) {
       const lineaId = uuidv4()
       await tx.execute(
-        `INSERT INTO ajustes_det (id, ajuste_id, producto_id, deposito_id, cantidad, costo_unitario, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO ajustes_det (id, ajuste_id, producto_id, deposito_id, cantidad, costo_unitario,
+          lote_id, lote_nro, lote_fecha_fab, lote_fecha_venc, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           lineaId,
           ajusteId,
@@ -157,6 +168,10 @@ export async function crearAjuste(data: {
           linea.deposito_id,
           linea.cantidad.toFixed(3),
           linea.costo_unitario !== undefined ? linea.costo_unitario.toFixed(2) : null,
+          linea.lote_id ?? null,
+          linea.lote_nro ? linea.lote_nro.trim().toUpperCase() : null,
+          linea.lote_fecha_fab ?? null,
+          linea.lote_fecha_venc ?? null,
           now,
           data.created_by ?? null,
         ]
@@ -219,15 +234,38 @@ export async function aplicarAjuste(
 
       if (operacion === 'SUMA') {
         stockNuevo = stockAnterior + cantidad
+
+        // Si la linea tiene datos de lote, crear el registro en lotes
+        let loteIdCreado: string | null = null
+        if (linea.lote_nro) {
+          loteIdCreado = uuidv4()
+          await tx.execute(
+            `INSERT INTO lotes (id, empresa_id, producto_id, deposito_id, nro_lote, fecha_fabricacion,
+               fecha_vencimiento, cantidad_inicial, cantidad_actual, costo_unitario, factura_compra_id,
+               status, created_at, updated_at, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'ACTIVO', ?, ?, ?)`,
+            [
+              loteIdCreado, empresaId, linea.producto_id, linea.deposito_id,
+              linea.lote_nro.toUpperCase(),
+              linea.lote_fecha_fab ?? null,
+              linea.lote_fecha_venc ?? null,
+              cantidad.toFixed(3), cantidad.toFixed(3),
+              linea.costo_unitario ?? null,
+              now, now, userId,
+            ]
+          )
+        }
+
         await tx.execute(
           `INSERT INTO movimientos_inventario
            (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
-            costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
-           VALUES (?, ?, ?, ?, 'E', 'AJU', ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?)`,
+            costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
+           VALUES (?, ?, ?, ?, 'E', 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?)`,
           [
             uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
-            linea.costo_unitario ?? null, ajusteId, ajuste.num_ajuste,
+            linea.costo_unitario ?? null, loteIdCreado,
+            ajusteId, ajuste.num_ajuste,
             userId, fechaHoy, now,
           ]
         )
@@ -240,15 +278,36 @@ export async function aplicarAjuste(
         if (stockNuevo < 0) {
           throw new Error(`Stock insuficiente para ${linea.producto_id}. Stock actual: ${stockAnterior.toFixed(3)}`)
         }
+
+        // Si la linea tiene lote_id, descontar del lote especifico
+        if (linea.lote_id) {
+          const loteResult = await tx.execute(
+            'SELECT cantidad_actual FROM lotes WHERE id = ?',
+            [linea.lote_id]
+          )
+          if (loteResult.rows && loteResult.rows.length > 0) {
+            const cantLote = parseFloat((loteResult.rows.item(0) as { cantidad_actual: string }).cantidad_actual)
+            if (cantLote < cantidad) {
+              throw new Error(`Stock insuficiente en lote. Disponible: ${cantLote.toFixed(3)}, Solicitado: ${cantidad.toFixed(3)}`)
+            }
+            const nuevaCant = cantLote - cantidad
+            await tx.execute(
+              'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+              [nuevaCant.toFixed(3), nuevaCant <= 0 ? 'AGOTADO' : 'ACTIVO', now, linea.lote_id]
+            )
+          }
+        }
+
         await tx.execute(
           `INSERT INTO movimientos_inventario
            (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
-            costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
-           VALUES (?, ?, ?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?)`,
+            costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
+           VALUES (?, ?, ?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?)`,
           [
             uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
-            linea.costo_unitario ?? null, ajusteId, ajuste.num_ajuste,
+            linea.costo_unitario ?? null, linea.lote_id ?? null,
+            ajusteId, ajuste.num_ajuste,
             userId, fechaHoy, now,
           ]
         )
@@ -334,15 +393,59 @@ export async function anularAjuste(
         throw new Error(`No se puede anular: stock insuficiente para producto ${linea.producto_id}`)
       }
 
+      // Buscar el lote afectado en los movimientos de este ajuste
+      const movResult = await tx.execute(
+        `SELECT lote_id FROM movimientos_inventario
+         WHERE doc_origen_id = ? AND producto_id = ? AND deposito_id = ? AND origen = 'AJU'
+         AND tipo = ? LIMIT 1`,
+        [ajusteId, linea.producto_id, linea.deposito_id, operacion === 'SUMA' ? 'E' : 'S']
+      )
+      const loteId = movResult.rows?.item(0)
+        ? (movResult.rows.item(0) as { lote_id: string | null }).lote_id
+        : null
+
+      // Revertir lote si aplica
+      if (loteId) {
+        if (operacion === 'SUMA') {
+          // La SUMA cre un lote: al anular, descontamos del lote creado
+          const loteResult = await tx.execute(
+            'SELECT cantidad_actual FROM lotes WHERE id = ?',
+            [loteId]
+          )
+          if (loteResult.rows && loteResult.rows.length > 0) {
+            const cantLote = parseFloat((loteResult.rows.item(0) as { cantidad_actual: string }).cantidad_actual)
+            const nuevaCant = Math.max(0, cantLote - cantidad)
+            await tx.execute(
+              'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+              [nuevaCant.toFixed(3), nuevaCant <= 0 ? 'AGOTADO' : 'ACTIVO', now, loteId]
+            )
+          }
+        } else if (operacion === 'RESTA') {
+          // La RESTA descontó un lote: al anular, restaurar
+          const loteResult = await tx.execute(
+            'SELECT cantidad_actual FROM lotes WHERE id = ?',
+            [loteId]
+          )
+          if (loteResult.rows && loteResult.rows.length > 0) {
+            const cantLote = parseFloat((loteResult.rows.item(0) as { cantidad_actual: string }).cantidad_actual)
+            await tx.execute(
+              'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+              [(cantLote + cantidad).toFixed(3), 'ACTIVO', now, loteId]
+            )
+          }
+        }
+      }
+
       await tx.execute(
         `INSERT INTO movimientos_inventario
          (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
-          costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
-         VALUES (?, ?, ?, ?, ?, 'AJU', ?, ?, ?, ?, ?, ?, 'Anulacion de ajuste', ?, ?, ?)`,
+          costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
+         VALUES (?, ?, ?, ?, ?, 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Anulacion de ajuste', ?, ?, ?)`,
         [
           uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
           tipoInverso, linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
-          linea.costo_unitario ?? null, ajusteId, ajuste.num_ajuste,
+          linea.costo_unitario ?? null, loteId,
+          ajusteId, ajuste.num_ajuste,
           userId, fechaHoy, now,
         ]
       )

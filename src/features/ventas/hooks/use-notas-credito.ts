@@ -230,7 +230,7 @@ export async function crearNotaCredito(
 
     // 4. Reversion de stock — leer ventas_det
     const detalleResult = await tx.execute(
-      'SELECT producto_id, cantidad FROM ventas_det WHERE venta_id = ?',
+      'SELECT producto_id, cantidad, lote_id FROM ventas_det WHERE venta_id = ?',
       [venta_id]
     )
 
@@ -239,6 +239,7 @@ export async function crearNotaCredito(
         const linea = detalleResult.rows.item(i) as {
           producto_id: string
           cantidad: string
+          lote_id: string | null
         }
         const cantidadVendida = parseFloat(linea.cantidad)
 
@@ -263,8 +264,8 @@ export async function crearNotaCredito(
           const movId = uuidv4()
 
           await tx.execute(
-            `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
-             VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+             VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               movId,
               linea.producto_id,
@@ -272,6 +273,7 @@ export async function crearNotaCredito(
               cantidadVendida.toFixed(3),
               stockActual.toFixed(3),
               stockNuevo.toFixed(3),
+              linea.lote_id ?? null,
               ncrId,
               `NCR-${nroNcr}`,
               `${nroNcr} - Reintegro ${producto.nombre}`,
@@ -287,6 +289,27 @@ export async function crearNotaCredito(
             now,
             linea.producto_id,
           ])
+
+          // Si la linea tenia lote, restaurar cantidad en el lote
+          if (linea.lote_id) {
+            const loteResult = await tx.execute(
+              'SELECT cantidad_actual, status FROM lotes WHERE id = ?',
+              [linea.lote_id]
+            )
+            if (loteResult.rows && loteResult.rows.length > 0) {
+              const loteRow = loteResult.rows.item(0) as { cantidad_actual: string; status: string }
+              const nuevaCantLote = parseFloat(loteRow.cantidad_actual) + cantidadVendida
+              await tx.execute(
+                'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+                [
+                  nuevaCantLote.toFixed(3),
+                  'ACTIVO',
+                  now,
+                  linea.lote_id,
+                ]
+              )
+            }
+          }
         } else if (producto.tipo === 'S') {
           // SERVICIO: reintegrar ingredientes via recetas
           const recetasResult = await tx.execute(

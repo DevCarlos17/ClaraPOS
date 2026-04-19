@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ajusteSchema } from '@/features/inventario/schemas/ajuste-schema'
@@ -6,7 +6,9 @@ import { crearAjuste } from '@/features/inventario/hooks/use-ajustes'
 import { useAjusteMotivosActivos } from '@/features/inventario/hooks/use-ajuste-motivos'
 import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
+import { useAllLotesActivos } from '@/features/inventario/hooks/use-lotes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { formatDate } from '@/lib/format'
 
 interface AjusteFormProps {
   isOpen: boolean
@@ -18,6 +20,11 @@ interface LineaInput {
   deposito_id: string
   cantidad: string
   costo_unitario: string
+  // Campos de lote (solo cuando maneja_lotes=1)
+  lote_id: string        // para RESTA: lote existente
+  lote_nro: string       // para SUMA: nuevo lote
+  lote_fecha_fab: string
+  lote_fecha_venc: string
 }
 
 function getTodayIso(): string {
@@ -29,6 +36,7 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   const { motivos } = useAjusteMotivosActivos()
   const { productos } = useProductos()
   const { depositos } = useDepositosActivos()
+  const { lotes: todosLotesActivos } = useAllLotesActivos()
   const { user } = useCurrentUser()
 
   const [motivoId, setMotivoId] = useState('')
@@ -38,6 +46,23 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [lineasError, setLineasError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const selectedMotivo = useMemo(
+    () => motivos.find((m) => m.id === motivoId) ?? null,
+    [motivos, motivoId]
+  )
+  const operacionBase = selectedMotivo?.operacion_base ?? null
+
+  const productoMap = useMemo(
+    () => new Map(productos.map((p) => [p.id, p])),
+    [productos]
+  )
+
+  function getLotesParaLinea(productoId: string, depositoId: string) {
+    return todosLotesActivos.filter(
+      (l) => l.producto_id === productoId && l.deposito_id === depositoId
+    )
+  }
 
   useEffect(() => {
     if (isOpen) {
@@ -62,7 +87,10 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   function agregarLinea() {
     setLineas((prev) => [
       ...prev,
-      { producto_id: '', deposito_id: '', cantidad: '', costo_unitario: '' },
+      {
+        producto_id: '', deposito_id: '', cantidad: '', costo_unitario: '',
+        lote_id: '', lote_nro: '', lote_fecha_fab: '', lote_fecha_venc: '',
+      },
     ])
   }
 
@@ -72,7 +100,14 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
 
   function actualizarLinea(index: number, field: keyof LineaInput, value: string) {
     setLineas((prev) =>
-      prev.map((linea, i) => (i === index ? { ...linea, [field]: value } : linea))
+      prev.map((linea, i) => {
+        if (i !== index) return linea
+        // Al cambiar producto o deposito, limpiar campos de lote
+        if (field === 'producto_id' || field === 'deposito_id') {
+          return { ...linea, [field]: value, lote_id: '', lote_nro: '', lote_fecha_fab: '', lote_fecha_venc: '' }
+        }
+        return { ...linea, [field]: value }
+      })
     )
   }
 
@@ -90,8 +125,11 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
       producto_id: l.producto_id,
       deposito_id: l.deposito_id,
       cantidad: parseFloat(l.cantidad) || 0,
-      costo_unitario:
-        l.costo_unitario !== '' ? parseFloat(l.costo_unitario) : undefined,
+      costo_unitario: l.costo_unitario !== '' ? parseFloat(l.costo_unitario) : undefined,
+      lote_id: l.lote_id || undefined,
+      lote_nro: l.lote_nro.trim() || undefined,
+      lote_fecha_fab: l.lote_fecha_fab || undefined,
+      lote_fecha_venc: l.lote_fecha_venc || undefined,
     }))
 
     const parsed = ajusteSchema.safeParse({
@@ -231,70 +269,144 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {lineas.map((linea, index) => (
-                      <tr key={index} className="border-b border-gray-100">
-                        <td className="px-3 py-2">
-                          <select
-                            value={linea.producto_id}
-                            onChange={(e) => actualizarLinea(index, 'producto_id', e.target.value)}
-                            className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                          >
-                            <option value="">Seleccionar</option>
-                            {productos.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.codigo} - {p.nombre}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <select
-                            value={linea.deposito_id}
-                            onChange={(e) => actualizarLinea(index, 'deposito_id', e.target.value)}
-                            className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                          >
-                            <option value="">Seleccionar</option>
-                            {depositos.map((d) => (
-                              <option key={d.id} value={d.id}>
-                                {d.nombre}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="0.001"
-                            min="0.001"
-                            value={linea.cantidad}
-                            onChange={(e) => actualizarLinea(index, 'cantidad', e.target.value)}
-                            placeholder="0.000"
-                            className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={linea.costo_unitario}
-                            onChange={(e) => actualizarLinea(index, 'costo_unitario', e.target.value)}
-                            placeholder="0.00"
-                            className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </td>
-                        <td className="px-2 py-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => removerLinea(index)}
-                            className="p-1 text-gray-400 rounded hover:text-red-600 hover:bg-red-50 transition-colors"
-                            title="Eliminar linea"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {lineas.map((linea, index) => {
+                      const producto = productoMap.get(linea.producto_id)
+                      const manejaLotes = producto && Number(producto.maneja_lotes) === 1
+                      const lotesDisponibles = manejaLotes && linea.deposito_id
+                        ? getLotesParaLinea(linea.producto_id, linea.deposito_id)
+                        : []
+                      return (
+                        <React.Fragment key={index}>
+                          <tr className="border-b border-gray-100">
+                            <td className="px-3 py-2">
+                              <select
+                                value={linea.producto_id}
+                                onChange={(e) => actualizarLinea(index, 'producto_id', e.target.value)}
+                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                              >
+                                <option value="">Seleccionar</option>
+                                {productos.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.codigo} - {p.nombre}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2">
+                              <select
+                                value={linea.deposito_id}
+                                onChange={(e) => actualizarLinea(index, 'deposito_id', e.target.value)}
+                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                              >
+                                <option value="">Seleccionar</option>
+                                {depositos.map((d) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.nombre}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                step="0.001"
+                                min="0.001"
+                                value={linea.cantidad}
+                                onChange={(e) => actualizarLinea(index, 'cantidad', e.target.value)}
+                                placeholder="0.000"
+                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                value={linea.costo_unitario}
+                                onChange={(e) => actualizarLinea(index, 'costo_unitario', e.target.value)}
+                                placeholder="0.00"
+                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="px-2 py-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removerLinea(index)}
+                                className="p-1 text-gray-400 rounded hover:text-red-600 hover:bg-red-50 transition-colors"
+                                title="Eliminar linea"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+
+                          {/* Fila de lote (solo si producto maneja_lotes=1 y hay motivo seleccionado) */}
+                          {manejaLotes && operacionBase && operacionBase !== 'NEUTRO' && linea.producto_id && linea.deposito_id && (
+                            <tr className="border-b border-amber-100 bg-amber-50/40">
+                              <td colSpan={5} className="px-3 py-2">
+                                {operacionBase === 'SUMA' ? (
+                                  <div className="flex flex-wrap items-center gap-3 text-xs">
+                                    <span className="text-amber-700 font-medium shrink-0">Lote nuevo:</span>
+                                    <div className="flex items-center gap-1.5">
+                                      <label className="text-gray-500 shrink-0">Nro.</label>
+                                      <input
+                                        type="text"
+                                        value={linea.lote_nro}
+                                        onChange={(e) => actualizarLinea(index, 'lote_nro', e.target.value.toUpperCase())}
+                                        placeholder="Ej: LOT-001"
+                                        autoComplete="off"
+                                        className="w-28 rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <label className="text-gray-500 shrink-0">Fab.</label>
+                                      <input
+                                        type="date"
+                                        value={linea.lote_fecha_fab}
+                                        onChange={(e) => actualizarLinea(index, 'lote_fecha_fab', e.target.value)}
+                                        className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                      <label className="text-gray-500 shrink-0">Venc.</label>
+                                      <input
+                                        type="date"
+                                        value={linea.lote_fecha_venc}
+                                        onChange={(e) => actualizarLinea(index, 'lote_fecha_venc', e.target.value)}
+                                        className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      />
+                                    </div>
+                                    <span className="text-amber-600/60 italic">Opcional</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-3 text-xs">
+                                    <span className="text-amber-700 font-medium shrink-0">Lote a descontar:</span>
+                                    {lotesDisponibles.length === 0 ? (
+                                      <span className="text-gray-400 italic">No hay lotes activos en este deposito</span>
+                                    ) : (
+                                      <select
+                                        value={linea.lote_id}
+                                        onChange={(e) => actualizarLinea(index, 'lote_id', e.target.value)}
+                                        className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                      >
+                                        <option value="">-- Sin lote especifico --</option>
+                                        {lotesDisponibles.map((l) => (
+                                          <option key={l.id} value={l.id}>
+                                            {l.nro_lote}
+                                            {l.fecha_vencimiento ? ` | Venc: ${formatDate(l.fecha_vencimiento)}` : ''}
+                                            {` | Disp: ${parseFloat(l.cantidad_actual).toFixed(3)}`}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

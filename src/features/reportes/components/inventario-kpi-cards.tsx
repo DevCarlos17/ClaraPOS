@@ -7,9 +7,11 @@ import { useInventarioKpis } from '../hooks/use-inventario-reportes'
 interface InventarioKpiCardsProps {
   fechaDesde: string
   fechaHasta: string
+  onValorClick?: () => void
+  onMovimientosClick?: () => void
 }
 
-export function InventarioKpiCards({ fechaDesde, fechaHasta }: InventarioKpiCardsProps) {
+export function InventarioKpiCards({ fechaDesde, fechaHasta, onValorClick, onMovimientosClick }: InventarioKpiCardsProps) {
   const { valorTotalUsd, productosActivos, stockCritico, movimientosPeriodo, isLoading } =
     useInventarioKpis(fechaDesde, fechaHasta)
   const { tasaValor, isLoading: loadingTasa } = useTasaActual()
@@ -23,6 +25,7 @@ export function InventarioKpiCards({ fechaDesde, fechaHasta }: InventarioKpiCard
         subtitulo={isLoading || loadingTasa ? '...' : formatBs(usdToBs(valorTotalUsd, tasaValor))}
         icon={Package}
         color="blue"
+        onClick={onValorClick}
       />
 
       {/* Productos Activos */}
@@ -50,6 +53,7 @@ export function InventarioKpiCards({ fechaDesde, fechaHasta }: InventarioKpiCard
         subtitulo="en el periodo"
         icon={ArrowLeftRight}
         color="amber"
+        onClick={onMovimientosClick}
       />
     </div>
   )
@@ -61,12 +65,14 @@ function KpiCard({
   subtitulo,
   icon: Icon,
   color,
+  onClick,
 }: {
   titulo: string
   valor: string
   subtitulo: string
   icon: React.ComponentType<{ className?: string }>
   color: string
+  onClick?: () => void
 }) {
   const colorMap: Record<string, string> = {
     blue: 'bg-blue-50 text-blue-600',
@@ -75,8 +81,20 @@ function KpiCard({
     red: 'bg-red-50 text-red-600',
   }
 
-  return (
-    <div className="rounded-xl border bg-card p-5">
+  const hoverMap: Record<string, string> = {
+    blue: 'hover:ring-blue-200',
+    green: 'hover:ring-green-200',
+    amber: 'hover:ring-amber-200',
+    red: 'hover:ring-red-200',
+  }
+
+  const base = 'rounded-xl border bg-card p-5 text-left w-full'
+  const interactive = onClick
+    ? `cursor-pointer transition-all hover:ring-2 ${hoverMap[color] ?? hoverMap.blue} hover:shadow-sm`
+    : ''
+
+  const content = (
+    <>
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-muted-foreground">{titulo}</p>
         <div className={`p-2 rounded-lg ${colorMap[color] ?? colorMap.blue}`}>
@@ -87,6 +105,19 @@ function KpiCard({
         <p className="text-2xl font-bold">{valor}</p>
         <p className="text-xs text-muted-foreground mt-1">{subtitulo}</p>
       </div>
-    </div>
+      {onClick && (
+        <p className="text-xs text-muted-foreground/60 mt-2">Ver detalle →</p>
+      )}
+    </>
   )
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={`${base} ${interactive}`}>
+        {content}
+      </button>
+    )
+  }
+
+  return <div className={base}>{content}</div>
 }

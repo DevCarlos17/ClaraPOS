@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
 import { toast } from 'sonner'
 import { ArrowLeft, Plus, Trash2, Search, CreditCard, Banknote } from 'lucide-react'
 import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
@@ -28,6 +28,10 @@ interface LineaUI {
   factor: number
   cantidad_input: number
   costo_input: number
+  maneja_lotes: number
+  lote_nro: string
+  lote_fecha_fab: string
+  lote_fecha_venc: string
 }
 
 interface CompraFormProps {
@@ -125,6 +129,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
         factor: 1,
         cantidad_input: 1,
         costo_input: Number(costoDisplay.toFixed(2)),
+        maneja_lotes: Number(producto.maneja_lotes) || 0,
+        lote_nro: '',
+        lote_fecha_fab: '',
+        lote_fecha_venc: '',
       },
     ])
     setBusqueda('')
@@ -145,6 +153,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
         }
         return l
       })
+    )
+  }
+
+  function handleLoteChange(index: number, field: 'lote_nro' | 'lote_fecha_fab' | 'lote_fecha_venc', value: string) {
+    setLineas((prev) =>
+      prev.map((l, i) => (i === index ? { ...l, [field]: value } : l))
     )
   }
 
@@ -248,6 +262,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
         producto_id: l.producto_id,
         cantidad: cantidadBase,
         costo_unitario_usd: Number(costoUnitarioUsd.toFixed(4)),
+        lote_nro: l.lote_nro.trim() || undefined,
+        lote_fecha_fab: l.lote_fecha_fab || undefined,
+        lote_fecha_venc: l.lote_fecha_venc || undefined,
       }
     })
 
@@ -510,7 +527,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
                   {lineas.map((linea, index) => {
                     const subtotal = getLineSubtotal(linea)
                     return (
-                      <tr key={linea.producto_id}>
+                      <React.Fragment key={linea.producto_id}>
+                      <tr>
                         <td className="px-3 py-2 text-sm font-mono text-muted-foreground">{linea.codigo}</td>
                         <td className="px-3 py-2 text-sm text-foreground">{linea.nombre}</td>
                         <td className="px-3 py-2">
@@ -566,6 +584,46 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           </button>
                         </td>
                       </tr>
+                      {linea.maneja_lotes === 1 && (
+                        <tr key={`lote-${linea.producto_id}`} className="bg-amber-50/50 border-b border-amber-100">
+                          <td colSpan={7} className="px-3 py-2">
+                            <div className="flex flex-wrap items-center gap-3 text-xs">
+                              <span className="text-amber-700 font-medium shrink-0">Lote:</span>
+                              <div className="flex items-center gap-1.5">
+                                <label className="text-muted-foreground shrink-0">Nro.</label>
+                                <input
+                                  type="text"
+                                  value={linea.lote_nro}
+                                  onChange={(e) => handleLoteChange(index, 'lote_nro', e.target.value.toUpperCase())}
+                                  placeholder="Ej: LOT-001"
+                                  autoComplete="off"
+                                  className="w-28 rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <label className="text-muted-foreground shrink-0">Fab.</label>
+                                <input
+                                  type="date"
+                                  value={linea.lote_fecha_fab}
+                                  onChange={(e) => handleLoteChange(index, 'lote_fecha_fab', e.target.value)}
+                                  className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                />
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <label className="text-muted-foreground shrink-0">Venc.</label>
+                                <input
+                                  type="date"
+                                  value={linea.lote_fecha_venc}
+                                  onChange={(e) => handleLoteChange(index, 'lote_fecha_venc', e.target.value)}
+                                  className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                />
+                              </div>
+                              <span className="text-amber-600/70 text-xs italic">Opcional - dejar vacio si no aplica</span>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     )
                   })}
                 </tbody>

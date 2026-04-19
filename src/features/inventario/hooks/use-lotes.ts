@@ -45,6 +45,28 @@ export function useLotesPorProducto(productoId: string) {
 }
 
 /**
+ * Retorna todos los lotes ACTIVOS de la empresa con nombre de deposito.
+ * Util para selectors en formularios donde se necesita filtrar por producto+deposito.
+ */
+export function useAllLotesActivos() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `SELECT l.*, d.nombre AS nombre_deposito
+     FROM lotes l
+     LEFT JOIN depositos d ON d.id = l.deposito_id
+     WHERE l.empresa_id = ? AND l.status = 'ACTIVO'
+     ORDER BY l.fecha_vencimiento ASC, l.created_at ASC`,
+    [empresaId]
+  )
+  return {
+    lotes: (data ?? []) as (Lote & { nombre_deposito: string | null })[],
+    isLoading,
+  }
+}
+
+/**
  * Actualiza cantidad_actual y/o status de un lote.
  */
 export async function actualizarLote(

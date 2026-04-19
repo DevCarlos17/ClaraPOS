@@ -190,16 +190,20 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
       // Leer producto
       const prodResult = await tx.execute(
-        'SELECT tipo, stock, nombre FROM productos WHERE id = ?',
+        'SELECT tipo, stock, nombre, maneja_lotes FROM productos WHERE id = ?',
         [linea.producto_id]
       )
       if (!prodResult.rows || prodResult.rows.length === 0) {
         throw new Error('Producto no encontrado')
       }
-      const producto = prodResult.rows.item(0) as { tipo: string; stock: string; nombre: string }
+      const producto = prodResult.rows.item(0) as {
+        tipo: string
+        stock: string
+        nombre: string
+        maneja_lotes: number
+      }
 
       if (producto.tipo === 'P') {
-        // PRODUCTO: descontar stock directo
         const stockActual = parseFloat(producto.stock)
         if (stockActual < linea.cantidad) {
           throw new Error(
@@ -207,28 +211,110 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           )
         }
         const stockNuevo = stockActual - linea.cantidad
-        const movId = uuidv4()
 
-        await tx.execute(
-          `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
-           VALUES (?, ?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            movId,
-            linea.producto_id,
-            depositoId,
-            linea.cantidad.toFixed(3),
-            stockActual.toFixed(3),
-            stockNuevo.toFixed(3),
-            linea.precio_unitario_usd.toFixed(4),
-            ventaId,
-            `VEN-${nroFactura}`,
-            `Venta ${nroFactura}`,
-            usuario_id,
-            now,
-            empresa_id,
-            now,
-          ]
-        )
+        if (Number(producto.maneja_lotes) === 1) {
+          // FEFO: descontar desde lotes activos ordenados por fecha_vencimiento
+          const lotesResult = await tx.execute(
+            `SELECT id, cantidad_actual, fecha_vencimiento FROM lotes
+             WHERE empresa_id = ? AND producto_id = ? AND deposito_id = ? AND status = 'ACTIVO'
+             ORDER BY CASE WHEN fecha_vencimiento IS NULL THEN 1 ELSE 0 END,
+                      fecha_vencimiento ASC, created_at ASC`,
+            [empresa_id, linea.producto_id, depositoId]
+          )
+
+          let pendiente = linea.cantidad
+          let firstLoteId: string | null = null
+
+          if (lotesResult.rows) {
+            let stockCursor = stockActual
+            for (let li = 0; li < lotesResult.rows.length; li++) {
+              if (pendiente <= 0) break
+              const lote = lotesResult.rows.item(li) as {
+                id: string
+                cantidad_actual: string
+              }
+              const disponible = parseFloat(lote.cantidad_actual)
+              if (disponible <= 0) continue
+
+              const aDescontar = Math.min(disponible, pendiente)
+              const nuevaCantLote = disponible - aDescontar
+              const stockLoteNuevo = stockCursor - aDescontar
+
+              if (firstLoteId === null) firstLoteId = lote.id
+
+              await tx.execute(
+                'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+                [
+                  nuevaCantLote.toFixed(3),
+                  nuevaCantLote <= 0 ? 'AGOTADO' : 'ACTIVO',
+                  now,
+                  lote.id,
+                ]
+              )
+
+              const movLoteId = uuidv4()
+              await tx.execute(
+                `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+                 VALUES (?, ?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  movLoteId,
+                  linea.producto_id,
+                  depositoId,
+                  aDescontar.toFixed(3),
+                  stockCursor.toFixed(3),
+                  stockLoteNuevo.toFixed(3),
+                  linea.precio_unitario_usd.toFixed(4),
+                  lote.id,
+                  ventaId,
+                  `VEN-${nroFactura}`,
+                  `Venta ${nroFactura}`,
+                  usuario_id,
+                  now,
+                  empresa_id,
+                  now,
+                ]
+              )
+
+              stockCursor = stockLoteNuevo
+              pendiente -= aDescontar
+            }
+          }
+
+          if (pendiente > 0.0005) {
+            throw new Error(
+              `Stock en lotes insuficiente para "${producto.nombre}". Faltan ${pendiente.toFixed(3)} en lotes activos.`
+            )
+          }
+
+          // Actualizar ventas_det con el lote principal
+          await tx.execute('UPDATE ventas_det SET lote_id = ? WHERE id = ?', [
+            firstLoteId,
+            detalleId,
+          ])
+        } else {
+          // PRODUCTO SIN LOTES: movimiento directo
+          const movId = uuidv4()
+          await tx.execute(
+            `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+             VALUES (?, ?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              movId,
+              linea.producto_id,
+              depositoId,
+              linea.cantidad.toFixed(3),
+              stockActual.toFixed(3),
+              stockNuevo.toFixed(3),
+              linea.precio_unitario_usd.toFixed(4),
+              ventaId,
+              `VEN-${nroFactura}`,
+              `Venta ${nroFactura}`,
+              usuario_id,
+              now,
+              empresa_id,
+              now,
+            ]
+          )
+        }
 
         await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
           stockNuevo.toFixed(3),

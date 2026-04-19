@@ -141,7 +141,7 @@ export function useProductosStockCritico() {
 
 // ─── Movimientos del Periodo ────────────────────────────────
 
-export function useMovimientosPeriodo(fechaDesde: string, fechaHasta: string) {
+export function useMovimientosPeriodo(fechaDesde: string, fechaHasta: string, limit = 100) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
@@ -154,8 +154,8 @@ export function useMovimientosPeriodo(fechaDesde: string, fechaHasta: string) {
      JOIN productos p ON m.producto_id = p.id
      WHERE m.empresa_id = ? AND SUBSTR(m.fecha, 1, 10) >= ? AND SUBSTR(m.fecha, 1, 10) <= ?
      ORDER BY m.fecha DESC
-     LIMIT 100`,
-    [empresaId, fechaDesde, fechaHasta]
+     LIMIT ?`,
+    [empresaId, fechaDesde, fechaHasta, limit]
   )
 
   return { movimientos: (data ?? []) as MovimientoPeriodo[], isLoading }

@@ -34,6 +34,9 @@ export interface LineaCompra {
   producto_id: string
   cantidad: number
   costo_unitario_usd: number
+  lote_nro?: string
+  lote_fecha_fab?: string
+  lote_fecha_venc?: string
 }
 
 export interface CrearCompraParams {
@@ -275,10 +278,36 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       const subtotalUsd = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
       const subtotalBs = Number((subtotalUsd * tasa).toFixed(2))
 
-      // 4a. INSERT facturas_compra_det
+      // 4a. Crear lote si aplica
+      let loteId: string | null = null
+      if (linea.lote_nro && linea.lote_nro.trim()) {
+        loteId = uuidv4()
+        await tx.execute(
+          `INSERT INTO lotes (id, empresa_id, producto_id, deposito_id, nro_lote, fecha_fabricacion, fecha_vencimiento, cantidad_inicial, cantidad_actual, costo_unitario, factura_compra_id, status, created_at, updated_at, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVO', ?, ?, ?)`,
+          [
+            loteId,
+            empresa_id,
+            linea.producto_id,
+            depositoId,
+            linea.lote_nro.trim().toUpperCase(),
+            linea.lote_fecha_fab ?? null,
+            linea.lote_fecha_venc ?? null,
+            linea.cantidad.toFixed(3),
+            linea.cantidad.toFixed(3),
+            linea.costo_unitario_usd.toFixed(2),
+            compraId,
+            now,
+            now,
+            usuario_id,
+          ]
+        )
+      }
+
+      // 4b. INSERT facturas_compra_det
       await tx.execute(
-        `INSERT INTO facturas_compra_det (id, factura_compra_id, producto_id, deposito_id, cantidad, costo_unitario_usd, tipo_impuesto, impuesto_pct, subtotal_usd, subtotal_bs, empresa_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facturas_compra_det (id, factura_compra_id, producto_id, deposito_id, cantidad, costo_unitario_usd, tipo_impuesto, impuesto_pct, subtotal_usd, subtotal_bs, lote_id, empresa_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           detalleId,
           compraId,
@@ -290,12 +319,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           '0.00',
           subtotalUsd.toFixed(2),
           subtotalBs.toFixed(2),
+          loteId,
           empresa_id,
           now,
         ]
       )
 
-      // 4b. Leer stock actual del producto
+      // 4c. Leer stock actual del producto
       const prodResult = await tx.execute(
         'SELECT stock FROM productos WHERE id = ?',
         [linea.producto_id]
@@ -305,14 +335,14 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       }
       const stockActual = parseFloat((prodResult.rows.item(0) as { stock: string }).stock)
 
-      // 4c. Calcular nuevo stock
+      // 4d. Calcular nuevo stock
       const stockNuevo = stockActual + linea.cantidad
 
-      // 4d. INSERT movimiento de inventario (entrada por compra)
+      // 4e. INSERT movimiento de inventario (entrada por compra)
       const movId = uuidv4()
       await tx.execute(
-        `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
-         VALUES (?, ?, ?, 'E', 'COM', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+         VALUES (?, ?, ?, 'E', 'COM', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movId,
           linea.producto_id,
@@ -321,6 +351,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           stockActual.toFixed(3),
           stockNuevo.toFixed(3),
           linea.costo_unitario_usd.toFixed(4),
+          loteId,
           compraId,
           `COM-${nro_factura}`,
           `Compra ${nro_factura}`,
@@ -331,7 +362,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         ]
       )
 
-      // 4e. UPDATE producto: stock y costo_usd
+      // 4f. UPDATE producto: stock y costo_usd
       await tx.execute(
         'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
         [

@@ -2,7 +2,12 @@ import { formatUsd } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { useTopProductosRango, type TopProductoRango } from '@/features/dashboard/hooks/use-dashboard'
 
-export function DashboardTopRotacion() {
+interface DashboardTopRotacionProps {
+  onMayorClick?: () => void
+  onMenorClick?: () => void
+}
+
+export function DashboardTopRotacion({ onMayorClick, onMenorClick }: DashboardTopRotacionProps = {}) {
   const { productos: mayorRotacion, isLoading: loadingMayor } = useTopProductosRango(30, 10, 'DESC')
   const { productos: menorRotacion, isLoading: loadingMenor } = useTopProductosRango(30, 10, 'ASC')
 
@@ -14,6 +19,7 @@ export function DashboardTopRotacion() {
         productos={mayorRotacion}
         isLoading={loadingMayor}
         emptyMsg="Sin ventas en los ultimos 30 dias"
+        onVerDetalle={onMayorClick}
       />
       <RotacionTable
         titulo="Menor Rotacion"
@@ -21,6 +27,7 @@ export function DashboardTopRotacion() {
         productos={menorRotacion}
         isLoading={loadingMenor}
         emptyMsg="Sin ventas en los ultimos 30 dias"
+        onVerDetalle={onMenorClick}
       />
     </div>
   )
@@ -32,16 +39,29 @@ function RotacionTable({
   productos,
   isLoading,
   emptyMsg,
+  onVerDetalle,
 }: {
   titulo: string
   subtitulo: string
   productos: TopProductoRango[]
   isLoading: boolean
   emptyMsg: string
+  onVerDetalle?: () => void
 }) {
   return (
     <div className="rounded-xl border bg-card p-5">
-      <h3 className="text-sm font-semibold">{titulo}</h3>
+      <div className="flex items-start justify-between mb-0.5">
+        <h3 className="text-sm font-semibold">{titulo}</h3>
+        {onVerDetalle && (
+          <button
+            type="button"
+            onClick={onVerDetalle}
+            className="text-xs text-blue-600 hover:text-blue-700 hover:underline transition-colors"
+          >
+            Ver Top 25 →
+          </button>
+        )}
+      </div>
       <p className="text-xs text-muted-foreground mb-3">{subtitulo}</p>
 
       {isLoading ? (

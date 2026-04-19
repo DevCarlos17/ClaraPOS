@@ -384,6 +384,10 @@ export interface AjustesDet {
   deposito_id: string
   cantidad: string
   costo_unitario: string | null
+  lote_id: string | null
+  lote_nro: string | null
+  lote_fecha_fab: string | null
+  lote_fecha_venc: string | null
   created_at: string
   created_by: string | null
 }
