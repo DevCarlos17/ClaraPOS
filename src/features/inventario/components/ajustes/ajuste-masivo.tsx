@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
-import { CheckCircle, ChevronDown, ChevronUp, ClipboardList, History, Printer, RotateCcw, Search } from 'lucide-react'
+import { CheckCircle, ChevronDown, ChevronUp, ClipboardList, History, Package, Printer, RotateCcw, Search } from 'lucide-react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useAjusteMotivosActivos } from '@/features/inventario/hooks/use-ajuste-motivos'
+import { useEnsureDefaultMotivos } from '@/features/inventario/hooks/use-ensure-default-motivos'
 import { crearAjuste, aplicarAjuste } from '@/features/inventario/hooks/use-ajustes'
 import { AjusteList } from './ajuste-list'
 
@@ -15,6 +16,7 @@ interface ProductoConteo {
   stock: string
   nombre_departamento: string | null
   departamento_id: string
+  maneja_lotes: number
 }
 
 type OrdenCol = 'departamento' | 'nombre' | 'stock' | 'diferencia'
@@ -23,6 +25,8 @@ type OrdenDir = 'asc' | 'desc'
 export function AjusteMasivo() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
+
+  useEnsureDefaultMotivos(empresaId)
 
   const [vista, setVista] = useState<'conteo' | 'historial'>('conteo')
   const [depositoId, setDepositoId] = useState('')
@@ -43,7 +47,7 @@ export function AjusteMasivo() {
   const { motivos } = useAjusteMotivosActivos()
 
   const { data: productosRaw, isLoading } = useQuery(
-    `SELECT p.id, p.codigo, p.nombre, p.stock, p.departamento_id,
+    `SELECT p.id, p.codigo, p.nombre, p.stock, p.departamento_id, p.maneja_lotes,
             d.nombre AS nombre_departamento
      FROM productos p
      LEFT JOIN departamentos d ON d.id = p.departamento_id
@@ -68,7 +72,7 @@ export function AjusteMasivo() {
   const productosFiltrados = useMemo(() => {
     let lista = productos
 
-    if (filtroDepto) {
+    if (filtroDepto && filtroDepto !== '__ALL__') {
       lista = lista.filter((p) => p.departamento_id === filtroDepto)
     }
 
@@ -167,6 +171,10 @@ export function AjusteMasivo() {
     }
     if (!depositoId) {
       toast.error('Selecciona un deposito antes de aplicar el conteo')
+      return
+    }
+    if (depositoId === '__ALL__') {
+      toast.error('Selecciona un deposito especifico (no "Todos") para aplicar el conteo')
       return
     }
     setConfirmando(true)
@@ -372,7 +380,8 @@ export function AjusteMasivo() {
                 onChange={(e) => setDepositoId(e.target.value)}
                 className="h-9 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px]"
               >
-                <option value="">Seleccionar...</option>
+                <option value="">Seleccionar deposito...</option>
+                <option value="__ALL__">Todos los depositos</option>
                 {depositos.map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.nombre}
@@ -389,7 +398,8 @@ export function AjusteMasivo() {
                 onChange={(e) => setFiltroDepto(e.target.value)}
                 className="h-9 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px]"
               >
-                <option value="">Todos</option>
+                <option value="">Seleccionar departamento...</option>
+                <option value="__ALL__">Todos los departamentos</option>
                 {deptoOpciones.map(([id, nombre]) => (
                   <option key={id} value={id}>
                     {nombre}
@@ -444,7 +454,7 @@ export function AjusteMasivo() {
               </button>
               <button
                 onClick={abrirConfirmacion}
-                disabled={cambios.total === 0 || !depositoId}
+                disabled={cambios.total === 0 || !depositoId || depositoId === '__ALL__'}
                 className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <CheckCircle className="h-4 w-4" />
@@ -472,7 +482,16 @@ export function AjusteMasivo() {
           )}
 
           {/* Tabla */}
-          {isLoading ? (
+          {depositoId === '' || filtroDepto === '' ? (
+            <div className="text-center py-16 text-gray-400 border border-dashed border-gray-200 rounded-lg">
+              <ClipboardList className="h-10 w-10 mx-auto mb-3 opacity-30" />
+              <p className="font-medium text-gray-500">
+                {depositoId === ''
+                  ? 'Selecciona un deposito para comenzar el conteo'
+                  : 'Selecciona un departamento para ver los productos'}
+              </p>
+            </div>
+          ) : isLoading ? (
             <div className="space-y-2">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div key={i} className="h-10 bg-gray-100 rounded animate-pulse" />
@@ -519,7 +538,16 @@ export function AjusteMasivo() {
                         <td className="px-4 py-2 text-gray-600 whitespace-nowrap text-xs">
                           {p.nombre_departamento ?? '-'}
                         </td>
-                        <td className="px-4 py-2 text-gray-800">{p.nombre}</td>
+                        <td className="px-4 py-2 text-gray-800">
+                          <span className="flex items-center gap-1.5">
+                            {p.nombre}
+                            {p.maneja_lotes === 1 && (
+                              <span title="Maneja lotes">
+                                <Package className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                              </span>
+                            )}
+                          </span>
+                        </td>
                         <td className="px-4 py-2 text-right tabular-nums text-gray-700 font-medium whitespace-nowrap">
                           {actual.toFixed(3)}
                         </td>

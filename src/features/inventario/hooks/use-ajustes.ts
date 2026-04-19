@@ -279,7 +279,9 @@ export async function aplicarAjuste(
           throw new Error(`Stock insuficiente para ${linea.producto_id}. Stock actual: ${stockAnterior.toFixed(3)}`)
         }
 
-        // Si la linea tiene lote_id, descontar del lote especifico
+        let loteIdMovimiento: string | null = linea.lote_id ?? null
+
+        // Si la linea tiene lote_id explicito, descontar del lote especifico
         if (linea.lote_id) {
           const loteResult = await tx.execute(
             'SELECT cantidad_actual FROM lotes WHERE id = ?',
@@ -296,6 +298,43 @@ export async function aplicarAjuste(
               [nuevaCant.toFixed(3), nuevaCant <= 0 ? 'AGOTADO' : 'ACTIVO', now, linea.lote_id]
             )
           }
+        } else {
+          // Sin lote explicito: si el producto maneja lotes, descontar FEFO automaticamente
+          const prodResult = await tx.execute(
+            'SELECT maneja_lotes FROM productos WHERE id = ?',
+            [linea.producto_id]
+          )
+          const manejaLotes = (prodResult.rows?.item(0) as { maneja_lotes: number } | undefined)?.maneja_lotes ?? 0
+
+          if (manejaLotes === 1) {
+            const lotesResult = await tx.execute(
+              `SELECT id, cantidad_actual FROM lotes
+               WHERE producto_id = ? AND deposito_id = ? AND empresa_id = ? AND status = 'ACTIVO'
+               ORDER BY CASE WHEN fecha_vencimiento IS NULL THEN 1 ELSE 0 END ASC,
+                        fecha_vencimiento ASC, created_at ASC`,
+              [linea.producto_id, linea.deposito_id, empresaId]
+            )
+
+            let pendiente = cantidad
+            for (let i = 0; i < (lotesResult.rows?.length ?? 0); i++) {
+              if (pendiente <= 0.0001) break
+              const row = lotesResult.rows!.item(i) as { id: string; cantidad_actual: string }
+              const disponible = parseFloat(row.cantidad_actual)
+              if (disponible <= 0) continue
+
+              const aDescontar = Math.min(disponible, pendiente)
+              const nuevaCant = disponible - aDescontar
+
+              await tx.execute(
+                'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+                [nuevaCant.toFixed(3), nuevaCant <= 0.0001 ? 'AGOTADO' : 'ACTIVO', now, row.id]
+              )
+
+              if (loteIdMovimiento === null) loteIdMovimiento = row.id
+              pendiente -= aDescontar
+            }
+            // best-effort: si los lotes no cubren todo, el stock global se ajusta igual
+          }
         }
 
         await tx.execute(
@@ -306,7 +345,7 @@ export async function aplicarAjuste(
           [
             uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
-            linea.costo_unitario ?? null, linea.lote_id ?? null,
+            linea.costo_unitario ?? null, loteIdMovimiento,
             ajusteId, ajuste.num_ajuste,
             userId, fechaHoy, now,
           ]
