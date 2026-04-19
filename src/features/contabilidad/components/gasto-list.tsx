@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Plus, BarChart3, ChevronDown } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   useGastos,
@@ -7,6 +7,8 @@ import {
   type Gasto,
 } from '@/features/contabilidad/hooks/use-gastos'
 import { GastoForm } from './gasto-form'
+import { GastosKpis } from './gastos-kpis'
+import { GastoReportes, type TipoReporte } from './gasto-reportes'
 import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
@@ -59,10 +61,30 @@ export function GastoList() {
   const [formOpen, setFormOpen] = useState(false)
   const [anulandoId, setAnulandoId] = useState<string | null>(null)
 
+  // Estado para el dropdown de reportes
+  const [reporteOpen, setReporteOpen] = useState(false)
+  const [reporteActivo, setReporteActivo] = useState<TipoReporte | null>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
   const { gastos, isLoading } = useGastos(
     fechaDesde || undefined,
     fechaHasta || undefined
   )
+
+  // Cerrar dropdown al hacer clic fuera
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setReporteOpen(false)
+      }
+    }
+    if (reporteOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [reporteOpen])
 
   async function handleAnular(gasto: GastoConJoins) {
     const confirmar = window.confirm(
@@ -82,13 +104,23 @@ export function GastoList() {
     }
   }
 
+  function abrirReporte(tipo: TipoReporte) {
+    setReporteOpen(false)
+    setReporteActivo(tipo)
+  }
+
   if (isLoading) {
     return <TablaSkeleton />
   }
 
   return (
     <div>
-      {/* Barra superior con filtros y boton */}
+      {/* KPIs */}
+      <div className="mb-6">
+        <GastosKpis gastos={gastos} />
+      </div>
+
+      {/* Barra superior con filtros y botones */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3 mb-4">
         {/* Filtros de fecha */}
         <div className="flex flex-wrap items-end gap-3">
@@ -116,14 +148,56 @@ export function GastoList() {
           </div>
         </div>
 
-        {/* Boton nuevo */}
-        <button
-          onClick={() => setFormOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0"
-        >
-          <Plus className="h-4 w-4" />
-          Nuevo Gasto
-        </button>
+        {/* Botones: Reportes + Nuevo Gasto */}
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Dropdown Reportes */}
+          <div className="relative" ref={dropdownRef}>
+            <button
+              type="button"
+              onClick={() => setReporteOpen((prev) => !prev)}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            >
+              <BarChart3 className="h-4 w-4" />
+              Reportes
+              <ChevronDown className="h-4 w-4" />
+            </button>
+
+            {reporteOpen && (
+              <div className="absolute right-0 mt-1 w-44 rounded-md border border-gray-200 bg-white shadow-lg z-10">
+                <button
+                  type="button"
+                  onClick={() => abrirReporte('POR_CUENTA')}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors first:rounded-t-md"
+                >
+                  Por Cuenta
+                </button>
+                <button
+                  type="button"
+                  onClick={() => abrirReporte('DETALLADO')}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100"
+                >
+                  Detallado
+                </button>
+                <button
+                  type="button"
+                  onClick={() => abrirReporte('ESPECIFICO')}
+                  className="w-full text-left px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 transition-colors border-t border-gray-100 last:rounded-b-md"
+                >
+                  Registro Especifico
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Boton nuevo */}
+          <button
+            onClick={() => setFormOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            Nuevo Gasto
+          </button>
+        </div>
       </div>
 
       {/* Tabla / estado vacio */}
@@ -200,6 +274,13 @@ export function GastoList() {
 
       {/* Dialogo de creacion */}
       <GastoForm isOpen={formOpen} onClose={() => setFormOpen(false)} />
+
+      {/* Modal de reportes */}
+      <GastoReportes
+        gastos={gastos}
+        reporte={reporteActivo}
+        onClose={() => setReporteActivo(null)}
+      />
     </div>
   )
 }

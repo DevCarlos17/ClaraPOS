@@ -30,6 +30,13 @@ export interface Gasto {
   created_by: string | null
 }
 
+export interface GastoPago {
+  metodo_cobro_id: string
+  banco_empresa_id?: string
+  monto_usd: number
+  referencia?: string
+}
+
 // ─── Helpers ────────────────────────────────────────────────
 
 function buildDateRange(
@@ -97,8 +104,9 @@ export function useGastos(fechaDesde?: string, fechaHasta?: string) {
 // ─── Funciones de escritura ──────────────────────────────────
 
 /**
- * Crea un nuevo gasto y genera sus asientos contables.
+ * Crea un nuevo gasto con soporte de multiples pagos.
  * Genera nro_gasto con formato GTO-XXXX (secuencial por empresa).
+ * Inserta filas en gasto_pagos para cada pago.
  * El gasto queda en status REGISTRADO (no se puede editar, solo anular).
  */
 export async function crearGasto(data: {
@@ -109,9 +117,7 @@ export async function crearGasto(data: {
   moneda_id: string
   tasa: number
   monto_usd: number
-  metodo_cobro_id?: string
-  banco_empresa_id?: string
-  referencia?: string
+  pagos: GastoPago[]
   observaciones?: string
   empresa_id: string
   created_by?: string
@@ -134,6 +140,9 @@ export async function crearGasto(data: {
     const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
     nroGasto = `GTO-${String(count + 1).padStart(4, '0')}`
 
+    // Primer pago para campos legacy de backward compat
+    const primerPago = data.pagos[0]
+
     await tx.execute(
       `INSERT INTO gastos (
          id, empresa_id, nro_gasto, cuenta_id, proveedor_id, descripcion,
@@ -153,15 +162,36 @@ export async function crearGasto(data: {
         data.tasa.toFixed(4),
         data.monto_usd.toFixed(2),
         montoBs.toFixed(2),
-        data.metodo_cobro_id ?? null,
-        data.banco_empresa_id ?? null,
-        data.referencia ?? null,
+        primerPago?.metodo_cobro_id ?? null,
+        primerPago?.banco_empresa_id ?? null,
+        primerPago?.referencia ?? null,
         data.observaciones ?? null,
         now,
         now,
         data.created_by ?? null,
       ]
     )
+
+    // Insertar filas en gasto_pagos para cada pago
+    for (const pago of data.pagos) {
+      const pagoId = uuidv4()
+      await tx.execute(
+        `INSERT INTO gasto_pagos (
+           id, empresa_id, gasto_id, metodo_cobro_id, banco_empresa_id,
+           monto_usd, referencia, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          pagoId,
+          data.empresa_id,
+          gastoId,
+          pago.metodo_cobro_id,
+          pago.banco_empresa_id ?? null,
+          pago.monto_usd.toFixed(2),
+          pago.referencia ?? null,
+          now,
+        ]
+      )
+    }
 
     // Generar asientos contables
     try {
@@ -172,13 +202,15 @@ export async function crearGasto(data: {
         nroGasto,
         cuentaGastoId: data.cuenta_id,
         monto_usd: data.monto_usd,
-        banco_empresa_id: data.banco_empresa_id ?? null,
+        pagos: data.pagos.map((p) => ({
+          monto_usd: p.monto_usd,
+          banco_empresa_id: p.banco_empresa_id ?? null,
+        })),
         cuentas,
         usuarioId: data.created_by ?? '',
       })
     } catch {
       // Si falla la contabilidad no bloqueamos el gasto
-      // El usuario puede registrar el asiento manualmente desde el libro contable
     }
   })
 

@@ -38,6 +38,7 @@ import { Route as AppInventarioComprasRouteImport } from './routes/_app/inventar
 import { Route as AppInventarioAjustesRouteImport } from './routes/_app/inventario/ajustes'
 import { Route as AppContabilidadPlanCuentasRouteImport } from './routes/_app/contabilidad/plan-cuentas'
 import { Route as AppContabilidadLibroContableRouteImport } from './routes/_app/contabilidad/libro-contable'
+import { Route as AppContabilidadGastosDashboardRouteImport } from './routes/_app/contabilidad/gastos-dashboard'
 import { Route as AppContabilidadGastosRouteImport } from './routes/_app/contabilidad/gastos'
 import { Route as AppContabilidadCuentasConfigRouteImport } from './routes/_app/contabilidad/cuentas-config'
 import { Route as AppConfiguracionUsuariosRouteImport } from './routes/_app/configuracion/usuarios'
@@ -205,6 +206,12 @@ const AppContabilidadLibroContableRoute =
     path: '/contabilidad/libro-contable',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppContabilidadGastosDashboardRoute =
+  AppContabilidadGastosDashboardRouteImport.update({
+    id: '/contabilidad/gastos-dashboard',
+    path: '/contabilidad/gastos-dashboard',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppContabilidadGastosRoute = AppContabilidadGastosRouteImport.update({
   id: '/contabilidad/gastos',
   path: '/contabilidad/gastos',
@@ -342,6 +349,7 @@ export interface FileRoutesByFullPath {
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
   '/contabilidad/cuentas-config': typeof AppContabilidadCuentasConfigRoute
   '/contabilidad/gastos': typeof AppContabilidadGastosRoute
+  '/contabilidad/gastos-dashboard': typeof AppContabilidadGastosDashboardRoute
   '/contabilidad/libro-contable': typeof AppContabilidadLibroContableRoute
   '/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
   '/inventario/ajustes': typeof AppInventarioAjustesRoute
@@ -389,6 +397,7 @@ export interface FileRoutesByTo {
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/contabilidad/cuentas-config': typeof AppContabilidadCuentasConfigRoute
   '/contabilidad/gastos': typeof AppContabilidadGastosRoute
+  '/contabilidad/gastos-dashboard': typeof AppContabilidadGastosDashboardRoute
   '/contabilidad/libro-contable': typeof AppContabilidadLibroContableRoute
   '/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
   '/inventario/ajustes': typeof AppInventarioAjustesRoute
@@ -441,6 +450,7 @@ export interface FileRoutesById {
   '/_app/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
   '/_app/contabilidad/cuentas-config': typeof AppContabilidadCuentasConfigRoute
   '/_app/contabilidad/gastos': typeof AppContabilidadGastosRoute
+  '/_app/contabilidad/gastos-dashboard': typeof AppContabilidadGastosDashboardRoute
   '/_app/contabilidad/libro-contable': typeof AppContabilidadLibroContableRoute
   '/_app/contabilidad/plan-cuentas': typeof AppContabilidadPlanCuentasRoute
   '/_app/inventario/ajustes': typeof AppInventarioAjustesRoute
@@ -492,6 +502,7 @@ export interface FileRouteTypes {
     | '/configuracion/usuarios'
     | '/contabilidad/cuentas-config'
     | '/contabilidad/gastos'
+    | '/contabilidad/gastos-dashboard'
     | '/contabilidad/libro-contable'
     | '/contabilidad/plan-cuentas'
     | '/inventario/ajustes'
@@ -539,6 +550,7 @@ export interface FileRouteTypes {
     | '/configuracion/tasa-cambio'
     | '/contabilidad/cuentas-config'
     | '/contabilidad/gastos'
+    | '/contabilidad/gastos-dashboard'
     | '/contabilidad/libro-contable'
     | '/contabilidad/plan-cuentas'
     | '/inventario/ajustes'
@@ -590,6 +602,7 @@ export interface FileRouteTypes {
     | '/_app/configuracion/usuarios'
     | '/_app/contabilidad/cuentas-config'
     | '/_app/contabilidad/gastos'
+    | '/_app/contabilidad/gastos-dashboard'
     | '/_app/contabilidad/libro-contable'
     | '/_app/contabilidad/plan-cuentas'
     | '/_app/inventario/ajustes'
@@ -825,6 +838,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppContabilidadLibroContableRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/contabilidad/gastos-dashboard': {
+      id: '/_app/contabilidad/gastos-dashboard'
+      path: '/contabilidad/gastos-dashboard'
+      fullPath: '/contabilidad/gastos-dashboard'
+      preLoaderRoute: typeof AppContabilidadGastosDashboardRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/contabilidad/gastos': {
       id: '/_app/contabilidad/gastos'
       path: '/contabilidad/gastos'
@@ -1039,6 +1059,7 @@ interface AppRouteRouteChildren {
   AppConfiguracionUsuariosRoute: typeof AppConfiguracionUsuariosRouteWithChildren
   AppContabilidadCuentasConfigRoute: typeof AppContabilidadCuentasConfigRoute
   AppContabilidadGastosRoute: typeof AppContabilidadGastosRoute
+  AppContabilidadGastosDashboardRoute: typeof AppContabilidadGastosDashboardRoute
   AppContabilidadLibroContableRoute: typeof AppContabilidadLibroContableRoute
   AppContabilidadPlanCuentasRoute: typeof AppContabilidadPlanCuentasRoute
   AppInventarioAjustesRoute: typeof AppInventarioAjustesRoute
@@ -1079,6 +1100,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppConfiguracionUsuariosRoute: AppConfiguracionUsuariosRouteWithChildren,
   AppContabilidadCuentasConfigRoute: AppContabilidadCuentasConfigRoute,
   AppContabilidadGastosRoute: AppContabilidadGastosRoute,
+  AppContabilidadGastosDashboardRoute: AppContabilidadGastosDashboardRoute,
   AppContabilidadLibroContableRoute: AppContabilidadLibroContableRoute,
   AppContabilidadPlanCuentasRoute: AppContabilidadPlanCuentasRoute,
   AppInventarioAjustesRoute: AppInventarioAjustesRoute,

@@ -342,3 +342,82 @@ When using `<select>` outside native dialog (e.g. settings forms with shadcn Inp
 className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
 ```
 This matches the shadcn Input visual style.
+
+## Completed: Plan Cuentas Tree View + Context Menu + CSV Import/Export (2026-04-19)
+
+### New Files Created
+- `src/features/contabilidad/lib/plan-cuentas-csv.ts` — pure utility: exportPlanCuentasCsv, downloadCsv, generateTemplate, parseCsv, ParsedCuentaRow
+- `src/features/contabilidad/components/cuenta-context-menu.tsx` — right-click menu with Copy/Edit/Subcuenta options
+- `src/features/contabilidad/components/plan-cuentas-import.tsx` — CSV import dialog with preview table
+
+### Modified Files
+- `src/features/contabilidad/components/cuenta-form.tsx` — added `parentPreset?: CuentaContable` prop; third useEffect branch populates codigo=parent.codigo+'.', nivel=parent.nivel+1, copies tipo/naturaleza/parentId from preset; title shows "Nueva Subcuenta de [nombre]"
+- `src/features/contabilidad/components/plan-cuentas-list.tsx` — full rewrite with tree view, expand/collapse all, context menu integration, CSV export/import buttons
+
+### Tree View Pattern
+- `childrenMap: Map<string | null, CuentaContable[]>` via useMemo — key is `parent_id ?? null`
+- `visibleCuentas` via useMemo — recursive `walk(parentId)` starting from `walk(null)`, only recurses if `expandedIds.has(c.id) && es_cuenta_detalle === 0`
+- Default state: collapsed (empty `Set`)
+- Expand all: `new Set(allGroupIds)` where allGroupIds = group accounts' ids
+- Indentation: `paddingLeft: ${8 + (nivel - 1) * 20}px` on `<td>` — 8px base + 20px per level
+
+### Context Menu Pattern
+- `data-context-menu` attribute on root div for click-outside detection
+- `document.addEventListener('mousedown')` checks `!target.closest('[data-context-menu]')`
+- `position: fixed` with `style={{ left: position.x, top: position.y }}`
+- Cleanup: useEffect returns removal of both `keydown` and `mousedown` listeners
+- "Agregar Subcuenta" only shown when `cuenta.es_cuenta_detalle === 0`
+
+### CSV parseCsv Validation
+- Each row validated with `cuentaSchema.safeParse({ nivel: 1, ... })`
+- Duplicate check via `existingCodigos = new Set(existingCuentas.map(c => c.codigo))`
+- First error message taken: `parsed.error.issues[0]?.message`
+
+### Import Sequential Loop
+- `for...of validRows` with `await crearCuenta(...)` — sequential, not Promise.all
+- `resolveParentId`: find in existing cuentas by matching codigo field
+- `resolveNivel`: parent.nivel + 1 or 1 if no parent
+- Summary toast: "X creada(s) correctamente" or "X creada(s), Y con errores" (warning)
+
+### Pre-existing TS Errors (not our code, ignore)
+- `use-libro-contable.ts`: unused `localNow` and `empresaId` variables
+
+## Completed: Gastos UI Phase 5 — Multi-Payment + KPIs + Reports (2026-04-19)
+
+### Modified Files
+- `src/features/contabilidad/components/gasto-form.tsx` — full rewrite: multi-payment `PagoRow[]` state, `useCuentasDetallePorTipo('GASTO')`, `useMetodosPagoActivos()`, fechaWarning banner, auto-bank detection, auto-fill single pago monto, payment totalizator
+- `src/features/contabilidad/components/gasto-list.tsx` — added GastosKpis, Reportes dropdown (BarChart3+ChevronDown icons), GastoReportes modal integration, click-outside close pattern
+
+### New Files Created
+- `src/features/contabilidad/components/gastos-kpis.tsx` — 4 KPI cards (Total USD, Total Bs, Cantidad, Top Cuenta), only counts REGISTRADO gastos
+- `src/features/contabilidad/components/gasto-reportes.tsx` — native dialog, 3 report views: POR_CUENTA (grouped subtotals), DETALLADO (print-enabled), ESPECIFICO (client-side filter)
+- `src/features/contabilidad/components/gastos-dashboard.tsx` — already existed, fixed Tooltip formatter types (recharts v3 Formatter needs `value: ValueType | undefined`)
+
+### Recharts v3 Tooltip Formatter Fix
+```tsx
+formatter={(value) => {
+  const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
+  return [`$${num.toFixed(2)}`, 'Label']
+}}
+```
+Signature is `Formatter<ValueType, NameType>` where `ValueType` is `number | string | undefined`.
+
+### Multi-Payment PagoRow Pattern
+```tsx
+interface PagoRow { id: string; metodo_cobro_id: string; banco_empresa_id: string; monto_usd: string; referencia: string }
+// Auto-bank detection when metodo selected:
+const metodo = metodos.find((m) => m.id === valor)
+updated.banco_empresa_id = metodo?.banco_empresa_id ?? ''
+// Auto-fill monto when single pago (useEffect on montoUsd, eslint-disable on deps array):
+useEffect(() => {
+  if (pagos.length === 1) setPagos(prev => prev.map((p, i) => i === 0 ? {...p, monto_usd: montoUsd} : p))
+}, [montoUsd]) // eslint-disable-line react-hooks/exhaustive-deps
+```
+
+### TipoReporte Union Type (gasto-reportes.tsx)
+`export type TipoReporte = 'POR_CUENTA' | 'DETALLADO' | 'ESPECIFICO'`
+Imported in gasto-list.tsx: `import { GastoReportes, type TipoReporte } from './gasto-reportes'`
+
+### useMetodosPagoActivos vs usePaymentMethods
+- `useMetodosPagoActivos()` returns `{ metodos, isLoading }` — use this for active-only list
+- `usePaymentMethods()` returns `{ methods, isLoading }` — use for full list in config screens

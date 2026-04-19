@@ -16,6 +16,8 @@ interface CuentaFormProps {
   onClose: () => void
   cuenta?: CuentaContable
   cuentas: CuentaContable[]
+  /** Cuando se provee, el formulario pre-rellena campos para crear una subcuenta */
+  parentPreset?: CuentaContable
 }
 
 const TIPO_LABELS: Record<string, string> = {
@@ -29,7 +31,7 @@ const TIPO_LABELS: Record<string, string> = {
 
 // ─── Componente ───────────────────────────────────────────────
 
-export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps) {
+export function CuentaForm({ isOpen, onClose, cuenta, cuentas, parentPreset }: CuentaFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { user } = useCurrentUser()
   const isEditing = !!cuenta
@@ -55,6 +57,7 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
   useEffect(() => {
     if (isOpen) {
       if (cuenta) {
+        // Modo edicion: cargar datos existentes
         setCodigo(cuenta.codigo)
         setNombre(cuenta.nombre)
         setTipo(cuenta.tipo as TipoCuenta)
@@ -63,7 +66,18 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
         setNivel(String(cuenta.nivel))
         setEsCuentaDetalle(cuenta.es_cuenta_detalle === 1)
         setIsActive(cuenta.is_active === 1)
+      } else if (parentPreset) {
+        // Modo nueva subcuenta: pre-rellenar a partir del padre
+        setCodigo(parentPreset.codigo + '.')
+        setNombre('')
+        setTipo(parentPreset.tipo as TipoCuenta)
+        setNaturaleza((parentPreset.naturaleza as NaturalezaCuenta) ?? 'DEUDORA')
+        setParentId(parentPreset.id)
+        setNivel(String(parentPreset.nivel + 1))
+        setEsCuentaDetalle(false)
+        setIsActive(true)
       } else {
+        // Modo nueva cuenta raiz
         setCodigo('')
         setNombre('')
         setTipo('GASTO')
@@ -78,7 +92,7 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
     } else {
       dialogRef.current?.close()
     }
-  }, [isOpen, cuenta])
+  }, [isOpen, cuenta, parentPreset])
 
   // Auto-completar naturaleza cuando cambia el tipo
   function handleTipoChange(nuevoTipo: TipoCuenta) {
@@ -171,7 +185,11 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas }: CuentaFormProps
     >
       <div className="p-6">
         <h2 className="text-lg font-semibold mb-4">
-          {isEditing ? 'Editar Cuenta' : 'Nueva Cuenta Contable'}
+          {isEditing
+            ? 'Editar Cuenta'
+            : parentPreset
+              ? `Nueva Subcuenta de ${parentPreset.nombre}`
+              : 'Nueva Cuenta Contable'}
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-4">

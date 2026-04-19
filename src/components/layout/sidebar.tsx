@@ -126,6 +126,7 @@ const menuItems: MenuItem[] = [
       { title: 'Libro Contable', url: '/contabilidad/libro-contable', icon: BookText, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
       { title: 'Plan de Cuentas', url: '/contabilidad/plan-cuentas', icon: BookOpenCheck, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
       { title: 'Gastos', url: '/contabilidad/gastos', icon: HandCoins, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
+      { title: 'Dashboard Gastos', url: '/contabilidad/gastos-dashboard', icon: BarChart3, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
       { title: 'Config. Contable', url: '/contabilidad/cuentas-config', icon: SlidersHorizontal, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
     ],
   },

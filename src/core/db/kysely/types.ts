@@ -984,6 +984,17 @@ export interface LibroContable {
   created_at: string
 }
 
+export interface GastoPagos {
+  id: string
+  empresa_id: string
+  gasto_id: string
+  metodo_cobro_id: string | null
+  banco_empresa_id: string | null
+  monto_usd: string
+  referencia: string | null
+  created_at: string
+}
+
 // =============================================
 // DB INTERFACE (mapeo nombre_tabla -> Interface)
 // =============================================
@@ -1056,6 +1067,7 @@ export interface DB {
   // Contabilidad
   plan_cuentas: PlanCuentas
   gastos: Gastos
+  gasto_pagos: GastoPagos
   cuentas_config: CuentasConfig
   libro_contable: LibroContable
 }

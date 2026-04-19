@@ -1,19 +1,42 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { Plus, Trash2 } from 'lucide-react'
 import { gastoSchema } from '@/features/contabilidad/schemas/gasto-schema'
-import { crearGasto } from '@/features/contabilidad/hooks/use-gastos'
-import { useCuentasDetalle } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import { crearGasto, type GastoPago } from '@/features/contabilidad/hooks/use-gastos'
+import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
-import { usePaymentMethods } from '@/features/configuracion/hooks/use-payment-methods'
-import { useBancos } from '@/features/configuracion/hooks/use-bancos'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { v4 as uuidv4 } from 'uuid'
+
+// ─── Tipos locales ──────────────────────────────────────────
+
+interface PagoRow {
+  id: string
+  metodo_cobro_id: string
+  banco_empresa_id: string
+  monto_usd: string
+  referencia: string
+}
 
 // ─── Props ────────────────────────────────────────────────────
 
 interface GastoFormProps {
   isOpen: boolean
   onClose: () => void
+}
+
+// ─── Helpers ─────────────────────────────────────────────────
+
+function nuevoPagoRow(): PagoRow {
+  return {
+    id: uuidv4(),
+    metodo_cobro_id: '',
+    banco_empresa_id: '',
+    monto_usd: '',
+    referencia: '',
+  }
 }
 
 // ─── Componente ───────────────────────────────────────────────
@@ -23,10 +46,9 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
   const { user } = useCurrentUser()
 
   // Dependencias externas
-  const { cuentas, isLoading: loadingCuentas } = useCuentasDetalle()
+  const { cuentas, isLoading: loadingCuentas } = useCuentasDetallePorTipo('GASTO')
   const { proveedores, isLoading: loadingProveedores } = useProveedores()
-  const { methods, isLoading: loadingMetodos } = usePaymentMethods()
-  const { bancos, isLoading: loadingBancos } = useBancos()
+  const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
   const { tasa: tasaActual } = useTasaActual()
 
   // ─── Estado de campos ──────────────────────────────────────
@@ -37,9 +59,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
   const [fecha, setFecha] = useState('')
   const [tasa, setTasa] = useState('')
   const [montoUsd, setMontoUsd] = useState('')
-  const [metodoCobro, setMetodoCobro] = useState('')
-  const [bancoEmpresa, setBancoEmpresa] = useState('')
-  const [referencia, setReferencia] = useState('')
+  const [pagos, setPagos] = useState<PagoRow[]>([nuevoPagoRow()])
   const [observaciones, setObservaciones] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -48,18 +68,13 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
 
   useEffect(() => {
     if (isOpen) {
-      // Valores iniciales
       setCuentaId('')
       setProveedorId('')
       setDescripcion('')
-      // Fecha de hoy por defecto
       setFecha(new Date().toISOString().slice(0, 10))
-      // Tasa actual por defecto
       setTasa(tasaActual ? parseFloat(tasaActual.valor).toFixed(4) : '1.0000')
       setMontoUsd('')
-      setMetodoCobro('')
-      setBancoEmpresa('')
-      setReferencia('')
+      setPagos([nuevoPagoRow()])
       setObservaciones('')
       setErrors({})
       dialogRef.current?.showModal()
@@ -67,6 +82,15 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
       dialogRef.current?.close()
     }
   }, [isOpen, tasaActual])
+
+  // ─── Advertencia de fecha fuera del mes actual ────────────
+
+  const fechaWarning = (() => {
+    if (!fecha) return false
+    const [anio, mes] = fecha.split('-').map(Number)
+    const now = new Date()
+    return anio !== now.getFullYear() || mes !== (now.getMonth() + 1)
+  })()
 
   // ─── Calculo de monto en Bs (solo visual) ─────────────────
 
@@ -79,11 +103,66 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
     return null
   })()
 
+  // ─── Auto-fill monto cuando hay un solo pago ──────────────
+
+  useEffect(() => {
+    if (pagos.length === 1) {
+      setPagos((prev) =>
+        prev.map((p, i) => (i === 0 ? { ...p, monto_usd: montoUsd } : p))
+      )
+    }
+    // Solo reaccionar al cambio de montoUsd, no a pagos para evitar loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [montoUsd])
+
+  // ─── Operaciones sobre filas de pagos ─────────────────────
+
+  function agregarPago() {
+    setPagos((prev) => [...prev, nuevoPagoRow()])
+  }
+
+  function eliminarPago(id: string) {
+    setPagos((prev) => prev.filter((p) => p.id !== id))
+  }
+
+  function actualizarPago(id: string, campo: keyof Omit<PagoRow, 'id'>, valor: string) {
+    setPagos((prev) =>
+      prev.map((p) => {
+        if (p.id !== id) return p
+        const updated = { ...p, [campo]: valor }
+        // Auto-detectar banco desde el metodo de pago seleccionado
+        if (campo === 'metodo_cobro_id') {
+          const metodo = metodos.find((m) => m.id === valor)
+          updated.banco_empresa_id = metodo?.banco_empresa_id ?? ''
+        }
+        return updated
+      })
+    )
+  }
+
+  // ─── Calculo del total de pagos ───────────────────────────
+
+  const totalPagos = pagos.reduce((sum, p) => {
+    const val = parseFloat(p.monto_usd)
+    return sum + (isNaN(val) ? 0 : val)
+  }, 0)
+
+  const montoTotalFloat = parseFloat(montoUsd) || 0
+  const pagosDesbalanceados =
+    montoTotalFloat > 0 && Math.abs(totalPagos - montoTotalFloat) > 0.01
+
   // ─── Submit ───────────────────────────────────────────────
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErrors({})
+
+    const pagosPayload: GastoPago[] = pagos.map((p) => ({
+      metodo_cobro_id: p.metodo_cobro_id,
+      banco_empresa_id: p.banco_empresa_id || undefined,
+      monto_usd: parseFloat(p.monto_usd) || 0,
+      referencia: p.referencia.trim() || undefined,
+    }))
 
     const parsed = gastoSchema.safeParse({
       cuenta_id: cuentaId,
@@ -93,9 +172,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
       moneda_id: 'USD',
       tasa: parseFloat(tasa) || 0,
       monto_usd: parseFloat(montoUsd) || 0,
-      metodo_cobro_id: metodoCobro || undefined,
-      banco_empresa_id: bancoEmpresa || undefined,
-      referencia: referencia.trim(),
+      pagos: pagosPayload,
       observaciones: observaciones.trim(),
     })
 
@@ -106,6 +183,18 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
         if (field) fieldErrors[field] = issue.message
       }
       setErrors(fieldErrors)
+      return
+    }
+
+    // Validar que el total de pagos cuadre con el monto total
+    const totalPagosValidacion = parsed.data.pagos.reduce(
+      (sum, p) => sum + p.monto_usd,
+      0
+    )
+    if (Math.abs(totalPagosValidacion - parsed.data.monto_usd) > 0.01) {
+      toast.error(
+        `La suma de pagos (${totalPagosValidacion.toFixed(2)}) no coincide con el monto total (${parsed.data.monto_usd.toFixed(2)})`
+      )
       return
     }
 
@@ -124,9 +213,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
         moneda_id: 'USD',
         tasa: parsed.data.tasa,
         monto_usd: parsed.data.monto_usd,
-        metodo_cobro_id: parsed.data.metodo_cobro_id,
-        banco_empresa_id: parsed.data.banco_empresa_id,
-        referencia: parsed.data.referencia || undefined,
+        pagos: parsed.data.pagos,
         observaciones: parsed.data.observaciones || undefined,
         empresa_id: user.empresa_id!,
         created_by: user.id,
@@ -248,6 +335,11 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
             {errors.fecha && (
               <p className="text-red-500 text-xs mt-1">{errors.fecha}</p>
             )}
+            {fechaWarning && (
+              <div className="mt-1 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                Advertencia: la fecha no corresponde al mes en curso
+              </div>
+            )}
           </div>
 
           {/* Tasa y Monto USD */}
@@ -301,65 +393,126 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
             </p>
           )}
 
-          {/* Metodo de cobro */}
+          {/* Seccion de pagos */}
           <div>
-            <label htmlFor="gasto-metodo" className="block text-sm font-medium text-gray-700 mb-1">
-              Metodo de Pago <span className="text-gray-400 font-normal">(opcional)</span>
-            </label>
-            <select
-              id="gasto-metodo"
-              value={metodoCobro}
-              onChange={(e) => setMetodoCobro(e.target.value)}
-              disabled={loadingMetodos}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">
-                {loadingMetodos ? 'Cargando...' : 'Sin especificar'}
-              </option>
-              {methods.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.nombre}
-                </option>
-              ))}
-            </select>
-          </div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">
+                Pagos
+              </label>
+              <button
+                type="button"
+                onClick={agregarPago}
+                className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Agregar pago
+              </button>
+            </div>
 
-          {/* Banco empresa */}
-          <div>
-            <label htmlFor="gasto-banco" className="block text-sm font-medium text-gray-700 mb-1">
-              Banco <span className="text-gray-400 font-normal">(opcional)</span>
-            </label>
-            <select
-              id="gasto-banco"
-              value={bancoEmpresa}
-              onChange={(e) => setBancoEmpresa(e.target.value)}
-              disabled={loadingBancos}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">
-                {loadingBancos ? 'Cargando...' : 'Sin especificar'}
-              </option>
-              {bancos.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.nombre_banco}
-                </option>
-              ))}
-            </select>
-          </div>
+            {errors.pagos && (
+              <p className="text-red-500 text-xs mb-2">{errors.pagos}</p>
+            )}
 
-          {/* Referencia */}
-          <div>
-            <label htmlFor="gasto-ref" className="block text-sm font-medium text-gray-700 mb-1">
-              Referencia <span className="text-gray-400 font-normal">(opcional)</span>
-            </label>
-            <input
-              id="gasto-ref"
-              type="text"
-              value={referencia}
-              onChange={(e) => setReferencia(e.target.value.toUpperCase())}
-              placeholder="Nro de transferencia, cheque, etc."
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="space-y-3">
+              {pagos.map((pago, index) => {
+                const metodoSeleccionado = metodos.find(
+                  (m) => m.id === pago.metodo_cobro_id
+                )
+                const requiereReferencia =
+                  metodoSeleccionado?.requiere_referencia === 1
+
+                return (
+                  <div
+                    key={pago.id}
+                    className="rounded-md border border-gray-200 bg-gray-50 p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-gray-500">
+                        Pago {index + 1}
+                      </span>
+                      {pagos.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => eliminarPago(pago.id)}
+                          className="text-red-500 hover:text-red-700 transition-colors"
+                          aria-label="Eliminar pago"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Metodo de pago */}
+                    <select
+                      value={pago.metodo_cobro_id}
+                      onChange={(e) =>
+                        actualizarPago(pago.id, 'metodo_cobro_id', e.target.value)
+                      }
+                      disabled={loadingMetodos}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    >
+                      <option value="">
+                        {loadingMetodos ? 'Cargando...' : 'Seleccionar metodo'}
+                      </option>
+                      {metodos.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.nombre} ({m.moneda})
+                        </option>
+                      ))}
+                    </select>
+
+                    {/* Monto */}
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={pago.monto_usd}
+                      onChange={(e) =>
+                        actualizarPago(pago.id, 'monto_usd', e.target.value)
+                      }
+                      placeholder="Monto USD"
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    />
+
+                    {/* Referencia (solo si el metodo lo requiere) */}
+                    {requiereReferencia && (
+                      <input
+                        type="text"
+                        value={pago.referencia}
+                        onChange={(e) =>
+                          actualizarPago(
+                            pago.id,
+                            'referencia',
+                            e.target.value.toUpperCase()
+                          )
+                        }
+                        placeholder="Nro de referencia"
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Totalizador de pagos */}
+            {montoTotalFloat > 0 && (
+              <div
+                className={`mt-2 rounded-md px-3 py-2 text-xs flex justify-between ${
+                  pagosDesbalanceados
+                    ? 'bg-red-50 border border-red-200 text-red-700'
+                    : 'bg-green-50 border border-green-200 text-green-700'
+                }`}
+              >
+                <span>Total pagos: ${totalPagos.toFixed(2)}</span>
+                <span>Total gasto: ${montoTotalFloat.toFixed(2)}</span>
+                {pagosDesbalanceados && (
+                  <span className="font-medium">
+                    Diferencia: ${Math.abs(totalPagos - montoTotalFloat).toFixed(2)}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Observaciones */}

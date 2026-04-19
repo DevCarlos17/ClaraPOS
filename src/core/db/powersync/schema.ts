@@ -1119,6 +1119,19 @@ const libro_contable = new Table(
   { indexes: {} }
 )
 
+const gasto_pagos = new Table(
+  {
+    empresa_id: column.text,
+    gasto_id: column.text,
+    metodo_cobro_id: column.text,
+    banco_empresa_id: column.text,
+    monto_usd: column.text,
+    referencia: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
 // =============================================
 // SCHEMA EXPORT
 // =============================================
@@ -1191,6 +1204,7 @@ export const AppSchema = new Schema({
   // Contabilidad
   plan_cuentas,
   gastos,
+  gasto_pagos,
   cuentas_config,
   libro_contable,
 })

@@ -197,7 +197,8 @@ export async function generarAsientosVenta(
 }
 
 /**
- * Asientos para un gasto.
+ * Asientos para un gasto con soporte de pagos multiples.
+ * Genera un DEBE por la cuenta de gasto y multiples HABER (uno por pago).
  */
 export async function generarAsientosGasto(
   tx: WriteTx,
@@ -207,18 +208,14 @@ export async function generarAsientosGasto(
     nroGasto: string
     cuentaGastoId: string
     monto_usd: number
-    banco_empresa_id: string | null
+    pagos: Array<{ monto_usd: number; banco_empresa_id: string | null }>
     cuentas: Record<string, string>
     usuarioId: string
   }
 ): Promise<string[]> {
-  const { empresaId, gastoId, nroGasto, cuentaGastoId, monto_usd, banco_empresa_id, cuentas, usuarioId } = params
+  const { empresaId, gastoId, nroGasto, cuentaGastoId, monto_usd, pagos, cuentas, usuarioId } = params
 
   if (monto_usd <= 0) return []
-
-  const cuentaBanco = banco_empresa_id
-    ? (await getCuentaBanco(tx, banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
-    : cuentas['CAJA_EFECTIVO']
 
   const lineas: LineaAsiento[] = [
     {
@@ -226,13 +223,21 @@ export async function generarAsientosGasto(
       monto: monto_usd,
       detalle: `Gasto ${nroGasto}`,
     },
-    {
-      cuenta_contable_id: cuentaBanco ?? cuentaGastoId,
-      banco_empresa_id: banco_empresa_id,
-      monto: -monto_usd,
-      detalle: `Pago gasto ${nroGasto}`,
-    },
   ]
+
+  for (const pago of pagos) {
+    if (pago.monto_usd <= 0) continue
+    const cuentaBanco = pago.banco_empresa_id
+      ? (await getCuentaBanco(tx, pago.banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
+      : cuentas['CAJA_EFECTIVO']
+
+    lineas.push({
+      cuenta_contable_id: cuentaBanco ?? cuentaGastoId,
+      banco_empresa_id: pago.banco_empresa_id,
+      monto: -pago.monto_usd,
+      detalle: `Pago gasto ${nroGasto}`,
+    })
+  }
 
   return generarAsientos(tx, {
     empresaId,
