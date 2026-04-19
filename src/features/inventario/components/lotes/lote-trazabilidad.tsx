@@ -11,7 +11,6 @@ interface DespachoLote {
   cantidad: string
   fecha: string
   origen: string
-  venta_id: string | null
   nro_factura: string | null
   cliente_nombre: string | null
   cliente_rif: string | null
@@ -28,12 +27,12 @@ function TrazabilidadDetalleTable({
 }) {
   const { data, isLoading } = useQuery(
     `SELECT
-       mi.id, mi.cantidad, mi.fecha, mi.origen, mi.venta_id,
+       mi.id, mi.cantidad, mi.fecha, mi.origen,
        v.nro_factura,
-       c.nombre  AS cliente_nombre,
+       c.nombre        AS cliente_nombre,
        c.identificacion AS cliente_rif
      FROM movimientos_inventario mi
-     LEFT JOIN ventas v   ON v.id = mi.venta_id
+     LEFT JOIN ventas   v ON v.id = mi.doc_origen_id AND mi.origen = 'VEN'
      LEFT JOIN clientes c ON c.id = v.cliente_id
      WHERE mi.lote_id = ? AND mi.empresa_id = ? AND mi.tipo = 'S'
      ORDER BY mi.fecha DESC`,
