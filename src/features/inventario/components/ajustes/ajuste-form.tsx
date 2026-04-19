@@ -21,8 +21,9 @@ interface LineaInput {
   cantidad: string
   costo_unitario: string
   // Campos de lote (solo cuando maneja_lotes=1)
-  lote_id: string        // para RESTA: lote existente
-  lote_nro: string       // para SUMA: nuevo lote
+  lote_modo: 'existente' | 'nuevo'  // SUMA: agregar a lote existente vs crear nuevo
+  lote_id: string                   // para RESTA o SUMA modo existente
+  lote_nro: string                  // para SUMA modo nuevo
   lote_fecha_fab: string
   lote_fecha_venc: string
 }
@@ -89,7 +90,7 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
       ...prev,
       {
         producto_id: '', deposito_id: '', cantidad: '', costo_unitario: '',
-        lote_id: '', lote_nro: '', lote_fecha_fab: '', lote_fecha_venc: '',
+        lote_modo: 'existente', lote_id: '', lote_nro: '', lote_fecha_fab: '', lote_fecha_venc: '',
       },
     ])
   }
@@ -102,9 +103,17 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
     setLineas((prev) =>
       prev.map((linea, i) => {
         if (i !== index) return linea
-        // Al cambiar producto o deposito, limpiar campos de lote
+        // Al cambiar producto o deposito, limpiar todos los campos de lote
         if (field === 'producto_id' || field === 'deposito_id') {
           return { ...linea, [field]: value, lote_id: '', lote_nro: '', lote_fecha_fab: '', lote_fecha_venc: '' }
+        }
+        // Al cambiar modo de lote, limpiar campos del modo anterior
+        if (field === 'lote_modo') {
+          if (value === 'existente') {
+            return { ...linea, lote_modo: 'existente', lote_nro: '', lote_fecha_fab: '', lote_fecha_venc: '' }
+          } else {
+            return { ...linea, lote_modo: 'nuevo', lote_id: '' }
+          }
         }
         return { ...linea, [field]: value }
       })
@@ -157,6 +166,24 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
       }
       setErrors(fieldErrors)
       return
+    }
+
+    // Validar seleccion de lote para productos que manejan lotes
+    if (operacionBase && operacionBase !== 'NEUTRO') {
+      for (let i = 0; i < lineas.length; i++) {
+        const linea = lineas[i]
+        const producto = productoMap.get(linea.producto_id)
+        if (producto && Number(producto.maneja_lotes) === 1) {
+          if (operacionBase === 'RESTA' && !linea.lote_id) {
+            toast.error(`Linea ${i + 1}: debes seleccionar el lote a descontar`)
+            return
+          }
+          if (operacionBase === 'SUMA' && linea.lote_modo === 'existente' && !linea.lote_id) {
+            toast.error(`Linea ${i + 1}: selecciona el lote al que agregar la cantidad`)
+            return
+          }
+        }
+      }
     }
 
     setSubmitting(true)
@@ -345,51 +372,108 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
                             <tr className="border-b border-amber-100 bg-amber-50/40">
                               <td colSpan={5} className="px-3 py-2">
                                 {operacionBase === 'SUMA' ? (
-                                  <div className="flex flex-wrap items-center gap-3 text-xs">
-                                    <span className="text-amber-700 font-medium shrink-0">Lote nuevo:</span>
-                                    <div className="flex items-center gap-1.5">
-                                      <label className="text-gray-500 shrink-0">Nro.</label>
-                                      <input
-                                        type="text"
-                                        value={linea.lote_nro}
-                                        onChange={(e) => actualizarLinea(index, 'lote_nro', e.target.value.toUpperCase())}
-                                        placeholder="Ej: LOT-001"
-                                        autoComplete="off"
-                                        className="w-28 rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                      />
+                                  <div className="flex flex-wrap items-start gap-3 text-xs">
+                                    {/* Toggle modo lote */}
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => actualizarLinea(index, 'lote_modo', 'existente')}
+                                        className={`px-2 py-0.5 rounded text-xs border transition-colors ${
+                                          linea.lote_modo === 'existente'
+                                            ? 'bg-amber-200 border-amber-400 text-amber-900 font-medium'
+                                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                                        }`}
+                                      >
+                                        Lote existente
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => actualizarLinea(index, 'lote_modo', 'nuevo')}
+                                        className={`px-2 py-0.5 rounded text-xs border transition-colors ${
+                                          linea.lote_modo === 'nuevo'
+                                            ? 'bg-amber-200 border-amber-400 text-amber-900 font-medium'
+                                            : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'
+                                        }`}
+                                      >
+                                        Lote nuevo
+                                      </button>
                                     </div>
-                                    <div className="flex items-center gap-1.5">
-                                      <label className="text-gray-500 shrink-0">Fab.</label>
-                                      <input
-                                        type="date"
-                                        value={linea.lote_fecha_fab}
-                                        onChange={(e) => actualizarLinea(index, 'lote_fecha_fab', e.target.value)}
-                                        className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                      />
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                      <label className="text-gray-500 shrink-0">Venc.</label>
-                                      <input
-                                        type="date"
-                                        value={linea.lote_fecha_venc}
-                                        onChange={(e) => actualizarLinea(index, 'lote_fecha_venc', e.target.value)}
-                                        className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                      />
-                                    </div>
-                                    <span className="text-amber-600/60 italic">Opcional</span>
+
+                                    {linea.lote_modo === 'existente' ? (
+                                      /* Seleccionar lote existente para agregar cantidad */
+                                      lotesDisponibles.length === 0 ? (
+                                        <span className="text-gray-400 italic self-center">
+                                          No hay lotes activos — usa "Lote nuevo"
+                                        </span>
+                                      ) : (
+                                        <select
+                                          value={linea.lote_id}
+                                          onChange={(e) => actualizarLinea(index, 'lote_id', e.target.value)}
+                                          className={`rounded border bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                            linea.lote_id ? 'border-amber-200' : 'border-amber-400'
+                                          }`}
+                                        >
+                                          <option value="">Seleccionar lote...</option>
+                                          {lotesDisponibles.map((l) => (
+                                            <option key={l.id} value={l.id}>
+                                              {l.nro_lote}
+                                              {l.fecha_vencimiento ? ` | Venc: ${formatDate(l.fecha_vencimiento)}` : ''}
+                                              {` | Actual: ${parseFloat(l.cantidad_actual).toFixed(3)}`}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      )
+                                    ) : (
+                                      /* Crear nuevo lote */
+                                      <div className="flex flex-wrap items-center gap-3">
+                                        <div className="flex items-center gap-1.5">
+                                          <label className="text-gray-500 shrink-0">Nro.</label>
+                                          <input
+                                            type="text"
+                                            value={linea.lote_nro}
+                                            onChange={(e) => actualizarLinea(index, 'lote_nro', e.target.value.toUpperCase())}
+                                            placeholder="Ej: LOT-001"
+                                            autoComplete="off"
+                                            className="w-28 rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                          />
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <label className="text-gray-500 shrink-0">Fab.</label>
+                                          <input
+                                            type="date"
+                                            value={linea.lote_fecha_fab}
+                                            onChange={(e) => actualizarLinea(index, 'lote_fecha_fab', e.target.value)}
+                                            className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                          />
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <label className="text-gray-500 shrink-0">Venc.</label>
+                                          <input
+                                            type="date"
+                                            value={linea.lote_fecha_venc}
+                                            onChange={(e) => actualizarLinea(index, 'lote_fecha_venc', e.target.value)}
+                                            className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                          />
+                                        </div>
+                                        <span className="text-amber-600/60 italic">Opcional</span>
+                                      </div>
+                                    )}
                                   </div>
                                 ) : (
+                                  /* RESTA: seleccionar lote a descontar (obligatorio) */
                                   <div className="flex items-center gap-3 text-xs">
-                                    <span className="text-amber-700 font-medium shrink-0">Lote a descontar:</span>
+                                    <span className="text-amber-700 font-medium shrink-0">Lote a descontar <span className="text-red-500">*</span></span>
                                     {lotesDisponibles.length === 0 ? (
-                                      <span className="text-gray-400 italic">No hay lotes activos en este deposito</span>
+                                      <span className="text-amber-600 italic">No hay lotes activos en este deposito</span>
                                     ) : (
                                       <select
                                         value={linea.lote_id}
                                         onChange={(e) => actualizarLinea(index, 'lote_id', e.target.value)}
-                                        className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                        className={`rounded border bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400 ${
+                                          linea.lote_id ? 'border-amber-200' : 'border-amber-400'
+                                        }`}
                                       >
-                                        <option value="">-- Sin lote especifico --</option>
+                                        <option value="">Seleccionar lote...</option>
                                         {lotesDisponibles.map((l) => (
                                           <option key={l.id} value={l.id}>
                                             {l.nro_lote}
