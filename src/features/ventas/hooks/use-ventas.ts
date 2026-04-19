@@ -467,10 +467,22 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     // 8. Generar asientos contables
     try {
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
-      const pagosContadoContab = pagos.map((p) => ({
-        monto_usd: p.moneda === 'BS' ? Number((p.monto / tasa).toFixed(2)) : p.monto,
-        banco_empresa_id: null as string | null,
-      }))
+
+      // Resolver banco_empresa_id por metodo de cobro para que el libro contable
+      // use la cuenta contable del banco correspondiente (partida doble correcta)
+      const pagosContadoContab: Array<{ monto_usd: number; banco_empresa_id: string | null }> = []
+      for (const pago of pagos) {
+        const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
+        const metodoResult = await tx.execute(
+          'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+          [pago.metodo_cobro_id]
+        )
+        const bancoId =
+          (metodoResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
+            ?.banco_empresa_id ?? null
+        pagosContadoContab.push({ monto_usd: montoUsd, banco_empresa_id: bancoId })
+      }
+
       await generarAsientosVenta(tx, {
         empresaId: empresa_id,
         ventaId,

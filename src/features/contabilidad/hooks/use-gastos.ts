@@ -129,6 +129,14 @@ export async function crearGasto(data: {
     const now = localNow()
     gastoId = uuidv4()
 
+    // Resolver moneda_id: el formulario pasa el codigo ISO (ej: 'USD'), necesitamos el UUID
+    const monedaResult = await tx.execute(
+      'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+      [data.moneda_id]
+    )
+    const monedaId = (monedaResult.rows?.item(0) as { id: string } | undefined)?.id
+    if (!monedaId) throw new Error(`Moneda no encontrada: ${data.moneda_id}`)
+
     // Calcular monto en Bs a partir del USD y la tasa
     const montoBs = Number((data.monto_usd * data.tasa).toFixed(2))
 
@@ -158,7 +166,7 @@ export async function crearGasto(data: {
         data.proveedor_id ?? null,
         data.descripcion,
         data.fecha,
-        data.moneda_id,
+        monedaId,
         data.tasa.toFixed(4),
         data.monto_usd.toFixed(2),
         montoBs.toFixed(2),
