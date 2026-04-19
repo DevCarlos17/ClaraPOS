@@ -5,6 +5,7 @@ import { useProductosTipo } from '@/features/inventario/hooks/use-productos'
 import { registrarMovimiento } from '@/features/inventario/hooks/use-kardex'
 import { useLotesPorProducto } from '@/features/inventario/hooks/use-lotes'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
+import { useUnidades } from '@/features/inventario/hooks/use-unidades'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 interface MovimientoFormProps {
@@ -36,6 +37,7 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
 
   const { lotes } = useLotesPorProducto(productoId)
   const { depositos } = useDepositosActivos()
+  const { unidades } = useUnidades()
 
   const productosFiltrados = productos.filter((p) =>
     p.nombre.toLowerCase().includes(busqueda.toLowerCase()) ||
@@ -46,6 +48,12 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
   const manejaLotes = productoSeleccionado?.maneja_lotes === 1
   const lotesActivos = lotes.filter((l) => l.status === 'ACTIVO')
   const loteSeleccionado = lotesActivos.find((l) => l.id === loteId)
+
+  // Determinar si el producto acepta decimales segun su unidad base
+  const unidadBase = unidades.find((u) => u.id === productoSeleccionado?.unidad_base_id)
+  const esDecimal = unidadBase ? unidadBase.es_decimal === 1 : true
+  const cantidadStep = esDecimal ? '0.001' : '1'
+  const cantidadMin = esDecimal ? '0.001' : '1'
 
   useEffect(() => {
     if (isOpen) {
@@ -122,6 +130,11 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
         const field = issue.path[0]?.toString()
         if (field) newErrors[field] = issue.message
       }
+    }
+
+    // Validar decimales segun unidad del producto
+    if (!isNaN(cantidadNum) && !esDecimal && cantidadNum !== Math.floor(cantidadNum)) {
+      newErrors.cantidad = `Este producto se maneja por ${unidadBase?.abreviatura ?? 'unidades'} enteras`
     }
 
     // Validaciones de lote
@@ -483,12 +496,17 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
           <div>
             <label htmlFor="mov-cantidad" className="block text-sm font-medium text-gray-700 mb-1">
               Cantidad
+              {unidadBase && (
+                <span className="ml-1.5 text-gray-400 font-normal">
+                  ({unidadBase.abreviatura}{!esDecimal ? ' — solo enteros' : ''})
+                </span>
+              )}
             </label>
             <input
               id="mov-cantidad"
               type="number"
-              step="0.001"
-              min="0.001"
+              step={cantidadStep}
+              min={cantidadMin}
               value={cantidad}
               onChange={(e) => setCantidad(e.target.value)}
               placeholder="0"
