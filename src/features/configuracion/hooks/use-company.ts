@@ -2,6 +2,19 @@ import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
+export interface EmpresaConfig {
+  moneda_contable?: 'USD' | 'BS'
+}
+
+export function parseEmpresaConfig(configJson: string | null | undefined): EmpresaConfig {
+  if (!configJson) return {}
+  try {
+    return JSON.parse(configJson) as EmpresaConfig
+  } catch {
+    return {}
+  }
+}
+
 export interface Company {
   id: string
   tenant_id: string
@@ -17,6 +30,21 @@ export interface Company {
   is_active: number
   created_at: string
   updated_at: string
+}
+
+export function useMonedaContable(): 'USD' | 'BS' {
+  const { company } = useCompany()
+  return parseEmpresaConfig(company?.config).moneda_contable ?? 'USD'
+}
+
+export async function setMonedaContable(
+  empresaId: string,
+  moneda: 'USD' | 'BS',
+  currentConfig: string | null | undefined
+): Promise<void> {
+  const current = parseEmpresaConfig(currentConfig)
+  const updated: EmpresaConfig = { ...current, moneda_contable: moneda }
+  await updateCompany(empresaId, { config: JSON.stringify(updated) })
 }
 
 export function useCompany() {

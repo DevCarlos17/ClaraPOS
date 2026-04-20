@@ -4,7 +4,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
-import { generarAsientosPagoCxP } from '@/features/contabilidad/lib/generar-asientos'
+import { generarAsientosPagoCxP, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -93,12 +93,13 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
 
     // 1. Leer factura
     const facturaResult = await tx.execute(
-      'SELECT nro_factura, saldo_pend_usd FROM facturas_compra WHERE id = ?',
+      'SELECT nro_factura, saldo_pend_usd, tasa FROM facturas_compra WHERE id = ?',
       [factura_compra_id]
     )
     if (!facturaResult.rows?.length) throw new Error('Factura no encontrada')
-    const factura = facturaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+    const factura = facturaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; tasa: string }
     const saldoFactura = parseFloat(factura.saldo_pend_usd)
+    const tasaCompra = parseFloat(factura.tasa)
 
     // 2. Calcular monto en USD
     const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
@@ -171,7 +172,10 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
         )
       }
 
-      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      const [cuentas, monedaContable] = await Promise.all([
+        cargarMapaCuentas(tx, empresa_id),
+        leerMonedaContable(tx, empresa_id),
+      ])
       await generarAsientosPagoCxP(tx, {
         empresaId: empresa_id,
         pagoId: movId,
@@ -180,6 +184,9 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
         banco_empresa_id: banco_empresa_id ?? null,
         cuentas,
         usuarioId: usuario_id,
+        monedaContable,
+        tasaPago: tasa,
+        tasaCompra,
       })
     } catch {
       // Fallo en contabilidad/bancos no bloquea el pago

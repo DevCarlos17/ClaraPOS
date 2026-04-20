@@ -4,6 +4,7 @@ import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
 import { CuentasConfigList } from '@/features/contabilidad/components/cuentas-config-list'
+import { MonedaContableConfig } from '@/features/contabilidad/components/moneda-contable-config'
 
 export const Route = createFileRoute('/_app/contabilidad/cuentas-config')({
   component: CuentasConfigPage,
@@ -17,6 +18,7 @@ function CuentasConfigPage() {
           titulo="Configuracion Contable"
           descripcion="Mapeo de operaciones del sistema a cuentas del plan de cuentas"
         />
+        <MonedaContableConfig />
         <CuentasConfigList />
       </div>
     </RequirePermission>

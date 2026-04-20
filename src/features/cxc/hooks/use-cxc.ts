@@ -4,7 +4,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
-import { generarAsientosPagoCxC } from '@/features/contabilidad/lib/generar-asientos'
+import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 
 export interface VentaPendiente {
   id: string
@@ -236,14 +236,15 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
 
     // 1. Leer factura
     const ventaResult = await tx.execute(
-      'SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ?',
+      'SELECT nro_factura, saldo_pend_usd, tasa FROM ventas WHERE id = ?',
       [venta_id]
     )
     if (!ventaResult.rows || ventaResult.rows.length === 0) {
       throw new Error('Factura no encontrada')
     }
-    const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+    const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; tasa: string }
     const saldoFactura = parseFloat(venta.saldo_pend_usd)
+    const tasaVenta = parseFloat(venta.tasa)
 
     // 2. Calcular monto en USD
     const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
@@ -351,7 +352,10 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         )
       }
 
-      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      const [cuentas, monedaContable] = await Promise.all([
+        cargarMapaCuentas(tx, empresa_id),
+        leerMonedaContable(tx, empresa_id),
+      ])
       await generarAsientosPagoCxC(tx, {
         empresaId: empresa_id,
         pagoId,
@@ -360,6 +364,9 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         banco_empresa_id: bancoCxCId,
         cuentas,
         usuarioId: procesado_por,
+        monedaContable,
+        tasaPago: tasa,
+        tasaVenta,
       })
     } catch {
       // Fallo en contabilidad/bancos no bloquea el pago
@@ -550,7 +557,10 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         )
       }
 
-      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      const [cuentas, monedaContable] = await Promise.all([
+        cargarMapaCuentas(tx, empresa_id),
+        leerMonedaContable(tx, empresa_id),
+      ])
       await generarAsientosPagoCxC(tx, {
         empresaId: empresa_id,
         pagoId: movId,
@@ -559,6 +569,9 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         banco_empresa_id: bancoAbonoId,
         cuentas,
         usuarioId: procesado_por,
+        monedaContable,
+        tasaPago: tasa,
+        // Sin tasaVenta en abono global FIFO: sin diferencial cambiario por simplificacion
       })
     } catch {
       // Fallo en contabilidad/bancos no bloquea el abono
@@ -679,5 +692,28 @@ export async function registrarReversoAbono(params: {
         reversed_by,
       ]
     )
+
+    // 6. Reversar asientos contables del pago original (crea contra-asientos)
+    try {
+      const asientosResult = await tx.execute(
+        `SELECT id FROM libro_contable WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'PAGO_CXC' AND estado = 'PENDIENTE'`,
+        [empresa_id, pago_id]
+      )
+      const asientosIds: string[] = []
+      if (asientosResult.rows) {
+        for (let i = 0; i < asientosResult.rows.length; i++) {
+          asientosIds.push((asientosResult.rows.item(i) as { id: string }).id)
+        }
+      }
+      if (asientosIds.length > 0) {
+        await reversarAsientos(tx, {
+          empresaId: empresa_id,
+          asientosIds,
+          usuarioId: reversed_by,
+        })
+      }
+    } catch {
+      // Fallo en contabilidad no bloquea el reverso
+    }
   })
 }

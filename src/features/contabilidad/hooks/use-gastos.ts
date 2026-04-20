@@ -4,7 +4,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
-import { generarAsientosGasto } from '@/features/contabilidad/lib/generar-asientos'
+import { generarAsientosGasto, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -228,7 +228,10 @@ export async function crearGasto(data: {
 
     // Generar asientos contables
     try {
-      const cuentas = await cargarMapaCuentas(tx, data.empresa_id)
+      const [cuentas, monedaContable] = await Promise.all([
+        cargarMapaCuentas(tx, data.empresa_id),
+        leerMonedaContable(tx, data.empresa_id),
+      ])
       await generarAsientosGasto(tx, {
         empresaId: data.empresa_id,
         gastoId,
@@ -241,6 +244,8 @@ export async function crearGasto(data: {
         })),
         cuentas,
         usuarioId: data.created_by ?? '',
+        monedaContable,
+        tasa: data.tasa,
       })
     } catch {
       // Si falla la contabilidad no bloqueamos el gasto
@@ -277,14 +282,26 @@ export async function anularGasto(id: string, usuarioId?: string): Promise<void>
       [now, id]
     )
 
-    // Marcar asientos contables del gasto como ANULADO
+    // Reversar asientos contables del gasto (crea contra-asientos, no solo marca ANULADO)
     if (usuarioId) {
       try {
-        await tx.execute(
-          `UPDATE libro_contable SET estado = 'ANULADO'
-           WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'GASTO' AND estado = 'PENDIENTE'`,
+        const asientosResult = await tx.execute(
+          `SELECT id FROM libro_contable WHERE empresa_id = ? AND doc_origen_id = ? AND modulo_origen = 'GASTO' AND estado = 'PENDIENTE'`,
           [gasto.empresa_id, id]
         )
+        const asientosIds: string[] = []
+        if (asientosResult.rows) {
+          for (let i = 0; i < asientosResult.rows.length; i++) {
+            asientosIds.push((asientosResult.rows.item(i) as { id: string }).id)
+          }
+        }
+        if (asientosIds.length > 0) {
+          await reversarAsientos(tx, {
+            empresaId: gasto.empresa_id,
+            asientosIds,
+            usuarioId,
+          })
+        }
       } catch {
         // No bloquear la anulacion si falla la contabilidad
       }

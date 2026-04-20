@@ -3,6 +3,35 @@ import { localNow } from '@/lib/dates'
 
 // ─── Tipos ────────────────────────────────────────────────────
 
+export type MonedaContable = 'USD' | 'BS'
+
+/** Convierte un monto USD al monto a registrar segun moneda contable de la empresa. */
+function montoContable(usd: number, tasa: number, moneda: MonedaContable): number {
+  return moneda === 'BS' ? Number((usd * tasa).toFixed(2)) : usd
+}
+
+/**
+ * Lee la configuracion de moneda contable de la empresa dentro de una transaccion.
+ * Retorna 'USD' si no esta configurada (comportamiento por defecto).
+ */
+export async function leerMonedaContable(
+  tx: WriteTx,
+  empresaId: string
+): Promise<MonedaContable> {
+  const result = await tx.execute(
+    'SELECT config FROM empresas WHERE id = ? LIMIT 1',
+    [empresaId]
+  )
+  const configStr = (result.rows?.item(0) as { config: string | null } | undefined)?.config
+  if (!configStr) return 'USD'
+  try {
+    const parsed = JSON.parse(configStr) as { moneda_contable?: string }
+    return parsed.moneda_contable === 'BS' ? 'BS' : 'USD'
+  } catch {
+    return 'USD'
+  }
+}
+
 export type ModuloOrigen =
   | 'VENTA'
   | 'PAGO_CXC'
@@ -130,6 +159,8 @@ export async function generarAsientosVenta(
     montoServicios: number
     cuentas: Record<string, string>
     usuarioId: string
+    monedaContable?: MonedaContable
+    tasa?: number
   }
 ): Promise<string[]> {
   const {
@@ -137,6 +168,8 @@ export async function generarAsientosVenta(
     pagosContado, montoCredito,
     montoProductos, montoServicios,
     cuentas, usuarioId,
+    monedaContable = 'USD',
+    tasa = 1,
   } = params
 
   const lineas: LineaAsiento[] = []
@@ -152,7 +185,7 @@ export async function generarAsientosVenta(
     lineas.push({
       cuenta_contable_id: cuentaBanco,
       banco_empresa_id: pago.banco_empresa_id,
-      monto: pago.monto_usd,
+      monto: montoContable(pago.monto_usd, tasa, monedaContable),
       detalle: `Cobro venta ${nroFactura}`,
     })
   }
@@ -161,7 +194,7 @@ export async function generarAsientosVenta(
   if (montoCredito > 0 && cuentas['CXC_CLIENTES']) {
     lineas.push({
       cuenta_contable_id: cuentas['CXC_CLIENTES'],
-      monto: montoCredito,
+      monto: montoContable(montoCredito, tasa, monedaContable),
       detalle: `Credito venta ${nroFactura}`,
     })
   }
@@ -170,7 +203,7 @@ export async function generarAsientosVenta(
   if (montoProductos > 0 && cuentas['INGRESO_VENTA_PRODUCTO']) {
     lineas.push({
       cuenta_contable_id: cuentas['INGRESO_VENTA_PRODUCTO'],
-      monto: -montoProductos,
+      monto: -montoContable(montoProductos, tasa, monedaContable),
       detalle: `Ingreso productos ${nroFactura}`,
     })
   }
@@ -179,7 +212,7 @@ export async function generarAsientosVenta(
   if (montoServicios > 0 && cuentas['INGRESO_VENTA_SERVICIO']) {
     lineas.push({
       cuenta_contable_id: cuentas['INGRESO_VENTA_SERVICIO'],
-      monto: -montoServicios,
+      monto: -montoContable(montoServicios, tasa, monedaContable),
       detalle: `Ingreso servicios ${nroFactura}`,
     })
   }
@@ -211,16 +244,18 @@ export async function generarAsientosGasto(
     pagos: Array<{ monto_usd: number; banco_empresa_id: string | null }>
     cuentas: Record<string, string>
     usuarioId: string
+    monedaContable?: MonedaContable
+    tasa?: number
   }
 ): Promise<string[]> {
-  const { empresaId, gastoId, nroGasto, cuentaGastoId, monto_usd, pagos, cuentas, usuarioId } = params
+  const { empresaId, gastoId, nroGasto, cuentaGastoId, monto_usd, pagos, cuentas, usuarioId, monedaContable = 'USD', tasa = 1 } = params
 
   if (monto_usd <= 0) return []
 
   const lineas: LineaAsiento[] = [
     {
       cuenta_contable_id: cuentaGastoId,
-      monto: monto_usd,
+      monto: montoContable(monto_usd, tasa, monedaContable),
       detalle: `Gasto ${nroGasto}`,
     },
   ]
@@ -234,7 +269,7 @@ export async function generarAsientosGasto(
     lineas.push({
       cuenta_contable_id: cuentaBanco ?? cuentaGastoId,
       banco_empresa_id: pago.banco_empresa_id,
-      monto: -pago.monto_usd,
+      monto: -montoContable(pago.monto_usd, tasa, monedaContable),
       detalle: `Pago gasto ${nroGasto}`,
     })
   }
@@ -262,9 +297,15 @@ export async function generarAsientosPagoCxC(
     banco_empresa_id: string | null
     cuentas: Record<string, string>
     usuarioId: string
+    /** Moneda en que se lleva la contabilidad de la empresa */
+    monedaContable?: MonedaContable
+    /** Tasa de cambio al momento de registrar el pago */
+    tasaPago?: number
+    /** Tasa de cambio de la venta original (para calculo de diferencial) */
+    tasaVenta?: number
   }
 ): Promise<string[]> {
-  const { empresaId, pagoId, pagoRef, monto_usd, banco_empresa_id, cuentas, usuarioId } = params
+  const { empresaId, pagoId, pagoRef, monto_usd, banco_empresa_id, cuentas, usuarioId, monedaContable = 'USD', tasaPago = 1, tasaVenta = 1 } = params
 
   if (monto_usd <= 0) return []
 
@@ -275,19 +316,91 @@ export async function generarAsientosPagoCxC(
   const cuentaCxC = cuentas['CXC_CLIENTES']
   if (!cuentaBanco || !cuentaCxC) return []
 
-  const lineas: LineaAsiento[] = [
-    {
+  const lineas: LineaAsiento[] = []
+
+  if (monedaContable === 'BS' && tasaPago !== tasaVenta) {
+    // Modo bolivares con diferencial cambiario
+    const montoBsRecibido = Number((monto_usd * tasaPago).toFixed(2))
+    const montoBsOriginal = Number((monto_usd * tasaVenta).toFixed(2))
+    const diferencial = Number((montoBsRecibido - montoBsOriginal).toFixed(2))
+
+    // DEBE: banco/caja por lo que realmente se recibio en BS
+    lineas.push({
       cuenta_contable_id: cuentaBanco,
       banco_empresa_id: banco_empresa_id,
-      monto: monto_usd,
+      monto: montoBsRecibido,
       detalle: `Cobro CxC ${pagoRef}`,
-    },
-    {
-      cuenta_contable_id: cuentaCxC,
-      monto: -monto_usd,
-      detalle: `Abono CxC ${pagoRef}`,
-    },
-  ]
+    })
+
+    if (diferencial > 0) {
+      // Ganancia: recibimos mas BS de lo que teniamos en CxC
+      lineas.push({
+        cuenta_contable_id: cuentaCxC,
+        monto: -montoBsOriginal,
+        detalle: `Abono CxC ${pagoRef}`,
+      })
+      const cuentaGanancia = cuentas['GANANCIA_DIFERENCIAL_CAMBIARIO']
+      if (cuentaGanancia) {
+        lineas.push({
+          cuenta_contable_id: cuentaGanancia,
+          monto: -diferencial,
+          detalle: `Diferencial cambiario ${pagoRef}`,
+        })
+      } else {
+        // Sin cuenta configurada: ajustar CxC al monto recibido
+        lineas[lineas.length - 1] = {
+          cuenta_contable_id: cuentaCxC,
+          monto: -montoBsRecibido,
+          detalle: `Abono CxC ${pagoRef}`,
+        }
+      }
+    } else if (diferencial < 0) {
+      // Perdida: recibimos menos BS de lo que teniamos en CxC
+      const cuentaPerdida = cuentas['PERDIDA_DIFERENCIAL_CAMBIARIO']
+      if (cuentaPerdida) {
+        lineas.push({
+          cuenta_contable_id: cuentaPerdida,
+          monto: -diferencial, // abs(diferencial) positivo = DEBE
+          detalle: `Diferencial cambiario ${pagoRef}`,
+        })
+        lineas.push({
+          cuenta_contable_id: cuentaCxC,
+          monto: -montoBsOriginal,
+          detalle: `Abono CxC ${pagoRef}`,
+        })
+      } else {
+        // Sin cuenta configurada: ajustar CxC al monto recibido
+        lineas.push({
+          cuenta_contable_id: cuentaCxC,
+          monto: -montoBsRecibido,
+          detalle: `Abono CxC ${pagoRef}`,
+        })
+      }
+    } else {
+      // Tasas iguales, sin diferencial
+      lineas.push({
+        cuenta_contable_id: cuentaCxC,
+        monto: -montoBsOriginal,
+        detalle: `Abono CxC ${pagoRef}`,
+      })
+    }
+  } else {
+    // Modo USD o BS sin diferencial
+    const monto = montoContable(monto_usd, tasaPago, monedaContable)
+    lineas.push(
+      {
+        cuenta_contable_id: cuentaBanco,
+        banco_empresa_id: banco_empresa_id,
+        monto: monto,
+        detalle: `Cobro CxC ${pagoRef}`,
+      },
+      {
+        cuenta_contable_id: cuentaCxC,
+        monto: -monto,
+        detalle: `Abono CxC ${pagoRef}`,
+      }
+    )
+  }
 
   return generarAsientos(tx, {
     empresaId,
@@ -313,19 +426,23 @@ export async function generarAsientosCompra(
     banco_empresa_id: string | null
     cuentas: Record<string, string>
     usuarioId: string
+    monedaContable?: MonedaContable
+    tasa?: number
   }
 ): Promise<string[]> {
-  const { empresaId, compraId, nroFactura, totalUsd, esContado, banco_empresa_id, cuentas, usuarioId } = params
+  const { empresaId, compraId, nroFactura, totalUsd, esContado, banco_empresa_id, cuentas, usuarioId, monedaContable = 'USD', tasa = 1 } = params
 
   if (totalUsd <= 0) return []
 
   const cuentaInventario = cuentas['INVENTARIO']
   if (!cuentaInventario) return []
 
+  const monto = montoContable(totalUsd, tasa, monedaContable)
+
   const lineas: LineaAsiento[] = [
     {
       cuenta_contable_id: cuentaInventario,
-      monto: totalUsd,
+      monto: monto,
       detalle: `Compra mercancia ${nroFactura}`,
     },
   ]
@@ -338,7 +455,7 @@ export async function generarAsientosCompra(
       lineas.push({
         cuenta_contable_id: cuentaBanco,
         banco_empresa_id: banco_empresa_id,
-        monto: -totalUsd,
+        monto: -monto,
         detalle: `Pago compra ${nroFactura}`,
       })
     }
@@ -347,7 +464,7 @@ export async function generarAsientosCompra(
     if (cuentaCxP) {
       lineas.push({
         cuenta_contable_id: cuentaCxP,
-        monto: -totalUsd,
+        monto: -monto,
         detalle: `Credito compra ${nroFactura}`,
       })
     }
@@ -379,9 +496,11 @@ export async function generarAsientosNCR(
     banco_empresa_id: string | null
     cuentas: Record<string, string>
     usuarioId: string
+    monedaContable?: MonedaContable
+    tasa?: number
   }
 ): Promise<string[]> {
-  const { empresaId, ncrId, nroNcr, ventaId, totalUsd, afectaCxC, banco_empresa_id, cuentas, usuarioId } = params
+  const { empresaId, ncrId, nroNcr, ventaId, totalUsd, afectaCxC, banco_empresa_id, cuentas, usuarioId, monedaContable = 'USD', tasa = 1 } = params
 
   if (totalUsd <= 0) return []
 
@@ -402,16 +521,18 @@ export async function generarAsientosNCR(
 
   if (!cuentaDevolucion || !cuentaContraparte) return []
 
+  const monto = montoContable(totalUsd, tasa, monedaContable)
+
   const lineas: LineaAsiento[] = [
     {
       cuenta_contable_id: cuentaDevolucion,
-      monto: totalUsd,
+      monto: monto,
       detalle: `Devolucion venta ${nroNcr}`,
     },
     {
       cuenta_contable_id: cuentaContraparte,
       banco_empresa_id: afectaCxC ? null : banco_empresa_id,
-      monto: -totalUsd,
+      monto: -monto,
       detalle: `Contraparte devolucion ${nroNcr}`,
     },
   ]
@@ -520,9 +641,15 @@ export async function generarAsientosPagoCxP(
     banco_empresa_id: string | null
     cuentas: Record<string, string>
     usuarioId: string
+    /** Moneda en que se lleva la contabilidad de la empresa */
+    monedaContable?: MonedaContable
+    /** Tasa de cambio al momento de registrar el pago */
+    tasaPago?: number
+    /** Tasa de cambio de la compra original (para calculo de diferencial) */
+    tasaCompra?: number
   }
 ): Promise<string[]> {
-  const { empresaId, pagoId, pagoRef, monto_usd, banco_empresa_id, cuentas, usuarioId } = params
+  const { empresaId, pagoId, pagoRef, monto_usd, banco_empresa_id, cuentas, usuarioId, monedaContable = 'USD', tasaPago = 1, tasaCompra = 1 } = params
 
   if (monto_usd <= 0) return []
 
@@ -533,19 +660,60 @@ export async function generarAsientosPagoCxP(
 
   if (!cuentaCxP || !cuentaBanco) return []
 
-  const lineas: LineaAsiento[] = [
-    {
-      cuenta_contable_id: cuentaCxP,
-      monto: monto_usd,
-      detalle: `Pago CxP ${pagoRef}`,
-    },
-    {
-      cuenta_contable_id: cuentaBanco,
-      banco_empresa_id: banco_empresa_id,
-      monto: -monto_usd,
-      detalle: `Egreso pago CxP ${pagoRef}`,
-    },
-  ]
+  const lineas: LineaAsiento[] = []
+
+  if (monedaContable === 'BS' && tasaPago !== tasaCompra) {
+    // Modo bolivares con diferencial cambiario
+    const montoBsPagado = Number((monto_usd * tasaPago).toFixed(2))
+    const montoBsOriginal = Number((monto_usd * tasaCompra).toFixed(2))
+    const diferencial = Number((montoBsPagado - montoBsOriginal).toFixed(2))
+
+    if (diferencial > 0) {
+      // Perdida: pagamos mas BS de lo que teniamos en CxP
+      const cuentaPerdida = cuentas['PERDIDA_DIFERENCIAL_CAMBIARIO']
+      if (cuentaPerdida) {
+        lineas.push(
+          { cuenta_contable_id: cuentaCxP, monto: montoBsOriginal, detalle: `Pago CxP ${pagoRef}` },
+          { cuenta_contable_id: cuentaPerdida, monto: diferencial, detalle: `Diferencial cambiario ${pagoRef}` },
+          { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsPagado, detalle: `Egreso pago CxP ${pagoRef}` }
+        )
+      } else {
+        // Sin cuenta configurada: ajustar CxP al monto pagado
+        lineas.push(
+          { cuenta_contable_id: cuentaCxP, monto: montoBsPagado, detalle: `Pago CxP ${pagoRef}` },
+          { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsPagado, detalle: `Egreso pago CxP ${pagoRef}` }
+        )
+      }
+    } else if (diferencial < 0) {
+      // Ganancia: pagamos menos BS de lo que teniamos en CxP
+      const cuentaGanancia = cuentas['GANANCIA_DIFERENCIAL_CAMBIARIO']
+      if (cuentaGanancia) {
+        lineas.push(
+          { cuenta_contable_id: cuentaCxP, monto: montoBsOriginal, detalle: `Pago CxP ${pagoRef}` },
+          { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsPagado, detalle: `Egreso pago CxP ${pagoRef}` },
+          { cuenta_contable_id: cuentaGanancia, monto: diferencial, detalle: `Diferencial cambiario ${pagoRef}` } // diferencial negativo = HABER
+        )
+      } else {
+        lineas.push(
+          { cuenta_contable_id: cuentaCxP, monto: montoBsPagado, detalle: `Pago CxP ${pagoRef}` },
+          { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsPagado, detalle: `Egreso pago CxP ${pagoRef}` }
+        )
+      }
+    } else {
+      // Tasas iguales, sin diferencial
+      lineas.push(
+        { cuenta_contable_id: cuentaCxP, monto: montoBsOriginal, detalle: `Pago CxP ${pagoRef}` },
+        { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsOriginal, detalle: `Egreso pago CxP ${pagoRef}` }
+      )
+    }
+  } else {
+    // Modo USD o BS sin diferencial
+    const monto = montoContable(monto_usd, tasaPago, monedaContable)
+    lineas.push(
+      { cuenta_contable_id: cuentaCxP, monto: monto, detalle: `Pago CxP ${pagoRef}` },
+      { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -monto, detalle: `Egreso pago CxP ${pagoRef}` }
+    )
+  }
 
   return generarAsientos(tx, {
     empresaId,

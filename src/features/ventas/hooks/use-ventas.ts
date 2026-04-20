@@ -4,7 +4,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { localNow } from '@/lib/dates'
 import { v4 as uuidv4 } from 'uuid'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
-import { generarAsientosVenta } from '@/features/contabilidad/lib/generar-asientos'
+import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 
 export interface LineaVenta {
   producto_id: string
@@ -466,7 +466,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
     // 8. Generar asientos contables + movimientos bancarios
     try {
-      const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      const [cuentas, monedaContable] = await Promise.all([
+        cargarMapaCuentas(tx, empresa_id),
+        leerMonedaContable(tx, empresa_id),
+      ])
 
       // Resolver banco_empresa_id por metodo de cobro para contabilidad y movimientos bancarios
       const pagosContadoContab: Array<{ monto_usd: number; banco_empresa_id: string | null }> = []
@@ -511,6 +514,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         montoServicios,
         cuentas,
         usuarioId: usuario_id,
+        monedaContable,
+        tasa,
       })
     } catch {
       // Fallo en contabilidad no bloquea la venta

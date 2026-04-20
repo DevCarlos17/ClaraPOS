@@ -26,4 +26,6 @@ export const CLAVES_CONFIG: Record<string, string> = {
   DESCUENTO_VENTAS: 'Descuentos en ventas',
   DEVOLUCION_VENTAS: 'Devoluciones en ventas',
   COSTO_VENTA: 'Costo de mercancia vendida',
+  GANANCIA_DIFERENCIAL_CAMBIARIO: 'Ganancia por diferencial cambiario',
+  PERDIDA_DIFERENCIAL_CAMBIARIO: 'Perdida por diferencial cambiario',
 }

@@ -62,6 +62,64 @@ export function useCuentaConfigPorClave(clave: string) {
   return { cuentaId: row?.cuenta_contable_id ?? null, isLoading }
 }
 
+export interface BancoConCuenta {
+  id: string
+  nombre_banco: string
+  nro_cuenta: string | null
+  cuenta_contable_id: string | null
+  cuenta_codigo: string | null
+  cuenta_nombre: string | null
+}
+
+/**
+ * Bancos de la empresa que tienen cuenta contable vinculada.
+ * Se muestran en la seccion Caja y Bancos de la config contable.
+ */
+export function useBancosConCuenta() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data: bancosData, isLoading: bancosLoading } = useQuery(
+    `SELECT id, nombre_banco, nro_cuenta, cuenta_contable_id
+     FROM bancos_empresa
+     WHERE empresa_id = ? AND is_active = 1
+     ORDER BY nombre_banco ASC`,
+    [empresaId]
+  )
+
+  const bancos = (bancosData ?? []) as Array<{ id: string; nombre_banco: string; nro_cuenta: string | null; cuenta_contable_id: string | null }>
+
+  const cuentaIds = bancos.filter((b) => b.cuenta_contable_id).map((b) => b.cuenta_contable_id!)
+
+  const { data: cuentasData, isLoading: cuentasLoading } = useQuery(
+    cuentaIds.length > 0
+      ? `SELECT id, codigo, nombre FROM plan_cuentas WHERE empresa_id = ? AND id IN (${cuentaIds.map(() => '?').join(',')})`
+      : '',
+    cuentaIds.length > 0 ? [empresaId, ...cuentaIds] : []
+  )
+
+  const cuentasMap = new Map(
+    ((cuentasData ?? []) as Array<{ id: string; codigo: string; nombre: string }>).map((c) => [
+      c.id,
+      c,
+    ])
+  )
+
+  const result: BancoConCuenta[] = bancos.map((b) => {
+    const cuenta = b.cuenta_contable_id ? cuentasMap.get(b.cuenta_contable_id) : undefined
+    return {
+      id: b.id,
+      nombre_banco: b.nombre_banco,
+      nro_cuenta: b.nro_cuenta,
+      cuenta_contable_id: b.cuenta_contable_id,
+      cuenta_codigo: cuenta?.codigo ?? null,
+      cuenta_nombre: cuenta?.nombre ?? null,
+    }
+  })
+
+  return { bancos: result, isLoading: bancosLoading || cuentasLoading }
+}
+
 // ─── Funciones de escritura ──────────────────────────────────
 
 /**
