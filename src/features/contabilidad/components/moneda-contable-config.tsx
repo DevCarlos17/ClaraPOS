@@ -1,32 +1,15 @@
-import { useState } from 'react'
 import { toast } from 'sonner'
-import { useCompany, setMonedaContable, parseEmpresaConfig } from '@/features/configuracion/hooks/use-company'
+import { useMonedaContable, setMonedaContable } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 export function MonedaContableConfig() {
   const { user } = useCurrentUser()
-  const { company, isLoading } = useCompany()
-  const [saving, setSaving] = useState(false)
+  const current = useMonedaContable()
 
-  const config = parseEmpresaConfig(company?.config)
-  const current = config.moneda_contable ?? 'USD'
-
-  async function handleChange(moneda: 'USD' | 'BS') {
-    if (!user?.empresa_id || !company) return
-    setSaving(true)
-    try {
-      await setMonedaContable(user.empresa_id, moneda, company.config)
-      toast.success(`Moneda contable cambiada a ${moneda}`)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Error inesperado'
-      toast.error(message)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (isLoading) {
-    return <div className="h-20 bg-gray-100 rounded animate-pulse" />
+  function handleChange(moneda: 'USD' | 'BS') {
+    if (!user?.empresa_id) return
+    setMonedaContable(user.empresa_id, moneda)
+    toast.success(`Moneda contable cambiada a ${moneda}`)
   }
 
   return (
@@ -37,7 +20,7 @@ export function MonedaContableConfig() {
       <div className="flex flex-col sm:flex-row gap-3">
         <button
           onClick={() => handleChange('USD')}
-          disabled={saving || current === 'USD'}
+          disabled={current === 'USD'}
           className={`flex-1 rounded-lg border-2 p-3 text-left transition-colors ${
             current === 'USD'
               ? 'border-blue-500 bg-blue-50'
@@ -51,7 +34,7 @@ export function MonedaContableConfig() {
         </button>
         <button
           onClick={() => handleChange('BS')}
-          disabled={saving || current === 'BS'}
+          disabled={current === 'BS'}
           className={`flex-1 rounded-lg border-2 p-3 text-left transition-colors ${
             current === 'BS'
               ? 'border-blue-500 bg-blue-50'

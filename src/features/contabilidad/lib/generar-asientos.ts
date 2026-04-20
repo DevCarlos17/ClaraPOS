@@ -10,23 +10,22 @@ function montoContable(usd: number, tasa: number, moneda: MonedaContable): numbe
   return moneda === 'BS' ? Number((usd * tasa).toFixed(2)) : usd
 }
 
+const MONEDA_CONTABLE_STORE_KEY = 'clarapos-moneda-contable'
+
 /**
- * Lee la configuracion de moneda contable de la empresa dentro de una transaccion.
+ * Lee la configuracion de moneda contable de la empresa.
+ * Lee directamente desde localStorage (Zustand persist) — no requiere DB.
  * Retorna 'USD' si no esta configurada (comportamiento por defecto).
  */
 export async function leerMonedaContable(
-  tx: WriteTx,
+  _tx: WriteTx,
   empresaId: string
 ): Promise<MonedaContable> {
-  const result = await tx.execute(
-    'SELECT config FROM empresas WHERE id = ? LIMIT 1',
-    [empresaId]
-  )
-  const configStr = (result.rows?.item(0) as { config: string | null } | undefined)?.config
-  if (!configStr) return 'USD'
   try {
-    const parsed = JSON.parse(configStr) as { moneda_contable?: string }
-    return parsed.moneda_contable === 'BS' ? 'BS' : 'USD'
+    const stored = localStorage.getItem(MONEDA_CONTABLE_STORE_KEY)
+    if (!stored) return 'USD'
+    const parsed = JSON.parse(stored) as { state?: { monedas?: Record<string, string> } }
+    return parsed.state?.monedas?.[empresaId] === 'BS' ? 'BS' : 'USD'
   } catch {
     return 'USD'
   }
