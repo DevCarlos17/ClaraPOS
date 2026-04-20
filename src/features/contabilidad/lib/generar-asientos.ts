@@ -10,25 +10,15 @@ function montoContable(usd: number, tasa: number, moneda: MonedaContable): numbe
   return moneda === 'BS' ? Number((usd * tasa).toFixed(2)) : usd
 }
 
-const MONEDA_CONTABLE_STORE_KEY = 'clarapos-moneda-contable'
-
 /**
- * Lee la configuracion de moneda contable de la empresa.
- * Lee directamente desde localStorage (Zustand persist) — no requiere DB.
- * Retorna 'USD' si no esta configurada (comportamiento por defecto).
+ * La contabilidad siempre se lleva en Bs.
+ * Funcion mantenida por compatibilidad con los generadores especializados.
  */
 export async function leerMonedaContable(
   _tx: WriteTx,
-  empresaId: string
+  _empresaId: string
 ): Promise<MonedaContable> {
-  try {
-    const stored = localStorage.getItem(MONEDA_CONTABLE_STORE_KEY)
-    if (!stored) return 'USD'
-    const parsed = JSON.parse(stored) as { state?: { monedas?: Record<string, string> } }
-    return parsed.state?.monedas?.[empresaId] === 'BS' ? 'BS' : 'USD'
-  } catch {
-    return 'USD'
-  }
+  return 'BS'
 }
 
 export type ModuloOrigen =
@@ -42,6 +32,7 @@ export type ModuloOrigen =
   | 'NDB'
   | 'MANUAL'
   | 'REVERSO'
+  | 'DIFERENCIAL_BANCO'
 
 export interface LineaAsiento {
   cuenta_contable_id: string
@@ -736,4 +727,57 @@ async function getCuentaBanco(
   )
   const row = result.rows?.item(0) as { cuenta_contable_id: string | null } | undefined
   return row?.cuenta_contable_id ?? null
+}
+
+/**
+ * Ajuste por diferencial cambiario de cuentas bancarias en moneda extranjera.
+ *
+ * Ganancia (diferencial > 0): el banco vale MAS en Bs de lo que muestra el libro.
+ *   Dr BANCO / Cr GANANCIA_DIFERENCIAL_CAMBIARIO
+ *
+ * Perdida (diferencial < 0): el banco vale MENOS en Bs de lo que muestra el libro.
+ *   Dr PERDIDA_DIFERENCIAL_CAMBIARIO / Cr BANCO
+ */
+export async function generarAsientosDiferencialBanco(
+  tx: WriteTx,
+  params: {
+    empresaId: string
+    bancoEmpresaId: string
+    cuentaBancoId: string
+    /** Positivo = ganancia, negativo = perdida */
+    diferencialBs: number
+    cuentas: Record<string, string>
+    usuarioId: string
+    descripcion: string
+  }
+): Promise<string[]> {
+  const { empresaId, bancoEmpresaId, cuentaBancoId, diferencialBs, cuentas, usuarioId, descripcion } = params
+
+  if (Math.abs(diferencialBs) < 0.01) return []
+
+  const lineas: LineaAsiento[] = []
+
+  if (diferencialBs > 0) {
+    const cuentaGanancia = cuentas['GANANCIA_DIFERENCIAL_CAMBIARIO']
+    if (!cuentaGanancia) throw new Error('Cuenta GANANCIA_DIFERENCIAL_CAMBIARIO no configurada')
+    lineas.push(
+      { cuenta_contable_id: cuentaBancoId, banco_empresa_id: bancoEmpresaId, monto: diferencialBs, detalle: descripcion },
+      { cuenta_contable_id: cuentaGanancia, monto: -diferencialBs, detalle: descripcion }
+    )
+  } else {
+    const cuentaPerdida = cuentas['PERDIDA_DIFERENCIAL_CAMBIARIO']
+    if (!cuentaPerdida) throw new Error('Cuenta PERDIDA_DIFERENCIAL_CAMBIARIO no configurada')
+    const abs = Math.abs(diferencialBs)
+    lineas.push(
+      { cuenta_contable_id: cuentaPerdida, monto: abs, detalle: descripcion },
+      { cuenta_contable_id: cuentaBancoId, banco_empresa_id: bancoEmpresaId, monto: -abs, detalle: descripcion }
+    )
+  }
+
+  return generarAsientos(tx, {
+    empresaId,
+    modulo: 'DIFERENCIAL_BANCO',
+    lineas,
+    usuarioId,
+  })
 }

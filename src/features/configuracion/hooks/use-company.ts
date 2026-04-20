@@ -1,13 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import {
-  useMonedaContableStore,
-  getMonedaContable,
-  type MonedaContable,
-} from '@/stores/moneda-contable-store'
-
-export type { MonedaContable }
 
 export interface EmpresaConfig {
   moneda_contable?: 'USD' | 'BS'
@@ -37,21 +30,6 @@ export interface Company {
   is_active: number
   created_at: string
   updated_at: string
-}
-
-export function useMonedaContable(): MonedaContable {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
-  return useMonedaContableStore((s) => s.monedas[empresaId] ?? 'USD')
-}
-
-export function setMonedaContable(empresaId: string, moneda: MonedaContable): void {
-  useMonedaContableStore.getState().setMoneda(empresaId, moneda)
-}
-
-/** @deprecated Use setMonedaContable(empresaId, moneda) - no longer needs currentConfig */
-export function getMonedaContableForEmpresa(empresaId: string): MonedaContable {
-  return getMonedaContable(empresaId)
 }
 
 export function useCompany() {

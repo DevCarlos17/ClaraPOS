@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 export const MODULOS_ORIGEN = [
   'VENTA', 'PAGO_CXC', 'COMPRA', 'PAGO_CXP', 'GASTO',
-  'NCR_VENTA', 'NCR_COMPRA', 'NDB', 'MANUAL', 'REVERSO',
+  'NCR_VENTA', 'NCR_COMPRA', 'NDB', 'MANUAL', 'REVERSO', 'DIFERENCIAL_BANCO',
 ] as const
 
 export const ESTADOS_ASIENTO = ['PENDIENTE', 'CONCILIADO', 'ANULADO'] as const
@@ -18,6 +18,7 @@ export const MODULO_LABELS: Record<string, string> = {
   NDB: 'Nota Debito',
   MANUAL: 'Manual',
   REVERSO: 'Reverso',
+  DIFERENCIAL_BANCO: 'Dif. Cambiario Banco',
 }
 
 // Schema para movimiento manual (exige partida doble)

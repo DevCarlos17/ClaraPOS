@@ -38,6 +38,7 @@ import {
   HandCoins,
   BookText,
   SlidersHorizontal,
+  TrendingUp,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -159,6 +160,7 @@ const menuItems: MenuItem[] = [
       { title: 'Bancos', url: '/configuracion/bancos', icon: Landmark, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Metodos de Pago', url: '/configuracion/metodos-pago', icon: Wallet, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Conciliacion Bancaria', url: '/bancos/conciliacion', icon: BookOpenCheck, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Diferencial Cambiario', url: '/bancos/diferencial-cambiario', icon: TrendingUp, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
     ],
   },
   { title: 'Clinica', url: '/clinica', icon: Heart, requiredPermission: PERMISSIONS.CLINIC_ACCESS },
