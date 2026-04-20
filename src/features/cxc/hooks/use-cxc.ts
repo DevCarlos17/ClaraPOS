@@ -323,20 +323,46 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       cliente_id,
     ])
 
-    // 7. Generar asientos contables (cobro CxC)
+    // 7. Resolver banco + movimiento bancario + asientos contables
     try {
+      const metodoCxCResult = await tx.execute(
+        'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+        [metodo_cobro_id]
+      )
+      const bancoCxCId =
+        (metodoCxCResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
+          ?.banco_empresa_id ?? null
+
+      if (bancoCxCId && montoUsd > 0) {
+        const movBancoCxCId = uuidv4()
+        await tx.execute(
+          `INSERT INTO movimientos_bancarios
+             (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+              doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
+           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
+          [
+            movBancoCxCId, empresa_id, bancoCxCId,
+            montoUsd.toFixed(2),
+            venta_id,
+            referencia ?? null,
+            `Cobro CxC fac.${venta.nro_factura}`,
+            now, now, procesado_por,
+          ]
+        )
+      }
+
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
       await generarAsientosPagoCxC(tx, {
         empresaId: empresa_id,
         pagoId,
         pagoRef: `PAG-${venta.nro_factura}`,
         monto_usd: montoUsd,
-        banco_empresa_id: null,
+        banco_empresa_id: bancoCxCId,
         cuentas,
         usuarioId: procesado_por,
       })
     } catch {
-      // Fallo en contabilidad no bloquea el pago
+      // Fallo en contabilidad/bancos no bloquea el pago
     }
   })
 }
@@ -496,20 +522,46 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       cliente_id,
     ])
 
-    // 6. Generar asientos contables (abono global CxC)
+    // 6. Resolver banco + movimiento bancario + asientos contables (abono global CxC)
     try {
+      const metodoAbonoResult = await tx.execute(
+        'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+        [metodo_cobro_id]
+      )
+      const bancoAbonoId =
+        (metodoAbonoResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
+          ?.banco_empresa_id ?? null
+
+      if (bancoAbonoId && montoTotalUsd > 0) {
+        const movBancoAbonoId = uuidv4()
+        await tx.execute(
+          `INSERT INTO movimientos_bancarios
+             (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+              doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
+           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
+          [
+            movBancoAbonoId, empresa_id, bancoAbonoId,
+            montoTotalUsd.toFixed(2),
+            movId,
+            referencia ?? null,
+            `Abono global cliente`,
+            now, now, procesado_por,
+          ]
+        )
+      }
+
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
       await generarAsientosPagoCxC(tx, {
         empresaId: empresa_id,
         pagoId: movId,
         pagoRef: 'ABONO-GLOBAL',
         monto_usd: montoTotalUsd,
-        banco_empresa_id: null,
+        banco_empresa_id: bancoAbonoId,
         cuentas,
         usuarioId: procesado_por,
       })
     } catch {
-      // Fallo en contabilidad no bloquea el abono
+      // Fallo en contabilidad/bancos no bloquea el abono
     }
   })
 

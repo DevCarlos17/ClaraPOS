@@ -464,12 +464,11 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       ])
     }
 
-    // 8. Generar asientos contables
+    // 8. Generar asientos contables + movimientos bancarios
     try {
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
 
-      // Resolver banco_empresa_id por metodo de cobro para que el libro contable
-      // use la cuenta contable del banco correspondiente (partida doble correcta)
+      // Resolver banco_empresa_id por metodo de cobro para contabilidad y movimientos bancarios
       const pagosContadoContab: Array<{ monto_usd: number; banco_empresa_id: string | null }> = []
       for (const pago of pagos) {
         const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
@@ -481,6 +480,25 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           (metodoResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
             ?.banco_empresa_id ?? null
         pagosContadoContab.push({ monto_usd: montoUsd, banco_empresa_id: bancoId })
+
+        // Crear movimiento bancario para pagos que usan cuenta bancaria
+        if (bancoId && montoUsd > 0) {
+          const movBancoId = uuidv4()
+          await tx.execute(
+            `INSERT INTO movimientos_bancarios
+               (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
+             VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'VENTA', ?, 0, ?, ?, ?, ?)`,
+            [
+              movBancoId, empresa_id, bancoId,
+              montoUsd.toFixed(2),
+              ventaId,
+              pago.referencia ?? null,
+              `Venta ${nroFactura}`,
+              now, now, usuario_id,
+            ]
+          )
+        }
       }
 
       await generarAsientosVenta(tx, {

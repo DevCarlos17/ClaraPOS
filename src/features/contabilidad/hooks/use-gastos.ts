@@ -201,6 +201,31 @@ export async function crearGasto(data: {
       )
     }
 
+    // Crear movimientos bancarios para pagos con cuenta bancaria
+    try {
+      for (const pago of data.pagos) {
+        if (pago.banco_empresa_id && pago.monto_usd > 0) {
+          const movBancoId = uuidv4()
+          await tx.execute(
+            `INSERT INTO movimientos_bancarios
+               (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
+             VALUES (?, ?, ?, 'EGRESO', 'GASTO', ?, 0, 0, ?, 'GASTO', ?, 0, ?, ?, ?, ?)`,
+            [
+              movBancoId, data.empresa_id, pago.banco_empresa_id,
+              pago.monto_usd.toFixed(2),
+              gastoId,
+              pago.referencia ?? null,
+              `Gasto ${nroGasto}`,
+              now, now, data.created_by ?? null,
+            ]
+          )
+        }
+      }
+    } catch {
+      // No bloquear el gasto si falla el movimiento bancario
+    }
+
     // Generar asientos contables
     try {
       const cuentas = await cargarMapaCuentas(tx, data.empresa_id)

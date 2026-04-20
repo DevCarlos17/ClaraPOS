@@ -505,6 +505,58 @@ export async function reversarAsientos(
   return nuevosIds
 }
 
+/**
+ * Asientos para un pago de CxP (empresa paga deuda a proveedor).
+ * DEBE: CxP Proveedores (reduce pasivo)
+ * HABER: Banco/Caja (sale dinero)
+ */
+export async function generarAsientosPagoCxP(
+  tx: WriteTx,
+  params: {
+    empresaId: string
+    pagoId: string
+    pagoRef: string
+    monto_usd: number
+    banco_empresa_id: string | null
+    cuentas: Record<string, string>
+    usuarioId: string
+  }
+): Promise<string[]> {
+  const { empresaId, pagoId, pagoRef, monto_usd, banco_empresa_id, cuentas, usuarioId } = params
+
+  if (monto_usd <= 0) return []
+
+  const cuentaCxP = cuentas['CXP_PROVEEDORES']
+  const cuentaBanco = banco_empresa_id
+    ? (await getCuentaBanco(tx, banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
+    : cuentas['BANCO_DEFAULT']
+
+  if (!cuentaCxP || !cuentaBanco) return []
+
+  const lineas: LineaAsiento[] = [
+    {
+      cuenta_contable_id: cuentaCxP,
+      monto: monto_usd,
+      detalle: `Pago CxP ${pagoRef}`,
+    },
+    {
+      cuenta_contable_id: cuentaBanco,
+      banco_empresa_id: banco_empresa_id,
+      monto: -monto_usd,
+      detalle: `Egreso pago CxP ${pagoRef}`,
+    },
+  ]
+
+  return generarAsientos(tx, {
+    empresaId,
+    modulo: 'PAGO_CXP',
+    docOrigenId: pagoId,
+    docOrigenRef: pagoRef,
+    lineas,
+    usuarioId,
+  })
+}
+
 // ─── Helper interno ──────────────────────────────────────────
 
 async function getCuentaBanco(
