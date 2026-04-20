@@ -41,6 +41,7 @@ import { Route as AppContabilidadLibroContableRouteImport } from './routes/_app/
 import { Route as AppContabilidadGastosDashboardRouteImport } from './routes/_app/contabilidad/gastos-dashboard'
 import { Route as AppContabilidadGastosRouteImport } from './routes/_app/contabilidad/gastos'
 import { Route as AppContabilidadCuentasConfigRouteImport } from './routes/_app/contabilidad/cuentas-config'
+import { Route as AppContabilidadBalanceComprobacionRouteImport } from './routes/_app/contabilidad/balance-comprobacion'
 import { Route as AppConfiguracionUsuariosRouteImport } from './routes/_app/configuracion/usuarios'
 import { Route as AppConfiguracionTasaCambioRouteImport } from './routes/_app/configuracion/tasa-cambio'
 import { Route as AppConfiguracionMetodosPagoRouteImport } from './routes/_app/configuracion/metodos-pago'
@@ -51,11 +52,13 @@ import { Route as AppConfiguracionBancosRouteImport } from './routes/_app/config
 import { Route as AppComprasRetencionesRouteImport } from './routes/_app/compras/retenciones'
 import { Route as AppComprasNotasFiscalesRouteImport } from './routes/_app/compras/notas-fiscales'
 import { Route as AppComprasFacturasRouteImport } from './routes/_app/compras/facturas'
+import { Route as AppComprasCxpRouteImport } from './routes/_app/compras/cxp'
 import { Route as AppClientesReportesRouteImport } from './routes/_app/clientes/reportes'
 import { Route as AppClientesGestionRouteImport } from './routes/_app/clientes/gestion'
 import { Route as AppClientesCuentasPorCobrarRouteImport } from './routes/_app/clientes/cuentas-por-cobrar'
 import { Route as AppCajaSesionesRouteImport } from './routes/_app/caja/sesiones'
 import { Route as AppCajaMovimientosRouteImport } from './routes/_app/caja/movimientos'
+import { Route as AppBancosConciliacionRouteImport } from './routes/_app/bancos/conciliacion'
 import { Route as AppConfiguracionUsuariosIndexRouteImport } from './routes/_app/configuracion/usuarios/index'
 import { Route as AppConfiguracionUsuariosNuevoRouteImport } from './routes/_app/configuracion/usuarios/nuevo'
 import { Route as AppConfiguracionUsuariosUsuarioIdEditarRouteImport } from './routes/_app/configuracion/usuarios/$usuarioId.editar'
@@ -223,6 +226,12 @@ const AppContabilidadCuentasConfigRoute =
     path: '/contabilidad/cuentas-config',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppContabilidadBalanceComprobacionRoute =
+  AppContabilidadBalanceComprobacionRouteImport.update({
+    id: '/contabilidad/balance-comprobacion',
+    path: '/contabilidad/balance-comprobacion',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppConfiguracionUsuariosRoute =
   AppConfiguracionUsuariosRouteImport.update({
     id: '/configuracion/usuarios',
@@ -278,6 +287,11 @@ const AppComprasFacturasRoute = AppComprasFacturasRouteImport.update({
   path: '/compras/facturas',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppComprasCxpRoute = AppComprasCxpRouteImport.update({
+  id: '/compras/cxp',
+  path: '/compras/cxp',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppClientesReportesRoute = AppClientesReportesRouteImport.update({
   id: '/reportes',
   path: '/reportes',
@@ -302,6 +316,11 @@ const AppCajaSesionesRoute = AppCajaSesionesRouteImport.update({
 const AppCajaMovimientosRoute = AppCajaMovimientosRouteImport.update({
   id: '/caja/movimientos',
   path: '/caja/movimientos',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppBancosConciliacionRoute = AppBancosConciliacionRouteImport.update({
+  id: '/bancos/conciliacion',
+  path: '/bancos/conciliacion',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppConfiguracionUsuariosIndexRoute =
@@ -332,11 +351,13 @@ export interface FileRoutesByFullPath {
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
   '/reportes': typeof AppReportesRoute
+  '/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/caja/movimientos': typeof AppCajaMovimientosRoute
   '/caja/sesiones': typeof AppCajaSesionesRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
   '/clientes/reportes': typeof AppClientesReportesRoute
+  '/compras/cxp': typeof AppComprasCxpRoute
   '/compras/facturas': typeof AppComprasFacturasRoute
   '/compras/notas-fiscales': typeof AppComprasNotasFiscalesRoute
   '/compras/retenciones': typeof AppComprasRetencionesRoute
@@ -347,6 +368,7 @@ export interface FileRoutesByFullPath {
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
+  '/contabilidad/balance-comprobacion': typeof AppContabilidadBalanceComprobacionRoute
   '/contabilidad/cuentas-config': typeof AppContabilidadCuentasConfigRoute
   '/contabilidad/gastos': typeof AppContabilidadGastosRoute
   '/contabilidad/gastos-dashboard': typeof AppContabilidadGastosDashboardRoute
@@ -381,11 +403,13 @@ export interface FileRoutesByTo {
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
   '/reportes': typeof AppReportesRoute
+  '/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/caja/movimientos': typeof AppCajaMovimientosRoute
   '/caja/sesiones': typeof AppCajaSesionesRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
   '/clientes/reportes': typeof AppClientesReportesRoute
+  '/compras/cxp': typeof AppComprasCxpRoute
   '/compras/facturas': typeof AppComprasFacturasRoute
   '/compras/notas-fiscales': typeof AppComprasNotasFiscalesRoute
   '/compras/retenciones': typeof AppComprasRetencionesRoute
@@ -395,6 +419,7 @@ export interface FileRoutesByTo {
   '/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
+  '/contabilidad/balance-comprobacion': typeof AppContabilidadBalanceComprobacionRoute
   '/contabilidad/cuentas-config': typeof AppContabilidadCuentasConfigRoute
   '/contabilidad/gastos': typeof AppContabilidadGastosRoute
   '/contabilidad/gastos-dashboard': typeof AppContabilidadGastosDashboardRoute
@@ -433,11 +458,13 @@ export interface FileRoutesById {
   '/_app/cxc': typeof AppCxcRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/reportes': typeof AppReportesRoute
+  '/_app/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/_app/caja/movimientos': typeof AppCajaMovimientosRoute
   '/_app/caja/sesiones': typeof AppCajaSesionesRoute
   '/_app/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/_app/clientes/gestion': typeof AppClientesGestionRoute
   '/_app/clientes/reportes': typeof AppClientesReportesRoute
+  '/_app/compras/cxp': typeof AppComprasCxpRoute
   '/_app/compras/facturas': typeof AppComprasFacturasRoute
   '/_app/compras/notas-fiscales': typeof AppComprasNotasFiscalesRoute
   '/_app/compras/retenciones': typeof AppComprasRetencionesRoute
@@ -448,6 +475,7 @@ export interface FileRoutesById {
   '/_app/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
   '/_app/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/_app/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
+  '/_app/contabilidad/balance-comprobacion': typeof AppContabilidadBalanceComprobacionRoute
   '/_app/contabilidad/cuentas-config': typeof AppContabilidadCuentasConfigRoute
   '/_app/contabilidad/gastos': typeof AppContabilidadGastosRoute
   '/_app/contabilidad/gastos-dashboard': typeof AppContabilidadGastosDashboardRoute
@@ -485,11 +513,13 @@ export interface FileRouteTypes {
     | '/cxc'
     | '/dashboard'
     | '/reportes'
+    | '/bancos/conciliacion'
     | '/caja/movimientos'
     | '/caja/sesiones'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
     | '/clientes/reportes'
+    | '/compras/cxp'
     | '/compras/facturas'
     | '/compras/notas-fiscales'
     | '/compras/retenciones'
@@ -500,6 +530,7 @@ export interface FileRouteTypes {
     | '/configuracion/metodos-pago'
     | '/configuracion/tasa-cambio'
     | '/configuracion/usuarios'
+    | '/contabilidad/balance-comprobacion'
     | '/contabilidad/cuentas-config'
     | '/contabilidad/gastos'
     | '/contabilidad/gastos-dashboard'
@@ -534,11 +565,13 @@ export interface FileRouteTypes {
     | '/cxc'
     | '/dashboard'
     | '/reportes'
+    | '/bancos/conciliacion'
     | '/caja/movimientos'
     | '/caja/sesiones'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
     | '/clientes/reportes'
+    | '/compras/cxp'
     | '/compras/facturas'
     | '/compras/notas-fiscales'
     | '/compras/retenciones'
@@ -548,6 +581,7 @@ export interface FileRouteTypes {
     | '/configuracion/impuestos'
     | '/configuracion/metodos-pago'
     | '/configuracion/tasa-cambio'
+    | '/contabilidad/balance-comprobacion'
     | '/contabilidad/cuentas-config'
     | '/contabilidad/gastos'
     | '/contabilidad/gastos-dashboard'
@@ -585,11 +619,13 @@ export interface FileRouteTypes {
     | '/_app/cxc'
     | '/_app/dashboard'
     | '/_app/reportes'
+    | '/_app/bancos/conciliacion'
     | '/_app/caja/movimientos'
     | '/_app/caja/sesiones'
     | '/_app/clientes/cuentas-por-cobrar'
     | '/_app/clientes/gestion'
     | '/_app/clientes/reportes'
+    | '/_app/compras/cxp'
     | '/_app/compras/facturas'
     | '/_app/compras/notas-fiscales'
     | '/_app/compras/retenciones'
@@ -600,6 +636,7 @@ export interface FileRouteTypes {
     | '/_app/configuracion/metodos-pago'
     | '/_app/configuracion/tasa-cambio'
     | '/_app/configuracion/usuarios'
+    | '/_app/contabilidad/balance-comprobacion'
     | '/_app/contabilidad/cuentas-config'
     | '/_app/contabilidad/gastos'
     | '/_app/contabilidad/gastos-dashboard'
@@ -859,6 +896,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppContabilidadCuentasConfigRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/contabilidad/balance-comprobacion': {
+      id: '/_app/contabilidad/balance-comprobacion'
+      path: '/contabilidad/balance-comprobacion'
+      fullPath: '/contabilidad/balance-comprobacion'
+      preLoaderRoute: typeof AppContabilidadBalanceComprobacionRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/configuracion/usuarios': {
       id: '/_app/configuracion/usuarios'
       path: '/configuracion/usuarios'
@@ -929,6 +973,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppComprasFacturasRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/compras/cxp': {
+      id: '/_app/compras/cxp'
+      path: '/compras/cxp'
+      fullPath: '/compras/cxp'
+      preLoaderRoute: typeof AppComprasCxpRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/clientes/reportes': {
       id: '/_app/clientes/reportes'
       path: '/reportes'
@@ -962,6 +1013,13 @@ declare module '@tanstack/react-router' {
       path: '/caja/movimientos'
       fullPath: '/caja/movimientos'
       preLoaderRoute: typeof AppCajaMovimientosRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/bancos/conciliacion': {
+      id: '/_app/bancos/conciliacion'
+      path: '/bancos/conciliacion'
+      fullPath: '/bancos/conciliacion'
+      preLoaderRoute: typeof AppBancosConciliacionRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/configuracion/usuarios/': {
@@ -1045,8 +1103,10 @@ interface AppRouteRouteChildren {
   AppCxcRoute: typeof AppCxcRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppReportesRoute: typeof AppReportesRoute
+  AppBancosConciliacionRoute: typeof AppBancosConciliacionRoute
   AppCajaMovimientosRoute: typeof AppCajaMovimientosRoute
   AppCajaSesionesRoute: typeof AppCajaSesionesRoute
+  AppComprasCxpRoute: typeof AppComprasCxpRoute
   AppComprasFacturasRoute: typeof AppComprasFacturasRoute
   AppComprasNotasFiscalesRoute: typeof AppComprasNotasFiscalesRoute
   AppComprasRetencionesRoute: typeof AppComprasRetencionesRoute
@@ -1057,6 +1117,7 @@ interface AppRouteRouteChildren {
   AppConfiguracionMetodosPagoRoute: typeof AppConfiguracionMetodosPagoRoute
   AppConfiguracionTasaCambioRoute: typeof AppConfiguracionTasaCambioRoute
   AppConfiguracionUsuariosRoute: typeof AppConfiguracionUsuariosRouteWithChildren
+  AppContabilidadBalanceComprobacionRoute: typeof AppContabilidadBalanceComprobacionRoute
   AppContabilidadCuentasConfigRoute: typeof AppContabilidadCuentasConfigRoute
   AppContabilidadGastosRoute: typeof AppContabilidadGastosRoute
   AppContabilidadGastosDashboardRoute: typeof AppContabilidadGastosDashboardRoute
@@ -1086,8 +1147,10 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppCxcRoute: AppCxcRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppReportesRoute: AppReportesRoute,
+  AppBancosConciliacionRoute: AppBancosConciliacionRoute,
   AppCajaMovimientosRoute: AppCajaMovimientosRoute,
   AppCajaSesionesRoute: AppCajaSesionesRoute,
+  AppComprasCxpRoute: AppComprasCxpRoute,
   AppComprasFacturasRoute: AppComprasFacturasRoute,
   AppComprasNotasFiscalesRoute: AppComprasNotasFiscalesRoute,
   AppComprasRetencionesRoute: AppComprasRetencionesRoute,
@@ -1098,6 +1161,8 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppConfiguracionMetodosPagoRoute: AppConfiguracionMetodosPagoRoute,
   AppConfiguracionTasaCambioRoute: AppConfiguracionTasaCambioRoute,
   AppConfiguracionUsuariosRoute: AppConfiguracionUsuariosRouteWithChildren,
+  AppContabilidadBalanceComprobacionRoute:
+    AppContabilidadBalanceComprobacionRoute,
   AppContabilidadCuentasConfigRoute: AppContabilidadCuentasConfigRoute,
   AppContabilidadGastosRoute: AppContabilidadGastosRoute,
   AppContabilidadGastosDashboardRoute: AppContabilidadGastosDashboardRoute,
