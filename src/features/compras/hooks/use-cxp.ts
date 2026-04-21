@@ -45,13 +45,20 @@ export function useProveedoresConDeuda() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT p.id, p.rif, p.razon_social, p.saldo_actual,
-       (SELECT COUNT(*) FROM facturas_compra fc
-        WHERE fc.proveedor_id = p.id AND CAST(fc.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
+    // Calcular saldo desde facturas_compra directamente.
+    // Evita dependencia del trigger PostgreSQL que no corre en SQLite local.
+    `SELECT p.id, p.rif, p.razon_social,
+       SUM(CAST(fc.saldo_pend_usd AS REAL)) as saldo_actual,
+       COUNT(fc.id) as facturas_pendientes
      FROM proveedores p
-     WHERE p.empresa_id = ? AND CAST(p.saldo_actual AS REAL) > 0.01 AND p.is_active = 1
-     ORDER BY CAST(p.saldo_actual AS REAL) DESC`,
-    [empresaId]
+     INNER JOIN facturas_compra fc
+       ON fc.proveedor_id = p.id
+       AND CAST(fc.saldo_pend_usd AS REAL) > 0.01
+       AND fc.empresa_id = ?
+     WHERE p.empresa_id = ? AND p.is_active = 1
+     GROUP BY p.id, p.rif, p.razon_social
+     ORDER BY saldo_actual DESC`,
+    [empresaId, empresaId]
   )
 
   return { proveedores: (data ?? []) as ProveedorConDeuda[], isLoading }

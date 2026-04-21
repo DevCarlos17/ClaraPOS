@@ -94,6 +94,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   const tasaNum = parseFloat(tasa) || 0
 
+  // Validacion de fecha: advertencia si es futura
+  const hoy = new Date().toISOString().slice(0, 10)
+  const fechaEsFutura = fechaFactura > hoy
+
   const productosFiltrados = productos.filter(
     (p) =>
       !lineas.some((l) => l.producto_id === p.id) &&
@@ -419,6 +423,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 }`}
               />
               {errors.fecha_factura && <p className="text-destructive text-xs mt-1">{errors.fecha_factura}</p>}
+              {fechaEsFutura && !errors.fecha_factura && (
+                <p className="text-amber-600 text-xs mt-1">
+                  ⚠ La fecha es posterior a hoy. Verifique que sea correcta.
+                </p>
+              )}
             </div>
 
             {/* Nro Factura */}

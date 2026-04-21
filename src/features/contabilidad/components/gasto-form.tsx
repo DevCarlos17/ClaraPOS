@@ -16,7 +16,8 @@ interface PagoRow {
   id: string
   metodo_cobro_id: string
   banco_empresa_id: string
-  monto_usd: string
+  moneda: 'USD' | 'BS'
+  monto: string
   referencia: string
 }
 
@@ -34,7 +35,8 @@ function nuevoPagoRow(): PagoRow {
     id: uuidv4(),
     metodo_cobro_id: '',
     banco_empresa_id: '',
-    monto_usd: '',
+    moneda: 'USD',
+    monto: '',
     referencia: '',
   }
 }
@@ -83,10 +85,12 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
     }
   }, [isOpen, tasaActual])
 
-  // ─── Advertencia de fecha fuera del mes actual ────────────
+  // ─── Advertencias de fecha ────────────────────────────────
 
+  const hoy = new Date().toISOString().slice(0, 10)
+  const fechaEsFutura = Boolean(fecha && fecha > hoy)
   const fechaWarning = (() => {
-    if (!fecha) return false
+    if (!fecha || fechaEsFutura) return false
     const [anio, mes] = fecha.split('-').map(Number)
     const now = new Date()
     return anio !== now.getFullYear() || mes !== (now.getMonth() + 1)
@@ -107,13 +111,20 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
 
   useEffect(() => {
     if (pagos.length === 1) {
+      const tasaN = parseFloat(tasa) || 1
       setPagos((prev) =>
-        prev.map((p, i) => (i === 0 ? { ...p, monto_usd: montoUsd } : p))
+        prev.map((p, i) => {
+          if (i !== 0) return p
+          const monto = p.moneda === 'BS'
+            ? ((parseFloat(montoUsd) || 0) * tasaN).toFixed(2)
+            : montoUsd
+          return { ...p, monto }
+        })
       )
     }
-    // Solo reaccionar al cambio de montoUsd, no a pagos para evitar loops
+    // Solo reaccionar al cambio de montoUsd/tasa, no a pagos para evitar loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [montoUsd])
+  }, [montoUsd, tasa])
 
   // ─── Operaciones sobre filas de pagos ─────────────────────
 
@@ -130,10 +141,12 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
       prev.map((p) => {
         if (p.id !== id) return p
         const updated = { ...p, [campo]: valor }
-        // Auto-detectar banco desde el metodo de pago seleccionado
+        // Auto-detectar banco y moneda desde el metodo de pago seleccionado
         if (campo === 'metodo_cobro_id') {
           const metodo = metodos.find((m) => m.id === valor)
           updated.banco_empresa_id = metodo?.banco_empresa_id ?? ''
+          updated.moneda = (metodo?.moneda ?? 'USD') as 'USD' | 'BS'
+          updated.monto = ''
         }
         return updated
       })
@@ -142,14 +155,15 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
 
   // ─── Calculo del total de pagos ───────────────────────────
 
-  const totalPagos = pagos.reduce((sum, p) => {
-    const val = parseFloat(p.monto_usd)
-    return sum + (isNaN(val) ? 0 : val)
+  const tasaNum = parseFloat(tasa) || 1
+  const totalPagosUsd = pagos.reduce((sum, p) => {
+    const val = parseFloat(p.monto) || 0
+    return sum + (p.moneda === 'BS' ? val / tasaNum : val)
   }, 0)
 
   const montoTotalFloat = parseFloat(montoUsd) || 0
   const pagosDesbalanceados =
-    montoTotalFloat > 0 && Math.abs(totalPagos - montoTotalFloat) > 0.01
+    montoTotalFloat > 0 && Math.abs(totalPagosUsd - montoTotalFloat) > 0.01
 
   // ─── Submit ───────────────────────────────────────────────
 
@@ -157,12 +171,17 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
     e.preventDefault()
     setErrors({})
 
-    const pagosPayload: GastoPago[] = pagos.map((p) => ({
-      metodo_cobro_id: p.metodo_cobro_id,
-      banco_empresa_id: p.banco_empresa_id || undefined,
-      monto_usd: parseFloat(p.monto_usd) || 0,
-      referencia: p.referencia.trim() || undefined,
-    }))
+    const tasaN = parseFloat(tasa) || 1
+    const pagosPayload: GastoPago[] = pagos.map((p) => {
+      const montoRaw = parseFloat(p.monto) || 0
+      const montoUsdCalc = p.moneda === 'BS' ? montoRaw / tasaN : montoRaw
+      return {
+        metodo_cobro_id: p.metodo_cobro_id,
+        banco_empresa_id: p.banco_empresa_id || undefined,
+        monto_usd: montoUsdCalc,
+        referencia: p.referencia.trim() || undefined,
+      }
+    })
 
     const parsed = gastoSchema.safeParse({
       cuenta_id: cuentaId,
@@ -335,6 +354,11 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
             {errors.fecha && (
               <p className="text-red-500 text-xs mt-1">{errors.fecha}</p>
             )}
+            {fechaEsFutura && !errors.fecha && (
+              <div className="mt-1 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
+                ⚠ La fecha es posterior a hoy. Verifique que sea correcta.
+              </div>
+            )}
             {fechaWarning && (
               <div className="mt-1 rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
                 Advertencia: la fecha no corresponde al mes en curso
@@ -466,11 +490,11 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
                       type="number"
                       step="0.01"
                       min="0.01"
-                      value={pago.monto_usd}
+                      value={pago.monto}
                       onChange={(e) =>
-                        actualizarPago(pago.id, 'monto_usd', e.target.value)
+                        actualizarPago(pago.id, 'monto', e.target.value)
                       }
-                      placeholder="Monto USD"
+                      placeholder={`Monto ${pago.moneda}`}
                       className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
                     />
 
@@ -504,11 +528,11 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
                     : 'bg-green-50 border border-green-200 text-green-700'
                 }`}
               >
-                <span>Total pagos: ${totalPagos.toFixed(2)}</span>
-                <span>Total gasto: ${montoTotalFloat.toFixed(2)}</span>
+                <span>Total pagos: ${totalPagosUsd.toFixed(2)} USD</span>
+                <span>Total gasto: ${montoTotalFloat.toFixed(2)} USD</span>
                 {pagosDesbalanceados && (
                   <span className="font-medium">
-                    Diferencia: ${Math.abs(totalPagos - montoTotalFloat).toFixed(2)}
+                    Diferencia: ${Math.abs(totalPagosUsd - montoTotalFloat).toFixed(2)}
                   </span>
                 )}
               </div>
