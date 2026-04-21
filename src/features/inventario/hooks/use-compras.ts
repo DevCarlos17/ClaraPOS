@@ -404,14 +404,17 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
     // 5. Registrar movimientos de cuenta del proveedor
 
-    // 5a. Leer saldo actual del proveedor
-    const provResult = await tx.execute(
-      'SELECT saldo_actual FROM proveedores WHERE id = ?',
-      [proveedor_id]
+    // 5a. Calcular saldo proveedor desde facturas_compra (la nueva factura ya esta insertada)
+    // NOTA: NO hacer UPDATE proveedores.saldo_actual — trigger en Supabase lo bloquea (P0001).
+    // El saldo se actualiza en Supabase via trigger al insertar movimientos_cuenta_proveedor.
+    const sumResult = await tx.execute(
+      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
+       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
+      [proveedor_id, empresa_id]
     )
-    let saldoProv = provResult.rows?.length
-      ? parseFloat((provResult.rows.item(0) as { saldo_actual: string }).saldo_actual) || 0
-      : 0
+    const sumAfterInsert = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+    // saldo antes de esta factura = sum actual - pendienteUsd (contribucion de la nueva factura)
+    let saldoProv = Math.max(0, Number((sumAfterInsert - pendienteUsd).toFixed(2)))
 
     // 5b. Si hay deuda pendiente: crear entrada FAC
     if (pendienteUsd > 0.01) {
@@ -432,10 +435,6 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           compraId, compraId,
           now, now, usuario_id,
         ]
-      )
-      await tx.execute(
-        'UPDATE proveedores SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-        [nuevoSaldo.toFixed(2), now, proveedor_id]
       )
       saldoProv = nuevoSaldo
     }
@@ -461,10 +460,6 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           compraId, compraId,
           now, now, usuario_id,
         ]
-      )
-      await tx.execute(
-        'UPDATE proveedores SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-        [nuevoSaldo.toFixed(2), now, proveedor_id]
       )
       saldoProv = nuevoSaldo
 

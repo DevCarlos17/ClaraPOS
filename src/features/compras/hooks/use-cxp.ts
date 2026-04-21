@@ -23,6 +23,8 @@ export interface FacturaCompraPendiente {
   total_usd: string
   saldo_pend_usd: string
   tipo: string
+  tasa: string           // tasa de negociacion/proveedor (tasa original del documento)
+  tasa_costo: string | null  // tasa BCV/interna (usada para diferencial cambiario)
 }
 
 export interface PagoCxPParams {
@@ -31,7 +33,8 @@ export interface PagoCxPParams {
   metodo_cobro_id: string
   banco_empresa_id: string | null
   moneda: 'USD' | 'BS'
-  tasa: number
+  tasa: number           // tasa pactada para este pago
+  tasaBcvCompra?: number // tasa BCV original del documento (para diferencial)
   monto: number
   referencia?: string
   empresa_id: string
@@ -67,7 +70,7 @@ export function useProveedoresConDeuda() {
 export function useFacturasCompraPendientes(proveedorId: string | null) {
   const { data, isLoading } = useQuery(
     proveedorId
-      ? `SELECT id, nro_factura, fecha_factura, total_usd, saldo_pend_usd, tipo
+      ? `SELECT id, nro_factura, fecha_factura, total_usd, saldo_pend_usd, tipo, tasa, tasa_costo
          FROM facturas_compra
          WHERE proveedor_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
          ORDER BY fecha_factura ASC`
@@ -88,8 +91,8 @@ export function useFacturasCompraPendientes(proveedorId: string | null) {
  */
 export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
   const {
-    factura_compra_id, proveedor_id, metodo_cobro_id, banco_empresa_id,
-    moneda, tasa, monto, referencia, empresa_id, usuario_id,
+    factura_compra_id, proveedor_id, banco_empresa_id,
+    moneda, tasa, tasaBcvCompra, monto, referencia, empresa_id, usuario_id,
   } = params
 
   if (tasa <= 0) throw new Error('La tasa debe ser mayor a 0')
@@ -100,13 +103,19 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
 
     // 1. Leer factura
     const facturaResult = await tx.execute(
-      'SELECT nro_factura, saldo_pend_usd, tasa FROM facturas_compra WHERE id = ?',
+      'SELECT nro_factura, saldo_pend_usd, tasa, tasa_costo FROM facturas_compra WHERE id = ?',
       [factura_compra_id]
     )
     if (!facturaResult.rows?.length) throw new Error('Factura no encontrada')
-    const factura = facturaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; tasa: string }
+    const factura = facturaResult.rows.item(0) as {
+      nro_factura: string; saldo_pend_usd: string; tasa: string; tasa_costo: string | null
+    }
     const saldoFactura = parseFloat(factura.saldo_pend_usd)
-    const tasaCompra = parseFloat(factura.tasa)
+    // tasaCompra para diferencial: usa tasa BCV/interna del documento
+    // (tasaBcvCompra del modal > tasa_costo del documento > tasa del proveedor como ultimo recurso)
+    const tasaCompra = tasaBcvCompra
+      ?? (factura.tasa_costo ? parseFloat(factura.tasa_costo) : null)
+      ?? parseFloat(factura.tasa)
 
     // 2. Calcular monto en USD
     const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
@@ -118,21 +127,21 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
       )
     }
 
-    // 4. Reducir saldo de la factura
+    // 4. Leer saldo proveedor ANTES de modificar la factura (desde facturas_compra, no de proveedores)
+    const sumResult = await tx.execute(
+      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
+       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
+      [proveedor_id, empresa_id]
+    )
+    const saldoProv = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+    const nuevoSaldoProv = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
+
+    // 5. Reducir saldo de la factura
     const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
     await tx.execute(
       'UPDATE facturas_compra SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
       [nuevoSaldoFactura.toFixed(2), now, factura_compra_id]
     )
-
-    // 5. Leer saldo proveedor
-    const provResult = await tx.execute(
-      'SELECT saldo_actual FROM proveedores WHERE id = ?',
-      [proveedor_id]
-    )
-    if (!provResult.rows?.length) throw new Error('Proveedor no encontrado')
-    const saldoProv = parseFloat((provResult.rows.item(0) as { saldo_actual: string }).saldo_actual)
-    const nuevoSaldoProv = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
 
     // 6. Crear movimiento_cuenta_proveedor
     const movId = uuidv4()
@@ -152,14 +161,10 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
         now, now, usuario_id,
       ]
     )
+    // NOTA: saldo_actual de proveedores se actualiza via trigger en Supabase.
+    // No hacer UPDATE directo aqui — el trigger lo bloquea (P0001).
 
-    // 7. Actualizar saldo del proveedor
-    await tx.execute(
-      'UPDATE proveedores SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-      [nuevoSaldoProv.toFixed(2), now, proveedor_id]
-    )
-
-    // 8. Movimiento bancario + asientos contables
+    // 7. Movimiento bancario + asientos contables
     try {
       if (banco_empresa_id && montoUsd > 0) {
         const movBancoId = uuidv4()

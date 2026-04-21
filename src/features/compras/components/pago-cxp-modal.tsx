@@ -30,7 +30,10 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const [monto, setMonto] = useState('')
   const [metodoCobro, setMetodoCobro] = useState('')
   const [referencia, setReferencia] = useState('')
+  // tasa de pago: el usuario puede editar. default = tasa de negociacion de la factura
   const [tasaPagoStr, setTasaPagoStr] = useState('')
+  // tasa BCV del documento: solo visible cuando la factura no tenia tasa_costo guardada
+  const [tasaBcvStr, setTasaBcvStr] = useState('')
   const [loading, setLoading] = useState(false)
 
   function handleClose() {
@@ -38,6 +41,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
     setMetodoCobro('')
     setReferencia('')
     setTasaPagoStr('')
+    setTasaBcvStr('')
     onClose()
   }
 
@@ -45,19 +49,31 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
 
   const saldoPend = parseFloat(factura.saldo_pend_usd)
   const totalFactura = parseFloat(factura.total_usd)
+  const tasaNegociacion = parseFloat(factura.tasa) || 0
+  const tasaCostoDocumento = factura.tasa_costo ? parseFloat(factura.tasa_costo) : null
 
-  // Derivar moneda del metodo seleccionado (igual que CxC)
+  // Derivar moneda del metodo seleccionado
   const metodoSeleccionado = metodos.find((m) => m.id === metodoCobro)
   const moneda = (metodoSeleccionado?.moneda ?? 'USD') as 'USD' | 'BS'
   const montoNum = parseFloat(monto) || 0
-  // tasa de pago: editable por usuario, default = tasa actual del sistema
-  const tasaPagoNum = parseFloat(tasaPagoStr) || tasaValor
+
+  // tasa de pago: default a tasa de negociacion del documento (no a tasa actual del sistema)
+  const tasaPagoNum = parseFloat(tasaPagoStr) || tasaNegociacion
+
+  // tasa BCV para diferencial: del documento si existe, sino del input del usuario
+  const tasaBcvParaDiferencial = tasaCostoDocumento ?? (parseFloat(tasaBcvStr) || 0)
+  const necesitaTasaBcv = !tasaCostoDocumento  // pedir al usuario si no estaba en el documento
 
   const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum) : montoNum
   const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum) : montoNum
 
   const excedeSaldo = montoUsd > saldoPend + 0.01
-  const canSubmit = metodoCobro && montoNum > 0 && !excedeSaldo && !loading && tasaPagoNum > 0
+  const tasaBcvValida = !necesitaTasaBcv || tasaBcvParaDiferencial > 0
+  const canSubmit = metodoCobro && montoNum > 0 && !excedeSaldo && !loading
+    && tasaPagoNum > 0 && tasaBcvValida
+
+  // diferencial: cuando la tasa de pago difiere de la tasa BCV original del documento
+  const hayDiferencial = tasaBcvParaDiferencial > 0 && tasaPagoNum !== tasaBcvParaDiferencial
 
   function handlePayMax() {
     if (moneda === 'BS') {
@@ -80,6 +96,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
         banco_empresa_id: metodoSeleccionado?.banco_empresa_id ?? null,
         moneda,
         tasa: tasaPagoNum,
+        tasaBcvCompra: tasaBcvParaDiferencial > 0 ? tasaBcvParaDiferencial : undefined,
         monto: montoNum,
         referencia: referencia || undefined,
         empresa_id: user.empresa_id,
@@ -104,7 +121,11 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
         {/* Resumen de la factura */}
         <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
           <div className="font-medium">{proveedorNombre}</div>
-          <div className="text-muted-foreground">Factura: {factura.nro_factura}</div>
+          <div className="text-muted-foreground">
+            Factura: {factura.nro_factura}
+            {' · '}
+            <span className="text-xs">Tasa negociacion: {tasaNegociacion > 0 ? tasaNegociacion.toFixed(4) : '—'}</span>
+          </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Total factura:</span>
             <span>{formatUsd(totalFactura)}</span>
@@ -114,27 +135,51 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
             <span className="text-destructive">{formatUsd(saldoPend)}</span>
           </div>
           {tasaPagoNum > 0 && (
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Equivalente Bs:</span>
-              <span className="text-muted-foreground">{formatBs(usdToBs(saldoPend, tasaPagoNum))}</span>
+            <div className="flex justify-between text-muted-foreground">
+              <span>Equivalente Bs (a tasa pago):</span>
+              <span>{formatBs(usdToBs(saldoPend, tasaPagoNum))}</span>
             </div>
           )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Tasa BCV del documento (solo si no estaba guardada) */}
+          {necesitaTasaBcv && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
+              <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                Esta factura no tiene tasa BCV/interna registrada.
+                Ingrese la tasa BCV vigente en la fecha del documento para calcular el diferencial cambiario.
+              </p>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  Tasa BCV a la fecha del documento <span className="text-destructive">*</span>
+                  <span className="text-muted-foreground font-normal ml-1">({factura.fecha_factura})</span>
+                </label>
+                <Input
+                  type="number"
+                  step="0.0001"
+                  min="0.0001"
+                  value={tasaBcvStr}
+                  onChange={(e) => setTasaBcvStr(e.target.value)}
+                  placeholder="Ej: 50.0000"
+                />
+              </div>
+            </div>
+          )}
+
           {/* Tasa de pago */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-medium text-muted-foreground">
-                Tasa de pago (Bs/USD)
+                Tasa de pago pactada (Bs/USD)
               </label>
-              {tasaValor > 0 && tasaPagoStr && parseFloat(tasaPagoStr) !== tasaValor && (
+              {tasaValor > 0 && tasaPagoNum !== tasaValor && (
                 <button
                   type="button"
-                  onClick={() => setTasaPagoStr('')}
+                  onClick={() => setTasaPagoStr(tasaValor.toFixed(4))}
                   className="text-xs text-primary hover:underline"
                 >
-                  Usar tasa actual
+                  Usar tasa actual ({tasaValor.toFixed(2)})
                 </button>
               )}
             </div>
@@ -144,14 +189,18 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
               min="0.0001"
               value={tasaPagoStr}
               onChange={(e) => setTasaPagoStr(e.target.value)}
-              placeholder={tasaValor > 0 ? tasaValor.toFixed(4) : '0.0000'}
+              placeholder={tasaNegociacion > 0 ? tasaNegociacion.toFixed(4) : '0.0000'}
             />
-            <p className="text-xs text-muted-foreground">
-              Tasa vigente: {tasaValor > 0 ? tasaValor.toFixed(4) : '—'}
-              {tasaPagoNum !== tasaValor && tasaPagoNum > 0 && (
-                <span className="text-amber-600 ml-2">⚠ Diferencial cambiario se registrara en contabilidad</span>
-              )}
-            </p>
+            {hayDiferencial && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                Diferencial cambiario: tasa BCV doc {tasaBcvParaDiferencial.toFixed(2)} → pago {tasaPagoNum.toFixed(2)}
+                {' ('}
+                {tasaPagoNum > tasaBcvParaDiferencial ? 'perdida' : 'ganancia'}
+                {' Bs '}
+                {formatBs(Math.abs(saldoPend * (tasaPagoNum - tasaBcvParaDiferencial)))}
+                {' aproximado)'}
+              </p>
+            )}
           </div>
 
           {/* Metodo de pago */}
