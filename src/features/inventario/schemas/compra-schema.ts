@@ -13,7 +13,6 @@ export const compraHeaderSchema = z.object({
   nro_factura: z.string().min(1, 'El numero de factura es requerido'),
   nro_control: z.string().optional(),
   moneda: z.enum(['USD', 'BS']),
-  tipo: z.enum(['CONTADO', 'CREDITO']),
 })
 
 export type LineaCompraValues = z.infer<typeof lineaCompraSchema>

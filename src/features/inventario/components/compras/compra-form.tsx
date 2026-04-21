@@ -1,15 +1,24 @@
 import React, { useState } from 'react'
 import { toast } from 'sonner'
-import { ArrowLeft, Plus, Trash2, Search, CreditCard, Banknote } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Search, Banknote, PackagePlus, UserPlus, X } from 'lucide-react'
 import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
-import { crearCompra } from '@/features/inventario/hooks/use-compras'
+import { crearCompra, type PagoCompraParam } from '@/features/inventario/hooks/use-compras'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
 import { useProductosTipo, type Producto } from '@/features/inventario/hooks/use-productos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useConversiones } from '@/features/inventario/hooks/use-unidades-conversion'
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs } from '@/lib/currency'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { ProductoForm } from '@/features/inventario/components/productos/producto-form'
+import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
 
 interface UnidadOption {
   id: string | null
@@ -34,6 +43,15 @@ interface LineaUI {
   lote_fecha_venc: string
 }
 
+interface PagoUI {
+  metodo_cobro_id: string
+  metodo_nombre: string
+  moneda: 'USD' | 'BS'
+  monto: number
+  banco_empresa_id: string | null
+  referencia?: string
+}
+
 interface CompraFormProps {
   onClose: () => void
 }
@@ -45,6 +63,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const { user } = useCurrentUser()
   const { conversiones } = useConversiones()
   const { unidades } = useUnidadesActivas()
+  const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
 
   // Header fields
   const [fechaFactura, setFechaFactura] = useState(new Date().toISOString().slice(0, 10))
@@ -53,7 +72,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [proveedorId, setProveedorId] = useState('')
   const [moneda, setMoneda] = useState<'USD' | 'BS'>('USD')
   const [tasa, setTasa] = useState(tasaValor > 0 ? tasaValor.toFixed(4) : '')
-  const [tipo, setTipo] = useState<'CONTADO' | 'CREDITO'>('CONTADO')
 
   // Lines
   const [lineas, setLineas] = useState<LineaUI[]>([])
@@ -63,6 +81,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
   // Product search
   const [busqueda, setBusqueda] = useState('')
   const [dropdownOpen, setDropdownOpen] = useState(false)
+
+  // Pagos
+  const [pagos, setPagos] = useState<PagoUI[]>([])
+  const [pagoMetodoId, setPagoMetodoId] = useState('')
+  const [pagoMonto, setPagoMonto] = useState('')
+  const [pagoReferencia, setPagoReferencia] = useState('')
+
+  // Modals
+  const [showCrearProducto, setShowCrearProducto] = useState(false)
+  const [showCrearProveedor, setShowCrearProveedor] = useState(false)
 
   const tasaNum = parseFloat(tasa) || 0
 
@@ -111,6 +139,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const totalDisplay = lineas.reduce((sum, l) => sum + getLineSubtotal(l), 0)
   const totalUsd = moneda === 'USD' ? totalDisplay : tasaNum > 0 ? totalDisplay / tasaNum : 0
   const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaNum
+
+  // Payment calculations
+  const totalAbonadoUsd = pagos.reduce((sum, p) => {
+    const mUsd = p.moneda === 'BS' ? (tasaNum > 0 ? p.monto / tasaNum : 0) : p.monto
+    return sum + mUsd
+  }, 0)
+  const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
+  const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
+
+  const metodoSeleccionado = metodos.find((m) => m.id === pagoMetodoId)
 
   function handleAddProducto(producto: Producto) {
     const options = getUnidadOptions(producto)
@@ -171,7 +209,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
         )
         if (!option) return l
 
-        // Recalculate cost per new unit
         const oldCostoPerBase = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
         const newCostoDisplay = oldCostoPerBase * option.factor
 
@@ -200,6 +237,38 @@ export function CompraForm({ onClose }: CompraFormProps) {
     setMoneda(newMoneda)
   }
 
+  function handleAddPago() {
+    const montoNum = parseFloat(pagoMonto)
+    if (!pagoMetodoId || isNaN(montoNum) || montoNum <= 0 || !metodoSeleccionado) return
+    setPagos((prev) => [
+      ...prev,
+      {
+        metodo_cobro_id: pagoMetodoId,
+        metodo_nombre: metodoSeleccionado.nombre,
+        moneda: metodoSeleccionado.moneda as 'USD' | 'BS',
+        monto: montoNum,
+        banco_empresa_id: metodoSeleccionado.banco_empresa_id,
+        referencia: pagoReferencia.trim() || undefined,
+      },
+    ])
+    setPagoMetodoId('')
+    setPagoMonto('')
+    setPagoReferencia('')
+  }
+
+  function handleRemovePago(index: number) {
+    setPagos((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  function handlePagoMax() {
+    if (!metodoSeleccionado || totalUsd <= 0) return
+    if (metodoSeleccionado.moneda === 'BS') {
+      setPagoMonto((pendienteUsd * tasaNum).toFixed(2))
+    } else {
+      setPagoMonto(pendienteUsd.toFixed(2))
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErrors({})
@@ -217,7 +286,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
       nro_factura: nroFactura,
       nro_control: nroControl || undefined,
       moneda,
-      tipo,
     })
 
     if (!headerParsed.success) {
@@ -271,6 +339,15 @@ export function CompraForm({ onClose }: CompraFormProps) {
     if (productosFiltrados && lineasConvertidas.some((l) => l === null)) return
     const lineasValidas = lineasConvertidas.filter((l): l is NonNullable<typeof l> => l !== null)
 
+    // Build pagos param
+    const pagosParam: PagoCompraParam[] = pagos.map((p) => ({
+      metodo_cobro_id: p.metodo_cobro_id,
+      moneda: p.moneda,
+      monto: p.monto,
+      banco_empresa_id: p.banco_empresa_id,
+      referencia: p.referencia,
+    }))
+
     setSubmitting(true)
     try {
       const result = await crearCompra({
@@ -280,12 +357,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
         nro_factura: headerParsed.data.nro_factura,
         nro_control: headerParsed.data.nro_control,
         moneda: headerParsed.data.moneda,
-        tipo: headerParsed.data.tipo,
         lineas: lineasValidas,
+        pagos: pagosParam,
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
       })
-      toast.success(`Compra ${result.nroFactura} registrada exitosamente`)
+      toast.success(`Factura ${result.nroFactura} registrada exitosamente`)
       onClose()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
@@ -296,6 +373,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
   }
 
   const monedaLabel = moneda === 'USD' ? '$' : 'Bs'
+
+  const submitLabel = submitting
+    ? 'Registrando...'
+    : tipoDetectado === 'CREDITO' && pagos.length === 0
+    ? 'Registrar a Credito'
+    : tipoDetectado === 'CREDITO'
+    ? `Registrar (${formatUsd(pendienteUsd)} a credito)`
+    : 'Registrar Factura de Compra'
 
   return (
     <div className="space-y-6">
@@ -308,7 +393,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
           <ArrowLeft className="h-5 w-5" />
         </button>
         <div>
-          <h2 className="text-lg font-semibold text-foreground">Nueva Compra</h2>
+          <h2 className="text-lg font-semibold text-foreground">Nueva Factura de Compra</h2>
           <p className="text-sm text-muted-foreground">Registrar factura de compra a proveedor</p>
         </div>
       </div>
@@ -373,9 +458,20 @@ export function CompraForm({ onClose }: CompraFormProps) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             {/* Proveedor */}
             <div className="sm:col-span-2">
-              <label htmlFor="compra-proveedor" className="block text-xs font-medium text-muted-foreground mb-1">
-                Proveedor
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label htmlFor="compra-proveedor" className="block text-xs font-medium text-muted-foreground">
+                  Proveedor
+                </label>
+                <button
+                  type="button"
+                  onClick={() => setShowCrearProveedor(true)}
+                  className="inline-flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors"
+                  title="Crear nuevo proveedor"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  Nuevo
+                </button>
+              </div>
               <select
                 id="compra-proveedor"
                 value={proveedorId}
@@ -420,9 +516,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
           {/* Moneda switch */}
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-2">
-              Moneda de entrada
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Moneda del documento fisico
             </label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Solo afecta la visualizacion. El asiento contable siempre se genera en Bolivares.
+            </p>
             <div className="inline-flex rounded-lg border border-input overflow-hidden">
               <button
                 type="button"
@@ -456,52 +555,64 @@ export function CompraForm({ onClose }: CompraFormProps) {
         <div className="rounded-lg border bg-card p-4 space-y-4">
           <h3 className="text-sm font-semibold text-foreground">Productos</h3>
 
-          {/* Product search */}
-          <div className="relative">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <input
-                type="text"
-                value={busqueda}
-                onChange={(e) => {
-                  setBusqueda(e.target.value)
-                  setDropdownOpen(true)
-                }}
-                onFocus={() => busqueda && setDropdownOpen(true)}
-                placeholder={loadingProductos ? 'Cargando productos...' : 'Buscar producto por nombre o codigo...'}
-                disabled={loadingProductos}
-                autoComplete="off"
-                className="w-full pl-10 pr-4 py-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              />
+          {/* Product search + create button */}
+          <div className="flex gap-2">
+            <div className="relative flex-1">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <input
+                  type="text"
+                  value={busqueda}
+                  onChange={(e) => {
+                    setBusqueda(e.target.value)
+                    setDropdownOpen(true)
+                  }}
+                  onFocus={() => busqueda && setDropdownOpen(true)}
+                  placeholder={loadingProductos ? 'Cargando productos...' : 'Buscar producto por nombre o codigo...'}
+                  disabled={loadingProductos}
+                  autoComplete="off"
+                  className="w-full pl-10 pr-4 py-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+
+              {dropdownOpen && busqueda && productosFiltrados.length > 0 && (
+                <ul className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-border bg-background shadow-lg">
+                  {productosFiltrados.slice(0, 10).map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        onClick={() => handleAddProducto(p)}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex items-center gap-2"
+                      >
+                        <Plus className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                        <span className="font-mono text-muted-foreground">{p.codigo}</span>
+                        <span className="text-muted-foreground/50">|</span>
+                        <span className="text-foreground">{p.nombre}</span>
+                        <span className="text-muted-foreground text-xs ml-auto">
+                          Costo: {formatUsd(p.costo_usd)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {dropdownOpen && busqueda && productosFiltrados.length === 0 && !loadingProductos && (
+                <div className="absolute z-10 mt-1 w-full rounded-md border border-border bg-background shadow-lg p-3 text-sm text-muted-foreground">
+                  No se encontraron productos
+                </div>
+              )}
             </div>
 
-            {dropdownOpen && busqueda && productosFiltrados.length > 0 && (
-              <ul className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-border bg-background shadow-lg">
-                {productosFiltrados.slice(0, 10).map((p) => (
-                  <li key={p.id}>
-                    <button
-                      type="button"
-                      onClick={() => handleAddProducto(p)}
-                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                    >
-                      <Plus className="h-3.5 w-3.5 text-green-600 shrink-0" />
-                      <span className="font-mono text-muted-foreground">{p.codigo}</span>
-                      <span className="text-muted-foreground/50">|</span>
-                      <span className="text-foreground">{p.nombre}</span>
-                      <span className="text-muted-foreground text-xs ml-auto">
-                        Costo: {formatUsd(p.costo_usd)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-
-            {dropdownOpen && busqueda && productosFiltrados.length === 0 && !loadingProductos && (
-              <div className="absolute z-10 mt-1 w-full rounded-md border border-border bg-background shadow-lg p-3 text-sm text-muted-foreground">
-                No se encontraron productos
-              </div>
-            )}
+            <button
+              type="button"
+              onClick={() => setShowCrearProducto(true)}
+              title="Crear nuevo producto"
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-input bg-background text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <PackagePlus className="h-4 w-4" />
+              <span className="hidden sm:inline">Nuevo producto</span>
+            </button>
           </div>
 
           {/* Line items table */}
@@ -634,42 +745,128 @@ export function CompraForm({ onClose }: CompraFormProps) {
           {errors.lineas && <p className="text-destructive text-xs">{errors.lineas}</p>}
         </div>
 
-        {/* Section: Tipo de Compra */}
-        <div className="rounded-lg border bg-card p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-foreground">Tipo de Compra</h3>
-          <div className="flex gap-4">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="tipo-compra"
-                value="CONTADO"
-                checked={tipo === 'CONTADO'}
-                onChange={() => setTipo('CONTADO')}
-                className="h-4 w-4 text-primary focus:ring-ring"
-              />
-              <div className="flex items-center gap-1.5">
-                <Banknote className="h-4 w-4 text-green-600" />
-                <span className="text-sm font-medium">Contado</span>
-              </div>
-            </label>
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="radio"
-                name="tipo-compra"
-                value="CREDITO"
-                checked={tipo === 'CREDITO'}
-                onChange={() => setTipo('CREDITO')}
-                className="h-4 w-4 text-primary focus:ring-ring"
-              />
-              <div className="flex items-center gap-1.5">
-                <CreditCard className="h-4 w-4 text-orange-600" />
-                <span className="text-sm font-medium">Credito</span>
-              </div>
-            </label>
+        {/* Section: Pagos */}
+        <div className="rounded-lg border bg-card p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground">Pagos</h3>
+            {tipoDetectado === 'CONTADO' && (
+              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-green-50 text-green-700 ring-1 ring-green-600/20">
+                CONTADO
+              </span>
+            )}
+            {tipoDetectado === 'CREDITO' && (
+              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-orange-50 text-orange-700 ring-1 ring-orange-600/20">
+                CREDITO
+              </span>
+            )}
           </div>
-          {tipo === 'CREDITO' && (
+
+          {/* Payment input row */}
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr_auto_auto] gap-2 items-end">
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Metodo</label>
+              <select
+                value={pagoMetodoId}
+                onChange={(e) => setPagoMetodoId(e.target.value)}
+                disabled={loadingMetodos}
+                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">{loadingMetodos ? 'Cargando...' : 'Seleccionar...'}</option>
+                {metodos.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.nombre} ({m.moneda})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="hidden sm:block">
+              <div className="h-8" />
+              {metodoSeleccionado && (
+                <span className="inline-flex items-center px-2 py-2 text-xs font-medium text-muted-foreground">
+                  {metodoSeleccionado.moneda}
+                </span>
+              )}
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-muted-foreground">Monto</label>
+                {pendienteUsd > 0 && metodoSeleccionado && (
+                  <button
+                    type="button"
+                    onClick={handlePagoMax}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Max
+                  </button>
+                )}
+              </div>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={pagoMonto}
+                onChange={(e) => setPagoMonto(e.target.value)}
+                placeholder="0.00"
+                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Referencia</label>
+              <input
+                type="text"
+                value={pagoReferencia}
+                onChange={(e) => setPagoReferencia(e.target.value.toUpperCase())}
+                placeholder="Opcional"
+                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+
+            <div>
+              <div className="h-5 mb-1" />
+              <button
+                type="button"
+                onClick={handleAddPago}
+                disabled={!pagoMetodoId || !pagoMonto || parseFloat(pagoMonto) <= 0}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                <Plus className="h-4 w-4" />
+                Agregar
+              </button>
+            </div>
+          </div>
+
+          {/* Pagos list */}
+          {pagos.length > 0 && (
+            <ul className="space-y-2">
+              {pagos.map((pago, index) => (
+                <li key={index} className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
+                  <div className="flex items-center gap-3">
+                    <span className="font-medium text-foreground">{pago.metodo_nombre}</span>
+                    <span className="text-muted-foreground">
+                      {pago.moneda === 'USD' ? formatUsd(pago.monto) : formatBs(pago.monto)}
+                    </span>
+                    {pago.referencia && (
+                      <span className="text-muted-foreground text-xs font-mono">{pago.referencia}</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemovePago(index)}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {pagos.length === 0 && (
             <p className="text-xs text-muted-foreground">
-              La factura quedara con saldo pendiente por el total.
+              Sin pagos registrados. La factura se procesara completamente a credito.
             </p>
           )}
         </div>
@@ -687,11 +884,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 <p className="text-xl font-bold text-foreground">{formatBs(totalBs)}</p>
               </div>
             </div>
-            {tipo === 'CREDITO' && (
-              <div className="mt-3 pt-3 border-t border-border">
+            {pagos.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border space-y-1">
                 <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Saldo pendiente:</span>
-                  <span className="font-bold text-orange-600">{formatUsd(totalUsd)}</span>
+                  <span className="text-muted-foreground">Abonado:</span>
+                  <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    {tipoDetectado === 'CREDITO' ? 'Queda a credito:' : 'Pendiente:'}
+                  </span>
+                  <span className={`font-bold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
+                    {formatUsd(pendienteUsd)}
+                  </span>
                 </div>
               </div>
             )}
@@ -713,10 +918,26 @@ export function CompraForm({ onClose }: CompraFormProps) {
             disabled={submitting || lineas.length === 0}
             className="px-5 py-2.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
-            {submitting ? 'Registrando...' : 'Registrar Compra'}
+            {submitLabel}
           </button>
         </div>
       </form>
+
+      {/* Dialog: Crear Producto */}
+      <Dialog open={showCrearProducto} onOpenChange={(v) => { if (!v) setShowCrearProducto(false) }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Nuevo Producto</DialogTitle>
+          </DialogHeader>
+          <ProductoForm isOpen={showCrearProducto} onClose={() => setShowCrearProducto(false)} />
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog: Crear Proveedor (usa su propio dialog interno) */}
+      <ProveedorForm
+        isOpen={showCrearProveedor}
+        onClose={() => setShowCrearProveedor(false)}
+      />
     </div>
   )
 }

@@ -46,6 +46,7 @@ ALTER TABLE notas_fiscales_compra_det DISABLE TRIGGER USER;
 ALTER TABLE facturas_compra DISABLE TRIGGER USER;
 ALTER TABLE facturas_compra_det DISABLE TRIGGER USER;
 ALTER TABLE gastos DISABLE TRIGGER USER;
+ALTER TABLE libro_contable DISABLE TRIGGER USER;
 ALTER TABLE pagos_suscripcion DISABLE TRIGGER USER;
 
 -- Tablas con triggers de validacion/update (se necesitan UPDATE antes de DELETE)
@@ -65,6 +66,7 @@ ALTER TABLE empresas DISABLE TRIGGER USER;
 
 -- Nivel 8: Detalles / lineas (hojas del arbol)
 DELETE FROM ajustes_det;
+DELETE FROM gasto_pagos;
 DELETE FROM sesiones_caja_detalle;
 DELETE FROM notas_credito_det;
 DELETE FROM notas_debito_det;
@@ -80,6 +82,9 @@ DELETE FROM movimientos_cuenta;
 DELETE FROM movimientos_metodo_cobro;
 DELETE FROM movimientos_bancarios;
 DELETE FROM movimientos_cuenta_proveedor;
+-- libro_contable tiene self-ref FK (parent_id), nullear primero
+UPDATE libro_contable SET parent_id = NULL;
+DELETE FROM libro_contable;
 DELETE FROM retenciones_iva;
 DELETE FROM retenciones_islr;
 DELETE FROM retenciones_iva_ventas;
@@ -111,6 +116,7 @@ DELETE FROM bancos_empresa;
 DELETE FROM cajas;
 DELETE FROM depositos;
 DELETE FROM ajuste_motivos;
+DELETE FROM cuentas_config;
 -- plan_cuentas tiene self-ref FK con ON DELETE RESTRICT, nullear parent_id primero
 UPDATE plan_cuentas SET parent_id = NULL;
 DELETE FROM plan_cuentas;
@@ -188,6 +194,7 @@ ALTER TABLE notas_fiscales_compra_det ENABLE TRIGGER USER;
 ALTER TABLE facturas_compra ENABLE TRIGGER USER;
 ALTER TABLE facturas_compra_det ENABLE TRIGGER USER;
 ALTER TABLE gastos ENABLE TRIGGER USER;
+ALTER TABLE libro_contable ENABLE TRIGGER USER;
 ALTER TABLE pagos_suscripcion ENABLE TRIGGER USER;
 ALTER TABLE clientes ENABLE TRIGGER USER;
 ALTER TABLE proveedores ENABLE TRIGGER USER;
@@ -211,6 +218,9 @@ SELECT 'empresas' AS tabla, COUNT(*) FROM empresas
 UNION ALL SELECT 'usuarios', COUNT(*) FROM usuarios
 UNION ALL SELECT 'roles', COUNT(*) FROM roles
 UNION ALL SELECT 'auth.users', COUNT(*) FROM auth.users
+UNION ALL SELECT 'libro_contable', COUNT(*) FROM libro_contable
+UNION ALL SELECT 'cuentas_config', COUNT(*) FROM cuentas_config
+UNION ALL SELECT 'gasto_pagos', COUNT(*) FROM gasto_pagos
 UNION ALL SELECT '--- PRESERVADOS ---', 0
 UNION ALL SELECT 'apps', COUNT(*) FROM apps
 UNION ALL SELECT 'permisos', COUNT(*) FROM permisos

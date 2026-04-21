@@ -66,13 +66,13 @@ export function CompraList() {
     <div>
       {/* Header */}
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-lg font-semibold text-foreground">Historial de Compras</h2>
+        <h2 className="text-lg font-semibold text-foreground">Historial de Facturas de Compra</h2>
         <button
           onClick={() => setShowForm(true)}
           className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
           <Plus className="h-4 w-4" />
-          Nueva Compra
+          Nueva Factura de Compra
         </button>
       </div>
 

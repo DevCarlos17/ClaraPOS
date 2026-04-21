@@ -41,6 +41,14 @@ export interface LineaCompra {
   lote_fecha_venc?: string
 }
 
+export interface PagoCompraParam {
+  metodo_cobro_id: string
+  moneda: 'USD' | 'BS'
+  monto: number
+  banco_empresa_id: string | null
+  referencia?: string
+}
+
 export interface CrearCompraParams {
   proveedor_id: string
   tasa: number
@@ -48,8 +56,8 @@ export interface CrearCompraParams {
   nro_factura: string
   nro_control?: string
   moneda: 'USD' | 'BS'
-  tipo: 'CONTADO' | 'CREDITO'
   lineas: LineaCompra[]
+  pagos: PagoCompraParam[]
   usuario_id: string
   empresa_id: string
 }
@@ -182,8 +190,8 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     nro_factura,
     nro_control,
     moneda,
-    tipo,
     lineas,
+    pagos,
     usuario_id,
     empresa_id,
   } = params
@@ -240,8 +248,16 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     totalUsd = Number(totalUsd.toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
 
-    // 2. Determinar saldo pendiente segun tipo
-    const saldoPendUsd = tipo === 'CREDITO' ? totalUsd : 0
+    // 2. Calcular pagos inmediatos y saldo pendiente
+    let totalAbonadoUsd = 0
+    for (const pago of pagos) {
+      const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
+      totalAbonadoUsd += montoUsd
+    }
+    totalAbonadoUsd = Number(totalAbonadoUsd.toFixed(2))
+    const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
+    const tipo: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
+    const saldoPendUsd = pendienteUsd
 
     // 3. INSERT facturas_compra (cabecera)
     await tx.execute(
@@ -376,9 +392,99 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       )
     }
 
-    // 5. Generar asientos contables
+    // 5. Registrar movimientos de cuenta del proveedor
+
+    // 5a. Leer saldo actual del proveedor
+    const provResult = await tx.execute(
+      'SELECT saldo_actual FROM proveedores WHERE id = ?',
+      [proveedor_id]
+    )
+    let saldoProv = provResult.rows?.length
+      ? parseFloat((provResult.rows.item(0) as { saldo_actual: string }).saldo_actual) || 0
+      : 0
+
+    // 5b. Si hay deuda pendiente: crear entrada FAC
+    if (pendienteUsd > 0.01) {
+      const nuevoSaldo = Number((saldoProv + pendienteUsd).toFixed(2))
+      const movFacId = uuidv4()
+      await tx.execute(
+        `INSERT INTO movimientos_cuenta_proveedor
+           (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+            observacion, factura_compra_id, doc_origen_id, doc_origen_tipo, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'FAC', ?, ?, ?, ?, ?, ?, ?, 'FACTURA_COMPRA', ?, ?, ?)`,
+        [
+          movFacId, empresa_id, proveedor_id,
+          `FAC-${nro_factura}`,
+          pendienteUsd.toFixed(2),
+          saldoProv.toFixed(2),
+          nuevoSaldo.toFixed(2),
+          `Factura compra ${nro_factura}`,
+          compraId, compraId,
+          now, now, usuario_id,
+        ]
+      )
+      await tx.execute(
+        'UPDATE proveedores SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+        [nuevoSaldo.toFixed(2), now, proveedor_id]
+      )
+      saldoProv = nuevoSaldo
+    }
+
+    // 5c. Por cada pago inmediato: crear entrada PAG
+    for (const pago of pagos) {
+      const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
+      if (montoUsd <= 0) continue
+      const nuevoSaldo = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
+      const movPagId = uuidv4()
+      await tx.execute(
+        `INSERT INTO movimientos_cuenta_proveedor
+           (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+            observacion, factura_compra_id, doc_origen_id, doc_origen_tipo, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, 'PAGO', ?, ?, ?)`,
+        [
+          movPagId, empresa_id, proveedor_id,
+          pago.referencia ? pago.referencia : `PAG-${nro_factura}`,
+          montoUsd.toFixed(2),
+          saldoProv.toFixed(2),
+          nuevoSaldo.toFixed(2),
+          `Pago inicial compra ${nro_factura}`,
+          compraId, compraId,
+          now, now, usuario_id,
+        ]
+      )
+      await tx.execute(
+        'UPDATE proveedores SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+        [nuevoSaldo.toFixed(2), now, proveedor_id]
+      )
+      saldoProv = nuevoSaldo
+
+      // Movimiento bancario si tiene banco asociado
+      if (pago.banco_empresa_id) {
+        const movBancoId = uuidv4()
+        await tx.execute(
+          `INSERT INTO movimientos_bancarios
+             (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+              doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
+           VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
+          [
+            movBancoId, empresa_id, pago.banco_empresa_id,
+            montoUsd.toFixed(2),
+            compraId,
+            pago.referencia ?? null,
+            `Pago compra ${nro_factura}`,
+            now, now, usuario_id,
+          ]
+        )
+      }
+    }
+
+    // 6. Generar asientos contables (siempre en Bs)
     try {
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
+      const pagosContabilidad = pagos.map((p) => ({
+        monto_usd: p.moneda === 'BS' ? Number((p.monto / tasa).toFixed(2)) : p.monto,
+        banco_empresa_id: p.banco_empresa_id,
+      }))
       await generarAsientosCompra(tx, {
         empresaId: empresa_id,
         compraId,
@@ -386,8 +492,11 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         totalUsd,
         esContado: tipo === 'CONTADO',
         banco_empresa_id: null,
+        pagos: pagosContabilidad,
         cuentas,
         usuarioId: usuario_id,
+        monedaContable: 'BS',
+        tasa,
       })
     } catch {
       // Fallo en contabilidad no bloquea la compra

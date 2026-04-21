@@ -13,7 +13,7 @@ function ComprasPage() {
   return (
     <RequirePermission permission={PERMISSIONS.INVENTORY_ADJUST} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
-        <PageHeader titulo="Compras" descripcion="Ordenes de compra a proveedores" />
+        <PageHeader titulo="Facturas de Compra" descripcion="Registro y seguimiento de facturas de compra a proveedores" />
         <CompraList />
       </div>
     </RequirePermission>

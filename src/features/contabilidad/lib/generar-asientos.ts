@@ -404,6 +404,9 @@ export async function generarAsientosPagoCxC(
 
 /**
  * Asientos para una compra de inventario.
+ * La contabilidad siempre se genera en Bs (monedaContable='BS' por defecto).
+ * Si se proveen pagos parciales/totales, se genera un HABER por cada pago;
+ * el saldo restante va a CxP Proveedores.
  */
 export async function generarAsientosCompra(
   tx: WriteTx,
@@ -414,30 +417,65 @@ export async function generarAsientosCompra(
     totalUsd: number
     esContado: boolean
     banco_empresa_id: string | null
+    /** Pagos inmediatos registrados al momento de la compra */
+    pagos?: Array<{ monto_usd: number; banco_empresa_id: string | null }>
     cuentas: Record<string, string>
     usuarioId: string
     monedaContable?: MonedaContable
     tasa?: number
   }
 ): Promise<string[]> {
-  const { empresaId, compraId, nroFactura, totalUsd, esContado, banco_empresa_id, cuentas, usuarioId, monedaContable = 'USD', tasa = 1 } = params
+  const {
+    empresaId, compraId, nroFactura, totalUsd, esContado, banco_empresa_id,
+    pagos, cuentas, usuarioId, monedaContable = 'BS', tasa = 1,
+  } = params
 
   if (totalUsd <= 0) return []
 
   const cuentaInventario = cuentas['INVENTARIO']
   if (!cuentaInventario) return []
 
-  const monto = montoContable(totalUsd, tasa, monedaContable)
+  const montoTotal = montoContable(totalUsd, tasa, monedaContable)
 
   const lineas: LineaAsiento[] = [
     {
       cuenta_contable_id: cuentaInventario,
-      monto: monto,
+      monto: montoTotal,
       detalle: `Compra mercancia ${nroFactura}`,
     },
   ]
 
-  if (esContado) {
+  if (pagos && pagos.length > 0) {
+    // Multi-pago: HABER por cada pago, HABER CxP por el restante
+    let totalPagadoUsd = 0
+    for (const pago of pagos) {
+      if (pago.monto_usd <= 0) continue
+      totalPagadoUsd += pago.monto_usd
+      const montoPago = montoContable(pago.monto_usd, tasa, monedaContable)
+      const cuentaBanco = pago.banco_empresa_id
+        ? (await getCuentaBanco(tx, pago.banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
+        : cuentas['CAJA_EFECTIVO'] ?? cuentas['BANCO_DEFAULT']
+      if (cuentaBanco) {
+        lineas.push({
+          cuenta_contable_id: cuentaBanco,
+          banco_empresa_id: pago.banco_empresa_id,
+          monto: -montoPago,
+          detalle: `Pago compra ${nroFactura}`,
+        })
+      }
+    }
+    const restanteUsd = Math.max(0, Number((totalUsd - totalPagadoUsd).toFixed(2)))
+    if (restanteUsd > 0.01) {
+      const cuentaCxP = cuentas['CXP_PROVEEDORES']
+      if (cuentaCxP) {
+        lineas.push({
+          cuenta_contable_id: cuentaCxP,
+          monto: -montoContable(restanteUsd, tasa, monedaContable),
+          detalle: `Credito compra ${nroFactura}`,
+        })
+      }
+    }
+  } else if (esContado) {
     const cuentaBanco = banco_empresa_id
       ? (await getCuentaBanco(tx, banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
       : cuentas['BANCO_DEFAULT']
@@ -445,7 +483,7 @@ export async function generarAsientosCompra(
       lineas.push({
         cuenta_contable_id: cuentaBanco,
         banco_empresa_id: banco_empresa_id,
-        monto: -monto,
+        monto: -montoTotal,
         detalle: `Pago compra ${nroFactura}`,
       })
     }
@@ -454,7 +492,7 @@ export async function generarAsientosCompra(
     if (cuentaCxP) {
       lineas.push({
         cuenta_contable_id: cuentaCxP,
-        monto: -monto,
+        monto: -montoTotal,
         detalle: `Credito compra ${nroFactura}`,
       })
     }
