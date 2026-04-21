@@ -686,7 +686,14 @@ export async function generarAsientosPagoCxP(
     ? (await getCuentaBanco(tx, banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
     : cuentas['BANCO_DEFAULT']
 
-  if (!cuentaCxP || !cuentaBanco) return []
+  if (!cuentaCxP) {
+    console.warn('[Contabilidad] generarAsientosPagoCxP: CXP_PROVEEDORES no configurada. Sin asientos.')
+    return []
+  }
+  if (!cuentaBanco) {
+    console.warn('[Contabilidad] generarAsientosPagoCxP: cuenta banco no encontrada (banco_empresa_id=%s, BANCO_DEFAULT no configurado). Sin asientos.', banco_empresa_id)
+    return []
+  }
 
   const lineas: LineaAsiento[] = []
 
@@ -706,7 +713,7 @@ export async function generarAsientosPagoCxP(
           { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsPagado, detalle: `Egreso pago CxP ${pagoRef}` }
         )
       } else {
-        // Sin cuenta configurada: ajustar CxP al monto pagado
+        console.warn('[Contabilidad] PERDIDA_DIFERENCIAL_CAMBIARIO no configurada. Diferencial Bs %.2f absorbido en CxP.', diferencial)
         lineas.push(
           { cuenta_contable_id: cuentaCxP, monto: montoBsPagado, detalle: `Pago CxP ${pagoRef}` },
           { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsPagado, detalle: `Egreso pago CxP ${pagoRef}` }
@@ -722,6 +729,7 @@ export async function generarAsientosPagoCxP(
           { cuenta_contable_id: cuentaGanancia, monto: diferencial, detalle: `Diferencial cambiario ${pagoRef}` } // diferencial negativo = HABER
         )
       } else {
+        console.warn('[Contabilidad] GANANCIA_DIFERENCIAL_CAMBIARIO no configurada. Diferencial Bs %.2f absorbido en CxP.', Math.abs(diferencial))
         lineas.push(
           { cuenta_contable_id: cuentaCxP, monto: montoBsPagado, detalle: `Pago CxP ${pagoRef}` },
           { cuenta_contable_id: cuentaBanco, banco_empresa_id: banco_empresa_id, monto: -montoBsPagado, detalle: `Egreso pago CxP ${pagoRef}` }

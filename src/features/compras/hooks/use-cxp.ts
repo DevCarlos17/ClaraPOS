@@ -195,8 +195,8 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
         tasaPago: tasa,
         tasaCompra,
       })
-    } catch {
-      // Fallo en contabilidad/bancos no bloquea el pago
+    } catch (err) {
+      console.error('[CxP] Error en contabilidad al registrar pago:', err)
     }
   })
 }

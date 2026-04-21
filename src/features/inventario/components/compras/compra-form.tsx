@@ -167,6 +167,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
     ? totalDisplay
     : (tasaNum > 0 ? totalDisplay / tasaNum : 0)
   const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaNum
+  // totalUsdSistema: BCV-adjusted cost that goes to inventory (shown alongside totalUsd when parallel)
+  const totalUsdSistema = usaTasaParalela && moneda === 'BS' && tasaBcvNum > 0
+    ? totalDisplay / tasaBcvNum
+    : totalUsd
 
   // Payment calculations always at proveedor rate (tasaNum)
   const totalAbonadoUsd = pagos.reduce((sum, p) => {
@@ -989,19 +993,39 @@ export function CompraForm({ onClose }: CompraFormProps) {
         {/* Section: Totales */}
         {lineas.length > 0 && (
           <div className="rounded-lg border bg-card p-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Total USD</span>
-                <p className="text-xl font-bold text-foreground">{formatUsd(totalUsd)}</p>
-                {usaTasaParalela && (
-                  <p className="text-xs text-amber-600">Costo a tasa BCV {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'}</p>
-                )}
+            {usaTasaParalela ? (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Costo Sistema (BCV) <span className="text-amber-600 font-medium">→ Inventario</span></span>
+                    <p className="text-xl font-bold text-amber-700 dark:text-amber-400">{formatUsd(totalUsdSistema)}</p>
+                    <p className="text-xs text-muted-foreground">a tasa {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'}</p>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-xs text-muted-foreground">Total Bs (factura)</span>
+                    <p className="text-xl font-bold text-foreground">{formatBs(totalBs)}</p>
+                  </div>
+                </div>
+                <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Deuda CxP (tasa proveedor {tasaNum > 0 ? tasaNum.toFixed(2) : '?'}):</span>
+                    <span className="font-medium">{formatUsd(totalUsd)}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Total USD</span>
+                  <p className="text-xl font-bold text-foreground">{formatUsd(totalUsd)}</p>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-xs text-muted-foreground">Total Bs</span>
+                  <p className="text-xl font-bold text-foreground">{formatBs(totalBs)}</p>
+                </div>
               </div>
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">Total Bs</span>
-                <p className="text-xl font-bold text-foreground">{formatBs(totalBs)}</p>
-              </div>
-            </div>
+            )}
+
             <div className="mt-3 pt-3 border-t border-border space-y-1">
               {pagos.length > 0 && (
                 <div className="flex justify-between text-sm">
