@@ -35,7 +35,8 @@ export interface DetalleCompra {
 export interface LineaCompra {
   producto_id: string
   cantidad: number
-  costo_unitario_usd: number
+  costo_unitario_usd: number    // original invoice cost in USD (for CxP / total factura)
+  costo_usd_sistema?: number    // BCV-adjusted cost for inventory (equals costo_unitario_usd when not parallel)
   lote_nro?: string
   lote_fecha_fab?: string
   lote_fecha_venc?: string
@@ -51,7 +52,8 @@ export interface PagoCompraParam {
 
 export interface CrearCompraParams {
   proveedor_id: string
-  tasa: number
+  tasa: number          // proveedor/invoice rate (for original amounts & CxP)
+  tasa_costo?: number   // BCV/internal rate (only when tasa paralela; for inventory cost)
   fecha_factura: string
   nro_factura: string
   nro_control?: string
@@ -186,6 +188,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   const {
     proveedor_id,
     tasa,
+    tasa_costo,
     fecha_factura,
     nro_factura,
     nro_control,
@@ -260,9 +263,11 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     const saldoPendUsd = pendienteUsd
 
     // 3. INSERT facturas_compra (cabecera)
+    // tasa       = proveedor/invoice rate (for CxP, original amounts)
+    // tasa_costo = BCV rate (for inventory cost, NULL when same as tasa)
     await tx.execute(
-      `INSERT INTO facturas_compra (id, proveedor_id, nro_factura, nro_control, deposito_id, moneda_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, fecha_factura, fecha_recepcion, usuario_id, empresa_id, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO facturas_compra (id, proveedor_id, nro_factura, nro_control, deposito_id, moneda_id, tasa, tasa_costo, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, fecha_factura, fecha_recepcion, usuario_id, empresa_id, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         compraId,
         proveedor_id,
@@ -271,6 +276,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         depositoId,
         monedaId,
         tasa.toFixed(4),
+        tasa_costo ? tasa_costo.toFixed(4) : null,
         '0.00',
         totalUsd.toFixed(2),
         '0.00',
@@ -295,6 +301,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       const detalleId = uuidv4()
       const subtotalUsd = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
       const subtotalBs = Number((subtotalUsd * tasa).toFixed(2))
+      // costoSistema: BCV-adjusted cost for inventory valuation.
+      // Equals costo_unitario_usd when not using tasa paralela.
+      const costoSistema = linea.costo_usd_sistema ?? linea.costo_unitario_usd
 
       // 4a. Crear lote si aplica
       let loteId: string | null = null
@@ -313,7 +322,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             linea.lote_fecha_venc ?? null,
             linea.cantidad.toFixed(3),
             linea.cantidad.toFixed(3),
-            linea.costo_unitario_usd.toFixed(2),
+            costoSistema.toFixed(2),
             compraId,
             now,
             now,
@@ -324,15 +333,16 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
       // 4b. INSERT facturas_compra_det
       await tx.execute(
-        `INSERT INTO facturas_compra_det (id, factura_compra_id, producto_id, deposito_id, cantidad, costo_unitario_usd, tipo_impuesto, impuesto_pct, subtotal_usd, subtotal_bs, lote_id, empresa_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO facturas_compra_det (id, factura_compra_id, producto_id, deposito_id, cantidad, costo_unitario_usd, costo_usd_sistema, tipo_impuesto, impuesto_pct, subtotal_usd, subtotal_bs, lote_id, empresa_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           detalleId,
           compraId,
           linea.producto_id,
           depositoId,
           linea.cantidad.toFixed(3),
-          linea.costo_unitario_usd.toFixed(2),
+          linea.costo_unitario_usd.toFixed(4),
+          costoSistema.toFixed(4),
           'Exento',
           '0.00',
           subtotalUsd.toFixed(2),
@@ -356,7 +366,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // 4d. Calcular nuevo stock
       const stockNuevo = stockActual + linea.cantidad
 
-      // 4e. INSERT movimiento de inventario (entrada por compra)
+      // 4e. INSERT movimiento de inventario (entrada por compra) — usa costo sistema (BCV)
       const movId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
@@ -368,7 +378,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           linea.cantidad.toFixed(3),
           stockActual.toFixed(3),
           stockNuevo.toFixed(3),
-          linea.costo_unitario_usd.toFixed(4),
+          costoSistema.toFixed(4),
           loteId,
           compraId,
           `COM-${nro_factura}`,
@@ -380,12 +390,12 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         ]
       )
 
-      // 4f. UPDATE producto: stock y costo_usd
+      // 4f. UPDATE producto: stock y costo_usd — usa costo sistema (BCV)
       await tx.execute(
         'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
         [
           stockNuevo.toFixed(3),
-          linea.costo_unitario_usd.toFixed(2),
+          costoSistema.toFixed(4),
           now,
           linea.producto_id,
         ]

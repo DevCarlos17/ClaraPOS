@@ -30,12 +30,14 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const [monto, setMonto] = useState('')
   const [metodoCobro, setMetodoCobro] = useState('')
   const [referencia, setReferencia] = useState('')
+  const [tasaPagoStr, setTasaPagoStr] = useState('')
   const [loading, setLoading] = useState(false)
 
   function handleClose() {
     setMonto('')
     setMetodoCobro('')
     setReferencia('')
+    setTasaPagoStr('')
     onClose()
   }
 
@@ -48,16 +50,18 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const metodoSeleccionado = metodos.find((m) => m.id === metodoCobro)
   const moneda = (metodoSeleccionado?.moneda ?? 'USD') as 'USD' | 'BS'
   const montoNum = parseFloat(monto) || 0
+  // tasa de pago: editable por usuario, default = tasa actual del sistema
+  const tasaPagoNum = parseFloat(tasaPagoStr) || tasaValor
 
-  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaValor) : montoNum
-  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaValor) : montoNum
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum) : montoNum
+  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum) : montoNum
 
   const excedeSaldo = montoUsd > saldoPend + 0.01
-  const canSubmit = metodoCobro && montoNum > 0 && !excedeSaldo && !loading
+  const canSubmit = metodoCobro && montoNum > 0 && !excedeSaldo && !loading && tasaPagoNum > 0
 
   function handlePayMax() {
     if (moneda === 'BS') {
-      setMonto(usdToBs(saldoPend, tasaValor).toFixed(2))
+      setMonto(usdToBs(saldoPend, tasaPagoNum).toFixed(2))
     } else {
       setMonto(saldoPend.toFixed(2))
     }
@@ -75,7 +79,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
         metodo_cobro_id: metodoCobro,
         banco_empresa_id: metodoSeleccionado?.banco_empresa_id ?? null,
         moneda,
-        tasa: tasaValor,
+        tasa: tasaPagoNum,
         monto: montoNum,
         referencia: referencia || undefined,
         empresa_id: user.empresa_id,
@@ -109,15 +113,47 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
             <span>Saldo pendiente:</span>
             <span className="text-destructive">{formatUsd(saldoPend)}</span>
           </div>
-          {tasaValor > 0 && (
+          {tasaPagoNum > 0 && (
             <div className="flex justify-between">
               <span className="text-muted-foreground">Equivalente Bs:</span>
-              <span className="text-muted-foreground">{formatBs(usdToBs(saldoPend, tasaValor))}</span>
+              <span className="text-muted-foreground">{formatBs(usdToBs(saldoPend, tasaPagoNum))}</span>
             </div>
           )}
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Tasa de pago */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-muted-foreground">
+                Tasa de pago (Bs/USD)
+              </label>
+              {tasaValor > 0 && tasaPagoStr && parseFloat(tasaPagoStr) !== tasaValor && (
+                <button
+                  type="button"
+                  onClick={() => setTasaPagoStr('')}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Usar tasa actual
+                </button>
+              )}
+            </div>
+            <Input
+              type="number"
+              step="0.0001"
+              min="0.0001"
+              value={tasaPagoStr}
+              onChange={(e) => setTasaPagoStr(e.target.value)}
+              placeholder={tasaValor > 0 ? tasaValor.toFixed(4) : '0.0000'}
+            />
+            <p className="text-xs text-muted-foreground">
+              Tasa vigente: {tasaValor > 0 ? tasaValor.toFixed(4) : '—'}
+              {tasaPagoNum !== tasaValor && tasaPagoNum > 0 && (
+                <span className="text-amber-600 ml-2">⚠ Diferencial cambiario se registrara en contabilidad</span>
+              )}
+            </p>
+          </div>
+
           {/* Metodo de pago */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Metodo de pago</label>

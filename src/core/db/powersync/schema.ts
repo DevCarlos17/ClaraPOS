@@ -881,6 +881,7 @@ const facturas_compra = new Table(
     deposito_id: column.text,
     moneda_id: column.text,
     tasa: column.text,
+    tasa_costo: column.text,       // BCV/internal rate (tasa paralela)
     total_exento_usd: column.text,
     total_base_usd: column.text,
     total_iva_usd: column.text,
@@ -907,7 +908,8 @@ const facturas_compra_det = new Table(
     producto_id: column.text,
     deposito_id: column.text,
     cantidad: column.text,
-    costo_unitario_usd: column.text,
+    costo_unitario_usd: column.text,      // original invoice cost in USD
+    costo_usd_sistema: column.text,       // BCV-adjusted cost (goes to inventory)
     tipo_impuesto: column.text,
     impuesto_pct: column.text,
     subtotal_usd: column.text,

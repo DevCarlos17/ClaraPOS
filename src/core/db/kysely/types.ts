@@ -770,6 +770,7 @@ export interface FacturasCompra {
   deposito_id: string
   moneda_id: string | null
   tasa: string
+  tasa_costo: string | null  // BCV/internal rate for cost calc (tasa paralela)
   total_exento_usd: string
   total_base_usd: string
   total_iva_usd: string
@@ -794,7 +795,8 @@ export interface FacturasCompraDet {
   producto_id: string
   deposito_id: string
   cantidad: string
-  costo_unitario_usd: string
+  costo_unitario_usd: string      // original invoice cost in USD
+  costo_usd_sistema: string | null // BCV-adjusted cost (inventory valuation)
   tipo_impuesto: string
   impuesto_pct: string
   subtotal_usd: string

@@ -114,8 +114,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   const tasaNum = parseFloat(tasa) || 0
   const tasaBcvNum = parseFloat(tasaBcv) || 0
-  // When tasa paralela: use BCV rate for cost conversions; otherwise use invoice tasa
-  const tasaParaConversion = (usaTasaParalela && moneda === 'BS') ? tasaBcvNum : tasaNum
 
   // Validacion de fecha: advertencia si es futura
   const hoy = new Date().toISOString().slice(0, 10)
@@ -164,21 +162,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
   }
 
   const totalDisplay = lineas.reduce((sum, l) => sum + getLineSubtotal(l), 0)
-  // With tasa paralela: USD cost = BS / tasa_bcv (BCV rate); without: normal conversion
+  // totalUsd always uses proveedor rate (tasaNum) — this is the CxP/invoice original amount
   const totalUsd = moneda === 'USD'
     ? totalDisplay
-    : usaTasaParalela && tasaBcvNum > 0
-      ? totalDisplay / tasaBcvNum
-      : (tasaNum > 0 ? totalDisplay / tasaNum : 0)
+    : (tasaNum > 0 ? totalDisplay / tasaNum : 0)
   const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaNum
 
-  // Payment calculations
+  // Payment calculations always at proveedor rate (tasaNum)
   const totalAbonadoUsd = pagos.reduce((sum, p) => {
-    const mUsd = p.moneda === 'BS' ? (tasaParaConversion > 0 ? p.monto / tasaParaConversion : 0) : p.monto
+    const mUsd = p.moneda === 'BS' ? (tasaNum > 0 ? p.monto / tasaNum : 0) : p.monto
     return sum + mUsd
   }, 0)
   const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
-  const pendienteBs = pendienteUsd * tasaParaConversion
+  const pendienteBs = pendienteUsd * tasaNum
   const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
 
   const metodoSeleccionado = metodos.find((m) => m.id === pagoMetodoId)
@@ -296,7 +292,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   function handlePagoMax() {
     if (!metodoSeleccionado || totalUsd <= 0) return
     if (metodoSeleccionado.moneda === 'BS') {
-      setPagoMonto((pendienteUsd * tasaParaConversion).toFixed(2))
+      setPagoMonto((pendienteUsd * tasaNum).toFixed(2))
     } else {
       setPagoMonto(pendienteUsd.toFixed(2))
     }
@@ -311,11 +307,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // Validate header (when tasa paralela, use tasaBcv as the stored rate)
-    const tasaParaGuardar = usaTasaParalela ? tasaBcvNum : tasaNum
+    // tasa always = proveedor/invoice rate; tasa_costo (BCV) handled separately
     const headerParsed = compraHeaderSchema.safeParse({
       proveedor_id: proveedorId,
-      tasa: tasaParaGuardar,
+      tasa: tasaNum,
       fecha_factura: fechaFactura,
       nro_factura: nroFactura,
       nro_control: nroControl || undefined,
@@ -327,11 +322,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
       for (const issue of headerParsed.error.issues) {
         const field = issue.path[0]?.toString()
         if (field) fieldErrors[field] = issue.message
-      }
-      // When tasa paralela, schema validates against tasaBcv — map error to tasa_bcv field
-      if (fieldErrors.tasa && usaTasaParalela) {
-        fieldErrors.tasa_bcv = 'La tasa BCV/interna debe ser mayor a 0'
-        delete fieldErrors.tasa
       }
       setErrors(fieldErrors)
       return
@@ -351,14 +341,23 @@ export function CompraForm({ onClose }: CompraFormProps) {
     // Convert lines to USD base units for storage
     const lineasConvertidas = lineas.map((l, i) => {
       const cantidadBase = l.cantidad_input * l.factor
-      let costoUnitarioUsd: number
+      let costoUnitarioUsd: number  // original invoice cost at proveedor rate (for CxP)
+      let costoUsdSistema: number   // BCV-adjusted cost (for inventory)
+
       if (moneda === 'USD') {
         costoUnitarioUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
+        costoUsdSistema = costoUnitarioUsd
       } else {
-        // Tasa paralela: divide Bs cost by BCV rate (not proveedor rate)
-        const tasaUsada = usaTasaParalela ? tasaBcvNum : tasaNum
-        const costoUsdPerUnit = tasaUsada > 0 ? l.costo_input / tasaUsada : 0
-        costoUnitarioUsd = l.factor > 0 ? costoUsdPerUnit / l.factor : costoUsdPerUnit
+        // Original invoice cost: always divide by proveedor rate (tasaNum)
+        const costoOrigPerUnit = tasaNum > 0 ? l.costo_input / tasaNum : 0
+        costoUnitarioUsd = l.factor > 0 ? costoOrigPerUnit / l.factor : costoOrigPerUnit
+        // BCV-adjusted cost: divide by BCV rate when parallel, else same as original
+        if (usaTasaParalela && tasaBcvNum > 0) {
+          const costoBcvPerUnit = l.costo_input / tasaBcvNum
+          costoUsdSistema = l.factor > 0 ? costoBcvPerUnit / l.factor : costoBcvPerUnit
+        } else {
+          costoUsdSistema = costoUnitarioUsd
+        }
       }
 
       const parsed = lineaCompraSchema.safeParse({
@@ -377,6 +376,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         producto_id: l.producto_id,
         cantidad: cantidadBase,
         costo_unitario_usd: Number(costoUnitarioUsd.toFixed(4)),
+        costo_usd_sistema: Number(costoUsdSistema.toFixed(4)),
         lote_nro: l.lote_nro.trim() || undefined,
         lote_fecha_fab: l.lote_fecha_fab || undefined,
         lote_fecha_venc: l.lote_fecha_venc || undefined,
@@ -400,6 +400,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       const result = await crearCompra({
         proveedor_id: headerParsed.data.proveedor_id,
         tasa: headerParsed.data.tasa,
+        tasa_costo: usaTasaParalela ? tasaBcvNum : undefined,
         fecha_factura: headerParsed.data.fecha_factura,
         nro_factura: headerParsed.data.nro_factura,
         nro_control: headerParsed.data.nro_control,
