@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { ArrowLeft, Plus, Trash2, Search, Banknote, PackagePlus, UserPlus, X } from 'lucide-react'
 import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
@@ -11,6 +11,7 @@ import { useConversiones } from '@/features/inventario/hooks/use-unidades-conver
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { db } from '@/core/db/powersync/db'
 import {
   Dialog,
   DialogContent,
@@ -78,6 +79,25 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
+  // Tasa paralela
+  const [usaTasaParalela, setUsaTasaParalela] = useState(false)
+  const [tasaBcv, setTasaBcv] = useState(tasaValor > 0 ? tasaValor.toFixed(4) : '')
+
+  // Auto-lookup BCV rate for invoice date when parallel mode is on
+  useEffect(() => {
+    if (!usaTasaParalela || !user?.empresa_id || !fechaFactura) return
+    db.getAll<{ valor: string }>(
+      `SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1`,
+      [user.empresa_id, fechaFactura]
+    ).then((rows) => {
+      if (rows.length > 0) {
+        setTasaBcv(parseFloat(rows[0].valor).toFixed(4))
+      } else if (tasaValor > 0) {
+        setTasaBcv(tasaValor.toFixed(4))
+      }
+    }).catch(() => {})
+  }, [fechaFactura, usaTasaParalela, user?.empresa_id])
+
   // Product search
   const [busqueda, setBusqueda] = useState('')
   const [dropdownOpen, setDropdownOpen] = useState(false)
@@ -93,6 +113,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [showCrearProveedor, setShowCrearProveedor] = useState(false)
 
   const tasaNum = parseFloat(tasa) || 0
+  const tasaBcvNum = parseFloat(tasaBcv) || 0
+  // When tasa paralela: use BCV rate for cost conversions; otherwise use invoice tasa
+  const tasaParaConversion = (usaTasaParalela && moneda === 'BS') ? tasaBcvNum : tasaNum
 
   // Validacion de fecha: advertencia si es futura
   const hoy = new Date().toISOString().slice(0, 10)
@@ -141,15 +164,21 @@ export function CompraForm({ onClose }: CompraFormProps) {
   }
 
   const totalDisplay = lineas.reduce((sum, l) => sum + getLineSubtotal(l), 0)
-  const totalUsd = moneda === 'USD' ? totalDisplay : tasaNum > 0 ? totalDisplay / tasaNum : 0
+  // With tasa paralela: USD cost = BS / tasa_bcv (BCV rate); without: normal conversion
+  const totalUsd = moneda === 'USD'
+    ? totalDisplay
+    : usaTasaParalela && tasaBcvNum > 0
+      ? totalDisplay / tasaBcvNum
+      : (tasaNum > 0 ? totalDisplay / tasaNum : 0)
   const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaNum
 
   // Payment calculations
   const totalAbonadoUsd = pagos.reduce((sum, p) => {
-    const mUsd = p.moneda === 'BS' ? (tasaNum > 0 ? p.monto / tasaNum : 0) : p.monto
+    const mUsd = p.moneda === 'BS' ? (tasaParaConversion > 0 ? p.monto / tasaParaConversion : 0) : p.monto
     return sum + mUsd
   }, 0)
   const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
+  const pendienteBs = pendienteUsd * tasaParaConversion
   const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
 
   const metodoSeleccionado = metodos.find((m) => m.id === pagoMetodoId)
@@ -267,7 +296,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   function handlePagoMax() {
     if (!metodoSeleccionado || totalUsd <= 0) return
     if (metodoSeleccionado.moneda === 'BS') {
-      setPagoMonto((pendienteUsd * tasaNum).toFixed(2))
+      setPagoMonto((pendienteUsd * tasaParaConversion).toFixed(2))
     } else {
       setPagoMonto(pendienteUsd.toFixed(2))
     }
@@ -282,10 +311,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // Validate header
+    // Validate header (when tasa paralela, use tasaBcv as the stored rate)
+    const tasaParaGuardar = usaTasaParalela ? tasaBcvNum : tasaNum
     const headerParsed = compraHeaderSchema.safeParse({
       proveedor_id: proveedorId,
-      tasa: tasaNum,
+      tasa: tasaParaGuardar,
       fecha_factura: fechaFactura,
       nro_factura: nroFactura,
       nro_control: nroControl || undefined,
@@ -298,7 +328,18 @@ export function CompraForm({ onClose }: CompraFormProps) {
         const field = issue.path[0]?.toString()
         if (field) fieldErrors[field] = issue.message
       }
+      // When tasa paralela, schema validates against tasaBcv — map error to tasa_bcv field
+      if (fieldErrors.tasa && usaTasaParalela) {
+        fieldErrors.tasa_bcv = 'La tasa BCV/interna debe ser mayor a 0'
+        delete fieldErrors.tasa
+      }
       setErrors(fieldErrors)
+      return
+    }
+
+    // Validate BCV rate when using tasa paralela
+    if (usaTasaParalela && tasaBcvNum <= 0) {
+      setErrors({ tasa_bcv: 'Ingrese la tasa BCV / interna para usar tasa paralela' })
       return
     }
 
@@ -314,7 +355,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
       if (moneda === 'USD') {
         costoUnitarioUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
       } else {
-        const costoUsdPerUnit = tasaNum > 0 ? l.costo_input / tasaNum : 0
+        // Tasa paralela: divide Bs cost by BCV rate (not proveedor rate)
+        const tasaUsada = usaTasaParalela ? tasaBcvNum : tasaNum
+        const costoUsdPerUnit = tasaUsada > 0 ? l.costo_input / tasaUsada : 0
         costoUnitarioUsd = l.factor > 0 ? costoUsdPerUnit / l.factor : costoUsdPerUnit
       }
 
@@ -505,7 +548,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
             {/* Tasa */}
             <div>
               <label htmlFor="compra-tasa" className="block text-xs font-medium text-muted-foreground mb-1">
-                Tasa (Bs/USD)
+                {usaTasaParalela ? 'Tasa Proveedor (Paralela)' : 'Tasa (Bs/USD)'}
               </label>
               <input
                 id="compra-tasa"
@@ -557,6 +600,68 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 Bs
               </button>
             </div>
+          </div>
+
+          {/* Tasa Paralela */}
+          <div>
+            <div className="flex items-center gap-2">
+              <input
+                id="tasa-paralela-check"
+                type="checkbox"
+                checked={usaTasaParalela}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  setUsaTasaParalela(checked)
+                  if (checked) {
+                    handleMonedaSwitch('BS')
+                  }
+                }}
+                className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
+              />
+              <label htmlFor="tasa-paralela-check" className="text-sm text-foreground cursor-pointer select-none">
+                Proveedor usa tasa paralela
+              </label>
+            </div>
+            {usaTasaParalela && (
+              <div className="mt-3 p-3 rounded-lg bg-amber-50/80 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-3">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  Ingrese los costos en Bs al precio del proveedor. El sistema los convierte a USD usando la Tasa BCV/Interna.
+                  Ejemplo: producto a 700 Bs (tasa proveedor 700) con tasa BCV 500 → costo sistema = <strong>700 ÷ 500 = 1.40 USD</strong>.
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Tasa BCV / Interna <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      id="tasa-bcv"
+                      type="number"
+                      step="0.0001"
+                      min="0.0001"
+                      value={tasaBcv}
+                      onChange={(e) => setTasaBcv(e.target.value)}
+                      placeholder="Ej: 500.0000"
+                      className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                        errors.tasa_bcv ? 'border-destructive' : 'border-input'
+                      }`}
+                    />
+                    {errors.tasa_bcv && <p className="text-destructive text-xs mt-1">{errors.tasa_bcv}</p>}
+                    <p className="text-xs text-muted-foreground mt-1">Tasa usada para calcular costos en USD</p>
+                  </div>
+                  <div className="flex items-end">
+                    <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
+                      <p className="font-medium mb-1">Costo sistema:</p>
+                      <p>Bs ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(4) : '?'} = USD</p>
+                      {tasaNum > 0 && tasaBcvNum > 0 && (
+                        <p className="mt-1 text-amber-700 dark:text-amber-400 font-medium">
+                          Factor: ×{(tasaNum / tasaBcvNum).toFixed(4)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -887,28 +992,39 @@ export function CompraForm({ onClose }: CompraFormProps) {
               <div className="space-y-1">
                 <span className="text-xs text-muted-foreground">Total USD</span>
                 <p className="text-xl font-bold text-foreground">{formatUsd(totalUsd)}</p>
+                {usaTasaParalela && (
+                  <p className="text-xs text-amber-600">Costo a tasa BCV {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'}</p>
+                )}
               </div>
               <div className="space-y-1">
                 <span className="text-xs text-muted-foreground">Total Bs</span>
                 <p className="text-xl font-bold text-foreground">{formatBs(totalBs)}</p>
               </div>
             </div>
-            {pagos.length > 0 && (
-              <div className="mt-3 pt-3 border-t border-border space-y-1">
+            <div className="mt-3 pt-3 border-t border-border space-y-1">
+              {pagos.length > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Abonado:</span>
                   <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">
-                    {tipoDetectado === 'CREDITO' ? 'Queda a credito:' : 'Pendiente:'}
-                  </span>
-                  <span className={`font-bold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
-                    {formatUsd(pendienteUsd)}
-                  </span>
-                </div>
+              )}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">
+                  {tipoDetectado === 'CREDITO' ? 'Queda a credito (USD):' : 'Pendiente (USD):'}
+                </span>
+                <span className={`font-bold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
+                  {formatUsd(pendienteUsd)}
+                </span>
               </div>
-            )}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">
+                  {tipoDetectado === 'CREDITO' ? 'Queda a credito (Bs):' : 'Pendiente (Bs):'}
+                </span>
+                <span className={`font-bold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
+                  {formatBs(pendienteBs)}
+                </span>
+              </div>
+            </div>
           </div>
         )}
 
