@@ -12,6 +12,7 @@ export interface Gasto {
   id: string
   empresa_id: string
   nro_gasto: string
+  nro_factura: string | null
   cuenta_id: string
   proveedor_id: string | null
   descripcion: string
@@ -73,31 +74,27 @@ export function useGastos(fechaDesde?: string, fechaHasta?: string) {
     hasDateFilter
       ? `SELECT g.*,
            pc.nombre as cuenta_nombre,
-           p.razon_social as proveedor_nombre
+           p.razon_social as proveedor_nombre,
+           u.nombre as created_by_nombre
          FROM gastos g
          LEFT JOIN plan_cuentas pc ON g.cuenta_id = pc.id
          LEFT JOIN proveedores p ON g.proveedor_id = p.id
+         LEFT JOIN usuarios u ON g.created_by = u.id
          WHERE g.empresa_id = ?
            AND g.fecha >= ?
            AND g.fecha <= ?
          ORDER BY g.fecha DESC`
-      : `SELECT g.*,
-           pc.nombre as cuenta_nombre,
-           p.razon_social as proveedor_nombre
-         FROM gastos g
-         LEFT JOIN plan_cuentas pc ON g.cuenta_id = pc.id
-         LEFT JOIN proveedores p ON g.proveedor_id = p.id
-         WHERE g.empresa_id = ?
-         ORDER BY g.fecha DESC`,
-    params
+      : '',
+    hasDateFilter ? params : []
   )
 
   return {
     gastos: (data ?? []) as (Gasto & {
       cuenta_nombre: string
       proveedor_nombre: string | null
+      created_by_nombre: string | null
     })[],
-    isLoading,
+    isLoading: hasDateFilter && isLoading,
   }
 }
 
@@ -112,6 +109,7 @@ export function useGastos(fechaDesde?: string, fechaHasta?: string) {
 export async function crearGasto(data: {
   cuenta_id: string
   proveedor_id?: string
+  nro_factura?: string
   descripcion: string
   fecha: string
   moneda_id: string
@@ -148,20 +146,25 @@ export async function crearGasto(data: {
     const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
     nroGasto = `GTO-${String(count + 1).padStart(4, '0')}`
 
+    // nro_factura: usar el proporcionado o generar uno automático
+    const nroFactura = data.nro_factura?.trim()
+      || `AUTO-${data.fecha.replace(/-/g, '')}-${String(count + 1).padStart(4, '0')}`
+
     // Primer pago para campos legacy de backward compat
     const primerPago = data.pagos[0]
 
     await tx.execute(
       `INSERT INTO gastos (
-         id, empresa_id, nro_gasto, cuenta_id, proveedor_id, descripcion,
+         id, empresa_id, nro_gasto, nro_factura, cuenta_id, proveedor_id, descripcion,
          fecha, moneda_id, tasa, monto_usd, monto_bs,
          metodo_cobro_id, banco_empresa_id, referencia, observaciones,
          status, created_at, updated_at, created_by
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADO', ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADO', ?, ?, ?)`,
       [
         gastoId,
         data.empresa_id,
         nroGasto,
+        nroFactura,
         data.cuenta_id,
         data.proveedor_id ?? null,
         data.descripcion,

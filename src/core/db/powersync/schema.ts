@@ -1071,6 +1071,7 @@ const gastos = new Table(
   {
     empresa_id: column.text,
     nro_gasto: column.text,
+    nro_factura: column.text,
     cuenta_id: column.text,
     proveedor_id: column.text,
     descripcion: column.text,

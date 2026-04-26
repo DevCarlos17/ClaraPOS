@@ -36,8 +36,6 @@ import {
   FileMinus,
   BookOpenCheck,
   HandCoins,
-  BookText,
-  SlidersHorizontal,
   TrendingUp,
 } from 'lucide-react'
 import { motion } from 'framer-motion'
@@ -112,25 +110,15 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
-    title: 'Compras',
+    title: 'Compras y Gastos',
     icon: ClipboardList,
     children: [
       { title: 'Facturas', url: '/compras/facturas', icon: FileSpreadsheet, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Cuentas por Pagar', url: '/compras/cxp', icon: CreditCard, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Retenciones', url: '/compras/retenciones', icon: FileCheck, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Notas Fiscales', url: '/compras/notas-fiscales', icon: FileMinus, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-    ],
-  },
-  {
-    title: 'Contabilidad',
-    icon: BookOpenCheck,
-    children: [
-      { title: 'Libro Contable', url: '/contabilidad/libro-contable', icon: BookText, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
-      { title: 'Plan de Cuentas', url: '/contabilidad/plan-cuentas', icon: BookOpenCheck, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
-      { title: 'Balance de Comprobacion', url: '/contabilidad/balance-comprobacion', icon: FileSpreadsheet, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
-      { title: 'Gastos', url: '/contabilidad/gastos', icon: HandCoins, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
-      { title: 'Dashboard Gastos', url: '/contabilidad/gastos-dashboard', icon: BarChart3, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
-      { title: 'Config. Contable', url: '/contabilidad/cuentas-config', icon: SlidersHorizontal, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
+      { title: 'Gastos', url: '/compras/gastos', icon: HandCoins, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Dashboard Gastos', url: '/compras/gastos-dashboard', icon: BarChart3, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
     ],
   },
   {
