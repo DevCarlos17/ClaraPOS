@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
-import { ArrowLeft, Plus, Trash2, Search, Banknote, PackagePlus, UserPlus, X } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, Search, Banknote, PackagePlus, UserPlus, X, CheckCircle2 } from 'lucide-react'
 import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
-import { crearCompra, type PagoCompraParam } from '@/features/inventario/hooks/use-compras'
+import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
 import { useProductosTipo, type Producto } from '@/features/inventario/hooks/use-productos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -82,21 +82,27 @@ export function CompraForm({ onClose }: CompraFormProps) {
   // Tasa paralela
   const [usaTasaParalela, setUsaTasaParalela] = useState(false)
   const [tasaBcv, setTasaBcv] = useState(tasaValor > 0 ? tasaValor.toFixed(4) : '')
+  const [tasaBcvFound, setTasaBcvFound] = useState(false)
 
-  // Auto-lookup tasa interna para la fecha de factura cuando tasa paralela está activa
+  // Confirmar registro
+  const [showConfirm, setShowConfirm] = useState(false)
+  const pendingParamsRef = useRef<CrearCompraParams | null>(null)
+
+  // Auto-lookup tasa interna para la fecha de factura (siempre, no solo con tasa paralela)
   useEffect(() => {
-    if (!usaTasaParalela || !user?.empresa_id || !fechaFactura) return
+    if (!user?.empresa_id || !fechaFactura) return
     db.getAll<{ valor: string }>(
       `SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1`,
       [user.empresa_id, fechaFactura]
     ).then((rows) => {
       if (rows.length > 0) {
         setTasaBcv(parseFloat(rows[0].valor).toFixed(4))
-      } else if (tasaValor > 0) {
-        setTasaBcv(tasaValor.toFixed(4))
+        setTasaBcvFound(true)
+      } else {
+        setTasaBcvFound(false)
       }
-    }).catch(() => {})
-  }, [fechaFactura, usaTasaParalela, user?.empresa_id])
+    }).catch(() => setTasaBcvFound(false))
+  }, [fechaFactura, user?.empresa_id])
 
   // Product search
   const [busqueda, setBusqueda] = useState('')
@@ -324,7 +330,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErrors({})
 
@@ -366,22 +372,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
     // Convertir lineas a unidades base en USD para almacenamiento
     const lineasConvertidas = lineas.map((l, i) => {
       const cantidadBase = l.cantidad_input * l.factor
-      let costoUnitarioUsd: number  // costo original de la factura a tasa proveedor (para CxP)
-      let costoUsdSistema: number   // costo ajustado a tasa interna (para inventario)
+      let costoUnitarioUsd: number
+      let costoUsdSistema: number
 
       if (moneda === 'USD') {
         costoUnitarioUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
-        // Con tasa paralela: ajustar costo USD por diferencia de tasas
         if (usaTasaParalela && tasaBcvNum > 0 && tasaNum > 0) {
           costoUsdSistema = costoUnitarioUsd * tasaNum / tasaBcvNum
         } else {
           costoUsdSistema = costoUnitarioUsd
         }
       } else {
-        // Costo original: dividir entre tasa del proveedor
         const costoOrigPerUnit = tasaNum > 0 ? l.costo_input / tasaNum : 0
         costoUnitarioUsd = l.factor > 0 ? costoOrigPerUnit / l.factor : costoOrigPerUnit
-        // Costo ajustado BCV: dividir entre tasa interna cuando es paralela
         if (usaTasaParalela && tasaBcvNum > 0) {
           const costoBcvPerUnit = l.costo_input / tasaBcvNum
           costoUsdSistema = l.factor > 0 ? costoBcvPerUnit / l.factor : costoBcvPerUnit
@@ -416,7 +419,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
     if (productosFiltrados && lineasConvertidas.some((l) => l === null)) return
     const lineasValidas = lineasConvertidas.filter((l): l is NonNullable<typeof l> => l !== null)
 
-    // Build pagos param
     const pagosParam: PagoCompraParam[] = pagos.map((p) => ({
       metodo_cobro_id: p.metodo_cobro_id,
       moneda: p.moneda,
@@ -425,26 +427,35 @@ export function CompraForm({ onClose }: CompraFormProps) {
       referencia: p.referencia,
     }))
 
+    // Guardar params y mostrar confirmacion
+    pendingParamsRef.current = {
+      proveedor_id: headerParsed.data.proveedor_id,
+      tasa: headerParsed.data.tasa,
+      tasa_costo: usaTasaParalela ? tasaBcvNum : undefined,
+      fecha_factura: headerParsed.data.fecha_factura,
+      nro_factura: headerParsed.data.nro_factura,
+      nro_control: headerParsed.data.nro_control,
+      moneda: headerParsed.data.moneda,
+      lineas: lineasValidas,
+      pagos: pagosParam,
+      usuario_id: user.id,
+      empresa_id: user.empresa_id!,
+    }
+    setShowConfirm(true)
+  }
+
+  async function handleConfirm() {
+    const params = pendingParamsRef.current
+    if (!params) return
     setSubmitting(true)
     try {
-      const result = await crearCompra({
-        proveedor_id: headerParsed.data.proveedor_id,
-        tasa: headerParsed.data.tasa,
-        tasa_costo: usaTasaParalela ? tasaBcvNum : undefined,
-        fecha_factura: headerParsed.data.fecha_factura,
-        nro_factura: headerParsed.data.nro_factura,
-        nro_control: headerParsed.data.nro_control,
-        moneda: headerParsed.data.moneda,
-        lineas: lineasValidas,
-        pagos: pagosParam,
-        usuario_id: user.id,
-        empresa_id: user.empresa_id!,
-      })
+      const result = await crearCompra(params)
       toast.success(`Factura ${result.nroFactura} registrada exitosamente`)
       onClose()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
       toast.error(message)
+      setShowConfirm(false)
     } finally {
       setSubmitting(false)
     }
@@ -591,7 +602,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={tasa}
                 onChange={(e) => setTasa(e.target.value)}
                 placeholder="0.0000"
-                className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                   errors.tasa ? 'border-destructive' : 'border-input'
                 }`}
               />
@@ -671,14 +682,18 @@ export function CompraForm({ onClose }: CompraFormProps) {
                       step="0.0001"
                       min="0.0001"
                       value={tasaBcv}
-                      onChange={(e) => setTasaBcv(e.target.value)}
+                      onChange={(e) => !tasaBcvFound && setTasaBcv(e.target.value)}
+                      readOnly={tasaBcvFound}
                       placeholder="Ej: 500.0000"
-                      className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                         errors.tasa_bcv ? 'border-destructive' : 'border-input'
-                      }`}
+                      } ${tasaBcvFound ? 'bg-muted cursor-default' : 'bg-background'}`}
                     />
                     {errors.tasa_bcv && <p className="text-destructive text-xs mt-1">{errors.tasa_bcv}</p>}
-                    <p className="text-xs text-muted-foreground mt-1">Tasa usada para calcular el costo en contabilidad</p>
+                    {tasaBcvFound
+                      ? <p className="text-xs text-green-600 dark:text-green-400 mt-1">✓ Tasa encontrada en el sistema para esta fecha</p>
+                      : <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">No hay tasa registrada para esta fecha — ingrese manualmente</p>
+                    }
                   </div>
                   <div className="flex items-end">
                     <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 w-full">
@@ -774,21 +789,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Producto</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase w-32">Unidad</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-24">Cantidad</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-36">
+                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-32">
                       Costo ({monedaLabel})
-                      {mostrarColumnasSistema && (
-                        <span className="block text-[10px] text-slate-400 font-normal normal-case">
-                          Costo contab. ($)
-                        </span>
-                      )}
                     </th>
+                    {mostrarColumnasSistema && (
+                      <th className="px-3 py-2 text-right text-xs font-medium text-slate-400 uppercase w-32">
+                        Costo Contab. ($)
+                      </th>
+                    )}
                     <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase">
                       Subtotal ({monedaLabel})
-                      {mostrarColumnasSistema && (
-                        <span className="block text-[10px] text-slate-400 font-normal normal-case">
-                          Subtotal contab. ($)
-                        </span>
-                      )}
                     </th>
                     <th className="px-3 py-2 w-12"></th>
                   </tr>
@@ -797,31 +807,24 @@ export function CompraForm({ onClose }: CompraFormProps) {
                   {lineas.map((linea, index) => {
                     const subtotal = getLineSubtotal(linea)
                     const costoSistema = getCostoSistema(linea)
-                    const subtotalSistema = getSubtotalSistema(linea)
                     return (
                       <React.Fragment key={linea.producto_id}>
                       <tr>
                         <td className="px-3 py-2 text-sm font-mono text-muted-foreground">{linea.codigo}</td>
                         <td className="px-3 py-2 text-sm text-foreground">{linea.nombre}</td>
                         <td className="px-3 py-2">
-                          {linea.unidadOptions.length > 1 ? (
-                            <select
-                              value={linea.unidad_seleccionada_id ?? '__base__'}
-                              onChange={(e) => handleUnidadChange(index, e.target.value)}
-                              className="w-full rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                            >
-                              {linea.unidadOptions.map((opt) => (
-                                <option key={opt.id ?? '__base__'} value={opt.id ?? '__base__'}>
-                                  {opt.abreviatura}
-                                  {opt.factor > 1 && ` (x${opt.factor})`}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">
-                              {linea.unidadOptions[0]?.abreviatura ?? 'UND'}
-                            </span>
-                          )}
+                          <select
+                            value={linea.unidad_seleccionada_id ?? '__base__'}
+                            onChange={(e) => handleUnidadChange(index, e.target.value)}
+                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                          >
+                            {linea.unidadOptions.map((opt) => (
+                              <option key={opt.id ?? '__base__'} value={opt.id ?? '__base__'}>
+                                {opt.abreviatura}
+                                {opt.factor > 1 && ` (x${opt.factor})`}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="px-3 py-2">
                           <input
@@ -830,7 +833,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                             min="0.001"
                             value={linea.cantidad_input || ''}
                             onChange={(e) => handleLineaChange(index, 'cantidad_input', e.target.value)}
-                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-ring"
+                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -840,21 +843,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
                             min="0"
                             value={linea.costo_input || ''}
                             onChange={(e) => handleLineaChange(index, 'costo_input', e.target.value)}
-                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-ring"
+                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
-                          {costoSistema !== null && (
-                            <p className="text-[11px] text-slate-400 text-right mt-0.5">
-                              {formatUsd(costoSistema)}
-                            </p>
-                          )}
                         </td>
+                        {mostrarColumnasSistema && (
+                          <td className="px-3 py-2 text-sm text-right text-slate-400 tabular-nums">
+                            {costoSistema !== null ? formatUsd(costoSistema) : '—'}
+                          </td>
+                        )}
                         <td className="px-3 py-2 text-sm text-right font-medium text-foreground">
                           {moneda === 'USD' ? formatUsd(subtotal) : formatBs(subtotal)}
-                          {subtotalSistema !== null && (
-                            <p className="text-[11px] text-slate-400 mt-0.5">
-                              {formatUsd(subtotalSistema)}
-                            </p>
-                          )}
                         </td>
                         <td className="px-3 py-2 text-center">
                           <button
@@ -868,7 +866,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                       </tr>
                       {linea.maneja_lotes === 1 && (
                         <tr key={`lote-${linea.producto_id}`} className="bg-amber-50/50 border-b border-amber-100">
-                          <td colSpan={7} className="px-3 py-2">
+                          <td colSpan={mostrarColumnasSistema ? 8 : 7} className="px-3 py-2">
                             <div className="flex flex-wrap items-center gap-3 text-xs">
                               <span className="text-amber-700 font-medium shrink-0">Lote:</span>
                               <div className="flex items-center gap-1.5">
@@ -980,7 +978,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={pagoMonto}
                 onChange={(e) => setPagoMonto(e.target.value)}
                 placeholder="0.00"
-                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
             </div>
 
@@ -1150,6 +1148,168 @@ export function CompraForm({ onClose }: CompraFormProps) {
           </button>
         </div>
       </form>
+
+      {/* Dialog: Confirmar registro */}
+      <Dialog open={showConfirm} onOpenChange={(v) => { if (!v && !submitting) setShowConfirm(false) }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-primary" />
+              Confirmar Factura de Compra
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Resumen header */}
+          <div className="rounded-lg bg-muted/50 p-3 space-y-1 text-sm">
+            <div className="font-semibold text-base">
+              {proveedores.find((p) => p.id === proveedorId)?.razon_social ?? '—'}
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <span className="text-muted-foreground">Nro. Factura</span>
+              <span className="font-mono font-medium">{nroFactura}</span>
+              {nroControl && <>
+                <span className="text-muted-foreground">Nro. Control</span>
+                <span className="font-mono">{nroControl}</span>
+              </>}
+              <span className="text-muted-foreground">Fecha</span>
+              <span>{fechaFactura}</span>
+              <span className="text-muted-foreground">Moneda</span>
+              <span>{moneda}</span>
+              <span className="text-muted-foreground">Tasa proveedor</span>
+              <span>{tasaNum.toFixed(4)}</span>
+              {usaTasaParalela && tasaBcvNum > 0 && <>
+                <span className="text-muted-foreground">Tasa interna (BCV)</span>
+                <span>{tasaBcvNum.toFixed(4)}</span>
+              </>}
+              <span className="text-muted-foreground">Tipo</span>
+              <span className={tipoDetectado === 'CONTADO' ? 'text-green-600 font-medium' : 'text-orange-600 font-medium'}>
+                {tipoDetectado}
+              </span>
+            </div>
+          </div>
+
+          {/* Productos */}
+          <div>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+              Productos ({lineas.length})
+            </h4>
+            <div className="overflow-auto rounded-md border max-h-48">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Producto</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Cant.</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Costo ({monedaLabel})</th>
+                    {mostrarColumnasSistema && (
+                      <th className="text-right px-3 py-2 font-medium text-slate-400">Costo Contab. ($)</th>
+                    )}
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Subtotal ({monedaLabel})</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {lineas.map((l) => {
+                    const cs = getCostoSistema(l)
+                    const st = getLineSubtotal(l)
+                    const sts = getSubtotalSistema(l)
+                    return (
+                      <tr key={l.producto_id}>
+                        <td className="px-3 py-1.5">
+                          <span className="font-mono text-muted-foreground text-[10px]">{l.codigo}</span>
+                          {' '}{l.nombre}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">
+                          {l.cantidad_input} {l.unidadOptions.find((o) => (o.id ?? '__base__') === (l.unidad_seleccionada_id ?? '__base__'))?.abreviatura}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums">
+                          {moneda === 'USD' ? formatUsd(l.costo_input) : formatBs(l.costo_input)}
+                        </td>
+                        {mostrarColumnasSistema && (
+                          <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">
+                            {cs !== null ? formatUsd(cs) : '—'}
+                          </td>
+                        )}
+                        <td className="px-3 py-1.5 text-right tabular-nums font-medium">
+                          {moneda === 'USD' ? formatUsd(st) : formatBs(st)}
+                          {sts !== null && (
+                            <div className="text-[10px] text-slate-400">{formatUsd(sts)}</div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Pagos */}
+          {pagos.length > 0 && (
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Pagos registrados
+              </h4>
+              <ul className="space-y-1">
+                {pagos.map((p, i) => (
+                  <li key={i} className="flex justify-between text-sm rounded bg-muted/50 px-3 py-1.5">
+                    <span>{p.metodo_nombre}</span>
+                    <span className="font-medium">
+                      {p.moneda === 'USD' ? formatUsd(p.monto) : formatBs(p.monto)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Totales */}
+          <div className="rounded-lg border p-3 space-y-1 text-sm">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Total USD (factura):</span>
+              <span className="font-semibold">{formatUsd(totalUsd)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Total Bs:</span>
+              <span className="font-semibold">{formatBs(totalBs)}</span>
+            </div>
+            {usaTasaParalela && (
+              <div className="flex justify-between text-amber-700 dark:text-amber-400">
+                <span>Costo contabilidad (tasa interna):</span>
+                <span className="font-semibold">{formatUsd(totalUsdSistema)}</span>
+              </div>
+            )}
+            {pagos.length > 0 && (
+              <div className="flex justify-between text-green-600 border-t border-border pt-1">
+                <span>Abonado:</span>
+                <span className="font-medium">{formatUsd(totalAbonadoUsd)}</span>
+              </div>
+            )}
+            <div className={`flex justify-between font-bold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
+              <span>{tipoDetectado === 'CREDITO' ? 'Queda a credito:' : 'Pagado completamente'}</span>
+              {tipoDetectado === 'CREDITO' && <span>{formatUsd(pendienteUsd)}</span>}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-3 pt-2 border-t">
+            <button
+              type="button"
+              onClick={() => setShowConfirm(false)}
+              disabled={submitting}
+              className="px-4 py-2 text-sm font-medium text-muted-foreground bg-muted rounded-md hover:bg-muted/80 transition-colors disabled:opacity-50"
+            >
+              Cancelar — Seguir editando
+            </button>
+            <button
+              type="button"
+              onClick={handleConfirm}
+              disabled={submitting}
+              className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {submitting ? 'Registrando...' : 'Confirmar y Registrar'}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog: Crear Producto */}
       <Dialog open={showCrearProducto} onOpenChange={(v) => { if (!v) setShowCrearProducto(false) }}>
