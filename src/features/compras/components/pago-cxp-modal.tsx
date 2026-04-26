@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -13,6 +13,8 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
+import { db } from '@/core/db/powersync/db'
+import { localNow } from '@/lib/dates'
 
 interface PagoCxPModalProps {
   open: boolean
@@ -27,6 +29,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const { metodos } = useMetodosPagoActivos()
   const { tasaValor } = useTasaActual()
 
+  const [fechaPago, setFechaPago] = useState(() => localNow().slice(0, 10))
   const [monto, setMonto] = useState('')
   const [metodoCobro, setMetodoCobro] = useState('')
   const [referencia, setReferencia] = useState('')
@@ -34,14 +37,30 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const [tasaPagoStr, setTasaPagoStr] = useState('')
   // tasa BCV del documento: solo visible cuando la factura no tenia tasa_costo guardada
   const [tasaBcvStr, setTasaBcvStr] = useState('')
+  // tasa interna a la fecha del pago (buscada de tasas_cambio)
+  const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
 
+  // Buscar tasa interna vigente a la fecha del abono
+  useEffect(() => {
+    if (!user?.empresa_id || !fechaPago) return
+    db.execute(
+      'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1',
+      [user.empresa_id, fechaPago]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { valor: string } | undefined
+      setTasaInternaNum(row ? parseFloat(row.valor) : 0)
+    }).catch(() => setTasaInternaNum(0))
+  }, [fechaPago, user?.empresa_id])
+
   function handleClose() {
+    setFechaPago(localNow().slice(0, 10))
     setMonto('')
     setMetodoCobro('')
     setReferencia('')
     setTasaPagoStr('')
     setTasaBcvStr('')
+    setTasaInternaNum(0)
     onClose()
   }
 
@@ -57,15 +76,20 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const moneda = (metodoSeleccionado?.moneda ?? 'USD') as 'USD' | 'BS'
   const montoNum = parseFloat(monto) || 0
 
-  // tasa de pago: default a tasa de negociacion del documento (no a tasa actual del sistema)
+  // tasa de pago: default a tasa de negociacion del documento
   const tasaPagoNum = parseFloat(tasaPagoStr) || tasaNegociacion
 
   // tasa BCV para diferencial: del documento si existe, sino del input del usuario
   const tasaBcvParaDiferencial = tasaCostoDocumento ?? (parseFloat(tasaBcvStr) || 0)
-  const necesitaTasaBcv = !tasaCostoDocumento  // pedir al usuario si no estaba en el documento
+  const necesitaTasaBcv = !tasaCostoDocumento
 
   const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum) : montoNum
   const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum) : montoNum
+
+  // USD a tasa interna (para contabilidad, solo en pagos BS)
+  const montoUsdInterno = moneda === 'BS' && tasaInternaNum > 0
+    ? montoNum / tasaInternaNum
+    : null
 
   const excedeSaldo = montoUsd > saldoPend + 0.01
   const tasaBcvValida = !necesitaTasaBcv || tasaBcvParaDiferencial > 0
@@ -97,7 +121,9 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
         moneda,
         tasa: tasaPagoNum,
         tasaBcvCompra: tasaBcvParaDiferencial > 0 ? tasaBcvParaDiferencial : undefined,
+        tasaInternaPago: tasaInternaNum > 0 ? tasaInternaNum : undefined,
         monto: montoNum,
+        fechaPago,
         referencia: referencia || undefined,
         empresa_id: user.empresa_id,
         usuario_id: user.id,
@@ -143,6 +169,22 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Fecha del abono */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Fecha del abono</label>
+            <Input
+              type="date"
+              value={fechaPago}
+              onChange={(e) => setFechaPago(e.target.value)}
+              max={localNow().slice(0, 10)}
+            />
+            {tasaInternaNum > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Tasa interna a esta fecha: <span className="font-medium">{tasaInternaNum.toFixed(4)}</span>
+              </p>
+            )}
+          </div>
+
           {/* Tasa BCV del documento (solo si no estaba guardada) */}
           {necesitaTasaBcv && (
             <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
@@ -245,12 +287,22 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
               onChange={(e) => setMonto(e.target.value)}
               placeholder="0.00"
             />
-            {montoNum > 0 && (
+            {montoNum > 0 && moneda === 'USD' && (
               <p className="text-xs text-muted-foreground">
-                {moneda === 'USD'
-                  ? `Equivale a ${formatBs(montoBs)}`
-                  : `Equivale a ${formatUsd(montoUsd)}`}
+                Equivale a {formatBs(montoBs)}
               </p>
+            )}
+            {montoNum > 0 && moneda === 'BS' && (
+              <div className="space-y-0.5">
+                <p className="text-xs text-muted-foreground">
+                  {formatUsd(montoUsd)} a tasa proveedor {tasaPagoNum.toFixed(2)}
+                </p>
+                {montoUsdInterno !== null && Math.abs(montoUsdInterno - montoUsd) > 0.005 && (
+                  <p className="text-xs text-slate-400">
+                    {formatUsd(montoUsdInterno)} a tasa interna {tasaInternaNum.toFixed(2)}
+                  </p>
+                )}
+              </div>
             )}
             {excedeSaldo && (
               <p className="text-xs text-destructive">

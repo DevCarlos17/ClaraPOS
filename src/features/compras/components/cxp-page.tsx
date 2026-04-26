@@ -6,7 +6,7 @@ import {
   type ProveedorConDeuda,
   type FacturaCompraPendiente,
 } from '../hooks/use-cxp'
-import { useAbonosCompra } from '@/features/inventario/hooks/use-compras'
+import { useAbonosCompra, useDetalleCompra } from '@/features/inventario/hooks/use-compras'
 import { PagoCxPModal } from './pago-cxp-modal'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -42,7 +42,9 @@ interface CxpDetalleModalProps {
 
 function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: CxpDetalleModalProps) {
   const { abonos, isLoading: loadingAbonos } = useAbonosCompra(factura?.id ?? '')
+  const { detalle, isLoading: loadingDetalle } = useDetalleCompra(factura?.id ?? '')
   const { tasaValor } = useTasaActual()
+  const [nuevaTasaStr, setNuevaTasaStr] = useState('')
 
   if (!factura) return null
 
@@ -50,9 +52,21 @@ function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: C
   const saldo = parseFloat(factura.saldo_pend_usd)
   const abonado = total - saldo
 
+  // Tasa del ultimo pago registrado (para mostrar pendiente en Bs)
+  const ultimaTasaPago = [...abonos]
+    .filter((a) => a.tipo === 'PAG' && a.tasa_pago)
+    .at(-1)?.tasa_pago
+
+  const nuevaTasaNum = parseFloat(nuevaTasaStr) || 0
+  const tasaParaPendiente = nuevaTasaNum > 0
+    ? nuevaTasaNum
+    : ultimaTasaPago
+      ? parseFloat(ultimaTasaPago)
+      : tasaValor
+
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Detalle Factura de Compra</DialogTitle>
         </DialogHeader>
@@ -75,16 +89,86 @@ function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: C
             <div className="text-green-600 font-medium">{formatUsd(abonado)}</div>
             <div className="text-muted-foreground">Saldo Pendiente</div>
             <div className="text-destructive font-bold">{formatUsd(saldo)}</div>
-            {tasaValor > 0 && (
-              <>
-                <div className="text-muted-foreground">Pendiente (Bs)</div>
-                <div className="text-muted-foreground">{formatBs(saldo * tasaValor)}</div>
-              </>
-            )}
           </div>
         </div>
 
-        {/* Payment history */}
+        {/* Pendiente en Bs con tasa editable */}
+        {saldo > 0.01 && (
+          <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Pendiente en Bs:</span>
+              <span className="text-sm font-bold text-amber-700 dark:text-amber-400">
+                {tasaParaPendiente > 0 ? formatBs(saldo * tasaParaPendiente) : '—'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground whitespace-nowrap">Tasa Bs/USD:</label>
+              <input
+                type="number"
+                step="0.0001"
+                min="0.0001"
+                value={nuevaTasaStr}
+                onChange={(e) => setNuevaTasaStr(e.target.value)}
+                placeholder={tasaParaPendiente > 0 ? tasaParaPendiente.toFixed(4) : '0.0000'}
+                className="flex-1 rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+            {!nuevaTasaStr && (
+              <p className="text-xs text-muted-foreground">
+                {ultimaTasaPago
+                  ? `Usando tasa del ultimo pago (${parseFloat(ultimaTasaPago).toFixed(2)})`
+                  : `Usando tasa actual del sistema (${tasaValor.toFixed(2)})`}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Articulos comprados */}
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+            Articulos Comprados
+          </h4>
+          {loadingDetalle ? (
+            <p className="text-sm text-muted-foreground py-2">Cargando...</p>
+          ) : detalle.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">Sin detalle disponible</p>
+          ) : (
+            <div className="overflow-auto rounded-md border max-h-36">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Producto</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Cant.</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Costo USD</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {detalle.map((d) => (
+                    <tr key={d.id}>
+                      <td className="px-3 py-1.5">
+                        <span className="font-mono text-muted-foreground text-[10px]">{d.producto_codigo}</span>
+                        {' '}
+                        <span>{d.producto_nombre}</span>
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        {parseFloat(d.cantidad).toFixed(2)}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums">
+                        {formatUsd(parseFloat(d.costo_unitario_usd))}
+                      </td>
+                      <td className="px-3 py-1.5 text-right tabular-nums font-medium">
+                        {formatUsd(parseFloat(d.cantidad) * parseFloat(d.costo_unitario_usd))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Historial de pagos */}
         <div>
           <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
             Historial de Pagos
@@ -94,7 +178,7 @@ function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: C
           ) : abonos.length === 0 ? (
             <p className="text-sm text-muted-foreground py-2">Sin pagos registrados</p>
           ) : (
-            <div className="overflow-auto rounded-md border max-h-40">
+            <div className="overflow-auto rounded-md border max-h-44">
               <table className="w-full text-xs">
                 <thead className="bg-muted/50">
                   <tr>
@@ -105,20 +189,35 @@ function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: C
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {abonos.map((a) => (
-                    <tr key={a.id}>
-                      <td className="px-3 py-1.5 text-muted-foreground">{a.fecha?.slice(0, 10)}</td>
-                      <td className="px-3 py-1.5">
-                        <span className={`font-medium ${a.tipo === 'PAG' ? 'text-green-600' : 'text-muted-foreground'}`}>
-                          {a.tipo}
-                        </span>
-                      </td>
-                      <td className="px-3 py-1.5 font-mono text-muted-foreground">{a.referencia ?? '-'}</td>
-                      <td className="px-3 py-1.5 text-right font-medium">
-                        {a.tipo === 'PAG' ? '+' : ''}{formatUsd(parseFloat(a.monto))}
-                      </td>
-                    </tr>
-                  ))}
+                  {abonos.map((a) => {
+                    const esBs = a.moneda_pago === 'BS' && a.monto_moneda && a.tasa_pago
+                    return (
+                      <tr key={a.id}>
+                        <td className="px-3 py-1.5 text-muted-foreground">{a.fecha?.slice(0, 10)}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={`font-medium ${a.tipo === 'PAG' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                            {a.tipo}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{a.referencia ?? '-'}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <div className="font-medium">
+                            {a.tipo === 'PAG' ? '+' : ''}{formatUsd(parseFloat(a.monto))}
+                          </div>
+                          {esBs && (
+                            <div className="text-muted-foreground text-[10px] leading-tight">
+                              {formatBs(parseFloat(a.monto_moneda!))} a {parseFloat(a.tasa_pago!).toFixed(2)}
+                              {a.monto_usd_interno && Math.abs(parseFloat(a.monto_usd_interno) - parseFloat(a.monto)) > 0.005 && (
+                                <span className="text-slate-400 ml-1">
+                                  / {formatUsd(parseFloat(a.monto_usd_interno))} int.
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

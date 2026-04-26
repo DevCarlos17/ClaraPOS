@@ -1019,6 +1019,10 @@ const movimientos_cuenta_proveedor = new Table(
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,
+    moneda_pago: column.text,          // 'USD' o 'BS'
+    monto_moneda: column.text,         // importe en moneda original
+    tasa_pago: column.text,            // tasa usada para este pago
+    monto_usd_interno: column.text,    // USD a tasa interna/BCV (contabilidad)
   },
   { indexes: {} }
 )

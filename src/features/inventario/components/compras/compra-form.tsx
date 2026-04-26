@@ -83,7 +83,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [usaTasaParalela, setUsaTasaParalela] = useState(false)
   const [tasaBcv, setTasaBcv] = useState(tasaValor > 0 ? tasaValor.toFixed(4) : '')
 
-  // Auto-lookup BCV rate for invoice date when parallel mode is on
+  // Auto-lookup tasa interna para la fecha de factura cuando tasa paralela está activa
   useEffect(() => {
     if (!usaTasaParalela || !user?.empresa_id || !fechaFactura) return
     db.getAll<{ valor: string }>(
@@ -161,15 +161,37 @@ export function CompraForm({ onClose }: CompraFormProps) {
     return l.cantidad_input * l.costo_input
   }
 
+  // Costo sistema por unidad (a tasa interna) para mostrar en gris
+  function getCostoSistema(l: LineaUI): number | null {
+    if (!usaTasaParalela || tasaBcvNum <= 0) return null
+    if (moneda === 'USD') {
+      // costo_usd * tasa_proveedor / tasa_interna
+      return tasaNum > 0 ? l.costo_input * tasaNum / tasaBcvNum : null
+    } else {
+      // costo_bs / tasa_interna
+      return l.costo_input / tasaBcvNum
+    }
+  }
+
+  function getSubtotalSistema(l: LineaUI): number | null {
+    const cs = getCostoSistema(l)
+    if (cs === null) return null
+    return l.cantidad_input * cs
+  }
+
   const totalDisplay = lineas.reduce((sum, l) => sum + getLineSubtotal(l), 0)
-  // totalUsd always uses proveedor rate (tasaNum) — this is the CxP/invoice original amount
+
+  // totalUsd: siempre a tasa del proveedor (para CxP)
   const totalUsd = moneda === 'USD'
     ? totalDisplay
     : (tasaNum > 0 ? totalDisplay / tasaNum : 0)
   const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaNum
-  // totalUsdSistema: BCV-adjusted cost that goes to inventory (shown alongside totalUsd when parallel)
-  const totalUsdSistema = usaTasaParalela && moneda === 'BS' && tasaBcvNum > 0
-    ? totalDisplay / tasaBcvNum
+
+  // totalUsdSistema: a tasa interna (para inventario y contabilidad)
+  const totalUsdSistema = usaTasaParalela && tasaBcvNum > 0
+    ? (moneda === 'USD'
+        ? (tasaNum > 0 ? totalDisplay * tasaNum / tasaBcvNum : 0)
+        : totalDisplay / tasaBcvNum)
     : totalUsd
 
   // Payment calculations always at proveedor rate (tasaNum)
@@ -311,7 +333,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // tasa always = proveedor/invoice rate; tasa_costo (BCV) handled separately
     const headerParsed = compraHeaderSchema.safeParse({
       proveedor_id: proveedorId,
       tasa: tasaNum,
@@ -331,7 +352,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // Validate BCV rate when using tasa paralela
+    // Validar tasa BCV cuando usa tasa paralela
     if (usaTasaParalela && tasaBcvNum <= 0) {
       setErrors({ tasa_bcv: 'Ingrese la tasa BCV / interna para usar tasa paralela' })
       return
@@ -342,20 +363,25 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // Convert lines to USD base units for storage
+    // Convertir lineas a unidades base en USD para almacenamiento
     const lineasConvertidas = lineas.map((l, i) => {
       const cantidadBase = l.cantidad_input * l.factor
-      let costoUnitarioUsd: number  // original invoice cost at proveedor rate (for CxP)
-      let costoUsdSistema: number   // BCV-adjusted cost (for inventory)
+      let costoUnitarioUsd: number  // costo original de la factura a tasa proveedor (para CxP)
+      let costoUsdSistema: number   // costo ajustado a tasa interna (para inventario)
 
       if (moneda === 'USD') {
         costoUnitarioUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
-        costoUsdSistema = costoUnitarioUsd
+        // Con tasa paralela: ajustar costo USD por diferencia de tasas
+        if (usaTasaParalela && tasaBcvNum > 0 && tasaNum > 0) {
+          costoUsdSistema = costoUnitarioUsd * tasaNum / tasaBcvNum
+        } else {
+          costoUsdSistema = costoUnitarioUsd
+        }
       } else {
-        // Original invoice cost: always divide by proveedor rate (tasaNum)
+        // Costo original: dividir entre tasa del proveedor
         const costoOrigPerUnit = tasaNum > 0 ? l.costo_input / tasaNum : 0
         costoUnitarioUsd = l.factor > 0 ? costoOrigPerUnit / l.factor : costoOrigPerUnit
-        // BCV-adjusted cost: divide by BCV rate when parallel, else same as original
+        // Costo ajustado BCV: dividir entre tasa interna cuando es paralela
         if (usaTasaParalela && tasaBcvNum > 0) {
           const costoBcvPerUnit = l.costo_input / tasaBcvNum
           costoUsdSistema = l.factor > 0 ? costoBcvPerUnit / l.factor : costoBcvPerUnit
@@ -433,6 +459,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
     : tipoDetectado === 'CREDITO'
     ? `Registrar (${formatUsd(pendienteUsd)} a credito)`
     : 'Registrar Factura de Compra'
+
+  const mostrarColumnasSistema = usaTasaParalela && tasaBcvNum > 0
 
   return (
     <div className="space-y-6">
@@ -614,29 +642,28 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 id="tasa-paralela-check"
                 type="checkbox"
                 checked={usaTasaParalela}
-                onChange={(e) => {
-                  const checked = e.target.checked
-                  setUsaTasaParalela(checked)
-                  if (checked) {
-                    handleMonedaSwitch('BS')
-                  }
-                }}
+                onChange={(e) => setUsaTasaParalela(e.target.checked)}
                 className="h-4 w-4 rounded border-input accent-primary cursor-pointer"
               />
               <label htmlFor="tasa-paralela-check" className="text-sm text-foreground cursor-pointer select-none">
-                Proveedor usa tasa paralela
+                Proveedor usa tasa paralela (distinta a la tasa interna BCV)
               </label>
             </div>
             {usaTasaParalela && (
               <div className="mt-3 p-3 rounded-lg bg-amber-50/80 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-3">
                 <p className="text-xs text-amber-700 dark:text-amber-400">
-                  Ingrese los costos en Bs al precio del proveedor. El sistema los convierte a USD usando la Tasa BCV/Interna.
-                  Ejemplo: producto a 700 Bs (tasa proveedor 700) con tasa BCV 500 → costo sistema = <strong>700 ÷ 500 = 1.40 USD</strong>.
+                  {moneda === 'BS'
+                    ? `Ingrese los costos en Bs al precio del proveedor. El sistema los convierte a USD usando la Tasa Interna/BCV para contabilidad. Ejemplo: producto a Bs 700 (tasa proveedor 700) con tasa BCV 500 → costo sistema = 700 ÷ 500 = `
+                    : `Ingrese los costos en USD segun la factura. El sistema ajusta el costo de inventario multiplicando por el diferencial de tasas. Ejemplo: producto a $1.00 (tasa proveedor 700) con tasa BCV 500 → costo sistema = $1.00 × 700 ÷ 500 = `
+                  }
+                  <strong>
+                    {moneda === 'BS' ? '1.40 USD' : '$1.40'}
+                  </strong>.
                 </p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-xs font-medium text-muted-foreground mb-1">
-                      Tasa BCV / Interna <span className="text-destructive">*</span>
+                      Tasa Interna / BCV <span className="text-destructive">*</span>
                     </label>
                     <input
                       id="tasa-bcv"
@@ -651,12 +678,15 @@ export function CompraForm({ onClose }: CompraFormProps) {
                       }`}
                     />
                     {errors.tasa_bcv && <p className="text-destructive text-xs mt-1">{errors.tasa_bcv}</p>}
-                    <p className="text-xs text-muted-foreground mt-1">Tasa usada para calcular costos en USD</p>
+                    <p className="text-xs text-muted-foreground mt-1">Tasa usada para calcular el costo en contabilidad</p>
                   </div>
                   <div className="flex items-end">
-                    <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
-                      <p className="font-medium mb-1">Costo sistema:</p>
-                      <p>Bs ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(4) : '?'} = USD</p>
+                    <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 w-full">
+                      <p className="font-medium mb-1">Costo contabilidad:</p>
+                      {moneda === 'BS'
+                        ? <p>Bs ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
+                        : <p>USD × {tasaNum > 0 ? tasaNum.toFixed(2) : '?'} ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
+                      }
                       {tasaNum > 0 && tasaBcvNum > 0 && (
                         <p className="mt-1 text-amber-700 dark:text-amber-400 font-medium">
                           Factor: ×{(tasaNum / tasaBcvNum).toFixed(4)}
@@ -744,11 +774,21 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Producto</th>
                     <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase w-32">Unidad</th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-24">Cantidad</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-32">
+                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-36">
                       Costo ({monedaLabel})
+                      {mostrarColumnasSistema && (
+                        <span className="block text-[10px] text-slate-400 font-normal normal-case">
+                          Costo contab. ($)
+                        </span>
+                      )}
                     </th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase">
                       Subtotal ({monedaLabel})
+                      {mostrarColumnasSistema && (
+                        <span className="block text-[10px] text-slate-400 font-normal normal-case">
+                          Subtotal contab. ($)
+                        </span>
+                      )}
                     </th>
                     <th className="px-3 py-2 w-12"></th>
                   </tr>
@@ -756,6 +796,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 <tbody className="bg-background divide-y divide-border">
                   {lineas.map((linea, index) => {
                     const subtotal = getLineSubtotal(linea)
+                    const costoSistema = getCostoSistema(linea)
+                    const subtotalSistema = getSubtotalSistema(linea)
                     return (
                       <React.Fragment key={linea.producto_id}>
                       <tr>
@@ -800,9 +842,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
                             onChange={(e) => handleLineaChange(index, 'costo_input', e.target.value)}
                             className="w-full rounded border border-input bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-ring"
                           />
+                          {costoSistema !== null && (
+                            <p className="text-[11px] text-slate-400 text-right mt-0.5">
+                              {formatUsd(costoSistema)}
+                            </p>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-sm text-right font-medium text-foreground">
                           {moneda === 'USD' ? formatUsd(subtotal) : formatBs(subtotal)}
+                          {subtotalSistema !== null && (
+                            <p className="text-[11px] text-slate-400 mt-0.5">
+                              {formatUsd(subtotalSistema)}
+                            </p>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-center">
                           <button
@@ -960,26 +1012,46 @@ export function CompraForm({ onClose }: CompraFormProps) {
           {/* Pagos list */}
           {pagos.length > 0 && (
             <ul className="space-y-2">
-              {pagos.map((pago, index) => (
-                <li key={index} className="flex items-center justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
-                  <div className="flex items-center gap-3">
-                    <span className="font-medium text-foreground">{pago.metodo_nombre}</span>
-                    <span className="text-muted-foreground">
-                      {pago.moneda === 'USD' ? formatUsd(pago.monto) : formatBs(pago.monto)}
-                    </span>
-                    {pago.referencia && (
-                      <span className="text-muted-foreground text-xs font-mono">{pago.referencia}</span>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemovePago(index)}
-                    className="text-muted-foreground hover:text-destructive transition-colors"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                </li>
-              ))}
+              {pagos.map((pago, index) => {
+                const mUsdProveedor = pago.moneda === 'BS'
+                  ? (tasaNum > 0 ? pago.monto / tasaNum : 0)
+                  : pago.monto
+                const mUsdInterno = pago.moneda === 'BS' && usaTasaParalela && tasaBcvNum > 0
+                  ? pago.monto / tasaBcvNum
+                  : null
+                return (
+                  <li key={index} className="flex items-start justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-foreground">{pago.metodo_nombre}</span>
+                        <span className="text-muted-foreground">
+                          {pago.moneda === 'USD' ? formatUsd(pago.monto) : formatBs(pago.monto)}
+                        </span>
+                        {pago.referencia && (
+                          <span className="text-muted-foreground text-xs font-mono">{pago.referencia}</span>
+                        )}
+                      </div>
+                      {pago.moneda === 'BS' && tasaNum > 0 && (
+                        <div className="text-xs text-muted-foreground ml-0.5">
+                          <span>= {formatUsd(mUsdProveedor)} (tasa prov. {tasaNum.toFixed(2)})</span>
+                          {mUsdInterno !== null && (
+                            <span className="ml-3 text-slate-400">
+                              {formatUsd(mUsdInterno)} (tasa int. {tasaBcvNum.toFixed(2)})
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleRemovePago(index)}
+                      className="text-muted-foreground hover:text-destructive transition-colors ml-2 mt-0.5"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
           )}
 
@@ -997,13 +1069,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
               <>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                    <span className="text-xs text-muted-foreground">Costo Sistema (BCV) <span className="text-amber-600 font-medium">→ Inventario</span></span>
+                    <span className="text-xs text-muted-foreground">
+                      Costo contabilidad (tasa int.) <span className="text-amber-600 font-medium">→ Inventario</span>
+                    </span>
                     <p className="text-xl font-bold text-amber-700 dark:text-amber-400">{formatUsd(totalUsdSistema)}</p>
                     <p className="text-xs text-muted-foreground">a tasa {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'}</p>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-xs text-muted-foreground">Total Bs (factura)</span>
-                    <p className="text-xl font-bold text-foreground">{formatBs(totalBs)}</p>
+                    <span className="text-xs text-muted-foreground">
+                      {moneda === 'BS' ? 'Total Bs (factura)' : 'Total USD (factura)'}
+                    </span>
+                    <p className="text-xl font-bold text-foreground">
+                      {moneda === 'BS' ? formatBs(totalBs) : formatUsd(totalUsd)}
+                    </p>
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800">

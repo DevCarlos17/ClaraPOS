@@ -32,6 +32,20 @@ export interface DetalleCompra {
   created_at: string
 }
 
+export interface AbonoCompra {
+  id: string
+  tipo: string
+  referencia: string
+  monto: string
+  fecha: string
+  observacion: string | null
+  created_at: string
+  moneda_pago: string | null
+  monto_moneda: string | null
+  tasa_pago: string | null
+  monto_usd_interno: string | null
+}
+
 export interface LineaCompra {
   producto_id: string
   cantidad: number
@@ -124,15 +138,7 @@ export function useAbonosCompra(facturaCompraId: string) {
     enabled ? [empresaId, facturaCompraId] : []
   )
   return {
-    abonos: (data ?? []) as {
-      id: string
-      tipo: string
-      referencia: string
-      monto: string
-      fecha: string
-      observacion: string | null
-      created_at: string
-    }[],
+    abonos: (data ?? []) as AbonoCompra[],
     isLoading: enabled && isLoading,
   }
 }
@@ -440,16 +446,25 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     }
 
     // 5c. Por cada pago inmediato: crear entrada PAG
+    // tasa_interna: para pagos iniciales usar tasa_costo si existe, sino tasa del proveedor
+    const tasaInterna = tasa_costo ?? tasa
+
     for (const pago of pagos) {
       const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
       if (montoUsd <= 0) continue
+      // monto a tasa interna (para contabilidad)
+      const montoUsdInterno = pago.moneda === 'BS'
+        ? Number((pago.monto / tasaInterna).toFixed(2))
+        : pago.monto
       const nuevoSaldo = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
       const movPagId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_cuenta_proveedor
            (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
-            observacion, factura_compra_id, doc_origen_id, doc_origen_tipo, fecha, created_at, created_by)
-         VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, 'PAGO', ?, ?, ?)`,
+            observacion, factura_compra_id, doc_origen_id, doc_origen_tipo,
+            moneda_pago, monto_moneda, tasa_pago, monto_usd_interno,
+            fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, 'PAGO', ?, ?, ?, ?, ?, ?, ?)`,
         [
           movPagId, empresa_id, proveedor_id,
           pago.referencia ? pago.referencia : `PAG-${nro_factura}`,
@@ -458,6 +473,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           nuevoSaldo.toFixed(2),
           `Pago inicial compra ${nro_factura}`,
           compraId, compraId,
+          pago.moneda,
+          pago.monto.toFixed(2),
+          tasa.toFixed(4),
+          montoUsdInterno.toFixed(2),
           now, now, usuario_id,
         ]
       )

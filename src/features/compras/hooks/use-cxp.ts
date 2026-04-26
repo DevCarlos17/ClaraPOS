@@ -27,15 +27,31 @@ export interface FacturaCompraPendiente {
   tasa_costo: string | null  // tasa BCV/interna (usada para diferencial cambiario)
 }
 
+export interface AbonoProveedor {
+  id: string
+  tipo: string
+  referencia: string
+  monto: string
+  fecha: string
+  observacion: string | null
+  created_at: string
+  moneda_pago: string | null
+  monto_moneda: string | null
+  tasa_pago: string | null
+  monto_usd_interno: string | null
+}
+
 export interface PagoCxPParams {
   factura_compra_id: string
   proveedor_id: string
   metodo_cobro_id: string
   banco_empresa_id: string | null
   moneda: 'USD' | 'BS'
-  tasa: number           // tasa pactada para este pago
+  tasa: number           // tasa pactada para este pago (tasa proveedor para BS, interna para USD)
   tasaBcvCompra?: number // tasa BCV original del documento (para diferencial)
+  tasaInternaPago?: number // tasa interna a la fecha del pago (para monto_usd_interno)
   monto: number
+  fechaPago: string      // fecha del abono (YYYY-MM-DD)
   referencia?: string
   empresa_id: string
   usuario_id: string
@@ -86,13 +102,14 @@ export function useFacturasCompraPendientes(proveedorId: string | null) {
 /**
  * Registrar pago a factura de compra (CxP).
  * Reduce saldo_pend_usd de la factura y saldo_actual del proveedor.
- * Crea movimiento_cuenta_proveedor (tipo PAG).
+ * Crea movimiento_cuenta_proveedor (tipo PAG) con datos de dual-rate.
  * Genera asientos contables PAGO_CXP y movimiento bancario si aplica.
  */
 export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
   const {
     factura_compra_id, proveedor_id, banco_empresa_id,
-    moneda, tasa, tasaBcvCompra, monto, referencia, empresa_id, usuario_id,
+    moneda, tasa, tasaBcvCompra, tasaInternaPago, monto,
+    fechaPago, referencia, empresa_id, usuario_id,
   } = params
 
   if (tasa <= 0) throw new Error('La tasa debe ser mayor a 0')
@@ -111,23 +128,34 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
       nro_factura: string; saldo_pend_usd: string; tasa: string; tasa_costo: string | null
     }
     const saldoFactura = parseFloat(factura.saldo_pend_usd)
+
     // tasaCompra para diferencial: usa tasa BCV/interna del documento
-    // (tasaBcvCompra del modal > tasa_costo del documento > tasa del proveedor como ultimo recurso)
     const tasaCompra = tasaBcvCompra
       ?? (factura.tasa_costo ? parseFloat(factura.tasa_costo) : null)
       ?? parseFloat(factura.tasa)
 
-    // 2. Calcular monto en USD
+    // 2. Calcular monto en USD (a tasa del proveedor del documento o tasa pactada)
     const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
 
-    // 3. Validar monto <= saldo pendiente
+    // 3. monto_usd_interno: USD a tasa interna del día del pago (para contabilidad)
+    // Para BS: monto_bs / tasa_interna_pago
+    // Para USD: el mismo monto (1 USD = 1 USD)
+    let montoUsdInterno: number
+    if (moneda === 'BS') {
+      const tasaInt = tasaInternaPago ?? tasaCompra
+      montoUsdInterno = tasaInt > 0 ? Number((monto / tasaInt).toFixed(2)) : montoUsd
+    } else {
+      montoUsdInterno = montoUsd
+    }
+
+    // 4. Validar monto <= saldo pendiente
     if (montoUsd > saldoFactura + 0.01) {
       throw new Error(
         `El pago ($${montoUsd.toFixed(2)}) excede el saldo pendiente ($${saldoFactura.toFixed(2)}) de la factura ${factura.nro_factura}`
       )
     }
 
-    // 4. Leer saldo proveedor ANTES de modificar la factura (desde facturas_compra, no de proveedores)
+    // 5. Leer saldo proveedor ANTES de modificar la factura (desde facturas_compra)
     const sumResult = await tx.execute(
       `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
        FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
@@ -136,35 +164,42 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
     const saldoProv = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
     const nuevoSaldoProv = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
 
-    // 5. Reducir saldo de la factura
+    // 6. Reducir saldo de la factura
     const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
     await tx.execute(
       'UPDATE facturas_compra SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
       [nuevoSaldoFactura.toFixed(2), now, factura_compra_id]
     )
 
-    // 6. Crear movimiento_cuenta_proveedor
+    // 7. Crear movimiento_cuenta_proveedor con datos de dual-rate
     const movId = uuidv4()
     await tx.execute(
       `INSERT INTO movimientos_cuenta_proveedor
          (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
-          observacion, factura_compra_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          observacion, factura_compra_id,
+          moneda_pago, monto_moneda, tasa_pago, monto_usd_interno,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId, empresa_id, proveedor_id,
-        `PAG-${factura.nro_factura}`,
+        referencia || `PAG-${factura.nro_factura}`,
         montoUsd.toFixed(2),
         saldoProv.toFixed(2),
         nuevoSaldoProv.toFixed(2),
         `Pago factura ${factura.nro_factura}`,
         factura_compra_id,
-        now, now, usuario_id,
+        moneda,
+        monto.toFixed(2),
+        tasa.toFixed(4),
+        montoUsdInterno.toFixed(2),
+        fechaPago,
+        now, usuario_id,
       ]
     )
     // NOTA: saldo_actual de proveedores se actualiza via trigger en Supabase.
     // No hacer UPDATE directo aqui — el trigger lo bloquea (P0001).
 
-    // 7. Movimiento bancario + asientos contables
+    // 8. Movimiento bancario + asientos contables
     try {
       if (banco_empresa_id && montoUsd > 0) {
         const movBancoId = uuidv4()
@@ -179,7 +214,7 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
             factura_compra_id,
             referencia ?? null,
             `Pago CxP ${factura.nro_factura}`,
-            now, now, usuario_id,
+            fechaPago, now, usuario_id,
           ]
         )
       }
@@ -191,7 +226,7 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
       await generarAsientosPagoCxP(tx, {
         empresaId: empresa_id,
         pagoId: movId,
-        pagoRef: `PAG-${factura.nro_factura}`,
+        pagoRef: referencia || `PAG-${factura.nro_factura}`,
         monto_usd: montoUsd,
         banco_empresa_id: banco_empresa_id ?? null,
         cuentas,
