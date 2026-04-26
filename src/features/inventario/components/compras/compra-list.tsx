@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Eye, Search, CalendarDays } from 'lucide-react'
+import { Plus, Eye, Search, CalendarDays, RotateCcw } from 'lucide-react'
 import { useComprasPorFecha, type CompraConProveedor } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { CompraForm } from './compra-form'
@@ -163,6 +163,7 @@ export function CompraList() {
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Fecha</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Proveedor</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Tipo</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total USD</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Bs</th>
                   <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Tasa</th>
@@ -188,6 +189,18 @@ export function CompraList() {
                       >
                         {compra.tipo}
                       </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {compra.status === 'REVERSADA' ? (
+                        <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-purple-50 text-purple-700 ring-purple-600/20 dark:bg-purple-950 dark:text-purple-300">
+                          <RotateCcw className="h-2.5 w-2.5" />
+                          REVERSADA
+                        </span>
+                      ) : compra.status === 'ANULADA' ? (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-950 dark:text-red-300">
+                          ANULADA
+                        </span>
+                      ) : null}
                     </td>
                     <td className="px-4 py-3 text-sm text-right font-medium text-foreground">
                       {formatUsd(compra.total_usd)}

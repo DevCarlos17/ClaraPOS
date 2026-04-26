@@ -110,7 +110,7 @@ function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: C
                 value={nuevaTasaStr}
                 onChange={(e) => setNuevaTasaStr(e.target.value)}
                 placeholder={tasaParaPendiente > 0 ? tasaParaPendiente.toFixed(4) : '0.0000'}
-                className="flex-1 rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                className="flex-1 rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
             </div>
             {!nuevaTasaStr && (

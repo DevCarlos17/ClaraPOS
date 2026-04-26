@@ -190,6 +190,161 @@ export async function fetchDetalleParaReporte(
   return result
 }
 
+export interface ReversarCompraParams {
+  compraId: string
+  usuarioId: string
+  empresaId: string
+}
+
+export async function reversarCompra(params: ReversarCompraParams): Promise<void> {
+  const { compraId, usuarioId, empresaId } = params
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // 1. Obtener factura
+    const compraRes = await tx.execute(
+      'SELECT * FROM facturas_compra WHERE id = ? AND empresa_id = ?',
+      [compraId, empresaId]
+    )
+    if (!compraRes.rows?.length) throw new Error('Factura no encontrada')
+    const compra = compraRes.rows.item(0) as {
+      id: string; proveedor_id: string; nro_factura: string; tipo: string; status: string
+      total_usd: string; saldo_pend_usd: string
+    }
+
+    // 2. Validar status
+    if (compra.status !== 'PROCESADA') {
+      throw new Error(`La factura tiene status "${compra.status}" y no puede ser reversada`)
+    }
+
+    // 3. Para CREDITO: no puede tener abonos registrados
+    if (compra.tipo === 'CREDITO') {
+      const pagRes = await tx.execute(
+        "SELECT COUNT(*) as cnt FROM movimientos_cuenta_proveedor WHERE factura_compra_id = ? AND tipo = 'PAG' AND empresa_id = ?",
+        [compraId, empresaId]
+      )
+      const pagCount = Number((pagRes.rows?.item(0) as { cnt: string | number })?.cnt ?? 0)
+      if (pagCount > 0) {
+        throw new Error('La factura tiene abonos registrados. Reverse los abonos individualmente desde el modulo CxP antes de reversar la factura.')
+      }
+    }
+
+    // 4. Obtener lineas de detalle
+    const detRes = await tx.execute(
+      'SELECT * FROM facturas_compra_det WHERE factura_compra_id = ? AND empresa_id = ?',
+      [compraId, empresaId]
+    )
+    type LineaDet = {
+      id: string; producto_id: string; deposito_id: string
+      cantidad: string; costo_usd_sistema: string | null; costo_unitario_usd: string; lote_id: string | null
+    }
+    const lineas: LineaDet[] = []
+    if (detRes.rows) {
+      for (let i = 0; i < detRes.rows.length; i++) {
+        lineas.push(detRes.rows.item(i) as LineaDet)
+      }
+    }
+    if (lineas.length === 0) throw new Error('La factura no tiene lineas de detalle')
+
+    // 5. Por cada linea: validar stock y crear Kardex inverso (salida por devolucion)
+    for (const linea of lineas) {
+      const qty = parseFloat(linea.cantidad)
+      const costoSistema = parseFloat(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
+
+      const prodRes = await tx.execute(
+        'SELECT stock, costo_usd FROM productos WHERE id = ?',
+        [linea.producto_id]
+      )
+      if (!prodRes.rows?.length) throw new Error('Producto no encontrado')
+      const prod = prodRes.rows.item(0) as { stock: string; costo_usd: string }
+      const currentStock = parseFloat(prod.stock)
+      const currentCosto = parseFloat(prod.costo_usd)
+
+      if (currentStock < qty - 0.001) {
+        throw new Error(
+          `Stock insuficiente para reversar. Disponible: ${currentStock.toFixed(3)}, requerido: ${qty.toFixed(3)}. Es posible que el inventario ya haya sido consumido.`
+        )
+      }
+
+      const newStock = Math.max(0, Number((currentStock - qty).toFixed(3)))
+
+      // Recalcular costo promedio ponderado (reverso de la contribucion de esta compra)
+      let newCosto = currentCosto
+      if (newStock > 0.001) {
+        const rawCosto = (currentStock * currentCosto - qty * costoSistema) / newStock
+        newCosto = Math.max(0, Number(rawCosto.toFixed(4)))
+      }
+
+      // Kardex: salida por devolucion de compra
+      await tx.execute(
+        `INSERT INTO movimientos_inventario
+           (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
+            costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo,
+            usuario_id, fecha, empresa_id, created_at)
+         VALUES (?, ?, ?, 'S', 'DEV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          linea.producto_id,
+          linea.deposito_id,
+          qty.toFixed(3),
+          currentStock.toFixed(3),
+          newStock.toFixed(3),
+          costoSistema.toFixed(4),
+          linea.lote_id ?? null,
+          compraId,
+          `DEV-${compra.nro_factura}`,
+          `Devolucion de compra ${compra.nro_factura}`,
+          usuarioId,
+          now,
+          empresaId,
+          now,
+        ]
+      )
+
+      // Actualizar stock y costo del producto
+      await tx.execute(
+        'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
+        [newStock.toFixed(3), newCosto.toFixed(4), now, linea.producto_id]
+      )
+    }
+
+    // 6. Movimiento CxP: cancelar deuda pendiente (CREDITO sin abonos)
+    const saldoPend = parseFloat(compra.saldo_pend_usd)
+    if (saldoPend > 0.01) {
+      const provRes = await tx.execute(
+        'SELECT saldo_actual FROM proveedores WHERE id = ? AND empresa_id = ?',
+        [compra.proveedor_id, empresaId]
+      )
+      const saldoProvActual = parseFloat((provRes.rows?.item(0) as { saldo_actual: string })?.saldo_actual ?? '0')
+      const nuevoSaldoProv = Math.max(0, Number((saldoProvActual - saldoPend).toFixed(2)))
+
+      await tx.execute(
+        `INSERT INTO movimientos_cuenta_proveedor
+           (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+            observacion, factura_compra_id, doc_origen_id, doc_origen_tipo, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'DEV', ?, ?, ?, ?, ?, ?, ?, 'DEV_COMPRA', ?, ?, ?)`,
+        [
+          uuidv4(), empresaId, compra.proveedor_id,
+          `DEV-${compra.nro_factura}`,
+          saldoPend.toFixed(2),
+          saldoProvActual.toFixed(2),
+          nuevoSaldoProv.toFixed(2),
+          `Devolucion de factura de compra ${compra.nro_factura}`,
+          compraId, compraId,
+          now, now, usuarioId,
+        ]
+      )
+    }
+
+    // 7. Marcar factura como REVERSADA y saldo en 0
+    await tx.execute(
+      'UPDATE facturas_compra SET status = ?, saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
+      ['REVERSADA', '0.00', now, compraId]
+    )
+  })
+}
+
 export async function crearCompra(params: CrearCompraParams): Promise<CrearCompraResult> {
   const {
     proveedor_id,
@@ -213,41 +368,59 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     throw new Error('La tasa de cambio debe ser mayor a 0')
   }
 
+  // ─── Pre-fetch: deposito, moneda y stocks ANTES de la transaccion ──────────
+  // Hacemos los SELECTs fuera del writeTransaction para evitar mezclar
+  // lecturas y escrituras dentro del loop, lo que puede causar que solo
+  // el primer producto se procese en algunas implementaciones de wa-sqlite.
+
+  // 0. Deposito principal
+  let depositoId: string
+  const depResult = await db.execute(
+    'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+    [empresa_id]
+  )
+  if (depResult.rows && depResult.rows.length > 0) {
+    depositoId = (depResult.rows.item(0) as { id: string }).id
+  } else {
+    const depFallback = await db.execute(
+      'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+      [empresa_id]
+    )
+    if (!depFallback.rows || depFallback.rows.length === 0) {
+      throw new Error('No hay depositos configurados. Cree un deposito primero.')
+    }
+    depositoId = (depFallback.rows.item(0) as { id: string }).id
+  }
+
+  // 0b. Moneda
+  const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
+  const monedaResult = await db.execute(
+    'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+    [monedaCode]
+  )
+  if (!monedaResult.rows?.length) {
+    throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
+  }
+  const monedaId = (monedaResult.rows.item(0) as { id: string }).id
+
+  // 0c. Stocks actuales de todos los productos de las lineas
+  const stocksMap = new Map<string, number>()
+  for (const linea of lineas) {
+    const prodRes = await db.execute(
+      'SELECT stock FROM productos WHERE id = ? LIMIT 1',
+      [linea.producto_id]
+    )
+    if (!prodRes.rows || prodRes.rows.length === 0) {
+      throw new Error('Producto no encontrado. Verifique que todos los productos esten sincronizados.')
+    }
+    stocksMap.set(linea.producto_id, parseFloat((prodRes.rows.item(0) as { stock: string }).stock) || 0)
+  }
+
   let compraId = ''
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
     compraId = uuidv4()
-
-    // 0. Obtener deposito principal de la empresa
-    const depResult = await tx.execute(
-      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
-      [empresa_id]
-    )
-    let depositoId: string
-    if (depResult.rows && depResult.rows.length > 0) {
-      depositoId = (depResult.rows.item(0) as { id: string }).id
-    } else {
-      const depFallback = await tx.execute(
-        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
-        [empresa_id]
-      )
-      if (!depFallback.rows || depFallback.rows.length === 0) {
-        throw new Error('No hay depositos configurados. Cree un deposito primero.')
-      }
-      depositoId = (depFallback.rows.item(0) as { id: string }).id
-    }
-
-    // 0b. Obtener UUID de moneda
-    const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
-    const monedaResult = await tx.execute(
-      'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
-      [monedaCode]
-    )
-    if (!monedaResult.rows?.length) {
-      throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
-    }
-    const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
     // 1. Calcular totales (lineas ya vienen en USD)
     let totalUsd = 0
@@ -359,18 +532,12 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         ]
       )
 
-      // 4c. Leer stock actual del producto
-      const prodResult = await tx.execute(
-        'SELECT stock FROM productos WHERE id = ?',
-        [linea.producto_id]
-      )
-      if (!prodResult.rows || prodResult.rows.length === 0) {
-        throw new Error('Producto no encontrado')
-      }
-      const stockActual = parseFloat((prodResult.rows.item(0) as { stock: string }).stock)
+      // 4c. Stock actual (pre-cargado; se actualiza localmente para acumular lineas del mismo producto)
+      const stockActual = stocksMap.get(linea.producto_id) ?? 0
 
-      // 4d. Calcular nuevo stock
+      // 4d. Calcular nuevo stock y actualizar mapa para proximas iteraciones
       const stockNuevo = stockActual + linea.cantidad
+      stocksMap.set(linea.producto_id, stockNuevo)
 
       // 4e. INSERT movimiento de inventario (entrada por compra) — usa costo sistema (BCV)
       const movId = uuidv4()

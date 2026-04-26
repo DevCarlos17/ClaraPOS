@@ -1,5 +1,5 @@
-import { useRef } from 'react'
-import { X, Printer } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { X, Printer, RotateCcw } from 'lucide-react'
 import {
   useDetalleCompra,
   useAbonosCompra,
@@ -7,6 +7,7 @@ import {
 } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
+import { CompraDevolucionModal } from './compra-devolucion-modal'
 
 interface CompraDetalleModalProps {
   compra: CompraConProveedor
@@ -17,6 +18,7 @@ interface CompraDetalleModalProps {
 export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const printRef = useRef<HTMLDivElement>(null)
+  const [showDevolucion, setShowDevolucion] = useState(false)
   const { detalle, isLoading: loadingDetalle } = useDetalleCompra(compra.id)
   const { abonos, isLoading: loadingAbonos } = useAbonosCompra(
     compra.tipo === 'CREDITO' ? compra.id : ''
@@ -27,6 +29,14 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
   const totalBs = parseFloat(compra.total_bs)
   const saldoPend = parseFloat(compra.saldo_pend_usd)
   const totalAbonado = abonos.reduce((sum, a) => sum + parseFloat(a.monto), 0)
+
+  // Determinar si la factura puede ser reversada totalmente
+  const puedeReversar = compra.status === 'PROCESADA' && (
+    compra.tipo === 'CONTADO' ||
+    (compra.tipo === 'CREDITO' && Math.abs(saldoPend - totalUsd) < 0.01)
+  )
+  const bloqueadoPorAbonos = compra.status === 'PROCESADA' &&
+    compra.tipo === 'CREDITO' && saldoPend < totalUsd - 0.01
 
   // Dialog open/close via ref
   if (isOpen && dialogRef.current && !dialogRef.current.open) {
@@ -122,6 +132,26 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-lg font-semibold text-foreground">Detalle de Compra</h2>
           <div className="flex items-center gap-2">
+            {puedeReversar && (
+              <button
+                type="button"
+                onClick={() => setShowDevolucion(true)}
+                disabled={isLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-destructive bg-destructive/10 rounded-md hover:bg-destructive/20 transition-colors disabled:opacity-50"
+              >
+                <RotateCcw className="h-4 w-4" />
+                Reversar
+              </button>
+            )}
+            {bloqueadoPorAbonos && (
+              <span
+                title="La factura tiene abonos. Reverse los abonos desde CxP para poder reversar la factura."
+                className="inline-flex items-center gap-1 px-2 py-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md cursor-help dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Tiene abonos
+              </span>
+            )}
             <button
               type="button"
               onClick={handlePrint}
@@ -199,7 +229,9 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                     className={`badge inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
                       compra.status === 'ANULADA'
                         ? 'badge-anulada bg-red-50 text-red-700 ring-red-600/20'
-                        : 'badge-procesada bg-blue-50 text-blue-700 ring-blue-600/20'
+                        : compra.status === 'REVERSADA'
+                          ? 'bg-purple-50 text-purple-700 ring-purple-600/20 dark:bg-purple-950 dark:text-purple-300'
+                          : 'badge-procesada bg-blue-50 text-blue-700 ring-blue-600/20'
                     }`}
                   >
                     {compra.status}
@@ -320,6 +352,18 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
           </button>
         </div>
       </div>
+
+      {showDevolucion && (
+        <CompraDevolucionModal
+          compra={compra}
+          isOpen={showDevolucion}
+          onClose={() => setShowDevolucion(false)}
+          onSuccess={() => {
+            setShowDevolucion(false)
+            onClose()
+          }}
+        />
+      )}
     </dialog>
   )
 }

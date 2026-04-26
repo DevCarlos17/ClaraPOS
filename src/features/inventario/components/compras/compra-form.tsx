@@ -431,7 +431,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
     pendingParamsRef.current = {
       proveedor_id: headerParsed.data.proveedor_id,
       tasa: headerParsed.data.tasa,
-      tasa_costo: usaTasaParalela ? tasaBcvNum : undefined,
+      tasa_costo: tasaBcvNum > 0 ? tasaBcvNum : undefined,
       fecha_factura: headerParsed.data.fecha_factura,
       nro_factura: headerParsed.data.nro_factura,
       nro_control: headerParsed.data.nro_control,
@@ -610,6 +610,39 @@ export function CompraForm({ onClose }: CompraFormProps) {
             </div>
           </div>
 
+          {/* Tasa BCV / Interna - siempre visible */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="sm:col-span-2">
+              <p className="text-xs text-muted-foreground leading-snug">
+                Tasa BCV / interna vigente a la fecha de la factura.
+                Se usa para registrar el diferencial cambiario al realizar pagos.
+              </p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">
+                Tasa BCV / Interna
+              </label>
+              <input
+                id="tasa-bcv"
+                type="number"
+                step="0.0001"
+                min="0.0001"
+                value={tasaBcv}
+                onChange={(e) => !tasaBcvFound && setTasaBcv(e.target.value)}
+                readOnly={tasaBcvFound}
+                placeholder="Ej: 500.0000"
+                className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                  errors.tasa_bcv ? 'border-destructive' : 'border-input'
+                } ${tasaBcvFound ? 'bg-muted cursor-default' : 'bg-background'}`}
+              />
+              {errors.tasa_bcv && <p className="text-destructive text-xs mt-1">{errors.tasa_bcv}</p>}
+              {tasaBcvFound
+                ? <p className="text-xs text-green-600 dark:text-green-400 mt-1">✓ Tasa encontrada para esta fecha</p>
+                : <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">No hay tasa para esta fecha — ingrese manualmente</p>
+              }
+            </div>
+          </div>
+
           {/* Moneda switch */}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">
@@ -671,44 +704,17 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     {moneda === 'BS' ? '1.40 USD' : '$1.40'}
                   </strong>.
                 </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-muted-foreground mb-1">
-                      Tasa Interna / BCV <span className="text-destructive">*</span>
-                    </label>
-                    <input
-                      id="tasa-bcv"
-                      type="number"
-                      step="0.0001"
-                      min="0.0001"
-                      value={tasaBcv}
-                      onChange={(e) => !tasaBcvFound && setTasaBcv(e.target.value)}
-                      readOnly={tasaBcvFound}
-                      placeholder="Ej: 500.0000"
-                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
-                        errors.tasa_bcv ? 'border-destructive' : 'border-input'
-                      } ${tasaBcvFound ? 'bg-muted cursor-default' : 'bg-background'}`}
-                    />
-                    {errors.tasa_bcv && <p className="text-destructive text-xs mt-1">{errors.tasa_bcv}</p>}
-                    {tasaBcvFound
-                      ? <p className="text-xs text-green-600 dark:text-green-400 mt-1">✓ Tasa encontrada en el sistema para esta fecha</p>
-                      : <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">No hay tasa registrada para esta fecha — ingrese manualmente</p>
-                    }
-                  </div>
-                  <div className="flex items-end">
-                    <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2 w-full">
-                      <p className="font-medium mb-1">Costo contabilidad:</p>
-                      {moneda === 'BS'
-                        ? <p>Bs ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
-                        : <p>USD × {tasaNum > 0 ? tasaNum.toFixed(2) : '?'} ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
-                      }
-                      {tasaNum > 0 && tasaBcvNum > 0 && (
-                        <p className="mt-1 text-amber-700 dark:text-amber-400 font-medium">
-                          Factor: ×{(tasaNum / tasaBcvNum).toFixed(4)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
+                  <p className="font-medium mb-1">Costo contabilidad (usando tasa BCV arriba):</p>
+                  {moneda === 'BS'
+                    ? <p>Bs ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
+                    : <p>USD × {tasaNum > 0 ? tasaNum.toFixed(2) : '?'} ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
+                  }
+                  {tasaNum > 0 && tasaBcvNum > 0 && (
+                    <p className="mt-1 text-amber-700 dark:text-amber-400 font-medium">
+                      Factor: ×{(tasaNum / tasaBcvNum).toFixed(4)}
+                    </p>
+                  )}
                 </div>
               </div>
             )}

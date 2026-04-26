@@ -204,6 +204,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
                   value={tasaBcvStr}
                   onChange={(e) => setTasaBcvStr(e.target.value)}
                   placeholder="Ej: 50.0000"
+                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
             </div>
@@ -232,6 +233,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
               value={tasaPagoStr}
               onChange={(e) => setTasaPagoStr(e.target.value)}
               placeholder={tasaNegociacion > 0 ? tasaNegociacion.toFixed(4) : '0.0000'}
+              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
             {hayDiferencial && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
@@ -286,6 +288,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
               value={monto}
               onChange={(e) => setMonto(e.target.value)}
               placeholder="0.00"
+              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
             {montoNum > 0 && moneda === 'USD' && (
               <p className="text-xs text-muted-foreground">
