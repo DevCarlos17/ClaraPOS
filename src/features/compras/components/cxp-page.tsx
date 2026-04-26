@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Building2, ChevronRight, DollarSign, ChevronUp, ChevronDown, Printer, X } from 'lucide-react'
+import { Building2, ChevronRight, DollarSign, ChevronUp, ChevronDown, Printer, X, RotateCcw } from 'lucide-react'
 import {
   useProveedoresConDeuda,
   useFacturasCompraPendientes,
+  reversarAbonoCxP,
   type ProveedorConDeuda,
   type FacturaCompraPendiente,
 } from '../hooks/use-cxp'
@@ -18,6 +19,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import { toast } from 'sonner'
 
 // ─── Sort types ──────────────────────────────────────────────
 
@@ -36,17 +40,43 @@ interface CxpDetalleModalProps {
   open: boolean
   onClose: () => void
   factura: FacturaCompraPendiente | null
+  proveedorId: string
   proveedorNombre: string
   onPagar: (factura: FacturaCompraPendiente) => void
 }
 
-function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: CxpDetalleModalProps) {
+function CxpDetalleModal({ open, onClose, factura, proveedorId, proveedorNombre, onPagar }: CxpDetalleModalProps) {
   const { abonos, isLoading: loadingAbonos } = useAbonosCompra(factura?.id ?? '')
   const { detalle, isLoading: loadingDetalle } = useDetalleCompra(factura?.id ?? '')
   const { tasaValor } = useTasaActual()
   const [nuevaTasaStr, setNuevaTasaStr] = useState('')
+  const [confirmandoAbonoId, setConfirmandoAbonoId] = useState<string | null>(null)
+  const [reversandoAbonoId, setReversandoAbonoId] = useState<string | null>(null)
+  const { user } = useCurrentUser()
+  const { hasPermission } = usePermissions()
+  const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
 
   if (!factura) return null
+
+  async function handleReversarAbono(abonoId: string) {
+    if (!user?.empresa_id || !factura) return
+    setReversandoAbonoId(abonoId)
+    try {
+      await reversarAbonoCxP({
+        abonoId,
+        facturaCompraId: factura.id,
+        proveedorId,
+        empresaId: user.empresa_id,
+        usuarioId: user.id,
+      })
+      toast.success('Abono reversado exitosamente')
+      setConfirmandoAbonoId(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al reversar el abono')
+    } finally {
+      setReversandoAbonoId(null)
+    }
+  }
 
   const total = parseFloat(factura.total_usd)
   const saldo = parseFloat(factura.saldo_pend_usd)
@@ -186,6 +216,9 @@ function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: C
                     <th className="text-left px-3 py-2 font-medium text-muted-foreground">Tipo</th>
                     <th className="text-left px-3 py-2 font-medium text-muted-foreground">Ref.</th>
                     <th className="text-right px-3 py-2 font-medium text-muted-foreground">Monto</th>
+                    {puedeReversarAbono && (
+                      <th className="text-center px-3 py-2 font-medium text-muted-foreground">Accion</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -215,6 +248,42 @@ function CxpDetalleModal({ open, onClose, factura, proveedorNombre, onPagar }: C
                             </div>
                           )}
                         </td>
+                        {puedeReversarAbono && (
+                          <td className="px-3 py-1.5 text-center">
+                            {a.tipo === 'PAG' ? (
+                              confirmandoAbonoId === a.id ? (
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={reversandoAbonoId === a.id}
+                                    onClick={() => handleReversarAbono(a.id)}
+                                    className="px-2 py-0.5 text-[10px] font-medium text-white bg-destructive rounded hover:bg-destructive/90 disabled:opacity-50"
+                                  >
+                                    {reversandoAbonoId === a.id ? '...' : 'Confirmar'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmandoAbonoId(null)}
+                                    className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted rounded hover:bg-muted/80"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmandoAbonoId(a.id)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
+                                >
+                                  <RotateCcw className="h-2.5 w-2.5" />
+                                  Reversar
+                                </button>
+                              )
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground">—</span>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     )
                   })}
@@ -556,6 +625,7 @@ export function CxpPage() {
           setFacturaDetalle(null)
         }}
         factura={facturaDetalle}
+        proveedorId={proveedorSeleccionado?.id ?? ''}
         proveedorNombre={proveedorSeleccionado?.razon_social ?? ''}
         onPagar={handlePagar}
       />

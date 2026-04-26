@@ -8,6 +8,10 @@ import {
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { CompraDevolucionModal } from './compra-devolucion-modal'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import { reversarAbonoCxP } from '@/features/compras/hooks/use-cxp'
+import { toast } from 'sonner'
 
 interface CompraDetalleModalProps {
   compra: CompraConProveedor
@@ -19,6 +23,11 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
   const dialogRef = useRef<HTMLDialogElement>(null)
   const printRef = useRef<HTMLDivElement>(null)
   const [showDevolucion, setShowDevolucion] = useState(false)
+  const [reversandoAbonoId, setReversandoAbonoId] = useState<string | null>(null)
+  const [confirmandoAbonoId, setConfirmandoAbonoId] = useState<string | null>(null)
+  const { user } = useCurrentUser()
+  const { hasPermission } = usePermissions()
+  const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
   const { detalle, isLoading: loadingDetalle } = useDetalleCompra(compra.id)
   const { abonos, isLoading: loadingAbonos } = useAbonosCompra(
     compra.tipo === 'CREDITO' ? compra.id : ''
@@ -49,6 +58,26 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
   function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
     if (e.target === dialogRef.current) {
       onClose()
+    }
+  }
+
+  async function handleReversarAbono(abonoId: string) {
+    if (!user?.empresa_id) return
+    setReversandoAbonoId(abonoId)
+    try {
+      await reversarAbonoCxP({
+        abonoId,
+        facturaCompraId: compra.id,
+        proveedorId: compra.proveedor_id,
+        empresaId: user.empresa_id,
+        usuarioId: user.id,
+      })
+      toast.success('Abono reversado exitosamente')
+      setConfirmandoAbonoId(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al reversar el abono')
+    } finally {
+      setReversandoAbonoId(null)
     }
   }
 
@@ -322,6 +351,9 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Referencia</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase">Monto USD</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Observacion</th>
+                        {puedeReversarAbono && (
+                          <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground uppercase">Accion</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="bg-background divide-y divide-border">
@@ -331,6 +363,42 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                           <td className="px-3 py-2 text-sm font-mono text-foreground">{abono.referencia}</td>
                           <td className="px-3 py-2 text-sm text-right font-medium text-foreground">{formatUsd(abono.monto)}</td>
                           <td className="px-3 py-2 text-sm text-muted-foreground">{abono.observacion ?? '-'}</td>
+                          {puedeReversarAbono && (
+                            <td className="px-3 py-2 text-center">
+                              {abono.tipo === 'PAG' ? (
+                                confirmandoAbonoId === abono.id ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      disabled={reversandoAbonoId === abono.id}
+                                      onClick={() => handleReversarAbono(abono.id)}
+                                      className="px-2 py-0.5 text-[10px] font-medium text-white bg-destructive rounded hover:bg-destructive/90 disabled:opacity-50"
+                                    >
+                                      {reversandoAbonoId === abono.id ? '...' : 'Confirmar'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmandoAbonoId(null)}
+                                      className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted rounded hover:bg-muted/80"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmandoAbonoId(abono.id)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
+                                  >
+                                    <RotateCcw className="h-2.5 w-2.5" />
+                                    Reversar
+                                  </button>
+                                )
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground">—</span>
+                              )}
+                            </td>
+                          )}
                         </tr>
                       ))}
                     </tbody>

@@ -41,6 +41,14 @@ export interface AbonoProveedor {
   monto_usd_interno: string | null
 }
 
+export interface ReversarAbonoCxPParams {
+  abonoId: string
+  facturaCompraId: string
+  proveedorId: string
+  empresaId: string
+  usuarioId: string
+}
+
 export interface PagoCxPParams {
   factura_compra_id: string
   proveedor_id: string
@@ -238,5 +246,74 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
     } catch (err) {
       console.error('[CxP] Error en contabilidad al registrar pago:', err)
     }
+  })
+}
+
+/**
+ * Reversar un abono (PAG) de CxP.
+ * Restaura el saldo pendiente de la factura y crea un movimiento DEV.
+ * Si la factura estaba completamente pagada, reaparece en CxP con el nuevo saldo.
+ */
+export async function reversarAbonoCxP(params: ReversarAbonoCxPParams): Promise<void> {
+  const { abonoId, facturaCompraId, proveedorId, empresaId, usuarioId } = params
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // 1. Leer el abono a reversar
+    const abonoResult = await tx.execute(
+      'SELECT monto, tipo, referencia FROM movimientos_cuenta_proveedor WHERE id = ? AND empresa_id = ?',
+      [abonoId, empresaId]
+    )
+    if (!abonoResult.rows?.length) throw new Error('Abono no encontrado')
+    const abono = abonoResult.rows.item(0) as { monto: string; tipo: string; referencia: string }
+    if (abono.tipo !== 'PAG') throw new Error('Solo se pueden reversar movimientos de tipo PAG')
+    const montoAbono = parseFloat(abono.monto)
+
+    // 2. Leer factura
+    const facturaResult = await tx.execute(
+      'SELECT nro_factura, saldo_pend_usd, total_usd FROM facturas_compra WHERE id = ? AND empresa_id = ?',
+      [facturaCompraId, empresaId]
+    )
+    if (!facturaResult.rows?.length) throw new Error('Factura no encontrada')
+    const factura = facturaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; total_usd: string }
+    const saldoFactura = parseFloat(factura.saldo_pend_usd)
+    const totalUsd = parseFloat(factura.total_usd)
+
+    // 3. Saldo total del proveedor ANTES de modificar (para el movimiento)
+    const sumResult = await tx.execute(
+      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
+       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
+      [proveedorId, empresaId]
+    )
+    const saldoProvAnterior = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+
+    // 4. Nuevo saldo de la factura (no puede superar el total)
+    const nuevoSaldoFactura = Math.min(totalUsd, Number((saldoFactura + montoAbono).toFixed(2)))
+
+    // 5. Actualizar saldo de la factura
+    await tx.execute(
+      'UPDATE facturas_compra SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
+      [nuevoSaldoFactura.toFixed(2), now, facturaCompraId]
+    )
+
+    // 6. Crear movimiento DEV (la deuda aumenta = saldo proveedor sube)
+    const nuevoSaldoProv = Number((saldoProvAnterior + montoAbono).toFixed(2))
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta_proveedor
+         (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+          observacion, factura_compra_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'DEV', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresaId, proveedorId,
+        `DEV-${abono.referencia}`,
+        montoAbono.toFixed(2),
+        saldoProvAnterior.toFixed(2),
+        nuevoSaldoProv.toFixed(2),
+        `Reversa de abono ${abono.referencia} - Factura ${factura.nro_factura}`,
+        facturaCompraId,
+        now, now, usuarioId,
+      ]
+    )
   })
 }

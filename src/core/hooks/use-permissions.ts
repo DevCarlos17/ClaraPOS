@@ -21,6 +21,7 @@ export const PERMISSIONS = {
   PURCHASES_VIEW: 'compras.crear',
   ACCOUNTING_VIEW: 'contabilidad.gastos',
   CXC_REVERSE: 'cxc.reversar_abono',
+  CXP_REVERSE: 'cxp.reversar_abono',
 } as const
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]

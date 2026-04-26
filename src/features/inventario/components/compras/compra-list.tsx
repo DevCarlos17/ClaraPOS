@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Plus, Eye, Search, CalendarDays, RotateCcw } from 'lucide-react'
 import { useComprasPorFecha, type CompraConProveedor } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 import { CompraForm } from './compra-form'
 import { CompraDetalleModal } from './compra-detalle-modal'
 import { CompraReportes } from './compra-reportes'
@@ -176,7 +177,7 @@ export function CompraList() {
                   <tr key={compra.id} className="hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-3 font-mono text-sm text-foreground">{compra.nro_factura}</td>
                     <td className="px-4 py-3 text-sm text-muted-foreground">
-                      {new Date(compra.fecha_factura).toLocaleDateString('es-VE')}
+                      {formatDate(compra.fecha_factura)}
                     </td>
                     <td className="px-4 py-3 text-sm text-foreground">{compra.proveedor_nombre}</td>
                     <td className="px-4 py-3">
@@ -200,7 +201,15 @@ export function CompraList() {
                         <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-950 dark:text-red-300">
                           ANULADA
                         </span>
-                      ) : null}
+                      ) : compra.status === 'PROCESADA' ? (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-950 dark:text-blue-300">
+                          PROCESADA
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-muted text-muted-foreground ring-muted-foreground/20">
+                          {compra.status}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-right font-medium text-foreground">
                       {formatUsd(compra.total_usd)}
