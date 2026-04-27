@@ -162,18 +162,52 @@ function ResumenConfirm({
           </div>
         )}
         <div className="border-t border-border pt-2 mt-1">
-          <div className="flex justify-between font-medium">
-            <span>Total Factura:</span>
-            <span>{montoFactura.toFixed(2)} {monedaFactura}</span>
-          </div>
-          <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
-            <span>Total Contable USD:</span>
-            <span>{formatUsd(montoContableUsd)}</span>
-          </div>
-          <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
-            <span>Equivalente Bs (interno):</span>
-            <span>{formatBs(montoContableUsd * tasaInterna)}</span>
-          </div>
+          {monedaFactura === 'USD' && usaTasaParalela && tasaProveedor && tasaProveedor > 0 ? (
+            <>
+              <div className="flex justify-between font-medium">
+                <span>Total USD:</span>
+                <span>{formatUsd(montoFactura)}</span>
+              </div>
+              <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
+                <span>Equivalente Bs (tasa proveedor):</span>
+                <span>{formatBs(montoFactura * tasaProveedor)}</span>
+              </div>
+              <div className="flex justify-between text-muted-foreground/70 text-xs mt-0.5">
+                <span>Total Contable USD:</span>
+                <span>{formatUsd(montoContableUsd)}</span>
+              </div>
+            </>
+          ) : monedaFactura === 'BS' && usaTasaParalela && tasaProveedor && tasaProveedor > 0 ? (
+            <>
+              <div className="flex justify-between font-medium">
+                <span>Total Bs:</span>
+                <span>{formatBs(montoFactura)}</span>
+              </div>
+              <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
+                <span>Total USD (tasa proveedor):</span>
+                <span>{formatUsd(montoFactura / tasaProveedor)}</span>
+              </div>
+              <div className="flex justify-between text-muted-foreground/70 text-xs mt-0.5">
+                <span>Total USD (tasa interna):</span>
+                <span>{formatUsd(montoContableUsd)}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex justify-between font-medium">
+                <span>Total Factura:</span>
+                <span>{montoFactura.toFixed(2)} {monedaFactura}</span>
+              </div>
+              <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
+                <span>Total Contable USD:</span>
+                <span>{formatUsd(montoContableUsd)}</span>
+              </div>
+              <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
+                <span>Equivalente Bs (interno):</span>
+                <span>{formatBs(montoContableUsd * tasaInterna)}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -750,6 +784,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
                       min="0.0001"
                       value={tasaProveedor}
                       onChange={(e) => setTasaProveedor(e.target.value)}
+                      onWheel={(e) => (e.target as HTMLInputElement).blur()}
                       placeholder="0.0000"
                       className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
                         errors.tasa_proveedor ? 'border-destructive' : 'border-input'
@@ -786,6 +821,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
                     min="0.0001"
                     value={tasaInterna}
                     onChange={(e) => { setTasaInterna(e.target.value); setTasaInternaManual(true) }}
+                    onWheel={(e) => (e.target as HTMLInputElement).blur()}
                     placeholder="0.0000"
                     className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
                       errors.tasa ? 'border-destructive' : 'border-input'
@@ -806,6 +842,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
                   min="0.01"
                   value={montoFactura}
                   onChange={(e) => setMontoFactura(e.target.value)}
+                  onWheel={(e) => (e.target as HTMLInputElement).blur()}
                   placeholder={monedaFactura === 'USD' ? '0.00 USD' : '0.00 Bs'}
                   className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
                     errors.monto_factura ? 'border-destructive' : 'border-input'
@@ -819,25 +856,54 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
               {/* Total contable (calculado, solo visual) */}
               {montoContableUsd !== null && montoContableUsd > 0 && (
                 <div className="rounded-md bg-muted/60 border border-border px-4 py-2.5 space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Total Contable USD:</span>
-                    <span className="font-semibold text-muted-foreground tabular-nums">
-                      {formatUsd(montoContableUsd)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-xs text-muted-foreground/70">
-                    <span>Equivalente Bs (tasa interna):</span>
-                    <span className="tabular-nums">{formatBs(montoContableUsd * tasaInternaNum)}</span>
-                  </div>
-                  {monedaFactura === 'USD' && usaTasaParalela && tasaProveedorNum > 0 && (
-                    <p className="text-[10px] text-muted-foreground/60 pt-0.5">
-                      Cálculo: {montoFacturaNum.toFixed(2)} × {tasaProveedorNum.toFixed(4)} ÷ {tasaInternaNum.toFixed(4)}
-                    </p>
-                  )}
-                  {monedaFactura === 'BS' && tasaInternaNum > 0 && (
-                    <p className="text-[10px] text-muted-foreground/60 pt-0.5">
-                      Cálculo: {montoFacturaNum.toFixed(2)} Bs ÷ {tasaInternaNum.toFixed(4)}
-                    </p>
+                  {monedaFactura === 'USD' && usaTasaParalela && tasaProveedorNum > 0 ? (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total USD:</span>
+                        <span className="font-semibold tabular-nums">{formatUsd(montoFacturaNum)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground/70">
+                        <span>Equivalente Bs (tasa proveedor):</span>
+                        <span className="tabular-nums">{formatBs(montoFacturaNum * tasaProveedorNum)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground/60">
+                        <span>Total Contable USD:</span>
+                        <span className="tabular-nums">{formatUsd(montoContableUsd)}</span>
+                      </div>
+                    </>
+                  ) : monedaFactura === 'BS' && usaTasaParalela && tasaProveedorNum > 0 ? (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total Bs:</span>
+                        <span className="font-semibold tabular-nums">{formatBs(montoFacturaNum)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground/70">
+                        <span>Total USD (tasa proveedor):</span>
+                        <span className="tabular-nums">{formatUsd(montoFacturaNum / tasaProveedorNum)}</span>
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground/60">
+                        <span>Total USD (tasa interna):</span>
+                        <span className="tabular-nums">{formatUsd(montoContableUsd)}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Total Contable USD:</span>
+                        <span className="font-semibold text-muted-foreground tabular-nums">
+                          {formatUsd(montoContableUsd)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-xs text-muted-foreground/70">
+                        <span>Equivalente Bs (tasa interna):</span>
+                        <span className="tabular-nums">{formatBs(montoContableUsd * tasaInternaNum)}</span>
+                      </div>
+                      {monedaFactura === 'BS' && tasaInternaNum > 0 && (
+                        <p className="text-[10px] text-muted-foreground/60 pt-0.5">
+                          Cálculo: {montoFacturaNum.toFixed(2)} Bs ÷ {tasaInternaNum.toFixed(4)}
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -912,6 +978,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
                           min="0.01"
                           value={pago.monto}
                           onChange={(e) => actualizarPago(pago.id, 'monto', e.target.value)}
+                          onWheel={(e) => (e.target as HTMLInputElement).blur()}
                           placeholder={`Monto ${pago.moneda}`}
                           className={`w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner}`}
                         />
