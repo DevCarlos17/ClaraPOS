@@ -3,10 +3,20 @@ import { z } from 'zod'
 export const gastoPagoSchema = z.object({
   metodo_cobro_id: z.string().min(1, 'El metodo de pago es requerido'),
   banco_empresa_id: z.string().optional(),
-  monto_usd: z
-    .number({ message: 'El monto es requerido' })
+  moneda: z.enum(['USD', 'BS']).default('USD'),
+  monto_moneda: z
+    .number({ message: 'El monto en moneda original es requerido' })
     .positive('Debe ser mayor a 0'),
-  referencia: z.string().optional().default(''),
+  tasa_pago: z
+    .number({ message: 'La tasa de pago es requerida' })
+    .positive('Debe ser mayor a 0'),
+  monto_usd: z
+    .number({ message: 'El monto USD es requerido' })
+    .positive('Debe ser mayor a 0'),
+  monto_usd_interno: z
+    .number({ message: 'El monto USD interno es requerido' })
+    .positive('Debe ser mayor a 0'),
+  referencia: z.string().optional(),
 })
 
 export type GastoPagoValues = z.infer<typeof gastoPagoSchema>

@@ -2,7 +2,12 @@ import { useRef, useState } from 'react'
 import { X, RotateCcw } from 'lucide-react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
-import { anularGasto, type Gasto } from '@/features/contabilidad/hooks/use-gastos'
+import {
+  anularGasto,
+  useAbonosGasto,
+  reversarPagoGasto,
+  type Gasto,
+} from '@/features/contabilidad/hooks/use-gastos'
 import { formatDate } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -36,20 +41,27 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
   const { hasPermission } = usePermissions()
   const [anulando, setAnulando] = useState(false)
   const [confirmandoAnular, setConfirmandoAnular] = useState(false)
+  const [confirmandoAbonoId, setConfirmandoAbonoId] = useState<string | null>(null)
+  const [reversandoAbonoId, setReversandoAbonoId] = useState<string | null>(null)
 
   const puedeAnular = hasPermission(PERMISSIONS.ACCOUNTING_VIEW)
+  const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
 
+  // Abonos desde movimientos_cuenta_proveedor (nueva via, con dual-rate)
+  const { abonos, isLoading: loadingAbonos } = useAbonosGasto(gasto?.id ?? '')
+
+  // Fallback: gasto_pagos (para gastos creados antes de este update)
   const { data: pagosData } = useQuery(
-    gasto?.id
+    gasto?.id && abonos.length === 0
       ? `SELECT gp.*, mc.nombre as metodo_nombre
          FROM gasto_pagos gp
          LEFT JOIN metodos_cobro mc ON gp.metodo_cobro_id = mc.id
          WHERE gp.gasto_id = ?
          ORDER BY gp.created_at ASC`
       : '',
-    gasto?.id ? [gasto.id] : []
+    gasto?.id && abonos.length === 0 ? [gasto.id] : []
   )
-  const pagos = (pagosData ?? []) as GastoPagoRow[]
+  const pagosLegacy = (pagosData ?? []) as GastoPagoRow[]
 
   if (isOpen && dialogRef.current && !dialogRef.current.open) {
     dialogRef.current.showModal()
@@ -77,12 +89,35 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
     }
   }
 
+  async function handleReversarAbono(abonoId: string) {
+    if (!gasto?.proveedor_id || !user?.empresa_id) return
+    setReversandoAbonoId(abonoId)
+    try {
+      await reversarPagoGasto({
+        abonoId,
+        gastoId: gasto.id,
+        proveedorId: gasto.proveedor_id,
+        empresaId: user.empresa_id,
+        usuarioId: user.id,
+      })
+      toast.success('Abono reversado exitosamente')
+      setConfirmandoAbonoId(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al reversar el abono')
+    } finally {
+      setReversandoAbonoId(null)
+    }
+  }
+
   if (!gasto) return null
 
   const tasa = parseFloat(gasto.tasa)
+  const tasaProveedor = gasto.tasa_proveedor ? parseFloat(gasto.tasa_proveedor) : null
   const montoUsd = parseFloat(gasto.monto_usd)
   const montoBs = parseFloat(gasto.monto_bs)
+  const saldoPendiente = parseFloat(gasto.saldo_pendiente_usd)
   const esAnulado = gasto.status === 'ANULADO'
+  const tieneProveedor = Boolean(gasto.proveedor_id)
 
   return (
     <dialog
@@ -166,6 +201,12 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
               <span className="text-muted-foreground min-w-[90px]">Tasa:</span>
               <span>{tasa.toFixed(4)} Bs/USD</span>
             </div>
+            {tasaProveedor && gasto.usa_tasa_paralela === 1 && (
+              <div className="flex gap-1">
+                <span className="text-muted-foreground min-w-[90px]">T. Proveedor:</span>
+                <span>{tasaProveedor.toFixed(4)} Bs/USD</span>
+              </div>
+            )}
             <div className="flex gap-1">
               <span className="text-muted-foreground min-w-[90px]">Status:</span>
               <span className={`font-medium ${esAnulado ? 'text-destructive' : 'text-green-600'}`}>
@@ -182,18 +223,122 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
         {/* Totales */}
         <div className="rounded-lg border border-border bg-muted/30 p-4 mb-4 space-y-1.5">
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Monto USD:</span>
+            <span className="text-muted-foreground">Monto USD (contable):</span>
             <span className="font-bold text-foreground">{formatUsd(montoUsd)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">Monto Bs:</span>
             <span className="font-medium text-muted-foreground">{formatBs(montoBs)}</span>
           </div>
+          {saldoPendiente > 0.005 && (
+            <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
+              <span className="text-muted-foreground">Saldo Pendiente:</span>
+              <span className="font-medium text-amber-600">{formatUsd(saldoPendiente)}</span>
+            </div>
+          )}
         </div>
 
-        {/* Pagos */}
-        {pagos.length > 0 && (
-          <div>
+        {/* Historial de abonos — desde movimientos_cuenta_proveedor */}
+        {tieneProveedor && (
+          <div className="mb-4">
+            <h3 className="text-sm font-semibold text-foreground mb-2">Historial de Pagos</h3>
+            {loadingAbonos ? (
+              <p className="text-sm text-muted-foreground py-2">Cargando...</p>
+            ) : abonos.length > 0 ? (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Fecha</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Tipo</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Ref.</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Monto</th>
+                      {puedeReversarAbono && (
+                        <th className="text-center px-3 py-2 font-medium text-muted-foreground">Accion</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {abonos.map((a) => {
+                      const esBs = a.moneda_pago === 'BS' && a.monto_moneda && a.tasa_pago
+                      return (
+                        <tr key={a.id}>
+                          <td className="px-3 py-1.5 text-muted-foreground">
+                            {a.fecha?.slice(0, 10)}
+                          </td>
+                          <td className="px-3 py-1.5">
+                            <span className={`font-medium ${a.tipo === 'PAG' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                              {a.tipo}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 font-mono text-muted-foreground">
+                            {a.referencia ?? '—'}
+                          </td>
+                          <td className="px-3 py-1.5 text-right">
+                            <div className="font-medium tabular-nums">
+                              {a.tipo === 'PAG' ? '' : '-'}{formatUsd(parseFloat(a.monto))}
+                            </div>
+                            {esBs && (
+                              <div className="text-muted-foreground text-[10px] leading-tight">
+                                {formatBs(parseFloat(a.monto_moneda!))} @ {parseFloat(a.tasa_pago!).toFixed(2)}
+                                {a.monto_usd_interno &&
+                                  Math.abs(parseFloat(a.monto_usd_interno) - parseFloat(a.monto)) > 0.005 && (
+                                    <span className="text-slate-400 ml-1">
+                                      / {formatUsd(parseFloat(a.monto_usd_interno))} int.
+                                    </span>
+                                  )}
+                              </div>
+                            )}
+                          </td>
+                          {puedeReversarAbono && (
+                            <td className="px-3 py-1.5 text-center">
+                              {a.tipo === 'PAG' ? (
+                                confirmandoAbonoId === a.id ? (
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      type="button"
+                                      disabled={reversandoAbonoId === a.id}
+                                      onClick={() => handleReversarAbono(a.id)}
+                                      className="px-2 py-0.5 text-[10px] font-medium text-white bg-destructive rounded hover:bg-destructive/90 disabled:opacity-50"
+                                    >
+                                      {reversandoAbonoId === a.id ? '...' : 'Confirmar'}
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmandoAbonoId(null)}
+                                      className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted rounded hover:bg-muted/80"
+                                    >
+                                      Cancelar
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmandoAbonoId(a.id)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
+                                  >
+                                    <RotateCcw className="h-2.5 w-2.5" />
+                                    Reversar
+                                  </button>
+                                )
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground">—</span>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {/* Fallback: gasto_pagos legacy (sin proveedor o sin movimientos nuevos) */}
+        {(!tieneProveedor || abonos.length === 0) && pagosLegacy.length > 0 && (
+          <div className="mb-4">
             <h3 className="text-sm font-semibold text-foreground mb-2">Detalle de Pagos</h3>
             <div className="rounded-lg border border-border overflow-hidden">
               <table className="w-full text-xs">
@@ -205,7 +350,7 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {pagos.map((p) => (
+                  {pagosLegacy.map((p) => (
                     <tr key={p.id}>
                       <td className="px-3 py-2">{p.metodo_nombre ?? '—'}</td>
                       <td className="px-3 py-2 text-right tabular-nums font-medium">

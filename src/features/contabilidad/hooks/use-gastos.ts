@@ -40,7 +40,11 @@ export interface Gasto {
 export interface GastoPago {
   metodo_cobro_id: string
   banco_empresa_id?: string
-  monto_usd: number
+  moneda: 'USD' | 'BS'
+  monto_moneda: number       // monto en moneda original
+  tasa_pago: number          // tasa usada (proveedor para BS paralela, interna para BS sin paralela)
+  monto_usd: number          // USD a tasa proveedor (para saldo_pendiente)
+  monto_usd_interno: number  // USD a tasa interna (para contabilidad)
   referencia?: string
 }
 
@@ -149,9 +153,20 @@ export async function crearGasto(data: {
     // Calcular monto en Bs a partir del total contable USD y la tasa interna
     const montoBs = Number((data.monto_usd * data.tasa).toFixed(2))
 
-    // Saldo pendiente = total contable - sum de abonos registrados ahora
-    const totalAbonado = data.pagos.reduce((s, p) => s + p.monto_usd, 0)
-    const saldoPendiente = Number(Math.max(0, data.monto_usd - totalAbonado).toFixed(2))
+    // Monto desde la perspectiva del proveedor en USD:
+    // - Factura USD: el valor nominal de la factura
+    // - Factura BS: BS / tasa_proveedor (o tasa_interna si no usa paralela)
+    const montoProveedorUsd = (() => {
+      if (data.moneda_factura === 'USD') return data.monto_factura
+      const tasaRef = data.usa_tasa_paralela && data.tasa_proveedor
+        ? data.tasa_proveedor
+        : data.tasa
+      return tasaRef > 0 ? Number((data.monto_factura / tasaRef).toFixed(2)) : data.monto_usd
+    })()
+
+    // Saldo pendiente = perspectiva proveedor - sum de abonos al tipo proveedor
+    const totalAbonadoProveedorUsd = data.pagos.reduce((s, p) => s + p.monto_usd, 0)
+    const saldoPendiente = Number(Math.max(0, montoProveedorUsd - totalAbonadoProveedorUsd).toFixed(2))
 
     // Generar nro_gasto secuencial por empresa (formato GTO-XXXX)
     const countResult = await tx.execute(
@@ -205,7 +220,7 @@ export async function crearGasto(data: {
       ]
     )
 
-    // Insertar filas en gasto_pagos para cada pago
+    // Insertar filas en gasto_pagos para cada pago (backward compat)
     for (const pago of data.pagos) {
       const pagoId = uuidv4()
       await tx.execute(
@@ -224,6 +239,55 @@ export async function crearGasto(data: {
           now,
         ]
       )
+    }
+
+    // Crear movimientos_cuenta_proveedor para pagos iniciales cuando hay proveedor
+    if (data.proveedor_id && data.pagos.length > 0) {
+      try {
+        // Saldo del proveedor DESPUES de insertar el gasto (ya incluye saldo_pendiente reducido)
+        const sumResult = await tx.execute(
+          `SELECT
+             COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+             + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+             as saldo`,
+          [data.proveedor_id, data.empresa_id, data.proveedor_id, data.empresa_id]
+        )
+        const saldoPostGasto = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+        // Reconstruir el saldo ANTES de los abonos: saldoPostGasto ya tiene saldo_pendiente reducido
+        // saldoAntes = saldoPostGasto + totalAbonado (restauramos los pagos para el audit trail)
+        let saldoRunning = Number((saldoPostGasto + totalAbonadoProveedorUsd).toFixed(2))
+
+        for (const pago of data.pagos) {
+          const saldoAntes = saldoRunning
+          const nuevoSaldo = Math.max(0, Number((saldoRunning - pago.monto_usd).toFixed(2)))
+          saldoRunning = nuevoSaldo
+
+          await tx.execute(
+            `INSERT INTO movimientos_cuenta_proveedor
+               (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+                observacion, factura_compra_id, doc_origen_id, doc_origen_tipo,
+                moneda_pago, monto_moneda, tasa_pago, monto_usd_interno,
+                fecha, created_at, created_by)
+             VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, NULL, ?, 'GASTO', ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(), data.empresa_id, data.proveedor_id,
+              `PAG-${nroGasto}`,
+              pago.monto_usd.toFixed(2),
+              saldoAntes.toFixed(2),
+              nuevoSaldo.toFixed(2),
+              `Pago inicial gasto ${nroGasto}`,
+              gastoId,
+              pago.moneda,
+              pago.monto_moneda.toFixed(2),
+              pago.tasa_pago.toFixed(4),
+              pago.monto_usd_interno.toFixed(2),
+              now, now, data.created_by ?? null,
+            ]
+          )
+        }
+      } catch {
+        // No bloquear el gasto si falla la creacion de movimientos de proveedor
+      }
     }
 
     // Crear movimientos bancarios para pagos con cuenta bancaria
@@ -265,12 +329,14 @@ export async function crearGasto(data: {
         monto_usd: data.monto_usd,
         pagos: data.pagos.map((p) => ({
           monto_usd: p.monto_usd,
+          monto_usd_interno: p.monto_usd_interno,
           banco_empresa_id: p.banco_empresa_id ?? null,
         })),
         cuentas,
         usuarioId: data.created_by ?? '',
         monedaContable,
         tasa: data.tasa,
+        saldoPendienteProveedorUsd: saldoPendiente,
       })
     } catch {
       // Si falla la contabilidad no bloqueamos el gasto

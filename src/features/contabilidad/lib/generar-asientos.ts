@@ -220,8 +220,10 @@ export async function generarAsientosVenta(
 }
 
 /**
- * Asientos para un gasto con soporte de pagos multiples.
+ * Asientos para un gasto con soporte de pagos multiples y diferencial cambiario.
  * Genera un DEBE por la cuenta de gasto y multiples HABER (uno por pago).
+ * Si el gasto esta completamente pagado y hay diferencia entre monto_usd_interno
+ * y monto_usd, genera una linea de diferencial cambiario.
  */
 export async function generarAsientosGasto(
   tx: WriteTx,
@@ -231,27 +233,43 @@ export async function generarAsientosGasto(
     nroGasto: string
     cuentaGastoId: string
     monto_usd: number
-    pagos: Array<{ monto_usd: number; banco_empresa_id: string | null }>
+    pagos: Array<{
+      monto_usd: number
+      monto_usd_interno?: number  // USD a tasa interna; si omitido = monto_usd
+      banco_empresa_id: string | null
+    }>
     cuentas: Record<string, string>
     usuarioId: string
     monedaContable?: MonedaContable
     tasa?: number
+    /** Saldo pendiente en perspectiva proveedor. Si 0 y hay diferencial, se agrega linea cambiaria. */
+    saldoPendienteProveedorUsd?: number
   }
 ): Promise<string[]> {
-  const { empresaId, gastoId, nroGasto, cuentaGastoId, monto_usd, pagos, cuentas, usuarioId, monedaContable = 'USD', tasa = 1 } = params
+  const {
+    empresaId, gastoId, nroGasto, cuentaGastoId, monto_usd, pagos,
+    cuentas, usuarioId, monedaContable = 'USD', tasa = 1,
+    saldoPendienteProveedorUsd,
+  } = params
 
   if (monto_usd <= 0) return []
+
+  const debeContable = montoContable(monto_usd, tasa, monedaContable)
 
   const lineas: LineaAsiento[] = [
     {
       cuenta_contable_id: cuentaGastoId,
-      monto: montoContable(monto_usd, tasa, monedaContable),
+      monto: debeContable,
       detalle: `Gasto ${nroGasto}`,
     },
   ]
 
+  let totalInternoUsd = 0
   for (const pago of pagos) {
-    if (pago.monto_usd <= 0) continue
+    const internoUsd = pago.monto_usd_interno ?? pago.monto_usd
+    if (internoUsd <= 0) continue
+    totalInternoUsd += internoUsd
+
     const cuentaBanco = pago.banco_empresa_id
       ? (await getCuentaBanco(tx, pago.banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
       : cuentas['CAJA_EFECTIVO']
@@ -259,9 +277,37 @@ export async function generarAsientosGasto(
     lineas.push({
       cuenta_contable_id: cuentaBanco ?? cuentaGastoId,
       banco_empresa_id: pago.banco_empresa_id,
-      monto: -montoContable(pago.monto_usd, tasa, monedaContable),
+      monto: -montoContable(internoUsd, tasa, monedaContable),
       detalle: `Pago gasto ${nroGasto}`,
     })
+  }
+
+  // Diferencial cambiario: solo cuando el gasto esta completamente pagado
+  // y existe diferencia entre el total contable y lo pagado internamente.
+  const esCompletamentePagado = (saldoPendienteProveedorUsd ?? 1) < 0.01
+  const diffUsd = monto_usd - totalInternoUsd
+  if (esCompletamentePagado && Math.abs(diffUsd) > 0.01) {
+    if (diffUsd > 0) {
+      // Ganancia: pagaron menos (en terminos internos) de lo que se contabilizo
+      const cuentaGanancia = cuentas['GANANCIA_DIFERENCIAL_CAMBIARIO']
+      if (cuentaGanancia) {
+        lineas.push({
+          cuenta_contable_id: cuentaGanancia,
+          monto: -montoContable(diffUsd, tasa, monedaContable),
+          detalle: `Diferencial cambiario gasto ${nroGasto}`,
+        })
+      }
+    } else {
+      // Perdida: pagaron mas (en terminos internos) de lo que se contabilizo
+      const cuentaPerdida = cuentas['PERDIDA_DIFERENCIAL_CAMBIARIO']
+      if (cuentaPerdida) {
+        lineas.push({
+          cuenta_contable_id: cuentaPerdida,
+          monto: montoContable(-diffUsd, tasa, monedaContable),
+          detalle: `Diferencial cambiario gasto ${nroGasto}`,
+        })
+      }
+    }
   }
 
   return generarAsientos(tx, {
