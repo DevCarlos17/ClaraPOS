@@ -206,7 +206,8 @@ export async function crearGrupoGastoConSubcuentas(params: {
   subcuentas: string[]
   empresaId: string
   userId: string
-}): Promise<void> {
+}): Promise<{ grupoId: string }> {
+  const grupoId = uuidv4()
   await db.writeTransaction(async (tx) => {
     const now = localNow()
 
@@ -217,7 +218,6 @@ export async function crearGrupoGastoConSubcuentas(params: {
     )
     const cnt = Number((cntResult.rows?.item(0) as { cnt: number } | undefined)?.cnt ?? 0)
     const codigoGrupo = `6.${cnt + 1}`
-    const grupoId = uuidv4()
 
     await tx.execute(
       `INSERT INTO plan_cuentas
@@ -237,6 +237,7 @@ export async function crearGrupoGastoConSubcuentas(params: {
       )
     }
   })
+  return { grupoId }
 }
 
 /**

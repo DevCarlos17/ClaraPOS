@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Building2, ChevronRight, DollarSign, ChevronUp, ChevronDown, Printer, X, RotateCcw } from 'lucide-react'
+import { Building2, ChevronRight, DollarSign, ChevronUp, ChevronDown, Printer, X, RotateCcw, Receipt } from 'lucide-react'
 import {
   useProveedoresConDeuda,
   useFacturasCompraPendientes,
@@ -8,7 +8,14 @@ import {
   type FacturaCompraPendiente,
 } from '../hooks/use-cxp'
 import { useAbonosCompra, useDetalleCompra } from '@/features/inventario/hooks/use-compras'
+import {
+  useGastosPendientesProveedor,
+  useAbonosGasto,
+  reversarPagoGasto,
+  type GastoPendiente,
+} from '@/features/contabilidad/hooks/use-gastos'
 import { PagoCxPModal } from './pago-cxp-modal'
+import { PagoGastoCxpModal } from './pago-gasto-cxp-modal'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { Badge } from '@/components/ui/badge'
@@ -382,6 +389,198 @@ function printReporteProveedor(
   }
 }
 
+// ─── Gasto Detalle Modal ──────────────────────────────────────
+
+interface GastoDetalleModalProps {
+  open: boolean
+  onClose: () => void
+  gasto: GastoPendiente | null
+  proveedorId: string
+  proveedorNombre: string
+  onPagar: (gasto: GastoPendiente) => void
+}
+
+function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre, onPagar }: GastoDetalleModalProps) {
+  const { abonos, isLoading: loadingAbonos } = useAbonosGasto(gasto?.id ?? '')
+  const [confirmandoAbonoId, setConfirmandoAbonoId] = useState<string | null>(null)
+  const [reversandoAbonoId, setReversandoAbonoId] = useState<string | null>(null)
+  const { user } = useCurrentUser()
+  const { hasPermission } = usePermissions()
+  const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
+
+  if (!gasto) return null
+
+  const total = parseFloat(gasto.monto_usd)
+  const saldo = parseFloat(gasto.saldo_pendiente_usd)
+  const abonado = total - saldo
+
+  async function handleReversarAbono(abonoId: string) {
+    if (!user?.empresa_id || !gasto) return
+    setReversandoAbonoId(abonoId)
+    try {
+      await reversarPagoGasto({
+        abonoId,
+        gastoId: gasto.id,
+        proveedorId,
+        empresaId: user.empresa_id,
+        usuarioId: user.id,
+      })
+      toast.success('Abono reversado exitosamente')
+      setConfirmandoAbonoId(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al reversar el abono')
+    } finally {
+      setReversandoAbonoId(null)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
+      <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Detalle Gasto</DialogTitle>
+        </DialogHeader>
+
+        <div className="rounded-lg bg-muted/50 p-3 space-y-2 text-sm">
+          <div className="font-semibold text-base">{proveedorNombre}</div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <div className="text-muted-foreground">Nro. Gasto</div>
+            <div className="font-mono font-medium">{gasto.nro_gasto}</div>
+            {gasto.nro_factura && (
+              <>
+                <div className="text-muted-foreground">Nro. Factura</div>
+                <div className="font-mono">{gasto.nro_factura}</div>
+              </>
+            )}
+            <div className="text-muted-foreground">Fecha</div>
+            <div>{gasto.fecha?.slice(0, 10)}</div>
+            {gasto.cuenta_nombre && (
+              <>
+                <div className="text-muted-foreground">Cuenta</div>
+                <div className="text-xs">{gasto.cuenta_nombre}</div>
+              </>
+            )}
+            <div className="text-muted-foreground">Descripcion</div>
+            <div className="text-xs">{gasto.descripcion}</div>
+            <div className="text-muted-foreground">Total Contable</div>
+            <div className="font-semibold">{formatUsd(total)}</div>
+            <div className="text-muted-foreground">Abonado</div>
+            <div className="text-green-600 font-medium">{formatUsd(abonado)}</div>
+            <div className="text-muted-foreground">Saldo Pendiente</div>
+            <div className="text-destructive font-bold">{formatUsd(saldo)}</div>
+          </div>
+        </div>
+
+        <div>
+          <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+            Historial de Pagos
+          </h4>
+          {loadingAbonos ? (
+            <p className="text-sm text-muted-foreground py-2">Cargando...</p>
+          ) : abonos.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">Sin pagos registrados</p>
+          ) : (
+            <div className="overflow-auto rounded-md border max-h-44">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Fecha</th>
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Tipo</th>
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">Ref.</th>
+                    <th className="text-right px-3 py-2 font-medium text-muted-foreground">Monto</th>
+                    {puedeReversarAbono && (
+                      <th className="text-center px-3 py-2 font-medium text-muted-foreground">Accion</th>
+                    )}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {abonos.map((a) => {
+                    const esBs = a.moneda_pago === 'BS' && a.monto_moneda && a.tasa_pago
+                    return (
+                      <tr key={a.id}>
+                        <td className="px-3 py-1.5 text-muted-foreground">{a.fecha?.slice(0, 10)}</td>
+                        <td className="px-3 py-1.5">
+                          <span className={`font-medium ${a.tipo === 'PAG' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                            {a.tipo}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 font-mono text-muted-foreground">{a.referencia ?? '-'}</td>
+                        <td className="px-3 py-1.5 text-right">
+                          <div className="font-medium">
+                            {a.tipo === 'PAG' ? '+' : ''}{formatUsd(parseFloat(a.monto))}
+                          </div>
+                          {esBs && (
+                            <div className="text-muted-foreground text-[10px] leading-tight">
+                              {formatBs(parseFloat(a.monto_moneda!))} a {parseFloat(a.tasa_pago!).toFixed(2)}
+                              {a.monto_usd_interno && Math.abs(parseFloat(a.monto_usd_interno) - parseFloat(a.monto)) > 0.005 && (
+                                <span className="text-slate-400 ml-1">
+                                  / {formatUsd(parseFloat(a.monto_usd_interno))} int.
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        {puedeReversarAbono && (
+                          <td className="px-3 py-1.5 text-center">
+                            {a.tipo === 'PAG' ? (
+                              confirmandoAbonoId === a.id ? (
+                                <div className="flex items-center justify-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={reversandoAbonoId === a.id}
+                                    onClick={() => handleReversarAbono(a.id)}
+                                    className="px-2 py-0.5 text-[10px] font-medium text-white bg-destructive rounded hover:bg-destructive/90 disabled:opacity-50"
+                                  >
+                                    {reversandoAbonoId === a.id ? '...' : 'Confirmar'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmandoAbonoId(null)}
+                                    className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted rounded hover:bg-muted/80"
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmandoAbonoId(a.id)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
+                                >
+                                  <RotateCcw className="h-2.5 w-2.5" />
+                                  Reversar
+                                </button>
+                              )
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground">—</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-2 border-t">
+          <Button variant="outline" onClick={onClose}>
+            <X className="h-4 w-4 mr-1" />
+            Cerrar
+          </Button>
+          {saldo > 0.01 && (
+            <Button onClick={() => { onClose(); onPagar(gasto) }}>
+              Registrar Pago
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // ─── Main page ────────────────────────────────────────────────
 
 export function CxpPage() {
@@ -392,11 +591,21 @@ export function CxpPage() {
   const [detalleOpen, setDetalleOpen] = useState(false)
   const [facturaDetalle, setFacturaDetalle] = useState<FacturaCompraPendiente | null>(null)
 
+  // Gastos pendientes
+  const [gastoSeleccionado, setGastoSeleccionado] = useState<GastoPendiente | null>(null)
+  const [pagoGastoOpen, setPagoGastoOpen] = useState(false)
+  const [detalleGastoOpen, setDetalleGastoOpen] = useState(false)
+  const [gastoDetalle, setGastoDetalle] = useState<GastoPendiente | null>(null)
+
   // Sort state for facturas table
   const [sortKey, setSortKey] = useState<SortKey>('fecha_factura')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   const { facturas, isLoading: loadingFacturas } = useFacturasCompraPendientes(
+    proveedorSeleccionado?.id ?? null
+  )
+
+  const { gastosPendientes, isLoading: loadingGastos } = useGastosPendientesProveedor(
     proveedorSeleccionado?.id ?? null
   )
 
@@ -425,6 +634,16 @@ export function CxpPage() {
   function handleVerDetalle(factura: FacturaCompraPendiente) {
     setFacturaDetalle(factura)
     setDetalleOpen(true)
+  }
+
+  function handlePagarGasto(gasto: GastoPendiente) {
+    setGastoSeleccionado(gasto)
+    setPagoGastoOpen(true)
+  }
+
+  function handleVerDetalleGasto(gasto: GastoPendiente) {
+    setGastoDetalle(gasto)
+    setDetalleGastoOpen(true)
   }
 
   if (isLoading) {
@@ -478,7 +697,7 @@ export function CxpPage() {
                 </div>
                 <div className="mt-1">
                   <Badge variant="outline" className="text-xs">
-                    {proveedor.facturas_pendientes} factura(s) pendiente(s)
+                    {proveedor.facturas_pendientes} documento(s) pendiente(s)
                   </Badge>
                 </div>
               </button>
@@ -523,8 +742,8 @@ export function CxpPage() {
                 Cargando facturas...
               </div>
             ) : facturas.length === 0 ? (
-              <div className="py-8 text-center text-muted-foreground text-sm border border-dashed rounded-lg">
-                No hay facturas pendientes
+              <div className="py-6 text-center text-muted-foreground text-sm border border-dashed rounded-lg">
+                No hay facturas de compra pendientes
               </div>
             ) : (
               <div className="overflow-auto rounded-lg border">
@@ -601,11 +820,84 @@ export function CxpPage() {
                 </table>
               </div>
             )}
+
+            {/* Gastos pendientes del proveedor */}
+            {(loadingGastos || gastosPendientes.length > 0) && (
+              <div className="mt-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <Receipt className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+                    Gastos Pendientes
+                  </h3>
+                </div>
+                {loadingGastos ? (
+                  <div className="py-4 text-center text-muted-foreground text-sm">
+                    Cargando gastos...
+                  </div>
+                ) : (
+                  <div className="overflow-auto rounded-lg border">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/50">
+                        <tr>
+                          <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Gasto</th>
+                          <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Descripcion</th>
+                          <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Fecha</th>
+                          <th className="text-right px-4 py-3 font-semibold text-muted-foreground">Total</th>
+                          <th className="text-right px-4 py-3 font-semibold text-muted-foreground">Pendiente</th>
+                          <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Accion</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {gastosPendientes.map((gasto) => (
+                          <tr
+                            key={gasto.id}
+                            onClick={() => handleVerDetalleGasto(gasto)}
+                            className="hover:bg-muted/30 cursor-pointer transition-colors"
+                          >
+                            <td className="px-4 py-3 font-mono text-xs">
+                              <div>{gasto.nro_gasto}</div>
+                              {gasto.nro_factura && (
+                                <div className="text-muted-foreground text-[10px]">{gasto.nro_factura}</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 max-w-[180px]">
+                              <div className="truncate text-xs">{gasto.descripcion}</div>
+                              {gasto.cuenta_nombre && (
+                                <div className="text-muted-foreground text-[10px] truncate">{gasto.cuenta_nombre}</div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground">
+                              {gasto.fecha?.slice(0, 10)}
+                            </td>
+                            <td className="px-4 py-3 text-right tabular-nums">
+                              {formatUsd(parseFloat(gasto.monto_usd))}
+                            </td>
+                            <td className="px-4 py-3 text-right tabular-nums font-semibold text-destructive">
+                              {formatUsd(parseFloat(gasto.saldo_pendiente_usd))}
+                            </td>
+                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handlePagarGasto(gasto)}
+                                className="text-xs"
+                              >
+                                Pagar
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
 
-      {/* Pago modal */}
+      {/* Pago factura compra modal */}
       <PagoCxPModal
         open={modalOpen}
         onClose={() => {
@@ -617,7 +909,7 @@ export function CxpPage() {
         proveedorNombre={proveedorSeleccionado?.razon_social ?? ''}
       />
 
-      {/* Detalle modal */}
+      {/* Detalle factura compra modal */}
       <CxpDetalleModal
         open={detalleOpen}
         onClose={() => {
@@ -628,6 +920,31 @@ export function CxpPage() {
         proveedorId={proveedorSeleccionado?.id ?? ''}
         proveedorNombre={proveedorSeleccionado?.razon_social ?? ''}
         onPagar={handlePagar}
+      />
+
+      {/* Pago gasto modal */}
+      <PagoGastoCxpModal
+        open={pagoGastoOpen}
+        onClose={() => {
+          setPagoGastoOpen(false)
+          setGastoSeleccionado(null)
+        }}
+        gasto={gastoSeleccionado}
+        proveedorId={proveedorSeleccionado?.id ?? ''}
+        proveedorNombre={proveedorSeleccionado?.razon_social ?? ''}
+      />
+
+      {/* Detalle gasto modal */}
+      <GastoDetalleModal
+        open={detalleGastoOpen}
+        onClose={() => {
+          setDetalleGastoOpen(false)
+          setGastoDetalle(null)
+        }}
+        gasto={gastoDetalle}
+        proveedorId={proveedorSeleccionado?.id ?? ''}
+        proveedorNombre={proveedorSeleccionado?.razon_social ?? ''}
+        onPagar={handlePagarGasto}
       />
     </div>
   )

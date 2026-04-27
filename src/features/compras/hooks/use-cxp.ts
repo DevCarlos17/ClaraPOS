@@ -72,20 +72,27 @@ export function useProveedoresConDeuda() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    // Calcular saldo desde facturas_compra directamente.
+    // Incluye tanto facturas_compra como gastos con saldo pendiente.
     // Evita dependencia del trigger PostgreSQL que no corre en SQLite local.
     `SELECT p.id, p.rif, p.razon_social,
-       SUM(CAST(fc.saldo_pend_usd AS REAL)) as saldo_actual,
-       COUNT(fc.id) as facturas_pendientes
+       COALESCE(SUM(CAST(d.saldo AS REAL)), 0) as saldo_actual,
+       COUNT(d.doc_id) as facturas_pendientes
      FROM proveedores p
-     INNER JOIN facturas_compra fc
-       ON fc.proveedor_id = p.id
-       AND CAST(fc.saldo_pend_usd AS REAL) > 0.01
-       AND fc.empresa_id = ?
+     INNER JOIN (
+       SELECT proveedor_id, id as doc_id, CAST(saldo_pend_usd AS REAL) as saldo
+       FROM facturas_compra
+       WHERE empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
+       UNION ALL
+       SELECT proveedor_id, id as doc_id, CAST(saldo_pendiente_usd AS REAL) as saldo
+       FROM gastos
+       WHERE empresa_id = ? AND proveedor_id IS NOT NULL
+         AND status = 'REGISTRADO'
+         AND CAST(saldo_pendiente_usd AS REAL) > 0.01
+     ) d ON d.proveedor_id = p.id
      WHERE p.empresa_id = ? AND p.is_active = 1
      GROUP BY p.id, p.rif, p.razon_social
      ORDER BY saldo_actual DESC`,
-    [empresaId, empresaId]
+    [empresaId, empresaId, empresaId]
   )
 
   return { proveedores: (data ?? []) as ProveedorConDeuda[], isLoading }

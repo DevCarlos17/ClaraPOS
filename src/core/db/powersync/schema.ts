@@ -1072,14 +1072,20 @@ const gastos = new Table(
     empresa_id: column.text,
     nro_gasto: column.text,
     nro_factura: column.text,
+    nro_control: column.text,
     cuenta_id: column.text,
     proveedor_id: column.text,
     descripcion: column.text,
     fecha: column.text,
     moneda_id: column.text,
-    tasa: column.text,
-    monto_usd: column.text,
+    moneda_factura: column.text,       // 'USD' o 'BS'
+    usa_tasa_paralela: column.integer, // 0/1
+    tasa: column.text,                 // tasa interna (BCV/sistema) snapshot
+    tasa_proveedor: column.text,       // tasa del proveedor (paralela)
+    monto_factura: column.text,        // importe original en moneda_factura
+    monto_usd: column.text,            // total contable USD (para reportes)
     monto_bs: column.text,
+    saldo_pendiente_usd: column.text,  // pendiente por pagar
     metodo_cobro_id: column.text,
     banco_empresa_id: column.text,
     referencia: column.text,

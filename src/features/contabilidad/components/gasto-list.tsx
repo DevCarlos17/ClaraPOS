@@ -1,9 +1,10 @@
-import { useRef, useState, useEffect } from 'react'
-import { Plus, BarChart3, ChevronDown, Search, CalendarDays, BookPlus } from 'lucide-react'
+import { useRef, useState, useEffect, useMemo } from 'react'
+import { Plus, BarChart3, ChevronDown, Search, CalendarDays, BookPlus, X } from 'lucide-react'
 import {
   useGastos,
   type Gasto,
 } from '@/features/contabilidad/hooks/use-gastos'
+import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { GastoForm } from './gasto-form'
 import { GastosKpis } from './gastos-kpis'
 import { GastoReportes, type TipoReporte } from './gasto-reportes'
@@ -73,12 +74,16 @@ export function GastoList() {
   const [reporteActivo, setReporteActivo] = useState<TipoReporte | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
+  // Filtro por grupo de cuenta
+  const [filtroGrupoId, setFiltroGrupoId] = useState<string | null>(null)
+
   const hasConsulta = Boolean(consultaActiva)
 
   const { gastos, isLoading } = useGastos(
     consultaActiva?.desde,
     consultaActiva?.hasta
   )
+  const { grupos } = useGruposGastoConSubcuentas()
 
   // Validacion del rango
   const rangeError = (() => {
@@ -91,8 +96,40 @@ export function GastoList() {
 
   function handleConsultar() {
     if (rangeError || !fechaDesde || !fechaHasta) return
+    setFiltroGrupoId(null)
     setConsultaActiva({ desde: fechaDesde, hasta: fechaHasta })
   }
+
+  // Resumen de gastos agrupado por grupo → subcuenta (solo REGISTRADO)
+  const resumenPorGrupo = useMemo(() => {
+    if (!hasConsulta || gastos.length === 0) return []
+    const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
+    return grupos
+      .map((grupo) => {
+        const subcuentasConData = grupo.subcuentas
+          .map((sub) => {
+            const items = registrados.filter((g) => g.cuenta_id === sub.id)
+            if (items.length === 0) return null
+            const totalUsd = items.reduce((sum, g) => sum + (parseFloat(g.monto_usd) || 0), 0)
+            return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, totalUsd, count: items.length }
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null)
+        if (subcuentasConData.length === 0) return null
+        const totalUsd = subcuentasConData.reduce((sum, s) => sum + s.totalUsd, 0)
+        const count = subcuentasConData.reduce((sum, s) => sum + s.count, 0)
+        return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, totalUsd, count, subcuentas: subcuentasConData }
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
+  }, [gastos, grupos, hasConsulta])
+
+  // Gastos filtrados por grupo seleccionado (para la tabla plana)
+  const gastosFiltrados = useMemo(() => {
+    if (!filtroGrupoId) return gastos
+    const grupo = grupos.find((g) => g.id === filtroGrupoId)
+    if (!grupo) return gastos
+    const subIds = new Set(grupo.subcuentas.map((s) => s.id))
+    return gastos.filter((g) => subIds.has(g.cuenta_id))
+  }, [gastos, grupos, filtroGrupoId])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') handleConsultar()
@@ -116,14 +153,14 @@ export function GastoList() {
 
   return (
     <div>
-      {/* Filtro de fechas + Consultar */}
+      {/* Filtro de fechas + Consultar + Acciones principales */}
       <div className="rounded-lg border border-border bg-card p-4 mb-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <CalendarDays className="h-4 w-4" />
-            <span className="font-medium">Periodo:</span>
-          </div>
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-1">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <CalendarDays className="h-4 w-4" />
+              <span className="font-medium">Periodo:</span>
+            </div>
             <div className="flex items-center gap-2">
               <label htmlFor="gasto-desde" className="text-xs text-muted-foreground whitespace-nowrap">Desde</label>
               <input
@@ -155,6 +192,25 @@ export function GastoList() {
               Consultar
             </button>
           </div>
+
+          {/* Acciones principales — siempre visibles */}
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setCuentaModalOpen(true)}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-muted border border-border rounded-md hover:bg-muted/80 transition-colors"
+            >
+              <BookPlus className="h-4 w-4" />
+              Crear Cuenta
+            </button>
+            <button
+              onClick={() => setFormOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Nuevo Gasto
+            </button>
+          </div>
         </div>
         {rangeError && (
           <p className="text-destructive text-xs mt-2">{rangeError}</p>
@@ -177,22 +233,75 @@ export function GastoList() {
             </div>
           )}
 
-          {/* Barra de acciones */}
+          {/* Resumen por Grupo de Cuenta */}
+          {resumenPorGrupo.length > 0 && !isLoading && (
+            <div className="mb-4 rounded-lg border border-border overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-muted/50 border-b border-border">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Resumen por Grupo
+                </span>
+                {filtroGrupoId && (
+                  <button
+                    type="button"
+                    onClick={() => setFiltroGrupoId(null)}
+                    className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                  >
+                    <X className="h-3 w-3" />
+                    Ver todos
+                  </button>
+                )}
+              </div>
+              <div className="divide-y divide-border">
+                {resumenPorGrupo.map((grupo) => (
+                  <div key={grupo.id}>
+                    <button
+                      type="button"
+                      onClick={() => setFiltroGrupoId(filtroGrupoId === grupo.id ? null : grupo.id)}
+                      className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors hover:bg-muted/30 ${
+                        filtroGrupoId === grupo.id ? 'bg-primary/5' : ''
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">{grupo.codigo}</span>
+                        <span className="text-sm font-semibold text-foreground">{grupo.nombre}</span>
+                        <span className="text-[10px] text-muted-foreground">({grupo.count})</span>
+                      </div>
+                      <span className="text-sm font-bold text-foreground tabular-nums shrink-0">{formatUsd(grupo.totalUsd)}</span>
+                    </button>
+                    {grupo.subcuentas.map((sub) => (
+                      <div key={sub.id} className="flex items-center justify-between px-4 py-1.5 pl-10 bg-muted/10 border-t border-border/30">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">{sub.codigo}</span>
+                          <span className="text-xs text-muted-foreground">{sub.nombre}</span>
+                          <span className="text-[10px] text-muted-foreground/60">({sub.count})</span>
+                        </div>
+                        <span className="text-xs font-medium text-foreground tabular-nums shrink-0">{formatUsd(sub.totalUsd)}</span>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+                {/* Total general */}
+                <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30">
+                  <span className="text-xs font-semibold text-muted-foreground">Total periodo</span>
+                  <span className="text-sm font-bold text-foreground tabular-nums">
+                    {formatUsd(resumenPorGrupo.reduce((sum, g) => sum + g.totalUsd, 0))}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Barra de resultados + Reportes */}
           <div className="flex justify-between items-center mb-3">
             <p className="text-sm text-muted-foreground">
-              {isLoading ? 'Cargando...' : `${gastos.length} gasto${gastos.length !== 1 ? 's' : ''} encontrado${gastos.length !== 1 ? 's' : ''}`}
+              {isLoading
+                ? 'Cargando...'
+                : filtroGrupoId
+                  ? `${gastosFiltrados.length} gasto${gastosFiltrados.length !== 1 ? 's' : ''} · ${grupos.find(g => g.id === filtroGrupoId)?.nombre ?? ''}`
+                  : `${gastos.length} gasto${gastos.length !== 1 ? 's' : ''} encontrado${gastos.length !== 1 ? 's' : ''}`
+              }
             </p>
             <div className="flex items-center gap-2">
-              {/* Crear cuenta de gasto */}
-              <button
-                type="button"
-                onClick={() => setCuentaModalOpen(true)}
-                className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-muted border border-border rounded-md hover:bg-muted/80 transition-colors"
-              >
-                <BookPlus className="h-4 w-4" />
-                Crear Cuenta
-              </button>
-
               {/* Reportes dropdown */}
               <div className="relative" ref={dropdownRef}>
                 <button
@@ -221,15 +330,6 @@ export function GastoList() {
                   </div>
                 )}
               </div>
-
-              {/* Nuevo gasto */}
-              <button
-                onClick={() => setFormOpen(true)}
-                className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors"
-              >
-                <Plus className="h-4 w-4" />
-                Nuevo Gasto
-              </button>
             </div>
           </div>
 
@@ -261,7 +361,7 @@ export function GastoList() {
                   </tr>
                 </thead>
                 <tbody>
-                  {gastos.map((g) => {
+                  {gastosFiltrados.map((g) => {
                     const anulado = g.status === 'ANULADO'
                     return (
                       <tr
