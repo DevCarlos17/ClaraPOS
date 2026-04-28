@@ -1,6 +1,7 @@
 {
   "name": "clarapos",
   "private": true,
+  "packageManager": "yarn@1.22.22",
   "type": "module",
   "scripts": {
     "dev": "vite --port 3000",
