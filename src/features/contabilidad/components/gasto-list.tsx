@@ -151,6 +151,10 @@ export function GastoList() {
     setReporteActivo(tipo)
   }
 
+  if (formOpen) {
+    return <GastoForm onClose={() => setFormOpen(false)} />
+  }
+
   return (
     <div>
       {/* Filtro de fechas + Consultar + Acciones principales */}
@@ -404,8 +408,6 @@ export function GastoList() {
       )}
 
       {/* Modales */}
-      <GastoForm isOpen={formOpen} onClose={() => setFormOpen(false)} />
-
       <GastoDetalleModal
         gasto={gastoDetalle}
         isOpen={!!gastoDetalle}

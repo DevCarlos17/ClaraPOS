@@ -410,9 +410,20 @@ function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre,
 
   if (!gasto) return null
 
-  const total = parseFloat(gasto.monto_usd)
-  const saldo = parseFloat(gasto.saldo_pendiente_usd)
-  const abonado = total - saldo
+  const total = parseFloat(gasto.monto_usd)          // total contable
+  const saldo = parseFloat(gasto.saldo_pendiente_usd) // saldo proveedor
+  const hayDualRate = gasto.usa_tasa_paralela === 1 && Boolean(gasto.tasa_proveedor)
+
+  const montoProveedorUsd = (() => {
+    const montoFactura = parseFloat(gasto.monto_factura ?? '0')
+    if (gasto.moneda_factura === 'USD') return montoFactura
+    const tasaRef = hayDualRate && gasto.tasa_proveedor
+      ? parseFloat(gasto.tasa_proveedor)
+      : parseFloat(gasto.tasa)
+    return tasaRef > 0 ? montoFactura / tasaRef : total
+  })()
+
+  const abonado = Math.max(0, montoProveedorUsd - saldo)
 
   async function handleReversarAbono(abonoId: string) {
     if (!user?.empresa_id || !gasto) return
@@ -462,8 +473,19 @@ function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre,
             )}
             <div className="text-muted-foreground">Descripcion</div>
             <div className="text-xs">{gasto.descripcion}</div>
-            <div className="text-muted-foreground">Total Contable</div>
-            <div className="font-semibold">{formatUsd(total)}</div>
+            {hayDualRate ? (
+              <>
+                <div className="text-muted-foreground">Total Factura</div>
+                <div className="font-semibold">{formatUsd(montoProveedorUsd)}</div>
+                <div className="text-muted-foreground">Total Contable</div>
+                <div className="font-medium text-muted-foreground">{formatUsd(total)}</div>
+              </>
+            ) : (
+              <>
+                <div className="text-muted-foreground">Total</div>
+                <div className="font-semibold">{formatUsd(montoProveedorUsd)}</div>
+              </>
+            )}
             <div className="text-muted-foreground">Abonado</div>
             <div className="text-green-600 font-medium">{formatUsd(abonado)}</div>
             <div className="text-muted-foreground">Saldo Pendiente</div>

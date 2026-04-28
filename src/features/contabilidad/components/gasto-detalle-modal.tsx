@@ -119,6 +119,15 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
   const esAnulado = gasto.status === 'ANULADO'
   const tieneProveedor = Boolean(gasto.proveedor_id)
 
+  const hayDualRate = gasto.usa_tasa_paralela === 1 && Boolean(gasto.tasa_proveedor)
+  const montoFactura = parseFloat(gasto.monto_factura)
+  const montoProveedorUsd = (() => {
+    if (gasto.moneda_factura === 'USD') return montoFactura
+    const tasaRef = hayDualRate && tasaProveedor ? tasaProveedor : tasa
+    return tasaRef > 0 ? montoFactura / tasaRef : montoUsd
+  })()
+  const abonadoUsd = Math.max(0, montoProveedorUsd - saldoPendiente)
+
   return (
     <dialog
       ref={dialogRef}
@@ -222,14 +231,33 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
 
         {/* Totales */}
         <div className="rounded-lg border border-border bg-muted/30 p-4 mb-4 space-y-1.5">
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Monto USD (contable):</span>
-            <span className="font-bold text-foreground">{formatUsd(montoUsd)}</span>
-          </div>
+          {hayDualRate ? (
+            <>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Monto Factura (Proveedor):</span>
+                <span className="font-bold text-foreground">{formatUsd(montoProveedorUsd)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Monto Contable:</span>
+                <span className="font-medium text-muted-foreground">{formatUsd(montoUsd)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Monto USD (contable):</span>
+              <span className="font-bold text-foreground">{formatUsd(montoUsd)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-sm">
             <span className="text-muted-foreground">Monto Bs:</span>
             <span className="font-medium text-muted-foreground">{formatBs(montoBs)}</span>
           </div>
+          {abonadoUsd > 0.005 && (
+            <div className="flex justify-between text-sm">
+              <span className="text-muted-foreground">Abonado:</span>
+              <span className="font-medium text-green-600">{formatUsd(abonadoUsd)}</span>
+            </div>
+          )}
           {saldoPendiente > 0.005 && (
             <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
               <span className="text-muted-foreground">Saldo Pendiente:</span>

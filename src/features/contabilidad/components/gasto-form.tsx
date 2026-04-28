@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Trash2, UserPlus, X, AlertTriangle, Info, FileText } from 'lucide-react'
+import { Plus, Trash2, UserPlus, ArrowLeft, AlertTriangle, Info, FileText } from 'lucide-react'
 import { gastoSchema } from '@/features/contabilidad/schemas/gasto-schema'
 import { crearGasto, type GastoPago } from '@/features/contabilidad/hooks/use-gastos'
 import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -28,7 +28,6 @@ interface PagoRow {
 }
 
 interface GastoFormProps {
-  isOpen: boolean
   onClose: () => void
 }
 
@@ -87,6 +86,7 @@ interface ResumenConfirmProps {
   montoProveedorUsd: number
   pagos: Array<{ metodoNombre: string; monto: string; moneda: string; referencia: string }>
   saldoPendienteProveedor: number
+  saldoPendienteInterno: number
   submitting: boolean
   onConfirm: () => void
   onVolver: () => void
@@ -108,6 +108,7 @@ function ResumenConfirm({
   montoProveedorUsd,
   pagos,
   saldoPendienteProveedor,
+  saldoPendienteInterno,
   submitting,
   onConfirm,
   onVolver,
@@ -246,7 +247,7 @@ function ResumenConfirm({
               Saldo Proveedor pendiente: {formatUsd(saldoPendienteProveedor)} — CXP
             </div>
           )}
-          {hayDiferencial && saldoPendienteProveedor < 0.005 && (
+          {hayDiferencial && saldoPendienteProveedor < 0.005 && saldoPendienteInterno > 0.005 && (
             <div className="rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-400">
               {montoContableUsd > montoProveedorUsd
                 ? `Diferencial cambiario: +${formatUsd(montoContableUsd - montoProveedorUsd)} (ganancia contable)`
@@ -288,8 +289,7 @@ function ResumenConfirm({
 
 // ─── Componente principal ─────────────────────────────────────
 
-export function GastoForm({ isOpen, onClose }: GastoFormProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+export function GastoForm({ onClose }: GastoFormProps) {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { user } = useCurrentUser()
   const { borrador, guardar, limpiar } = useGastoBorradorStore()
@@ -350,25 +350,22 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
     setPayloadConfirmado(null)
   }
 
-  // ─── Abrir / cerrar ───────────────────────────────────────
+  // ─── Inicializar al montar ────────────────────────────────
 
   useEffect(() => {
-    if (isOpen) {
-      const hayBorrador = borrador && borrador.empresaId === user?.empresa_id
-      if (hayBorrador) {
-        setMostrarBannerBorrador(true)
-        resetFormToDefaults()
-      } else {
-        resetFormToDefaults()
-        setMostrarBannerBorrador(false)
-      }
-      dialogRef.current?.showModal()
+    const hayBorrador = borrador && borrador.empresaId === user?.empresa_id
+    if (hayBorrador) {
+      setMostrarBannerBorrador(true)
+      resetFormToDefaults()
     } else {
-      dialogRef.current?.close()
+      resetFormToDefaults()
+      setMostrarBannerBorrador(false)
+    }
+    return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen])
+  }, [])
 
   // ─── Auto-lookup tasa interna por fecha ───────────────────
 
@@ -501,7 +498,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
   // ─── Auto-guardado de borrador ────────────────────────────
 
   useEffect(() => {
-    if (!isOpen || !user?.empresa_id || mostrarBannerBorrador) return
+    if (!user?.empresa_id || mostrarBannerBorrador) return
     const hasData = Boolean(cuentaId || descripcion.trim() || montoFactura)
     if (!hasData) return
 
@@ -524,7 +521,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nroFactura, nroControl, cuentaId, proveedorId, descripcion, fecha,
       monedaFactura, usaTasaParalela, tasaInterna, tasaProveedor, montoFactura,
-      pagos, observaciones, isOpen, mostrarBannerBorrador])
+      pagos, observaciones, mostrarBannerBorrador])
 
   // ─── Restaurar / descartar borrador ───────────────────────
 
@@ -666,10 +663,6 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
     }
   }
 
-  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
-    if (e.target === dialogRef.current) onClose()
-  }
-
   // ─── Datos para el resumen ────────────────────────────────
 
   const cuentaSeleccionada = cuentas.find((c) => c.id === cuentaId)
@@ -694,28 +687,25 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
 
   return (
     <>
-      <dialog
-        ref={dialogRef}
-        onClose={onClose}
-        onClick={handleBackdropClick}
-        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-lg shadow-xl"
-      >
-        <div className="p-6 max-h-[90vh] overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-5">
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-md p-2 text-muted-foreground hover:bg-muted transition-colors"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div>
             <h2 className="text-lg font-semibold text-foreground">
               {showResumen ? 'Confirmar Registro' : 'Nuevo Gasto'}
             </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md p-1.5 text-muted-foreground hover:bg-muted transition-colors"
-            >
-              <X className="h-5 w-5" />
-            </button>
+            <p className="text-sm text-muted-foreground">Registrar gasto o factura de proveedor</p>
           </div>
+        </div>
 
-          {showResumen ? (
+        {showResumen ? (
             <ResumenConfirm
               cuentaNombre={cuentaSeleccionada ? `${cuentaSeleccionada.codigo} - ${cuentaSeleccionada.nombre}` : cuentaId}
               proveedorNombre={proveedorSeleccionado?.razon_social ?? null}
@@ -732,6 +722,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
               montoProveedorUsd={montoProveedorUsd ?? (montoContableUsd ?? 0)}
               pagos={pagosResumen}
               saldoPendienteProveedor={saldoPendienteProveedor}
+              saldoPendienteInterno={saldoPendienteInterno}
               submitting={submitting}
               onConfirm={handleConfirmar}
               onVolver={() => setShowResumen(false)}
@@ -1196,7 +1187,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
                             </div>
                           </div>
                           {/* Diferencial */}
-                          {hayDiferencial && saldoPendienteProveedor < 0.01 && (
+                          {hayDiferencial && saldoPendienteProveedor < 0.01 && saldoPendienteInterno > 0.01 && (
                             <div className="pt-1 border-t border-border text-blue-600 dark:text-blue-400">
                               {(montoContableUsd ?? 0) > (montoProveedorUsd ?? 0)
                                 ? `Diferencial cambiario: +${formatUsd((montoContableUsd ?? 0) - (montoProveedorUsd ?? 0))} (ganancia)`
@@ -1265,8 +1256,7 @@ export function GastoForm({ isOpen, onClose }: GastoFormProps) {
               </form>
             </>
           )}
-        </div>
-      </dialog>
+      </div>
 
       <ProveedorForm
         isOpen={crearProveedorOpen}

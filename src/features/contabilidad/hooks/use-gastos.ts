@@ -408,6 +408,8 @@ export interface GastoPendiente {
   nro_factura: string | null
   fecha: string
   monto_usd: string
+  monto_factura: string
+  moneda_factura: string
   saldo_pendiente_usd: string
   descripcion: string
   cuenta_nombre: string | null
@@ -461,7 +463,7 @@ export function useGastosPendientesProveedor(proveedorId: string | null) {
   const { data, isLoading } = useQuery(
     proveedorId
       ? `SELECT g.id, g.nro_gasto, g.nro_factura, g.fecha,
-             g.monto_usd, g.saldo_pendiente_usd, g.descripcion,
+             g.monto_usd, g.monto_factura, g.moneda_factura, g.saldo_pendiente_usd, g.descripcion,
              g.tasa, g.tasa_proveedor, g.usa_tasa_paralela,
              pc.nombre as cuenta_nombre
            FROM gastos g
