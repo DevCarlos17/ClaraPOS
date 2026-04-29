@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Building2, ChevronRight, DollarSign, ChevronUp, ChevronDown, Printer, X, RotateCcw, Receipt } from 'lucide-react'
 import {
   useProveedoresConDeuda,
@@ -62,6 +62,14 @@ function CxpDetalleModal({ open, onClose, factura, proveedorId, proveedorNombre,
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
   const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
+  const reversedPagRefs = useMemo(() => {
+    const set = new Set<string>()
+    for (const a of abonos) {
+      if (a.tipo === 'DEV' && a.referencia?.startsWith('DEV-'))
+        set.add(a.referencia.slice(4))
+    }
+    return set
+  }, [abonos])
 
   if (!factura) return null
 
@@ -231,11 +239,12 @@ function CxpDetalleModal({ open, onClose, factura, proveedorId, proveedorNombre,
                 <tbody className="divide-y divide-border">
                   {abonos.map((a) => {
                     const esBs = a.moneda_pago === 'BS' && a.monto_moneda && a.tasa_pago
+                    const esReversado = a.tipo === 'PAG' && reversedPagRefs.has(a.referencia ?? '')
                     return (
-                      <tr key={a.id}>
+                      <tr key={a.id} className={esReversado ? 'line-through opacity-50' : ''}>
                         <td className="px-3 py-1.5 text-muted-foreground">{a.fecha?.slice(0, 10)}</td>
                         <td className="px-3 py-1.5">
-                          <span className={`font-medium ${a.tipo === 'PAG' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                          <span className={`font-medium ${a.tipo === 'PAG' && !esReversado ? 'text-green-600' : 'text-muted-foreground'}`}>
                             {a.tipo}
                           </span>
                         </td>
@@ -257,7 +266,7 @@ function CxpDetalleModal({ open, onClose, factura, proveedorId, proveedorNombre,
                         </td>
                         {puedeReversarAbono && (
                           <td className="px-3 py-1.5 text-center">
-                            {a.tipo === 'PAG' ? (
+                            {a.tipo === 'PAG' && !esReversado ? (
                               confirmandoAbonoId === a.id ? (
                                 <div className="flex items-center justify-center gap-1">
                                   <button
@@ -286,6 +295,8 @@ function CxpDetalleModal({ open, onClose, factura, proveedorId, proveedorNombre,
                                   Reversar
                                 </button>
                               )
+                            ) : esReversado ? (
+                              <span className="text-[10px] text-muted-foreground italic">Reversado</span>
                             ) : (
                               <span className="text-[10px] text-muted-foreground">—</span>
                             )}
@@ -407,6 +418,14 @@ function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre,
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
   const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
+  const reversedPagRefs = useMemo(() => {
+    const set = new Set<string>()
+    for (const a of abonos) {
+      if (a.tipo === 'DEV' && a.referencia?.startsWith('DEV-'))
+        set.add(a.referencia.slice(4))
+    }
+    return set
+  }, [abonos])
 
   if (!gasto) return null
 
@@ -518,11 +537,12 @@ function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre,
                 <tbody className="divide-y divide-border">
                   {abonos.map((a) => {
                     const esBs = a.moneda_pago === 'BS' && a.monto_moneda && a.tasa_pago
+                    const esReversado = a.tipo === 'PAG' && reversedPagRefs.has(a.referencia ?? '')
                     return (
-                      <tr key={a.id}>
+                      <tr key={a.id} className={esReversado ? 'line-through opacity-50' : ''}>
                         <td className="px-3 py-1.5 text-muted-foreground">{a.fecha?.slice(0, 10)}</td>
                         <td className="px-3 py-1.5">
-                          <span className={`font-medium ${a.tipo === 'PAG' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                          <span className={`font-medium ${a.tipo === 'PAG' && !esReversado ? 'text-green-600' : 'text-muted-foreground'}`}>
                             {a.tipo}
                           </span>
                         </td>
@@ -544,7 +564,7 @@ function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre,
                         </td>
                         {puedeReversarAbono && (
                           <td className="px-3 py-1.5 text-center">
-                            {a.tipo === 'PAG' ? (
+                            {a.tipo === 'PAG' && !esReversado ? (
                               confirmandoAbonoId === a.id ? (
                                 <div className="flex items-center justify-center gap-1">
                                   <button
@@ -573,6 +593,8 @@ function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre,
                                   Reversar
                                 </button>
                               )
+                            ) : esReversado ? (
+                              <span className="text-[10px] text-muted-foreground italic">Reversado</span>
                             ) : (
                               <span className="text-[10px] text-muted-foreground">—</span>
                             )}

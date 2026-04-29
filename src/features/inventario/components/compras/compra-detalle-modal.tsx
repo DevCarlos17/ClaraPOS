@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useMemo } from 'react'
 import { X, Printer, RotateCcw } from 'lucide-react'
 import {
   useDetalleCompra,
@@ -32,6 +32,14 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
   const { abonos, isLoading: loadingAbonos } = useAbonosCompra(
     compra.tipo === 'CREDITO' ? compra.id : ''
   )
+  const reversedPagRefs = useMemo(() => {
+    const set = new Set<string>()
+    for (const a of abonos) {
+      if (a.tipo === 'DEV' && a.referencia?.startsWith('DEV-'))
+        set.add(a.referencia.slice(4))
+    }
+    return set
+  }, [abonos])
 
   const tasa = parseFloat(compra.tasa)
   const totalUsd = parseFloat(compra.total_usd)
@@ -348,6 +356,7 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                     <thead className="bg-muted/50">
                       <tr>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Fecha</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Tipo</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Referencia</th>
                         <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase">Monto USD</th>
                         <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Observacion</th>
@@ -357,50 +366,62 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                       </tr>
                     </thead>
                     <tbody className="bg-background divide-y divide-border">
-                      {abonos.map((abono) => (
-                        <tr key={abono.id}>
-                          <td className="px-3 py-2 text-sm text-foreground">{formatDate(abono.fecha)}</td>
-                          <td className="px-3 py-2 text-sm font-mono text-foreground">{abono.referencia}</td>
-                          <td className="px-3 py-2 text-sm text-right font-medium text-foreground">{formatUsd(abono.monto)}</td>
-                          <td className="px-3 py-2 text-sm text-muted-foreground">{abono.observacion ?? '-'}</td>
-                          {puedeReversarAbono && (
-                            <td className="px-3 py-2 text-center">
-                              {abono.tipo === 'PAG' ? (
-                                confirmandoAbonoId === abono.id ? (
-                                  <div className="flex items-center justify-center gap-1">
-                                    <button
-                                      type="button"
-                                      disabled={reversandoAbonoId === abono.id}
-                                      onClick={() => handleReversarAbono(abono.id)}
-                                      className="px-2 py-0.5 text-[10px] font-medium text-white bg-destructive rounded hover:bg-destructive/90 disabled:opacity-50"
-                                    >
-                                      {reversandoAbonoId === abono.id ? '...' : 'Confirmar'}
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => setConfirmandoAbonoId(null)}
-                                      className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted rounded hover:bg-muted/80"
-                                    >
-                                      Cancelar
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() => setConfirmandoAbonoId(abono.id)}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
-                                  >
-                                    <RotateCcw className="h-2.5 w-2.5" />
-                                    Reversar
-                                  </button>
-                                )
-                              ) : (
-                                <span className="text-[10px] text-muted-foreground">—</span>
-                              )}
+                      {abonos.map((abono) => {
+                        const esReversado = abono.tipo === 'PAG' && reversedPagRefs.has(abono.referencia ?? '')
+                        return (
+                          <tr key={abono.id} className={esReversado ? 'line-through opacity-50' : ''}>
+                            <td className="px-3 py-2 text-sm text-foreground">{formatDate(abono.fecha)}</td>
+                            <td className="px-3 py-2 text-sm">
+                              <span className={`font-medium ${abono.tipo === 'PAG' && !esReversado ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                {abono.tipo}
+                              </span>
                             </td>
-                          )}
-                        </tr>
-                      ))}
+                            <td className="px-3 py-2 text-sm font-mono text-foreground">{abono.referencia}</td>
+                            <td className="px-3 py-2 text-sm text-right font-medium text-foreground">
+                              {abono.tipo === 'DEV' ? '-' : ''}{formatUsd(abono.monto)}
+                            </td>
+                            <td className="px-3 py-2 text-sm text-muted-foreground">{abono.observacion ?? '-'}</td>
+                            {puedeReversarAbono && (
+                              <td className="px-3 py-2 text-center">
+                                {abono.tipo === 'PAG' && !esReversado ? (
+                                  confirmandoAbonoId === abono.id ? (
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        disabled={reversandoAbonoId === abono.id}
+                                        onClick={() => handleReversarAbono(abono.id)}
+                                        className="px-2 py-0.5 text-[10px] font-medium text-white bg-destructive rounded hover:bg-destructive/90 disabled:opacity-50"
+                                      >
+                                        {reversandoAbonoId === abono.id ? '...' : 'Confirmar'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmandoAbonoId(null)}
+                                        className="px-2 py-0.5 text-[10px] font-medium text-muted-foreground bg-muted rounded hover:bg-muted/80"
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => setConfirmandoAbonoId(abono.id)}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
+                                    >
+                                      <RotateCcw className="h-2.5 w-2.5" />
+                                      Reversar
+                                    </button>
+                                  )
+                                ) : esReversado ? (
+                                  <span className="text-[10px] text-muted-foreground italic">Reversado</span>
+                                ) : (
+                                  <span className="text-[10px] text-muted-foreground">—</span>
+                                )}
+                              </td>
+                            )}
+                          </tr>
+                        )
+                      })}
                     </tbody>
                   </table>
                 </div>

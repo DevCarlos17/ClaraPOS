@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, useMemo } from 'react'
 import { X, RotateCcw } from 'lucide-react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
@@ -49,6 +49,14 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
 
   // Abonos desde movimientos_cuenta_proveedor (nueva via, con dual-rate)
   const { abonos, isLoading: loadingAbonos } = useAbonosGasto(gasto?.id ?? '')
+  const reversedPagRefs = useMemo(() => {
+    const set = new Set<string>()
+    for (const a of abonos) {
+      if (a.tipo === 'DEV' && a.referencia?.startsWith('DEV-'))
+        set.add(a.referencia.slice(4))
+    }
+    return set
+  }, [abonos])
 
   // Fallback: gasto_pagos (para gastos creados antes de este update)
   const { data: pagosData } = useQuery(
@@ -289,13 +297,14 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
                   <tbody className="divide-y divide-border">
                     {abonos.map((a) => {
                       const esBs = a.moneda_pago === 'BS' && a.monto_moneda && a.tasa_pago
+                      const esReversado = a.tipo === 'PAG' && reversedPagRefs.has(a.referencia ?? '')
                       return (
-                        <tr key={a.id}>
+                        <tr key={a.id} className={esReversado ? 'line-through opacity-50' : ''}>
                           <td className="px-3 py-1.5 text-muted-foreground">
                             {a.fecha?.slice(0, 10)}
                           </td>
                           <td className="px-3 py-1.5">
-                            <span className={`font-medium ${a.tipo === 'PAG' ? 'text-green-600' : 'text-muted-foreground'}`}>
+                            <span className={`font-medium ${a.tipo === 'PAG' && !esReversado ? 'text-green-600' : 'text-muted-foreground'}`}>
                               {a.tipo}
                             </span>
                           </td>
@@ -320,7 +329,7 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
                           </td>
                           {puedeReversarAbono && (
                             <td className="px-3 py-1.5 text-center">
-                              {a.tipo === 'PAG' ? (
+                              {a.tipo === 'PAG' && !esReversado ? (
                                 confirmandoAbonoId === a.id ? (
                                   <div className="flex items-center justify-center gap-1">
                                     <button
@@ -349,6 +358,8 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
                                     Reversar
                                   </button>
                                 )
+                              ) : esReversado ? (
+                                <span className="text-[10px] text-muted-foreground italic">Reversado</span>
                               ) : (
                                 <span className="text-[10px] text-muted-foreground">—</span>
                               )}
@@ -360,7 +371,9 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
                   </tbody>
                 </table>
               </div>
-            ) : null}
+            ) : (
+              <p className="text-sm text-muted-foreground py-2">Sin pagos registrados</p>
+            )}
           </div>
         )}
 
