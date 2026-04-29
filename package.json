@@ -9,7 +9,9 @@
     "serve": "vite preview",
     "lint": "eslint",
     "format": "prettier --write .",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "deploy": "yarn run build && wrangler deploy",
+    "preview": "yarn run build && wrangler dev"
   },
   "dependencies": {
     "@journeyapps/wa-sqlite": "^1.4.1",
@@ -71,6 +73,7 @@
     "vite": "^7.1.7",
     "vite-plugin-pwa": "^1.1.0",
     "vite-plugin-top-level-await": "^1.6.0",
-    "vite-plugin-wasm": "^3.5.0"
+    "vite-plugin-wasm": "^3.5.0",
+    "wrangler": "^4.86.0"
   }
 }
