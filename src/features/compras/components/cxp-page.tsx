@@ -492,6 +492,20 @@ function GastoDetalleModal({ open, onClose, gasto, proveedorId, proveedorNombre,
             )}
             <div className="text-muted-foreground">Descripcion</div>
             <div className="text-xs">{gasto.descripcion}</div>
+            {gasto.moneda_factura === 'BS' && (
+              <>
+                <div className="text-muted-foreground">Factura en</div>
+                <div className="text-xs">{hayDualRate ? 'Bs · Tasa Paralela' : 'Bs'}</div>
+                {hayDualRate && gasto.tasa_proveedor && (
+                  <>
+                    <div className="text-muted-foreground">Tasa Proveedor</div>
+                    <div className="text-xs font-mono tabular-nums">{parseFloat(gasto.tasa_proveedor).toFixed(4)} Bs/USD</div>
+                  </>
+                )}
+                <div className="text-muted-foreground">Tasa Interna</div>
+                <div className="text-xs font-mono tabular-nums">{parseFloat(gasto.tasa).toFixed(4)} Bs/USD</div>
+              </>
+            )}
             {hayDualRate ? (
               <>
                 <div className="text-muted-foreground">Total Factura</div>

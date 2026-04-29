@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo } from 'react'
-import { Plus, BarChart3, ChevronDown, Search, CalendarDays, BookPlus, X } from 'lucide-react'
+import { Plus, BarChart3, ChevronDown, ChevronUp, Search, CalendarDays, BookPlus, X } from 'lucide-react'
 import {
   useGastos,
   type Gasto,
@@ -19,6 +19,15 @@ type GastoConJoins = Gasto & {
   cuenta_nombre: string
   proveedor_nombre: string | null
   created_by_nombre: string | null
+}
+
+type GastoSortKey = 'nro_gasto' | 'fecha' | 'monto_usd' | 'status'
+
+function SortIcon({ field, current, dir }: { field: GastoSortKey; current: GastoSortKey; dir: 'asc' | 'desc' }) {
+  if (field !== current) return <ChevronDown className="h-3 w-3 opacity-30 inline ml-1" />
+  return dir === 'asc'
+    ? <ChevronUp className="h-3 w-3 inline ml-1" />
+    : <ChevronDown className="h-3 w-3 inline ml-1" />
 }
 
 // ─── Helpers de fecha ────────────────────────────────────────
@@ -77,6 +86,15 @@ export function GastoList() {
   // Filtro por grupo de cuenta
   const [filtroGrupoId, setFiltroGrupoId] = useState<string | null>(null)
 
+  // Sort de tabla
+  const [sortKey, setSortKey] = useState<GastoSortKey>('fecha')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(key: GastoSortKey) {
+    if (key === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(key); setSortDir('asc') }
+  }
+
   const hasConsulta = Boolean(consultaActiva)
 
   const { gastos, isLoading } = useGastos(
@@ -130,6 +148,14 @@ export function GastoList() {
     const subIds = new Set(grupo.subcuentas.map((s) => s.id))
     return gastos.filter((g) => subIds.has(g.cuenta_id))
   }, [gastos, grupos, filtroGrupoId])
+
+  const gastosSorted = useMemo(() => {
+    return [...gastosFiltrados].sort((a, b) => {
+      const mult = sortDir === 'asc' ? 1 : -1
+      if (sortKey === 'monto_usd') return (parseFloat(a.monto_usd) - parseFloat(b.monto_usd)) * mult
+      return String(a[sortKey]).localeCompare(String(b[sortKey])) * mult
+    })
+  }, [gastosFiltrados, sortKey, sortDir])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') handleConsultar()
@@ -354,18 +380,38 @@ export function GastoList() {
               <table className="w-full text-sm">
                 <thead className="bg-muted/50 sticky top-0 z-[1]">
                   <tr>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Gasto</th>
+                    <th
+                      className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                      onClick={() => toggleSort('nro_gasto')}
+                    >
+                      Nro Gasto<SortIcon field="nro_gasto" current={sortKey} dir={sortDir} />
+                    </th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Factura</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+                    <th
+                      className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                      onClick={() => toggleSort('fecha')}
+                    >
+                      Fecha<SortIcon field="fecha" current={sortKey} dir={sortDir} />
+                    </th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto USD</th>
-                    <th className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                    <th
+                      className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                      onClick={() => toggleSort('monto_usd')}
+                    >
+                      Monto USD<SortIcon field="monto_usd" current={sortKey} dir={sortDir} />
+                    </th>
+                    <th
+                      className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                      onClick={() => toggleSort('status')}
+                    >
+                      Status<SortIcon field="status" current={sortKey} dir={sortDir} />
+                    </th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Procesado por</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {gastosFiltrados.map((g) => {
+                  {gastosSorted.map((g) => {
                     const anulado = g.status === 'ANULADO'
                     return (
                       <tr
