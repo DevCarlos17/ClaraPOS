@@ -54,7 +54,7 @@ export function PagoFacturaModal({
   useEffect(() => {
     if (!user?.empresa_id || !fechaPago) return
     db.execute(
-      'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND DATE(fecha) <= ? ORDER BY fecha DESC LIMIT 1',
+      'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND DATE(fecha) <= ? ORDER BY fecha DESC, created_at DESC LIMIT 1',
       [user.empresa_id, fechaPago]
     ).then((res) => {
       const row = res.rows?.item(0) as { valor: string } | undefined

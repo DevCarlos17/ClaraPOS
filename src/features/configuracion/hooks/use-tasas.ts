@@ -53,7 +53,7 @@ export function useTasaActual() {
   }, [empresaId])
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC LIMIT 1',
+    'SELECT * FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC, created_at DESC LIMIT 1',
     [empresaId]
   )
 
@@ -82,7 +82,7 @@ export function useTasasHistorial() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC LIMIT 10',
+    'SELECT * FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC, created_at DESC LIMIT 10',
     [empresaId]
   )
 
