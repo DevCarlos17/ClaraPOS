@@ -54,10 +54,8 @@ function buildDateRange(
   fechaDesde: string,
   fechaHasta: string
 ): { start: string; end: string } {
-  return {
-    start: `${fechaDesde}T00:00:00.000Z`,
-    end: `${fechaHasta}T23:59:59.999Z`,
-  }
+  // Usar DATE() en la query, por eso devolvemos fechas simples YYYY-MM-DD
+  return { start: fechaDesde, end: fechaHasta }
 }
 
 // ─── Hooks ──────────────────────────────────────────────────
@@ -91,9 +89,9 @@ export function useGastos(fechaDesde?: string, fechaHasta?: string) {
          LEFT JOIN proveedores p ON g.proveedor_id = p.id
          LEFT JOIN usuarios u ON g.created_by = u.id
          WHERE g.empresa_id = ?
-           AND g.fecha >= ?
-           AND g.fecha <= ?
-         ORDER BY g.fecha DESC`
+           AND DATE(g.fecha) >= ?
+           AND DATE(g.fecha) <= ?
+         ORDER BY g.fecha DESC, g.created_at DESC`
       : '',
     hasDateFilter ? params : []
   )
