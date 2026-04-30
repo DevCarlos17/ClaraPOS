@@ -92,7 +92,7 @@ export function GastoList() {
 
   function toggleSort(key: GastoSortKey) {
     if (key === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    else { setSortKey(key); setSortDir('asc') }
+    else { setSortKey(key); setSortDir('desc') }
   }
 
   const hasConsulta = Boolean(consultaActiva)

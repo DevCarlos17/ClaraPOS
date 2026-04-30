@@ -202,6 +202,12 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
               <span className="text-muted-foreground min-w-[90px]">Fecha:</span>
               <span>{formatDate(gasto.fecha)}</span>
             </div>
+            {gasto.nro_control && (
+              <div className="flex gap-1 col-span-2">
+                <span className="text-muted-foreground min-w-[90px]">Nro Control:</span>
+                <span className="font-mono">{gasto.nro_control}</span>
+              </div>
+            )}
             <div className="flex gap-1 col-span-2">
               <span className="text-muted-foreground min-w-[90px]">Cuenta:</span>
               <span className="font-medium">{gasto.cuenta_nombre}</span>
@@ -215,12 +221,12 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
               <span>{gasto.descripcion}</span>
             </div>
             <div className="flex gap-1">
-              <span className="text-muted-foreground min-w-[90px]">Tasa:</span>
+              <span className="text-muted-foreground min-w-[90px]">Tasa Interna:</span>
               <span>{tasa.toFixed(4)} Bs/USD</span>
             </div>
             {tasaProveedor && gasto.usa_tasa_paralela === 1 && (
               <div className="flex gap-1">
-                <span className="text-muted-foreground min-w-[90px]">T. Proveedor:</span>
+                <span className="text-muted-foreground min-w-[90px]">Tasa Proveedor:</span>
                 <span>{tasaProveedor.toFixed(4)} Bs/USD</span>
               </div>
             )}
@@ -234,6 +240,12 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
               <span className="text-muted-foreground min-w-[90px]">Procesado por:</span>
               <span>{gasto.created_by_nombre ?? '—'}</span>
             </div>
+            {gasto.observaciones && (
+              <div className="flex gap-1 col-span-2">
+                <span className="text-muted-foreground min-w-[90px]">Observaciones:</span>
+                <span className="text-muted-foreground italic">{gasto.observaciones}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -242,17 +254,27 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
           {hayDualRate ? (
             <>
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Monto Factura (Proveedor):</span>
+                <span className="text-muted-foreground">Total Factura (Proveedor):</span>
                 <span className="font-bold text-foreground">{formatUsd(montoProveedorUsd)}</span>
               </div>
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Monto Contable:</span>
-                <span className="font-medium text-muted-foreground">{formatUsd(montoUsd)}</span>
+                <span className="text-muted-foreground">
+                  Equivalente Bs ({tasaProveedor!.toFixed(2)} Bs/USD):
+                </span>
+                <span className="font-medium text-muted-foreground">
+                  {formatBs(montoProveedorUsd * tasaProveedor!)}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm border-t border-border/50 pt-1.5 mt-0.5">
+                <span className="text-muted-foreground">
+                  Total Contable USD ({tasa.toFixed(2)} Bs/USD):
+                </span>
+                <span className="font-bold text-foreground">{formatUsd(montoUsd)}</span>
               </div>
             </>
           ) : (
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Monto USD (contable):</span>
+              <span className="text-muted-foreground">Total Contable USD:</span>
               <span className="font-bold text-foreground">{formatUsd(montoUsd)}</span>
             </div>
           )}
