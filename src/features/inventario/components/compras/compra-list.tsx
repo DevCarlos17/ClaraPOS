@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Plus, Eye, Search, CalendarDays, RotateCcw } from 'lucide-react'
-import { useComprasPorFecha, type CompraConProveedor } from '@/features/inventario/hooks/use-compras'
+import { useComprasPorFecha } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { CompraForm } from './compra-form'
-import { CompraDetalleModal } from './compra-detalle-modal'
+import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import { CompraReportes } from './compra-reportes'
 
 const MAX_RANGE_DAYS = 62 // ~2 meses
@@ -27,7 +27,7 @@ function getDefaultDates() {
 export function CompraList() {
   const defaults = getDefaultDates()
   const [showForm, setShowForm] = useState(false)
-  const [detalleCompra, setDetalleCompra] = useState<CompraConProveedor | null>(null)
+  const [detalleId, setDetalleId] = useState<string | null>(null)
 
   // Date range filter state
   const [fechaDesde, setFechaDesde] = useState(defaults.desde)
@@ -225,7 +225,7 @@ export function CompraList() {
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button
-                        onClick={() => setDetalleCompra(compra)}
+                        onClick={() => setDetalleId(compra.id)}
                         className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
                       >
                         <Eye className="h-4 w-4" />
@@ -240,13 +240,12 @@ export function CompraList() {
         </>
       )}
 
-      {detalleCompra && (
-        <CompraDetalleModal
-          compra={detalleCompra}
-          isOpen={!!detalleCompra}
-          onClose={() => setDetalleCompra(null)}
-        />
-      )}
+      <FacturaProveedorModal
+        tipo="COMPRA"
+        id={detalleId ?? ''}
+        isOpen={!!detalleId}
+        onClose={() => setDetalleId(null)}
+      />
     </div>
   )
 }

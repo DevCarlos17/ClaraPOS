@@ -8,7 +8,7 @@ import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-p
 import { GastoForm } from './gasto-form'
 import { GastosKpis } from './gastos-kpis'
 import { GastoReportes, type TipoReporte } from './gasto-reportes'
-import { GastoDetalleModal } from './gasto-detalle-modal'
+import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { formatDate } from '@/lib/format'
 import { formatUsd } from '@/lib/currency'
@@ -77,7 +77,7 @@ export function GastoList() {
 
   const [formOpen, setFormOpen] = useState(false)
   const [cuentaModalOpen, setCuentaModalOpen] = useState(false)
-  const [gastoDetalle, setGastoDetalle] = useState<GastoConJoins | null>(null)
+  const [detalleId, setDetalleId] = useState<string | null>(null)
 
   const [reporteOpen, setReporteOpen] = useState(false)
   const [reporteActivo, setReporteActivo] = useState<TipoReporte | null>(null)
@@ -416,7 +416,7 @@ export function GastoList() {
                     return (
                       <tr
                         key={g.id}
-                        onClick={() => setGastoDetalle(g as GastoConJoins)}
+                        onClick={() => setDetalleId(g.id)}
                         className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
                       >
                         <td className={`px-4 py-3 font-mono text-foreground ${anulado ? 'line-through opacity-50' : ''}`}>
@@ -454,10 +454,11 @@ export function GastoList() {
       )}
 
       {/* Modales */}
-      <GastoDetalleModal
-        gasto={gastoDetalle}
-        isOpen={!!gastoDetalle}
-        onClose={() => setGastoDetalle(null)}
+      <FacturaProveedorModal
+        tipo="GASTO"
+        id={detalleId ?? ''}
+        isOpen={!!detalleId}
+        onClose={() => setDetalleId(null)}
       />
 
       <CuentaGastoModal
