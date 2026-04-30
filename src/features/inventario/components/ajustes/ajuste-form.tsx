@@ -9,6 +9,7 @@ import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useAllLotesActivos } from '@/features/inventario/hooks/use-lotes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatDate } from '@/lib/format'
+import { todayStr } from '@/lib/dates'
 
 interface AjusteFormProps {
   isOpen: boolean
@@ -28,10 +29,6 @@ interface LineaInput {
   lote_fecha_venc: string
 }
 
-function getTodayIso(): string {
-  return new Date().toISOString().slice(0, 10)
-}
-
 export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { motivos } = useAjusteMotivosActivos()
@@ -41,7 +38,7 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   const { user } = useCurrentUser()
 
   const [motivoId, setMotivoId] = useState('')
-  const [fecha, setFecha] = useState(getTodayIso())
+  const [fecha, setFecha] = useState(todayStr())
   const [observaciones, setObservaciones] = useState('')
   const [lineas, setLineas] = useState<LineaInput[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})

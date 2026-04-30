@@ -10,6 +10,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { todayStr } from '@/lib/dates'
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
 import { useGastoBorradorStore } from '@/features/contabilidad/stores/gasto-borrador-store'
@@ -330,7 +331,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
   // ─── Helper: reset form ────────────────────────────────────
 
   function resetFormToDefaults(tasaValor?: string) {
-    const hoy = new Date().toISOString().slice(0, 10)
+    const hoy = todayStr()
     setNroFactura('')
     setNroControl('')
     setCuentaId('')
@@ -383,7 +384,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
 
   // ─── Advertencias de fecha ────────────────────────────────
 
-  const hoy = new Date().toISOString().slice(0, 10)
+  const hoy = todayStr()
   const fechaEsFutura = Boolean(fecha && fecha > hoy)
   const fechaWarning = (() => {
     if (!fecha || fechaEsFutura) return false

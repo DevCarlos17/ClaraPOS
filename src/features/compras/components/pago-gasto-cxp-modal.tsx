@@ -254,7 +254,7 @@ export function PagoGastoCxpModal({
                 </p>
                 {montoUsdInterno !== null && Math.abs(montoUsdInterno - montoUsd) > 0.005 && (
                   <p className="text-xs text-slate-400">
-                    {formatUsd(montoUsdInterno)} a tasa interna {tasaInternaNum.toFixed(2)}
+                    Abono contable: {formatBs(montoNum)} / {tasaInternaNum.toFixed(4)} = {formatUsd(montoUsdInterno)}
                   </p>
                 )}
               </div>

@@ -556,8 +556,15 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
       [nuevoSaldoGasto.toFixed(2), now, gasto_id]
     )
 
+    const cntResult = await tx.execute(
+      `SELECT COUNT(*) as cnt FROM movimientos_cuenta_proveedor
+       WHERE doc_origen_id = ? AND doc_origen_tipo = 'GASTO' AND tipo = 'PAG'`,
+      [gasto_id]
+    )
+    const cnt = parseInt((cntResult.rows?.item(0) as { cnt: string }).cnt) + 1
+
     const movId = uuidv4()
-    const ref = referencia || `PAG-${gasto.nro_gasto}`
+    const ref = referencia || `PAG-${gasto.nro_gasto}-${cnt}`
     await tx.execute(
       `INSERT INTO movimientos_cuenta_proveedor
          (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,

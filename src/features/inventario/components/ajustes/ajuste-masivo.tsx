@@ -7,6 +7,7 @@ import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useAjusteMotivosActivos } from '@/features/inventario/hooks/use-ajuste-motivos'
 import { useEnsureDefaultMotivos } from '@/features/inventario/hooks/use-ensure-default-motivos'
 import { crearAjuste, aplicarAjuste } from '@/features/inventario/hooks/use-ajustes'
+import { todayStr } from '@/lib/dates'
 import { AjusteList } from './ajuste-list'
 
 interface ProductoConteo {
@@ -248,7 +249,7 @@ export function AjusteMasivo() {
 
     setAplicando(true)
     try {
-      const fechaHoy = new Date().toISOString().slice(0, 10)
+      const fechaHoy = todayStr()
       const ajusteIds: string[] = []
 
       // Crear y aplicar ajuste de SUMA

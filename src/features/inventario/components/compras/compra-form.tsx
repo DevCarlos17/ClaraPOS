@@ -11,6 +11,7 @@ import { useConversiones } from '@/features/inventario/hooks/use-unidades-conver
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { todayStr } from '@/lib/dates'
 import { db } from '@/core/db/powersync/db'
 import {
   Dialog,
@@ -67,7 +68,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
 
   // Header fields
-  const [fechaFactura, setFechaFactura] = useState(new Date().toISOString().slice(0, 10))
+  const [fechaFactura, setFechaFactura] = useState(todayStr())
   const [nroFactura, setNroFactura] = useState('')
   const [nroControl, setNroControl] = useState('')
   const [proveedorId, setProveedorId] = useState('')
@@ -122,7 +123,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const tasaBcvNum = parseFloat(tasaBcv) || 0
 
   // Validacion de fecha: advertencia si es futura
-  const hoy = new Date().toISOString().slice(0, 10)
+  const hoy = todayStr()
   const fechaEsFutura = fechaFactura > hoy
 
   const productosFiltrados = productos.filter(
