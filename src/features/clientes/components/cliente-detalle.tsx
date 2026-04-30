@@ -71,6 +71,13 @@ function generarReporteEstadoCuenta(
 
   const filas = movimientos.map((mov) => {
     const tipo = TIPO_LABELS[mov.tipo] ?? { label: mov.tipo, color: '' }
+    let detallePago = '-'
+    if ((mov.tipo === 'PAG' || mov.tipo === 'REV') && mov.moneda_pago && mov.monto_moneda && mov.tasa_pago) {
+      const montoOrigFmt = mov.moneda_pago === 'BS'
+        ? formatBs(parseFloat(mov.monto_moneda))
+        : formatUsd(parseFloat(mov.monto_moneda))
+      detallePago = `${montoOrigFmt} @ ${parseFloat(mov.tasa_pago).toFixed(4)}`
+    }
     return `
       <tr>
         <td>${formatFecha(mov.fecha)}</td>
@@ -79,6 +86,7 @@ function generarReporteEstadoCuenta(
         <td class="right">${formatUsd(mov.monto)}</td>
         <td class="right">${formatUsd(mov.saldo_anterior)}</td>
         <td class="right bold">${formatUsd(mov.saldo_nuevo)}</td>
+        <td class="obs">${detallePago}</td>
         <td class="obs">${mov.observacion || '-'}</td>
       </tr>`
   }).join('')
@@ -155,11 +163,12 @@ function generarReporteEstadoCuenta(
         <th class="right">Monto</th>
         <th class="right">Saldo Ant.</th>
         <th class="right">Saldo Nuevo</th>
+        <th>Detalle Pago</th>
         <th>Observacion</th>
       </tr>
     </thead>
     <tbody>
-      ${filas || '<tr><td colspan="7" style="text-align:center;color:#999;padding:16px">Sin movimientos en el periodo</td></tr>'}
+      ${filas || '<tr><td colspan="8" style="text-align:center;color:#999;padding:16px">Sin movimientos en el periodo</td></tr>'}
     </tbody>
   </table>
 
@@ -585,6 +594,11 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                             className={`px-3 py-2 text-right font-medium text-xs ${isReversed ? 'line-through text-muted-foreground' : ''}`}
                           >
                             {formatUsd(mov.monto)}
+                            {(mov.tipo === 'PAG' || mov.tipo === 'REV') && mov.moneda_pago === 'BS' && mov.monto_moneda && mov.tasa_pago && (
+                              <div className="text-muted-foreground font-normal text-[10px] leading-tight whitespace-nowrap">
+                                {formatBs(parseFloat(mov.monto_moneda))} @ {parseFloat(mov.tasa_pago).toFixed(4)}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-right text-xs text-muted-foreground whitespace-nowrap">
                             {formatUsd(mov.saldo_anterior)} → {formatUsd(mov.saldo_nuevo)}

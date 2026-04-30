@@ -439,8 +439,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
       const movCuentaId = uuidv4()
       await tx.execute(
-        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
-         VALUES (?, ?, 'FAC', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, tasa_pago)
+         VALUES (?, ?, 'FAC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movCuentaId,
           cliente_id,
@@ -453,6 +453,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           now,
           empresa_id,
           now,
+          tasa.toFixed(4),
         ]
       )
 

@@ -30,6 +30,9 @@ export interface MovimientoCuenta {
   fecha: string
   created_at: string
   created_by: string | null
+  moneda_pago: string | null
+  monto_moneda: string | null
+  tasa_pago: string | null
 }
 
 export function useClientes() {

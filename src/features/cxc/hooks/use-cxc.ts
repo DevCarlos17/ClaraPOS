@@ -300,8 +300,8 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
 
     const movId = uuidv4()
     await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         cliente_id,
@@ -315,6 +315,9 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         empresa_id,
         now,
         procesado_por,
+        moneda,
+        monto.toFixed(2),
+        tasa.toFixed(4),
       ]
     )
 
@@ -505,8 +508,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
     const movId = uuidv4()
     await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         cliente_id,
@@ -520,6 +523,9 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         empresa_id,
         now,
         procesado_por,
+        moneda,
+        monto.toFixed(2),
+        tasa.toFixed(4),
       ]
     )
 
@@ -602,7 +608,7 @@ export async function registrarReversoAbono(params: {
 
     // 1. Leer el pago original
     const pagoResult = await tx.execute(
-      `SELECT id, venta_id, cliente_id, monto_usd, is_reversed FROM pagos WHERE id = ? AND empresa_id = ?`,
+      `SELECT id, venta_id, cliente_id, monto_usd, is_reversed, tasa, monto, moneda_id FROM pagos WHERE id = ? AND empresa_id = ?`,
       [pago_id, empresa_id]
     )
     if (!pagoResult.rows || pagoResult.rows.length === 0) {
@@ -614,6 +620,9 @@ export async function registrarReversoAbono(params: {
       cliente_id: string
       monto_usd: string
       is_reversed: number
+      tasa: string | null
+      monto: string | null
+      moneda_id: string | null
     }
 
     if (pago.is_reversed === 1) {
@@ -672,11 +681,26 @@ export async function registrarReversoAbono(params: {
     ])
 
     // 5. Insertar movimiento_cuenta tipo REV
+    // Resolver moneda label desde moneda_id del pago original
+    let monedaPagoLabel: string | null = null
+    if (pago.moneda_id) {
+      const monedaResult = await tx.execute(
+        `SELECT codigo FROM monedas WHERE id = ? LIMIT 1`,
+        [pago.moneda_id]
+      )
+      const codigoMoneda = (monedaResult.rows?.item(0) as { codigo: string } | undefined)?.codigo
+      if (codigoMoneda === 'VES') {
+        monedaPagoLabel = 'BS'
+      } else if (codigoMoneda) {
+        monedaPagoLabel = codigoMoneda
+      }
+    }
+
     const movId = uuidv4()
     const referencia = nroFactura ? `REV-${nroFactura}` : 'REV-ABONO'
     await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by)
-       VALUES (?, ?, 'REV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, 'REV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         pago.cliente_id,
@@ -690,6 +714,9 @@ export async function registrarReversoAbono(params: {
         empresa_id,
         now,
         reversed_by,
+        monedaPagoLabel,
+        pago.monto != null ? parseFloat(pago.monto).toFixed(2) : null,
+        pago.tasa != null ? parseFloat(pago.tasa).toFixed(4) : null,
       ]
     )
 

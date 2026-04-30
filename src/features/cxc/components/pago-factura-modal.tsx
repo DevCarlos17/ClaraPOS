@@ -141,12 +141,18 @@ export function PagoFacturaModal({
             <span className="font-bold text-red-600">{formatUsd(saldoPend)}</span>
           </div>
           {tasaValor > 0 && (
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Equivalente Bs</span>
-              <span className="text-muted-foreground">
-                {formatBs(usdToBs(saldoPend, tasaValor))}
-              </span>
-            </div>
+            <>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Equivalente Bs</span>
+                <span className="text-muted-foreground">
+                  {formatBs(usdToBs(saldoPend, tasaValor))}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm border-t border-border/50 pt-1 mt-1">
+                <span className="text-muted-foreground font-medium">Tasa actual</span>
+                <span className="font-semibold tabular-nums">{tasaValor.toFixed(4)} Bs/$</span>
+              </div>
+            </>
           )}
         </div>
 
