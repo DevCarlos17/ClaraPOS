@@ -4,12 +4,12 @@ export function todayStr(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** Returns full datetime string in local time: YYYY-MM-DD HH:mm:ss.SSS */
+/** Returns current datetime as UTC ISO 8601 string (YYYY-MM-DDTHH:mm:ss.SSSZ).
+ *  Usando UTC se evita que Supabase (TIMESTAMPTZ) malinterprete la hora local
+ *  como UTC, lo que causaria un desfase de 4 horas en Venezuela (UTC-4).
+ */
 export function localNow(): string {
-  const d = new Date()
-  const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  const time = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}.${String(d.getMilliseconds()).padStart(3, '0')}`
-  return `${date} ${time}`
+  return new Date().toISOString()
 }
 
 /** Returns YYYY-MM-DD for N days ago */

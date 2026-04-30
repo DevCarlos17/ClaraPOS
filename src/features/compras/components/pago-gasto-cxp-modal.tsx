@@ -41,14 +41,22 @@ export function PagoGastoCxpModal({
 
   useEffect(() => {
     if (!user?.empresa_id || !fechaPago) return
+    // DATE(fecha) strips the time component so that tasas creadas hoy (stored as
+    // 'YYYY-MM-DD HH:mm:ss') sean encontradas correctamente cuando fechaPago='YYYY-MM-DD'
     db.execute(
-      'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1',
+      'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND DATE(fecha) <= ? ORDER BY fecha DESC LIMIT 1',
       [user.empresa_id, fechaPago]
     ).then((res) => {
       const row = res.rows?.item(0) as { valor: string } | undefined
-      setTasaInternaNum(row ? parseFloat(row.valor) : 0)
+      const valor = row ? parseFloat(row.valor) : 0
+      setTasaInternaNum(valor)
+      // Auto-poblar la tasa de pago con la tasa BCV actual si el usuario no la cambio
+      // y el gasto no usa tasa paralela negociada
+      if (valor > 0 && !tasaPagoStr && !gasto?.usa_tasa_paralela) {
+        setTasaPagoStr(valor.toFixed(4))
+      }
     }).catch(() => setTasaInternaNum(0))
-  }, [fechaPago, user?.empresa_id])
+  }, [fechaPago, user?.empresa_id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleClose() {
     setFechaPago(localNow().slice(0, 10))
