@@ -7,6 +7,8 @@ import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-paymen
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { registrarAbonoGlobal, useFacturasPendientes } from '../hooks/use-cxc'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { db } from '@/core/db/powersync/db'
+import { todayStr } from '@/lib/dates'
 
 interface AbonoGlobalModalProps {
   isOpen: boolean
@@ -34,7 +36,21 @@ export function AbonoGlobalModal({
   const [metodoPagoId, setMetodoPagoId] = useState('')
   const [montoStr, setMontoStr] = useState('')
   const [referencia, setReferencia] = useState('')
+  const [fechaPago, setFechaPago] = useState(() => todayStr())
+  const [tasaFecha, setTasaFecha] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+
+  // Buscar tasa BCV correspondiente a la fecha del abono
+  useEffect(() => {
+    if (!user?.empresa_id || !fechaPago) return
+    db.execute(
+      'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND DATE(fecha) <= ? ORDER BY fecha DESC LIMIT 1',
+      [user.empresa_id, fechaPago]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { valor: string } | undefined
+      setTasaFecha(row ? parseFloat(row.valor) : 0)
+    }).catch(() => setTasaFecha(0))
+  }, [fechaPago, user?.empresa_id])
 
   useEffect(() => {
     if (isOpen) {
@@ -42,6 +58,7 @@ export function AbonoGlobalModal({
       setMetodoPagoId('')
       setMontoStr('')
       setReferencia('')
+      setFechaPago(todayStr())
     } else {
       dialogRef.current?.close()
     }
@@ -50,10 +67,14 @@ export function AbonoGlobalModal({
   const metodoSeleccionado = metodos.find((m) => m.id === metodoPagoId)
   const moneda = metodoSeleccionado?.moneda ?? 'USD'
   const monto = parseFloat(montoStr) || 0
-  const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaValor) : monto
-  const montoBs = moneda === 'USD' ? usdToBs(monto, tasaValor) : monto
 
-  const canSubmit = metodoPagoId && monto > 0 && !submitting
+  // Tasa efectiva: la de la fecha del abono (historica si es pasada), con fallback a la actual
+  const tasaEfectiva = tasaFecha || tasaValor
+
+  const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva) : monto
+  const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva) : monto
+
+  const canSubmit = metodoPagoId && monto > 0 && !submitting && tasaEfectiva > 0
 
   // Simulacion FIFO para preview
   const fifoPreview = (() => {
@@ -75,7 +96,7 @@ export function AbonoGlobalModal({
 
   const handlePayMax = () => {
     if (moneda === 'BS') {
-      setMontoStr(usdToBs(saldoActual, tasaValor).toFixed(2))
+      setMontoStr(usdToBs(saldoActual, tasaEfectiva).toFixed(2))
     } else {
       setMontoStr(saldoActual.toFixed(2))
     }
@@ -90,7 +111,7 @@ export function AbonoGlobalModal({
         cliente_id: clienteId,
         metodo_cobro_id: metodoPagoId,
         moneda: moneda as 'USD' | 'BS',
-        tasa: tasaValor,
+        tasa: tasaEfectiva,
         monto,
         referencia: referencia.trim() || undefined,
         empresa_id: user!.empresa_id!,
@@ -138,11 +159,11 @@ export function AbonoGlobalModal({
             <span className="text-muted-foreground">Deuda total</span>
             <span className="font-bold text-red-600">{formatUsd(saldoActual)}</span>
           </div>
-          {tasaValor > 0 && (
+          {tasaEfectiva > 0 && (
             <div className="flex justify-between text-sm">
               <span className="text-muted-foreground">Equivalente Bs</span>
               <span className="text-muted-foreground">
-                {formatBs(usdToBs(saldoActual, tasaValor))}
+                {formatBs(usdToBs(saldoActual, tasaEfectiva))}
               </span>
             </div>
           )}
@@ -150,16 +171,40 @@ export function AbonoGlobalModal({
             <span className="text-muted-foreground">Facturas pendientes</span>
             <span className="font-medium">{facturas.length}</span>
           </div>
-          {tasaValor > 0 && (
+          {tasaEfectiva > 0 && (
             <div className="flex justify-between text-sm border-t border-border/50 pt-1 mt-1">
-              <span className="text-muted-foreground font-medium">Tasa actual</span>
-              <span className="font-semibold tabular-nums">{tasaValor.toFixed(4)} Bs/$</span>
+              <span className="text-muted-foreground font-medium">
+                Tasa {fechaPago === todayStr() ? 'actual' : `al ${fechaPago}`}
+              </span>
+              <span className="font-semibold tabular-nums">{tasaEfectiva.toFixed(4)} Bs/$</span>
             </div>
           )}
         </div>
 
         {/* Form */}
         <div className="space-y-3">
+          {/* Fecha del abono */}
+          <div>
+            <label className="text-xs font-medium text-muted-foreground">Fecha del abono</label>
+            <input
+              type="date"
+              value={fechaPago}
+              onChange={(e) => { setFechaPago(e.target.value); setMontoStr('') }}
+              max={todayStr()}
+              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            />
+            {tasaFecha > 0 && fechaPago !== todayStr() && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Tasa BCV a esa fecha: <span className="font-medium">{tasaFecha.toFixed(4)}</span>
+              </p>
+            )}
+            {tasaFecha === 0 && fechaPago !== todayStr() && (
+              <p className="text-xs text-amber-600 mt-1">
+                Sin tasa registrada para esa fecha. Se usara la tasa actual.
+              </p>
+            )}
+          </div>
+
           {/* Metodo de pago */}
           <div>
             <label className="text-xs font-medium text-muted-foreground">Metodo de pago</label>
@@ -206,8 +251,8 @@ export function AbonoGlobalModal({
             {monto > 0 && (
               <p className="text-xs text-muted-foreground mt-1">
                 {moneda === 'USD'
-                  ? `Equivale a ${formatBs(montoBs)}`
-                  : `Equivale a ${formatUsd(montoUsd)}`}
+                  ? `Equivale a ${formatBs(montoBs)} a tasa ${tasaEfectiva.toFixed(4)}`
+                  : `Equivale a ${formatUsd(montoUsd)} a tasa ${tasaEfectiva.toFixed(4)}`}
               </p>
             )}
           </div>
