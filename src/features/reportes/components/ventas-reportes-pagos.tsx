@@ -16,7 +16,7 @@ export function VentasReportesPagos({ fechaDesde, fechaHasta }: VentasReportesPa
     .reduce((sum, m) => sum + m.totalOriginal, 0)
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold mb-4">Cobros por Metodo de Pago</h3>
 
       {isLoading ? (

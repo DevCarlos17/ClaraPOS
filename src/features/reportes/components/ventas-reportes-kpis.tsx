@@ -70,14 +70,14 @@ function KpiCard({
   color: string
 }) {
   const colorMap: Record<string, string> = {
-    blue: 'bg-blue-50 text-blue-600',
-    green: 'bg-green-50 text-green-600',
-    amber: 'bg-amber-50 text-amber-600',
-    purple: 'bg-purple-50 text-purple-600',
+    blue: 'bg-blue-100 text-blue-600',
+    green: 'bg-green-100 text-green-600',
+    amber: 'bg-amber-100 text-amber-600',
+    purple: 'bg-purple-100 text-purple-600',
   }
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-muted-foreground">{titulo}</p>
         <div className={`p-2 rounded-lg ${colorMap[color] ?? colorMap.blue}`}>

@@ -335,7 +335,7 @@ export function VentasReportesPdfButton({ fechaDesde, fechaHasta }: VentasReport
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+      <Button variant="outline" size="sm" onClick={() => setOpen(true)} className="bg-white">
         <FileDown className="size-4" />
         Generar PDF
       </Button>

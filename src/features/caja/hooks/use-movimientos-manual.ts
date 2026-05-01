@@ -16,6 +16,15 @@ export interface MovimientoManualParams {
   usuario_id: string
 }
 
+export interface MovimientoManualMultiParams {
+  entradas: Array<{ metodo_cobro_id: string; monto: number }>
+  origen: OrigenManual
+  concepto: string
+  sesion_caja_id: string
+  empresa_id: string
+  usuario_id: string
+}
+
 // ─── Funcion principal ────────────────────────────────────────
 
 /**
@@ -91,5 +100,78 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
       'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
       [saldoNuevo.toFixed(2), now, metodo_cobro_id]
     )
+  })
+}
+
+/**
+ * Registra multiples movimientos manuales en una sola transaccion atomica.
+ * Util para operaciones multimoneda (ej: ingreso/retiro en USD y Bs simultaneamente).
+ */
+export async function createMovimientoManualMulti(params: MovimientoManualMultiParams): Promise<void> {
+  const { entradas, origen, concepto, sesion_caja_id, empresa_id, usuario_id } = params
+
+  if (entradas.length === 0) throw new Error('No hay entradas para registrar')
+  if (!concepto.trim()) throw new Error('El concepto es requerido')
+  if (!sesion_caja_id) throw new Error('No hay sesion de caja activa')
+
+  const tipo = tipoDeOrigen(origen)
+  const now = localNow()
+
+  await db.writeTransaction(async (tx) => {
+    for (const entrada of entradas) {
+      if (entrada.monto <= 0) throw new Error('El monto debe ser mayor a 0')
+
+      const metodoResult = await tx.execute(
+        'SELECT saldo_actual FROM metodos_cobro WHERE id = ? AND empresa_id = ?',
+        [entrada.metodo_cobro_id, empresa_id]
+      )
+
+      if (!metodoResult.rows || metodoResult.rows.length === 0) {
+        throw new Error('Metodo de cobro no encontrado')
+      }
+
+      const saldoActual = parseFloat(
+        (metodoResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+      )
+
+      if (tipo === 'EGRESO' && saldoActual < entrada.monto) {
+        throw new Error(
+          `Saldo insuficiente. Disponible: ${saldoActual.toFixed(2)}, Solicitado: ${entrada.monto.toFixed(2)}`
+        )
+      }
+
+      const saldoNuevo =
+        tipo === 'INGRESO'
+          ? Number((saldoActual + entrada.monto).toFixed(2))
+          : Number((saldoActual - entrada.monto).toFixed(2))
+
+      const movId = uuidv4()
+      await tx.execute(
+        `INSERT INTO movimientos_metodo_cobro
+           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+        [
+          movId,
+          empresa_id,
+          entrada.metodo_cobro_id,
+          tipo,
+          origen,
+          entrada.monto.toFixed(2),
+          saldoActual.toFixed(2),
+          saldoNuevo.toFixed(2),
+          concepto.trim(),
+          sesion_caja_id,
+          now,
+          now,
+          usuario_id,
+        ]
+      )
+
+      await tx.execute(
+        'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+        [saldoNuevo.toFixed(2), now, entrada.metodo_cobro_id]
+      )
+    }
   })
 }

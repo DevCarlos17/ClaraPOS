@@ -24,7 +24,7 @@ export function VentasReportesDepto({ fechaDesde, fechaHasta }: VentasReportesDe
   const totalUsd = deptos.reduce((sum, d) => sum + d.totalUsd, 0)
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold mb-4">Ventas por Departamento</h3>
 
       {isLoading ? (

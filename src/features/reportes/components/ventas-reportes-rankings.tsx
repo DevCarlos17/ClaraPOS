@@ -73,7 +73,7 @@ function ProductosTable({
   onSelect: (p: TopProductoVentas) => void
 }) {
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold">Top 10 Productos</h3>
       <p className="text-xs text-muted-foreground mb-3">Mas vendidos en el periodo (clic para ver detalle)</p>
 
@@ -133,7 +133,7 @@ function ClientesTable({
   onSelect: (c: TopClienteVentas) => void
 }) {
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold">Top 10 Clientes</h3>
       <p className="text-xs text-muted-foreground mb-3">Mayor volumen de compras (clic para ver detalle)</p>
 

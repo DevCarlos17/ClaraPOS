@@ -34,17 +34,17 @@ function VentasReportesPage() {
               type="date"
               value={fechaDesde}
               onChange={(e) => setFechaDesde(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="rounded-md border border-input bg-white px-3 py-2 text-sm"
             />
             <label className="text-sm text-muted-foreground">Hasta</label>
             <input
               type="date"
               value={fechaHasta}
               onChange={(e) => setFechaHasta(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="rounded-md border border-input bg-white px-3 py-2 text-sm"
             />
             <VentasReportesPdfButton fechaDesde={fechaDesde} fechaHasta={fechaHasta} />
-            <Button variant="outline" size="sm" onClick={() => setConsultasOpen(true)}>
+            <Button variant="outline" size="sm" onClick={() => setConsultasOpen(true)} className="bg-white">
               <Search className="size-4" />
               Consultas
             </Button>

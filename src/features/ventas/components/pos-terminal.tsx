@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, ShoppingCart, Trash2, Save, List, CreditCard, ArrowDownCircle, ArrowUpCircle, Wallet, Handshake, XCircle } from 'lucide-react'
+import { useQuery } from '@powersync/react'
+import { Plus, Trash2, Save, List, ArrowDownCircle, ArrowUpCircle, Wallet, Handshake, XCircle, User, Building2, CreditCard, ShoppingCart } from 'lucide-react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useBlocker } from '@tanstack/react-router'
@@ -22,10 +23,11 @@ import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
 import { NuevoClienteRapidoModal } from './nuevo-cliente-rapido-modal'
 import { AperturaSesionPosModal } from '@/features/caja/components/apertura-sesion-pos-modal'
-import { MovimientoManualForm } from '@/features/caja/components/movimiento-manual-form'
 import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
+import { IngresoRetiroModal } from '@/features/caja/components/ingreso-retiro-modal'
+import { AvanceModal } from '@/features/caja/components/avance-modal'
+import { PrestamoModal } from '@/features/caja/components/prestamo-modal'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
-import type { OrigenManual } from '@/features/caja/schemas/movimiento-manual-schema'
 
 export function PosTerminal() {
   const { tasaValor, isLoading: tasaLoading } = useTasaActual()
@@ -36,6 +38,23 @@ export function PosTerminal() {
   const canCloseCajaPos = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
   const esperaStore = useFacturasEsperaStore()
   const { sesion, isLoading: sesionLoading } = useSesionActiva()
+
+  // Datos de contexto para la barra de caja
+  const { data: empresaData } = useQuery(
+    user?.empresa_id ? 'SELECT nombre FROM empresas WHERE id = ? LIMIT 1' : '',
+    user?.empresa_id ? [user.empresa_id] : []
+  )
+  const empresaNombre = empresaData?.[0]
+    ? (empresaData[0] as { nombre: string }).nombre
+    : null
+
+  const { data: cajaData } = useQuery(
+    sesion?.caja_id ? 'SELECT nombre FROM cajas WHERE id = ? LIMIT 1' : '',
+    sesion?.caja_id ? [sesion.caja_id] : []
+  )
+  const cajaNombre = cajaData?.[0]
+    ? (cajaData[0] as { nombre: string }).nombre
+    : null
 
   // Factura
   const [clienteId, setClienteId] = useState<string | null>(null)
@@ -62,9 +81,11 @@ export function PosTerminal() {
     mensaje: string
   } | null>(null)
 
-  // Caja state
-  const [showMovManualPos, setShowMovManualPos] = useState(false)
-  const [origenMovPos, setOrigenMovPos] = useState<OrigenManual>('INGRESO_MANUAL')
+  // Caja state - modales dedicados
+  const [showIngresoModal, setShowIngresoModal] = useState(false)
+  const [showRetiroModal, setShowRetiroModal] = useState(false)
+  const [showAvanceModal, setShowAvanceModal] = useState(false)
+  const [showPrestamoModal, setShowPrestamoModal] = useState(false)
   const [showCierrePosPin, setShowCierrePosPin] = useState(false)
   const [showCierrePos, setShowCierrePos] = useState(false)
 
@@ -404,11 +425,6 @@ export function PosTerminal() {
   }
 
   // --- Caja desde POS ---
-  const handleMovCajaPos = (origen: OrigenManual) => {
-    setOrigenMovPos(origen)
-    setShowMovManualPos(true)
-  }
-
   const handleCerrarCajaPos = () => {
     if (canCloseCajaPos) {
       setShowCierrePos(true)
@@ -526,6 +542,79 @@ export function PosTerminal() {
             </Button>
           </div>
 
+          {/* Operaciones de Caja */}
+          {sesion && (canMovManualPos || canCloseCajaPos) && (
+            <div className="space-y-2">
+              {/* Contexto: usuario, caja, empresa */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                {user?.nombre && (
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <User size={11} />
+                    <span className="font-medium text-foreground">{user.nombre}</span>
+                  </div>
+                )}
+                {cajaNombre && (
+                  <span className="text-xs text-muted-foreground">· {cajaNombre}</span>
+                )}
+                {empresaNombre && (
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <Building2 size={11} />
+                    <span>{empresaNombre}</span>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {canMovManualPos && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setShowIngresoModal(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors"
+                    >
+                      <ArrowDownCircle size={12} />
+                      Ingreso
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowRetiroModal(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors"
+                    >
+                      <ArrowUpCircle size={12} />
+                      Retiro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAvanceModal(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors"
+                    >
+                      <Wallet size={12} />
+                      Avance
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPrestamoModal(true)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors"
+                    >
+                      <Handshake size={12} />
+                      Prestamo
+                    </button>
+                  </>
+                )}
+                {canCloseCajaPos && (
+                  <button
+                    type="button"
+                    onClick={handleCerrarCajaPos}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                  >
+                    <XCircle size={12} />
+                    Cerrar Caja
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="border-t" />
 
           {/* Cliente */}
@@ -639,6 +728,7 @@ export function PosTerminal() {
                   value={referencia}
                   onChange={(e) => setReferencia(e.target.value)}
                   placeholder="Referencia (opcional)"
+                  autoComplete="off"
                   className="flex-1 rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                 />
                 <Button
@@ -692,63 +782,6 @@ export function PosTerminal() {
             )}
           </div>
 
-          {/* Bloque: Operaciones de caja (solo si hay sesion activa y permisos) */}
-          {sesion && (canMovManualPos || canCloseCajaPos) && (
-            <>
-            <div className="border-t" />
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Caja</p>
-              <div className="flex flex-wrap gap-1.5">
-                {canMovManualPos && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => handleMovCajaPos('INGRESO_MANUAL')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-green-50 text-green-700 hover:bg-green-100 transition-colors border border-green-200"
-                    >
-                      <ArrowDownCircle size={12} />
-                      Ingreso
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleMovCajaPos('EGRESO_MANUAL')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-200"
-                    >
-                      <ArrowUpCircle size={12} />
-                      Retiro
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleMovCajaPos('AVANCE')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors border border-blue-200"
-                    >
-                      <Wallet size={12} />
-                      Avance
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleMovCajaPos('PRESTAMO')}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors border border-purple-200"
-                    >
-                      <Handshake size={12} />
-                      Prestamo
-                    </button>
-                  </>
-                )}
-                {canCloseCajaPos && (
-                  <button
-                    type="button"
-                    onClick={handleCerrarCajaPos}
-                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors border border-gray-300"
-                  >
-                    <XCircle size={12} />
-                    Cerrar Caja
-                  </button>
-                )}
-              </div>
-            </div>
-            </>
-          )}
 
           </div>
         </div>
@@ -796,14 +829,36 @@ export function PosTerminal() {
         onCreado={handleNuevoClienteCreado}
       />
 
-      {/* Movimiento manual desde POS */}
+      {/* Modales de caja desde POS */}
       {sesion && (
-        <MovimientoManualForm
-          isOpen={showMovManualPos}
-          onClose={() => setShowMovManualPos(false)}
-          sesionCajaId={sesion.id}
-          origenInicial={origenMovPos}
-        />
+        <>
+          <IngresoRetiroModal
+            isOpen={showIngresoModal}
+            onClose={() => setShowIngresoModal(false)}
+            sesionCajaId={sesion.id}
+            modo="INGRESO"
+          />
+          <IngresoRetiroModal
+            isOpen={showRetiroModal}
+            onClose={() => setShowRetiroModal(false)}
+            sesionCajaId={sesion.id}
+            modo="RETIRO"
+          />
+          <AvanceModal
+            isOpen={showAvanceModal}
+            onClose={() => setShowAvanceModal(false)}
+            sesionCajaId={sesion.id}
+            tasaActual={tasaValor}
+            clienteNombre={clienteNombre || undefined}
+          />
+          <PrestamoModal
+            isOpen={showPrestamoModal}
+            onClose={() => setShowPrestamoModal(false)}
+            sesionCajaId={sesion.id}
+            tasaActual={tasaValor}
+            clienteNombre={clienteNombre || undefined}
+          />
+        </>
       )}
 
       {/* PIN para cerrar caja desde POS (si no tiene permiso directo) */}

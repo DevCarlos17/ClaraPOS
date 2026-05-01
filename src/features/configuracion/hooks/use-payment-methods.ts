@@ -14,6 +14,7 @@ export interface PaymentMethod {
   banco_empresa_id: string | null
   banco_nombre: string | null
   requiere_referencia: number
+  saldo_actual: string
   is_active: number
   empresa_id: string
   created_at: string
