@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { useQuery } from '@powersync/react'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { createMovimientoManual } from '@/features/caja/hooks/use-movimientos-manual'
@@ -48,6 +49,7 @@ function FormMovimientoManual({
   const [origen, setOrigen] = useState<OrigenManual>(origenInicial)
   const [metodoCobroId, setMetodoCobroId] = useState('')
   const [monto, setMonto] = useState('')
+  const [porcentaje, setPorcentaje] = useState('')
   const [concepto, setConcepto] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -58,6 +60,21 @@ function FormMovimientoManual({
     ? metodos.filter((m) => m.tipo === 'EFECTIVO')
     : metodos
 
+  // Metodo seleccionado
+  const metodoSeleccionado = metodos.find((m) => m.id === metodoCobroId)
+  const monedaMetodo = metodoSeleccionado?.moneda ?? 'USD'
+
+  // Saldo actual del metodo seleccionado (para calcular avance por porcentaje)
+  const { data: saldoData } = useQuery(
+    metodoCobroId
+      ? `SELECT saldo_actual FROM metodos_cobro WHERE id = ? LIMIT 1`
+      : '',
+    metodoCobroId ? [metodoCobroId] : []
+  )
+  const saldoActual = saldoData && saldoData.length > 0
+    ? parseFloat((saldoData[0] as { saldo_actual: string }).saldo_actual) || 0
+    : 0
+
   useEffect(() => {
     // Si el metodo actual no esta en la lista filtrada, limpiar
     if (metodoCobroId && !metodosFiltrados.find((m) => m.id === metodoCobroId)) {
@@ -65,9 +82,19 @@ function FormMovimientoManual({
     }
   }, [origen, metodoCobroId, metodosFiltrados])
 
+  // Cuando cambia el porcentaje en avance, actualizar el monto
+  useEffect(() => {
+    if (origen !== 'AVANCE' || !porcentaje) return
+    const pct = parseFloat(porcentaje)
+    if (isNaN(pct) || pct <= 0 || saldoActual <= 0) return
+    const calculado = Number((saldoActual * pct / 100).toFixed(2))
+    setMonto(calculado.toFixed(2))
+  }, [porcentaje, saldoActual, origen])
+
   function resetFields() {
     setMetodoCobroId('')
     setMonto('')
+    setPorcentaje('')
     setConcepto('')
     setErrors({})
   }
@@ -168,7 +195,7 @@ function FormMovimientoManual({
           </option>
           {metodosFiltrados.map((m) => (
             <option key={m.id} value={m.id}>
-              {m.nombre} ({m.tipo})
+              {m.nombre} ({m.moneda})
             </option>
           ))}
         </select>
@@ -177,19 +204,57 @@ function FormMovimientoManual({
         )}
       </div>
 
+      {/* Porcentaje para avance (calcula el monto automaticamente) */}
+      {origen === 'AVANCE' && metodoCobroId && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Porcentaje de Avance
+          </label>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              inputMode="decimal"
+              min="0.01"
+              max="100"
+              step="0.01"
+              value={porcentaje}
+              onChange={(e) => setPorcentaje(e.target.value)}
+              onWheel={(e) => e.currentTarget.blur()}
+              placeholder="ej: 50"
+              className="no-spinner w-24 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-500">%</span>
+            {saldoActual > 0 && (
+              <span className="text-xs text-gray-500">
+                de {monedaMetodo} {saldoActual.toFixed(2)} disponible
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-1">
+            El monto se calcula automaticamente segun el porcentaje del saldo actual
+          </p>
+        </div>
+      )}
+
       {/* Monto */}
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          Monto (USD)
+          Monto ({monedaMetodo || 'USD'})
         </label>
         <input
           type="number"
+          inputMode="decimal"
           step="0.01"
           min="0.01"
           value={monto}
-          onChange={(e) => setMonto(e.target.value)}
+          onChange={(e) => {
+            setMonto(e.target.value)
+            // Limpiar porcentaje si el usuario escribe monto manualmente
+            if (origen === 'AVANCE') setPorcentaje('')
+          }}
+          onWheel={(e) => e.currentTarget.blur()}
           placeholder="0.00"
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+          className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
             errors.monto ? 'border-red-500' : 'border-gray-300'
           }`}
         />

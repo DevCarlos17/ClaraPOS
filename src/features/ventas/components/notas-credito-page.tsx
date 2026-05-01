@@ -34,7 +34,7 @@ export function NotasCreditoPage() {
       <PageHeader titulo="Notas de Credito" descripcion="Anulacion total de facturas" />
 
       {/* Buscar factura */}
-      <div className="relative">
+      <div className="rounded-xl bg-card shadow-md p-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
@@ -42,52 +42,52 @@ export function NotasCreditoPage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Buscar factura por numero..."
-            className="w-full pl-10 pr-4 py-2 rounded-md border border-input bg-background text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="w-full pl-10 pr-4 py-2 rounded-md border border-input bg-white text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
-        </div>
 
-        {/* Resultados de busqueda */}
-        {searchQuery.trim().length >= 1 && (
-          <div className="absolute z-10 w-full mt-1 bg-background border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
-            {loadingSearch ? (
-              <div className="p-3 text-sm text-muted-foreground">Buscando...</div>
-            ) : facturas.length === 0 ? (
-              <div className="p-3 text-sm text-muted-foreground">
-                No se encontraron facturas activas
-              </div>
-            ) : (
-              facturas.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => handleSelectFactura(f)}
-                  className="w-full text-left px-4 py-3 hover:bg-muted transition-colors border-b border-muted last:border-b-0"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-mono text-sm font-bold">#{f.nro_factura}</span>
-                      <span className="ml-2 text-sm text-muted-foreground">
-                        {f.cliente_nombre}
-                      </span>
-                      {f.tipo === 'CREDITO' && (
-                        <span className="ml-2 inline-flex items-center rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
-                          CREDITO
+          {/* Resultados de busqueda */}
+          {searchQuery.trim().length >= 1 && (
+            <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
+              {loadingSearch ? (
+                <div className="p-3 text-sm text-muted-foreground">Buscando...</div>
+              ) : facturas.length === 0 ? (
+                <div className="p-3 text-sm text-muted-foreground">
+                  No se encontraron facturas activas
+                </div>
+              ) : (
+                facturas.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => handleSelectFactura(f)}
+                    className="w-full text-left px-4 py-3 hover:bg-muted transition-colors border-b border-muted last:border-b-0"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="font-mono text-sm font-bold">#{f.nro_factura}</span>
+                        <span className="ml-2 text-sm text-muted-foreground">
+                          {f.cliente_nombre}
                         </span>
-                      )}
+                        {f.tipo === 'CREDITO' && (
+                          <span className="ml-2 inline-flex items-center rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
+                            CREDITO
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm font-bold">{formatUsd(f.total_usd)}</span>
                     </div>
-                    <span className="text-sm font-bold">{formatUsd(f.total_usd)}</span>
-                  </div>
-                  <div className="text-xs text-muted-foreground mt-1">
-                    {formatDateTime(f.fecha)} &middot; Saldo pend: {formatUsd(f.saldo_pend_usd)}
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-        )}
+                    <div className="text-xs text-muted-foreground mt-1">
+                      {formatDateTime(f.fecha)} &middot; Saldo pend: {formatUsd(f.saldo_pend_usd)}
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Tabla de NCR existentes */}
-      <div className="border rounded-lg">
+      <div className="rounded-xl bg-card shadow-md">
         {loadingNotas ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 5 }).map((_, i) => (

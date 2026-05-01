@@ -13,6 +13,7 @@ export interface SesionCaja {
   usuario_apertura_id: string
   fecha_apertura: string
   monto_apertura_usd: string
+  monto_apertura_bs: string
   usuario_cierre_id: string | null
   fecha_cierre: string | null
   monto_sistema_usd: string | null
@@ -27,6 +28,7 @@ export interface SesionCaja {
 export interface AbrirSesionParams {
   caja_id: string
   monto_apertura_usd: number
+  monto_apertura_bs?: number
   usuario_id: string
   empresa_id: string
 }
@@ -85,10 +87,13 @@ export function useSesionActiva() {
  * Retorna el id de la sesion creada.
  */
 export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string> {
-  const { caja_id, monto_apertura_usd, usuario_id, empresa_id } = params
+  const { caja_id, monto_apertura_usd, monto_apertura_bs = 0, usuario_id, empresa_id } = params
 
   if (monto_apertura_usd < 0) {
     throw new Error('El monto de apertura no puede ser negativo')
+  }
+  if (monto_apertura_bs < 0) {
+    throw new Error('El monto de apertura en Bs no puede ser negativo')
   }
 
   const id = uuidv4()
@@ -110,11 +115,11 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
     await tx.execute(
       `INSERT INTO sesiones_caja (
          id, empresa_id, caja_id, usuario_apertura_id, fecha_apertura,
-         monto_apertura_usd, usuario_cierre_id, fecha_cierre,
+         monto_apertura_usd, monto_apertura_bs, usuario_cierre_id, fecha_cierre,
          monto_sistema_usd, monto_fisico_usd, diferencia_usd,
          observaciones_cierre, status, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 'ABIERTA', ?, ?)`,
-      [id, empresa_id, caja_id, usuario_id, now, monto_apertura_usd.toFixed(2), now, now]
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 'ABIERTA', ?, ?)`,
+      [id, empresa_id, caja_id, usuario_id, now, monto_apertura_usd.toFixed(2), monto_apertura_bs.toFixed(2), now, now]
     )
   })
 

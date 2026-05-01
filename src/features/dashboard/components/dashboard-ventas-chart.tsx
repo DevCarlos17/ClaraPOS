@@ -50,7 +50,7 @@ export function DashboardVentasChart() {
   }
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold">Ventas por Dia</h3>
         <div className="flex gap-1">

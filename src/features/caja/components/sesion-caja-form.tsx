@@ -11,6 +11,7 @@ import {
 } from '@/features/caja/hooks/use-sesiones-caja'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -26,17 +27,26 @@ interface SesionCajaFormProps {
 function FormApertura({ onClose }: { onClose: () => void }) {
   const { user } = useCurrentUser()
   const { cajas, isLoading: loadingCajas } = useCajasActivas()
+  const { tasaValor } = useTasaActual()
 
   const [cajaId, setCajaId] = useState('')
-  const [montoApertura, setMontoApertura] = useState('')
+  const [montoUsd, setMontoUsd] = useState('')
+  const [montoBs, setMontoBs] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
   function resetFields() {
     setCajaId('')
-    setMontoApertura('')
+    setMontoUsd('')
+    setMontoBs('')
     setErrors({})
   }
+
+  const montoUsdNum = parseFloat(montoUsd) || 0
+  const montoBsNum = parseFloat(montoBs) || 0
+  const totalEquivUsd = tasaValor > 0
+    ? Number((montoUsdNum + montoBsNum / tasaValor).toFixed(2))
+    : montoUsdNum
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -44,7 +54,8 @@ function FormApertura({ onClose }: { onClose: () => void }) {
 
     const parsed = sesionCajaAperturaSchema.safeParse({
       caja_id: cajaId,
-      monto_apertura_usd: parseFloat(montoApertura) || 0,
+      monto_apertura_usd: montoUsdNum,
+      monto_apertura_bs: montoBsNum,
     })
 
     if (!parsed.success) {
@@ -67,6 +78,7 @@ function FormApertura({ onClose }: { onClose: () => void }) {
       await abrirSesionCaja({
         caja_id: parsed.data.caja_id,
         monto_apertura_usd: parsed.data.monto_apertura_usd,
+        monto_apertura_bs: parsed.data.monto_apertura_bs,
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
       })
@@ -111,25 +123,66 @@ function FormApertura({ onClose }: { onClose: () => void }) {
         )}
       </div>
 
-      {/* Monto de apertura */}
-      <div>
-        <label htmlFor="apertura-monto" className="block text-sm font-medium text-gray-700 mb-1">
-          Monto de Apertura (USD)
-        </label>
-        <input
-          id="apertura-monto"
-          type="number"
-          step="0.01"
-          min="0"
-          value={montoApertura}
-          onChange={(e) => setMontoApertura(e.target.value)}
-          placeholder="0.00"
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            errors.monto_apertura_usd ? 'border-red-500' : 'border-gray-300'
-          }`}
-        />
-        {errors.monto_apertura_usd && (
-          <p className="text-red-500 text-xs mt-1">{errors.monto_apertura_usd}</p>
+      {/* Fondos de apertura bimonetarios */}
+      <div className="space-y-3">
+        <p className="text-sm font-medium text-gray-700">Fondo de Apertura</p>
+
+        {/* USD */}
+        <div>
+          <label htmlFor="apertura-monto-usd" className="block text-xs font-medium text-gray-600 mb-1">
+            Efectivo USD
+          </label>
+          <input
+            id="apertura-monto-usd"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={montoUsd}
+            onChange={(e) => setMontoUsd(e.target.value)}
+            onWheel={(e) => e.currentTarget.blur()}
+            placeholder="0.00"
+            className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              errors.monto_apertura_usd ? 'border-red-500' : 'border-gray-300'
+            }`}
+          />
+          {errors.monto_apertura_usd && (
+            <p className="text-red-500 text-xs mt-1">{errors.monto_apertura_usd}</p>
+          )}
+        </div>
+
+        {/* Bs */}
+        <div>
+          <label htmlFor="apertura-monto-bs" className="block text-xs font-medium text-gray-600 mb-1">
+            Efectivo Bs
+          </label>
+          <input
+            id="apertura-monto-bs"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            value={montoBs}
+            onChange={(e) => setMontoBs(e.target.value)}
+            onWheel={(e) => e.currentTarget.blur()}
+            placeholder="0.00"
+            className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              errors.monto_apertura_bs ? 'border-red-500' : 'border-gray-300'
+            }`}
+          />
+          {errors.monto_apertura_bs && (
+            <p className="text-red-500 text-xs mt-1">{errors.monto_apertura_bs}</p>
+          )}
+        </div>
+
+        {/* Total equivalente */}
+        {(montoUsdNum > 0 || montoBsNum > 0) && tasaValor > 0 && (
+          <p className="text-xs text-gray-500 bg-gray-50 rounded px-2 py-1.5">
+            Total equivalente: <span className="font-medium">USD {totalEquivUsd.toFixed(2)}</span>
+            {montoBsNum > 0 && (
+              <span className="ml-1">(tasa: {tasaValor.toFixed(4)})</span>
+            )}
+          </p>
         )}
       </div>
 
@@ -359,12 +412,14 @@ function FormCierre({
         <input
           id="cierre-monto"
           type="number"
+          inputMode="decimal"
           step="0.01"
           min="0"
           value={montoFisico}
           onChange={(e) => setMontoFisico(e.target.value)}
+          onWheel={(e) => e.currentTarget.blur()}
           placeholder="0.00"
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+          className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
             errors.monto_fisico_usd ? 'border-red-500' : 'border-gray-300'
           }`}
         />

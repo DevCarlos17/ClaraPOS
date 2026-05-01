@@ -19,7 +19,7 @@ export function DashboardInventarioChart() {
   const totalUsd = deptos.reduce((sum, d) => sum + d.valorUsd, 0)
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold mb-4">Inventario por Departamento</h3>
 
       {isLoading ? (

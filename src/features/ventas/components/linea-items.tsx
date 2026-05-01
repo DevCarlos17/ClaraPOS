@@ -13,7 +13,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
 
   if (lineas.length === 0) {
     return (
-      <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+      <div className="rounded-xl bg-card shadow-md border border-dashed p-8 text-center text-sm text-muted-foreground">
         Busca y agrega productos para comenzar la venta
       </div>
     )
@@ -21,7 +21,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
 
   return (
     <div className="space-y-2">
-      <div className="rounded-lg border overflow-hidden">
+      <div className="rounded-xl bg-card shadow-md overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -75,7 +75,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
                           if (e.key === '-') e.preventDefault()
                           if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
                         }}
-                        className={`w-full text-center rounded border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+                        className={`w-full text-center rounded border bg-white px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
                           cantidadInvalida || stockExcedido ? 'border-destructive text-destructive' : ''
                         }`}
                       />

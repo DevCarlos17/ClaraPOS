@@ -4,7 +4,7 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
-  --color-background: #fdfdfd;
+  --color-background: #f1f5f9;
   --color-foreground: #1d1d1f;
 
   --color-card: #ffffff;
@@ -76,6 +76,16 @@
 }
 
 @layer utilities {
+  /* Ocultar flechas de inputs numericos */
+  input[type='number'].no-spinner::-webkit-inner-spin-button,
+  input[type='number'].no-spinner::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'].no-spinner {
+    -moz-appearance: textfield;
+  }
+
   ::-webkit-scrollbar {
     width: 14px;
     height: 14px;

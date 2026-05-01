@@ -118,7 +118,7 @@ export function NuevoClienteRapidoModal({
               value={identificacion}
               onChange={(e) => setIdentificacion(e.target.value.toUpperCase())}
               placeholder="Ej: V-12345678"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background ${
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white ${
                 errors.identificacion ? 'border-destructive' : 'border-input'
               }`}
             />
@@ -135,7 +135,7 @@ export function NuevoClienteRapidoModal({
               value={nombre}
               onChange={(e) => setNombre(e.target.value.toUpperCase())}
               placeholder="Nombre del cliente o empresa"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background ${
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white ${
                 errors.nombre ? 'border-destructive' : 'border-input'
               }`}
             />
@@ -155,7 +155,7 @@ export function NuevoClienteRapidoModal({
               onChange={(e) => setDireccion(e.target.value)}
               placeholder="Direccion del cliente"
               rows={2}
-              className="w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background resize-none"
+              className="w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white resize-none"
             />
           </div>
 
@@ -170,7 +170,7 @@ export function NuevoClienteRapidoModal({
               value={telefono}
               onChange={(e) => setTelefono(e.target.value)}
               placeholder="0412-1234567"
-              className="w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background"
+              className="w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white"
             />
           </div>
 
@@ -184,7 +184,7 @@ export function NuevoClienteRapidoModal({
               value={limiteCredito}
               onChange={(e) => setLimiteCredito(e.target.value)}
               onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-background ${
+              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary bg-white ${
                 errors.limite_credito_usd ? 'border-destructive' : 'border-input'
               }`}
             />

@@ -45,12 +45,12 @@ export function ProductoBuscador({ onSelect }: ProductoBuscadorProps) {
           }}
           onFocus={() => setOpen(true)}
           placeholder="Buscar producto por nombre o codigo..."
-          className="w-full rounded-lg border bg-background pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          className="w-full rounded-lg border bg-white pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
       </div>
 
       {open && query.trim().length >= 2 && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border bg-popover shadow-md max-h-60 overflow-y-auto">
+        <div className="absolute z-50 mt-1 w-full rounded-lg border bg-white shadow-md max-h-60 overflow-y-auto">
           {isLoading ? (
             <div className="p-3 text-sm text-muted-foreground text-center">Buscando...</div>
           ) : productos.length === 0 ? (

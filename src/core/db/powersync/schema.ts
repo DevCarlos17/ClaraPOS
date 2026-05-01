@@ -713,6 +713,7 @@ const sesiones_caja = new Table(
     usuario_apertura_id: column.text,
     fecha_apertura: column.text,
     monto_apertura_usd: column.text,
+    monto_apertura_bs: column.text,
     usuario_cierre_id: column.text,
     fecha_cierre: column.text,
     monto_sistema_usd: column.text,

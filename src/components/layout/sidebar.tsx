@@ -85,6 +85,7 @@ const menuItems: MenuItem[] = [
     children: [
       { title: 'Sesiones', url: '/caja/sesiones', icon: Monitor, requiredPermission: PERMISSIONS.CAJA_ACCESS },
       { title: 'Movimientos', url: '/caja/movimientos', icon: ArrowDownUp, requiredPermission: PERMISSIONS.CAJA_ACCESS },
+      { title: 'Cajas', url: '/configuracion/cajas', icon: Monitor, requiredPermission: PERMISSIONS.CONFIG_RATES },
     ],
   },
   {
@@ -137,7 +138,6 @@ const menuItems: MenuItem[] = [
       { title: 'Datos Empresa', url: '/configuracion/datos-empresa', icon: Building2, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Tasa de Cambio', url: '/configuracion/tasa-cambio', icon: DollarSign, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Usuarios y Perfiles', url: '/configuracion/usuarios', icon: UserCog, requiredPermission: PERMISSIONS.CONFIG_USERS },
-      { title: 'Cajas', url: '/configuracion/cajas', icon: Monitor, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Impuestos', url: '/configuracion/impuestos', icon: Calculator, requiredPermission: PERMISSIONS.CONFIG_RATES },
     ],
   },

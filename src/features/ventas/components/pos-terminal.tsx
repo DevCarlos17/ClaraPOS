@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plus, ShoppingCart, Trash2, Save, List, CreditCard } from 'lucide-react'
+import { Plus, ShoppingCart, Trash2, Save, List, CreditCard, ArrowDownCircle, ArrowUpCircle, Wallet, Handshake, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useBlocker } from '@tanstack/react-router'
@@ -22,13 +22,18 @@ import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
 import { NuevoClienteRapidoModal } from './nuevo-cliente-rapido-modal'
 import { AperturaSesionPosModal } from '@/features/caja/components/apertura-sesion-pos-modal'
+import { MovimientoManualForm } from '@/features/caja/components/movimiento-manual-form'
+import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
+import type { OrigenManual } from '@/features/caja/schemas/movimiento-manual-schema'
 
 export function PosTerminal() {
   const { tasaValor, isLoading: tasaLoading } = useTasaActual()
   const { user } = useCurrentUser()
   const { metodos } = useMetodosPagoActivos()
-  const { hasPermission } = usePermissions()
+  const { hasPermission, isOwner } = usePermissions()
+  const canMovManualPos = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)
+  const canCloseCajaPos = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
   const esperaStore = useFacturasEsperaStore()
   const { sesion, isLoading: sesionLoading } = useSesionActiva()
 
@@ -56,6 +61,12 @@ export function PosTerminal() {
     titulo: string
     mensaje: string
   } | null>(null)
+
+  // Caja state
+  const [showMovManualPos, setShowMovManualPos] = useState(false)
+  const [origenMovPos, setOrigenMovPos] = useState<OrigenManual>('INGRESO_MANUAL')
+  const [showCierrePosPin, setShowCierrePosPin] = useState(false)
+  const [showCierrePos, setShowCierrePos] = useState(false)
 
   // Refs for navigation blocker (always captures latest state)
   const lineasRef = useRef(lineas)
@@ -392,6 +403,20 @@ export function PosTerminal() {
     }
   }
 
+  // --- Caja desde POS ---
+  const handleMovCajaPos = (origen: OrigenManual) => {
+    setOrigenMovPos(origen)
+    setShowMovManualPos(true)
+  }
+
+  const handleCerrarCajaPos = () => {
+    if (canCloseCajaPos) {
+      setShowCierrePos(true)
+    } else {
+      setShowCierrePosPin(true)
+    }
+  }
+
   // ---- Validaciones para el boton confirmar ----
   const tieneLineasValidas = lineas.length > 0 && lineas.every((l) => l.cantidad > 0)
   const puedeConfirmar = !submitting && !!clienteId && tieneLineasValidas
@@ -449,7 +474,8 @@ export function PosTerminal() {
         </div>
 
         {/* ── COLUMNA DERECHA ── */}
-        <div className="space-y-3 lg:sticky lg:top-6">
+        <div className="rounded-xl bg-card shadow-md lg:sticky lg:top-6 overflow-hidden">
+          <div className="p-4 space-y-4">
 
           {/* Fila 1: Cancelar + Confirmar */}
           <div className="grid grid-cols-2 gap-2">
@@ -500,8 +526,10 @@ export function PosTerminal() {
             </Button>
           </div>
 
-          {/* Bloque: cliente */}
-          <div className="rounded-lg border p-3 space-y-2">
+          <div className="border-t" />
+
+          {/* Cliente */}
+          <div className="space-y-2">
             <label className="text-xs font-medium text-muted-foreground">Cliente</label>
             <div className="flex gap-2">
               <div className="flex-1 min-w-0">
@@ -523,8 +551,10 @@ export function PosTerminal() {
             </div>
           </div>
 
-          {/* Bloque: totales */}
-          <div className="rounded-lg bg-muted/50 px-3 py-2.5 space-y-1.5">
+          <div className="border-t" />
+
+          {/* Totales */}
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="text-xs text-muted-foreground">Total USD</span>
               <span className="text-xl font-bold">{formatUsd(totalUsd)}</span>
@@ -539,8 +569,10 @@ export function PosTerminal() {
             </div>
           </div>
 
-          {/* Bloque: pagos */}
-          <div className="rounded-lg border p-3 space-y-3">
+          <div className="border-t" />
+
+          {/* Pagos */}
+          <div className="space-y-3">
             <p className="text-sm font-semibold">Pagos</p>
 
             {/* Resumen abonado / pendiente / tipo */}
@@ -575,7 +607,7 @@ export function PosTerminal() {
                   <select
                     value={metodoId}
                     onChange={(e) => setMetodoId(e.target.value)}
-                    className="w-full rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                   >
                     <option value="">Seleccionar...</option>
                     {metodos.map((m) => (
@@ -597,7 +629,7 @@ export function PosTerminal() {
                     onChange={(e) => setMonto(e.target.value)}
                     onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
                     placeholder="0.00"
-                    className="w-full rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                   />
                 </div>
               </div>
@@ -607,7 +639,7 @@ export function PosTerminal() {
                   value={referencia}
                   onChange={(e) => setReferencia(e.target.value)}
                   placeholder="Referencia (opcional)"
-                  className="flex-1 rounded border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  className="flex-1 rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                 />
                 <Button
                   type="button"
@@ -660,6 +692,65 @@ export function PosTerminal() {
             )}
           </div>
 
+          {/* Bloque: Operaciones de caja (solo si hay sesion activa y permisos) */}
+          {sesion && (canMovManualPos || canCloseCajaPos) && (
+            <>
+            <div className="border-t" />
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Caja</p>
+              <div className="flex flex-wrap gap-1.5">
+                {canMovManualPos && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleMovCajaPos('INGRESO_MANUAL')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-green-50 text-green-700 hover:bg-green-100 transition-colors border border-green-200"
+                    >
+                      <ArrowDownCircle size={12} />
+                      Ingreso
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMovCajaPos('EGRESO_MANUAL')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-red-50 text-red-700 hover:bg-red-100 transition-colors border border-red-200"
+                    >
+                      <ArrowUpCircle size={12} />
+                      Retiro
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMovCajaPos('AVANCE')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors border border-blue-200"
+                    >
+                      <Wallet size={12} />
+                      Avance
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleMovCajaPos('PRESTAMO')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors border border-purple-200"
+                    >
+                      <Handshake size={12} />
+                      Prestamo
+                    </button>
+                  </>
+                )}
+                {canCloseCajaPos && (
+                  <button
+                    type="button"
+                    onClick={handleCerrarCajaPos}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors border border-gray-300"
+                  >
+                    <XCircle size={12} />
+                    Cerrar Caja
+                  </button>
+                )}
+              </div>
+            </div>
+            </>
+          )}
+
+          </div>
         </div>
       </div>
 
@@ -703,6 +794,34 @@ export function PosTerminal() {
         isOpen={showNuevoClienteModal}
         onClose={() => setShowNuevoClienteModal(false)}
         onCreado={handleNuevoClienteCreado}
+      />
+
+      {/* Movimiento manual desde POS */}
+      {sesion && (
+        <MovimientoManualForm
+          isOpen={showMovManualPos}
+          onClose={() => setShowMovManualPos(false)}
+          sesionCajaId={sesion.id}
+          origenInicial={origenMovPos}
+        />
+      )}
+
+      {/* PIN para cerrar caja desde POS (si no tiene permiso directo) */}
+      <SupervisorPinDialog
+        isOpen={showCierrePosPin}
+        onClose={() => setShowCierrePosPin(false)}
+        onAuthorized={() => setShowCierrePos(true)}
+        titulo="Cerrar Sesion de Caja"
+        mensaje="Ingresa el PIN de supervisor para cerrar la sesion de caja."
+        requiredPermission="caja.close"
+      />
+
+      {/* Formulario de cierre desde POS */}
+      <SesionCajaForm
+        mode="cierre"
+        isOpen={showCierrePos}
+        onClose={() => setShowCierrePos(false)}
+        sesionId={sesion?.id}
       />
     </>
   )

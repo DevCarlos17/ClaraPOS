@@ -15,13 +15,16 @@ export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosMod
   const { cajas, isLoading: loadingCajas } = useCajasActivas()
 
   const [cajaId, setCajaId] = useState('')
-  const [moneda, setMoneda] = useState<'USD' | 'BS'>('USD')
-  const [monto, setMonto] = useState('')
+  const [montoUsd, setMontoUsd] = useState('')
+  const [montoBs, setMontoBs] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
-  const montoNum = parseFloat(monto) || 0
-  const montoUsd = moneda === 'BS' && tasa > 0 ? montoNum / tasa : montoNum
+  const montoUsdNum = parseFloat(montoUsd) || 0
+  const montoBsNum = parseFloat(montoBs) || 0
+  const totalEquivUsd = tasa > 0
+    ? Number((montoUsdNum + montoBsNum / tasa).toFixed(2))
+    : montoUsdNum
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -29,7 +32,8 @@ export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosMod
 
     const newErrors: Record<string, string> = {}
     if (!cajaId) newErrors.caja_id = 'Selecciona una caja'
-    if (montoNum < 0) newErrors.monto = 'El monto no puede ser negativo'
+    if (montoUsdNum < 0) newErrors.monto_usd = 'El monto no puede ser negativo'
+    if (montoBsNum < 0) newErrors.monto_bs = 'El monto no puede ser negativo'
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
       return
@@ -44,7 +48,8 @@ export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosMod
     try {
       await abrirSesionCaja({
         caja_id: cajaId,
-        monto_apertura_usd: montoUsd,
+        monto_apertura_usd: montoUsdNum,
+        monto_apertura_bs: montoBsNum,
         usuario_id: user.id,
         empresa_id: user.empresa_id,
       })
@@ -94,50 +99,60 @@ export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosMod
             )}
           </div>
 
-          {/* Monto con toggle de moneda */}
-          <div>
-            <label className="block text-sm font-medium mb-1">Efectivo inicial</label>
-            <div className="flex gap-2">
-              <div className="flex rounded-md border border-input overflow-hidden">
-                <button
-                  type="button"
-                  onClick={() => setMoneda('USD')}
-                  className={`px-3 py-2 text-xs font-medium transition-colors ${
-                    moneda === 'USD' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-                  }`}
-                >
-                  USD
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMoneda('BS')}
-                  className={`px-3 py-2 text-xs font-medium transition-colors ${
-                    moneda === 'BS' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-                  }`}
-                >
-                  Bs
-                </button>
-              </div>
+          {/* Fondos bimonetarios */}
+          <div className="space-y-2">
+            <label className="block text-sm font-medium">Fondo inicial</label>
+
+            {/* USD */}
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Efectivo USD</label>
               <input
                 type="number"
+                inputMode="decimal"
                 min="0"
                 step="0.01"
-                value={monto}
-                onChange={(e) => setMonto(e.target.value)}
+                value={montoUsd}
+                onChange={(e) => setMontoUsd(e.target.value)}
+                onWheel={(e) => e.currentTarget.blur()}
                 onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
                 placeholder="0.00"
-                className={`flex-1 rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary ${
-                  errors.monto ? 'border-destructive' : 'border-input'
+                className={`no-spinner w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary ${
+                  errors.monto_usd ? 'border-destructive' : 'border-input'
                 }`}
               />
+              {errors.monto_usd && (
+                <p className="text-xs text-destructive mt-1">{errors.monto_usd}</p>
+              )}
             </div>
-            {moneda === 'BS' && tasa > 0 && montoNum > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Equivale a ${montoUsd.toFixed(2)} USD (tasa: {tasa.toFixed(4)})
+
+            {/* Bs */}
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Efectivo Bs</label>
+              <input
+                type="number"
+                inputMode="decimal"
+                min="0"
+                step="0.01"
+                value={montoBs}
+                onChange={(e) => setMontoBs(e.target.value)}
+                onWheel={(e) => e.currentTarget.blur()}
+                onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
+                placeholder="0.00"
+                className={`no-spinner w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary ${
+                  errors.monto_bs ? 'border-destructive' : 'border-input'
+                }`}
+              />
+              {errors.monto_bs && (
+                <p className="text-xs text-destructive mt-1">{errors.monto_bs}</p>
+              )}
+            </div>
+
+            {/* Equivalente */}
+            {(montoUsdNum > 0 || montoBsNum > 0) && tasa > 0 && (
+              <p className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1.5">
+                Total equiv: <span className="font-medium">${totalEquivUsd.toFixed(2)} USD</span>
+                {montoBsNum > 0 && <span className="ml-1">(tasa: {tasa.toFixed(4)})</span>}
               </p>
-            )}
-            {errors.monto && (
-              <p className="text-xs text-destructive mt-1">{errors.monto}</p>
             )}
           </div>
 

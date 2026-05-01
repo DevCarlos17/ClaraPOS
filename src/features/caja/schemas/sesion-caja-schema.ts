@@ -7,6 +7,11 @@ export const sesionCajaAperturaSchema = z.object({
   monto_apertura_usd: z
     .number({ message: 'El monto de apertura es requerido' })
     .min(0, 'El monto no puede ser negativo'),
+  monto_apertura_bs: z
+    .number()
+    .min(0, 'El monto no puede ser negativo')
+    .optional()
+    .default(0),
 })
 
 export type SesionCajaAperturaValues = z.infer<typeof sesionCajaAperturaSchema>

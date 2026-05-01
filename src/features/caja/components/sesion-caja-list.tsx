@@ -90,7 +90,10 @@ function BannerSesionActiva({
             Apertura: {formatDateTime(sesion.fecha_apertura)}
           </p>
           <p className="text-xs text-green-700">
-            Monto apertura: USD {parseFloat(sesion.monto_apertura_usd).toFixed(2)}
+            Fondo: USD {parseFloat(sesion.monto_apertura_usd).toFixed(2)}
+            {sesion.monto_apertura_bs && parseFloat(sesion.monto_apertura_bs) > 0 && (
+              <span className="ml-1">+ Bs {parseFloat(sesion.monto_apertura_bs).toFixed(2)}</span>
+            )}
           </p>
         </div>
 
