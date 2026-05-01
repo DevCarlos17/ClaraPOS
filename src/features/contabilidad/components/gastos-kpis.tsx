@@ -18,9 +18,9 @@ interface KpiCardProps {
 
 function KpiCard({ label, value }: KpiCardProps) {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4">
-      <p className="text-xs text-gray-500 font-medium">{label}</p>
-      <p className="text-lg font-bold text-gray-900 mt-1">{value}</p>
+    <div className="bg-card border border-border rounded-xl shadow-md p-4">
+      <p className="text-xs text-muted-foreground font-medium">{label}</p>
+      <p className="text-lg font-bold text-foreground mt-1">{value}</p>
     </div>
   )
 }

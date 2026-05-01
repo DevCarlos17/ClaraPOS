@@ -7,7 +7,7 @@ export function TasaList() {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border bg-card p-6">
+      <div className="rounded-xl bg-card shadow-md p-6">
         <div className="animate-pulse space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="h-10 bg-muted rounded" />
@@ -19,15 +19,15 @@ export function TasaList() {
 
   if (tasas.length === 0) {
     return (
-      <div className="rounded-xl border bg-card p-6 text-center">
+      <div className="rounded-xl bg-card shadow-md p-6 text-center">
         <p className="text-muted-foreground">No hay tasas registradas</p>
       </div>
     )
   }
 
   return (
-    <div className="rounded-xl border bg-card overflow-hidden">
-      <div className="px-6 py-4 border-b">
+    <div className="rounded-xl bg-card shadow-md overflow-hidden">
+      <div className="px-6 py-4 border-b border-border">
         <h3 className="font-semibold">Historial de Tasas (ultimas 10)</h3>
       </div>
       <div className="overflow-x-auto">

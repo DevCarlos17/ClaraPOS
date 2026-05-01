@@ -121,43 +121,43 @@ export function DepartamentoList() {
 
   function renderSortIcon(key: SortKey) {
     if (sortKey !== key) {
-      return <ArrowUpDown className="h-3.5 w-3.5 text-gray-400" />
+      return <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
     }
     return sortDir === 'asc' ? (
-      <ArrowUp className="h-3.5 w-3.5 text-gray-700" />
+      <ArrowUp className="h-3.5 w-3.5 text-muted-foreground" />
     ) : (
-      <ArrowDown className="h-3.5 w-3.5 text-gray-700" />
+      <ArrowDown className="h-3.5 w-3.5 text-muted-foreground" />
     )
   }
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
+      <div className="rounded-xl bg-card shadow-md p-6">
         <div className="flex justify-end gap-2 mb-4">
-          <div className="h-9 w-40 bg-gray-200 rounded animate-pulse" />
-          <div className="h-9 w-40 bg-gray-200 rounded animate-pulse" />
+          <div className="h-9 w-40 bg-muted rounded animate-pulse" />
+          <div className="h-9 w-40 bg-muted rounded animate-pulse" />
         </div>
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted rounded animate-pulse" />
         ))}
       </div>
     )
   }
 
   return (
-    <div>
+    <div className="rounded-xl bg-card shadow-md p-6">
       <div className="flex justify-end items-center gap-2 mb-4">
         <button
           onClick={() => setReporteOpen(true)}
           disabled={departamentos.length === 0}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
           <FileText className="h-4 w-4" />
           Generar Reporte
         </button>
         <button
           onClick={handleNuevo}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors cursor-pointer"
         >
           <Plus className="h-4 w-4" />
           Nuevo Departamento
@@ -165,52 +165,52 @@ export function DepartamentoList() {
       </div>
 
       {sortedDepartamentos.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-muted-foreground">
           <p className="text-base font-medium">No hay departamentos registrados</p>
           <p className="text-sm mt-1">Crea el primer departamento para comenzar</p>
         </div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <div className="overflow-x-auto border border-border rounded-lg">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+              <tr className="border-b border-border bg-muted">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('codigo')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Codigo
                     {renderSortIcon('codigo')}
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('nombre')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Nombre
                     {renderSortIcon('nombre')}
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('articulos')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Articulos Activos
                     {renderSortIcon('articulos')}
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('estado')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Estado
                     {renderSortIcon('estado')}
                   </button>
                 </th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -218,18 +218,18 @@ export function DepartamentoList() {
                 <tr
                   key={dep.id}
                   onClick={() => handleRowClick(dep)}
-                  className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+                  className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                 >
-                  <td className="px-4 py-3 font-mono text-gray-900">{dep.codigo}</td>
-                  <td className="px-4 py-3 text-gray-900">{dep.nombre}</td>
-                  <td className="px-4 py-3 text-gray-900 tabular-nums">
+                  <td className="px-4 py-3 font-mono">{dep.codigo}</td>
+                  <td className="px-4 py-3">{dep.nombre}</td>
+                  <td className="px-4 py-3 tabular-nums">
                     {dep.articulos_activos}
                   </td>
                   <td className="px-4 py-3">
                     <button
                       onClick={(e) => handleToggleActivo(e, dep)}
                       disabled={togglingId === dep.id}
-                      className="disabled:opacity-50"
+                      className="disabled:opacity-50 cursor-pointer"
                     >
                       {dep.is_active === 1 ? (
                         <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
@@ -245,7 +245,7 @@ export function DepartamentoList() {
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={(e) => handleEditar(e, dep)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                      className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
                     >
                       <Pencil className="h-3.5 w-3.5" />
                       Editar

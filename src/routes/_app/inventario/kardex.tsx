@@ -22,14 +22,14 @@ function KardexPage() {
       <div className="space-y-6">
         <PageHeader titulo="Kardex" descripcion="Movimientos y ajustes de inventario" />
 
-        <div className="border-b border-gray-200">
+        <div className="border-b border-border">
           <nav className="-mb-px flex gap-6">
             <button
               onClick={() => setTabActiva('movimientos')}
               className={`pb-3 text-sm font-medium transition-colors ${
                 tabActiva === 'movimientos'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'border-b-2 border-blue-600 text-blue-600 cursor-pointer'
+                  : 'text-muted-foreground hover:text-foreground cursor-pointer'
               }`}
             >
               Movimientos
@@ -38,8 +38,8 @@ function KardexPage() {
               onClick={() => setTabActiva('ajustes')}
               className={`pb-3 text-sm font-medium transition-colors ${
                 tabActiva === 'ajustes'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'border-b-2 border-blue-600 text-blue-600 cursor-pointer'
+                  : 'text-muted-foreground hover:text-foreground cursor-pointer'
               }`}
             >
               Ajuste Masivo
@@ -48,8 +48,8 @@ function KardexPage() {
               onClick={() => setTabActiva('motivos')}
               className={`pb-3 text-sm font-medium transition-colors ${
                 tabActiva === 'motivos'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'border-b-2 border-blue-600 text-blue-600 cursor-pointer'
+                  : 'text-muted-foreground hover:text-foreground cursor-pointer'
               }`}
             >
               Motivos de Ajuste

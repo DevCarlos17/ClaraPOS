@@ -81,69 +81,71 @@ export function ConciliacionBancaria() {
   return (
     <div className="space-y-5">
       {/* Selector + filtros */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 p-4 bg-muted/30 rounded-lg border">
-        <div className="space-y-1.5">
-          <Label className="text-xs">Cuenta Bancaria</Label>
-          <Select value={selectedBancoId} onValueChange={setSelectedBancoId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Seleccionar banco..." />
-            </SelectTrigger>
-            <SelectContent>
-              {bancos.map((b) => (
-                <SelectItem key={b.id} value={b.id}>
-                  {b.nombre_banco} - {b.nro_cuenta}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Desde</Label>
-          <Input
-            type="date"
-            value={fechaDesde}
-            onChange={(e) => setFechaDesde(e.target.value)}
-            className="text-sm"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label className="text-xs">Hasta</Label>
-          <Input
-            type="date"
-            value={fechaHasta}
-            onChange={(e) => setFechaHasta(e.target.value)}
-            className="text-sm"
-          />
-        </div>
-        <div className="flex items-end">
-          <Button onClick={handleConsultar} className="w-full" size="sm">
-            Consultar
-          </Button>
+      <div className="rounded-xl bg-card shadow-md p-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs">Cuenta Bancaria</Label>
+            <Select value={selectedBancoId} onValueChange={setSelectedBancoId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Seleccionar banco..." />
+              </SelectTrigger>
+              <SelectContent>
+                {bancos.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {b.nombre_banco} - {b.nro_cuenta}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Desde</Label>
+            <Input
+              type="date"
+              value={fechaDesde}
+              onChange={(e) => setFechaDesde(e.target.value)}
+              className="text-sm"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs">Hasta</Label>
+            <Input
+              type="date"
+              value={fechaHasta}
+              onChange={(e) => setFechaHasta(e.target.value)}
+              className="text-sm"
+            />
+          </div>
+          <div className="flex items-end">
+            <Button onClick={handleConsultar} className="w-full" size="sm">
+              Consultar
+            </Button>
+          </div>
         </div>
       </div>
 
       {/* Cards de resumen */}
       {selectedBanco && queryParams.bancoId && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="bg-card rounded-lg border p-3">
+          <div className="rounded-xl bg-card shadow-md p-3">
             <div className="text-xs text-muted-foreground mb-1">Saldo Actual</div>
             <div className="text-base font-bold text-primary">
               {formatUsd(parseFloat(selectedBanco.saldo_actual))}
             </div>
           </div>
-          <div className="bg-card rounded-lg border p-3">
+          <div className="rounded-xl bg-card shadow-md p-3">
             <div className="text-xs text-muted-foreground mb-1">Total Movimientos</div>
             <div className="text-base font-bold">{totalMovimientos}</div>
           </div>
-          <div className="bg-green-50 rounded-lg border border-green-200 p-3">
+          <div className="rounded-xl bg-green-50 shadow-sm border border-green-200/60 p-3">
             <div className="text-xs text-green-600 mb-1">Validados</div>
             <div className="text-base font-bold text-green-700">{totalValidados}</div>
           </div>
-          <div className="bg-amber-50 rounded-lg border border-amber-200 p-3">
+          <div className="rounded-xl bg-amber-50 shadow-sm border border-amber-200/60 p-3">
             <div className="text-xs text-amber-600 mb-1">Pendientes</div>
             <div className="text-base font-bold text-amber-700">{totalPendientes}</div>
           </div>
-          <div className="bg-card rounded-lg border p-3">
+          <div className="rounded-xl bg-card shadow-md p-3">
             <div className="text-xs text-muted-foreground mb-1">Neto Validado</div>
             <div className={`text-base font-bold ${montoIngresos - montoEgresos >= 0 ? 'text-green-700' : 'text-red-700'}`}>
               {formatUsd(montoIngresos - montoEgresos)}
@@ -153,7 +155,8 @@ export function ConciliacionBancaria() {
       )}
 
       {/* Tabla de movimientos */}
-      <div className="overflow-auto rounded-lg border">
+      <div className="rounded-xl bg-card shadow-md overflow-hidden">
+        <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">
             <tr>
@@ -241,8 +244,7 @@ export function ConciliacionBancaria() {
                   {mov.validado === 0 && (
                     <Button
                       size="sm"
-                      variant="outline"
-                      className="text-xs h-7 px-2.5 text-green-700 border-green-300 hover:bg-green-50"
+                      className="text-xs h-7 px-2.5 text-green-700 border-green-300 hover:bg-green-50 cursor-pointer"
                       onClick={() => handleValidar(mov.id)}
                     >
                       Validar
@@ -253,6 +255,7 @@ export function ConciliacionBancaria() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   )

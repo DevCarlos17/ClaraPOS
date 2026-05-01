@@ -64,7 +64,7 @@ export function UsuarioList() {
         <PageHeader titulo="Usuarios" descripcion="Gestion de empleados de tu empresa" />
         <div className="space-y-3">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+            <div key={i} className="h-12 bg-muted rounded animate-pulse" />
           ))}
         </div>
       </div>
@@ -76,7 +76,7 @@ export function UsuarioList() {
       <PageHeader titulo="Usuarios" descripcion="Gestion de empleados de tu empresa">
         <button
           onClick={() => navigate({ to: '/configuracion/usuarios/nuevo' })}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors cursor-pointer"
         >
           <Plus className="h-4 w-4" />
           Agregar Empleado
@@ -84,72 +84,76 @@ export function UsuarioList() {
       </PageHeader>
 
       {usuarios.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          <p className="text-base font-medium">No hay usuarios registrados</p>
-          <p className="text-sm mt-1">Agrega empleados para que puedan acceder al sistema</p>
+        <div className="rounded-xl bg-card shadow-md p-6">
+          <div className="text-center py-12 text-muted-foreground">
+            <p className="text-base font-medium">No hay usuarios registrados</p>
+            <p className="text-sm mt-1">Agrega empleados para que puedan acceder al sistema</p>
+          </div>
         </div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Nombre</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Correo</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Rol</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Estado</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700 hidden sm:table-cell">
-                  Fecha
-                </th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {usuarios.map((usr) => (
-                <tr
-                  key={usr.id}
-                  className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-                >
-                  <td className="px-4 py-3 text-gray-900 font-medium">{usr.nombre}</td>
-                  <td className="px-4 py-3 text-gray-600">{usr.email}</td>
-                  <td className="px-4 py-3">
-                    <RolBadge rolNombre={usr.rol_nombre} />
-                  </td>
-                  <td className="px-4 py-3">
-                    {isOwnerRow(usr) || isSelf(usr) ? (
-                      <EstadoBadge isActive={usr.is_active} />
-                    ) : (
-                      <button
-                        onClick={() => handleToggleActivo(usr)}
-                        disabled={togglingId === usr.id}
-                        className="disabled:opacity-50"
-                      >
-                        <EstadoBadge isActive={usr.is_active} />
-                      </button>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 hidden sm:table-cell">
-                    {new Date(usr.created_at).toLocaleDateString('es-VE')}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    {!isOwnerRow(usr) && !isSelf(usr) && (
-                      <button
-                        onClick={() =>
-                          navigate({
-                            to: '/configuracion/usuarios/$usuarioId/editar',
-                            params: { usuarioId: usr.id },
-                          })
-                        }
-                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        Editar
-                      </button>
-                    )}
-                  </td>
+        <div className="rounded-xl bg-card shadow-md p-6">
+          <div className="overflow-x-auto border border-border rounded-lg">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted">
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Nombre</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Correo</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Rol</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Estado</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">
+                    Fecha
+                  </th>
+                  <th className="text-right px-4 py-3 font-medium text-muted-foreground">Acciones</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {usuarios.map((usr) => (
+                  <tr
+                    key={usr.id}
+                    className="border-b border-border hover:bg-muted/50 transition-colors"
+                  >
+                    <td className="px-4 py-3 text-foreground font-medium">{usr.nombre}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{usr.email}</td>
+                    <td className="px-4 py-3">
+                      <RolBadge rolNombre={usr.rol_nombre} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {isOwnerRow(usr) || isSelf(usr) ? (
+                        <EstadoBadge isActive={usr.is_active} />
+                      ) : (
+                        <button
+                          onClick={() => handleToggleActivo(usr)}
+                          disabled={togglingId === usr.id}
+                          className="disabled:opacity-50 cursor-pointer"
+                        >
+                          <EstadoBadge isActive={usr.is_active} />
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">
+                      {new Date(usr.created_at).toLocaleDateString('es-VE')}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {!isOwnerRow(usr) && !isSelf(usr) && (
+                        <button
+                          onClick={() =>
+                            navigate({
+                              to: '/configuracion/usuarios/$usuarioId/editar',
+                              params: { usuarioId: usr.id },
+                            })
+                          }
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-muted-foreground border border-border rounded-md hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          Editar
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

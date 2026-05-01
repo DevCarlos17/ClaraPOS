@@ -190,24 +190,24 @@ export function ServicioList() {
     return (
       <div className="space-y-2 mt-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted rounded animate-pulse" />
         ))}
       </div>
     )
   }
 
   return (
-    <div>
+    <div className="rounded-xl bg-card shadow-md p-6">
       {/* Barra de acciones */}
       <div className="flex justify-between items-center mb-4">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           {servicios.length} {servicios.length === 1 ? 'servicio' : 'servicios'} registrados
         </p>
         <div className="flex gap-2">
           <button
             onClick={handleReporteLista}
             disabled={servicios.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-border bg-muted text-foreground hover:bg-muted/70 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <Printer className="h-4 w-4" />
             Reporte Lista
@@ -215,7 +215,7 @@ export function ServicioList() {
           <button
             onClick={handleReporteDetallado}
             disabled={servicios.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-border bg-muted text-foreground hover:bg-muted/70 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <FileText className="h-4 w-4" />
             Reporte Detallado
@@ -224,24 +224,24 @@ export function ServicioList() {
       </div>
 
       {servicios.length === 0 ? (
-        <div className="text-center py-12 text-gray-500 border border-dashed border-gray-300 rounded-lg">
+        <div className="text-center py-12 text-muted-foreground border border-dashed border-border rounded-lg">
           <p className="text-base font-medium">No hay servicios registrados</p>
           <p className="text-sm mt-1">
             Crea un producto de tipo <strong>Servicio</strong> en el catalogo de productos
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <div className="overflow-x-auto border border-border rounded-lg">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Codigo</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Nombre</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-700">Ingredientes</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Costo Insumos (USD)</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">PVP (USD)</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Margen</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-700">Estado</th>
+              <tr className="border-b border-border bg-muted">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Codigo</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Nombre</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Ingredientes</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Costo Insumos (USD)</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">PVP (USD)</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Margen</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Estado</th>
               </tr>
             </thead>
             <tbody>
@@ -255,13 +255,13 @@ export function ServicioList() {
                   <tr
                     key={servicio.id}
                     onClick={() => setServicioSeleccionado(servicio)}
-                    className="border-b border-gray-100 hover:bg-purple-50 transition-colors cursor-pointer"
+                    className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                   >
-                    <td className="px-4 py-3 font-mono text-gray-700">{servicio.codigo}</td>
-                    <td className="px-4 py-3 text-gray-900 font-medium">{servicio.nombre}</td>
-                    <td className="px-4 py-3 text-center text-gray-600">{nIngr}</td>
-                    <td className="px-4 py-3 text-right text-gray-900">{formatUsd(costo)}</td>
-                    <td className="px-4 py-3 text-right text-gray-900">{formatUsd(pvp)}</td>
+                    <td className="px-4 py-3 font-mono text-muted-foreground">{servicio.codigo}</td>
+                    <td className="px-4 py-3 text-foreground font-medium">{servicio.nombre}</td>
+                    <td className="px-4 py-3 text-center text-muted-foreground">{nIngr}</td>
+                    <td className="px-4 py-3 text-right text-foreground">{formatUsd(costo)}</td>
+                    <td className="px-4 py-3 text-right text-foreground">{formatUsd(pvp)}</td>
                     <td className="px-4 py-3 text-right">
                       <span className={margen >= 0 ? 'text-green-700 font-medium' : 'text-red-600 font-medium'}>
                         {margen.toFixed(1)}%
@@ -271,7 +271,7 @@ export function ServicioList() {
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
                         servicio.is_active === 1
                           ? 'bg-green-50 text-green-700 ring-green-600/20'
-                          : 'bg-gray-100 text-gray-500 ring-gray-400/20'
+                          : 'bg-muted text-muted-foreground ring-muted-foreground/20'
                       }`}>
                         {servicio.is_active === 1 ? 'Activo' : 'Inactivo'}
                       </span>

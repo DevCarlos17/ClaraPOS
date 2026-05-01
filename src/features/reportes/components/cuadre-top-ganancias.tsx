@@ -11,7 +11,7 @@ export function CuadreTopGanancias({ filters }: CuadreTopGananciasProps) {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-xl bg-card shadow-md p-5">
         <h3 className="text-sm font-semibold mb-4">Top Mayores Ganancias</h3>
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -24,7 +24,7 @@ export function CuadreTopGanancias({ filters }: CuadreTopGananciasProps) {
 
   if (productos.length === 0) {
     return (
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-xl bg-card shadow-md p-5">
         <h3 className="text-sm font-semibold mb-4">Top Mayores Ganancias</h3>
         <div className="text-center py-6 text-muted-foreground">
           <p className="text-sm">Sin datos de ganancia en esta fecha</p>
@@ -36,7 +36,7 @@ export function CuadreTopGanancias({ filters }: CuadreTopGananciasProps) {
   const totalGanancia = productos.reduce((sum, p) => sum + p.gananciaUsd, 0)
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold mb-4">Top Mayores Ganancias</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

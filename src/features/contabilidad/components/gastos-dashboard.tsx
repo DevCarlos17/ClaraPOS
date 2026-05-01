@@ -86,13 +86,14 @@ export function GastosDashboard() {
   return (
     <div className="space-y-6">
       {/* Selector de periodo */}
-      <div className="flex flex-wrap items-end gap-4">
+      <div className="rounded-xl bg-card shadow-md p-4">
+      <div className="flex flex-wrap items-center gap-4">
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Mes</label>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">Mes</label>
           <select
             value={mes}
             onChange={(e) => setMes(Number(e.target.value))}
-            className="rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
           >
             {MESES.map((nombre, i) => (
               <option key={i + 1} value={i + 1}>{nombre}</option>
@@ -100,19 +101,20 @@ export function GastosDashboard() {
           </select>
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Ano</label>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">Ano</label>
           <input
             type="number"
             value={anio}
             onChange={(e) => setAnio(Number(e.target.value))}
             min={2020}
             max={2099}
-            className="w-24 rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-24 rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
-        <p className="text-xs text-gray-500 pb-2">
+        <p className="text-xs text-muted-foreground">
           {isLoading ? 'Cargando...' : `${gastosFiltrados.length} gastos registrados`}
         </p>
+      </div>
       </div>
 
       {/* KPIs */}
@@ -122,8 +124,8 @@ export function GastosDashboard() {
       {gastosFiltrados.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Grafico de barras: total por semana */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">Gastos por Semana (USD)</h3>
+          <div className="bg-card border border-border rounded-xl shadow-md p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-4">Gastos por Semana (USD)</h3>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={datosBarras} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
                 <XAxis dataKey="name" tick={{ fontSize: 12 }} />
@@ -140,8 +142,8 @@ export function GastosDashboard() {
           </div>
 
           {/* Grafico de torta: por cuenta contable */}
-          <div className="bg-white border border-gray-200 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">Distribucion por Cuenta</h3>
+          <div className="bg-card border border-border rounded-xl shadow-md p-4">
+            <h3 className="text-sm font-semibold text-foreground mb-4">Distribucion por Cuenta</h3>
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Pie
@@ -178,7 +180,7 @@ export function GastosDashboard() {
         </div>
       ) : (
         !isLoading && (
-          <div className="text-center py-12 border border-dashed border-gray-200 rounded-lg text-gray-400">
+          <div className="text-center py-12 border border-dashed border-border rounded-lg text-muted-foreground">
             <p className="text-base font-medium">Sin datos para el periodo seleccionado</p>
             <p className="text-sm mt-1">Registra gastos para ver las graficas</p>
           </div>

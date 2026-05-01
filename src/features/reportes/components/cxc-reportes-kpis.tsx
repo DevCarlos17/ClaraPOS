@@ -71,7 +71,7 @@ function KpiCard({
   }
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <div className="flex items-center justify-between">
         <p className="text-sm font-medium text-muted-foreground">{titulo}</p>
         <div className={`p-2 rounded-lg ${colorMap[color] ?? colorMap.red}`}>

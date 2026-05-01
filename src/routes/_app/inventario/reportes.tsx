@@ -162,31 +162,37 @@ function InventarioReportesPage() {
   return (
     <RequirePermission permission={PERMISSIONS.INVENTORY_VIEW} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
-        <PageHeader titulo="Reportes de Inventario" descripcion="Valoracion, stock critico, rotacion y movimientos">
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="text-sm text-muted-foreground">Desde</label>
-            <input
-              type="date"
-              value={fechaDesde}
-              onChange={(e) => setFechaDesde(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
-            <label className="text-sm text-muted-foreground">Hasta</label>
-            <input
-              type="date"
-              value={fechaHasta}
-              onChange={(e) => setFechaHasta(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
+        <PageHeader titulo="Reportes de Inventario" descripcion="Valoracion, stock critico, rotacion y movimientos" />
+
+        <div className="rounded-xl bg-card shadow-md p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Desde</label>
+              <input
+                type="date"
+                value={fechaDesde}
+                onChange={(e) => setFechaDesde(e.target.value)}
+                className="rounded-md border border-input bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Hasta</label>
+              <input
+                type="date"
+                value={fechaHasta}
+                onChange={(e) => setFechaHasta(e.target.value)}
+                className="rounded-md border border-input bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
             <button
               onClick={handleGenerarReporte}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors cursor-pointer"
             >
               <Printer className="h-4 w-4" />
               Generar Reporte
             </button>
           </div>
-        </PageHeader>
+        </div>
 
         <InventarioKpiCards
           fechaDesde={fechaDesde}

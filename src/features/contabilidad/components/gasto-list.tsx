@@ -184,7 +184,7 @@ export function GastoList() {
   return (
     <div>
       {/* Filtro de fechas + Consultar + Acciones principales */}
-      <div className="rounded-lg border border-border bg-card p-4 mb-4">
+      <div className="rounded-xl bg-card shadow-md p-4 mb-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -199,7 +199,7 @@ export function GastoList() {
                 value={fechaDesde}
                 onChange={(e) => setFechaDesde(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -210,13 +210,13 @@ export function GastoList() {
                 value={fechaHasta}
                 onChange={(e) => setFechaHasta(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
             <button
               onClick={handleConsultar}
               disabled={!!rangeError || !fechaDesde || !fechaHasta}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Search className="h-4 w-4" />
               Consultar
@@ -228,14 +228,14 @@ export function GastoList() {
             <button
               type="button"
               onClick={() => setCuentaModalOpen(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-muted border border-border rounded-md hover:bg-muted/80 transition-colors"
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-muted border border-border rounded-md hover:bg-muted/80 transition-colors cursor-pointer"
             >
               <BookPlus className="h-4 w-4" />
               Crear Cuenta
             </button>
             <button
               onClick={() => setFormOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               Nuevo Gasto

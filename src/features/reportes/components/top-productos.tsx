@@ -11,7 +11,7 @@ export function TopProductos({ filters }: TopProductosProps) {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-xl bg-card shadow-md p-5">
         <h3 className="text-sm font-semibold mb-4">Top Productos</h3>
         <div className="space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -24,7 +24,7 @@ export function TopProductos({ filters }: TopProductosProps) {
 
   if (productos.length === 0) {
     return (
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-xl bg-card shadow-md p-5">
         <h3 className="text-sm font-semibold mb-4">Top Productos</h3>
         <div className="text-center py-6 text-muted-foreground">
           <p className="text-sm">Sin productos vendidos en esta fecha</p>
@@ -34,7 +34,7 @@ export function TopProductos({ filters }: TopProductosProps) {
   }
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold mb-4">Top Productos Vendidos</h3>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">

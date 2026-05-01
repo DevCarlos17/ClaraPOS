@@ -123,28 +123,28 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-3">
+      <div className="rounded-xl bg-card shadow-md p-6 space-y-3">
         <div className="flex justify-between items-center mb-4">
-          <div className="h-8 w-56 bg-gray-200 rounded animate-pulse" />
-          <div className="h-9 w-40 bg-gray-200 rounded animate-pulse" />
+          <div className="h-8 w-56 bg-muted rounded animate-pulse" />
+          <div className="h-9 w-40 bg-muted rounded animate-pulse" />
         </div>
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted rounded animate-pulse" />
         ))}
       </div>
     )
   }
 
   return (
-    <div>
+    <div className="rounded-xl bg-card shadow-md p-6">
       {/* Cabecera */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
-        <h2 className="text-lg font-semibold text-gray-900">Ajustes de Inventario</h2>
+        <h2 className="text-lg font-semibold">Ajustes de Inventario</h2>
         <div className="flex gap-2">
           <button
             onClick={handleReporte}
             disabled={ajustes.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 disabled:opacity-50 transition-colors cursor-pointer"
           >
             <Printer className="h-4 w-4" />
             Reporte
@@ -152,7 +152,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
           {!ocultarNuevo && (
             <button
               onClick={() => setFormOpen(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0 cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               Nuevo Ajuste
@@ -163,22 +163,22 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
 
       {/* Tabla */}
       {ajustes.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-muted-foreground">
           <p className="text-base font-medium">No hay ajustes registrados</p>
           <p className="text-sm mt-1">Crea el primer ajuste para comenzar</p>
         </div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <div className="overflow-x-auto border border-border rounded-lg">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Num Ajuste</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Fecha</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Motivo</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Operacion</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-700">Items</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Total (USD)</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Status</th>
+              <tr className="border-b border-border bg-muted">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Num Ajuste</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Fecha</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Motivo</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Operacion</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Items</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Total (USD)</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
               </tr>
             </thead>
             <tbody>
@@ -186,22 +186,22 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
                 <tr
                   key={ajuste.id}
                   onClick={() => setDetalleAjusteId(ajuste.id)}
-                  className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
+                  className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                 >
-                  <td className="px-4 py-3 font-mono text-gray-900 font-medium">
+                  <td className="px-4 py-3 font-mono font-medium">
                     {ajuste.num_ajuste}
                   </td>
-                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                     {formatDate(ajuste.fecha)}
                   </td>
-                  <td className="px-4 py-3 text-gray-700">{ajuste.nombre_motivo ?? '-'}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{ajuste.nombre_motivo ?? '-'}</td>
                   <td className="px-4 py-3">
                     <OperacionBadge operacion={ajuste.operacion_base} />
                   </td>
-                  <td className="px-4 py-3 text-center text-gray-600">
+                  <td className="px-4 py-3 text-center text-muted-foreground">
                     {ajuste.items_count ?? 0}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                  <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                     {formatUsd(ajuste.total_usd ?? 0)}
                   </td>
                   <td className="px-4 py-3">

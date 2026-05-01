@@ -22,8 +22,8 @@ const TIPOS_CONTRIBUYENTE = [
 ] as const
 
 const inputClass = (hasError: boolean) =>
-  `w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-    hasError ? 'border-red-500' : 'border-gray-300'
+  `w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring ${
+    hasError ? 'border-red-500' : 'border-input'
   }`
 
 export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps) {
@@ -193,7 +193,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
         <form onSubmit={handleSubmit} className="space-y-5">
           {/* ---- Identificacion ---- */}
           <div>
-            <label htmlFor="prov-razon" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="prov-razon" className="block text-sm font-medium text-muted-foreground mb-1">
               Razon Social *
             </label>
             <input
@@ -210,7 +210,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
           </div>
 
           <div>
-            <label htmlFor="prov-comercial" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="prov-comercial" className="block text-sm font-medium text-muted-foreground mb-1">
               Nombre Comercial
             </label>
             <input
@@ -224,7 +224,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
           </div>
 
           <div>
-            <label htmlFor="prov-rif" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="prov-rif" className="block text-sm font-medium text-muted-foreground mb-1">
               RIF *
             </label>
             <input
@@ -236,17 +236,17 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               placeholder="J-00000000-0"
               maxLength={12}
               className={`${inputClass(!!errors.rif)} ${
-                isEditing ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                isEditing ? 'bg-muted text-muted-foreground cursor-not-allowed' : 'bg-white'
               }`}
             />
             {errors.rif && <p className="text-red-500 text-xs mt-1">{errors.rif}</p>}
             {isEditing && (
-              <p className="text-gray-400 text-xs mt-1">El RIF no puede modificarse</p>
+              <p className="text-muted-foreground text-xs mt-1">El RIF no puede modificarse</p>
             )}
           </div>
 
           <div>
-            <label htmlFor="prov-dir" className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="prov-dir" className="block text-sm font-medium text-muted-foreground mb-1">
               Direccion Fiscal
             </label>
             <textarea
@@ -255,14 +255,14 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               onChange={(e) => setDireccionFiscal(e.target.value)}
               placeholder="Direccion fiscal del proveedor"
               rows={2}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
 
           {/* Telefono, Ciudad y Correo en grid */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
-              <label htmlFor="prov-tel" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="prov-tel" className="block text-sm font-medium text-muted-foreground mb-1">
                 Telefono
               </label>
               <input
@@ -275,7 +275,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               />
             </div>
             <div>
-              <label htmlFor="prov-ciudad" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="prov-ciudad" className="block text-sm font-medium text-muted-foreground mb-1">
                 Ciudad
               </label>
               <input
@@ -290,7 +290,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
             <div>
               <label
                 htmlFor="prov-correo"
-                className="block text-sm font-medium text-gray-700 mb-1"
+                className="block text-sm font-medium text-muted-foreground mb-1"
               >
                 Correo Electronico
               </label>
@@ -308,14 +308,14 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
 
           {/* ---- Datos Fiscales ---- */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3 border-b border-gray-100 pb-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/60 mb-3 border-b border-border pb-1">
               Datos Fiscales
             </p>
 
             <div className="mb-4">
               <label
                 htmlFor="prov-tipo-contrib"
-                className="block text-sm font-medium text-gray-700 mb-1"
+                className="block text-sm font-medium text-muted-foreground mb-1"
               >
                 Tipo de Contribuyente
               </label>
@@ -323,7 +323,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
                 id="prov-tipo-contrib"
                 value={tipoContribuyente}
                 onChange={(e) => setTipoContribuyente(e.target.value)}
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                className="w-full rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring bg-white"
               >
                 {TIPOS_CONTRIBUYENTE.map((opt) => (
                   <option key={opt.value} value={opt.value}>
@@ -342,9 +342,9 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
                     type="checkbox"
                     checked={retieneIva}
                     onChange={(e) => setRetieneIva(e.target.checked)}
-                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="h-4 w-4 rounded border-input text-primary focus:ring-ring"
                   />
-                  <label htmlFor="prov-iva" className="text-sm font-medium text-gray-700">
+                  <label htmlFor="prov-iva" className="text-sm font-medium text-muted-foreground">
                     Retiene IVA
                   </label>
                 </div>
@@ -352,7 +352,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
                   <div className="ml-6">
                     <label
                       htmlFor="prov-iva-pct"
-                      className="block text-xs font-medium text-gray-600 mb-1"
+                      className="block text-xs font-medium text-muted-foreground mb-1"
                     >
                       % Retencion IVA
                     </label>
@@ -366,11 +366,11 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
                         value={retencionIvaPct}
                         onChange={(e) => setRetencionIvaPct(e.target.value)}
                         placeholder="75"
-                        className={`w-full rounded-md border px-3 py-1.5 pr-7 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                          errors.retencion_iva_pct ? 'border-red-500' : 'border-gray-300'
+                        className={`w-full rounded-md border px-3 py-1.5 pr-7 text-sm focus:outline-none focus:ring-2 focus:ring-ring ${
+                          errors.retencion_iva_pct ? 'border-red-500' : 'border-input'
                         }`}
                       />
-                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400">
+                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
                         %
                       </span>
                     </div>
@@ -388,9 +388,9 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
                   type="checkbox"
                   checked={retieneIslr}
                   onChange={(e) => setRetieneIslr(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  className="h-4 w-4 rounded border-input text-primary focus:ring-ring"
                 />
-                <label htmlFor="prov-islr" className="text-sm font-medium text-gray-700">
+                <label htmlFor="prov-islr" className="text-sm font-medium text-muted-foreground">
                   Retiene ISLR
                 </label>
               </div>
@@ -399,7 +399,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
 
           {/* ---- Credito ---- */}
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3 border-b border-gray-100 pb-1">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground/60 mb-3 border-b border-border pb-1">
               Credito
             </p>
 
@@ -407,7 +407,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               <div>
                 <label
                   htmlFor="prov-dias"
-                  className="block text-sm font-medium text-gray-700 mb-1"
+                  className="block text-sm font-medium text-muted-foreground mb-1"
                 >
                   Dias de Credito
                 </label>
@@ -428,12 +428,12 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               <div>
                 <label
                   htmlFor="prov-limite"
-                  className="block text-sm font-medium text-gray-700 mb-1"
+                  className="block text-sm font-medium text-muted-foreground mb-1"
                 >
                   Limite de Credito (USD)
                 </label>
                 <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-gray-400">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                     $
                   </span>
                   <input
@@ -460,14 +460,14 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               type="button"
               onClick={onClose}
               disabled={submitting}
-              className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-50 cursor-pointer"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 cursor-pointer"
             >
               {submitting ? 'Guardando...' : isEditing ? 'Actualizar' : 'Crear'}
             </button>

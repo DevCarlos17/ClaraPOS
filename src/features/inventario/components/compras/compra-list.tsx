@@ -70,7 +70,7 @@ export function CompraList() {
         <h2 className="text-lg font-semibold text-foreground">Facturas de Compras</h2>
         <button
           onClick={() => setShowForm(true)}
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer"
         >
           <Plus className="h-4 w-4" />
           Nueva Factura de Compra
@@ -78,8 +78,8 @@ export function CompraList() {
       </div>
 
       {/* Date range filters */}
-      <div className="rounded-lg border border-border bg-card p-4 mb-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-end gap-3">
+      <div className="rounded-xl bg-card shadow-md p-4 mb-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <CalendarDays className="h-4 w-4" />
             <span className="font-medium">Periodo:</span>
@@ -95,7 +95,7 @@ export function CompraList() {
                 value={fechaDesde}
                 onChange={(e) => setFechaDesde(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
             <div className="flex items-center gap-2">
@@ -108,13 +108,13 @@ export function CompraList() {
                 value={fechaHasta}
                 onChange={(e) => setFechaHasta(e.target.value)}
                 onKeyDown={handleKeyDown}
-                className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
             <button
               onClick={handleConsultar}
               disabled={!!rangeError || !fechaDesde || !fechaHasta}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
               <Search className="h-4 w-4" />
               Consultar
@@ -226,7 +226,7 @@ export function CompraList() {
                     <td className="px-4 py-3 text-center">
                       <button
                         onClick={() => setDetalleId(compra.id)}
-                        className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors"
+                        className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors cursor-pointer"
                       >
                         <Eye className="h-4 w-4" />
                         Ver

@@ -83,7 +83,7 @@ export function CuadrePage() {
       </PageHeader>
 
       {/* Filter bar */}
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-card p-4">
+      <div className="flex flex-wrap items-end gap-3 rounded-xl bg-card shadow-md p-4">
         {/* Fecha */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-muted-foreground">Fecha</label>
@@ -91,7 +91,7 @@ export function CuadrePage() {
             type="date"
             value={fecha}
             onChange={(e) => handleFechaChange(e.target.value)}
-            className="rounded-md border border-input bg-background px-3 py-2 text-sm"
+            className="rounded-md border border-input bg-white px-3 py-2 text-sm"
           />
         </div>
 
@@ -101,7 +101,7 @@ export function CuadrePage() {
           <select
             value={cajaId ?? ''}
             onChange={(e) => handleCajaChange(e.target.value)}
-            className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[160px]"
+            className="rounded-md border border-input bg-white px-3 py-2 text-sm min-w-[160px]"
           >
             <option value="">Todas las cajas</option>
             {cajas.map((c) => (
@@ -117,7 +117,7 @@ export function CuadrePage() {
             <select
               value={sesionCajaId ?? ''}
               onChange={(e) => handleSesionChange(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm min-w-[200px]"
+              className="rounded-md border border-input bg-white px-3 py-2 text-sm min-w-[200px]"
             >
               <option value="">Todas las sesiones</option>
               {sesiones.map((s) => (

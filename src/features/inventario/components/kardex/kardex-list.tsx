@@ -73,29 +73,29 @@ export function KardexList() {
   return (
     <div className="space-y-4">
       {/* Barra de filtros */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3">
+      <div className="rounded-xl bg-card shadow-md p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Desde</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Desde</label>
             <input
               type="date"
               value={fechaDesde}
               onChange={(e) => setFechaDesde(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Hasta</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Hasta</label>
             <input
               type="date"
               value={fechaHasta}
               onChange={(e) => setFechaHasta(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              Producto / Codigo <span className="text-gray-400">(* para todos)</span>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">
+              Producto / Codigo <span className="text-muted-foreground">(* para todos)</span>
             </label>
             <input
               type="text"
@@ -103,15 +103,15 @@ export function KardexList() {
               onChange={(e) => setBusqueda(e.target.value)}
               placeholder="Buscar o *"
               onKeyDown={(e) => e.key === 'Enter' && handleConsultar()}
-              className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Departamento</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Departamento</label>
             <select
               value={filtroDepto}
               onChange={(e) => setFiltroDepto(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">Todos los departamentos</option>
               {departamentos.map((d) => (
@@ -123,11 +123,11 @@ export function KardexList() {
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-gray-600">Tipo:</label>
+            <label className="text-xs font-medium text-muted-foreground">Tipo:</label>
             <select
               value={filtroTipo}
               onChange={(e) => setFiltroTipo(e.target.value as 'E' | 'S' | '')}
-              className="rounded-md border border-gray-300 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">Todos</option>
               <option value="E">Entradas</option>
@@ -138,14 +138,14 @@ export function KardexList() {
           <div className="flex gap-2">
             <button
               onClick={() => setFormOpen(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 transition-colors cursor-pointer"
             >
               <Plus className="h-4 w-4" />
               Nuevo Movimiento
             </button>
             <button
               onClick={handleConsultar}
-              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+              className="inline-flex items-center gap-2 px-4 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors cursor-pointer"
             >
               <Search className="h-4 w-4" />
               Consultar
@@ -156,51 +156,51 @@ export function KardexList() {
 
       {/* Resultados */}
       {!aplicado ? (
-        <div className="text-center py-16 text-gray-400">
+        <div className="text-center py-16 text-muted-foreground">
           <Search className="h-10 w-10 mx-auto mb-3 opacity-40" />
-          <p className="text-base font-medium text-gray-500">Seleccione el rango de fechas y presione Consultar</p>
+          <p className="text-base font-medium text-muted-foreground">Seleccione el rango de fechas y presione Consultar</p>
           <p className="text-sm mt-1">Puede buscar por nombre o codigo de producto. Use * para ver todos.</p>
         </div>
       ) : isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+            <div key={i} className="h-12 bg-muted rounded animate-pulse" />
           ))}
         </div>
       ) : movimientosFiltrados.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-muted-foreground">
           <p className="text-base font-medium">No hay movimientos en el periodo seleccionado</p>
           <p className="text-sm mt-1">Ajuste los filtros y vuelva a consultar</p>
         </div>
       ) : (
-        <div>
-          <p className="text-xs text-gray-500 mb-2">
+        <div className="rounded-xl bg-card shadow-md p-4">
+          <p className="text-xs text-muted-foreground mb-2">
             {movimientosFiltrados.length} movimiento(s) encontrado(s)
             {filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*'
               ? ` para "${filtrosAplicados.busqueda}"`
               : ''}
           </p>
-          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+          <div className="overflow-x-auto border border-border rounded-lg">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 bg-gray-50">
-                  <th className="text-left px-4 py-3 font-medium text-gray-700">Fecha</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-700">Producto</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-700">Tipo</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-700">Origen</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-700">Cantidad</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-700">Stock</th>
-                  <th className="text-left px-4 py-3 font-medium text-gray-700">Motivo</th>
+                <tr className="border-b border-border bg-muted">
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Fecha</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Producto</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Tipo</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Origen</th>
+                  <th className="text-right px-4 py-3 font-medium text-muted-foreground">Cantidad</th>
+                  <th className="text-right px-4 py-3 font-medium text-muted-foreground">Stock</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Motivo</th>
                 </tr>
               </thead>
               <tbody>
                 {movimientosFiltrados.map((mov) => (
-                  <tr key={mov.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                  <tr key={mov.id} className="border-b border-border hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                       {formatDateTime(mov.fecha)}
                     </td>
-                    <td className="px-4 py-3 text-gray-900">
-                      <span className="font-mono text-xs text-gray-500 mr-1">{mov.prod_codigo}</span>
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-xs text-muted-foreground mr-1">{mov.prod_codigo}</span>
                       {mov.prod_nombre ?? mov.producto_id}
                     </td>
                     <td className="px-4 py-3">
@@ -214,16 +214,16 @@ export function KardexList() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{origenLabel(mov.origen)}</td>
-                    <td className="px-4 py-3 text-right font-medium text-gray-900">
+                    <td className="px-4 py-3 text-muted-foreground">{origenLabel(mov.origen)}</td>
+                    <td className="px-4 py-3 text-right font-medium">
                       {parseFloat(mov.cantidad).toFixed(3)}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-600 whitespace-nowrap">
+                    <td className="px-4 py-3 text-right text-muted-foreground whitespace-nowrap">
                       {parseFloat(mov.stock_anterior).toFixed(3)}
-                      <span className="mx-1 text-gray-400">&rarr;</span>
+                      <span className="mx-1 text-muted-foreground">&rarr;</span>
                       {parseFloat(mov.stock_nuevo).toFixed(3)}
                     </td>
-                    <td className="px-4 py-3 text-gray-500 max-w-[200px] truncate">
+                    <td className="px-4 py-3 text-muted-foreground max-w-[200px] truncate">
                       {mov.motivo ?? '-'}
                     </td>
                   </tr>

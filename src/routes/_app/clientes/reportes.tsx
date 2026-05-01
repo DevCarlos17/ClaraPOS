@@ -22,24 +22,30 @@ function ClientesReportesPage() {
   return (
     <RequirePermission permission={PERMISSIONS.CLIENTS_CREDIT} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
-        <PageHeader titulo="Reportes de CxC" descripcion="Analisis de cuentas por cobrar, antiguedad de saldos y cobros">
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-muted-foreground">Desde</label>
-            <input
-              type="date"
-              value={fechaDesde}
-              onChange={(e) => setFechaDesde(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
-            <label className="text-sm text-muted-foreground">Hasta</label>
-            <input
-              type="date"
-              value={fechaHasta}
-              onChange={(e) => setFechaHasta(e.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            />
+        <PageHeader titulo="Reportes de CxC" descripcion="Analisis de cuentas por cobrar, antiguedad de saldos y cobros" />
+
+        <div className="rounded-xl bg-card shadow-md p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Desde</label>
+              <input
+                type="date"
+                value={fechaDesde}
+                onChange={(e) => setFechaDesde(e.target.value)}
+                className="rounded-md border border-input bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Hasta</label>
+              <input
+                type="date"
+                value={fechaHasta}
+                onChange={(e) => setFechaHasta(e.target.value)}
+                className="rounded-md border border-input bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
           </div>
-        </PageHeader>
+        </div>
 
         <CxcReportesKpis fechaDesde={fechaDesde} fechaHasta={fechaHasta} />
 

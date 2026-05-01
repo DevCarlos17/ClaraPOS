@@ -11,7 +11,7 @@ export function CxcReportesCredito() {
   const { items, isLoading } = useUtilizacionCredito()
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold">Utilizacion de Credito</h3>
       <p className="text-xs text-muted-foreground mb-4">Top 10 clientes con credito asignado</p>
 

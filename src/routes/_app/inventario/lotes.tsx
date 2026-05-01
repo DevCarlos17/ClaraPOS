@@ -21,14 +21,14 @@ function LotesPage() {
       <div className="space-y-6">
         <PageHeader titulo="Lotes" descripcion="Gestion de lotes, vencimientos y trazabilidad" />
 
-        <div className="border-b border-gray-200">
+        <div className="border-b border-border">
           <nav className="-mb-px flex gap-6">
             <button
               onClick={() => setTabActiva('lotes')}
               className={`pb-3 text-sm font-medium transition-colors ${
                 tabActiva === 'lotes'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'border-b-2 border-blue-600 text-blue-600 cursor-pointer'
+                  : 'text-muted-foreground hover:text-foreground cursor-pointer'
               }`}
             >
               Lotes
@@ -37,8 +37,8 @@ function LotesPage() {
               onClick={() => setTabActiva('trazabilidad')}
               className={`pb-3 text-sm font-medium transition-colors ${
                 tabActiva === 'trazabilidad'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'border-b-2 border-blue-600 text-blue-600 cursor-pointer'
+                  : 'text-muted-foreground hover:text-foreground cursor-pointer'
               }`}
             >
               Trazabilidad

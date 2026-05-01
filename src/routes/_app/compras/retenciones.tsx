@@ -21,34 +21,34 @@ function RetencionesCompraPage() {
       <div className="space-y-6">
         <PageHeader titulo="Retenciones" descripcion="Retenciones de IVA e ISLR en compras" />
 
-        {/* Tabs */}
-        <div className="border-b border-gray-200">
-          <nav className="flex gap-6" aria-label="Pestanas de retenciones">
+        <div className="rounded-xl bg-card shadow-md p-6">
+          {/* Tabs */}
+          <div className="flex gap-1 border-b border-border mb-4">
             <button
               onClick={() => setTabActiva('iva')}
-              className={`pb-3 text-sm transition-colors ${
+              className={
                 tabActiva === 'iva'
-                  ? 'border-b-2 border-blue-600 text-blue-600 font-medium'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+                  ? 'px-3 pb-3 pt-1 text-sm font-medium border-b-2 border-blue-600 text-blue-600 cursor-pointer'
+                  : 'px-3 pb-3 pt-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-t-md transition-colors cursor-pointer'
+              }
             >
               IVA
             </button>
             <button
               onClick={() => setTabActiva('islr')}
-              className={`pb-3 text-sm transition-colors ${
+              className={
                 tabActiva === 'islr'
-                  ? 'border-b-2 border-blue-600 text-blue-600 font-medium'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
+                  ? 'px-3 pb-3 pt-1 text-sm font-medium border-b-2 border-blue-600 text-blue-600 cursor-pointer'
+                  : 'px-3 pb-3 pt-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-t-md transition-colors cursor-pointer'
+              }
             >
               ISLR
             </button>
-          </nav>
-        </div>
+          </div>
 
-        {/* Panel activo */}
-        {tabActiva === 'iva' ? <RetIvaCompraList /> : <RetIslrCompraList />}
+          {/* Panel activo */}
+          {tabActiva === 'iva' ? <RetIvaCompraList /> : <RetIslrCompraList />}
+        </div>
       </div>
     </RequirePermission>
   )

@@ -24,11 +24,11 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       {/* Total Ventas */}
       <button
         onClick={onClickVentas}
-        className="rounded-xl border bg-card p-5 text-left hover:shadow-md transition-shadow"
+        className="rounded-xl bg-card shadow-md p-5 text-left hover:shadow-lg transition-shadow"
       >
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">Total Ventas</p>
-          <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
+          <div className="p-2 rounded-lg bg-blue-100 text-blue-600">
             <ShoppingCart className="w-4 h-4" />
           </div>
         </div>
@@ -47,10 +47,10 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       </button>
 
       {/* Ganancia Estimada */}
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-xl bg-card shadow-md p-5">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">Ganancia Est.</p>
-          <div className="p-2 rounded-lg bg-green-50 text-green-600">
+          <div className="p-2 rounded-lg bg-green-100 text-green-600">
             <TrendingUp className="w-4 h-4" />
           </div>
         </div>
@@ -69,10 +69,10 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       </div>
 
       {/* Ticket Promedio */}
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-xl bg-card shadow-md p-5">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">Ticket Promedio</p>
-          <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
+          <div className="p-2 rounded-lg bg-amber-100 text-amber-600">
             <Receipt className="w-4 h-4" />
           </div>
         </div>
@@ -93,11 +93,11 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       {/* CxC del dia */}
       <button
         onClick={onClickCxc}
-        className="rounded-xl border bg-card p-5 text-left hover:shadow-md transition-shadow"
+        className="rounded-xl bg-card shadow-md p-5 text-left hover:shadow-lg transition-shadow"
       >
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">CxC Hoy</p>
-          <div className="p-2 rounded-lg bg-red-50 text-red-600">
+          <div className="p-2 rounded-lg bg-red-100 text-red-600">
             <CreditCard className="w-4 h-4" />
           </div>
         </div>

@@ -29,7 +29,7 @@ function tipoBadge(tipo: string) {
       )
     default:
       return (
-        <span className="inline-flex items-center rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-700 ring-1 ring-gray-600/20 ring-inset">
+        <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-muted-foreground/20 ring-inset">
           {tipo}
         </span>
       )
@@ -40,7 +40,7 @@ export function CxcReportesMovimientos({ fechaDesde, fechaHasta }: CxcReportesMo
   const { movimientos, isLoading } = useMovimientosCxcPeriodo(fechaDesde, fechaHasta)
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-xl bg-card shadow-md p-5">
       <h3 className="text-sm font-semibold">Movimientos del Periodo</h3>
       <p className="text-xs text-muted-foreground mb-3">Ultimos 100 movimientos de cuentas por cobrar</p>
 

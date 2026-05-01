@@ -34,7 +34,7 @@ export function TasaForm() {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {/* Current rate card */}
-      <div className="rounded-xl border bg-card p-6">
+      <div className="rounded-xl bg-card shadow-md p-6">
         <div className="flex items-center gap-2 mb-4">
           <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
             <DollarSign className="w-5 h-5" />
@@ -57,7 +57,7 @@ export function TasaForm() {
       </div>
 
       {/* New rate form */}
-      <div className="rounded-xl border bg-card p-6">
+      <div className="rounded-xl bg-card shadow-md p-6">
         <h3 className="font-semibold mb-4">Registrar Nueva Tasa</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -70,7 +70,7 @@ export function TasaForm() {
               value={valor}
               onChange={(e) => setValor(e.target.value)}
               disabled={isSubmitting}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
+              className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
             />
             <p className="text-xs text-muted-foreground mt-1">Precision de 4 decimales</p>
           </div>

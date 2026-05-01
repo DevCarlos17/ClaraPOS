@@ -206,24 +206,24 @@ export function ComboList() {
     return (
       <div className="space-y-2 mt-4">
         {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted rounded animate-pulse" />
         ))}
       </div>
     )
   }
 
   return (
-    <div>
+    <div className="rounded-xl bg-card shadow-md p-6">
       {/* Barra de acciones */}
       <div className="flex justify-between items-center mb-4">
-        <p className="text-sm text-gray-600">
+        <p className="text-sm text-muted-foreground">
           {combos.length} {combos.length === 1 ? 'combo' : 'combos'} registrados
         </p>
         <div className="flex gap-2">
           <button
             onClick={handleReporteLista}
             disabled={combos.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-border bg-muted text-foreground hover:bg-muted/70 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <Printer className="h-4 w-4" />
             Reporte Lista
@@ -231,7 +231,7 @@ export function ComboList() {
           <button
             onClick={handleReporteDetallado}
             disabled={combos.length === 0}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border border-border bg-muted text-foreground hover:bg-muted/70 transition-colors disabled:opacity-50 cursor-pointer"
           >
             <FileText className="h-4 w-4" />
             Reporte Detallado
@@ -240,25 +240,25 @@ export function ComboList() {
       </div>
 
       {combos.length === 0 ? (
-        <div className="text-center py-12 text-gray-500 border border-dashed border-gray-300 rounded-lg">
+        <div className="text-center py-12 text-muted-foreground border border-dashed border-border rounded-lg">
           <p className="text-base font-medium">No hay combos registrados</p>
           <p className="text-sm mt-1">
             Crea un producto de tipo <strong>Combo / Receta</strong> en el catalogo de productos
           </p>
         </div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <div className="overflow-x-auto border border-border rounded-lg">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Codigo</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Nombre</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-700">Componentes</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Costo (USD)</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">PVP (USD)</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Margen</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-700">Dispon.</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-700">Estado</th>
+              <tr className="border-b border-border bg-muted">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Codigo</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Nombre</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Componentes</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Costo (USD)</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">PVP (USD)</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Margen</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Dispon.</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Estado</th>
               </tr>
             </thead>
             <tbody>
@@ -273,13 +273,13 @@ export function ComboList() {
                   <tr
                     key={combo.id}
                     onClick={() => setComboSeleccionado(combo)}
-                    className="border-b border-gray-100 hover:bg-green-50 transition-colors cursor-pointer"
+                    className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                   >
-                    <td className="px-4 py-3 font-mono text-gray-700">{combo.codigo}</td>
-                    <td className="px-4 py-3 text-gray-900 font-medium">{combo.nombre}</td>
-                    <td className="px-4 py-3 text-center text-gray-600">{nComp}</td>
-                    <td className="px-4 py-3 text-right text-gray-900">{formatUsd(costo)}</td>
-                    <td className="px-4 py-3 text-right text-gray-900">{formatUsd(pvp)}</td>
+                    <td className="px-4 py-3 font-mono text-muted-foreground">{combo.codigo}</td>
+                    <td className="px-4 py-3 text-foreground font-medium">{combo.nombre}</td>
+                    <td className="px-4 py-3 text-center text-muted-foreground">{nComp}</td>
+                    <td className="px-4 py-3 text-right text-foreground">{formatUsd(costo)}</td>
+                    <td className="px-4 py-3 text-right text-foreground">{formatUsd(pvp)}</td>
                     <td className="px-4 py-3 text-right">
                       <span className={margen >= 0 ? 'text-green-700 font-medium' : 'text-red-600 font-medium'}>
                         {margen.toFixed(1)}%
@@ -287,9 +287,9 @@ export function ComboList() {
                     </td>
                     <td className="px-4 py-3 text-center">
                       {nComp === 0 ? (
-                        <span className="text-gray-400 text-xs">—</span>
+                        <span className="text-muted-foreground text-xs">—</span>
                       ) : (
-                        <span className={`text-sm font-medium ${disponibilidad > 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                        <span className={`text-sm font-medium ${disponibilidad > 0 ? 'text-foreground' : 'text-red-600'}`}>
                           ~{disponibilidad}
                         </span>
                       )}
@@ -298,7 +298,7 @@ export function ComboList() {
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
                         combo.is_active === 1
                           ? 'bg-green-50 text-green-700 ring-green-600/20'
-                          : 'bg-gray-100 text-gray-500 ring-gray-400/20'
+                          : 'bg-muted text-muted-foreground ring-muted-foreground/20'
                       }`}>
                         {combo.is_active === 1 ? 'Activo' : 'Inactivo'}
                       </span>

@@ -477,7 +477,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
           </div>
 
           {/* Filtro de fechas + Reporte */}
-          <div className="flex flex-wrap items-end gap-3 mb-4 p-3 rounded-lg border bg-muted/20">
+          <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-lg border bg-muted/20">
             <Calendar size={15} className="text-muted-foreground mb-0.5" />
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Desde</label>
@@ -486,7 +486,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                 value={fechaDesde}
                 onChange={(e) => setFechaDesde(e.target.value)}
                 autoComplete="off"
-                className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className="rounded-md border border-input bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
             <div>
@@ -496,7 +496,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                 value={fechaHasta}
                 onChange={(e) => setFechaHasta(e.target.value)}
                 autoComplete="off"
-                className="rounded-md border border-input bg-background px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className="rounded-md border border-input bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
             {hasFilter && (
@@ -512,7 +512,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
               <button
                 type="button"
                 onClick={handleGenerarReporte}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md border hover:bg-muted transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 rounded-md transition-colors cursor-pointer"
               >
                 <Printer size={14} />
                 Generar reporte
@@ -653,7 +653,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
           <div className="flex justify-end pt-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium rounded-md border hover:bg-muted transition-colors"
+              className="px-4 py-2 text-sm font-medium rounded-md border hover:bg-muted transition-colors cursor-pointer"
             >
               Cerrar
             </button>

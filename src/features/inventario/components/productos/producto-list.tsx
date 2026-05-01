@@ -137,12 +137,12 @@ export function ProductoList() {
 
   function renderSortIcon(key: SortKey) {
     if (sortKey !== key) {
-      return <ArrowUpDown className="h-3.5 w-3.5 text-gray-400" />
+      return <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
     }
     return sortDir === 'asc' ? (
-      <ArrowUp className="h-3.5 w-3.5 text-gray-700" />
+      <ArrowUp className="h-3.5 w-3.5 text-foreground" />
     ) : (
-      <ArrowDown className="h-3.5 w-3.5 text-gray-700" />
+      <ArrowDown className="h-3.5 w-3.5 text-foreground" />
     )
   }
 
@@ -192,12 +192,12 @@ export function ProductoList() {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <div className="h-24 bg-gray-100 rounded-lg animate-pulse" />
-          <div className="h-24 bg-gray-100 rounded-lg animate-pulse" />
+          <div className="h-24 bg-muted rounded-lg animate-pulse" />
+          <div className="h-24 bg-muted rounded-lg animate-pulse" />
         </div>
-        <div className="h-10 w-full bg-gray-100 rounded animate-pulse" />
+        <div className="h-10 w-full bg-muted rounded animate-pulse" />
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted rounded animate-pulse" />
         ))}
       </div>
     )
@@ -210,16 +210,16 @@ export function ProductoList() {
         <button
           type="button"
           onClick={() => setValorInventarioOpen(true)}
-          className="bg-white border border-gray-200 rounded-lg p-4 flex items-center gap-3 text-left hover:border-blue-400 hover:shadow-sm transition-all cursor-pointer"
+          className="bg-card border border-border rounded-xl shadow-sm p-4 flex items-center gap-3 text-left hover:shadow-md hover:border-primary/50 transition-all cursor-pointer"
         >
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
             <DollarSign className="h-5 w-5 text-green-600" />
           </div>
           <div className="flex-1">
-            <p className="text-sm text-gray-500">Valor Total Inventario</p>
-            <p className="text-lg font-semibold text-gray-900">{formatUsd(valorTotal)}</p>
+            <p className="text-sm text-muted-foreground">Valor Total Inventario</p>
+            <p className="text-lg font-semibold text-foreground">{formatUsd(valorTotal)}</p>
             {tasaValor > 0 && (
-              <p className="text-xs text-gray-400">{formatBs(usdToBs(valorTotal, tasaValor))}</p>
+              <p className="text-xs text-muted-foreground">{formatBs(usdToBs(valorTotal, tasaValor))}</p>
             )}
           </div>
           <span className="text-xs text-blue-600 font-medium">Ver detalle</span>
@@ -228,16 +228,16 @@ export function ProductoList() {
         <button
           type="button"
           onClick={() => setStockCriticoOpen(true)}
-          className="bg-white border border-gray-200 rounded-lg p-4 flex items-center gap-3 text-left hover:border-blue-400 hover:shadow-sm transition-all cursor-pointer"
+          className="bg-card border border-border rounded-xl shadow-sm p-4 flex items-center gap-3 text-left hover:shadow-md hover:border-primary/50 transition-all cursor-pointer"
         >
           <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
-            stockCritico > 0 ? 'bg-red-100' : 'bg-gray-100'
+            stockCritico > 0 ? 'bg-red-100' : 'bg-muted'
           }`}>
-            <AlertTriangle className={`h-5 w-5 ${stockCritico > 0 ? 'text-red-600' : 'text-gray-400'}`} />
+            <AlertTriangle className={`h-5 w-5 ${stockCritico > 0 ? 'text-red-600' : 'text-muted-foreground'}`} />
           </div>
           <div className="flex-1">
-            <p className="text-sm text-gray-500">Stock Critico</p>
-            <p className={`text-lg font-semibold ${stockCritico > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+            <p className="text-sm text-muted-foreground">Stock Critico</p>
+            <p className={`text-lg font-semibold ${stockCritico > 0 ? 'text-red-600' : 'text-foreground'}`}>
               {stockCritico} {stockCritico === 1 ? 'producto' : 'productos'}
             </p>
           </div>
@@ -246,12 +246,13 @@ export function ProductoList() {
       </div>
 
       {/* Barra de filtros y acciones */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+      <div className="rounded-xl bg-card shadow-md p-4 mb-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="flex flex-wrap gap-2">
           <select
             value={filtroDepartamento}
             onChange={(e) => setFiltroDepartamento(e.target.value)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Todos los departamentos</option>
             {departamentos.map((dep) => (
@@ -264,7 +265,7 @@ export function ProductoList() {
           <select
             value={filtroTipo}
             onChange={(e) => setFiltroTipo(e.target.value as 'P' | 'S' | 'C' | '')}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Todos los tipos</option>
             <option value="P">Productos</option>
@@ -277,7 +278,7 @@ export function ProductoList() {
               type="checkbox"
               checked={filtroActivo}
               onChange={(e) => setFiltroActivo(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="h-4 w-4 rounded border-input text-primary focus:ring-ring"
             />
             Solo activos
           </label>
@@ -286,7 +287,7 @@ export function ProductoList() {
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => setImportOpen(true)}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
           >
             <Upload className="h-4 w-4" />
             Importar
@@ -295,7 +296,7 @@ export function ProductoList() {
           <div className="relative">
             <button
               onClick={() => setExportMenuOpen(!exportMenuOpen)}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
             >
               <Download className="h-4 w-4" />
               Exportar
@@ -306,17 +307,17 @@ export function ProductoList() {
                   className="fixed inset-0 z-10"
                   onClick={() => setExportMenuOpen(false)}
                 />
-                <div className="absolute right-0 top-full mt-1 w-40 bg-white border border-gray-200 rounded-md shadow-lg z-20 py-1">
+                <div className="absolute right-0 top-full mt-1 w-40 bg-card border border-border rounded-md shadow-lg z-20 py-1">
                   <button
                     onClick={handleExportCsv}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted flex items-center gap-2 cursor-pointer"
                   >
                     <FileSpreadsheet className="h-4 w-4 text-green-600" />
                     CSV
                   </button>
                   <button
                     onClick={handleExportExcel}
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-gray-50 flex items-center gap-2"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-muted flex items-center gap-2 cursor-pointer"
                   >
                     <FileSpreadsheet className="h-4 w-4 text-green-700" />
                     Excel (.xlsx)
@@ -328,97 +329,99 @@ export function ProductoList() {
 
           <button
             onClick={handleNuevo}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0"
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0 cursor-pointer"
           >
             <Plus className="h-4 w-4" />
             Nuevo Producto
           </button>
         </div>
+        </div>
       </div>
 
       {/* Tabla */}
-      {productosOrdenados.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+      <div className="rounded-xl bg-card shadow-md p-4">
+        {productosOrdenados.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground">
           <p className="text-base font-medium">No se encontraron productos</p>
           <p className="text-sm mt-1">Ajusta los filtros o crea un nuevo producto</p>
         </div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <div className="overflow-x-auto border border-border rounded-lg">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+              <tr className="border-b border-border bg-muted">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('codigo')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Codigo
                     {renderSortIcon('codigo')}
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('tipo')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Tipo
                     {renderSortIcon('tipo')}
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('nombre')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Nombre
                     {renderSortIcon('nombre')}
                   </button>
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('departamento')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors cursor-pointer"
                   >
                     Departamento
                     {renderSortIcon('departamento')}
                   </button>
                 </th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('costo')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors ml-auto"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors ml-auto cursor-pointer"
                   >
                     Costo
                     {renderSortIcon('costo')}
                   </button>
                 </th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('venta')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors ml-auto"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors ml-auto cursor-pointer"
                   >
                     Precio Venta
                     {renderSortIcon('venta')}
                   </button>
                 </th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('stock')}
-                    className="inline-flex items-center gap-1.5 hover:text-gray-900 transition-colors ml-auto"
+                    className="inline-flex items-center gap-1.5 hover:text-foreground transition-colors ml-auto cursor-pointer"
                   >
                     Stock
                     {renderSortIcon('stock')}
                   </button>
                 </th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Acciones</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {productosOrdenados.map((prod) => {
                 const stockBajo = isStockBajo(prod)
                 return (
-                  <tr key={prod.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 font-mono text-gray-900">{prod.codigo}</td>
+                  <tr key={prod.id} className="border-b border-border hover:bg-muted/50 transition-colors">
+                    <td className="px-4 py-3 font-mono text-foreground">{prod.codigo}</td>
                     <td className="px-4 py-3">
                       {prod.tipo === 'P' ? (
                         <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-blue-600/20 ring-inset">
@@ -434,8 +437,8 @@ export function ProductoList() {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-900">{prod.nombre}</td>
-                    <td className="px-4 py-3 text-gray-600">
+                    <td className="px-4 py-3 text-foreground">{prod.nombre}</td>
+                    <td className="px-4 py-3 text-muted-foreground">
                       {departamentoMap.get(prod.departamento_id) ?? '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -446,12 +449,12 @@ export function ProductoList() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {prod.tipo === 'S' ? (
-                        <span className="text-gray-400">N/A</span>
+                        <span className="text-muted-foreground">N/A</span>
                       ) : prod.tipo === 'C' ? (
-                        <span className="text-gray-400 text-xs">Ver Combos</span>
+                        <span className="text-muted-foreground text-xs">Ver Combos</span>
                       ) : (
                         <div className="flex items-center justify-end gap-1.5">
-                          <span className={stockBajo ? 'text-red-600 font-medium' : 'text-gray-900'}>
+                          <span className={stockBajo ? 'text-red-600 font-medium' : 'text-foreground'}>
                             {parseFloat(prod.stock).toFixed(3)}
                           </span>
                           {stockBajo && (
@@ -467,7 +470,7 @@ export function ProductoList() {
                         {prod.tipo === 'C' && (
                           <button
                             onClick={() => setComboDetalle(prod)}
-                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 rounded-md hover:bg-green-100 transition-colors"
+                            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 rounded-md hover:bg-green-100 transition-colors cursor-pointer"
                           >
                             <Layers className="h-3.5 w-3.5" />
                             Componentes
@@ -475,7 +478,7 @@ export function ProductoList() {
                         )}
                         <button
                           onClick={() => handleEditar(prod)}
-                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
                         >
                           <Pencil className="h-3.5 w-3.5" />
                           Editar
@@ -489,6 +492,7 @@ export function ProductoList() {
           </table>
         </div>
       )}
+      </div>
 
       <ProductoForm
         isOpen={formOpen}

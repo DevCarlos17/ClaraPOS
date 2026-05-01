@@ -19,11 +19,11 @@ export function RetIvaCompraList() {
     return (
       <div className="space-y-3">
         <div className="flex justify-between items-center mb-4">
-          <div className="h-8 w-48 bg-gray-200 rounded animate-pulse" />
-          <div className="h-9 w-40 bg-gray-200 rounded animate-pulse" />
+          <div className="h-8 w-48 bg-muted rounded animate-pulse" />
+          <div className="h-9 w-40 bg-muted rounded animate-pulse" />
         </div>
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          <div key={i} className="h-12 bg-muted rounded animate-pulse" />
         ))}
       </div>
     )
@@ -34,12 +34,12 @@ export function RetIvaCompraList() {
       {/* Barra superior */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-          <h2 className="text-lg font-semibold text-gray-900">
+          <h2 className="text-lg font-semibold text-foreground">
             Retenciones IVA
-            <span className="text-sm font-normal text-gray-500 ml-2">({retenciones.length})</span>
+            <span className="text-sm font-normal text-muted-foreground ml-2">({retenciones.length})</span>
           </h2>
           <div className="flex items-center gap-2">
-            <label htmlFor="ret-iva-desde" className="text-sm text-gray-600 whitespace-nowrap">
+            <label htmlFor="ret-iva-desde" className="text-sm text-muted-foreground whitespace-nowrap">
               Desde
             </label>
             <input
@@ -47,9 +47,9 @@ export function RetIvaCompraList() {
               type="date"
               value={fechaDesde}
               onChange={(e) => setFechaDesde(e.target.value)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="rounded-md border border-input bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
-            <label htmlFor="ret-iva-hasta" className="text-sm text-gray-600 whitespace-nowrap">
+            <label htmlFor="ret-iva-hasta" className="text-sm text-muted-foreground whitespace-nowrap">
               Hasta
             </label>
             <input
@@ -57,13 +57,13 @@ export function RetIvaCompraList() {
               type="date"
               value={fechaHasta}
               onChange={(e) => setFechaHasta(e.target.value)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="rounded-md border border-input bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
         </div>
         <button
           onClick={() => setFormOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors shrink-0"
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium bg-primary text-primary-foreground hover:bg-primary/90 rounded-md transition-colors shrink-0 cursor-pointer"
         >
           <Plus className="h-4 w-4" />
           Nueva Retencion
@@ -72,50 +72,50 @@ export function RetIvaCompraList() {
 
       {/* Contenido */}
       {retenciones.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
+        <div className="text-center py-12 text-muted-foreground">
           <p className="text-base font-medium">No hay retenciones de IVA registradas</p>
           <p className="text-sm mt-1">Haz clic en "Nueva Retencion" para registrar una retencion de IVA</p>
         </div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+        <div className="overflow-x-auto border border-border rounded-lg">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50">
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Fecha</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Nro Comprobante</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-700">Proveedor</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Base Imponible</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">% IVA</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Monto IVA</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">% Ret.</th>
-                <th className="text-right px-4 py-3 font-medium text-gray-700">Monto Retenido</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-700">Status</th>
+              <tr className="border-b border-border bg-muted">
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Fecha</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Nro Comprobante</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Proveedor</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Base Imponible</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">% IVA</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Monto IVA</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">% Ret.</th>
+                <th className="text-right px-4 py-3 font-medium text-muted-foreground">Monto Retenido</th>
+                <th className="text-center px-4 py-3 font-medium text-muted-foreground">Status</th>
               </tr>
             </thead>
             <tbody>
               {retenciones.map((ret: RetencionIvaConProveedor) => (
                 <tr
                   key={ret.id}
-                  className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
+                  className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                 >
-                  <td className="px-4 py-3 text-gray-600 whitespace-nowrap">
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
                     {new Date(ret.fecha_comprobante).toLocaleDateString('es-VE')}
                   </td>
-                  <td className="px-4 py-3 font-mono text-gray-900">{ret.nro_comprobante}</td>
-                  <td className="px-4 py-3 text-gray-900">{ret.proveedor_nombre}</td>
-                  <td className="px-4 py-3 text-right font-medium text-gray-900">
+                  <td className="px-4 py-3 font-mono text-foreground">{ret.nro_comprobante}</td>
+                  <td className="px-4 py-3 text-foreground">{ret.proveedor_nombre}</td>
+                  <td className="px-4 py-3 text-right font-medium text-foreground">
                     {parseFloat(ret.base_imponible).toFixed(2)}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-600">
+                  <td className="px-4 py-3 text-right text-muted-foreground">
                     {parseFloat(ret.porcentaje_iva).toFixed(2)}%
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-900">
+                  <td className="px-4 py-3 text-right text-foreground">
                     {parseFloat(ret.monto_iva).toFixed(2)}
                   </td>
-                  <td className="px-4 py-3 text-right text-gray-600">
+                  <td className="px-4 py-3 text-right text-muted-foreground">
                     {parseFloat(ret.porcentaje_retencion).toFixed(2)}%
                   </td>
-                  <td className="px-4 py-3 text-right font-medium text-gray-900">
+                  <td className="px-4 py-3 text-right font-medium text-foreground">
                     {parseFloat(ret.monto_retenido).toFixed(2)}
                   </td>
                   <td className="px-4 py-3 text-center">

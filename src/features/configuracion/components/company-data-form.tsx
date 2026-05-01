@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Building2, Mail, Phone, MapPin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Button } from '@/components/ui/button'
 import { useCompany, updateCompany } from '../hooks/use-company'
 import { companySchema } from '../schemas/company-schema'
 
@@ -16,6 +14,7 @@ export function CompanyDataForm() {
   const [direccion, setDireccion] = useState('')
   const [telefono, setTelefono] = useState('')
   const [email, setEmail] = useState('')
+
   useEffect(() => {
     if (!company) return
     setNombre(company.nombre ?? '')
@@ -29,17 +28,9 @@ export function CompanyDataForm() {
     e.preventDefault()
     if (!company) return
 
-    const result = companySchema.safeParse({
-      nombre,
-      rif,
-      direccion,
-      telefono,
-      email,
-    })
-
+    const result = companySchema.safeParse({ nombre, rif, direccion, telefono, email })
     if (!result.success) {
-      const firstError = result.error.issues[0]
-      toast.error(firstError.message)
+      toast.error(result.error.issues[0].message)
       return
     }
 
@@ -70,139 +61,84 @@ export function CompanyDataForm() {
 
   if (!company) {
     return (
-      <div className="rounded-xl border bg-card p-6 text-center text-muted-foreground">
+      <div className="text-center py-12 text-muted-foreground">
         No se encontro informacion de la empresa
       </div>
     )
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2">
-      {/* Current data card */}
-      <div className="rounded-xl border bg-card p-6 space-y-5">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="p-2 rounded-lg bg-blue-50 text-blue-600">
-            <Building2 className="w-5 h-5" />
-          </div>
-          <h3 className="font-semibold">Datos Actuales</h3>
+    <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
+      <div className="space-y-1.5">
+        <Label htmlFor="nombre">Razon Social *</Label>
+        <Input
+          id="nombre"
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          onBlur={() => setNombre((v) => v.toUpperCase())}
+          placeholder="Nombre de la empresa"
+          disabled={isSubmitting}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="rif">RIF</Label>
+        <Input
+          id="rif"
+          value={rif}
+          onChange={(e) => setRif(e.target.value)}
+          onBlur={() => setRif((v) => v.toUpperCase())}
+          placeholder="J-12345678-9"
+          disabled={isSubmitting}
+        />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="direccion">Direccion</Label>
+        <textarea
+          id="direccion"
+          value={direccion}
+          onChange={(e) => setDireccion(e.target.value)}
+          placeholder="Direccion fiscal"
+          disabled={isSubmitting}
+          rows={2}
+          className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:opacity-50 md:text-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 resize-none"
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="telefono">Telefono</Label>
+          <Input
+            id="telefono"
+            value={telefono}
+            onChange={(e) => setTelefono(e.target.value)}
+            placeholder="0412-1234567"
+            disabled={isSubmitting}
+          />
         </div>
-
-        <div className="space-y-3">
-          <DataRow label="Razon Social" value={company.nombre} />
-          <DataRow label="RIF" value={company.rif} />
-
-          <div className="border-t pt-3">
-            <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wider">Contacto</p>
-            <div className="space-y-2">
-              <DataRowIcon icon={MapPin} value={company.direccion} placeholder="Sin direccion" />
-              <DataRowIcon icon={Phone} value={company.telefono} placeholder="Sin telefono" />
-              <DataRowIcon icon={Mail} value={company.email} placeholder="Sin email" />
-            </div>
-          </div>
-
+        <div className="space-y-1.5">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="empresa@email.com"
+            disabled={isSubmitting}
+          />
         </div>
       </div>
 
-      {/* Edit form */}
-      <div className="rounded-xl border bg-card p-6">
-        <h3 className="font-semibold mb-4">Editar Datos</h3>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="nombre">Razon Social *</Label>
-            <Input
-              id="nombre"
-              value={nombre}
-              onChange={(e) => setNombre(e.target.value)}
-              onBlur={() => setNombre((v) => v.toUpperCase())}
-              placeholder="Nombre de la empresa"
-              disabled={isSubmitting}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="rif">RIF</Label>
-            <Input
-              id="rif"
-              value={rif}
-              onChange={(e) => setRif(e.target.value)}
-              onBlur={() => setRif((v) => v.toUpperCase())}
-              placeholder="J-12345678-9"
-              disabled={isSubmitting}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="direccion">Direccion</Label>
-            <textarea
-              id="direccion"
-              value={direccion}
-              onChange={(e) => setDireccion(e.target.value)}
-              placeholder="Direccion fiscal"
-              disabled={isSubmitting}
-              rows={2}
-              className="w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:opacity-50 md:text-sm focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 resize-none"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="telefono">Telefono</Label>
-              <Input
-                id="telefono"
-                value={telefono}
-                onChange={(e) => setTelefono(e.target.value)}
-                placeholder="0412-1234567"
-                disabled={isSubmitting}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="empresa@email.com"
-                disabled={isSubmitting}
-              />
-            </div>
-          </div>
-
-          <Button type="submit" className="w-full" disabled={isSubmitting || !nombre.trim()}>
-            {isSubmitting ? 'Guardando...' : 'Guardar Cambios'}
-          </Button>
-        </form>
+      <div className="pt-2">
+        <button
+          type="submit"
+          disabled={isSubmitting || !nombre.trim()}
+          className="inline-flex items-center justify-center px-6 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:pointer-events-none cursor-pointer"
+        >
+          {isSubmitting ? 'Guardando...' : 'Guardar Cambios'}
+        </button>
       </div>
-    </div>
-  )
-}
-
-function DataRow({ label, value }: { label: string; value: string | null }) {
-  return (
-    <div>
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="text-sm font-medium">{value || <span className="text-muted-foreground italic">No definido</span>}</p>
-    </div>
-  )
-}
-
-function DataRowIcon({
-  icon: Icon,
-  value,
-  placeholder,
-}: {
-  icon: React.ComponentType<{ className?: string }>
-  value: string | null
-  placeholder: string
-}) {
-  return (
-    <div className="flex items-center gap-2 text-sm">
-      <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-      {value ? (
-        <span>{value}</span>
-      ) : (
-        <span className="text-muted-foreground italic">{placeholder}</span>
-      )}
-    </div>
+    </form>
   )
 }

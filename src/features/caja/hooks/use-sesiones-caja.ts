@@ -39,7 +39,43 @@ export interface CerrarSesionParams {
   usuario_cierre_id: string
 }
 
+// ─── Interfaces extendidas ───────────────────────────────────
+
+export interface SesionCajaConNombre extends SesionCaja {
+  caja_nombre: string | null
+}
+
 // ─── Hooks de lectura ────────────────────────────────────────
+
+/**
+ * Retorna todas las sesiones con status ABIERTA de la empresa actual,
+ * enriquecidas con el nombre de la caja.
+ */
+export function useSesionesActivas() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data: sesionesData, isLoading } = useQuery(
+    `SELECT * FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura ASC`,
+    [empresaId]
+  )
+
+  const { data: cajasData } = useQuery(
+    `SELECT id, nombre FROM cajas WHERE empresa_id = ?`,
+    [empresaId]
+  )
+
+  const cajaMap = new Map(
+    ((cajasData ?? []) as { id: string; nombre: string }[]).map((c) => [c.id, c.nombre])
+  )
+
+  const sesiones: SesionCajaConNombre[] = ((sesionesData ?? []) as SesionCaja[]).map((s) => ({
+    ...s,
+    caja_nombre: cajaMap.get(s.caja_id) ?? null,
+  }))
+
+  return { sesiones, isLoading }
+}
 
 /**
  * Retorna las 20 sesiones mas recientes de la empresa actual.

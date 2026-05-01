@@ -169,6 +169,7 @@ export function CxpPage() {
   }
 
   return (
+    <div className="rounded-xl bg-card shadow-md p-6">
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* Lista de proveedores con deuda */}
       <div className="md:col-span-1">
@@ -224,16 +225,15 @@ export function CxpPage() {
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
                 Facturas Pendientes — {proveedorSeleccionado.razon_social}
               </h3>
-              <div className="flex items-center gap-2">
-                <Badge className="bg-destructive/10 text-destructive border-destructive/20">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-destructive">
                   Deuda: {formatUsd(parseFloat(proveedorSeleccionado.saldo_actual))}
-                </Badge>
+                </span>
                 {facturas.length > 0 && (
                   <Button
                     size="sm"
-                    variant="outline"
                     onClick={() => printReporteProveedor(proveedorSeleccionado, facturasSorted)}
-                    className="gap-1.5 text-xs"
+                    className="gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
                   >
                     <Printer className="h-3.5 w-3.5" />
                     Reporte
@@ -312,9 +312,8 @@ export function CxpPage() {
                         <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                           <Button
                             size="sm"
-                            variant="outline"
                             onClick={() => handlePagar(factura)}
-                            className="text-xs"
+                            className="text-xs bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
                           >
                             Pagar
                           </Button>
@@ -383,9 +382,8 @@ export function CxpPage() {
                             <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                               <Button
                                 size="sm"
-                                variant="outline"
                                 onClick={() => handlePagarGasto(gasto)}
-                                className="text-xs"
+                                className="text-xs bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
                               >
                                 Pagar
                               </Button>
@@ -433,6 +431,7 @@ export function CxpPage() {
         isOpen={!!detalleFactura}
         onClose={() => setDetalleFactura(null)}
       />
+    </div>
     </div>
   )
 }
