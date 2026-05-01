@@ -337,6 +337,7 @@ const productos = new Table(
     created_by: column.text,
     updated_by: column.text,
     ubicacion: column.text,
+    presentacion: column.text,
   },
   { indexes: {} }
 )

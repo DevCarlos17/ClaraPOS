@@ -15,6 +15,10 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
+import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
+import { useDebounce } from '@/hooks/use-debounce'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
 
 interface ProductoFormProps {
   isOpen: boolean
@@ -35,6 +39,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [codigo, setCodigo] = useState('')
   const [tipo, setTipo] = useState<'P' | 'S' | 'C'>('P')
   const [nombre, setNombre] = useState('')
+  const [presentacion, setPresentacion] = useState('')
   const [departamentoId, setDepartamentoId] = useState('')
   const [costoUsd, setCostoUsd] = useState('')
   const [precioVentaUsd, setPrecioVentaUsd] = useState('')
@@ -49,6 +54,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [stockInicial, setStockInicial] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+  const [popoverOpen, setPopoverOpen] = useState(false)
+
+  const debouncedNombre = useDebounce(nombre, 300)
+  const { sugerencias } = useCatalogoGlobal(isEditing ? '' : debouncedNombre)
 
   useEffect(() => {
     if (isOpen) {
@@ -56,6 +65,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setCodigo(producto.codigo)
         setTipo(producto.tipo as 'P' | 'S' | 'C')
         setNombre(producto.nombre)
+        setPresentacion(producto.presentacion ?? '')
         setDepartamentoId(producto.departamento_id)
         setCostoUsd(producto.costo_usd)
         setPrecioVentaUsd(producto.precio_venta_usd)
@@ -72,6 +82,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setCodigo('')
         setTipo('P')
         setNombre('')
+        setPresentacion('')
         setDepartamentoId('')
         setCostoUsd('')
         setPrecioVentaUsd('')
@@ -86,6 +97,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setStockInicial('')
       }
       setErrors({})
+      setPopoverOpen(false)
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
@@ -98,6 +110,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   function handleNombreChange(value: string) {
     setNombre(value.toUpperCase())
+    setPopoverOpen(true)
+  }
+
+  function handlePresentacionChange(value: string) {
+    setPresentacion(value.toUpperCase())
   }
 
   function handleUbicacionChange(value: string) {
@@ -108,6 +125,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setTipo(nuevoTipo)
     if (nuevoTipo === 'S' || nuevoTipo === 'C') {
       setUbicacion('')
+      setPresentacion('')
       setStockMinimo('0')
       setUnidadBaseId('')
       setManejaLotes(false)
@@ -117,6 +135,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (nuevoTipo === 'C') {
       setCostoUsd('0')
     }
+  }
+
+  function handleSugerenciaSelect(s: { nombre: string; presentacion: string | null; maneja_lotes: boolean; tipo_impuesto: string }) {
+    setNombre(s.nombre)
+    if (tipo === 'P') {
+      if (s.presentacion) setPresentacion(s.presentacion)
+      setManejaLotes(s.maneja_lotes)
+      setTipoImpuesto(s.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado')
+    }
+    setPopoverOpen(false)
   }
 
   function parseNumOrZero(val: string): number {
@@ -153,6 +181,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       tipo_impuesto: tipoImpuesto,
       is_active: isActive,
       ubicacion: esServicioOCombo ? '' : ubicacion,
+      presentacion: esServicioOCombo ? '' : presentacion,
     }
 
     const parsed = productoSchema.safeParse(data)
@@ -183,6 +212,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           ubicacion: esServicioOCombo ? null : (parsed.data.ubicacion || null),
           unidad_base_id: esServicioOCombo ? null : (unidadBaseId || null),
           maneja_lotes: esServicioOCombo ? false : manejaLotes,
+          presentacion: esServicioOCombo ? null : (parsed.data.presentacion || null),
         })
         toast.success('Producto actualizado correctamente')
       } else {
@@ -195,10 +225,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           precio_venta_usd: parsed.data.precio_venta_usd,
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
+          tipo_impuesto: parsed.data.tipo_impuesto,
           empresa_id: user!.empresa_id!,
           ubicacion: esServicioOCombo ? undefined : (parsed.data.ubicacion || undefined),
           unidad_base_id: esServicioOCombo ? undefined : (unidadBaseId || undefined),
           maneja_lotes: esServicioOCombo ? false : manejaLotes,
+          presentacion: esServicioOCombo ? undefined : (parsed.data.presentacion || undefined),
         })
 
         // Si es producto fisico con stock inicial, crear movimiento y actualizar stock
@@ -268,6 +300,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const costoNum = esComboLocal ? 0 : parseNumOrZero(costoUsd)
   const ventaNum = parseNumOrZero(precioVentaUsd)
   const mayorNum = precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd)
+
+  const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
   return (
     <dialog
@@ -352,24 +386,79 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             )}
           </div>
 
-          {/* Nombre */}
+          {/* Nombre con autocomplete desde catalogo global */}
           <div>
             <label htmlFor="prod-nombre" className="block text-sm font-medium text-gray-700 mb-1">
               Nombre
             </label>
-            <input
-              id="prod-nombre"
-              type="text"
-              value={nombre}
-              onChange={(e) => handleNombreChange(e.target.value)}
-              placeholder="Nombre del producto"
-              autoComplete="off"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.nombre ? 'border-red-500' : 'border-gray-300'
-              }`}
-            />
+            <Popover open={mostrarPopover} onOpenChange={(open) => { if (!open) setPopoverOpen(false) }}>
+              <PopoverAnchor asChild>
+                <input
+                  id="prod-nombre"
+                  type="text"
+                  value={nombre}
+                  onChange={(e) => handleNombreChange(e.target.value)}
+                  onBlur={() => setTimeout(() => setPopoverOpen(false), 200)}
+                  placeholder="Nombre del producto"
+                  autoComplete="off"
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    errors.nombre ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                />
+              </PopoverAnchor>
+              <PopoverContent
+                onOpenAutoFocus={(e) => e.preventDefault()}
+                align="start"
+                sideOffset={4}
+                className="p-0"
+                style={{ width: 'var(--radix-popover-anchor-width, 300px)' }}
+              >
+                <Command shouldFilter={false}>
+                  <CommandList>
+                    <CommandGroup>
+                      {sugerencias.map((s) => (
+                        <CommandItem
+                          key={s.id}
+                          value={s.nombre}
+                          onSelect={() => handleSugerenciaSelect(s)}
+                          className="flex items-center justify-between gap-2 cursor-pointer"
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-medium truncate">{s.nombre}</span>
+                            {s.presentacion && (
+                              <span className="text-xs text-gray-400 truncate">{s.presentacion}</span>
+                            )}
+                          </div>
+                          <span className="shrink-0 text-xs font-medium text-blue-600 tabular-nums">
+                            {Math.round(s.similitud * 100)}%
+                          </span>
+                        </CommandItem>
+                      ))}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
             {errors.nombre && <p className="text-red-500 text-xs mt-1">{errors.nombre}</p>}
           </div>
+
+          {/* Presentacion - solo para tipo P */}
+          {!esServicioOComboLocal && (
+            <div>
+              <label htmlFor="prod-presentacion" className="block text-sm font-medium text-gray-700 mb-1">
+                Presentacion <span className="text-gray-400 font-normal">(Opcional)</span>
+              </label>
+              <input
+                id="prod-presentacion"
+                type="text"
+                value={presentacion}
+                onChange={(e) => handlePresentacionChange(e.target.value)}
+                placeholder="Ej: FRASCO 500ML, CAJA x12 UND"
+                autoComplete="off"
+                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          )}
 
           {/* Departamento */}
           <div>

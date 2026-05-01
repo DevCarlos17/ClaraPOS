@@ -13,6 +13,7 @@ export const productoSchema = z
     tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
     is_active: z.boolean().default(true),
     ubicacion: z.string().optional().default(''),
+    presentacion: z.string().optional().default(''),
   })
   .refine(
     (data) => {

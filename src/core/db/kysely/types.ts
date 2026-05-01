@@ -305,6 +305,7 @@ export interface Productos {
   created_by: string | null
   updated_by: string | null
   ubicacion: string | null
+  presentacion: string | null
 }
 
 export interface InventarioStock {

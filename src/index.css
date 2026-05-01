@@ -98,3 +98,50 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* ─── Temas de color (light-only) ─────────────────────────────── */
+
+[data-theme="clara"] {
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #eff6ff;
+  --color-accent-foreground: #1e40af;
+  --color-muted: #f1f5f9;
+  --color-muted-foreground: #64748b;
+}
+
+[data-theme="jade"] {
+  --color-primary: #059669;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #ecfdf5;
+  --color-accent-foreground: #065f46;
+  --color-muted: #f0fdf4;
+  --color-muted-foreground: #6b7280;
+}
+
+[data-theme="rosa"] {
+  --color-primary: #db2777;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #fdf2f8;
+  --color-accent-foreground: #9d174d;
+  --color-muted: #fdf4f8;
+  --color-muted-foreground: #6b7280;
+}
+
+[data-theme="violeta"] {
+  --color-primary: #7c3aed;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #f5f3ff;
+  --color-accent-foreground: #5b21b6;
+  --color-muted: #f5f3ff;
+  --color-muted-foreground: #6b7280;
+}
+
+[data-theme="ambar"] {
+  --color-primary: #d97706;
+  --color-primary-foreground: #ffffff;
+  --color-accent: #fffbeb;
+  --color-accent-foreground: #92400e;
+  --color-muted: #fef9ee;
+  --color-muted-foreground: #78716c;
+}

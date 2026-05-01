@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { Menu, TrendingUp, AlertCircle } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { SyncStatusIndicator } from '@/components/sync/sync-status-indicator'
+import { ThemePicker } from '@/components/theme-picker'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { TasaUpdateModal } from '@/features/configuracion/components/tasa-update-modal'
 import { formatTasa } from '@/lib/currency'
@@ -56,6 +57,8 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         <SyncStatusIndicator />
 
         <div className="h-4 w-px bg-border" />
+
+        <ThemePicker />
 
         {/* Tasa button: solo icono en mobile, icono + texto en desktop */}
         <button
