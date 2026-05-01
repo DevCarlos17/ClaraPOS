@@ -396,8 +396,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       const pagoMonedaId = pago.moneda === 'BS' ? monedaBsId : monedaUsdId
 
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoId,
           ventaId,
@@ -408,11 +408,37 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           pago.monto.toFixed(2),
           montoUsd.toFixed(2),
           pago.referencia ?? null,
+          sesion_caja_id ?? null,
           now,
           empresa_id,
           now,
+          usuario_id,
         ]
       )
+
+      // Crear movimiento_metodo_cobro por cada pago
+      if (montoUsd > 0) {
+        const movMetodoId = uuidv4()
+        await tx.execute(
+          `INSERT INTO movimientos_metodo_cobro
+             (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+              doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+           VALUES (?, ?, ?, 'INGRESO', 'VENTA', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            movMetodoId,
+            empresa_id,
+            pago.metodo_cobro_id,
+            montoUsd.toFixed(2),
+            ventaId,
+            `VEN-${nroFactura}`,
+            `Venta ${nroFactura}`,
+            sesion_caja_id ?? null,
+            now,
+            now,
+            usuario_id,
+          ]
+        )
+      }
 
       totalAbonadoUsd += montoUsd
     }

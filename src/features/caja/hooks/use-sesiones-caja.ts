@@ -125,8 +125,9 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
 
 /**
  * Cierra una sesion de caja activa.
- * Calcula la diferencia: monto_sistema_usd es derivado del sistema (se obtiene de la sesion actual).
+ * monto_sistema_usd = monto_apertura + pagos_efectivo_sesion + ingresos_manuales - egresos_manuales
  * diferencia_usd = monto_fisico_usd - monto_sistema_usd
+ * Tambien genera sesiones_caja_detalle con el desglose por metodo de cobro.
  */
 export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): Promise<void> {
   const { monto_fisico_usd, observaciones_cierre, usuario_cierre_id } = params
@@ -140,7 +141,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
   await db.writeTransaction(async (tx) => {
     // 1. Leer sesion y validar que este abierta
     const result = await tx.execute(
-      `SELECT status, monto_apertura_usd FROM sesiones_caja WHERE id = ?`,
+      `SELECT status, monto_apertura_usd, empresa_id FROM sesiones_caja WHERE id = ?`,
       [id]
     )
 
@@ -148,18 +149,61 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       throw new Error('Sesion de caja no encontrada')
     }
 
-    const sesion = result.rows.item(0) as { status: string; monto_apertura_usd: string }
+    const sesion = result.rows.item(0) as {
+      status: string
+      monto_apertura_usd: string
+      empresa_id: string
+    }
 
     if (sesion.status !== 'ABIERTA') {
       throw new Error('La sesion de caja ya fue cerrada')
     }
 
-    // 2. monto_sistema_usd: en esta implementacion se usa el monto de apertura como base del sistema
-    // (el calculo real del sistema puede extenderse con sumas de ventas del periodo)
-    const montoSistemaUsd = parseFloat(sesion.monto_apertura_usd)
-    const diferenciaUsd = monto_fisico_usd - montoSistemaUsd
+    const montoApertura = parseFloat(sesion.monto_apertura_usd)
+    const empresaId = sesion.empresa_id
 
-    // 3. Actualizar la sesion a CERRADA
+    // 2. Calcular total de pagos en EFECTIVO de esta sesion
+    const pagosEfectivoResult = await tx.execute(
+      `SELECT COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total
+       FROM pagos p
+       JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+       WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0`,
+      [id]
+    )
+    const pagosEfectivo = Number(
+      (pagosEfectivoResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
+    )
+
+    // 3. Calcular movimientos manuales de esta sesion
+    const movsManualResult = await tx.execute(
+      `SELECT origen, COALESCE(SUM(CAST(monto AS REAL)), 0) as total
+       FROM movimientos_metodo_cobro
+       WHERE sesion_caja_id = ?
+         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+       GROUP BY origen`,
+      [id]
+    )
+
+    let ingresosManual = 0
+    let egresosManual = 0
+    if (movsManualResult.rows) {
+      for (let i = 0; i < movsManualResult.rows.length; i++) {
+        const row = movsManualResult.rows.item(i) as { origen: string; total: number }
+        if (row.origen === 'INGRESO_MANUAL' || row.origen === 'AVANCE' || row.origen === 'PRESTAMO') {
+          ingresosManual += row.total
+        } else if (row.origen === 'EGRESO_MANUAL') {
+          egresosManual += row.total
+        }
+      }
+    }
+
+    // 4. monto_sistema_usd = apertura + pagos_efectivo + ingresos_manual - egresos_manual
+    const montoSistemaUsd = Number(
+      (montoApertura + pagosEfectivo + ingresosManual - egresosManual).toFixed(2)
+    )
+    const diferenciaUsd = Number((monto_fisico_usd - montoSistemaUsd).toFixed(2))
+
+    // 5. Actualizar la sesion a CERRADA
     await tx.execute(
       `UPDATE sesiones_caja SET
          status = 'CERRADA',
@@ -182,5 +226,78 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         id,
       ]
     )
+
+    // 6. Poblar sesiones_caja_detalle con desglose por metodo de cobro
+    // Obtener todos los metodos usados en pagos de esta sesion
+    const metodosUsadosResult = await tx.execute(
+      `SELECT p.metodo_cobro_id, mc.moneda_id,
+              COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total_pagos,
+              COUNT(*) as num_transacciones
+       FROM pagos p
+       JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+       WHERE p.sesion_caja_id = ? AND p.is_reversed = 0
+       GROUP BY p.metodo_cobro_id, mc.moneda_id`,
+      [id]
+    )
+
+    // Obtener movimientos manuales agrupados por metodo de cobro
+    const movsManualPorMetodoResult = await tx.execute(
+      `SELECT metodo_cobro_id,
+              SUM(CASE WHEN tipo = 'INGRESO' THEN CAST(monto AS REAL) ELSE 0 END) as total_ingreso,
+              SUM(CASE WHEN tipo = 'EGRESO' THEN CAST(monto AS REAL) ELSE 0 END) as total_egreso
+       FROM movimientos_metodo_cobro
+       WHERE sesion_caja_id = ?
+         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+       GROUP BY metodo_cobro_id`,
+      [id]
+    )
+
+    const movsManualPorMetodo = new Map<string, { ingreso: number; egreso: number }>()
+    if (movsManualPorMetodoResult.rows) {
+      for (let i = 0; i < movsManualPorMetodoResult.rows.length; i++) {
+        const row = movsManualPorMetodoResult.rows.item(i) as {
+          metodo_cobro_id: string
+          total_ingreso: number
+          total_egreso: number
+        }
+        movsManualPorMetodo.set(row.metodo_cobro_id, {
+          ingreso: row.total_ingreso,
+          egreso: row.total_egreso,
+        })
+      }
+    }
+
+    if (metodosUsadosResult.rows) {
+      for (let i = 0; i < metodosUsadosResult.rows.length; i++) {
+        const row = metodosUsadosResult.rows.item(i) as {
+          metodo_cobro_id: string
+          moneda_id: string
+          total_pagos: number
+          num_transacciones: number
+        }
+
+        const manual = movsManualPorMetodo.get(row.metodo_cobro_id) ?? { ingreso: 0, egreso: 0 }
+        const totalSistema = Number(
+          (row.total_pagos + manual.ingreso - manual.egreso).toFixed(2)
+        )
+
+        const detalleId = uuidv4()
+        await tx.execute(
+          `INSERT OR IGNORE INTO sesiones_caja_detalle
+             (id, sesion_caja_id, metodo_cobro_id, moneda_id, total_sistema, total_fisico, diferencia, num_transacciones, empresa_id, created_at)
+           VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+          [
+            detalleId,
+            id,
+            row.metodo_cobro_id,
+            row.moneda_id,
+            totalSistema.toFixed(2),
+            row.num_transacciones,
+            empresaId,
+            now,
+          ]
+        )
+      }
+    }
   })
 }

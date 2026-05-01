@@ -39,6 +39,7 @@ export interface PagoFacturaParams {
   empresa_id: string
   procesado_por: string
   procesado_por_nombre: string
+  sesion_caja_id?: string | null
 }
 
 export interface AbonoGlobalParams {
@@ -51,6 +52,7 @@ export interface AbonoGlobalParams {
   empresa_id: string
   procesado_por: string
   procesado_por_nombre: string
+  sesion_caja_id?: string | null
 }
 
 /**
@@ -215,7 +217,7 @@ export function usePagosFactura(ventaId: string | null) {
  * Crea pago, reduce saldo factura, crea movimiento_cuenta (tipo PAG), actualiza saldo cliente.
  */
 export async function registrarPagoFactura(params: PagoFacturaParams): Promise<void> {
-  const { venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre } = params
+  const { venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre, sesion_caja_id } = params
 
   if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
@@ -259,8 +261,8 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     // 4. INSERT pago
     const pagoId = uuidv4()
     await tx.execute(
-      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         pagoId,
         venta_id,
@@ -271,6 +273,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         monto.toFixed(2),
         montoUsd.toFixed(2),
         referencia ?? null,
+        sesion_caja_id ?? null,
         now,
         empresa_id,
         now,
@@ -278,6 +281,30 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         procesado_por_nombre,
       ]
     )
+
+    // Crear movimiento_metodo_cobro
+    if (montoUsd > 0) {
+      const movMetodoCxCId = uuidv4()
+      await tx.execute(
+        `INSERT INTO movimientos_metodo_cobro
+           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          movMetodoCxCId,
+          empresa_id,
+          metodo_cobro_id,
+          montoUsd.toFixed(2),
+          venta_id,
+          `PAG-${venta.nro_factura}`,
+          `Pago CxC fac. ${venta.nro_factura}`,
+          sesion_caja_id ?? null,
+          now,
+          now,
+          procesado_por,
+        ]
+      )
+    }
 
     // 5. Reducir saldo pendiente de factura
     const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
@@ -387,7 +414,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
   facturasAfectadas: number
   montoAplicado: number
 }> {
-  const { cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre } = params
+  const { cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre, sesion_caja_id } = params
 
   if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
@@ -435,8 +462,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         // INSERT pago vinculado a esta factura
         const pagoId = uuidv4()
         await tx.execute(
-          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             pagoId,
             factura.id,
@@ -447,6 +474,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
             (moneda === 'BS' ? montoAplicar * tasa : montoAplicar).toFixed(2),
             montoAplicar.toFixed(2),
             referencia ?? null,
+            sesion_caja_id ?? null,
             now,
             empresa_id,
             now,
@@ -471,8 +499,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     if (montoRestante > 0.01) {
       const pagoAnticipoId = uuidv4()
       await tx.execute(
-        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           pagoAnticipoId,
           null,
@@ -483,6 +511,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           (moneda === 'BS' ? montoRestante * tasa : montoRestante).toFixed(2),
           montoRestante.toFixed(2),
           referencia ? `${referencia} (anticipo)` : 'Anticipo',
+          sesion_caja_id ?? null,
           now,
           empresa_id,
           now,
@@ -535,7 +564,31 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       cliente_id,
     ])
 
-    // 6. Resolver banco + movimiento bancario + asientos contables (abono global CxC)
+    // 6. Crear movimiento_metodo_cobro por el total del abono
+    if (montoTotalUsd > 0) {
+      const movMetodoAbonoId = uuidv4()
+      await tx.execute(
+        `INSERT INTO movimientos_metodo_cobro
+           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          movMetodoAbonoId,
+          empresa_id,
+          metodo_cobro_id,
+          montoTotalUsd.toFixed(2),
+          movId,
+          'ABONO-GLOBAL',
+          `Abono global cliente (${facturasAfectadas} fac.)`,
+          sesion_caja_id ?? null,
+          now,
+          now,
+          procesado_por,
+        ]
+      )
+    }
+
+    // 7. Resolver banco + movimiento bancario + asientos contables (abono global CxC)
     try {
       const metodoAbonoResult = await tx.execute(
         'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',

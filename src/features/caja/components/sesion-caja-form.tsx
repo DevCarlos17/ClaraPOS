@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
+import { useQuery } from '@powersync/react'
 import {
   sesionCajaAperturaSchema,
   sesionCajaCierreSchema,
@@ -154,6 +155,133 @@ function FormApertura({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ─── Resumen de sesion (para cierre) ─────────────────────────
+
+function ResumenSesion({ sesionId }: { sesionId: string }) {
+  // Pagos por metodo de cobro en esta sesion
+  const { data: pagosData } = useQuery(
+    sesionId
+      ? `SELECT mc.nombre as metodo_nombre, mc.tipo as tipo_metodo,
+                COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total_pagos,
+                COUNT(*) as num_pagos
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         WHERE p.sesion_caja_id = ? AND p.is_reversed = 0
+         GROUP BY mc.id, mc.nombre, mc.tipo
+         ORDER BY mc.tipo, mc.nombre`
+      : '',
+    sesionId ? [sesionId] : []
+  )
+
+  // Movimientos manuales por metodo
+  const { data: movsData } = useQuery(
+    sesionId
+      ? `SELECT mc.nombre as metodo_nombre,
+                SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END) as total_ingreso_manual,
+                SUM(CASE WHEN mmc.tipo = 'EGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END) as total_egreso_manual
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         WHERE mmc.sesion_caja_id = ?
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+         GROUP BY mc.id, mc.nombre`
+      : '',
+    sesionId ? [sesionId] : []
+  )
+
+  // Sesion (para apertura)
+  const { data: sesionData } = useQuery(
+    sesionId ? 'SELECT monto_apertura_usd FROM sesiones_caja WHERE id = ?' : '',
+    sesionId ? [sesionId] : []
+  )
+
+  const sesion = (sesionData ?? [])[0] as { monto_apertura_usd: string } | undefined
+  const montoApertura = sesion ? parseFloat(sesion.monto_apertura_usd) : 0
+
+  const pagos = (pagosData ?? []) as Array<{
+    metodo_nombre: string
+    tipo_metodo: string
+    total_pagos: number
+    num_pagos: number
+  }>
+
+  const movsManualesMap = new Map<string, { ingreso: number; egreso: number }>()
+  for (const row of (movsData ?? []) as Array<{
+    metodo_nombre: string
+    total_ingreso_manual: number
+    total_egreso_manual: number
+  }>) {
+    movsManualesMap.set(row.metodo_nombre, {
+      ingreso: row.total_ingreso_manual,
+      egreso: row.total_egreso_manual,
+    })
+  }
+
+  // Total esperado en efectivo
+  const pagosEfectivo = pagos
+    .filter((p) => p.tipo_metodo === 'EFECTIVO')
+    .reduce((acc, p) => acc + p.total_pagos, 0)
+
+  const ingresosManualEfectivo = pagos
+    .filter((p) => p.tipo_metodo === 'EFECTIVO')
+    .reduce((acc, p) => {
+      const manual = movsManualesMap.get(p.metodo_nombre) ?? { ingreso: 0, egreso: 0 }
+      return acc + manual.ingreso - manual.egreso
+    }, 0)
+
+  const totalEsperadoEfectivo = Number(
+    (montoApertura + pagosEfectivo + ingresosManualEfectivo).toFixed(2)
+  )
+
+  const hayData = pagos.length > 0 || movsData?.length
+
+  if (!hayData) return null
+
+  return (
+    <div className="bg-gray-50 rounded-md border border-gray-200 p-3 space-y-2">
+      <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+        Resumen de la Sesion
+      </p>
+
+      {/* Apertura */}
+      <div className="flex justify-between text-xs text-gray-600">
+        <span>Monto de apertura</span>
+        <span className="font-medium">USD {montoApertura.toFixed(2)}</span>
+      </div>
+
+      {/* Pagos por metodo */}
+      {pagos.map((p) => {
+        const manual = movsManualesMap.get(p.metodo_nombre) ?? { ingreso: 0, egreso: 0 }
+        return (
+          <div key={p.metodo_nombre} className="space-y-0.5">
+            <div className="flex justify-between text-xs text-gray-600">
+              <span>Pagos — {p.metodo_nombre}</span>
+              <span className="font-medium text-green-700">+{p.total_pagos.toFixed(2)}</span>
+            </div>
+            {manual.ingreso > 0 && (
+              <div className="flex justify-between text-xs text-gray-500 pl-3">
+                <span>Ingresos manuales</span>
+                <span className="text-green-600">+{manual.ingreso.toFixed(2)}</span>
+              </div>
+            )}
+            {manual.egreso > 0 && (
+              <div className="flex justify-between text-xs text-gray-500 pl-3">
+                <span>Egresos manuales</span>
+                <span className="text-red-600">-{manual.egreso.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      {/* Total efectivo esperado */}
+      <div className="flex justify-between text-xs font-semibold text-gray-800 border-t border-gray-200 pt-2">
+        <span>Total efectivo esperado</span>
+        <span>USD {totalEsperadoEfectivo.toFixed(2)}</span>
+      </div>
+    </div>
+  )
+}
+
 // ─── Formulario de cierre ─────────────────────────────────────
 
 function FormCierre({
@@ -220,6 +348,9 @@ function FormCierre({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Resumen de la sesion */}
+      <ResumenSesion sesionId={sesionId} />
+
       {/* Monto fisico */}
       <div>
         <label htmlFor="cierre-monto" className="block text-sm font-medium text-gray-700 mb-1">

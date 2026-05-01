@@ -26,10 +26,14 @@ declare module '@tanstack/react-router' {
 
 // Inicializar tema desde localStorage para evitar flash al cargar
 try {
+  const themeColors: Record<string, string> = {
+    clara: '#2563eb', jade: '#059669', rosa: '#db2777', violeta: '#7c3aed', ambar: '#d97706',
+  }
   const raw = localStorage.getItem('clarapos-theme')
   const parsed = raw ? JSON.parse(raw) : null
   const savedTheme = parsed?.state?.theme ?? 'clara'
   document.documentElement.setAttribute('data-theme', savedTheme)
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeColors[savedTheme] ?? '#2563eb')
 } catch {
   document.documentElement.setAttribute('data-theme', 'clara')
 }

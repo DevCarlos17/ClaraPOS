@@ -1,12 +1,15 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus, ArrowDownCircle, ArrowUpCircle, Wallet, Handshake } from 'lucide-react'
 import {
   useSesionActiva,
   useSesionesCaja,
   type SesionCaja,
 } from '@/features/caja/hooks/use-sesiones-caja'
 import { SesionCajaForm } from './sesion-caja-form'
+import { MovimientoManualForm } from './movimiento-manual-form'
 import { formatDateTime } from '@/lib/format'
+import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import type { OrigenManual } from '@/features/caja/schemas/movimiento-manual-schema'
 
 // ─── Badge de status ──────────────────────────────────────────
 
@@ -68,27 +71,71 @@ function TablaSkeletonSesiones() {
 function BannerSesionActiva({
   sesion,
   onCerrar,
+  onMovimiento,
+  canClose,
+  canMovManual,
 }: {
   sesion: SesionCaja
   onCerrar: () => void
+  onMovimiento: (origen: OrigenManual) => void
+  canClose: boolean
+  canMovManual: boolean
 }) {
   return (
-    <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-      <div>
-        <p className="text-sm font-semibold text-green-800">Sesion Activa</p>
-        <p className="text-xs text-green-700 mt-0.5">
-          Apertura: {formatDateTime(sesion.fecha_apertura)}
-        </p>
-        <p className="text-xs text-green-700">
-          Monto apertura: USD {parseFloat(sesion.monto_apertura_usd).toFixed(2)}
-        </p>
+    <div className="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-green-800">Sesion Activa</p>
+          <p className="text-xs text-green-700 mt-0.5">
+            Apertura: {formatDateTime(sesion.fecha_apertura)}
+          </p>
+          <p className="text-xs text-green-700">
+            Monto apertura: USD {parseFloat(sesion.monto_apertura_usd).toFixed(2)}
+          </p>
+        </div>
+
+        {canClose && (
+          <button
+            onClick={onCerrar}
+            className="shrink-0 inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors"
+          >
+            Cerrar Sesion
+          </button>
+        )}
       </div>
-      <button
-        onClick={onCerrar}
-        className="shrink-0 inline-flex items-center justify-center px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors"
-      >
-        Cerrar Sesion
-      </button>
+
+      {canMovManual && (
+        <div className="flex flex-wrap gap-2 pt-1 border-t border-green-200">
+          <button
+            onClick={() => onMovimiento('INGRESO_MANUAL')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-green-800 bg-green-100 rounded-md hover:bg-green-200 transition-colors"
+          >
+            <ArrowDownCircle className="h-3.5 w-3.5" />
+            Ingreso
+          </button>
+          <button
+            onClick={() => onMovimiento('EGRESO_MANUAL')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 rounded-md hover:bg-red-100 transition-colors"
+          >
+            <ArrowUpCircle className="h-3.5 w-3.5" />
+            Egreso
+          </button>
+          <button
+            onClick={() => onMovimiento('AVANCE')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 rounded-md hover:bg-blue-100 transition-colors"
+          >
+            <Wallet className="h-3.5 w-3.5" />
+            Avance
+          </button>
+          <button
+            onClick={() => onMovimiento('PRESTAMO')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-700 bg-purple-50 rounded-md hover:bg-purple-100 transition-colors"
+          >
+            <Handshake className="h-3.5 w-3.5" />
+            Prestamo
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -98,11 +145,21 @@ function BannerSesionActiva({
 export function SesionCajaList() {
   const { sesion: sesionActiva, isLoading: loadingActiva } = useSesionActiva()
   const { sesiones, isLoading: loadingSesiones } = useSesionesCaja()
+  const { hasPermission, isOwner } = usePermissions()
+
+  const canClose = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
+  const canMovManual = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)
 
   const [aperturaOpen, setAperturaOpen] = useState(false)
   const [cierreOpen, setCierreOpen] = useState(false)
+  const [movManualOpen, setMovManualOpen] = useState(false)
+  const [origenSeleccionado, setOrigenSeleccionado] = useState<OrigenManual>('INGRESO_MANUAL')
 
-  // Estado de carga inicial del banner
+  function handleMovimiento(origen: OrigenManual) {
+    setOrigenSeleccionado(origen)
+    setMovManualOpen(true)
+  }
+
   const bannerLoading = loadingActiva
 
   return (
@@ -114,6 +171,9 @@ export function SesionCajaList() {
         <BannerSesionActiva
           sesion={sesionActiva}
           onCerrar={() => setCierreOpen(true)}
+          onMovimiento={handleMovimiento}
+          canClose={canClose}
+          canMovManual={canMovManual}
         />
       ) : (
         <div className="flex justify-end">
@@ -233,6 +293,16 @@ export function SesionCajaList() {
         onClose={() => setCierreOpen(false)}
         sesionId={sesionActiva?.id}
       />
+
+      {/* Dialogo de movimiento manual */}
+      {sesionActiva && (
+        <MovimientoManualForm
+          isOpen={movManualOpen}
+          onClose={() => setMovManualOpen(false)}
+          sesionCajaId={sesionActiva.id}
+          origenInicial={origenSeleccionado}
+        />
+      )}
     </div>
   )
 }

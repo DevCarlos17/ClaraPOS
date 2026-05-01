@@ -650,6 +650,8 @@ export interface MovimientosMetodoCobro {
   saldo_nuevo: string
   doc_origen_id: string | null
   doc_origen_ref: string | null
+  concepto: string | null
+  sesion_caja_id: string | null
   fecha: string
   created_at: string
   created_by: string | null

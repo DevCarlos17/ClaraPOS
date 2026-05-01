@@ -752,6 +752,8 @@ const movimientos_metodo_cobro = new Table(
     saldo_nuevo: column.text,
     doc_origen_id: column.text,
     doc_origen_ref: column.text,
+    concepto: column.text,
+    sesion_caja_id: column.text,
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,

@@ -30,7 +30,7 @@ export function ThemePicker() {
             >
               <span
                 className={cn(
-                  'w-8 h-8 rounded-full flex items-center justify-center transition-transform duration-150 group-hover:scale-110',
+                  'w-8 h-8 rounded-full flex items-center justify-center transition-transform duration-150 group-hover:scale-110 border border-black/10',
                   theme === t.id && 'ring-2 ring-offset-2 ring-offset-background'
                 )}
                 style={{

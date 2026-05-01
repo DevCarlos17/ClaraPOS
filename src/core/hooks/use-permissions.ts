@@ -18,6 +18,8 @@ export const PERMISSIONS = {
   CLIENTS_CREDIT: 'clientes.credito',
   CLINIC_ACCESS: 'clinica.acceso',
   CAJA_ACCESS: 'caja.abrir',
+  CAJA_CLOSE: 'caja.cerrar',
+  CAJA_MOV_MANUAL: 'caja.movimientos_manual',
   PURCHASES_VIEW: 'compras.crear',
   ACCOUNTING_VIEW: 'contabilidad.gastos',
   CXC_REVERSE: 'cxc.reversar_abono',
