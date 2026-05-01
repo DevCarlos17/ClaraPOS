@@ -1,7 +1,8 @@
 import { useStatus } from '@powersync/react'
-import { RefreshCw, AlertCircle, Upload, WifiOff, Wifi } from 'lucide-react'
+import { RefreshCw, AlertCircle, Upload, WifiOff } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { cn } from '@/lib/utils'
 
 export function SyncStatusIndicator() {
   const status = useStatus()
@@ -22,12 +23,11 @@ export function SyncStatusIndicator() {
 
     if (isUploading || isDownloading) {
       const direction = isUploading ? 'subiendo' : 'descargando'
-      return { label: 'SINCRONIZANDO', color: 'blue' as const, icon: RefreshCw, animate: true, description: `Sincronizando (${direction} datos)...` }
+      return { label: 'Sincronizando', color: 'blue' as const, icon: RefreshCw, animate: true, description: `Sincronizando (${direction} datos)...` }
     }
 
     const hasDownloadError = status.dataFlowStatus?.downloadError
     const hasUploadError = status.dataFlowStatus?.uploadError
-
     const isConnectionError =
       hasDownloadError?.message?.includes('websocket') ||
       hasDownloadError?.message?.includes('connection') ||
@@ -35,32 +35,37 @@ export function SyncStatusIndicator() {
       hasUploadError?.message?.includes('connection')
 
     if ((hasDownloadError || hasUploadError) && !isConnectionError && navigator.onLine) {
-      return { label: 'ERROR', color: 'red' as const, icon: AlertCircle, animate: false, description: 'Error en ultima sincronizacion' }
+      return { label: 'Error', color: 'red' as const, icon: AlertCircle, animate: false, description: 'Error en ultima sincronizacion' }
     }
 
     if (!navigator.onLine || !status.connected) {
-      return { label: 'DESCONECTADO', color: 'amber' as const, icon: WifiOff, animate: false, description: 'Trabajando sin conexion' }
+      return { label: 'Sin conexion', color: 'amber' as const, icon: WifiOff, animate: false, description: 'Trabajando sin conexion' }
     }
 
     if (status.hasSynced === false) {
-      return { label: 'PENDIENTE', color: 'yellow' as const, icon: Upload, animate: true, description: 'Cambios locales pendientes' }
+      return { label: 'Pendiente', color: 'yellow' as const, icon: Upload, animate: true, description: 'Cambios locales pendientes' }
     }
 
-    return { label: 'EN LINEA', color: 'green' as const, icon: Wifi, animate: false, description: 'Todo sincronizado' }
+    return { label: 'En linea', color: 'green' as const, icon: null, animate: false, description: 'Todo sincronizado' }
   }
 
   const syncState = getSyncState()
-  const Icon = syncState.icon
+  const isAlert = syncState.color === 'red' || syncState.color === 'amber'
 
-  const colorClasses = {
-    amber: { text: 'text-amber-600', bg: 'bg-amber-50', dot: 'bg-amber-500', border: 'border-amber-200' },
-    blue: { text: 'text-blue-600', bg: 'bg-blue-50', dot: 'bg-blue-500', border: 'border-blue-200' },
-    yellow: { text: 'text-yellow-700', bg: 'bg-yellow-50', dot: 'bg-yellow-500', border: 'border-yellow-200' },
-    red: { text: 'text-red-600', bg: 'bg-red-50', dot: 'bg-red-500', border: 'border-red-200' },
-    green: { text: 'text-green-600', bg: 'bg-green-50', dot: 'bg-green-500', border: 'border-green-200' },
+  const dotColor = {
+    green: 'bg-green-500',
+    blue: 'bg-blue-400',
+    yellow: 'bg-yellow-500',
+    amber: 'bg-amber-500',
+    red: 'bg-red-500',
+  }[syncState.color]
+
+  const alertColors = {
+    red: 'text-red-600 bg-red-50 border-red-200',
+    amber: 'text-amber-700 bg-amber-50 border-amber-200',
   }
 
-  const colors = colorClasses[syncState.color]
+  const Icon = syncState.icon
 
   return (
     <>
@@ -69,17 +74,36 @@ export function SyncStatusIndicator() {
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
         onClick={() => setShowTooltip(!showTooltip)}
-        className={`relative flex items-center gap-2 ${colors.bg} px-2 sm:px-3 py-1.5 rounded-full border ${colors.border} shadow-sm transition-all duration-200 hover:shadow-md cursor-pointer`}
+        className={cn(
+          'flex items-center gap-1.5 cursor-pointer transition-all duration-200 rounded-full',
+          isAlert
+            ? `border px-2.5 py-1 ${alertColors[syncState.color as 'red' | 'amber']}`
+            : 'px-1 py-1'
+        )}
       >
-        <Icon className={`hidden sm:block w-3.5 h-3.5 ${colors.text} ${syncState.animate ? 'animate-spin' : ''}`} />
-        <span className={`text-[9px] sm:text-[10px] font-semibold uppercase tracking-wider ${colors.text}`}>
+        {isAlert && Icon ? (
+          <Icon className="w-3.5 h-3.5 flex-shrink-0" />
+        ) : (
+          <div
+            className={cn(
+              'w-2 h-2 rounded-full flex-shrink-0',
+              dotColor,
+              syncState.animate && 'animate-pulse',
+              syncState.color === 'green' && 'shadow-[0_0_6px_rgba(34,197,94,0.7)]'
+            )}
+          />
+        )}
+        <span
+          className={cn(
+            'hidden sm:block text-xs font-medium',
+            isAlert ? '' : 'text-muted-foreground'
+          )}
+        >
           {syncState.label}
         </span>
-        <div
-          className={`w-2 sm:w-2.5 h-2 sm:h-2.5 ${colors.dot} rounded-full ${syncState.animate ? 'animate-pulse' : ''} ${
-            syncState.color === 'green' ? 'shadow-[0_0_8px_rgba(34,197,94,0.5)]' : ''
-          }`}
-        />
+        {syncState.animate && !isAlert && Icon && (
+          <Icon className="w-3 h-3 text-blue-400 animate-spin" />
+        )}
       </div>
 
       {showTooltip &&

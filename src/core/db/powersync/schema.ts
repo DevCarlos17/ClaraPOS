@@ -1087,7 +1087,6 @@ const gastos = new Table(
     tasa_proveedor: column.text,       // tasa del proveedor (paralela)
     monto_factura: column.text,        // importe original en moneda_factura
     monto_usd: column.text,            // total contable USD (para reportes)
-    monto_bs: column.text,
     saldo_pendiente_usd: column.text,  // pendiente por pagar
     metodo_cobro_id: column.text,
     banco_empresa_id: column.text,

@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { crearTasa, useTasaActual } from '../hooks/use-tasas'
+import { crearTasa, useTasaActual, useTasasHistorial } from '../hooks/use-tasas'
 import { formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -31,7 +31,9 @@ function isTasaDesactualizada(createdAt: string): boolean {
 
 export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
   const { tasa, tasaValor } = useTasaActual()
+  const { tasas } = useTasasHistorial()
   const { user } = useCurrentUser()
+  const prevTasas = tasas.filter((t) => t.id !== tasa?.id).slice(0, 5)
   const [valor, setValor] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -132,6 +134,22 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
             <p className="text-sm text-muted-foreground">No hay tasa registrada</p>
           )}
         </div>
+
+        {prevTasas.length > 0 && (
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
+              Historial reciente
+            </p>
+            <div className="rounded-md border divide-y divide-border overflow-hidden">
+              {prevTasas.map((t) => (
+                <div key={t.id} className="flex items-center justify-between px-3 py-1.5 bg-background">
+                  <span className="text-xs text-muted-foreground">{formatDateTime(t.created_at)}</span>
+                  <span className="text-xs font-semibold tabular-nums">{formatTasa(parseFloat(t.valor))} Bs/$</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>

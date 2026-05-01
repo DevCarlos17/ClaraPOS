@@ -1,6 +1,7 @@
 import type { FC } from 'react'
 import type { Gasto } from '@/features/contabilidad/hooks/use-gastos'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ function KpiCard({ label, value }: KpiCardProps) {
 // ─── Componente principal ─────────────────────────────────────
 
 export const GastosKpis: FC<GastosKpisProps> = ({ gastos }) => {
+  const { tasaValor } = useTasaActual()
   const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
 
   const totalUsd = registrados.reduce(
@@ -35,7 +37,7 @@ export const GastosKpis: FC<GastosKpisProps> = ({ gastos }) => {
   )
 
   const totalBs = registrados.reduce(
-    (sum, g) => sum + (parseFloat(g.monto_bs) || 0),
+    (sum, g) => sum + (parseFloat(g.monto_usd) * tasaValor || 0),
     0
   )
 

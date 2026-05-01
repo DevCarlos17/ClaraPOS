@@ -12,6 +12,7 @@ import { formatDate } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 
 type GastoConJoins = Gasto & {
   cuenta_nombre: string
@@ -46,6 +47,7 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
 
   const puedeAnular = hasPermission(PERMISSIONS.ACCOUNTING_VIEW)
   const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
+  const { tasaValor } = useTasaActual()
 
   // Abonos desde movimientos_cuenta_proveedor (nueva via, con dual-rate)
   const { abonos, isLoading: loadingAbonos } = useAbonosGasto(gasto?.id ?? '')
@@ -122,7 +124,7 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
   const tasa = parseFloat(gasto.tasa)
   const tasaProveedor = gasto.tasa_proveedor ? parseFloat(gasto.tasa_proveedor) : null
   const montoUsd = parseFloat(gasto.monto_usd)
-  const montoBs = parseFloat(gasto.monto_bs)
+  const montoBs = montoUsd * tasaValor
   const saldoPendiente = parseFloat(gasto.saldo_pendiente_usd)
   const esAnulado = gasto.status === 'ANULADO'
   const tieneProveedor = Boolean(gasto.proveedor_id)
@@ -279,7 +281,7 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
             </div>
           )}
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Monto Bs:</span>
+            <span className="text-muted-foreground">Equiv. Bs (tasa actual):</span>
             <span className="font-medium text-muted-foreground">{formatBs(montoBs)}</span>
           </div>
           {abonadoUsd > 0.005 && (

@@ -4,6 +4,7 @@ import { Printer, X } from 'lucide-react'
 import type { Gasto } from '@/features/contabilidad/hooks/use-gastos'
 import { formatDate } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 
 // ─── Tipos ────────────────────────────────────────────────────
 
@@ -37,9 +38,10 @@ function tituloReporte(tipo: TipoReporte): string {
 
 interface ReportePorCuentaProps {
   gastos: GastoConJoins[]
+  tasaValor: number
 }
 
-function ReportePorCuenta({ gastos }: ReportePorCuentaProps) {
+function ReportePorCuenta({ gastos, tasaValor }: ReportePorCuentaProps) {
   const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
 
   // Agrupar por cuenta
@@ -52,7 +54,7 @@ function ReportePorCuenta({ gastos }: ReportePorCuentaProps) {
       acc[key] = { nombre, totalUsd: 0, totalBs: 0, cantidad: 0 }
     }
     acc[key].totalUsd += parseFloat(g.monto_usd) || 0
-    acc[key].totalBs += parseFloat(g.monto_bs) || 0
+    acc[key].totalBs += parseFloat(g.monto_usd) * tasaValor || 0
     acc[key].cantidad += 1
     return acc
   }, {})
@@ -123,9 +125,10 @@ function ReportePorCuenta({ gastos }: ReportePorCuentaProps) {
 
 interface TablaDetalladaProps {
   gastos: GastoConJoins[]
+  tasaValor: number
 }
 
-function TablaDetallada({ gastos }: TablaDetalladaProps) {
+function TablaDetallada({ gastos, tasaValor }: TablaDetalladaProps) {
   if (gastos.length === 0) {
     return (
       <p className="text-center text-sm text-gray-500 py-8">
@@ -168,7 +171,7 @@ function TablaDetallada({ gastos }: TablaDetalladaProps) {
                 {formatUsd(g.monto_usd)}
               </td>
               <td className="px-3 py-2 text-right tabular-nums text-gray-600">
-                {formatBs(g.monto_bs)}
+                {formatBs(parseFloat(g.monto_usd) * tasaValor)}
               </td>
               <td className="px-3 py-2 text-center">
                 <span
@@ -193,9 +196,10 @@ function TablaDetallada({ gastos }: TablaDetalladaProps) {
 
 interface ReporteEspecificoProps {
   gastos: GastoConJoins[]
+  tasaValor: number
 }
 
-function ReporteEspecifico({ gastos }: ReporteEspecificoProps) {
+function ReporteEspecifico({ gastos, tasaValor }: ReporteEspecificoProps) {
   const [nroGasto, setNroGasto] = useState('')
   const [proveedor, setProveedor] = useState('')
   const [referencia, setReferencia] = useState('')
@@ -260,7 +264,7 @@ function ReporteEspecifico({ gastos }: ReporteEspecificoProps) {
         {filtrados.length} resultado{filtrados.length !== 1 ? 's' : ''} encontrado
         {filtrados.length !== 1 ? 's' : ''}
       </p>
-      <TablaDetallada gastos={filtrados} />
+      <TablaDetallada gastos={filtrados} tasaValor={tasaValor} />
     </div>
   )
 }
@@ -273,6 +277,7 @@ export const GastoReportes: FC<GastoReportesProps> = ({
   onClose,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const { tasaValor } = useTasaActual()
 
   useEffect(() => {
     if (reporte !== null) {
@@ -328,9 +333,9 @@ export const GastoReportes: FC<GastoReportesProps> = ({
             </div>
 
             {/* Contenido segun tipo de reporte */}
-            {reporte === 'POR_CUENTA' && <ReportePorCuenta gastos={gastos} />}
-            {reporte === 'DETALLADO' && <TablaDetallada gastos={gastos} />}
-            {reporte === 'ESPECIFICO' && <ReporteEspecifico gastos={gastos} />}
+            {reporte === 'POR_CUENTA' && <ReportePorCuenta gastos={gastos} tasaValor={tasaValor} />}
+            {reporte === 'DETALLADO' && <TablaDetallada gastos={gastos} tasaValor={tasaValor} />}
+            {reporte === 'ESPECIFICO' && <ReporteEspecifico gastos={gastos} tasaValor={tasaValor} />}
           </div>
         </>
       )}

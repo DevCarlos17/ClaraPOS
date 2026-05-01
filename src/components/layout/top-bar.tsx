@@ -1,10 +1,10 @@
-import { useState } from 'react'
-import { Menu, TrendingUp } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Menu, TrendingUp, AlertCircle } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import { SyncStatusIndicator } from '@/components/sync/sync-status-indicator'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { TasaUpdateModal } from '@/features/configuracion/components/tasa-update-modal'
 import { formatTasa } from '@/lib/currency'
-import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 interface TopBarProps {
@@ -22,7 +22,23 @@ function isTasaDesactualizada(createdAt: string): boolean {
 export function TopBar({ onMenuClick }: TopBarProps) {
   const { tasa, tasaValor, isLoading } = useTasaActual()
   const [tasaModalOpen, setTasaModalOpen] = useState(false)
+  const [showTasaTooltip, setShowTasaTooltip] = useState(false)
+  const tasaRef = useRef<HTMLButtonElement>(null)
+  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 })
   const desactualizada = tasa ? isTasaDesactualizada(tasa.created_at) : false
+
+  useEffect(() => {
+    if (showTasaTooltip && tasaRef.current) {
+      const rect = tasaRef.current.getBoundingClientRect()
+      setTooltipPos({ top: rect.bottom + 8, left: rect.left + rect.width / 2 })
+    }
+  }, [showTasaTooltip])
+
+  const tasaLabel = isLoading && !tasa
+    ? 'Cargando...'
+    : tasaValor > 0
+      ? `${formatTasa(tasaValor)} Bs/$ ${desactualizada ? '· Desactualizada' : ''}`
+      : 'Sin tasa registrada'
 
   return (
     <header className="h-16 bg-background/90 backdrop-blur-xl border-b border-transparent px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-40 w-full transition-colors duration-300">
@@ -36,32 +52,59 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         </button>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-4 ml-auto">
+      <div className="flex items-center gap-3 ml-auto">
         <SyncStatusIndicator />
+
+        <div className="h-4 w-px bg-border" />
+
+        {/* Tasa button: solo icono en mobile, icono + texto en desktop */}
         <button
+          ref={tasaRef}
           type="button"
           onClick={() => setTasaModalOpen(true)}
+          onMouseEnter={() => setShowTasaTooltip(true)}
+          onMouseLeave={() => setShowTasaTooltip(false)}
           className={cn(
-            'flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 shadow-sm cursor-pointer transition-all hover:shadow-md hover:border-primary/40 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
-            desactualizada && 'border-red-300 bg-red-50 hover:border-red-400'
+            'flex items-center gap-1.5 px-2 py-1.5 rounded-lg cursor-pointer',
+            'transition-all duration-200 active:scale-[0.98]',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/20',
+            desactualizada
+              ? 'text-amber-600 hover:bg-amber-50'
+              : 'text-muted-foreground hover:text-foreground hover:bg-black/5'
           )}
-          title={tasa ? `Actualizada: ${formatDateTime(tasa.created_at)} - Click para actualizar` : 'Sin tasa registrada - Click para registrar'}
           aria-label="Actualizar tasa de cambio"
         >
-          <TrendingUp className={cn('h-4 w-4', desactualizada ? 'text-red-600' : 'text-primary')} />
+          {/* Icono visible solo en sm+ */}
+          {desactualizada ? (
+            <AlertCircle className="hidden sm:block h-4 w-4 flex-shrink-0" />
+          ) : (
+            <TrendingUp className="hidden sm:block h-4 w-4 flex-shrink-0" />
+          )}
+
+          {/* Precio siempre visible. Label "USD / Bs" solo en sm+ */}
           <div className="flex flex-col leading-none text-left">
-            <span className="text-[10px] text-muted-foreground">USD/Bs</span>
-            <span className={cn('text-sm font-semibold tabular-nums', desactualizada && 'text-red-700')}>
+            <span className={cn('text-sm font-semibold tabular-nums', desactualizada ? 'text-amber-700' : 'text-foreground')}>
               {isLoading && !tasa ? '...' : tasaValor > 0 ? formatTasa(tasaValor) : 'Sin tasa'}
             </span>
-            {tasa && (
-              <span className={cn('text-[9px] mt-0.5', desactualizada ? 'text-red-600 font-medium' : 'text-muted-foreground')}>
-                {formatDateTime(tasa.created_at)}
-              </span>
-            )}
+            <span className="hidden sm:block text-[10px] text-muted-foreground">USD / Bs</span>
           </div>
         </button>
       </div>
+
+      {/* Tooltip de tasa (útil en mobile para ver el valor sin abrir modal) */}
+      {showTasaTooltip && typeof document !== 'undefined' &&
+        createPortal(
+          <div
+            className="fixed z-[200] pointer-events-none"
+            style={{ top: `${tooltipPos.top}px`, left: `${tooltipPos.left}px`, transform: 'translateX(-50%)' }}
+          >
+            <div className="bg-slate-900 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg whitespace-nowrap">
+              {tasaLabel}
+              <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-slate-900 rotate-45" />
+            </div>
+          </div>,
+          document.body
+        )}
 
       <TasaUpdateModal open={tasaModalOpen} onOpenChange={setTasaModalOpen} />
     </header>

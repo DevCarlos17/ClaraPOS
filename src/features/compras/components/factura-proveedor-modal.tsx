@@ -15,6 +15,7 @@ import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { reversarAbonoCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import {
   anularGasto,
   reversarPagoGasto,
@@ -60,7 +61,6 @@ interface GastoRow {
   tasa_proveedor: string | null
   monto_factura: string
   monto_usd: string
-  monto_bs: string
   saldo_pendiente_usd: string
   status: string
   observaciones: string | null
@@ -109,6 +109,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   const { hasPermission } = usePermissions()
   const puedeReversarAbono = hasPermission(PERMISSIONS.CXP_REVERSE)
   const puedeAnular = hasPermission(PERMISSIONS.ACCOUNTING_VIEW)
+  const { tasaValor } = useTasaActual()
 
   const [confirmandoAbonoId, setConfirmandoAbonoId] = useState<string | null>(null)
   const [reversandoAbonoId, setReversandoAbonoId] = useState<string | null>(null)
@@ -218,7 +219,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
       const usaParalela = gasto.usa_tasa_paralela === 1 && Boolean(gasto.tasa_proveedor)
       const montoFactura = parseFloat(gasto.monto_factura)
       const totalContableUsd = parseFloat(gasto.monto_usd)
-      const totalBs = parseFloat(gasto.monto_bs)
+      const totalBs = totalContableUsd * tasaValor
       const totalProveedorUsd = (() => {
         if (gasto.moneda_factura === 'USD') return montoFactura
         const tasaRef = usaParalela && tasaFactura > 0 ? tasaFactura : tasaInterna
@@ -228,7 +229,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
       return { tasaFactura, tasaInterna, usaParalela, totalProveedorUsd, totalContableUsd, totalBs, saldo }
     }
     return null
-  }, [tipo, compra, gasto])
+  }, [tipo, compra, gasto, tasaValor])
 
   // ─── Totales abonados ─────────────────────────────────────
 

@@ -25,7 +25,6 @@ export interface Gasto {
   tasa_proveedor: string | null   // tasa del proveedor (paralela)
   monto_factura: string           // importe original en moneda_factura
   monto_usd: string               // total contable USD
-  monto_bs: string
   saldo_pendiente_usd: string
   metodo_cobro_id: string | null
   banco_empresa_id: string | null
@@ -148,9 +147,6 @@ export async function crearGasto(data: {
     const monedaId = (monedaResult.rows?.item(0) as { id: string } | undefined)?.id
     if (!monedaId) throw new Error(`Moneda no encontrada: ${data.moneda_id}`)
 
-    // Calcular monto en Bs a partir del total contable USD y la tasa interna
-    const montoBs = Number((data.monto_usd * data.tasa).toFixed(2))
-
     // Monto desde la perspectiva del proveedor en USD:
     // - Factura USD: el valor nominal de la factura
     // - Factura BS: BS / tasa_proveedor (o tasa_interna si no usa paralela)
@@ -185,10 +181,10 @@ export async function crearGasto(data: {
       `INSERT INTO gastos (
          id, empresa_id, nro_gasto, nro_factura, nro_control, cuenta_id, proveedor_id, descripcion,
          fecha, moneda_id, moneda_factura, usa_tasa_paralela, tasa, tasa_proveedor,
-         monto_factura, monto_usd, monto_bs, saldo_pendiente_usd,
+         monto_factura, monto_usd, saldo_pendiente_usd,
          metodo_cobro_id, banco_empresa_id, referencia, observaciones,
          status, created_at, updated_at, created_by
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADO', ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADO', ?, ?, ?)`,
       [
         gastoId,
         data.empresa_id,
@@ -206,7 +202,6 @@ export async function crearGasto(data: {
         data.tasa_proveedor ? data.tasa_proveedor.toFixed(4) : null,
         data.monto_factura.toFixed(2),
         data.monto_usd.toFixed(2),
-        montoBs.toFixed(2),
         saldoPendiente.toFixed(2),
         primerPago?.metodo_cobro_id ?? null,
         primerPago?.banco_empresa_id ?? null,

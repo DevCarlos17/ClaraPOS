@@ -945,7 +945,6 @@ export interface Gastos {
   moneda_id: string
   tasa: string
   monto_usd: string
-  monto_bs: string
   metodo_cobro_id: string | null
   banco_empresa_id: string | null
   referencia: string | null
