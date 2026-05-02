@@ -1,99 +1,76 @@
-import { useRef, useEffect, useState } from 'react'
-import { X, Package, CreditCard, ArrowCounterClockwise, Wallet } from '@phosphor-icons/react'
+import { useState } from 'react'
+import { useQuery } from '@powersync/react'
+import { ArrowCounterClockwise, Wallet } from '@phosphor-icons/react'
 import { toast } from 'sonner'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
-import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
-import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
-import { useDetalleFactura, usePagosFactura, useCargosEspecialesVenta, registrarReversoAbono, type VentaPendiente, type PagoFacturaCxc } from '../hooks/use-cxc'
+import { formatUsd, formatBs } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import {
+  useDetalleFactura,
+  usePagosFactura,
+  useCargosEspecialesVenta,
+  registrarReversoAbono,
+  type VentaPendiente,
+  type PagoFacturaCxc,
+} from '../hooks/use-cxc'
+import { PagoFacturaModal } from './pago-factura-modal'
 
-interface FacturaDetalleCxcProps {
-  isOpen: boolean
-  onClose: () => void
-  factura: VentaPendiente | null
+// ─── Tipos internos ───────────────────────────────────────────
+
+interface VentaExtraRow {
+  status: string
+  procesado_por_nombre: string | null
+  cliente_nombre: string | null
+  cliente_identificacion: string | null
 }
 
-function formatFecha(fecha: string): string {
-  try {
-    return new Date(fecha).toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    })
-  } catch {
-    return fecha
-  }
-}
-
-function formatFechaHora(fecha: string): string {
-  try {
-    return new Date(fecha).toLocaleString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return fecha
-  }
-}
-
-// =============================================
-// ReversarAbonoDialog — inline
-// =============================================
+// ─── Dialogo de motivo de reverso ─────────────────────────────
 
 interface ReversarAbonoDialogProps {
-  isOpen: boolean
+  open: boolean
   pago: PagoFacturaCxc | null
   onClose: () => void
   onConfirm: (reason: string) => void
   loading: boolean
 }
 
-function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: ReversarAbonoDialogProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+function ReversarAbonoDialog({
+  open,
+  pago,
+  onClose,
+  onConfirm,
+  loading,
+}: ReversarAbonoDialogProps) {
   const [reason, setReason] = useState('')
-
-  useEffect(() => {
-    if (isOpen) {
-      dialogRef.current?.showModal()
-      setReason('')
-    } else {
-      dialogRef.current?.close()
-    }
-  }, [isOpen])
 
   if (!pago) return null
 
-  const montoUsd = parseFloat(pago.monto_usd)
-
-  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
-    if (e.target === dialogRef.current && !loading) onClose()
-  }
-
   return (
-    <dialog
-      ref={dialogRef}
-      onClose={onClose}
-      onClick={handleBackdropClick}
-      className="m-auto backdrop:bg-black/60 rounded-2xl shadow-2xl p-0 w-full max-w-sm border bg-card"
-    >
-      <div className="p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
-            <ArrowCounterClockwise size={18} className="text-destructive" />
+    <Dialog open={open} onOpenChange={(v) => { if (!v && !loading) onClose() }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10 shrink-0">
+              <ArrowCounterClockwise size={18} className="text-destructive" />
+            </div>
+            <div>
+              <DialogTitle>Reversar abono</DialogTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {formatUsd(parseFloat(pago.monto_usd))} — {pago.metodo_nombre}
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-base font-semibold">Reversar abono</h3>
-            <p className="text-xs text-muted-foreground">
-              {formatUsd(montoUsd)} — {pago.metodo_nombre}
-            </p>
-          </div>
-        </div>
-
+        </DialogHeader>
         <div className="space-y-3">
           <div>
             <label className="block text-sm font-medium mb-1.5">
@@ -107,43 +84,61 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-primary"
             />
           </div>
-
           <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
+            <Button
+              variant="outline"
+              className="flex-1"
               disabled={loading}
-              className="flex-1 px-4 py-2 text-sm font-medium rounded-md border hover:bg-muted transition-colors disabled:opacity-50"
+              onClick={onClose}
             >
               Cancelar
-            </button>
-            <button
-              type="button"
-              onClick={() => onConfirm(reason)}
+            </Button>
+            <Button
+              variant="destructive"
+              className="flex-1"
               disabled={loading || !reason.trim()}
-              className="flex-1 px-4 py-2 text-sm font-medium rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+              onClick={() => { onConfirm(reason); setReason('') }}
             >
               {loading ? 'Reversando...' : 'Confirmar reverso'}
-            </button>
+            </Button>
           </div>
         </div>
-      </div>
-    </dialog>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-// =============================================
-// FacturaDetalleCxc
-// =============================================
+// ─── Props ────────────────────────────────────────────────────
+
+interface FacturaDetalleCxcProps {
+  isOpen: boolean
+  onClose: () => void
+  factura: VentaPendiente | null
+}
+
+// ─── Componente principal ─────────────────────────────────────
 
 export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCxcProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
-  const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
+
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(factura?.id ?? null)
   const { pagos, isLoading: loadingPagos } = usePagosFactura(factura?.id ?? null)
   const { cargos: cargosEspeciales } = useCargosEspecialesVenta(factura?.id ?? null)
+
+  // Datos extra de la venta (status, procesado_por, cliente)
+  const { data: extraData } = useQuery(
+    factura
+      ? `SELECT v.status, u.nombre as procesado_por_nombre,
+               c.nombre as cliente_nombre, c.identificacion as cliente_identificacion
+         FROM ventas v
+         LEFT JOIN usuarios u ON v.procesado_por = u.id
+         LEFT JOIN clientes c ON v.cliente_id = c.id
+         WHERE v.id = ?`
+      : '',
+    factura ? [factura.id] : []
+  )
+  const extra = (extraData as VentaExtraRow[])?.[0]
 
   // Reverso state
   const [pagoAReverse, setPagoAReverse] = useState<PagoFacturaCxc | null>(null)
@@ -151,18 +146,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const [showReasonDialog, setShowReasonDialog] = useState(false)
   const [supervisorId, setSupervisorId] = useState<string | null>(null)
   const [reversing, setReversing] = useState(false)
-
-  useEffect(() => {
-    if (isOpen) {
-      dialogRef.current?.showModal()
-    } else {
-      dialogRef.current?.close()
-    }
-  }, [isOpen])
-
-  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
-    if (e.target === dialogRef.current) onClose()
-  }
+  const [pagoOpen, setPagoOpen] = useState(false)
 
   if (!factura) return null
 
@@ -171,20 +155,20 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const saldoPend = parseFloat(factura.saldo_pend_usd)
   const totalAbonado = totalUsd - saldoPend
 
-  // Solo pagos activos (no reversados) cuentan para el total pagado
   const totalPagado = pagos
     .filter((p) => !p.is_reversed)
     .reduce((sum, p) => sum + parseFloat(p.monto_usd), 0)
 
-  // ---- Flujo de reverso ----
+  const esAnulada = extra?.status === 'ANULADA' || extra?.status === 'REVERSADA'
+
+  // ─── Flujo de reverso ────────────────────────────────────
+
   function handleReversar(pago: PagoFacturaCxc) {
     setPagoAReverse(pago)
     if (hasPermission(PERMISSIONS.CXC_REVERSE)) {
-      // Tiene permiso directo → pedir razon
       setSupervisorId(user!.id)
       setShowReasonDialog(true)
     } else {
-      // Sin permiso → pedir PIN supervisor
       setShowPinDialog(true)
     }
   }
@@ -197,14 +181,11 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
 
   async function handleConfirmReverso(reason: string) {
     if (!pagoAReverse || !supervisorId || !user) return
-
     setReversing(true)
     try {
-      // Obtener nombre del que autoriza
       const reversedByNombre = hasPermission(PERMISSIONS.CXC_REVERSE)
         ? user.nombre
         : 'Supervisor'
-
       await registrarReversoAbono({
         pago_id: pagoAReverse.id,
         reason,
@@ -212,7 +193,6 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
         reversed_by_nombre: reversedByNombre,
         empresa_id: user.empresa_id!,
       })
-
       toast.success(`Abono de ${formatUsd(parseFloat(pagoAReverse.monto_usd))} reversado exitosamente`)
       setShowReasonDialog(false)
       setPagoAReverse(null)
@@ -224,313 +204,349 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
     }
   }
 
-  function handleCloseReason() {
-    if (reversing) return
-    setShowReasonDialog(false)
-    setPagoAReverse(null)
-    setSupervisorId(null)
-  }
-
-  function handleClosePin() {
-    setShowPinDialog(false)
-    setPagoAReverse(null)
-  }
+  // ─── Render ───────────────────────────────────────────────
 
   return (
     <>
-      <dialog
-        ref={dialogRef}
-        onClose={onClose}
-        onClick={handleBackdropClick}
-        className="m-auto backdrop:bg-black/60 rounded-2xl p-0 w-full max-w-3xl shadow-2xl bg-card border"
-      >
-        <div className="max-h-[88vh] overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
-                <CreditCard size={16} className="text-primary" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold">Factura #{factura.nro_factura}</h2>
-                <p className="text-xs text-muted-foreground">{formatFecha(factura.fecha)}</p>
-              </div>
+      <Dialog open={isOpen} onOpenChange={(v) => { if (!v) onClose() }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <DialogTitle>Detalle de Venta</DialogTitle>
+              <Badge
+                variant="outline"
+                className="text-[10px] bg-blue-50 text-blue-700 border-blue-200"
+              >
+                VENTA
+              </Badge>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-md hover:bg-muted transition-colors">
-              <X className="h-4 w-4 text-muted-foreground" />
-            </button>
-          </div>
+          </DialogHeader>
 
-          <div className="p-6 space-y-6">
-          {/* Resumen de montos */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="rounded-2xl bg-card border shadow-sm p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">Total factura</p>
-              <p className="text-lg font-bold">{formatUsd(totalUsd)}</p>
-              {tasaValor > 0 && <p className="text-xs text-muted-foreground mt-0.5">{formatBs(totalBs)}</p>}
+          <div className="space-y-4">
+
+            {/* ── Encabezado del documento ─────────────────── */}
+            <div className="rounded-lg bg-muted/40 border border-border p-4 space-y-3">
+              {/* Cliente */}
+              {extra?.cliente_nombre && (
+                <div>
+                  <div className="text-base font-semibold text-foreground">
+                    {extra.cliente_nombre}
+                  </div>
+                  {extra.cliente_identificacion && (
+                    <div className="text-xs text-muted-foreground font-mono">
+                      {extra.cliente_identificacion}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Datos del documento */}
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm">
+                <div className="text-muted-foreground">Nro. Factura</div>
+                <div className="font-mono font-medium">#{factura.nro_factura}</div>
+
+                <div className="text-muted-foreground">Fecha</div>
+                <div>{formatDate(factura.fecha)}</div>
+
+                <div className="text-muted-foreground">Tipo pago</div>
+                <div>
+                  <Badge
+                    variant="outline"
+                    className={`text-xs ${
+                      factura.tipo === 'CREDITO'
+                        ? 'bg-orange-50 text-orange-700 border-orange-200'
+                        : 'bg-green-50 text-green-700 border-green-200'
+                    }`}
+                  >
+                    {factura.tipo}
+                  </Badge>
+                </div>
+
+                <div className="text-muted-foreground">Tasa Factura</div>
+                <div className="font-mono tabular-nums">
+                  {parseFloat(factura.tasa).toFixed(4)} Bs/USD
+                </div>
+
+                <div className="text-muted-foreground">Status</div>
+                <div>
+                  <Badge
+                    variant="outline"
+                    className={`text-xs ${
+                      esAnulada
+                        ? 'bg-red-50 text-red-700 border-red-200'
+                        : 'bg-green-50 text-green-700 border-green-200'
+                    }`}
+                  >
+                    {extra?.status ?? 'PROCESADA'}
+                  </Badge>
+                </div>
+
+                <div className="text-muted-foreground">Procesado por</div>
+                <div className="text-muted-foreground">
+                  {extra?.procesado_por_nombre ?? '—'}
+                </div>
+              </div>
             </div>
-            <div className="rounded-2xl bg-card border shadow-sm p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-1">Tasa usada</p>
-              <p className="text-lg font-bold">{parseFloat(factura.tasa).toFixed(4)}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Bs/USD</p>
+
+            {/* ── Articulos vendidos ───────────────────────── */}
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Articulos Vendidos
+              </h4>
+              {loadingDetalle ? (
+                <div className="h-24 bg-muted/50 rounded animate-pulse" />
+              ) : detalle.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-2">Sin detalle disponible</p>
+              ) : (
+                <div className="overflow-auto rounded-md border max-h-40">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">
+                          Producto
+                        </th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground">
+                          Cant.
+                        </th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground">
+                          P.Unit USD
+                        </th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground">
+                          Subtotal
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {detalle.map((d) => {
+                        const cant = parseFloat(d.cantidad)
+                        const precio = parseFloat(d.precio_unitario_usd)
+                        const subt = parseFloat(d.subtotal_usd)
+                        return (
+                          <tr key={d.id}>
+                            <td className="px-3 py-1.5">
+                              <span className="font-mono text-muted-foreground text-[10px]">
+                                {d.producto_codigo}
+                              </span>
+                              {' '}
+                              <span>{d.producto_nombre}</span>
+                            </td>
+                            <td className="px-3 py-1.5 text-right tabular-nums">
+                              {cant % 1 === 0 ? cant.toFixed(0) : cant.toFixed(3)}
+                            </td>
+                            <td className="px-3 py-1.5 text-right tabular-nums">
+                              {formatUsd(precio)}
+                            </td>
+                            <td className="px-3 py-1.5 text-right tabular-nums font-medium">
+                              {formatUsd(subt)}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-            <div className="rounded-2xl bg-green-50 border border-green-200/60 shadow-sm p-3 text-center">
-              <p className="text-xs text-green-700/70 mb-1">Abonado</p>
-              <p className="text-lg font-bold text-green-700">{formatUsd(totalAbonado)}</p>
+
+            {/* ── Cargos especiales (avance / prestamo) ────── */}
+            {cargosEspeciales.length > 0 && (
+              <div>
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Wallet size={12} className="text-amber-600" />
+                  Cargos Especiales
+                </h4>
+                <div className="overflow-auto rounded-md border border-amber-200/60 max-h-32">
+                  <table className="w-full text-xs">
+                    <thead className="bg-amber-50">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-amber-800">Tipo</th>
+                        <th className="text-left px-3 py-2 font-medium text-amber-800">Concepto</th>
+                        <th className="text-right px-3 py-2 font-medium text-amber-800">Monto</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-amber-100">
+                      {cargosEspeciales.map((c) => (
+                        <tr key={c.id}>
+                          <td className="px-3 py-1.5">
+                            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                              c.tipo === 'PRESTAMO'
+                                ? 'bg-purple-100 text-purple-700'
+                                : 'bg-amber-100 text-amber-700'
+                            }`}>
+                              {c.tipo}
+                            </span>
+                          </td>
+                          <td className="px-3 py-1.5 text-muted-foreground">{c.concepto}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums font-medium">
+                            {formatUsd(parseFloat(c.monto))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* ── Totales ──────────────────────────────────── */}
+            <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-1.5">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Factura:</span>
+                <span className="font-bold text-foreground">{formatUsd(totalUsd)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Bs:</span>
+                <span className="font-medium text-muted-foreground">{formatBs(totalBs)}</span>
+              </div>
+              {totalAbonado > 0.005 && (
+                <div className="flex justify-between text-sm border-t border-border/50 pt-1.5">
+                  <span className="text-muted-foreground">Abonado:</span>
+                  <span className="font-medium text-green-600">{formatUsd(totalAbonado)}</span>
+                </div>
+              )}
+              {saldoPend > 0.005 ? (
+                <div className="flex justify-between text-sm border-t border-border pt-1.5">
+                  <span className="font-medium text-muted-foreground">Saldo Pendiente:</span>
+                  <span className="font-bold text-destructive">{formatUsd(saldoPend)}</span>
+                </div>
+              ) : totalAbonado > 0.005 ? (
+                <div className="text-center text-xs text-green-600 font-medium pt-1.5 border-t border-border">
+                  Factura completamente pagada
+                </div>
+              ) : null}
             </div>
-            <div className="rounded-2xl bg-red-50 border border-red-200/60 shadow-sm p-3 text-center">
-              <p className="text-xs text-red-700/70 mb-1">Pendiente</p>
-              <p className="text-lg font-bold text-red-600">{formatUsd(saldoPend)}</p>
-              {tasaValor > 0 && (
-                <p className="text-xs text-red-700/50 mt-0.5">{formatBs(usdToBs(saldoPend, tasaValor))}</p>
+
+            {/* ── Historial de pagos ───────────────────────── */}
+            <div>
+              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                Historial de Pagos
+              </h4>
+              {loadingPagos ? (
+                <div className="h-16 bg-muted/50 rounded animate-pulse" />
+              ) : pagos.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-2">Sin pagos registrados</p>
+              ) : (
+                <div className="overflow-auto rounded-md border max-h-48">
+                  <table className="w-full text-xs">
+                    <thead className="bg-muted/50 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Fecha</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Metodo</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Ref.</th>
+                        <th className="text-right px-3 py-2 font-medium text-muted-foreground">Monto</th>
+                        <th className="text-center px-3 py-2 font-medium text-muted-foreground">Accion</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {pagos.map((p) => {
+                        const montoUsdVal = parseFloat(p.monto_usd)
+                        const montoOrig = parseFloat(p.monto)
+                        const isReversed = p.is_reversed === 1
+                        return (
+                          <tr
+                            key={p.id}
+                            className={isReversed ? 'opacity-40' : ''}
+                          >
+                            <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                              {p.fecha?.slice(0, 10)}
+                            </td>
+                            <td className={`px-3 py-1.5 ${isReversed ? 'line-through text-muted-foreground' : ''}`}>
+                              {p.metodo_nombre}
+                              {p.moneda_label === 'BS' && (
+                                <div className="text-[10px] text-muted-foreground leading-tight">
+                                  {formatBs(montoOrig)} @ {parseFloat(p.tasa).toFixed(2)}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-muted-foreground">
+                              {p.referencia || '—'}
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              <span className={`font-medium tabular-nums ${isReversed ? 'line-through text-muted-foreground' : 'text-green-600'}`}>
+                                {formatUsd(montoUsdVal)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-1.5 text-center">
+                              {isReversed ? (
+                                <span className="text-[10px] text-muted-foreground italic">Reversado</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleReversar(p)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
+                                >
+                                  <ArrowCounterClockwise className="h-2.5 w-2.5" />
+                                  Reversar
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    {totalPagado > 0.005 && (
+                      <tfoot>
+                        <tr className="border-t-2 border-border bg-muted/20">
+                          <td colSpan={3} className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                            Total pagado
+                          </td>
+                          <td className="px-3 py-2 text-right font-bold text-green-600 tabular-nums">
+                            {formatUsd(totalPagado)}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* ── Footer ───────────────────────────────────── */}
+            <div className="flex justify-between items-center pt-3 border-t border-border">
+              <Button variant="outline" onClick={onClose}>
+                Cerrar
+              </Button>
+              {saldoPend > 0.01 && !esAnulada && (
+                <Button onClick={() => setPagoOpen(true)}>
+                  Registrar Pago
+                </Button>
               )}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
 
-          {/* Articulos */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <Package size={14} className="text-muted-foreground" />
-              <h3 className="text-sm font-semibold">Articulos</h3>
-            </div>
-            {loadingDetalle ? (
-              <div className="h-20 bg-muted rounded animate-pulse" />
-            ) : detalle.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4">Sin detalle disponible</p>
-            ) : (
-              <div className="overflow-x-auto border rounded-2xl">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Codigo</th>
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Producto</th>
-                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Cant</th>
-                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">P.Unit USD</th>
-                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Subtotal</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detalle.map((d) => {
-                      const cant = parseFloat(d.cantidad)
-                      const precio = parseFloat(d.precio_unitario_usd)
-                      const subt = parseFloat(d.subtotal_usd)
-                      return (
-                        <tr key={d.id} className="border-b border-muted hover:bg-muted/30 transition-colors">
-                          <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
-                            {d.producto_codigo}
-                          </td>
-                          <td className="px-3 py-2.5 font-medium">{d.producto_nombre}</td>
-                          <td className="px-3 py-2.5 text-right text-muted-foreground">
-                            {cant % 1 === 0 ? cant.toFixed(0) : cant.toFixed(3)}
-                          </td>
-                          <td className="px-3 py-2.5 text-right text-muted-foreground">{formatUsd(precio)}</td>
-                          <td className="px-3 py-2.5 text-right font-semibold">{formatUsd(subt)}</td>
-                        </tr>
-                      )
-                    })}
-                    <tr className="bg-primary/5 border-t-2 border-primary/20">
-                      <td colSpan={4} className="px-3 py-2.5 text-right font-semibold text-xs uppercase tracking-wide text-muted-foreground">
-                        Total factura
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-bold text-base">{formatUsd(totalUsd)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+      {/* Sub-modal de pago */}
+      <PagoFacturaModal
+        isOpen={pagoOpen}
+        onClose={() => setPagoOpen(false)}
+        factura={factura}
+        clienteId={factura.cliente_id}
+        onSuccess={() => setPagoOpen(false)}
+      />
 
-          {/* Cargos especiales (avance / prestamo) */}
-          {cargosEspeciales.length > 0 && (
-            <div>
-              <div className="flex items-center gap-2 mb-3">
-                <Wallet size={14} className="text-amber-600" />
-                <h3 className="text-sm font-semibold">Cargos especiales</h3>
-              </div>
-              <div className="overflow-x-auto border border-amber-200/60 rounded-2xl bg-amber-50/30">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-amber-200/60 bg-amber-50">
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-amber-800">Tipo</th>
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-amber-800">Concepto</th>
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-amber-800">Fecha</th>
-                      <th className="text-right px-3 py-2.5 font-medium text-xs text-amber-800">Efectivo entregado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cargosEspeciales.map((c) => (
-                      <tr key={c.id} className="border-b border-amber-100">
-                        <td className="px-3 py-2.5">
-                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                            c.tipo === 'PRESTAMO'
-                              ? 'bg-purple-100 text-purple-700'
-                              : 'bg-amber-100 text-amber-700'
-                          }`}>
-                            {c.tipo}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5 text-muted-foreground">{c.concepto}</td>
-                        <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
-                          {formatFecha(c.fecha)}
-                        </td>
-                        <td className="px-3 py-2.5 text-right font-semibold">
-                          {formatUsd(parseFloat(c.monto))}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Abonos recibidos */}
-          <div>
-            <div className="flex items-center gap-2 mb-3">
-              <CreditCard size={14} className="text-muted-foreground" />
-              <h3 className="text-sm font-semibold">Abonos recibidos</h3>
-            </div>
-            {loadingPagos ? (
-              <div className="h-16 bg-muted rounded animate-pulse" />
-            ) : pagos.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-4 border border-dashed rounded-lg">
-                Sin pagos registrados
-              </p>
-            ) : (
-              <div className="overflow-x-auto border rounded-2xl">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Fecha</th>
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Metodo</th>
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Moneda</th>
-                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Monto orig.</th>
-                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Equiv. USD</th>
-                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Tasa</th>
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Ref.</th>
-                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Procesado por</th>
-                      <th className="px-3 py-2.5 font-medium text-xs"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagos.map((p) => {
-                      const montoOrig = parseFloat(p.monto)
-                      const montoUsdVal = parseFloat(p.monto_usd)
-                      const tasaPago = parseFloat(p.tasa)
-                      const isReversed = p.is_reversed === 1
-                      return (
-                        <tr
-                          key={p.id}
-                          className={`border-b border-muted transition-opacity ${isReversed ? 'opacity-50' : ''}`}
-                        >
-                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                            {formatFechaHora(p.fecha)}
-                          </td>
-                          <td className={`px-3 py-2 ${isReversed ? 'line-through text-muted-foreground' : ''}`}>
-                            {p.metodo_nombre}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                              p.moneda_label === 'BS' ? 'bg-blue-50 text-blue-700' : 'bg-green-50 text-green-700'
-                            }`}>
-                              {p.moneda_label}
-                            </span>
-                          </td>
-                          <td className={`px-3 py-2 text-right font-medium ${isReversed ? 'line-through text-muted-foreground' : ''}`}>
-                            {p.moneda_label === 'BS' ? formatBs(montoOrig) : formatUsd(montoOrig)}
-                          </td>
-                          <td className={`px-3 py-2 text-right font-medium ${isReversed ? 'line-through text-muted-foreground' : 'text-green-700'}`}>
-                            {formatUsd(montoUsdVal)}
-                          </td>
-                          <td className="px-3 py-2 text-right text-xs text-muted-foreground">
-                            {tasaPago.toFixed(4)}
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {p.referencia || '-'}
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {p.procesado_por_nombre || '-'}
-                          </td>
-                          <td className="px-3 py-2">
-                            {isReversed ? (
-                              <div className="flex flex-col items-start gap-0.5">
-                                <span className="text-xs font-semibold px-1.5 py-0.5 rounded bg-destructive/10 text-destructive whitespace-nowrap">
-                                  REVERSADO
-                                </span>
-                                {p.reversed_reason && (
-                                  <span className="text-xs text-muted-foreground max-w-[120px] truncate" title={p.reversed_reason}>
-                                    {p.reversed_reason}
-                                  </span>
-                                )}
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleReversar(p)}
-                                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors whitespace-nowrap"
-                              >
-                                <ArrowCounterClockwise size={12} />
-                                Reversar
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                    <tr className="bg-green-50 border-t-2 border-green-200/60">
-                      <td colSpan={4} className="px-3 py-2.5 text-right font-semibold text-xs uppercase tracking-wide text-muted-foreground">
-                        Total pagado
-                      </td>
-                      <td className="px-3 py-2.5 text-right font-bold text-green-700">
-                        {formatUsd(totalPagado)}
-                      </td>
-                      <td colSpan={4} />
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Resumen saldo */}
-            {pagos.length > 0 && (
-              <div className="mt-3 flex items-center justify-end gap-6 rounded-lg bg-muted/40 border px-4 py-2.5 text-sm">
-                <span className="text-muted-foreground">
-                  Pagado: <span className="font-semibold text-green-700">{formatUsd(totalPagado)}</span>
-                </span>
-                <span className="text-muted-foreground">
-                  Pendiente:{' '}
-                  <span className={`font-bold ${saldoPend > 0.001 ? 'text-red-600' : 'text-green-700'}`}>
-                    {formatUsd(saldoPend)}
-                  </span>
-                </span>
-              </div>
-            )}
-          </div>
-
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={onClose}>
-              Cerrar
-            </Button>
-          </div>
-          </div>{/* end p-6 space-y-6 */}
-        </div>{/* end max-h overflow-y-auto */}
-      </dialog>
-
-      {/* PIN supervisor dialog */}
+      {/* PIN supervisor */}
       <SupervisorPinDialog
         isOpen={showPinDialog}
-        onClose={handleClosePin}
+        onClose={() => { setShowPinDialog(false); setPagoAReverse(null) }}
         onAuthorized={handlePinAuthorized}
-        titulo="Autorización requerida"
+        titulo="Autorizacion requerida"
         mensaje="Ingresa el PIN de supervisor para reversar este abono."
         requiredPermission={PERMISSIONS.CXC_REVERSE}
       />
 
-      {/* Reason dialog */}
+      {/* Motivo del reverso */}
       <ReversarAbonoDialog
-        isOpen={showReasonDialog}
+        open={showReasonDialog}
         pago={pagoAReverse}
-        onClose={handleCloseReason}
+        onClose={() => {
+          if (!reversing) {
+            setShowReasonDialog(false)
+            setPagoAReverse(null)
+            setSupervisorId(null)
+          }
+        }}
         onConfirm={handleConfirmReverso}
         loading={reversing}
       />
