@@ -10,7 +10,7 @@ import { Toaster as Sonner, type ToasterProps } from "sonner";
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
-      theme="system"
+      theme="light"
       className="toaster group"
       icons={{
         success: <CheckCircle className="size-4 text-green-500" />,

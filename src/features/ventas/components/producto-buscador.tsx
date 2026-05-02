@@ -55,7 +55,6 @@ function ProductoBuscador({ onSelect }, ref) {
     setQuery('')
     setOpen(false)
     setActiveIndex(-1)
-    inputRef.current?.focus()
   }
 
   const dropdownVisible = open && query.trim().length >= 2
@@ -77,6 +76,8 @@ function ProductoBuscador({ onSelect }, ref) {
         e.preventDefault()
         if (activeIndex >= 0 && productos[activeIndex]) {
           handleSelect(productos[activeIndex])
+        } else if (productos.length > 0) {
+          handleSelect(productos[0])
         }
         break
       case 'Escape':

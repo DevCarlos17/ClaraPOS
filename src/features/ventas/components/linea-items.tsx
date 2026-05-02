@@ -1,3 +1,4 @@
+import { useRef, forwardRef, useImperativeHandle } from 'react'
 import { Trash } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { LineaVentaForm } from '../schemas/venta-schema'
@@ -7,9 +8,26 @@ interface LineaItemsProps {
   tasa: number
   onUpdateCantidad: (index: number, cantidad: number) => void
   onRemove: (index: number) => void
+  onCantidadEnter?: () => void
 }
 
-export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaItemsProps) {
+export interface LineaItemsHandle {
+  focusCantidad: (index: number) => void
+}
+
+export const LineaItems = forwardRef<LineaItemsHandle, LineaItemsProps>(
+function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter }, ref) {
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+
+  useImperativeHandle(ref, () => ({
+    focusCantidad: (index: number) => {
+      const el = inputRefs.current[index]
+      if (el) {
+        el.focus()
+        el.select()
+      }
+    },
+  }))
 
   if (lineas.length === 0) {
     return (
@@ -58,6 +76,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
                     </td>
                     <td className="px-3 py-2">
                       <input
+                        ref={(el) => { inputRefs.current[index] = el }}
                         type="number"
                         min="0"
                         step={linea.es_decimal ? 'any' : '1'}
@@ -74,6 +93,10 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
                         onKeyDown={(e) => {
                           if (e.key === '-') e.preventDefault()
                           if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            onCantidadEnter?.()
+                          }
                         }}
                         className={`w-full text-center rounded border bg-white px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
                           cantidadInvalida || stockExcedido ? 'border-destructive text-destructive' : ''
@@ -123,4 +146,4 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
 
     </div>
   )
-}
+})

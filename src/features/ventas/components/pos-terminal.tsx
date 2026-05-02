@@ -17,7 +17,7 @@ import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import { ClienteSelector, type ClienteSelectorHandle } from './cliente-selector'
 import { ProductoBuscador, type ProductoBuscadorHandle } from './producto-buscador'
-import { LineaItems } from './linea-items'
+import { LineaItems, type LineaItemsHandle } from './linea-items'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
@@ -103,10 +103,12 @@ export function PosTerminal() {
   clienteIdRef.current = clienteId
   clienteNombreRef.current = clienteNombre
 
-  // Refs para atajos de teclado
+  // Refs para atajos de teclado y flujo de foco
   const productoBuscadorRef = useRef<ProductoBuscadorHandle>(null)
   const clienteSelectorRef = useRef<ClienteSelectorHandle>(null)
+  const lineaItemsRef = useRef<LineaItemsHandle>(null)
   const keyboardHandlerRef = useRef<((e: KeyboardEvent) => void) | undefined>(undefined)
+  const pendingFocusIndexRef = useRef<number | null>(null)
 
   // Totales de la factura
   const totalProductosUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
@@ -126,6 +128,24 @@ export function PosTerminal() {
   const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
   const pendienteBs = usdToBs(pendienteUsd, tasaValor)
   const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
+
+  // --- Auto-focus en buscador cuando carga el POS ---
+  useEffect(() => {
+    if (!tasaLoading && !sesionLoading && tasaValor > 0) {
+      productoBuscadorRef.current?.focus()
+    }
+  // Solo la primera vez que los datos esten listos
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasaLoading, sesionLoading])
+
+  // --- Focus a cantidad tras agregar/incrementar producto ---
+  useEffect(() => {
+    const idx = pendingFocusIndexRef.current
+    if (idx !== null) {
+      pendingFocusIndexRef.current = null
+      lineaItemsRef.current?.focusCantidad(idx)
+    }
+  }, [lineas])
 
   // --- Restaurar borrador al montar ---
   useEffect(() => {
@@ -235,6 +255,7 @@ export function PosTerminal() {
   const handleSelectProducto = (producto: ProductoVenta) => {
     const existing = lineas.findIndex((l) => l.producto_id === producto.id)
     if (existing >= 0) {
+      pendingFocusIndexRef.current = existing
       setLineas((prev) =>
         prev.map((l, i) =>
           i === existing
@@ -244,6 +265,7 @@ export function PosTerminal() {
       )
       return
     }
+    pendingFocusIndexRef.current = lineas.length
     setLineas((prev) => [
       ...prev,
       {
@@ -606,10 +628,12 @@ export function PosTerminal() {
           </div>
 
           <LineaItems
+            ref={lineaItemsRef}
             lineas={lineas}
             tasa={tasaValor}
             onUpdateCantidad={handleUpdateCantidad}
             onRemove={handleRemoveLinea}
+            onCantidadEnter={() => productoBuscadorRef.current?.focus()}
           />
 
           {/* Cargos especiales (avance / prestamo) */}
@@ -758,7 +782,7 @@ export function PosTerminal() {
                     type="button"
                     onClick={() => setShowNuevoClienteModal(true)}
                     title="Nuevo cliente rapido"
-                    className="shrink-0 flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    className="shrink-0 flex items-center gap-1 rounded-md border border-primary/40 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/15 transition-colors"
                   >
                     <Plus size={13} />
                     Nuevo
@@ -987,7 +1011,10 @@ export function PosTerminal() {
       <VentaExitosaModal
         isOpen={!!ventaExitosa}
         data={ventaExitosa}
-        onClose={() => setVentaExitosa(null)}
+        onClose={() => {
+          setVentaExitosa(null)
+          setTimeout(() => productoBuscadorRef.current?.focus(), 50)
+        }}
       />
 
       {confirmConfig && (
