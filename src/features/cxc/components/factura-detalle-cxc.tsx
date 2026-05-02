@@ -523,6 +523,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
         onClose={() => setPagoOpen(false)}
         factura={factura}
         clienteId={factura.cliente_id}
+        clienteNombre={extra?.cliente_nombre ?? undefined}
         onSuccess={() => setPagoOpen(false)}
       />
 

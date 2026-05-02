@@ -236,6 +236,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
         onClose={() => setPagoFacturaOpen(false)}
         factura={facturaSeleccionada}
         clienteId={cliente.id}
+        clienteNombre={cliente.nombre}
         onSuccess={() => {}}
       />
 

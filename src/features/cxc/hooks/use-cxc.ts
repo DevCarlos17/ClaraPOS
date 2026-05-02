@@ -35,6 +35,7 @@ export interface PagoFacturaParams {
   moneda: 'USD' | 'BS'
   tasa: number
   monto: number
+  fechaPago?: string       // YYYY-MM-DD; por defecto la fecha actual
   referencia?: string
   empresa_id: string
   procesado_por: string
@@ -242,13 +243,15 @@ export function usePagosFactura(ventaId: string | null) {
  * Crea pago, reduce saldo factura, crea movimiento_cuenta (tipo PAG), actualiza saldo cliente.
  */
 export async function registrarPagoFactura(params: PagoFacturaParams): Promise<void> {
-  const { venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre, sesion_caja_id } = params
+  const { venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, fechaPago, referencia, empresa_id, procesado_por, procesado_por_nombre, sesion_caja_id } = params
 
   if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
+    // Fecha del pago: si se proporciona usa esa fecha (historial), sino la actual
+    const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
 
     // 0. Obtener UUID de moneda
     const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
@@ -299,7 +302,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         montoUsd.toFixed(2),
         referencia ?? null,
         sesion_caja_id ?? null,
-        now,
+        fechaDoc,
         empresa_id,
         now,
         procesado_por,
@@ -324,7 +327,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
           `PAG-${venta.nro_factura}`,
           `Pago CxC fac. ${venta.nro_factura}`,
           sesion_caja_id ?? null,
-          now,
+          fechaDoc,
           now,
           procesado_por,
         ]
@@ -363,7 +366,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         saldoNuevo.toFixed(2),
         `Pago factura ${venta.nro_factura}`,
         venta_id,
-        now,
+        fechaDoc,
         empresa_id,
         now,
         procesado_por,

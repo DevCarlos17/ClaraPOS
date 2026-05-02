@@ -1,35 +1,29 @@
-import { useState, useRef, useEffect } from 'react'
-import { X } from '@phosphor-icons/react'
+import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { Input } from '@/components/ui/input'
+import { NativeSelect } from '@/components/ui/native-select'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { registrarPagoFactura, type VentaPendiente } from '../hooks/use-cxc'
-import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
-import { todayStr } from '@/lib/dates'
-import { NativeSelect } from '@/components/ui/native-select'
+import { localNow } from '@/lib/dates'
 
 interface PagoFacturaModalProps {
   isOpen: boolean
   onClose: () => void
   factura: VentaPendiente | null
   clienteId: string
+  clienteNombre?: string
   onSuccess: () => void
-}
-
-function formatFecha(fecha: string): string {
-  try {
-    const d = new Date(fecha)
-    return d.toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    })
-  } catch {
-    return fecha
-  }
 }
 
 export function PagoFacturaModal({
@@ -37,21 +31,25 @@ export function PagoFacturaModal({
   onClose,
   factura,
   clienteId,
+  clienteNombre,
   onSuccess,
 }: PagoFacturaModalProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
-  const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
   const { metodos } = useMetodosPagoActivos()
+  const { tasaValor } = useTasaActual()
 
-  const [metodoPagoId, setMetodoPagoId] = useState('')
+  const today = localNow().slice(0, 10)
+
+  const [fechaPago, setFechaPago] = useState(today)
+  const [tasaStr, setTasaStr] = useState('')
+  const [metodoCobro, setMetodoCobro] = useState('')
   const [montoStr, setMontoStr] = useState('')
   const [referencia, setReferencia] = useState('')
-  const [fechaPago, setFechaPago] = useState(() => todayStr())
-  const [tasaFecha, setTasaFecha] = useState(0)
-  const [submitting, setSubmitting] = useState(false)
+  // Tasa interna auto-cargada de la DB para la fecha seleccionada
+  const [tasaInternaNum, setTasaInternaNum] = useState(0)
+  const [loading, setLoading] = useState(false)
 
-  // Buscar tasa BCV correspondiente a la fecha del abono
+  // Auto-cargar tasa interna de la DB cada vez que cambia la fecha
   useEffect(() => {
     if (!user?.empresa_id || !fechaPago) return
     db.execute(
@@ -59,160 +57,197 @@ export function PagoFacturaModal({
       [user.empresa_id, fechaPago]
     ).then((res) => {
       const row = res.rows?.item(0) as { valor: string } | undefined
-      setTasaFecha(row ? parseFloat(row.valor) : 0)
-    }).catch(() => setTasaFecha(0))
+      const val = row ? parseFloat(row.valor) : 0
+      setTasaInternaNum(val)
+      // Pre-llenar la tasa editable con el valor encontrado
+      setTasaStr(val > 0 ? val.toFixed(4) : '')
+    }).catch(() => {
+      setTasaInternaNum(0)
+      setTasaStr('')
+    })
   }, [fechaPago, user?.empresa_id])
 
+  // Resetear form al abrir
   useEffect(() => {
     if (isOpen) {
-      dialogRef.current?.showModal()
-      setMetodoPagoId('')
+      setFechaPago(today)
+      setMetodoCobro('')
       setMontoStr('')
       setReferencia('')
-      setFechaPago(todayStr())
-    } else {
-      dialogRef.current?.close()
+      // La tasa se cargará por el efecto de fechaPago
     }
-  }, [isOpen])
+  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleClose() {
+    setFechaPago(today)
+    setTasaStr('')
+    setMetodoCobro('')
+    setMontoStr('')
+    setReferencia('')
+    setTasaInternaNum(0)
+    onClose()
+  }
 
   if (!factura) return null
 
   const saldoPend = parseFloat(factura.saldo_pend_usd)
-  const metodoSeleccionado = metodos.find((m) => m.id === metodoPagoId)
-  const moneda = metodoSeleccionado?.moneda ?? 'USD'
-  const monto = parseFloat(montoStr) || 0
+  const totalFactura = parseFloat(factura.total_usd)
 
-  // Tasa efectiva: la de la fecha del abono (historica si es pasada), con fallback a la actual
-  const tasaEfectiva = tasaFecha || tasaValor
+  const metodoSeleccionado = metodos.find((m) => m.id === metodoCobro)
+  const moneda = (metodoSeleccionado?.moneda ?? 'USD') as 'USD' | 'BS'
+  const montoNum = parseFloat(montoStr) || 0
+  const tasaNum = parseFloat(tasaStr) || 0
 
-  const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva) : monto
-  const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva) : monto
+  // Para pago USD: monto directo. Para pago BS: se divide por la tasa
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum) : montoNum
+  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaNum) : montoNum
 
   const excedeSaldo = montoUsd > saldoPend + 0.01
-  const canSubmit = metodoPagoId && monto > 0 && !excedeSaldo && !submitting && tasaEfectiva > 0
+  const sinTasa = tasaNum <= 0
+  const canSubmit = metodoCobro && montoNum > 0 && !excedeSaldo && !loading && tasaNum > 0
 
-  const handlePayMax = () => {
+  function handlePayMax() {
     if (moneda === 'BS') {
-      setMontoStr(usdToBs(saldoPend, tasaEfectiva).toFixed(2))
+      setMontoStr(usdToBs(saldoPend, tasaNum > 0 ? tasaNum : tasaValor).toFixed(2))
     } else {
       setMontoStr(saldoPend.toFixed(2))
     }
   }
 
-  const handleSubmit = async () => {
-    if (!canSubmit) return
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!canSubmit || !user?.empresa_id || !user.id) return
 
-    setSubmitting(true)
+    setLoading(true)
     try {
       await registrarPagoFactura({
-        venta_id: factura.id,
+        venta_id: factura!.id,
         cliente_id: clienteId,
-        metodo_cobro_id: metodoPagoId,
-        moneda: moneda as 'USD' | 'BS',
-        tasa: tasaEfectiva,
-        monto,
+        metodo_cobro_id: metodoCobro,
+        moneda,
+        tasa: tasaNum,
+        monto: montoNum,
+        fechaPago,
         referencia: referencia.trim() || undefined,
-        empresa_id: user!.empresa_id!,
-        procesado_por: user!.id,
-        procesado_por_nombre: user!.nombre,
+        empresa_id: user.empresa_id,
+        procesado_por: user.id,
+        procesado_por_nombre: user.nombre,
       })
-      toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura.nro_factura}`)
+      toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura!.nro_factura}`)
       onSuccess()
-      onClose()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Error al registrar pago')
+      handleClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar pago')
     } finally {
-      setSubmitting(false)
+      setLoading(false)
     }
   }
 
-  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
-    if (e.target === dialogRef.current) onClose()
-  }
-
   return (
-    <dialog
-      ref={dialogRef}
-      onClose={onClose}
-      onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl"
-    >
-      <div className="p-6">
-        {/* Header */}
-        <div className="flex items-start justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-semibold">Pagar Factura</h2>
-            <p className="text-sm text-muted-foreground">
-              #{factura.nro_factura} - {formatFecha(factura.fecha)}
-            </p>
-          </div>
-          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
-            <X className="h-5 w-5 text-muted-foreground" />
-          </button>
-        </div>
+    <Dialog open={isOpen} onOpenChange={(v) => { if (!v) handleClose() }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Registrar Pago CxC</DialogTitle>
+        </DialogHeader>
 
-        {/* Resumen factura */}
-        <div className="rounded-lg border bg-muted/50 p-3 mb-4 space-y-1">
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Total factura</span>
-            <span className="font-medium">{formatUsd(factura.total_usd)}</span>
+        {/* Resumen de la factura */}
+        <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
+          {clienteNombre && (
+            <div className="font-medium">{clienteNombre}</div>
+          )}
+          <div className="text-muted-foreground text-xs">
+            Factura: #{factura.nro_factura}
+            {' · '}
+            <span>Tasa factura: {parseFloat(factura.tasa).toFixed(4)}</span>
           </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Saldo pendiente</span>
-            <span className="font-bold text-red-600">{formatUsd(saldoPend)}</span>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Total factura:</span>
+            <span>{formatUsd(totalFactura)}</span>
           </div>
-          {tasaEfectiva > 0 && (
-            <>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Equivalente Bs</span>
-                <span className="text-muted-foreground">
-                  {formatBs(usdToBs(saldoPend, tasaEfectiva))}
-                </span>
-              </div>
-              <div className="flex justify-between text-sm border-t border-border/50 pt-1 mt-1">
-                <span className="text-muted-foreground font-medium">
-                  Tasa {fechaPago === todayStr() ? 'actual' : `al ${fechaPago}`}
-                </span>
-                <span className="font-semibold tabular-nums">{tasaEfectiva.toFixed(4)} Bs/$</span>
-              </div>
-            </>
+          <div className="flex justify-between font-semibold">
+            <span>Saldo pendiente:</span>
+            <span className="text-destructive">{formatUsd(saldoPend)}</span>
+          </div>
+          {tasaNum > 0 && (
+            <div className="flex justify-between text-muted-foreground">
+              <span>Equivalente Bs (a tasa cobro):</span>
+              <span>{formatBs(usdToBs(saldoPend, tasaNum))}</span>
+            </div>
           )}
         </div>
 
-        {/* Form */}
-        <div className="space-y-3">
+        <form onSubmit={handleSubmit} className="space-y-4">
+
           {/* Fecha del abono */}
-          <div>
+          <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Fecha del abono</label>
-            <input
+            <Input
               type="date"
               value={fechaPago}
-              onChange={(e) => { setFechaPago(e.target.value); setMontoStr('') }}
-              max={todayStr()}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              onChange={(e) => {
+                setFechaPago(e.target.value)
+                setMontoStr('')
+              }}
+              max={today}
             />
-            {tasaFecha > 0 && fechaPago !== todayStr() && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Tasa BCV a esa fecha: <span className="font-medium">{tasaFecha.toFixed(4)}</span>
+            {tasaInternaNum > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Tasa interna a esta fecha:{' '}
+                <span className="font-medium">{tasaInternaNum.toFixed(4)}</span>
               </p>
             )}
-            {tasaFecha === 0 && fechaPago !== todayStr() && (
-              <p className="text-xs text-amber-600 mt-1">
-                Sin tasa registrada para esa fecha. Se usara la tasa actual.
+          </div>
+
+          {/* Aviso cuando no hay tasa para la fecha */}
+          {tasaInternaNum === 0 && fechaPago && (
+            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 space-y-1">
+              <p className="text-xs text-amber-700 font-medium">
+                No hay tasa registrada para esta fecha. Ingrese la tasa manualmente.
+              </p>
+            </div>
+          )}
+
+          {/* Tasa de cobro (editable) */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-medium text-muted-foreground">
+                Tasa de cobro (Bs/USD)
+              </label>
+              {tasaValor > 0 && tasaNum !== tasaValor && (
+                <button
+                  type="button"
+                  onClick={() => setTasaStr(tasaValor.toFixed(4))}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Usar tasa actual ({tasaValor.toFixed(2)})
+                </button>
+              )}
+            </div>
+            <Input
+              type="number"
+              step="0.0001"
+              min="0.0001"
+              value={tasaStr}
+              onChange={(e) => setTasaStr(e.target.value)}
+              placeholder="0.0000"
+              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            />
+            {sinTasa && (
+              <p className="text-xs text-destructive">
+                Se requiere la tasa de cambio para registrar el pago
               </p>
             )}
           </div>
 
           {/* Metodo de pago */}
-          <div>
+          <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Metodo de pago</label>
             <NativeSelect
-              value={metodoPagoId}
+              value={metodoCobro}
               onChange={(e) => {
-                setMetodoPagoId(e.target.value)
+                setMetodoCobro(e.target.value)
                 setMontoStr('')
               }}
-              wrapperClassName="mt-1"
             >
               <option value="">Seleccionar...</option>
               {metodos.map((m) => (
@@ -224,7 +259,7 @@ export function PagoFacturaModal({
           </div>
 
           {/* Monto */}
-          <div>
+          <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-medium text-muted-foreground">
                 Monto ({moneda})
@@ -237,54 +272,54 @@ export function PagoFacturaModal({
                 Pagar total
               </button>
             </div>
-            <input
+            <Input
               type="number"
               step="0.01"
-              min="0"
+              min="0.01"
               value={montoStr}
               onChange={(e) => setMontoStr(e.target.value)}
               placeholder="0.00"
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
-            {monto > 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                {moneda === 'USD'
-                  ? `Equivale a ${formatBs(montoBs)} a tasa ${tasaEfectiva.toFixed(4)}`
-                  : `Equivale a ${formatUsd(montoUsd)} a tasa ${tasaEfectiva.toFixed(4)}`}
+            {montoNum > 0 && moneda === 'USD' && tasaNum > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Equivale a {formatBs(montoBs)} a tasa {tasaNum.toFixed(2)}
+              </p>
+            )}
+            {montoNum > 0 && moneda === 'BS' && tasaNum > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Equivale a {formatUsd(montoUsd)} a tasa {tasaNum.toFixed(2)}
               </p>
             )}
             {excedeSaldo && (
-              <p className="text-xs text-destructive mt-1">
+              <p className="text-xs text-destructive">
                 El monto excede el saldo pendiente de la factura
               </p>
             )}
           </div>
 
           {/* Referencia */}
-          <div>
+          <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">
               Referencia (opcional)
             </label>
-            <input
-              type="text"
+            <Input
               value={referencia}
               onChange={(e) => setReferencia(e.target.value)}
               placeholder="Nro. transferencia, etc."
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             />
           </div>
-        </div>
 
-        {/* Actions */}
-        <div className="flex justify-end gap-2 mt-6">
-          <Button variant="outline" onClick={onClose} disabled={submitting}>
-            Cancelar
-          </Button>
-          <Button onClick={handleSubmit} disabled={!canSubmit}>
-            {submitting ? 'Registrando...' : `Pagar ${formatUsd(montoUsd)}`}
-          </Button>
-        </div>
-      </div>
-    </dialog>
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" onClick={handleClose} disabled={loading}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={!canSubmit}>
+              {loading ? 'Registrando...' : `Pagar ${formatUsd(montoUsd)}`}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
