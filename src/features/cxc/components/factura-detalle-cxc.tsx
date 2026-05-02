@@ -79,7 +79,7 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/60 rounded-xl shadow-2xl p-0 w-full max-w-sm mx-4 border bg-card"
+      className="m-auto backdrop:bg-black/60 rounded-xl shadow-2xl p-0 w-full max-w-sm border bg-card"
     >
       <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
@@ -242,47 +242,54 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
         ref={dialogRef}
         onClose={onClose}
         onClick={handleBackdropClick}
-        className="backdrop:bg-black/60 rounded-lg p-0 w-full max-w-3xl shadow-xl"
+        className="m-auto backdrop:bg-black/60 rounded-xl p-0 w-full max-w-3xl shadow-2xl bg-card border"
       >
-        <div className="p-6 max-h-[85vh] overflow-y-auto">
+        <div className="max-h-[88vh] overflow-y-auto">
           {/* Header */}
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-semibold">Factura #{factura.nro_factura}</h2>
-              <p className="text-sm text-muted-foreground">{formatFecha(factura.fecha)}</p>
+          <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                <CreditCard size={16} className="text-primary" />
+              </div>
+              <div>
+                <h2 className="text-base font-semibold">Factura #{factura.nro_factura}</h2>
+                <p className="text-xs text-muted-foreground">{formatFecha(factura.fecha)}</p>
+              </div>
             </div>
-            <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
-              <X className="h-5 w-5 text-muted-foreground" />
+            <button onClick={onClose} className="p-1.5 rounded-md hover:bg-muted transition-colors">
+              <X className="h-4 w-4 text-muted-foreground" />
             </button>
           </div>
 
+          <div className="p-6 space-y-6">
           {/* Resumen de montos */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-            <div className="rounded-lg border bg-card p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-0.5">Total</p>
-              <p className="font-bold">{formatUsd(totalUsd)}</p>
-              {tasaValor > 0 && <p className="text-xs text-muted-foreground">{formatBs(totalBs)}</p>}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-xl bg-card border shadow-sm p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Total factura</p>
+              <p className="text-lg font-bold">{formatUsd(totalUsd)}</p>
+              {tasaValor > 0 && <p className="text-xs text-muted-foreground mt-0.5">{formatBs(totalBs)}</p>}
             </div>
-            <div className="rounded-lg border bg-card p-3 text-center">
-              <p className="text-xs text-muted-foreground mb-0.5">Tasa usada</p>
-              <p className="font-bold text-sm">{parseFloat(factura.tasa).toFixed(4)}</p>
+            <div className="rounded-xl bg-card border shadow-sm p-3 text-center">
+              <p className="text-xs text-muted-foreground mb-1">Tasa usada</p>
+              <p className="text-lg font-bold">{parseFloat(factura.tasa).toFixed(4)}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Bs/USD</p>
             </div>
-            <div className="rounded-lg border bg-green-50 p-3 text-center">
-              <p className="text-xs text-green-700/70 mb-0.5">Abonado</p>
-              <p className="font-bold text-green-700">{formatUsd(totalAbonado)}</p>
+            <div className="rounded-xl bg-green-50 border border-green-200/60 shadow-sm p-3 text-center">
+              <p className="text-xs text-green-700/70 mb-1">Abonado</p>
+              <p className="text-lg font-bold text-green-700">{formatUsd(totalAbonado)}</p>
             </div>
-            <div className="rounded-lg border bg-red-50 p-3 text-center">
-              <p className="text-xs text-red-700/70 mb-0.5">Pendiente</p>
-              <p className="font-bold text-red-600">{formatUsd(saldoPend)}</p>
+            <div className="rounded-xl bg-red-50 border border-red-200/60 shadow-sm p-3 text-center">
+              <p className="text-xs text-red-700/70 mb-1">Pendiente</p>
+              <p className="text-lg font-bold text-red-600">{formatUsd(saldoPend)}</p>
               {tasaValor > 0 && (
-                <p className="text-xs text-red-700/50">{formatBs(usdToBs(saldoPend, tasaValor))}</p>
+                <p className="text-xs text-red-700/50 mt-0.5">{formatBs(usdToBs(saldoPend, tasaValor))}</p>
               )}
             </div>
           </div>
 
           {/* Articulos */}
-          <div className="mb-5">
-            <div className="flex items-center gap-2 mb-2">
+          <div>
+            <div className="flex items-center gap-2 mb-3">
               <Package size={14} className="text-muted-foreground" />
               <h3 className="text-sm font-semibold">Articulos</h3>
             </div>
@@ -291,15 +298,15 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
             ) : detalle.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">Sin detalle disponible</p>
             ) : (
-              <div className="overflow-x-auto border rounded-lg">
+              <div className="overflow-x-auto border rounded-xl">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50">
-                      <th className="text-left px-3 py-2 font-medium text-xs">Codigo</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Producto</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Cant</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">P.Unit</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Subtotal</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Codigo</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Producto</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Cant</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">P.Unit USD</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -308,24 +315,24 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                       const precio = parseFloat(d.precio_unitario_usd)
                       const subt = parseFloat(d.subtotal_usd)
                       return (
-                        <tr key={d.id} className="border-b border-muted">
-                          <td className="px-3 py-2 font-mono text-xs text-muted-foreground">
+                        <tr key={d.id} className="border-b border-muted hover:bg-muted/30 transition-colors">
+                          <td className="px-3 py-2.5 font-mono text-xs text-muted-foreground">
                             {d.producto_codigo}
                           </td>
-                          <td className="px-3 py-2">{d.producto_nombre}</td>
-                          <td className="px-3 py-2 text-right">
+                          <td className="px-3 py-2.5 font-medium">{d.producto_nombre}</td>
+                          <td className="px-3 py-2.5 text-right text-muted-foreground">
                             {cant % 1 === 0 ? cant.toFixed(0) : cant.toFixed(3)}
                           </td>
-                          <td className="px-3 py-2 text-right">{formatUsd(precio)}</td>
-                          <td className="px-3 py-2 text-right font-medium">{formatUsd(subt)}</td>
+                          <td className="px-3 py-2.5 text-right text-muted-foreground">{formatUsd(precio)}</td>
+                          <td className="px-3 py-2.5 text-right font-semibold">{formatUsd(subt)}</td>
                         </tr>
                       )
                     })}
-                    <tr className="bg-muted/30">
-                      <td colSpan={4} className="px-3 py-2 text-right font-semibold text-xs uppercase">
-                        Total
+                    <tr className="bg-primary/5 border-t-2 border-primary/20">
+                      <td colSpan={4} className="px-3 py-2.5 text-right font-semibold text-xs uppercase tracking-wide text-muted-foreground">
+                        Total factura
                       </td>
-                      <td className="px-3 py-2 text-right font-bold">{formatUsd(totalUsd)}</td>
+                      <td className="px-3 py-2.5 text-right font-bold text-base">{formatUsd(totalUsd)}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -335,26 +342,26 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
 
           {/* Cargos especiales (avance / prestamo) */}
           {cargosEspeciales.length > 0 && (
-            <div className="mb-5">
-              <div className="flex items-center gap-2 mb-2">
+            <div>
+              <div className="flex items-center gap-2 mb-3">
                 <Wallet size={14} className="text-amber-600" />
                 <h3 className="text-sm font-semibold">Cargos especiales</h3>
               </div>
-              <div className="overflow-x-auto border border-amber-200 rounded-lg">
+              <div className="overflow-x-auto border border-amber-200/60 rounded-xl bg-amber-50/30">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b bg-amber-50">
-                      <th className="text-left px-3 py-2 font-medium text-xs">Tipo</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Concepto</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Fecha</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Efectivo entregado</th>
+                    <tr className="border-b border-amber-200/60 bg-amber-50">
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-amber-800">Tipo</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-amber-800">Concepto</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-amber-800">Fecha</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-xs text-amber-800">Efectivo entregado</th>
                     </tr>
                   </thead>
                   <tbody>
                     {cargosEspeciales.map((c) => (
                       <tr key={c.id} className="border-b border-amber-100">
-                        <td className="px-3 py-2">
-                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                        <td className="px-3 py-2.5">
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
                             c.tipo === 'PRESTAMO'
                               ? 'bg-purple-100 text-purple-700'
                               : 'bg-amber-100 text-amber-700'
@@ -362,11 +369,11 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                             {c.tipo}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-muted-foreground">{c.concepto}</td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                        <td className="px-3 py-2.5 text-muted-foreground">{c.concepto}</td>
+                        <td className="px-3 py-2.5 text-xs text-muted-foreground whitespace-nowrap">
                           {formatFecha(c.fecha)}
                         </td>
-                        <td className="px-3 py-2 text-right font-medium">
+                        <td className="px-3 py-2.5 text-right font-semibold">
                           {formatUsd(parseFloat(c.monto))}
                         </td>
                       </tr>
@@ -379,7 +386,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
 
           {/* Abonos recibidos */}
           <div>
-            <div className="flex items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-3">
               <CreditCard size={14} className="text-muted-foreground" />
               <h3 className="text-sm font-semibold">Abonos recibidos</h3>
             </div>
@@ -390,19 +397,19 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                 Sin pagos registrados
               </p>
             ) : (
-              <div className="overflow-x-auto border rounded-lg">
+              <div className="overflow-x-auto border rounded-xl">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50">
-                      <th className="text-left px-3 py-2 font-medium text-xs">Fecha</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Metodo</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Moneda</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Monto orig.</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Equiv. USD</th>
-                      <th className="text-right px-3 py-2 font-medium text-xs">Tasa</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Ref.</th>
-                      <th className="text-left px-3 py-2 font-medium text-xs">Procesado por</th>
-                      <th className="px-3 py-2 font-medium text-xs"></th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Fecha</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Metodo</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Moneda</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Monto orig.</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Equiv. USD</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-xs text-muted-foreground">Tasa</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Ref.</th>
+                      <th className="text-left px-3 py-2.5 font-medium text-xs text-muted-foreground">Procesado por</th>
+                      <th className="px-3 py-2.5 font-medium text-xs"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -470,11 +477,11 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                         </tr>
                       )
                     })}
-                    <tr className="bg-muted/30">
-                      <td colSpan={4} className="px-3 py-2 text-right font-semibold text-xs uppercase">
+                    <tr className="bg-green-50 border-t-2 border-green-200/60">
+                      <td colSpan={4} className="px-3 py-2.5 text-right font-semibold text-xs uppercase tracking-wide text-muted-foreground">
                         Total pagado
                       </td>
-                      <td className="px-3 py-2 text-right font-bold text-green-700">
+                      <td className="px-3 py-2.5 text-right font-bold text-green-700">
                         {formatUsd(totalPagado)}
                       </td>
                       <td colSpan={4} />
@@ -486,9 +493,9 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
 
             {/* Resumen saldo */}
             {pagos.length > 0 && (
-              <div className="mt-3 flex justify-end gap-6 text-sm">
+              <div className="mt-3 flex items-center justify-end gap-6 rounded-lg bg-muted/40 border px-4 py-2.5 text-sm">
                 <span className="text-muted-foreground">
-                  Pagado: <span className="font-medium text-green-700">{formatUsd(totalPagado)}</span>
+                  Pagado: <span className="font-semibold text-green-700">{formatUsd(totalPagado)}</span>
                 </span>
                 <span className="text-muted-foreground">
                   Pendiente:{' '}
@@ -500,12 +507,13 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
             )}
           </div>
 
-          <div className="flex justify-end pt-5">
+          <div className="flex justify-end">
             <Button variant="outline" onClick={onClose}>
               Cerrar
             </Button>
           </div>
-        </div>
+          </div>{/* end p-6 space-y-6 */}
+        </div>{/* end max-h overflow-y-auto */}
       </dialog>
 
       {/* PIN supervisor dialog */}

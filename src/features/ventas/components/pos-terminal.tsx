@@ -22,6 +22,7 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
 import { NuevoClienteRapidoModal } from './nuevo-cliente-rapido-modal'
+import { VentaExitosaModal, type VentaExitosaData } from './venta-exitosa-modal'
 import { AperturaSesionPosModal } from '@/features/caja/components/apertura-sesion-pos-modal'
 import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
 import { IngresoRetiroModal } from '@/features/caja/components/ingreso-retiro-modal'
@@ -89,6 +90,7 @@ export function PosTerminal() {
   const [showPrestamoModal, setShowPrestamoModal] = useState(false)
   const [showCierrePosPin, setShowCierrePosPin] = useState(false)
   const [showCierrePos, setShowCierrePos] = useState(false)
+  const [ventaExitosa, setVentaExitosa] = useState<VentaExitosaData | null>(null)
 
   // Refs for navigation blocker (always captures latest state)
   const lineasRef = useRef(lineas)
@@ -230,7 +232,7 @@ export function PosTerminal() {
       setLineas((prev) =>
         prev.map((l, i) =>
           i === existing
-            ? { ...l, cantidad: l.es_decimal ? l.cantidad + 1 : l.cantidad + 1 }
+            ? { ...l, cantidad: l.cantidad + 1 }
             : l
         )
       )
@@ -420,7 +422,16 @@ export function PosTerminal() {
         cargosEspeciales,
       })
 
-      toast.success(`Venta #${result.nroFactura} creada exitosamente`)
+      setVentaExitosa({
+        nroFactura: result.nroFactura,
+        clienteNombre: clienteNombre || 'Sin cliente',
+        totalUsd,
+        totalBs,
+        tipo: tipoDetectado,
+        pagos: [...pagos],
+        tasa: tasaValor,
+        cargosEspeciales: [...cargosEspeciales],
+      })
       resetForm()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Error al crear la venta')
@@ -568,304 +579,329 @@ export function PosTerminal() {
         </div>
 
         {/* ── COLUMNA DERECHA ── */}
-        <div className="rounded-xl bg-card shadow-md lg:sticky lg:top-6 overflow-hidden">
-          <div className="p-4 space-y-4">
+        <div className="rounded-xl bg-card shadow-md lg:sticky lg:top-6 flex flex-col lg:h-[calc(100vh-6.5rem)] overflow-hidden">
 
-          {/* Fila 1: Cancelar + Confirmar */}
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              onClick={handleCancelar}
-              disabled={submitting}
-              size="sm"
-              className="w-full"
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleConfirmVenta}
-              disabled={!puedeConfirmar}
-              size="sm"
-              className={`w-full ${tipoDetectado === 'CREDITO' && tieneLineasValidas && clienteId ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
-            >
-              {tipoDetectado === 'CREDITO' && tieneLineasValidas && clienteId ? (
-                <CreditCard size={14} className="mr-1.5" />
-              ) : (
-                <ShoppingCart size={14} className="mr-1.5" />
-              )}
-              {textoConfirmar}
-            </Button>
-          </div>
+          {/* ── Zona scrolleable ── */}
+          <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
 
-          {/* Fila 2: Guardar Factura + Facturas Guardadas */}
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="outline"
-              onClick={handleGuardarFactura}
-              disabled={submitting || lineas.length === 0}
-              size="sm"
-              className="w-full"
-            >
-              <Save size={14} className="mr-1.5" />
-              Guardar Factura
-            </Button>
-            <Button
-              variant={esperaCount > 0 ? 'secondary' : 'outline'}
-              onClick={() => setShowEsperaModal(true)}
-              size="sm"
-              className="w-full"
-            >
-              <List size={14} className="mr-1.5" />
-              {esperaCount > 0 ? `Facturas Guardadas (${esperaCount})` : 'Facturas Guardadas'}
-            </Button>
-          </div>
-
-          {/* Operaciones de Caja */}
-          {sesion && (canMovManualPos || canCloseCajaPos) && (
-            <div className="space-y-2">
-              {/* Contexto: usuario, caja, empresa */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
-                {user?.nombre && (
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <User size={11} />
-                    <span className="font-medium text-foreground">{user.nombre}</span>
-                  </div>
-                )}
-                {cajaNombre && (
-                  <span className="text-xs text-muted-foreground">· {cajaNombre}</span>
-                )}
-                {empresaNombre && (
-                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <Building2 size={11} />
-                    <span>{empresaNombre}</span>
-                  </div>
-                )}
+            {/* Operaciones de Caja */}
+            {sesion && (canMovManualPos || canCloseCajaPos) && (
+              <div className="space-y-2">
+                {/* Contexto: usuario, caja, empresa */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
+                  {user?.nombre && (
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <User size={11} />
+                      <span className="font-medium text-foreground">{user.nombre}</span>
+                    </div>
+                  )}
+                  {cajaNombre && (
+                    <span className="text-xs text-muted-foreground">· {cajaNombre}</span>
+                  )}
+                  {empresaNombre && (
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Building2 size={11} />
+                      <span>{empresaNombre}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {canMovManualPos && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setShowIngresoModal(true)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors"
+                      >
+                        <ArrowDownCircle size={12} />
+                        Ingreso
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowRetiroModal(true)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors"
+                      >
+                        <ArrowUpCircle size={12} />
+                        Retiro
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowAvanceModal(true)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors"
+                      >
+                        <Wallet size={12} />
+                        Avance
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowPrestamoModal(true)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors"
+                      >
+                        <Handshake size={12} />
+                        Prestamo
+                      </button>
+                    </>
+                  )}
+                  {canCloseCajaPos && (
+                    <button
+                      type="button"
+                      onClick={handleCerrarCajaPos}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    >
+                      <XCircle size={12} />
+                      Cerrar Caja
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-1">
-                {canMovManualPos && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setShowIngresoModal(true)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors"
-                    >
-                      <ArrowDownCircle size={12} />
-                      Ingreso
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowRetiroModal(true)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors"
-                    >
-                      <ArrowUpCircle size={12} />
-                      Retiro
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowAvanceModal(true)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors"
-                    >
-                      <Wallet size={12} />
-                      Avance
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowPrestamoModal(true)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors"
-                    >
-                      <Handshake size={12} />
-                      Prestamo
-                    </button>
-                  </>
-                )}
-                {canCloseCajaPos && (
+            )}
+
+            {sesion && (canMovManualPos || canCloseCajaPos) && <div className="border-t" />}
+
+            {/* Cliente */}
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground">Cliente</label>
+              <div className="flex gap-2">
+                <div className="flex-1 min-w-0">
+                  <ClienteSelector
+                    clienteId={clienteId}
+                    onSelect={handleSelectCliente}
+                    onClear={handleClearCliente}
+                  />
+                </div>
+                {!clienteId && (
                   <button
                     type="button"
-                    onClick={handleCerrarCajaPos}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                    onClick={() => setShowNuevoClienteModal(true)}
+                    title="Nuevo cliente rapido"
+                    className="shrink-0 flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                   >
-                    <XCircle size={12} />
-                    Cerrar Caja
+                    <Plus size={13} />
+                    Nuevo
                   </button>
                 )}
               </div>
-            </div>
-          )}
-
-          <div className="border-t" />
-
-          {/* Cliente */}
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">Cliente</label>
-            <div className="flex gap-2">
-              <div className="flex-1 min-w-0">
-                <ClienteSelector
-                  clienteId={clienteId}
-                  onSelect={handleSelectCliente}
-                  onClear={handleClearCliente}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowNuevoClienteModal(true)}
-                title="Nuevo cliente rapido"
-                className="shrink-0 flex items-center gap-1 rounded-md border px-2 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              >
-                <Plus size={13} />
-                Nuevo
-              </button>
-            </div>
-          </div>
-
-          <div className="border-t" />
-
-          {/* Totales */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Total USD</span>
-              <span className="text-xl font-bold">{formatUsd(totalUsd)}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">Total Bs</span>
-              <span className="text-sm font-semibold text-muted-foreground">{formatBs(totalBs)}</span>
-            </div>
-            <div className="flex items-center justify-between border-t pt-1.5">
-              <span className="text-xs text-muted-foreground">Articulos</span>
-              <span className="text-sm font-medium">{totalItems}</span>
-            </div>
-          </div>
-
-          <div className="border-t" />
-
-          {/* Pagos */}
-          <div className="space-y-3">
-            <p className="text-sm font-semibold">Pagos</p>
-
-            {/* Resumen abonado / pendiente / tipo */}
-            {(pagos.length > 0 || lineas.length > 0) && (
-              <div className="rounded-md bg-muted/50 px-3 py-2.5 space-y-1.5 text-sm">
-                {pagos.length > 0 && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Abonado</span>
-                    <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground">Pendiente</span>
-                  <span className={`font-medium ${pendienteUsd > 0.01 ? 'text-orange-600' : 'text-green-600'}`}>
-                    {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
+              {/* Info de credito del cliente seleccionado */}
+              {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
+                <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">
+                  <span>Credito disponible</span>
+                  <span className={`font-semibold ${
+                    Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)) < pendienteUsd - 0.01
+                      ? 'text-destructive'
+                      : 'text-green-600'
+                  }`}>
+                    {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
+                    {' / '}
+                    <span className="font-normal">{formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
                   </span>
                 </div>
-                <div className="flex items-center justify-between border-t pt-1.5">
-                  <span className="text-muted-foreground">Estado</span>
-                  <span className={`font-semibold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
-                    {tipoDetectado}
-                  </span>
-                </div>
-              </div>
-            )}
+              )}
+            </div>
 
-            {/* Formulario para agregar un pago */}
-            <div className="space-y-2">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="text-xs text-muted-foreground">Metodo</label>
-                  <select
-                    value={metodoId}
-                    onChange={(e) => setMetodoId(e.target.value)}
-                    className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  >
-                    <option value="">Seleccionar...</option>
-                    {metodos.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.nombre} ({m.moneda})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground">
-                    Monto{monedaMetodo ? ` (${monedaMetodo})` : ''}
-                  </label>
-                  <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={monto}
-                    onChange={(e) => setMonto(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
-                    placeholder="0.00"
-                    className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                </div>
+            <div className="border-t" />
+
+            {/* Totales */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Total USD</span>
+                <span className="text-xl font-bold">{formatUsd(totalUsd)}</span>
               </div>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={referencia}
-                  onChange={(e) => setReferencia(e.target.value)}
-                  placeholder="Referencia (opcional)"
-                  autoComplete="off"
-                  className="flex-1 rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={handleAddPago}
-                  disabled={!metodoId || !monto || parseFloat(monto) <= 0}
-                >
-                  <Plus size={14} className="mr-1" />
-                  Agregar
-                </Button>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Total Bs</span>
+                <span className="text-sm font-semibold text-muted-foreground">{formatBs(totalBs)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t pt-1.5">
+                <span className="text-xs text-muted-foreground">Articulos</span>
+                <span className="text-sm font-medium">{totalItems}</span>
               </div>
             </div>
 
-            {/* Lista de pagos registrados */}
-            {pagos.length > 0 && (
-              <div className="space-y-1.5">
-                {pagos.map((p, i) => {
-                  const equiv = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
-                  return (
-                    <div
-                      key={i}
-                      className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm"
-                    >
-                      <div className="min-w-0">
-                        <span className="font-medium">{p.metodo_nombre}</span>
-                        {p.referencia && (
-                          <span className="ml-2 text-xs text-muted-foreground">Ref: {p.referencia}</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span>
-                          {p.moneda === 'BS' ? formatBs(p.monto) : formatUsd(p.monto)}
-                          {p.moneda === 'BS' && (
-                            <span className="ml-1 text-xs text-muted-foreground">({formatUsd(equiv)})</span>
-                          )}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleRemovePago(i)}
-                          className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
+            <div className="border-t" />
+
+            {/* Pagos */}
+            <div className="space-y-3">
+              <p className="text-sm font-semibold">Pagos</p>
+
+              {/* Resumen abonado / pendiente / tipo */}
+              {(pagos.length > 0 || lineas.length > 0) && (
+                <div className="rounded-md bg-muted/50 px-3 py-2.5 space-y-1.5 text-sm">
+                  {pagos.length > 0 && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Abonado</span>
+                      <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
                     </div>
-                  )
-                })}
+                  )}
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Pendiente</span>
+                    <span className={`font-medium ${pendienteUsd > 0.01 ? 'text-orange-600' : 'text-green-600'}`}>
+                      {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between border-t pt-1.5">
+                    <span className="text-muted-foreground">Estado</span>
+                    <span className={`font-semibold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
+                      {tipoDetectado}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Formulario para agregar un pago */}
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs text-muted-foreground">Metodo</label>
+                    <select
+                      value={metodoId}
+                      onChange={(e) => setMetodoId(e.target.value)}
+                      className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value="">Seleccionar...</option>
+                      {metodos.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.nombre} ({m.moneda})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-muted-foreground">
+                      Monto{monedaMetodo ? ` (${monedaMetodo})` : ''}
+                    </label>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={monto}
+                      onChange={(e) => setMonto(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
+                      placeholder="0.00"
+                      className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={referencia}
+                    onChange={(e) => setReferencia(e.target.value)}
+                    placeholder="Referencia (opcional)"
+                    autoComplete="one-time-code"
+                    className="flex-1 rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleAddPago}
+                    disabled={!metodoId || !monto || parseFloat(monto) <= 0}
+                  >
+                    <Plus size={14} className="mr-1" />
+                    Agregar
+                  </Button>
+                </div>
               </div>
-            )}
+
+              {/* Lista de pagos registrados */}
+              {pagos.length > 0 && (
+                <div className="space-y-1.5">
+                  {pagos.map((p, i) => {
+                    const equiv = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
+                    return (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm"
+                      >
+                        <div className="min-w-0">
+                          <span className="font-medium">{p.metodo_nombre}</span>
+                          {p.referencia && (
+                            <span className="ml-2 text-xs text-muted-foreground">Ref: {p.referencia}</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span>
+                            {p.moneda === 'BS' ? formatBs(p.monto) : formatUsd(p.monto)}
+                            {p.moneda === 'BS' && (
+                              <span className="ml-1 text-xs text-muted-foreground">({formatUsd(equiv)})</span>
+                            )}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePago(i)}
+                            className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
           </div>
 
-
+          {/* ── Footer sticky: acciones principales ── */}
+          <div className="shrink-0 border-t bg-card p-4 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={handleGuardarFactura}
+                disabled={submitting || (lineas.length === 0 && cargosEspeciales.length === 0)}
+                size="sm"
+                className="w-full"
+              >
+                <Save size={14} className="mr-1.5" />
+                Guardar
+              </Button>
+              <Button
+                variant={esperaCount > 0 ? 'secondary' : 'outline'}
+                onClick={() => setShowEsperaModal(true)}
+                size="sm"
+                className="w-full"
+              >
+                <List size={14} className="mr-1.5" />
+                {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={handleCancelar}
+                disabled={submitting}
+                size="sm"
+                className="w-full"
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleConfirmVenta}
+                disabled={!puedeConfirmar}
+                size="sm"
+                className={`w-full ${tipoDetectado === 'CREDITO' && tieneContenido && clienteId ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
+              >
+                {tipoDetectado === 'CREDITO' && tieneContenido && clienteId ? (
+                  <CreditCard size={14} className="mr-1.5" />
+                ) : (
+                  <ShoppingCart size={14} className="mr-1.5" />
+                )}
+                {textoConfirmar}
+              </Button>
+            </div>
           </div>
+
         </div>
       </div>
 
       {/* ── DIALOGS ── */}
+
+      <VentaExitosaModal
+        isOpen={!!ventaExitosa}
+        data={ventaExitosa}
+        onClose={() => setVentaExitosa(null)}
+      />
 
       {confirmConfig && (
         <ConfirmDialog

@@ -23,7 +23,6 @@ export function CxcList() {
   const { tasaValor } = useTasaActual()
 
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteConDeuda | null>(null)
-  const [detalleOpen, setDetalleOpen] = useState(false)
   const [sortField, setSortField] = useState<SortField>('saldo_actual')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
 
@@ -54,7 +53,6 @@ export function CxcList() {
     return sortDir === 'asc' ? cmp : -cmp
   })
 
-  // Totales
   const totalDeuda = clientes.reduce((sum, c) => sum + parseFloat(c.saldo_actual), 0)
   const totalClientes = clientes.length
   const totalFacturas = clientes.reduce((sum, c) => sum + Number(c.facturas_pendientes), 0)
@@ -73,10 +71,8 @@ export function CxcList() {
 
   const handleSelectCliente = (cliente: ClienteConDeuda) => {
     setClienteSeleccionado(cliente)
-    setDetalleOpen(true)
   }
 
-  // Derivar cliente desde el array reactivo para que saldo_actual se actualice en tiempo real
   const clienteActual = clienteSeleccionado
     ? (allClientes.find(c => c.id === clienteSeleccionado.id) ?? clienteSeleccionado)
     : null
@@ -113,109 +109,112 @@ export function CxcList() {
         </div>
       </div>
 
-      {/* Search + Table card */}
-      <div className="rounded-xl bg-card shadow-md p-4 space-y-3">
-        {/* Search + Reportes */}
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1">
-            <Search
-              size={16}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-            />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Buscar cliente por nombre o identificacion..."
-              className="w-full rounded-md border border-input bg-white pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground"
-            />
+      {/* Search + Table + Detail split layout */}
+      <div className={clienteSeleccionado ? 'grid grid-cols-1 xl:grid-cols-[2fr_3fr] gap-4 items-start' : ''}>
+        {/* Search + Table card */}
+        <div className="rounded-xl bg-card shadow-md p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar cliente por nombre o identificacion..."
+                className="w-full rounded-md border border-input bg-white pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground"
+              />
+            </div>
+            <CxcReportesGeneral clientes={clientesSorted} />
           </div>
-          <CxcReportesGeneral clientes={clientesSorted} />
+
+          {isLoading ? (
+            <div className="space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-14 bg-muted rounded animate-pulse" />
+              ))}
+            </div>
+          ) : clientes.length === 0 ? (
+            <div className="text-center py-12 border border-dashed rounded-lg">
+              <DollarSign size={40} className="mx-auto text-muted-foreground/30 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">
+                {isSearching ? 'Sin resultados' : 'No hay clientes con deuda pendiente'}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {isSearching
+                  ? 'Intenta con otro termino de busqueda'
+                  : 'Las deudas se generan al crear ventas a credito'}
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto border rounded-lg">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/50">
+                    {thSort('identificacion', 'Identificacion', 'left')}
+                    {thSort('nombre', 'Cliente', 'left')}
+                    <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Telefono</th>
+                    {thSort('facturas_pendientes', 'Facturas', 'center')}
+                    {thSort('saldo_actual', 'Deuda USD', 'right')}
+                    <th className="text-right px-4 py-3 font-medium hidden md:table-cell">Deuda Bs</th>
+                    {thSort('limite_credito_usd', 'Limite', 'right', 'hidden lg:table-cell')}
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientesSorted.map((c) => {
+                    const saldo = parseFloat(c.saldo_actual)
+                    const limite = parseFloat(c.limite_credito_usd)
+                    const excedido = limite > 0 && saldo > limite
+                    const isSelected = clienteSeleccionado?.id === c.id
+                    return (
+                      <tr
+                        key={c.id}
+                        className={`border-b border-muted transition-colors cursor-pointer ${isSelected ? 'bg-primary/5' : 'hover:bg-muted/30'}`}
+                        onClick={() => handleSelectCliente(c)}
+                      >
+                        <td className="px-4 py-3 font-mono text-xs">{c.identificacion}</td>
+                        <td className="px-4 py-3 font-medium">{c.nombre}</td>
+                        <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">
+                          {c.telefono || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <span className="inline-flex items-center justify-center rounded-full bg-red-50 text-red-700 text-xs font-medium px-2 py-0.5 ring-1 ring-red-600/20 ring-inset">
+                            {c.facturas_pendientes}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold text-red-600">
+                          {formatUsd(saldo)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-muted-foreground hidden md:table-cell">
+                          {tasaValor > 0 ? formatBs(usdToBs(saldo, tasaValor)) : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-right hidden lg:table-cell">
+                          <span className={excedido ? 'text-destructive font-medium' : 'text-muted-foreground'}>
+                            {formatUsd(limite)}
+                          </span>
+                          {excedido && (
+                            <span className="ml-1 text-xs text-destructive">Excedido</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
-        {/* Table */}
-        {isLoading ? (
-          <div className="space-y-2">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="h-14 bg-muted rounded animate-pulse" />
-            ))}
-          </div>
-        ) : clientes.length === 0 ? (
-          <div className="text-center py-12 border border-dashed rounded-lg">
-            <DollarSign size={40} className="mx-auto text-muted-foreground/30 mb-3" />
-            <p className="text-sm font-medium text-muted-foreground">
-              {isSearching ? 'Sin resultados' : 'No hay clientes con deuda pendiente'}
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              {isSearching
-                ? 'Intenta con otro termino de busqueda'
-                : 'Las deudas se generan al crear ventas a credito'}
-            </p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto border rounded-lg">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  {thSort('identificacion', 'Identificacion', 'left')}
-                  {thSort('nombre', 'Cliente', 'left')}
-                  <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">Telefono</th>
-                  {thSort('facturas_pendientes', 'Facturas', 'center')}
-                  {thSort('saldo_actual', 'Deuda USD', 'right')}
-                  <th className="text-right px-4 py-3 font-medium hidden md:table-cell">Deuda Bs</th>
-                  {thSort('limite_credito_usd', 'Limite', 'right', 'hidden lg:table-cell')}
-                </tr>
-              </thead>
-              <tbody>
-                {clientesSorted.map((c) => {
-                  const saldo = parseFloat(c.saldo_actual)
-                  const limite = parseFloat(c.limite_credito_usd)
-                  const excedido = limite > 0 && saldo > limite
-                  return (
-                    <tr
-                      key={c.id}
-                      className="border-b border-muted hover:bg-muted/30 transition-colors cursor-pointer"
-                      onClick={() => handleSelectCliente(c)}
-                    >
-                      <td className="px-4 py-3 font-mono text-xs">{c.identificacion}</td>
-                      <td className="px-4 py-3 font-medium">{c.nombre}</td>
-                      <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">
-                        {c.telefono || '-'}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className="inline-flex items-center justify-center rounded-full bg-red-50 text-red-700 text-xs font-medium px-2 py-0.5 ring-1 ring-red-600/20 ring-inset">
-                          {c.facturas_pendientes}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-right font-bold text-red-600">
-                        {formatUsd(saldo)}
-                      </td>
-                      <td className="px-4 py-3 text-right text-muted-foreground hidden md:table-cell">
-                        {tasaValor > 0 ? formatBs(usdToBs(saldo, tasaValor)) : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-right hidden lg:table-cell">
-                        <span className={excedido ? 'text-destructive font-medium' : 'text-muted-foreground'}>
-                          {formatUsd(limite)}
-                        </span>
-                        {excedido && (
-                          <span className="ml-1 text-xs text-destructive">Excedido</span>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+        {/* Panel de detalle (inline, sticky) */}
+        {clienteSeleccionado && clienteActual && (
+          <CxcClienteDetalle
+            cliente={clienteActual}
+            onClose={() => setClienteSeleccionado(null)}
+          />
         )}
       </div>
-
-      {/* Detail modal */}
-      <CxcClienteDetalle
-        isOpen={detalleOpen}
-        onClose={() => setDetalleOpen(false)}
-        cliente={clienteActual}
-      />
     </div>
   )
 }

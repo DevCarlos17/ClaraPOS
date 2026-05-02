@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
 import { X, DollarSign, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -11,9 +11,8 @@ import { CxcClienteReporte } from './cxc-cliente-reporte'
 import type { VentaPendiente } from '../hooks/use-cxc'
 
 interface CxcClienteDetalleProps {
-  isOpen: boolean
   onClose: () => void
-  cliente: ClienteConDeuda | null
+  cliente: ClienteConDeuda
 }
 
 type SortField = 'nro_factura' | 'fecha' | 'total_usd' | 'saldo_pend_usd'
@@ -38,10 +37,9 @@ function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: 
     : <ArrowDown size={11} className="ml-1 text-primary inline" />
 }
 
-export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetalleProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) {
   const { tasaValor } = useTasaActual()
-  const { facturas, isLoading } = useFacturasPendientes(cliente?.id ?? null)
+  const { facturas, isLoading } = useFacturasPendientes(cliente.id)
 
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
   const [pagoFacturaOpen, setPagoFacturaOpen] = useState(false)
@@ -50,18 +48,6 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
 
   const [sortField, setSortField] = useState<SortField>('fecha')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
-
-  useEffect(() => {
-    if (isOpen) {
-      dialogRef.current?.showModal()
-    } else {
-      dialogRef.current?.close()
-    }
-  }, [isOpen])
-
-  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
-    if (e.target === dialogRef.current) onClose()
-  }
 
   const handlePagarFactura = (factura: VentaPendiente, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -103,8 +89,6 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
     return sortDir === 'asc' ? cmp : -cmp
   })
 
-  if (!cliente) return null
-
   const saldo = parseFloat(cliente.saldo_actual)
 
   const thSort = (field: SortField, label: string, align: string = 'left') => (
@@ -119,15 +103,10 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
 
   return (
     <>
-      <dialog
-        ref={dialogRef}
-        onClose={onClose}
-        onClick={handleBackdropClick}
-        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-2xl shadow-xl"
-      >
-        <div className="p-6">
+      <div className="rounded-xl bg-card shadow-md overflow-hidden lg:sticky lg:top-6">
+        <div className="p-5 overflow-y-auto max-h-[calc(100vh-8rem)] space-y-4">
           {/* Header */}
-          <div className="flex items-start justify-between mb-4">
+          <div className="flex items-start justify-between">
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm text-muted-foreground">
@@ -145,7 +124,7 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
           </div>
 
           {/* Saldo */}
-          <div className="rounded-lg border bg-red-50 p-4 mb-4">
+          <div className="rounded-lg border bg-red-50 p-4">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-red-700/70">Deuda Total</p>
@@ -234,17 +213,9 @@ export function CxcClienteDetalle({ isOpen, onClose, cliente }: CxcClienteDetall
               </div>
             )}
           </div>
-
-          {/* Cerrar */}
-          <div className="flex justify-end pt-4">
-            <Button variant="outline" onClick={onClose}>
-              Cerrar
-            </Button>
-          </div>
         </div>
-      </dialog>
+      </div>
 
-      {/* Sub-modals */}
       <PagoFacturaModal
         isOpen={pagoFacturaOpen}
         onClose={() => setPagoFacturaOpen(false)}

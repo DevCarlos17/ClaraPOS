@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useRef } from 'react'
 import { useQuery } from '@powersync/react'
 import { X, Phone, MapPin, CreditCard, RotateCcw, Printer, Calendar } from 'lucide-react'
 import { toast } from 'sonner'
@@ -16,9 +16,8 @@ import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 
 interface ClienteDetalleProps {
-  isOpen: boolean
   onClose: () => void
-  cliente?: Cliente
+  cliente: Cliente
 }
 
 const TIPO_LABELS: Record<string, { label: string; color: string }> = {
@@ -225,7 +224,7 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/60 rounded-xl shadow-2xl p-0 w-full max-w-sm mx-4 border bg-card"
+      className="m-auto backdrop:bg-black/60 rounded-xl shadow-2xl p-0 w-full max-w-sm mx-4 border bg-card"
     >
       <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
@@ -283,37 +282,36 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
 // ClienteDetalle
 // =============================================
 
-export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
+export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
 
-  // Date filter state
   const [fechaDesde, setFechaDesde] = useState('')
   const [fechaHasta, setFechaHasta] = useState('')
 
+  useEffect(() => {
+    setFechaDesde('')
+    setFechaHasta('')
+  }, [cliente.id])
+
   const { movimientos, isLoading } = useMovimientosClienteFiltrados(
-    isOpen ? cliente?.id : undefined,
+    cliente.id,
     { fechaDesde: fechaDesde || undefined, fechaHasta: fechaHasta || undefined }
   )
-  const { total: totalMovimientos } = useCountMovimientosCliente(isOpen ? cliente?.id : undefined)
-  const { pagos } = usePagosCliente(isOpen ? (cliente?.id ?? null) : null)
+  const { total: totalMovimientos } = useCountMovimientosCliente(cliente.id)
+  const { pagos } = usePagosCliente(cliente.id)
 
-  // Live saldo — reacts to changes after reversals
   const { data: saldoData } = useQuery(
-    cliente?.id ? 'SELECT saldo_actual FROM clientes WHERE id = ?' : '',
-    cliente?.id ? [cliente.id] : []
+    'SELECT saldo_actual FROM clientes WHERE id = ?',
+    [cliente.id]
   )
   const saldo = parseFloat(
     (saldoData?.[0] as { saldo_actual: string } | undefined)?.saldo_actual ??
-    cliente?.saldo_actual ??
+    cliente.saldo_actual ??
     '0'
   )
 
-  // Build pago lookup: key = "venta_id:fecha" → pago
-  // Matches PAG movements (from registrarPagoFactura) to their individual pago record.
-  // ABONO-GLOBAL movements have venta_id = null so they won't match — no reversal for those.
   const pagoMap = useMemo(() => {
     const map = new Map<string, PagoClienteCxc>()
     pagos.forEach((p) => {
@@ -324,28 +322,12 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
     return map
   }, [pagos])
 
-  // Reverso state
   const [pagoAReverse, setPagoAReverse] = useState<PagoClienteCxc | null>(null)
   const [showPinDialog, setShowPinDialog] = useState(false)
   const [showReasonDialog, setShowReasonDialog] = useState(false)
   const [supervisorId, setSupervisorId] = useState<string | null>(null)
   const [reversing, setReversing] = useState(false)
 
-  useEffect(() => {
-    if (isOpen) {
-      dialogRef.current?.showModal()
-    } else {
-      dialogRef.current?.close()
-      setFechaDesde('')
-      setFechaHasta('')
-    }
-  }, [isOpen])
-
-  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
-    if (e.target === dialogRef.current) onClose()
-  }
-
-  // ---- Reverso flow ----
   function handleReversar(pago: PagoClienteCxc) {
     setPagoAReverse(pago)
     if (hasPermission(PERMISSIONS.CXC_REVERSE)) {
@@ -397,9 +379,7 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
     setPagoAReverse(null)
   }
 
-  // ---- Report ----
   function handleGenerarReporte() {
-    if (!cliente) return
     generarReporteEstadoCuenta(cliente, movimientos, {
       fechaDesde: fechaDesde || undefined,
       fechaHasta: fechaHasta || undefined,
@@ -408,19 +388,12 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
     })
   }
 
-  if (!cliente) return null
-
   const hasFilter = !!fechaDesde || !!fechaHasta
 
   return (
     <>
-      <dialog
-        ref={dialogRef}
-        onClose={onClose}
-        onClick={handleBackdropClick}
-        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-4xl shadow-xl"
-      >
-        <div className="p-6 max-h-[90vh] overflow-y-auto">
+      <div className="rounded-xl bg-card shadow-md overflow-hidden lg:sticky lg:top-6">
+        <div className="p-5 overflow-y-auto max-h-[calc(100vh-8rem)]">
           {/* Header */}
           <div className="flex items-start justify-between mb-5">
             <div>
@@ -567,7 +540,6 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
                         label: mov.tipo,
                         color: 'bg-gray-50 text-gray-700 ring-gray-600/20',
                       }
-                      // Match PAG movements with venta_id to their individual pago record
                       const matchedPago =
                         mov.tipo === 'PAG' && mov.venta_id
                           ? pagoMap.get(`${mov.venta_id}:${mov.fecha}`)
@@ -648,20 +620,9 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
               </div>
             )}
           </div>
-
-          {/* Footer */}
-          <div className="flex justify-end pt-2">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium rounded-md border hover:bg-muted transition-colors cursor-pointer"
-            >
-              Cerrar
-            </button>
-          </div>
         </div>
-      </dialog>
+      </div>
 
-      {/* PIN supervisor dialog */}
       <SupervisorPinDialog
         isOpen={showPinDialog}
         onClose={handleClosePin}
@@ -671,7 +632,6 @@ export function ClienteDetalle({ isOpen, onClose, cliente }: ClienteDetalleProps
         requiredPermission={PERMISSIONS.CXC_REVERSE}
       />
 
-      {/* Reason dialog */}
       <ReversarAbonoDialog
         isOpen={showReasonDialog}
         pago={pagoAReverse}

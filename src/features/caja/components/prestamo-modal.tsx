@@ -391,7 +391,7 @@ export function PrestamoModal({
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl"
+      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl m-auto"
     >
       <div className="p-6">
         <div className="flex items-center gap-2 mb-1">

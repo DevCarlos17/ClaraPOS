@@ -491,7 +491,7 @@ export function SesionCajaForm({ mode, isOpen, onClose, sesionId }: SesionCajaFo
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl"
+      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl m-auto"
     >
       <div className="p-6">
         <h2 className="text-lg font-semibold mb-4">{titulo}</h2>
