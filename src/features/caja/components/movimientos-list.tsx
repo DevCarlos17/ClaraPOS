@@ -6,6 +6,7 @@ import { usePaymentMethods } from '@/features/configuracion/hooks/use-payment-me
 import { useBancos } from '@/features/configuracion/hooks/use-bancos'
 import { formatDate } from '@/lib/format'
 import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
+import { NativeSelect } from '@/components/ui/native-select'
 
 // ─── Badge helpers ────────────────────────────────────────────
 
@@ -142,11 +143,10 @@ function TabMetodoCobro() {
           <label className="block text-xs font-medium text-muted-foreground mb-1">
             Metodo de Cobro
           </label>
-          <select
+          <NativeSelect
             value={selectedMetodoId ?? ''}
             onChange={(e) => setSelectedMetodoId(e.target.value || null)}
             disabled={isLoadingMetodos}
-            className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Seleccionar metodo...</option>
             {methods.map((m) => (
@@ -154,7 +154,7 @@ function TabMetodoCobro() {
                 {m.nombre}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
 
         <div>
@@ -266,11 +266,10 @@ function TabBancarios() {
           <label className="block text-xs font-medium text-muted-foreground mb-1">
             Banco
           </label>
-          <select
+          <NativeSelect
             value={selectedBancoId ?? ''}
             onChange={(e) => setSelectedBancoId(e.target.value || null)}
             disabled={isLoadingBancos}
-            className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Seleccionar banco...</option>
             {bancos.map((b) => (
@@ -278,7 +277,7 @@ function TabBancarios() {
                 {b.nombre_banco}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
 
         <div>

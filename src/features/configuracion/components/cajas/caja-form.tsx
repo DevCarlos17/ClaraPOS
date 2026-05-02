@@ -8,6 +8,7 @@ import {
 } from '@/features/configuracion/hooks/use-cajas'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface CajaFormProps {
   isOpen: boolean
@@ -165,14 +166,12 @@ export function CajaForm({ isOpen, onClose, caja }: CajaFormProps) {
             <label htmlFor="caja-deposito" className="block text-sm font-medium text-muted-foreground mb-1">
               Deposito <span className="text-muted-foreground/60 font-normal">(opcional)</span>
             </label>
-            <select
+            <NativeSelect
               id="caja-deposito"
               value={depositoId}
               onChange={(e) => setDepositoId(e.target.value)}
               disabled={loadingDepositos}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                loadingDepositos ? 'text-muted-foreground' : ''
-              } ${errors.deposito_id ? 'border-red-500' : 'border-input'}`}
+              className={loadingDepositos ? 'text-muted-foreground' : undefined}
             >
               <option value="">Sin deposito</option>
               {depositos.map((d) => (
@@ -180,7 +179,7 @@ export function CajaForm({ isOpen, onClose, caja }: CajaFormProps) {
                   {d.nombre}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
             {errors.deposito_id && (
               <p className="text-red-500 text-xs mt-1">{errors.deposito_id}</p>
             )}

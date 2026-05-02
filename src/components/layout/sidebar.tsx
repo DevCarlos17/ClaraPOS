@@ -276,7 +276,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           <button
             onClick={() => toggleGroup(item.title)}
             className={cn(
-              'flex items-center w-full gap-3 px-4 py-3 rounded-xl transition-all duration-200 active:scale-[0.98]',
+              'flex items-center w-full gap-3 px-4 py-3 rounded-xl transition-all duration-200 active:scale-[0.98] cursor-pointer',
               groupIsActive
                 ? 'text-[var(--color-sidebar-fg)] font-medium'
                 : 'text-[var(--color-sidebar-muted-fg)] hover:text-[var(--color-sidebar-fg)] hover:bg-[var(--color-sidebar-hover)]'
@@ -400,7 +400,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
               <button
                 onClick={handleLogout}
-                className="flex items-center w-full gap-3 p-3 rounded-xl text-destructive hover:bg-destructive/10 transition-all duration-200 active:scale-[0.98]"
+                className="flex items-center w-full gap-3 p-3 rounded-xl text-destructive hover:bg-destructive/10 transition-all duration-200 active:scale-[0.98] cursor-pointer"
               >
                 <SignOut size={20} />
                 <span className="text-sm font-medium">Cerrar Sesion</span>
@@ -523,7 +523,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
           <button
             onClick={handleLogout}
             className={cn(
-              'flex items-center h-10 rounded-xl text-[var(--color-sidebar-muted-fg)] hover:text-destructive hover:bg-destructive/10 transition-all duration-300 group active:scale-[0.98] overflow-hidden',
+              'flex items-center h-10 rounded-xl text-[var(--color-sidebar-muted-fg)] hover:text-destructive hover:bg-destructive/10 transition-all duration-300 group active:scale-[0.98] overflow-hidden cursor-pointer',
               isHovered ? 'px-3 w-full' : 'justify-center w-11 mx-auto'
             )}
             title="Cerrar sesion"

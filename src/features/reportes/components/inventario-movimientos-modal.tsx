@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatDateTime } from '@/lib/format'
 import { useMovimientosPeriodo } from '../hooks/use-inventario-reportes'
+import { NativeSelect } from '@/components/ui/native-select'
 
 const LIMITS = [
   { label: '10 movimientos', value: 10 },
@@ -57,15 +58,14 @@ export function InventarioMovimientosModal({ isOpen, onClose, fechaDesde, fechaH
             <h2 className="text-lg font-semibold">Movimientos del Periodo</h2>
             <p className="text-xs text-gray-500 mt-0.5">{fechaDesde} — {fechaHasta}</p>
           </div>
-          <select
+          <NativeSelect
             value={limit}
             onChange={(e) => setLimit(Number(e.target.value))}
-            className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
             {LIMITS.map((l) => (
               <option key={l.value} value={l.value}>{l.label}</option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
 
         {isLoading ? (

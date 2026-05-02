@@ -9,6 +9,7 @@ import { registrarAbonoGlobal, useFacturasPendientes } from '../hooks/use-cxc'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface AbonoGlobalModalProps {
   isOpen: boolean
@@ -208,13 +209,13 @@ export function AbonoGlobalModal({
           {/* Metodo de pago */}
           <div>
             <label className="text-xs font-medium text-muted-foreground">Metodo de pago</label>
-            <select
+            <NativeSelect
               value={metodoPagoId}
               onChange={(e) => {
                 setMetodoPagoId(e.target.value)
                 setMontoStr('')
               }}
-              className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              wrapperClassName="mt-1"
             >
               <option value="">Seleccionar...</option>
               {metodos.map((m) => (
@@ -222,7 +223,7 @@ export function AbonoGlobalModal({
                   {m.nombre} ({m.moneda})
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
 
           {/* Monto */}

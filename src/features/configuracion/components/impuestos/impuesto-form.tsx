@@ -7,6 +7,7 @@ import {
   type Impuesto,
 } from '@/features/configuracion/hooks/use-impuestos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface ImpuestoFormProps {
   isOpen: boolean
@@ -155,18 +156,15 @@ export function ImpuestoForm({ isOpen, onClose, impuesto }: ImpuestoFormProps) {
             <label htmlFor="imp-tipo" className="block text-sm font-medium text-gray-700 mb-1">
               Tipo de tributo
             </label>
-            <select
+            <NativeSelect
               id="imp-tipo"
               value={tipoTributo}
               onChange={(e) => setTipoTributo(e.target.value as 'IVA' | 'IGTF' | 'INCO')}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                errors.tipo_tributo ? 'border-red-500' : 'border-gray-300'
-              }`}
             >
               <option value="IVA">IVA - Impuesto al Valor Agregado</option>
               <option value="IGTF">IGTF - Impuesto a las Grandes Transacciones Financieras</option>
               <option value="INCO">INCO - Impuesto No Constitutivo</option>
-            </select>
+            </NativeSelect>
             {errors.tipo_tributo && (
               <p className="text-red-500 text-xs mt-1">{errors.tipo_tributo}</p>
             )}

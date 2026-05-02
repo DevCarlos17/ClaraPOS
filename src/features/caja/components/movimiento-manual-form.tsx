@@ -10,6 +10,7 @@ import {
   tipoDeOrigen,
   type OrigenManual,
 } from '@/features/caja/schemas/movimiento-manual-schema'
+import { NativeSelect } from '@/components/ui/native-select'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -159,17 +160,16 @@ function FormMovimientoManual({
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Tipo de Operacion
         </label>
-        <select
+        <NativeSelect
           value={origen}
           onChange={(e) => setOrigen(e.target.value as OrigenManual)}
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           {ORIGENES.map((o) => (
             <option key={o} value={o}>
               {ORIGEN_LABELS[o]}
             </option>
           ))}
-        </select>
+        </NativeSelect>
         {soloEfectivo && (
           <p className="text-xs text-amber-600 mt-1">
             Este tipo solo aplica a metodos de cobro en Efectivo
@@ -182,13 +182,10 @@ function FormMovimientoManual({
         <label className="block text-sm font-medium text-gray-700 mb-1">
           Metodo de Cobro
         </label>
-        <select
+        <NativeSelect
           value={metodoCobroId}
           onChange={(e) => setMetodoCobroId(e.target.value)}
           disabled={loadingMetodos}
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            errors.metodo_cobro_id ? 'border-red-500' : 'border-gray-300'
-          }`}
         >
           <option value="">
             {loadingMetodos ? 'Cargando...' : 'Seleccionar metodo'}
@@ -198,7 +195,7 @@ function FormMovimientoManual({
               {m.nombre} ({m.moneda})
             </option>
           ))}
-        </select>
+        </NativeSelect>
         {errors.metodo_cobro_id && (
           <p className="text-red-500 text-xs mt-1">{errors.metodo_cobro_id}</p>
         )}

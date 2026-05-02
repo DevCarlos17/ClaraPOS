@@ -11,6 +11,7 @@ import {
 import { LibroContableForm } from './libro-contable-form'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { MODULO_LABELS } from '@/features/contabilidad/schemas/libro-contable-schema'
+import { NativeSelect } from '@/components/ui/native-select'
 
 // ─── Badges ───────────────────────────────────────────────────
 
@@ -74,29 +75,27 @@ function FiltroPanel({ filtros, onChange }: FiltroPanelProps) {
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Modulo</label>
-        <select
+        <NativeSelect
           value={filtros.modulo ?? ''}
           onChange={(e) => onChange({ ...filtros, modulo: e.target.value || undefined })}
-          className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="">Todos</option>
           {Object.entries(MODULO_LABELS).map(([k, v]) => (
             <option key={k} value={k}>{v}</option>
           ))}
-        </select>
+        </NativeSelect>
       </div>
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">Estado</label>
-        <select
+        <NativeSelect
           value={filtros.estado ?? ''}
           onChange={(e) => onChange({ ...filtros, estado: e.target.value || undefined })}
-          className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500"
         >
           <option value="">Todos</option>
           <option value="PENDIENTE">Pendiente</option>
           <option value="CONCILIADO">Conciliado</option>
           <option value="ANULADO">Anulado</option>
-        </select>
+        </NativeSelect>
       </div>
     </div>
   )

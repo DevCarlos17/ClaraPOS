@@ -15,6 +15,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface PagoGastoCxpModalProps {
   open: boolean
@@ -210,13 +211,12 @@ export function PagoGastoCxpModal({
           {/* Metodo de pago */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Metodo de pago</label>
-            <select
+            <NativeSelect
               value={metodoCobro}
               onChange={(e) => {
                 setMetodoCobro(e.target.value)
                 setMonto('')
               }}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="">Seleccionar...</option>
               {metodos.map((m) => (
@@ -224,7 +224,7 @@ export function PagoGastoCxpModal({
                   {m.nombre} ({m.moneda})
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
 
           {/* Monto */}

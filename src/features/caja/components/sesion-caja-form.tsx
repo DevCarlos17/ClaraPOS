@@ -12,6 +12,7 @@ import {
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { NativeSelect } from '@/components/ui/native-select'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -100,14 +101,11 @@ function FormApertura({ onClose }: { onClose: () => void }) {
         <label htmlFor="apertura-caja" className="block text-sm font-medium text-gray-700 mb-1">
           Caja
         </label>
-        <select
+        <NativeSelect
           id="apertura-caja"
           value={cajaId}
           onChange={(e) => setCajaId(e.target.value)}
           disabled={loadingCajas}
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            errors.caja_id ? 'border-red-500' : 'border-gray-300'
-          }`}
         >
           <option value="">
             {loadingCajas ? 'Cargando cajas...' : 'Seleccionar caja'}
@@ -117,7 +115,7 @@ function FormApertura({ onClose }: { onClose: () => void }) {
               {c.nombre}
             </option>
           ))}
-        </select>
+        </NativeSelect>
         {errors.caja_id && (
           <p className="text-red-500 text-xs mt-1">{errors.caja_id}</p>
         )}

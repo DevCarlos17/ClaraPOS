@@ -6,6 +6,7 @@ import { useCompras } from '@/features/inventario/hooks/use-compras'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface NotaFiscalCompraFormProps {
   isOpen: boolean
@@ -124,14 +125,11 @@ export function NotaFiscalCompraForm({ isOpen, onClose }: NotaFiscalCompraFormPr
             <label htmlFor="nf-proveedor" className="block text-sm font-medium text-gray-700 mb-1">
               Proveedor
             </label>
-            <select
+            <NativeSelect
               id="nf-proveedor"
               value={proveedorId}
               onChange={(e) => setProveedorId(e.target.value)}
               disabled={loadingProveedores}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.proveedor_id ? 'border-red-500' : 'border-gray-300'
-              }`}
             >
               <option value="">
                 {loadingProveedores ? 'Cargando...' : 'Seleccionar proveedor'}
@@ -141,7 +139,7 @@ export function NotaFiscalCompraForm({ isOpen, onClose }: NotaFiscalCompraFormPr
                   {p.rif} - {p.razon_social}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
             {errors.proveedor_id && (
               <p className="text-red-500 text-xs mt-1">{errors.proveedor_id}</p>
             )}
@@ -153,12 +151,11 @@ export function NotaFiscalCompraForm({ isOpen, onClose }: NotaFiscalCompraFormPr
               Factura de Compra{' '}
               <span className="text-gray-400 font-normal">- Opcional</span>
             </label>
-            <select
+            <NativeSelect
               id="nf-factura"
               value={facturaCompraId}
               onChange={(e) => setFacturaCompraId(e.target.value)}
               disabled={loadingCompras}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">
                 {loadingCompras ? 'Cargando...' : 'Sin factura asociada'}
@@ -168,7 +165,7 @@ export function NotaFiscalCompraForm({ isOpen, onClose }: NotaFiscalCompraFormPr
                   {c.nro_factura} - {c.proveedor_nombre}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
 
           {/* Tipo */}
@@ -176,17 +173,14 @@ export function NotaFiscalCompraForm({ isOpen, onClose }: NotaFiscalCompraFormPr
             <label htmlFor="nf-tipo" className="block text-sm font-medium text-gray-700 mb-1">
               Tipo
             </label>
-            <select
+            <NativeSelect
               id="nf-tipo"
               value={tipo}
               onChange={(e) => setTipo(e.target.value as 'NC' | 'ND')}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.tipo ? 'border-red-500' : 'border-gray-300'
-              }`}
             >
               <option value="NC">NC - Nota de Credito</option>
               <option value="ND">ND - Nota de Debito</option>
-            </select>
+            </NativeSelect>
             {errors.tipo && (
               <p className="text-red-500 text-xs mt-1">{errors.tipo}</p>
             )}

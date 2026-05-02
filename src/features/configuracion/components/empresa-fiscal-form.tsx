@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { useEmpresaFiscal, actualizarEmpresaFiscal } from '../hooks/use-empresa-fiscal'
+import { NativeSelect } from '@/components/ui/native-select'
 
 export function EmpresaFiscalForm() {
   const { fiscal, isLoading } = useEmpresaFiscal()
@@ -82,28 +83,26 @@ export function EmpresaFiscalForm() {
     <form onSubmit={handleSubmit} className="space-y-4 max-w-lg">
       <div className="space-y-1.5">
         <Label htmlFor="fiscal-tipo-contribuyente">Tipo Contribuyente</Label>
-        <select
+        <NativeSelect
           id="fiscal-tipo-contribuyente"
           value={tipoContribuyente}
           onChange={(e) => setTipoContribuyente(e.target.value)}
           disabled={isSubmitting}
-          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
           <option value="">Seleccione</option>
           <option value="Ordinario">Ordinario</option>
           <option value="Especial">Especial</option>
           <option value="Formal">Formal</option>
-        </select>
+        </NativeSelect>
       </div>
 
       <div className="space-y-1.5">
         <Label htmlFor="fiscal-tipo-doc">Tipo Documento</Label>
-        <select
+        <NativeSelect
           id="fiscal-tipo-doc"
           value={tipoDocumento}
           onChange={(e) => setTipoDocumento(e.target.value)}
           disabled={isSubmitting}
-          className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground disabled:pointer-events-none disabled:opacity-50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
         >
           <option value="">Seleccione</option>
           <option value="V">V</option>
@@ -111,7 +110,7 @@ export function EmpresaFiscalForm() {
           <option value="E">E</option>
           <option value="G">G</option>
           <option value="P">P</option>
-        </select>
+        </NativeSelect>
       </div>
 
       <div className="space-y-1.5">

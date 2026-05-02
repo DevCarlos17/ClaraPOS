@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { abrirSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface AperturaSesionPosModalProps {
   onAbierta: () => void
@@ -81,19 +82,16 @@ export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosMod
           {/* Caja */}
           <div>
             <label className="block text-sm font-medium mb-1">Caja</label>
-            <select
+            <NativeSelect
               value={cajaId}
               onChange={(e) => setCajaId(e.target.value)}
               disabled={loadingCajas}
-              className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary ${
-                errors.caja_id ? 'border-destructive' : 'border-input'
-              }`}
             >
               <option value="">{loadingCajas ? 'Cargando...' : 'Seleccionar caja'}</option>
               {cajas.map((c) => (
                 <option key={c.id} value={c.id}>{c.nombre}</option>
               ))}
-            </select>
+            </NativeSelect>
             {errors.caja_id && (
               <p className="text-xs text-destructive mt-1">{errors.caja_id}</p>
             )}

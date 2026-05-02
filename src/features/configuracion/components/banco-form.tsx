@@ -10,6 +10,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCuentasDetalle, crearCuenta } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { db } from '@/core/db/powersync/db'
 import { Plus } from '@phosphor-icons/react'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface BancoFormProps {
   isOpen: boolean
@@ -252,17 +253,16 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             <label htmlFor="banco-tipo" className="block text-sm font-medium text-gray-700 mb-1">
               Tipo de Cuenta
             </label>
-            <select
+            <NativeSelect
               id="banco-tipo"
               value={tipoCuenta}
               onChange={(e) => setTipoCuenta(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">-- Sin especificar --</option>
               <option value="CORRIENTE">Corriente</option>
               <option value="AHORRO">Ahorro</option>
               <option value="DIGITAL">Digital</option>
-            </select>
+            </NativeSelect>
           </div>
 
           {/* Titular */}
@@ -306,17 +306,17 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
               Cuenta Contable <span className="text-gray-400 font-normal">(opcional)</span>
             </label>
             <div className="flex gap-2">
-              <select
+              <NativeSelect
                 id="banco-cuenta-contable"
                 value={cuentaContableId}
                 onChange={(e) => setCuentaContableId(e.target.value)}
-                className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="flex-1"
               >
                 <option value="">-- Sin asignar --</option>
                 {cuentas.map((c) => (
                   <option key={c.id} value={c.id}>{c.codigo} - {c.nombre}</option>
                 ))}
-              </select>
+              </NativeSelect>
               <button
                 type="button"
                 onClick={handleCrearCuentaContable}

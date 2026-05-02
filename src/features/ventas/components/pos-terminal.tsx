@@ -23,6 +23,7 @@ import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
 import { NuevoClienteRapidoModal } from './nuevo-cliente-rapido-modal'
 import { VentaExitosaModal, type VentaExitosaData } from './venta-exitosa-modal'
+import { NativeSelect } from '@/components/ui/native-select'
 import { AperturaSesionPosModal } from '@/features/caja/components/apertura-sesion-pos-modal'
 import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
 import { IngresoRetiroModal } from '@/features/caja/components/ingreso-retiro-modal'
@@ -834,10 +835,9 @@ export function PosTerminal() {
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-xs text-muted-foreground">Metodo</label>
-                    <select
+                    <NativeSelect
                       value={metodoId}
                       onChange={(e) => setMetodoId(e.target.value)}
-                      className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                     >
                       <option value="">Seleccionar...</option>
                       {metodos.map((m) => (
@@ -845,7 +845,7 @@ export function PosTerminal() {
                           {m.nombre} ({m.moneda})
                         </option>
                       ))}
-                    </select>
+                    </NativeSelect>
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground">

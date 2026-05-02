@@ -9,6 +9,7 @@ import {
 } from '@/features/configuracion/hooks/use-payment-methods'
 import { useBancosActivos } from '@/features/configuracion/hooks/use-bancos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface PaymentMethodFormProps {
   isOpen: boolean
@@ -164,7 +165,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
             <label htmlFor="mp-tipo" className="block text-sm font-medium text-gray-700 mb-1">
               Tipo
             </label>
-            <select
+            <NativeSelect
               id="mp-tipo"
               value={tipo}
               onChange={(e) => {
@@ -173,14 +174,11 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
                   setBancoEmpresaId('')
                 }
               }}
-              className={`w-full rounded-md border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.tipo ? 'border-red-500' : 'border-gray-300'
-              }`}
             >
               {TIPOS_METODO.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
-            </select>
+            </NativeSelect>
             {errors.tipo && (
               <p className="text-red-500 text-xs mt-1">{errors.tipo}</p>
             )}
@@ -191,18 +189,16 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
             <label htmlFor="mp-currency" className="block text-sm font-medium text-gray-700 mb-1">
               Moneda
             </label>
-            <select
+            <NativeSelect
               id="mp-currency"
               value={currency}
               onChange={(e) => setCurrency(e.target.value as 'USD' | 'BS')}
               disabled={isEditing}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                isEditing ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
-              } ${errors.currency ? 'border-red-500' : 'border-gray-300'}`}
+              className={isEditing ? 'text-gray-500 cursor-not-allowed' : undefined}
             >
               <option value="USD">USD - Dolares</option>
               <option value="BS">BS - Bolivares</option>
-            </select>
+            </NativeSelect>
             {errors.currency && (
               <p className="text-red-500 text-xs mt-1">{errors.currency}</p>
             )}
@@ -222,13 +218,10 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
                   No hay bancos registrados. Cree un banco primero en la seccion de Bancos.
                 </p>
               ) : (
-                <select
+                <NativeSelect
                   id="mp-banco"
                   value={bancoEmpresaId}
                   onChange={(e) => setBancoEmpresaId(e.target.value)}
-                  className={`w-full rounded-md border px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                    errors.banco_empresa_id ? 'border-red-500' : 'border-gray-300'
-                  }`}
                 >
                   <option value="">-- Seleccione un banco --</option>
                   {bancos.map((b) => (
@@ -236,7 +229,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
                       {b.nombre_banco} - {b.nro_cuenta}
                     </option>
                   ))}
-                </select>
+                </NativeSelect>
               )}
               {errors.banco_empresa_id && (
                 <p className="text-red-500 text-xs mt-1">{errors.banco_empresa_id}</p>

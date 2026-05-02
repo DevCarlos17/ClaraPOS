@@ -5,6 +5,7 @@ import { crearRetencionIslr } from '@/features/compras/hooks/use-ret-islr-compra
 import { useCompras } from '@/features/inventario/hooks/use-compras'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { NativeSelect } from '@/components/ui/native-select'
 
 interface RetIslrCompraFormProps {
   isOpen: boolean
@@ -131,14 +132,11 @@ export function RetIslrCompraForm({ isOpen, onClose }: RetIslrCompraFormProps) {
             <label htmlFor="ret-islr-factura" className="block text-sm font-medium text-gray-700 mb-1">
               Factura de Compra
             </label>
-            <select
+            <NativeSelect
               id="ret-islr-factura"
               value={facturaCompraId}
               onChange={(e) => handleFacturaChange(e.target.value)}
               disabled={loadingCompras}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.factura_compra_id ? 'border-red-500' : 'border-gray-300'
-              }`}
             >
               <option value="">
                 {loadingCompras ? 'Cargando...' : 'Seleccionar factura de compra'}
@@ -148,7 +146,7 @@ export function RetIslrCompraForm({ isOpen, onClose }: RetIslrCompraFormProps) {
                   {c.nro_factura} - {c.proveedor_nombre}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
             {errors.factura_compra_id && (
               <p className="text-red-500 text-xs mt-1">{errors.factura_compra_id}</p>
             )}
@@ -159,14 +157,11 @@ export function RetIslrCompraForm({ isOpen, onClose }: RetIslrCompraFormProps) {
             <label htmlFor="ret-islr-proveedor" className="block text-sm font-medium text-gray-700 mb-1">
               Proveedor
             </label>
-            <select
+            <NativeSelect
               id="ret-islr-proveedor"
               value={proveedorId}
               onChange={(e) => setProveedorId(e.target.value)}
               disabled={loadingProveedores}
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.proveedor_id ? 'border-red-500' : 'border-gray-300'
-              }`}
             >
               <option value="">
                 {loadingProveedores ? 'Cargando...' : 'Seleccionar proveedor'}
@@ -176,7 +171,7 @@ export function RetIslrCompraForm({ isOpen, onClose }: RetIslrCompraFormProps) {
                   {p.rif} - {p.razon_social}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
             {errors.proveedor_id && (
               <p className="text-red-500 text-xs mt-1">{errors.proveedor_id}</p>
             )}

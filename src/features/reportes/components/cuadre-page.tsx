@@ -18,6 +18,7 @@ import {
   useTasaDelDia,
   type CuadreFilters,
 } from '../hooks/use-cuadre'
+import { NativeSelect } from '@/components/ui/native-select'
 
 export function CuadrePage() {
   // Funnel state
@@ -98,26 +99,26 @@ export function CuadrePage() {
         {/* Caja */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-muted-foreground">Caja</label>
-          <select
+          <NativeSelect
             value={cajaId ?? ''}
             onChange={(e) => handleCajaChange(e.target.value)}
-            className="rounded-md border border-input bg-white px-3 py-2 text-sm min-w-[160px]"
+            className="min-w-[160px]"
           >
             <option value="">Todas las cajas</option>
             {cajas.map((c) => (
               <option key={c.id} value={c.id}>{c.nombre}</option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
 
         {/* Sesion */}
         {cajaId && (
           <div className="flex flex-col gap-1">
             <label className="text-xs font-medium text-muted-foreground">Sesion</label>
-            <select
+            <NativeSelect
               value={sesionCajaId ?? ''}
               onChange={(e) => handleSesionChange(e.target.value)}
-              className="rounded-md border border-input bg-white px-3 py-2 text-sm min-w-[200px]"
+              className="min-w-[200px]"
             >
               <option value="">Todas las sesiones</option>
               {sesiones.map((s) => (
@@ -125,7 +126,7 @@ export function CuadrePage() {
                   {s.fecha_apertura.substring(11, 16)} - {s.status}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
 
