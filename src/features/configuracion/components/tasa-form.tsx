@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { CurrencyDollar, ArrowsClockwise } from '@phosphor-icons/react'
 import { toast } from 'sonner'
-import { useTasaActual, crearTasa, useFetchTasaApi } from '../hooks/use-tasas'
+import { useTasaActual, crearTasaRaw, useFetchTasaApi } from '../hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatTasa, formatBs } from '@/lib/currency'
 
@@ -11,15 +11,19 @@ export function TasaForm() {
   const { fetchTasa, isFetching, apiDateText } = useFetchTasaApi()
   const [valor, setValor] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSavingApi, setIsSavingApi] = useState(false)
 
   const handleFetchFromApi = async () => {
+    setIsSavingApi(true)
     try {
       const valorApi = await fetchTasa()
-      await crearTasa(valorApi, user!.empresa_id!, user!.id)
+      await crearTasaRaw(valorApi, user!.empresa_id!, user!.id)
       setValor(valorApi.toFixed(4))
       toast.success('Tasa BCV registrada automaticamente')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al consultar la API')
+    } finally {
+      setIsSavingApi(false)
     }
   }
 
@@ -33,7 +37,7 @@ export function TasaForm() {
 
     setIsSubmitting(true)
     try {
-      await crearTasa(num, user!.empresa_id!, user!.id)
+      await crearTasaRaw(num, user!.empresa_id!, user!.id)
       toast.success('Tasa de cambio registrada')
       setValor('')
     } catch {
@@ -82,17 +86,17 @@ export function TasaForm() {
                 placeholder={tasaValor ? tasaValor.toFixed(4) : '0.0000'}
                 value={valor}
                 onChange={(e) => setValor(e.target.value)}
-                disabled={isSubmitting || isFetching}
+                disabled={isSubmitting || isFetching || isSavingApi}
                 className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
               />
               <button
                 type="button"
                 onClick={handleFetchFromApi}
-                disabled={isSubmitting || isFetching}
+                disabled={isSubmitting || isFetching || isSavingApi}
                 title="Obtener tasa del BCV"
                 className="inline-flex items-center justify-center h-10 px-3 rounded-md border border-input bg-white text-sm hover:bg-muted transition-colors disabled:opacity-50 disabled:pointer-events-none shrink-0"
               >
-                <ArrowsClockwise className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
+                <ArrowsClockwise className={`w-4 h-4 ${isFetching || isSavingApi ? 'animate-spin' : ''}`} />
               </button>
             </div>
             {apiDateText ? (
