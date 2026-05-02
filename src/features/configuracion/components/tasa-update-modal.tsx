@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { crearTasa, useTasaActual, useTasasHistorial, useFetchTasaApi } from '../hooks/use-tasas'
+import { crearTasa, crearTasaRaw, useTasaActual, useTasasHistorial, useFetchTasaApi } from '../hooks/use-tasas'
 import { formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -70,14 +70,22 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
   }
 
   const handleAutomatica = async () => {
+    if (!user?.empresa_id) {
+      toast.error('Sesion no disponible')
+      return
+    }
+    setIsSubmitting(true)
     try {
       const valorApi = await fetchTasa()
-      console.log('[TasaUpdateModal] Respuesta BCV API:', { valorApi, apiDateText })
-      setValor(valorApi.toFixed(4))
-      toast.success('Tasa obtenida del BCV')
+      await crearTasaRaw(valorApi, user.empresa_id, user.id)
+      toast.success('Tasa actualizada desde BCV')
+      setValor('')
+      onOpenChange(false)
     } catch (err) {
       console.error('[TasaUpdateModal] Error al consultar API BCV:', err)
       toast.error(err instanceof Error ? err.message : 'Error al consultar la API')
+    } finally {
+      setIsSubmitting(false)
     }
   }
 
