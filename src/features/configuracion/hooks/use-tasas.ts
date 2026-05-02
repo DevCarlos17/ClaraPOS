@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { db } from '@/core/db/powersync/db'
@@ -121,6 +121,47 @@ export async function crearTasa(valor: number, empresaId: string, userId?: strin
     .execute()
 
   return id
+}
+
+// --- API externa BCV ---
+
+interface TasaApiResponse {
+  source: string
+  currency: string
+  value: string
+  date_text: string
+  fetched_at: string
+  success: boolean
+  error: string | null
+}
+
+export async function fetchTasaFromApi(): Promise<{ valor: number; dateText: string }> {
+  const url = import.meta.env.VITE_TASA_API_URL as string
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Error al consultar API BCV: ${res.status}`)
+  const data = (await res.json()) as TasaApiResponse
+  if (!data.success) throw new Error(data.error ?? 'La API reporto un error')
+  const valor = parseFloat(data.value)
+  if (isNaN(valor) || valor <= 0) throw new Error('Valor de tasa invalido recibido de la API')
+  return { valor, dateText: data.date_text }
+}
+
+export function useFetchTasaApi() {
+  const [isFetching, setIsFetching] = useState(false)
+  const [apiDateText, setApiDateText] = useState<string | null>(null)
+
+  const fetchTasa = useCallback(async (): Promise<number> => {
+    setIsFetching(true)
+    try {
+      const { valor, dateText } = await fetchTasaFromApi()
+      setApiDateText(dateText)
+      return valor
+    } finally {
+      setIsFetching(false)
+    }
+  }, [])
+
+  return { fetchTasa, isFetching, apiDateText }
 }
 
 // Alternative using raw PowerSync for transaction safety

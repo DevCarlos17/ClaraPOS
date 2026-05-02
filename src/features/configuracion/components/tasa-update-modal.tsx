@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { crearTasa, useTasaActual, useTasasHistorial } from '../hooks/use-tasas'
+import { crearTasa, useTasaActual, useTasasHistorial, useFetchTasaApi } from '../hooks/use-tasas'
 import { formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -34,6 +34,7 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
   const { tasas } = useTasasHistorial()
   const { user } = useCurrentUser()
   const prevTasas = tasas.filter((t) => t.id !== tasa?.id).slice(0, 5)
+  const { fetchTasa, isFetching, apiDateText } = useFetchTasaApi()
   const [valor, setValor] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -68,8 +69,16 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
     }
   }
 
-  const handleAutomatica = () => {
-    toast.info('Actualizacion automatica proximamente')
+  const handleAutomatica = async () => {
+    try {
+      const valorApi = await fetchTasa()
+      console.log('[TasaUpdateModal] Respuesta BCV API:', { valorApi, apiDateText })
+      setValor(valorApi.toFixed(4))
+      toast.success('Tasa obtenida del BCV')
+    } catch (err) {
+      console.error('[TasaUpdateModal] Error al consultar API BCV:', err)
+      toast.error(err instanceof Error ? err.message : 'Error al consultar la API')
+    }
   }
 
   const valorPreview = parseFloat(valor)
@@ -169,7 +178,7 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
               className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
             />
             <p className="text-[11px] text-muted-foreground mt-1">
-              Precision de 4 decimales
+              {apiDateText ? `BCV: ${apiDateText} · Precision de 4 decimales` : 'Precision de 4 decimales'}
             </p>
           </div>
 
@@ -186,12 +195,11 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
               type="button"
               variant="outline"
               onClick={handleAutomatica}
-              disabled={isSubmitting}
+              disabled={isSubmitting || isFetching}
               className="sm:w-auto w-full"
-              title="Proximamente"
             >
-              <RefreshCw className="h-4 w-4" />
-              Automatica
+              <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
+              {isFetching ? 'Consultando...' : 'Automatica'}
             </Button>
             <Button
               type="submit"

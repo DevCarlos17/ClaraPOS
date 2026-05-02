@@ -76,6 +76,13 @@ export default defineConfig({
   },
   server: {
     allowedHosts: true,
+    proxy: {
+      '/proxy/bcv': {
+        target: 'https://nexo21-tax-rate-api.onrender.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/proxy\/bcv/, '/api/rates/bcv'),
+      },
+    },
   },
   worker: {
     format: 'es',

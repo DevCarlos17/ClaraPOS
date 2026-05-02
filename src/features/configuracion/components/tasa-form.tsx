@@ -1,15 +1,26 @@
 import { useState } from 'react'
-import { DollarSign } from 'lucide-react'
+import { DollarSign, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
-import { useTasaActual, crearTasa } from '../hooks/use-tasas'
+import { useTasaActual, crearTasa, useFetchTasaApi } from '../hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatTasa, formatBs } from '@/lib/currency'
 
 export function TasaForm() {
   const { tasa, tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
+  const { fetchTasa, isFetching, apiDateText } = useFetchTasaApi()
   const [valor, setValor] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const handleFetchFromApi = async () => {
+    try {
+      const valorApi = await fetchTasa()
+      setValor(valorApi.toFixed(4))
+      toast.success('Tasa obtenida del BCV')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al consultar la API')
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -62,17 +73,32 @@ export function TasaForm() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="text-sm font-medium mb-1.5 block">Valor (Bs por USD)</label>
-            <input
-              type="number"
-              step="0.0001"
-              min="0.0001"
-              placeholder={tasaValor ? tasaValor.toFixed(4) : '0.0000'}
-              value={valor}
-              onChange={(e) => setValor(e.target.value)}
-              disabled={isSubmitting}
-              className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
-            />
-            <p className="text-xs text-muted-foreground mt-1">Precision de 4 decimales</p>
+            <div className="flex gap-2">
+              <input
+                type="number"
+                step="0.0001"
+                min="0.0001"
+                placeholder={tasaValor ? tasaValor.toFixed(4) : '0.0000'}
+                value={valor}
+                onChange={(e) => setValor(e.target.value)}
+                disabled={isSubmitting || isFetching}
+                className="flex h-10 w-full rounded-md border border-input bg-white px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={handleFetchFromApi}
+                disabled={isSubmitting || isFetching}
+                title="Obtener tasa del BCV"
+                className="inline-flex items-center justify-center h-10 px-3 rounded-md border border-input bg-white text-sm hover:bg-muted transition-colors disabled:opacity-50 disabled:pointer-events-none shrink-0"
+              >
+                <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+            {apiDateText ? (
+              <p className="text-xs text-muted-foreground mt-1">BCV: {apiDateText} &middot; Precision de 4 decimales</p>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-1">Precision de 4 decimales</p>
+            )}
           </div>
 
           {valor && parseFloat(valor) > 0 && (
