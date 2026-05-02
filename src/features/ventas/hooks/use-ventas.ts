@@ -19,6 +19,15 @@ export interface PagoEntry {
   referencia?: string
 }
 
+export interface CargoEspecial {
+  tipo: 'AVANCE' | 'PRESTAMO'
+  descripcion: string
+  montoCargoUsd: number   // lo que el cliente adeuda (avance+fee o prestamo+interes)
+  movimientoIds: string[] // IDs de movimientos_metodo_cobro ya creados (para linkear)
+  diasPlazo?: number      // solo PRESTAMO: plazo en dias para vencimiento_cobrar
+  clienteId?: string      // para crear vencimiento_cobrar
+}
+
 export interface CrearVentaParams {
   cliente_id: string
   tipo: 'CONTADO' | 'CREDITO'
@@ -28,6 +37,7 @@ export interface CrearVentaParams {
   usuario_id: string
   empresa_id: string
   sesion_caja_id: string | null
+  cargosEspeciales?: CargoEspecial[]
 }
 
 export interface CrearVentaResult {
@@ -70,10 +80,10 @@ export interface ProductoVenta {
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [] } = params
 
-  if (lineas.length === 0) {
-    throw new Error('Debe agregar al menos una linea a la venta')
+  if (lineas.length === 0 && cargosEspeciales.length === 0) {
+    throw new Error('Debe agregar al menos una linea o cargo especial a la venta')
   }
 
   if (tasa <= 0) {
@@ -126,6 +136,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     let totalUsd = 0
     for (const linea of lineas) {
       totalUsd += linea.cantidad * linea.precio_unitario_usd
+    }
+    // Agregar cargos especiales (avance/prestamo) al total
+    for (const cargo of cargosEspeciales) {
+      totalUsd += cargo.montoCargoUsd
     }
     totalUsd = Number(totalUsd.toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
@@ -489,6 +503,44 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         now,
         cliente_id,
       ])
+    }
+
+    // 7b. Linkear movimientos de cargos especiales a esta venta + vencimientos prestamo
+    if (cargosEspeciales.length > 0) {
+      for (const cargo of cargosEspeciales) {
+        // Vincular cada movimiento_metodo_cobro al doc de venta
+        for (const movId of cargo.movimientoIds) {
+          await tx.execute(
+            'UPDATE movimientos_metodo_cobro SET doc_origen_id = ?, doc_origen_ref = ? WHERE id = ?',
+            [ventaId, `VEN-${nroFactura}`, movId]
+          )
+        }
+
+        // Para PRESTAMO: crear vencimiento_cobrar
+        if (cargo.tipo === 'PRESTAMO' && cargo.diasPlazo && cargo.diasPlazo > 0) {
+          const vencId = uuidv4()
+          const fechaVenc = new Date()
+          fechaVenc.setDate(fechaVenc.getDate() + cargo.diasPlazo)
+          const fechaVencStr = fechaVenc.toISOString().split('T')[0]
+          await tx.execute(
+            `INSERT INTO vencimientos_cobrar
+               (id, empresa_id, venta_id, cliente_id, nro_cuota, fecha_vencimiento,
+                monto_original_usd, monto_pagado_usd, saldo_pendiente_usd, status, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 1, ?, ?, '0.00', ?, 'PENDIENTE', ?, ?)`,
+            [
+              vencId,
+              empresa_id,
+              ventaId,
+              cliente_id,
+              fechaVencStr,
+              cargo.montoCargoUsd.toFixed(2),
+              cargo.montoCargoUsd.toFixed(2),
+              now,
+              now,
+            ]
+          )
+        }
+      }
     }
 
     // 8. Generar asientos contables + movimientos bancarios

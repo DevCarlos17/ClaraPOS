@@ -189,6 +189,31 @@ export function useDetalleFactura(ventaId: string | null) {
   return { detalle: (data ?? []) as DetalleFacturaCxc[], isLoading }
 }
 
+export interface CargoEspecialVenta {
+  id: string
+  tipo: string          // 'AVANCE' | 'PRESTAMO'
+  concepto: string
+  monto: string         // efectivo entregado (egreso de caja)
+  fecha: string
+}
+
+/**
+ * Cargos especiales (avance/prestamo) vinculados a una venta especifica.
+ * Se identifican por doc_origen_id = ventaId y origen IN ('AVANCE','PRESTAMO')
+ */
+export function useCargosEspecialesVenta(ventaId: string | null) {
+  const { data, isLoading } = useQuery(
+    ventaId
+      ? `SELECT id, origen as tipo, concepto, monto, fecha
+         FROM movimientos_metodo_cobro
+         WHERE doc_origen_id = ? AND origen IN ('AVANCE','PRESTAMO')
+         ORDER BY fecha ASC`
+      : '',
+    ventaId ? [ventaId] : []
+  )
+  return { cargos: (data ?? []) as CargoEspecialVenta[], isLoading }
+}
+
 /**
  * Pagos realizados a una factura
  */

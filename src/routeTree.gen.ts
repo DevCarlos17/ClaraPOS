@@ -21,6 +21,7 @@ import { Route as authRegisterRouteImport } from './routes/(auth)/register'
 import { Route as authLoginRouteImport } from './routes/(auth)/login'
 import { Route as AppClientesIndexRouteImport } from './routes/_app/clientes/index'
 import { Route as AppVentasReportesRouteImport } from './routes/_app/ventas/reportes'
+import { Route as AppVentasPrestamosRouteImport } from './routes/_app/ventas/prestamos'
 import { Route as AppVentasNuevaRouteImport } from './routes/_app/ventas/nueva'
 import { Route as AppVentasNotasCreditoRouteImport } from './routes/_app/ventas/notas-credito'
 import { Route as AppVentasCuadreDeCajaRouteImport } from './routes/_app/ventas/cuadre-de-caja'
@@ -122,6 +123,11 @@ const AppClientesIndexRoute = AppClientesIndexRouteImport.update({
 const AppVentasReportesRoute = AppVentasReportesRouteImport.update({
   id: '/ventas/reportes',
   path: '/ventas/reportes',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppVentasPrestamosRoute = AppVentasPrestamosRouteImport.update({
+  id: '/ventas/prestamos',
+  path: '/ventas/prestamos',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppVentasNuevaRoute = AppVentasNuevaRouteImport.update({
@@ -412,6 +418,7 @@ export interface FileRoutesByFullPath {
   '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
   '/ventas/nueva': typeof AppVentasNuevaRoute
+  '/ventas/prestamos': typeof AppVentasPrestamosRoute
   '/ventas/reportes': typeof AppVentasReportesRoute
   '/clientes/': typeof AppClientesIndexRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
@@ -466,6 +473,7 @@ export interface FileRoutesByTo {
   '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
   '/ventas/nueva': typeof AppVentasNuevaRoute
+  '/ventas/prestamos': typeof AppVentasPrestamosRoute
   '/ventas/reportes': typeof AppVentasReportesRoute
   '/clientes': typeof AppClientesIndexRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
@@ -525,6 +533,7 @@ export interface FileRoutesById {
   '/_app/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
   '/_app/ventas/notas-credito': typeof AppVentasNotasCreditoRoute
   '/_app/ventas/nueva': typeof AppVentasNuevaRoute
+  '/_app/ventas/prestamos': typeof AppVentasPrestamosRoute
   '/_app/ventas/reportes': typeof AppVentasReportesRoute
   '/_app/clientes/': typeof AppClientesIndexRoute
   '/_app/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
@@ -583,6 +592,7 @@ export interface FileRouteTypes {
     | '/ventas/cuadre-de-caja'
     | '/ventas/notas-credito'
     | '/ventas/nueva'
+    | '/ventas/prestamos'
     | '/ventas/reportes'
     | '/clientes/'
     | '/configuracion/usuarios/nuevo'
@@ -637,6 +647,7 @@ export interface FileRouteTypes {
     | '/ventas/cuadre-de-caja'
     | '/ventas/notas-credito'
     | '/ventas/nueva'
+    | '/ventas/prestamos'
     | '/ventas/reportes'
     | '/clientes'
     | '/configuracion/usuarios/nuevo'
@@ -695,6 +706,7 @@ export interface FileRouteTypes {
     | '/_app/ventas/cuadre-de-caja'
     | '/_app/ventas/notas-credito'
     | '/_app/ventas/nueva'
+    | '/_app/ventas/prestamos'
     | '/_app/ventas/reportes'
     | '/_app/clientes/'
     | '/_app/configuracion/usuarios/nuevo'
@@ -792,6 +804,13 @@ declare module '@tanstack/react-router' {
       path: '/ventas/reportes'
       fullPath: '/ventas/reportes'
       preLoaderRoute: typeof AppVentasReportesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/ventas/prestamos': {
+      id: '/_app/ventas/prestamos'
+      path: '/ventas/prestamos'
+      fullPath: '/ventas/prestamos'
+      preLoaderRoute: typeof AppVentasPrestamosRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/ventas/nueva': {
@@ -1200,6 +1219,7 @@ interface AppRouteRouteChildren {
   AppVentasCuadreDeCajaRoute: typeof AppVentasCuadreDeCajaRoute
   AppVentasNotasCreditoRoute: typeof AppVentasNotasCreditoRoute
   AppVentasNuevaRoute: typeof AppVentasNuevaRoute
+  AppVentasPrestamosRoute: typeof AppVentasPrestamosRoute
   AppVentasReportesRoute: typeof AppVentasReportesRoute
 }
 
@@ -1248,6 +1268,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppVentasCuadreDeCajaRoute: AppVentasCuadreDeCajaRoute,
   AppVentasNotasCreditoRoute: AppVentasNotasCreditoRoute,
   AppVentasNuevaRoute: AppVentasNuevaRoute,
+  AppVentasPrestamosRoute: AppVentasPrestamosRoute,
   AppVentasReportesRoute: AppVentasReportesRoute,
 }
 

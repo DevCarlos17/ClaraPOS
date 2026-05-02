@@ -140,6 +140,64 @@ export function useVentasRango(fechaInicio: string, fechaFin: string) {
 
 // ─── Top Productos por Rango ──────────────────────────────
 
+// ─── Prestamos / Vencimientos Cobrar ──────────────────────────
+
+export interface VencimientoPrestamo {
+  id: string
+  venta_id: string
+  cliente_id: string
+  cliente_nombre: string
+  nro_factura: string
+  fecha_vencimiento: string
+  saldo_pendiente_usd: string
+  dias_restantes: number   // negativo = vencido
+}
+
+export function usePrestamosProximos(diasAdelanto = 7) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const today = new Date()
+  const todayStr = today.toISOString().split('T')[0]
+  const limitStr = new Date(today.getTime() + diasAdelanto * 86400000).toISOString().split('T')[0]
+
+  const { data, isLoading } = useQuery(
+    empresaId
+      ? `SELECT vc.id, vc.venta_id, vc.cliente_id, vc.fecha_vencimiento,
+               vc.saldo_pendiente_usd,
+               v.nro_factura,
+               c.nombre as cliente_nombre
+         FROM vencimientos_cobrar vc
+         JOIN ventas v ON vc.venta_id = v.id
+         JOIN clientes c ON vc.cliente_id = c.id
+         WHERE vc.empresa_id = ? AND vc.status = 'PENDIENTE'
+           AND CAST(vc.saldo_pendiente_usd AS REAL) > 0.01
+           AND vc.fecha_vencimiento <= ?
+         ORDER BY vc.fecha_vencimiento ASC`
+      : '',
+    empresaId ? [empresaId, limitStr] : []
+  )
+
+  const items: VencimientoPrestamo[] = (data ?? []).map((row: Record<string, unknown>) => {
+    const fechaVenc = String(row.fecha_vencimiento ?? '')
+    const diff = Math.floor(
+      (new Date(fechaVenc).getTime() - new Date(todayStr).getTime()) / 86400000
+    )
+    return {
+      id: String(row.id ?? ''),
+      venta_id: String(row.venta_id ?? ''),
+      cliente_id: String(row.cliente_id ?? ''),
+      cliente_nombre: String(row.cliente_nombre ?? ''),
+      nro_factura: String(row.nro_factura ?? ''),
+      fecha_vencimiento: fechaVenc,
+      saldo_pendiente_usd: String(row.saldo_pendiente_usd ?? '0'),
+      dias_restantes: diff,
+    }
+  })
+
+  return { vencimientos: items, isLoading }
+}
+
 export function useTopProductosRango(
   dias: number,
   limit: number,

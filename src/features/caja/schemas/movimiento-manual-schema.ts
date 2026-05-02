@@ -25,6 +25,6 @@ export const ORIGEN_LABELS: Record<OrigenManual, string> = {
 
 /** El tipo (INGRESO/EGRESO) que corresponde a cada origen */
 export function tipoDeOrigen(origen: OrigenManual): 'INGRESO' | 'EGRESO' {
-  if (origen === 'EGRESO_MANUAL') return 'EGRESO'
+  if (origen === 'EGRESO_MANUAL' || origen === 'AVANCE' || origen === 'PRESTAMO') return 'EGRESO'
   return 'INGRESO'
 }

@@ -11,8 +11,10 @@ import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 export interface AvanceAplicado {
   montoAvanceUsd: number
   montoAvanceBs: number
-  cargoUsd: number   // fee en USD
-  totalCargoUsd: number  // avance convertido a USD + cargo
+  cargoUsd: number        // fee en USD
+  totalCargoUsd: number   // avance convertido a USD + cargo
+  movimientoIds: string[] // IDs de movimientos_metodo_cobro creados
+  descripcion: string
 }
 
 interface AvanceModalProps {
@@ -127,7 +129,7 @@ function FormAvance({
 
     setSubmitting(true)
     try {
-      await createMovimientoManualMulti({
+      const movimientoIds = await createMovimientoManualMulti({
         entradas,
         origen: 'AVANCE',
         concepto: conceptoFinal,
@@ -145,6 +147,8 @@ function FormAvance({
         montoAvanceBs: bs,
         cargoUsd,
         totalCargoUsd,
+        movimientoIds,
+        descripcion: conceptoFinal,
       })
 
       reset()

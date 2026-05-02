@@ -15,6 +15,8 @@ export interface PrestamoAplicado {
   interesUsd: number
   totalDeudaUsd: number
   diasPlazo: number
+  movimientoIds: string[] // IDs de movimientos_metodo_cobro creados
+  descripcion: string
 }
 
 interface PrestamoModalProps {
@@ -133,7 +135,7 @@ function FormPrestamo({
 
     setSubmitting(true)
     try {
-      await createMovimientoManualMulti({
+      const movimientoIds = await createMovimientoManualMulti({
         entradas,
         origen: 'PRESTAMO',
         concepto: conceptoFinal,
@@ -152,6 +154,8 @@ function FormPrestamo({
         interesUsd,
         totalDeudaUsd,
         diasPlazo: dias,
+        movimientoIds,
+        descripcion: conceptoFinal,
       })
 
       reset()

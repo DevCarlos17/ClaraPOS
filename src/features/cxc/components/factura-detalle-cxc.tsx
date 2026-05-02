@@ -1,11 +1,11 @@
 import { useRef, useEffect, useState } from 'react'
-import { X, Package, CreditCard, RotateCcw } from 'lucide-react'
+import { X, Package, CreditCard, RotateCcw, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
-import { useDetalleFactura, usePagosFactura, registrarReversoAbono, type VentaPendiente, type PagoFacturaCxc } from '../hooks/use-cxc'
+import { useDetalleFactura, usePagosFactura, useCargosEspecialesVenta, registrarReversoAbono, type VentaPendiente, type PagoFacturaCxc } from '../hooks/use-cxc'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 
@@ -143,6 +143,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const { hasPermission } = usePermissions()
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(factura?.id ?? null)
   const { pagos, isLoading: loadingPagos } = usePagosFactura(factura?.id ?? null)
+  const { cargos: cargosEspeciales } = useCargosEspecialesVenta(factura?.id ?? null)
 
   // Reverso state
   const [pagoAReverse, setPagoAReverse] = useState<PagoFacturaCxc | null>(null)
@@ -331,6 +332,50 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
               </div>
             )}
           </div>
+
+          {/* Cargos especiales (avance / prestamo) */}
+          {cargosEspeciales.length > 0 && (
+            <div className="mb-5">
+              <div className="flex items-center gap-2 mb-2">
+                <Wallet size={14} className="text-amber-600" />
+                <h3 className="text-sm font-semibold">Cargos especiales</h3>
+              </div>
+              <div className="overflow-x-auto border border-amber-200 rounded-lg">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-amber-50">
+                      <th className="text-left px-3 py-2 font-medium text-xs">Tipo</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs">Concepto</th>
+                      <th className="text-left px-3 py-2 font-medium text-xs">Fecha</th>
+                      <th className="text-right px-3 py-2 font-medium text-xs">Efectivo entregado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cargosEspeciales.map((c) => (
+                      <tr key={c.id} className="border-b border-amber-100">
+                        <td className="px-3 py-2">
+                          <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                            c.tipo === 'PRESTAMO'
+                              ? 'bg-purple-100 text-purple-700'
+                              : 'bg-amber-100 text-amber-700'
+                          }`}>
+                            {c.tipo}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">{c.concepto}</td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
+                          {formatFecha(c.fecha)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-medium">
+                          {formatUsd(parseFloat(c.monto))}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* Abonos recibidos */}
           <div>

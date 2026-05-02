@@ -3,6 +3,7 @@ import { DashboardKpiCards } from './dashboard-kpi-cards'
 import { DashboardInventarioChart } from './dashboard-inventario-chart'
 import { DashboardVentasChart } from './dashboard-ventas-chart'
 import { DashboardTopRotacion } from './dashboard-top-rotacion'
+import { DashboardPrestamosWidget } from './dashboard-prestamos-widget'
 import { useDebugVentas } from '../hooks/use-dashboard'
 
 export function DashboardPage() {
@@ -13,6 +14,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       <DashboardWelcome />
       <DashboardKpiCards />
+      <DashboardPrestamosWidget />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <DashboardInventarioChart />
         <DashboardVentasChart />

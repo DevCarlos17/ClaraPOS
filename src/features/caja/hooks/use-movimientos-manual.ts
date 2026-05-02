@@ -106,8 +106,9 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
 /**
  * Registra multiples movimientos manuales en una sola transaccion atomica.
  * Util para operaciones multimoneda (ej: ingreso/retiro en USD y Bs simultaneamente).
+ * Retorna los IDs de los movimientos creados.
  */
-export async function createMovimientoManualMulti(params: MovimientoManualMultiParams): Promise<void> {
+export async function createMovimientoManualMulti(params: MovimientoManualMultiParams): Promise<string[]> {
   const { entradas, origen, concepto, sesion_caja_id, empresa_id, usuario_id } = params
 
   if (entradas.length === 0) throw new Error('No hay entradas para registrar')
@@ -116,6 +117,7 @@ export async function createMovimientoManualMulti(params: MovimientoManualMultiP
 
   const tipo = tipoDeOrigen(origen)
   const now = localNow()
+  const movIds: string[] = []
 
   await db.writeTransaction(async (tx) => {
     for (const entrada of entradas) {
@@ -146,6 +148,7 @@ export async function createMovimientoManualMulti(params: MovimientoManualMultiP
           : Number((saldoActual - entrada.monto).toFixed(2))
 
       const movId = uuidv4()
+      movIds.push(movId)
       await tx.execute(
         `INSERT INTO movimientos_metodo_cobro
            (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
@@ -174,4 +177,6 @@ export async function createMovimientoManualMulti(params: MovimientoManualMultiP
       )
     }
   })
+
+  return movIds
 }

@@ -11,7 +11,7 @@ import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-paymen
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
-import { crearVenta, type ProductoVenta } from '../hooks/use-ventas'
+import { crearVenta, type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -25,8 +25,8 @@ import { NuevoClienteRapidoModal } from './nuevo-cliente-rapido-modal'
 import { AperturaSesionPosModal } from '@/features/caja/components/apertura-sesion-pos-modal'
 import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
 import { IngresoRetiroModal } from '@/features/caja/components/ingreso-retiro-modal'
-import { AvanceModal } from '@/features/caja/components/avance-modal'
-import { PrestamoModal } from '@/features/caja/components/prestamo-modal'
+import { AvanceModal, type AvanceAplicado } from '@/features/caja/components/avance-modal'
+import { PrestamoModal, type PrestamoAplicado } from '@/features/caja/components/prestamo-modal'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
 
 export function PosTerminal() {
@@ -61,6 +61,7 @@ export function PosTerminal() {
   const [clienteNombre, setClienteNombre] = useState('')
   const [clienteData, setClienteData] = useState<Cliente | null>(null)
   const [lineas, setLineas] = useState<LineaVentaForm[]>([])
+  const [cargosEspeciales, setCargosEspeciales] = useState<CargoEspecial[]>([])
 
   // Pagos
   const [pagos, setPagos] = useState<PagoEntryForm[]>([])
@@ -100,7 +101,9 @@ export function PosTerminal() {
   clienteNombreRef.current = clienteNombre
 
   // Totales de la factura
-  const totalUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
+  const totalProductosUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
+  const totalCargosEspUsd = cargosEspeciales.reduce((sum, c) => sum + c.montoCargoUsd, 0)
+  const totalUsd = totalProductosUsd + totalCargosEspUsd
   const totalBs = usdToBs(totalUsd, tasaValor)
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
@@ -288,6 +291,7 @@ export function PosTerminal() {
     setClienteData(null)
     setLineas([])
     setPagos([])
+    setCargosEspeciales([])
     setMetodoId('')
     setMonto('')
     setReferencia('')
@@ -295,7 +299,7 @@ export function PosTerminal() {
   }
 
   const handleCancelar = () => {
-    if (lineas.length === 0 && pagos.length === 0) {
+    if (lineas.length === 0 && pagos.length === 0 && cargosEspeciales.length === 0) {
       resetForm()
       return
     }
@@ -307,8 +311,8 @@ export function PosTerminal() {
   }
 
   const handleGuardarFactura = () => {
-    if (lineas.length === 0) {
-      toast.error('Agrega al menos un producto antes de guardar')
+    if (lineas.length === 0 && cargosEspeciales.length === 0) {
+      toast.error('Agrega al menos un producto o cargo especial antes de guardar')
       return
     }
     if (!user) return
@@ -354,8 +358,8 @@ export function PosTerminal() {
       toast.error('Selecciona un cliente')
       return
     }
-    if (lineas.length === 0) {
-      toast.error('Agrega al menos un producto')
+    if (lineas.length === 0 && cargosEspeciales.length === 0) {
+      toast.error('Agrega al menos un producto o aplica un avance/prestamo')
       return
     }
     if (lineas.some((l) => l.cantidad <= 0)) {
@@ -413,6 +417,7 @@ export function PosTerminal() {
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
         sesion_caja_id: sesion?.id ?? null,
+        cargosEspeciales,
       })
 
       toast.success(`Venta #${result.nroFactura} creada exitosamente`)
@@ -435,12 +440,44 @@ export function PosTerminal() {
 
   // ---- Validaciones para el boton confirmar ----
   const tieneLineasValidas = lineas.length > 0 && lineas.every((l) => l.cantidad > 0)
-  const puedeConfirmar = !submitting && !!clienteId && tieneLineasValidas
+  const tieneContenido = tieneLineasValidas || cargosEspeciales.length > 0
+  const puedeConfirmar = !submitting && !!clienteId && tieneContenido
   const textoConfirmar = submitting
     ? 'Procesando...'
     : tipoDetectado === 'CREDITO'
     ? 'Factura Credito'
     : 'Confirmar'
+
+  // ---- Handlers de cargos especiales ----
+  const handleAvanceAplicado = (avance: AvanceAplicado) => {
+    setCargosEspeciales((prev) => [
+      ...prev,
+      {
+        tipo: 'AVANCE',
+        descripcion: avance.descripcion,
+        montoCargoUsd: avance.totalCargoUsd,
+        movimientoIds: avance.movimientoIds,
+      },
+    ])
+  }
+
+  const handlePrestamoAplicado = (prestamo: PrestamoAplicado) => {
+    setCargosEspeciales((prev) => [
+      ...prev,
+      {
+        tipo: 'PRESTAMO',
+        descripcion: prestamo.descripcion,
+        montoCargoUsd: prestamo.totalDeudaUsd,
+        movimientoIds: prestamo.movimientoIds,
+        diasPlazo: prestamo.diasPlazo,
+        clienteId: clienteId ?? undefined,
+      },
+    ])
+  }
+
+  const handleRemoveCargo = (index: number) => {
+    setCargosEspeciales((prev) => prev.filter((_, i) => i !== index))
+  }
 
   if (tasaLoading || sesionLoading) {
     return (
@@ -487,6 +524,47 @@ export function PosTerminal() {
             onUpdateCantidad={handleUpdateCantidad}
             onRemove={handleRemoveLinea}
           />
+
+          {/* Cargos especiales (avance / prestamo) */}
+          {cargosEspeciales.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1.5">
+              <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide">
+                Cargos especiales
+              </p>
+              {cargosEspeciales.map((cargo, i) => (
+                <div key={i} className="flex items-center justify-between text-sm">
+                  <div className="min-w-0">
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded mr-2 ${
+                      cargo.tipo === 'PRESTAMO'
+                        ? 'bg-purple-100 text-purple-700'
+                        : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {cargo.tipo}
+                    </span>
+                    <span className="text-amber-800 truncate">{cargo.descripcion}</span>
+                    {cargo.tipo === 'PRESTAMO' && cargo.diasPlazo && (
+                      <span className="ml-1 text-xs text-amber-600">({cargo.diasPlazo} dias)</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-semibold text-amber-900">{formatUsd(cargo.montoCargoUsd)}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveCargo(i)}
+                      className="rounded p-1 text-amber-600 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      title="Quitar cargo (no revierte el efectivo entregado)"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <div className="flex justify-between text-xs font-medium text-amber-800 border-t border-amber-200 pt-1.5">
+                <span>Total cargos</span>
+                <span>{formatUsd(totalCargosEspUsd)}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── COLUMNA DERECHA ── */}
@@ -850,6 +928,7 @@ export function PosTerminal() {
             sesionCajaId={sesion.id}
             tasaActual={tasaValor}
             clienteNombre={clienteNombre || undefined}
+            onAplicado={handleAvanceAplicado}
           />
           <PrestamoModal
             isOpen={showPrestamoModal}
@@ -857,6 +936,7 @@ export function PosTerminal() {
             sesionCajaId={sesion.id}
             tasaActual={tasaValor}
             clienteNombre={clienteNombre || undefined}
+            onAplicado={handlePrestamoAplicado}
           />
         </>
       )}

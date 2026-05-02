@@ -37,6 +37,7 @@ import {
   BookOpenCheck,
   HandCoins,
   TrendingUp,
+  Handshake,
 } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -77,6 +78,7 @@ const menuItems: MenuItem[] = [
       { title: 'Nota de Credito', url: '/ventas/notas-credito', icon: FileX, requiredPermission: PERMISSIONS.SALES_VOID },
       { title: 'Dashboard de Ventas', url: '/ventas/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.REPORTS_VIEW },
       { title: 'Cuadre de Caja', url: '/ventas/cuadre-de-caja', icon: Receipt, requiredPermission: PERMISSIONS.REPORTS_CASHCLOSE },
+      { title: 'Prestamos', url: '/ventas/prestamos', icon: Handshake, requiredPermission: PERMISSIONS.CLIENTS_CREDIT },
     ],
   },
   {
