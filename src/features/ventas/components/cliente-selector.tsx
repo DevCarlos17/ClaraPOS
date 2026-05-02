@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import { Search, X } from 'lucide-react'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { formatUsd } from '@/lib/currency'
@@ -7,6 +7,10 @@ interface ClienteSelectorProps {
   clienteId: string | null
   onSelect: (cliente: Cliente) => void
   onClear: () => void
+}
+
+export interface ClienteSelectorHandle {
+  focus: () => void
 }
 
 function CreditoBadge({ cliente }: { cliente: Cliente }) {
@@ -29,13 +33,19 @@ function CreditoBadge({ cliente }: { cliente: Cliente }) {
   )
 }
 
-export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelectorProps) {
+export const ClienteSelector = forwardRef<ClienteSelectorHandle, ClienteSelectorProps>(
+function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [selectedNombre, setSelectedNombre] = useState('')
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null)
   const { clientes, isLoading } = useBuscarClientes(query)
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useImperativeHandle(ref, () => ({
+    focus: () => inputRef.current?.focus(),
+  }))
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -88,10 +98,12 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
   }
 
   return (
+
     <div ref={wrapperRef} className="relative">
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input
+          ref={inputRef}
           type="text"
           value={query}
           onChange={(e) => {
@@ -146,4 +158,4 @@ export function ClienteSelector({ clienteId, onSelect, onClear }: ClienteSelecto
       )}
     </div>
   )
-}
+})

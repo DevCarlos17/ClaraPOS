@@ -15,8 +15,8 @@ import { crearVenta, type ProductoVenta, type CargoEspecial } from '../hooks/use
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
-import { ClienteSelector } from './cliente-selector'
-import { ProductoBuscador } from './producto-buscador'
+import { ClienteSelector, type ClienteSelectorHandle } from './cliente-selector'
+import { ProductoBuscador, type ProductoBuscadorHandle } from './producto-buscador'
 import { LineaItems } from './linea-items'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
@@ -101,6 +101,11 @@ export function PosTerminal() {
   pagosRef.current = pagos
   clienteIdRef.current = clienteId
   clienteNombreRef.current = clienteNombre
+
+  // Refs para atajos de teclado
+  const productoBuscadorRef = useRef<ProductoBuscadorHandle>(null)
+  const clienteSelectorRef = useRef<ClienteSelectorHandle>(null)
+  const keyboardHandlerRef = useRef<((e: KeyboardEvent) => void) | undefined>(undefined)
 
   // Totales de la factura
   const totalProductosUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
@@ -490,6 +495,73 @@ export function PosTerminal() {
     setCargosEspeciales((prev) => prev.filter((_, i) => i !== index))
   }
 
+  // --- Atajos de teclado ---
+  keyboardHandlerRef.current = (e: KeyboardEvent) => {
+    const anyModalOpen =
+      showConfirm || showSupervisorPin || showEsperaModal || showNuevoClienteModal ||
+      showIngresoModal || showRetiroModal || showAvanceModal || showPrestamoModal ||
+      showCierrePosPin || showCierrePos || !!ventaExitosa
+    if (anyModalOpen) return
+
+    const isInInput =
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLTextAreaElement ||
+      e.target instanceof HTMLSelectElement
+
+    switch (e.key) {
+      case 'F1':
+        e.preventDefault()
+        productoBuscadorRef.current?.focus()
+        break
+      case 'F2':
+        e.preventDefault()
+        clienteSelectorRef.current?.focus()
+        break
+      case 'F5':
+        e.preventDefault()
+        if (sesion && canMovManualPos) setShowIngresoModal(true)
+        break
+      case 'F6':
+        e.preventDefault()
+        if (sesion && canMovManualPos) setShowRetiroModal(true)
+        break
+      case 'F7':
+        e.preventDefault()
+        if (sesion && canMovManualPos) setShowAvanceModal(true)
+        break
+      case 'F8':
+        e.preventDefault()
+        handleGuardarFactura()
+        break
+      case 'F9':
+        e.preventDefault()
+        setShowEsperaModal(true)
+        break
+      case 'F10':
+        e.preventDefault()
+        handleConfirmVenta()
+        break
+      case 'Escape':
+        if (!isInInput) {
+          e.preventDefault()
+          handleCancelar()
+        }
+        break
+      default:
+        if (e.altKey && e.key.toLowerCase() === 'a') {
+          e.preventDefault()
+          handleAddPago()
+        }
+        break
+    }
+  }
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => keyboardHandlerRef.current?.(e)
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [])
+
   if (tasaLoading || sesionLoading) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
@@ -525,8 +597,11 @@ export function PosTerminal() {
         {/* ── COLUMNA IZQUIERDA: buscador + tabla de productos ── */}
         <div className="space-y-4">
           <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground">Agregar producto</label>
-            <ProductoBuscador onSelect={handleSelectProducto} />
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              Agregar producto
+              <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none text-muted-foreground">F1</kbd>
+            </label>
+            <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} />
           </div>
 
           <LineaItems
@@ -616,6 +691,7 @@ export function PosTerminal() {
                       >
                         <ArrowDownCircle size={12} />
                         Ingreso
+                        <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
                       </button>
                       <button
                         type="button"
@@ -624,6 +700,7 @@ export function PosTerminal() {
                       >
                         <ArrowUpCircle size={12} />
                         Retiro
+                        <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
                       </button>
                       <button
                         type="button"
@@ -632,6 +709,7 @@ export function PosTerminal() {
                       >
                         <Wallet size={12} />
                         Avance
+                        <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F7</kbd>
                       </button>
                       <button
                         type="button"
@@ -661,10 +739,14 @@ export function PosTerminal() {
 
             {/* Cliente */}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-muted-foreground">Cliente</label>
+              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                Cliente
+                <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F2</kbd>
+              </label>
               <div className="flex gap-2">
                 <div className="flex-1 min-w-0">
                   <ClienteSelector
+                    ref={clienteSelectorRef}
                     clienteId={clienteId}
                     onSelect={handleSelectCliente}
                     onClear={handleClearCliente}
@@ -799,6 +881,7 @@ export function PosTerminal() {
                   >
                     <Plus size={14} className="mr-1" />
                     Agregar
+                    <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Alt+A</kbd>
                   </Button>
                 </div>
               </div>
@@ -855,6 +938,7 @@ export function PosTerminal() {
               >
                 <Save size={14} className="mr-1.5" />
                 Guardar
+                <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
               </Button>
               <Button
                 variant={esperaCount > 0 ? 'secondary' : 'outline'}
@@ -864,6 +948,7 @@ export function PosTerminal() {
               >
                 <List size={14} className="mr-1.5" />
                 {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
+                <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
               </Button>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -875,6 +960,7 @@ export function PosTerminal() {
                 className="w-full"
               >
                 Cancelar
+                <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
               </Button>
               <Button
                 onClick={handleConfirmVenta}
@@ -888,6 +974,7 @@ export function PosTerminal() {
                   <ShoppingCart size={14} className="mr-1.5" />
                 )}
                 {textoConfirmar}
+                <kbd className="ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F10</kbd>
               </Button>
             </div>
           </div>
