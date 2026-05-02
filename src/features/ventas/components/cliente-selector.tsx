@@ -39,9 +39,11 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
   const [open, setOpen] = useState(false)
   const [selectedNombre, setSelectedNombre] = useState('')
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null)
+  const [activeIndex, setActiveIndex] = useState(-1)
   const { clientes, isLoading } = useBuscarClientes(query)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -56,6 +58,35 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  // Reset highlight when results change
+  useEffect(() => {
+    setActiveIndex(-1)
+  }, [clientes])
+
+  // Scroll active item into view
+  useEffect(() => {
+    if (activeIndex >= 0) {
+      itemRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [activeIndex])
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!open || clientes.length === 0) return
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActiveIndex(prev => (prev + 1) % clientes.length)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActiveIndex(prev => (prev - 1 + clientes.length) % clientes.length)
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault()
+      handleSelect(clientes[activeIndex])
+    } else if (e.key === 'Escape') {
+      setOpen(false)
+      setActiveIndex(-1)
+    }
+  }
 
   const handleSelect = (cliente: Cliente) => {
     setSelectedNombre(cliente.nombre)
@@ -111,6 +142,7 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
             setOpen(true)
           }}
           onFocus={() => setOpen(true)}
+          onKeyDown={handleKeyDown}
           placeholder="Buscar cliente por nombre o identificacion..."
           className="w-full rounded-lg border bg-white pl-9 pr-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
         />
@@ -123,16 +155,18 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
           ) : clientes.length === 0 ? (
             <div className="p-3 text-sm text-muted-foreground text-center">Sin resultados</div>
           ) : (
-            clientes.map((c) => {
+            clientes.map((c, i) => {
               const limite = parseFloat(c.limite_credito_usd)
               const saldo = parseFloat(c.saldo_actual)
               const disponible = limite > 0 ? Math.max(0, limite - saldo) : null
               return (
                 <button
                   key={c.id}
+                  ref={(el) => { itemRefs.current[i] = el }}
                   type="button"
                   onClick={() => handleSelect(c)}
-                  className="w-full text-left px-3 py-2 hover:bg-muted transition-colors border-b last:border-b-0"
+                  onMouseEnter={() => setActiveIndex(i)}
+                  className={`w-full text-left px-3 py-2 transition-colors border-b last:border-b-0 ${activeIndex === i ? 'bg-primary/10' : 'hover:bg-muted'}`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">

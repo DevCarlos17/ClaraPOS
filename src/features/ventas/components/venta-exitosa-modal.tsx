@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { SealCheck } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -22,6 +23,18 @@ interface VentaExitosaModalProps {
 }
 
 export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalProps) {
+  useEffect(() => {
+    if (!isOpen) return
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        e.preventDefault()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [isOpen, onClose])
+
   if (!isOpen || !data) return null
 
   const totalAbonadoUsd = data.pagos.reduce((sum, p) => {
