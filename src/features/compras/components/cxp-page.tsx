@@ -169,7 +169,7 @@ export function CxpPage() {
   }
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6">
     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
       {/* Lista de proveedores con deuda */}
       <div className="md:col-span-1">

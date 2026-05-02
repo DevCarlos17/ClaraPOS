@@ -81,7 +81,7 @@ export function ConciliacionBancaria() {
   return (
     <div className="space-y-5">
       {/* Selector + filtros */}
-      <div className="rounded-xl bg-card shadow-md p-4">
+      <div className="rounded-2xl bg-card shadow-lg p-4">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs">Cuenta Bancaria</Label>
@@ -127,25 +127,25 @@ export function ConciliacionBancaria() {
       {/* Cards de resumen */}
       {selectedBanco && queryParams.bancoId && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="rounded-xl bg-card shadow-md p-3">
+          <div className="rounded-2xl bg-card shadow-lg p-3">
             <div className="text-xs text-muted-foreground mb-1">Saldo Actual</div>
             <div className="text-base font-bold text-primary">
               {formatUsd(parseFloat(selectedBanco.saldo_actual))}
             </div>
           </div>
-          <div className="rounded-xl bg-card shadow-md p-3">
+          <div className="rounded-2xl bg-card shadow-lg p-3">
             <div className="text-xs text-muted-foreground mb-1">Total Movimientos</div>
             <div className="text-base font-bold">{totalMovimientos}</div>
           </div>
-          <div className="rounded-xl bg-green-50 shadow-sm border border-green-200/60 p-3">
+          <div className="rounded-2xl bg-green-50 shadow-sm border border-green-200/60 p-3">
             <div className="text-xs text-green-600 mb-1">Validados</div>
             <div className="text-base font-bold text-green-700">{totalValidados}</div>
           </div>
-          <div className="rounded-xl bg-amber-50 shadow-sm border border-amber-200/60 p-3">
+          <div className="rounded-2xl bg-amber-50 shadow-sm border border-amber-200/60 p-3">
             <div className="text-xs text-amber-600 mb-1">Pendientes</div>
             <div className="text-base font-bold text-amber-700">{totalPendientes}</div>
           </div>
-          <div className="rounded-xl bg-card shadow-md p-3">
+          <div className="rounded-2xl bg-card shadow-lg p-3">
             <div className="text-xs text-muted-foreground mb-1">Neto Validado</div>
             <div className={`text-base font-bold ${montoIngresos - montoEgresos >= 0 ? 'text-green-700' : 'text-red-700'}`}>
               {formatUsd(montoIngresos - montoEgresos)}
@@ -155,7 +155,7 @@ export function ConciliacionBancaria() {
       )}
 
       {/* Tabla de movimientos */}
-      <div className="rounded-xl bg-card shadow-md overflow-hidden">
+      <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
         <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">

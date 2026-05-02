@@ -503,7 +503,7 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
 
                 {/* Tabla / estados */}
                 {depositoId === '' || filtroDepto === '' ? (
-                  <div className="text-center py-16 border border-dashed border-border rounded-xl">
+                  <div className="text-center py-16 border border-dashed border-border rounded-2xl">
                     <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
                     <p className="text-sm font-medium text-muted-foreground">
                       {depositoId === ''
@@ -518,7 +518,7 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     ))}
                   </div>
                 ) : productosFiltrados.length === 0 ? (
-                  <div className="text-center py-16 border border-dashed border-border rounded-xl">
+                  <div className="text-center py-16 border border-dashed border-border rounded-2xl">
                     <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
                     <p className="text-sm font-medium text-muted-foreground">
                       {productos.length === 0
@@ -527,7 +527,7 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     </p>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-border overflow-hidden shadow-sm">
+                  <div className="rounded-2xl border border-border overflow-hidden shadow-sm">
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
@@ -677,10 +677,10 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
       {/* Modal de confirmacion */}
       <dialog
         ref={dialogRef}
-        className="rounded-xl shadow-2xl border-0 p-0 backdrop:bg-black/40 w-full max-w-lg"
+        className="rounded-2xl shadow-2xl border-0 p-0 backdrop:bg-black/40 w-full max-w-lg"
         onClose={cerrarConfirmacion}
       >
-        <div className="flex flex-col gap-5 p-6 bg-card rounded-xl">
+        <div className="flex flex-col gap-5 p-6 bg-card rounded-2xl">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Confirmar Conteo Fisico</h2>
             <p className="text-sm text-muted-foreground mt-1">

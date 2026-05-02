@@ -47,7 +47,7 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-card rounded-xl shadow-2xl w-full max-w-2xl mx-4 border flex flex-col max-h-[80vh]">
+      <div className="relative bg-card rounded-2xl shadow-2xl w-full max-w-2xl mx-4 border flex flex-col max-h-[80vh]">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b">
           <Clock size={18} className="text-primary" />

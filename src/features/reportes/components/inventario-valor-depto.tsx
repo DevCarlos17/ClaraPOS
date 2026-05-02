@@ -19,7 +19,7 @@ export function InventarioValorDepto() {
   const totalUsd = deptos.reduce((sum, d) => sum + d.valorUsd, 0)
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-2xl border bg-card p-5">
       <h3 className="text-sm font-semibold mb-4">Valoracion por Departamento</h3>
 
       {isLoading ? (

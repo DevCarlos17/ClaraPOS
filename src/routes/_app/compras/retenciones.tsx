@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { createFileRoute } from '@tanstack/react-router'
 import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
@@ -6,6 +7,7 @@ import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
 import { RetIvaCompraList } from '@/features/compras/components/ret-iva-compra-list'
 import { RetIslrCompraList } from '@/features/compras/components/ret-islr-compra-list'
+import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
 
 export const Route = createFileRoute('/_app/compras/retenciones')({
   component: RetencionesCompraPage,
@@ -13,41 +15,54 @@ export const Route = createFileRoute('/_app/compras/retenciones')({
 
 type TabActiva = 'iva' | 'islr'
 
+const TAB_ORDER: TabActiva[] = ['iva', 'islr']
+
+const TABS = [
+  { key: 'iva'  as const, label: 'IVA' },
+  { key: 'islr' as const, label: 'ISLR' },
+]
+
 function RetencionesCompraPage() {
   const [tabActiva, setTabActiva] = useState<TabActiva>('iva')
+  const [prevTab, setPrevTab] = useState<TabActiva>('iva')
+
+  function handleTabChange(key: TabActiva) {
+    setPrevTab(tabActiva)
+    setTabActiva(key)
+  }
+
+  const direction = TAB_ORDER.indexOf(tabActiva) > TAB_ORDER.indexOf(prevTab) ? 1 : -1
 
   return (
     <RequirePermission permission={PERMISSIONS.PURCHASES_VIEW} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
         <PageHeader titulo="Retenciones" descripcion="Retenciones de IVA e ISLR en compras" />
 
-        <div className="rounded-xl bg-card shadow-md p-6">
-          {/* Tabs */}
-          <div className="flex gap-1 border-b border-border mb-4">
-            <button
-              onClick={() => setTabActiva('iva')}
-              className={
-                tabActiva === 'iva'
-                  ? 'px-3 pb-3 pt-1 text-sm font-medium border-b-2 border-blue-600 text-blue-600 cursor-pointer'
-                  : 'px-3 pb-3 pt-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-t-md transition-colors cursor-pointer'
-              }
-            >
-              IVA
-            </button>
-            <button
-              onClick={() => setTabActiva('islr')}
-              className={
-                tabActiva === 'islr'
-                  ? 'px-3 pb-3 pt-1 text-sm font-medium border-b-2 border-blue-600 text-blue-600 cursor-pointer'
-                  : 'px-3 pb-3 pt-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-t-md transition-colors cursor-pointer'
-              }
-            >
-              ISLR
-            </button>
-          </div>
+        <div className="space-y-0">
+          <SegmentedTabs
+            tabs={TABS}
+            active={tabActiva}
+            onChange={handleTabChange}
+            layoutId="retenciones-tab"
+          />
 
-          {/* Panel activo */}
-          {tabActiva === 'iva' ? <RetIvaCompraList /> : <RetIslrCompraList />}
+          <div className="overflow-hidden">
+            <AnimatePresence mode="wait" custom={direction}>
+              <motion.div
+                key={tabActiva}
+                custom={direction}
+                variants={tabContentVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+              >
+                <div className="rounded-b-xl rounded-tr-xl border border-t-0 bg-card p-6">
+                  {tabActiva === 'iva'  && <RetIvaCompraList />}
+                  {tabActiva === 'islr' && <RetIslrCompraList />}
+                </div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
         </div>
       </div>
     </RequirePermission>

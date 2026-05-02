@@ -86,7 +86,7 @@ export function GastosDashboard() {
   return (
     <div className="space-y-6">
       {/* Selector de periodo */}
-      <div className="rounded-xl bg-card shadow-md p-4">
+      <div className="rounded-2xl bg-card shadow-lg p-4">
       <div className="flex flex-wrap items-center gap-4">
         <div>
           <label className="block text-xs font-medium text-muted-foreground mb-1">Mes</label>
@@ -124,7 +124,7 @@ export function GastosDashboard() {
       {gastosFiltrados.length > 0 ? (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Grafico de barras: total por semana */}
-          <div className="bg-card border border-border rounded-xl shadow-md p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-lg p-4">
             <h3 className="text-sm font-semibold text-foreground mb-4">Gastos por Semana (USD)</h3>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={datosBarras} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
@@ -142,7 +142,7 @@ export function GastosDashboard() {
           </div>
 
           {/* Grafico de torta: por cuenta contable */}
-          <div className="bg-card border border-border rounded-xl shadow-md p-4">
+          <div className="bg-card border border-border rounded-2xl shadow-lg p-4">
             <h3 className="text-sm font-semibold text-foreground mb-4">Distribucion por Cuenta</h3>
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>

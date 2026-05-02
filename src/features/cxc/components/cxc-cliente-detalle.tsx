@@ -103,7 +103,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
 
   return (
     <>
-      <div className="rounded-xl bg-card shadow-md overflow-hidden lg:sticky lg:top-6">
+      <div className="rounded-2xl bg-card shadow-lg overflow-hidden lg:sticky lg:top-6">
         <div className="p-5 overflow-y-auto max-h-[calc(100vh-8rem)] space-y-4">
           {/* Header */}
           <div className="flex items-start justify-between">

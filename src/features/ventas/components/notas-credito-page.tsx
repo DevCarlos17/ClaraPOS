@@ -34,7 +34,7 @@ export function NotasCreditoPage() {
       <PageHeader titulo="Notas de Credito" descripcion="Anulacion total de facturas" />
 
       {/* Buscar factura */}
-      <div className="rounded-xl bg-card shadow-md p-4">
+      <div className="rounded-2xl bg-card shadow-lg p-4">
         <div className="relative">
           <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
@@ -87,7 +87,7 @@ export function NotasCreditoPage() {
       </div>
 
       {/* Tabla de NCR existentes */}
-      <div className="rounded-xl bg-card shadow-md">
+      <div className="rounded-2xl bg-card shadow-lg">
         {loadingNotas ? (
           <div className="space-y-2 p-4">
             {Array.from({ length: 5 }).map((_, i) => (

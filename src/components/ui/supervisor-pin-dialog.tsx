@@ -116,7 +116,7 @@ export function SupervisorPinDialog({
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 backdrop:backdrop-blur-sm rounded-xl shadow-2xl p-0 w-full max-w-sm mx-4 border bg-card"
+      className="backdrop:bg-black/50 backdrop:backdrop-blur-sm rounded-2xl shadow-2xl p-0 w-full max-w-sm mx-4 border bg-card"
     >
       <div className="p-6">
         <div className="flex items-center gap-3 mb-4">

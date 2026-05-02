@@ -98,16 +98,16 @@ function KpiCard({
   const { gradient, iconColor } = colorMap[color] ?? colorMap.blue
 
   return (
-    <div className="rounded-xl bg-card shadow-md overflow-hidden">
-      <div className={`relative bg-gradient-to-br ${gradient} px-5 pt-4 pb-6`}>
+    <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+      <div className={`relative bg-gradient-to-br ${gradient} px-6 pt-5 pb-7`}>
         <p className="text-sm font-semibold text-white/90 leading-tight">{titulo}</p>
-        <div className="absolute -bottom-5 left-5 p-2.5 rounded-xl bg-card shadow-md">
+        <div className="absolute -bottom-5 left-5 p-3 rounded-2xl bg-card shadow-lg">
           <Icon className={`w-6 h-6 ${iconColor}`} />
         </div>
       </div>
-      <div className="px-5 pt-8 pb-4">
-        <p className="text-2xl font-bold">{valor}</p>
-        <p className={`text-xs mt-1 ${subtitleClassName ?? 'text-muted-foreground'}`}>{subtitulo}</p>
+      <div className="px-6 pt-9 pb-5">
+        <p className="text-3xl font-bold tracking-tight">{valor}</p>
+        <p className={`text-xs mt-1.5 ${subtitleClassName ?? 'text-muted-foreground'}`}>{subtitulo}</p>
       </div>
     </div>
   )

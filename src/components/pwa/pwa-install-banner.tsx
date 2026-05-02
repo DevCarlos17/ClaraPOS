@@ -10,7 +10,7 @@ export function PWAInstallBanner() {
 
   return (
     <div className="fixed bottom-4 left-4 right-4 sm:left-auto sm:right-4 sm:max-w-md z-50 animate-in slide-in-from-bottom-4 duration-500">
-      <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-xl shadow-2xl p-4 border border-blue-400/50">
+      <div className="bg-gradient-to-r from-blue-500 to-blue-600 rounded-2xl shadow-2xl p-4 border border-blue-400/50">
         <button
           onClick={() => setIsDismissed(true)}
           className="absolute top-2 right-2 p-1 hover:bg-white/20 rounded-lg transition-colors"

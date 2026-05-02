@@ -79,7 +79,7 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="m-auto backdrop:bg-black/60 rounded-xl shadow-2xl p-0 w-full max-w-sm border bg-card"
+      className="m-auto backdrop:bg-black/60 rounded-2xl shadow-2xl p-0 w-full max-w-sm border bg-card"
     >
       <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
@@ -242,7 +242,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
         ref={dialogRef}
         onClose={onClose}
         onClick={handleBackdropClick}
-        className="m-auto backdrop:bg-black/60 rounded-xl p-0 w-full max-w-3xl shadow-2xl bg-card border"
+        className="m-auto backdrop:bg-black/60 rounded-2xl p-0 w-full max-w-3xl shadow-2xl bg-card border"
       >
         <div className="max-h-[88vh] overflow-y-auto">
           {/* Header */}
@@ -264,21 +264,21 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
           <div className="p-6 space-y-6">
           {/* Resumen de montos */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="rounded-xl bg-card border shadow-sm p-3 text-center">
+            <div className="rounded-2xl bg-card border shadow-sm p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Total factura</p>
               <p className="text-lg font-bold">{formatUsd(totalUsd)}</p>
               {tasaValor > 0 && <p className="text-xs text-muted-foreground mt-0.5">{formatBs(totalBs)}</p>}
             </div>
-            <div className="rounded-xl bg-card border shadow-sm p-3 text-center">
+            <div className="rounded-2xl bg-card border shadow-sm p-3 text-center">
               <p className="text-xs text-muted-foreground mb-1">Tasa usada</p>
               <p className="text-lg font-bold">{parseFloat(factura.tasa).toFixed(4)}</p>
               <p className="text-xs text-muted-foreground mt-0.5">Bs/USD</p>
             </div>
-            <div className="rounded-xl bg-green-50 border border-green-200/60 shadow-sm p-3 text-center">
+            <div className="rounded-2xl bg-green-50 border border-green-200/60 shadow-sm p-3 text-center">
               <p className="text-xs text-green-700/70 mb-1">Abonado</p>
               <p className="text-lg font-bold text-green-700">{formatUsd(totalAbonado)}</p>
             </div>
-            <div className="rounded-xl bg-red-50 border border-red-200/60 shadow-sm p-3 text-center">
+            <div className="rounded-2xl bg-red-50 border border-red-200/60 shadow-sm p-3 text-center">
               <p className="text-xs text-red-700/70 mb-1">Pendiente</p>
               <p className="text-lg font-bold text-red-600">{formatUsd(saldoPend)}</p>
               {tasaValor > 0 && (
@@ -298,7 +298,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
             ) : detalle.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-4">Sin detalle disponible</p>
             ) : (
-              <div className="overflow-x-auto border rounded-xl">
+              <div className="overflow-x-auto border rounded-2xl">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50">
@@ -347,7 +347,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                 <Wallet size={14} className="text-amber-600" />
                 <h3 className="text-sm font-semibold">Cargos especiales</h3>
               </div>
-              <div className="overflow-x-auto border border-amber-200/60 rounded-xl bg-amber-50/30">
+              <div className="overflow-x-auto border border-amber-200/60 rounded-2xl bg-amber-50/30">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-amber-200/60 bg-amber-50">
@@ -397,7 +397,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                 Sin pagos registrados
               </p>
             ) : (
-              <div className="overflow-x-auto border rounded-xl">
+              <div className="overflow-x-auto border rounded-2xl">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b bg-muted/50">

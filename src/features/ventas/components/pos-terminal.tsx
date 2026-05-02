@@ -654,7 +654,7 @@ export function PosTerminal() {
         </div>
 
         {/* ── COLUMNA DERECHA ── */}
-        <div className="rounded-xl bg-card shadow-md lg:sticky lg:top-6 flex flex-col lg:h-[calc(100vh-6.5rem)] overflow-hidden">
+        <div className="rounded-2xl bg-card shadow-lg lg:sticky lg:top-6 flex flex-col lg:h-[calc(100vh-6.5rem)] overflow-hidden">
 
           {/* ── Zona scrolleable ── */}
           <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">

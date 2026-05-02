@@ -73,7 +73,7 @@ export function KardexList() {
   return (
     <div className="space-y-4">
       {/* Barra de filtros */}
-      <div className="rounded-xl bg-card shadow-md p-4 space-y-3">
+      <div className="rounded-2xl bg-card shadow-lg p-4 space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">Desde</label>
@@ -173,7 +173,7 @@ export function KardexList() {
           <p className="text-sm mt-1">Ajuste los filtros y vuelva a consultar</p>
         </div>
       ) : (
-        <div className="rounded-xl bg-card shadow-md p-4">
+        <div className="rounded-2xl bg-card shadow-lg p-4">
           <p className="text-xs text-muted-foreground mb-2">
             {movimientosFiltrados.length} movimiento(s) encontrado(s)
             {filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*'

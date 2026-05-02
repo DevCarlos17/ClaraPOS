@@ -220,7 +220,7 @@ export function LoteList() {
   const productoSeleccionado = productosConLotes.find((p) => p.id === selectedProductoId)
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6">
       {/* Selector de producto */}
       <div className="flex flex-wrap items-end gap-3 mb-4">
         <div className="flex-1 min-w-[260px]">

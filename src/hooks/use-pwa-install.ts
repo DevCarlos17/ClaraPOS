@@ -5,14 +5,20 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
 }
 
+const INSTALLED_KEY = 'clarapos-pwa-installed'
+
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isInstallable, setIsInstallable] = useState(false)
   const [isInstalled, setIsInstalled] = useState(false)
+  const [wasInstalledBefore, setWasInstalledBefore] = useState(
+    () => localStorage.getItem(INSTALLED_KEY) === '1'
+  )
 
   useEffect(() => {
     if (window.matchMedia('(display-mode: standalone)').matches) {
       setIsInstalled(true)
+      localStorage.setItem(INSTALLED_KEY, '1')
       return
     }
 
@@ -29,6 +35,8 @@ export function usePWAInstall() {
       setIsInstalled(true)
       setIsInstallable(false)
       setDeferredPrompt(null)
+      localStorage.setItem(INSTALLED_KEY, '1')
+      setWasInstalledBefore(true)
     }
 
     window.addEventListener('appinstalled', installedHandler)
@@ -46,12 +54,13 @@ export function usePWAInstall() {
     const { outcome } = await deferredPrompt.userChoice
 
     if (outcome === 'accepted') {
-      console.log('PWA instalada')
+      localStorage.setItem(INSTALLED_KEY, '1')
+      setWasInstalledBefore(true)
     }
 
     setDeferredPrompt(null)
     setIsInstallable(false)
   }
 
-  return { isInstallable, isInstalled, install }
+  return { isInstallable, isInstalled, wasInstalledBefore, install }
 }

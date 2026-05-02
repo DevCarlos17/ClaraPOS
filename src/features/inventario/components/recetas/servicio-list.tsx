@@ -197,7 +197,7 @@ export function ServicioList() {
   }
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6">
       {/* Barra de acciones */}
       <div className="flex justify-between items-center mb-4">
         <p className="text-sm text-muted-foreground">

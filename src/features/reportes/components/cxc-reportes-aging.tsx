@@ -11,7 +11,7 @@ export function CxcReportesAging() {
   const totalUsd = buckets.reduce((sum, b) => sum + b.totalUsd, 0)
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-5">
+    <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold">Antiguedad de Saldos</h3>
       <p className="text-xs text-muted-foreground mb-4">Facturas pendientes agrupadas por dias desde emision</p>
 

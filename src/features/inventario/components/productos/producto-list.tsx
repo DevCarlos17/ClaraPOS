@@ -225,7 +225,7 @@ export function ProductoList() {
         <button
           type="button"
           onClick={() => setValorInventarioOpen(true)}
-          className="bg-card border border-border rounded-xl shadow-sm p-4 flex items-center gap-3 text-left hover:shadow-md hover:border-primary/50 transition-all cursor-pointer"
+          className="bg-card border border-border rounded-2xl shadow-sm p-4 flex items-center gap-3 text-left hover:shadow-md hover:border-primary/50 transition-all cursor-pointer"
         >
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
             <CurrencyDollar className="h-5 w-5 text-green-600" />
@@ -243,7 +243,7 @@ export function ProductoList() {
         <button
           type="button"
           onClick={() => setStockCriticoOpen(true)}
-          className="bg-card border border-border rounded-xl shadow-sm p-4 flex items-center gap-3 text-left hover:shadow-md hover:border-primary/50 transition-all cursor-pointer"
+          className="bg-card border border-border rounded-2xl shadow-sm p-4 flex items-center gap-3 text-left hover:shadow-md hover:border-primary/50 transition-all cursor-pointer"
         >
           <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
             stockCritico > 0 ? 'bg-red-100' : 'bg-muted'
@@ -261,7 +261,7 @@ export function ProductoList() {
       </div>
 
       {/* Barra de filtros y acciones */}
-      <div className="rounded-xl bg-card shadow-md p-4 mb-4">
+      <div className="rounded-2xl bg-card shadow-lg p-4 mb-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="flex flex-wrap gap-2">
           <select
@@ -354,7 +354,7 @@ export function ProductoList() {
       </div>
 
       {/* Tabla */}
-      <div className="rounded-xl bg-card shadow-md p-4">
+      <div className="rounded-2xl bg-card shadow-lg p-4">
         {productosOrdenados.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <p className="text-base font-medium">No se encontraron productos</p>

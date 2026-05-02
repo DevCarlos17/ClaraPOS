@@ -61,7 +61,7 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
           </div>
 
           {/* Datos principales */}
-          <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+          <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
             <Row label="Cliente" value={data.clienteNombre} />
             <Row
               label="Total"
@@ -114,7 +114,7 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
               <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-0.5">
                 Pagos registrados
               </p>
-              <div className="rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+              <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
                 {data.pagos.map((p, i) => {
                   const equiv =
                     p.moneda === 'BS' ? Number((p.monto / data.tasa).toFixed(2)) : p.monto

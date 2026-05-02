@@ -88,7 +88,7 @@ function KpiCard({
     red: 'hover:ring-red-200',
   }
 
-  const base = 'rounded-xl bg-card shadow-md p-5 text-left w-full'
+  const base = 'rounded-2xl bg-card shadow-lg p-5 text-left w-full'
   const interactive = onClick
     ? `cursor-pointer transition-all hover:ring-2 ${hoverMap[color] ?? hoverMap.blue} hover:shadow-sm`
     : ''

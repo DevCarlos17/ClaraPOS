@@ -68,7 +68,7 @@ export function DataTable<TData, TValue>({
 
   return (
     <div className={cn(
-      'flex flex-1 flex-col rounded-xl bg-background border overflow-hidden',
+      'flex flex-1 flex-col rounded-2xl bg-background border overflow-hidden',
       containerClassName
     )}>
       {showToolbar && (

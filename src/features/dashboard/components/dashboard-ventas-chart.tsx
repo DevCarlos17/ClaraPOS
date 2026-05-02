@@ -50,7 +50,7 @@ export function DashboardVentasChart() {
   }
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-5">
+    <div className="rounded-2xl bg-card shadow-lg p-5">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold">Ventas por Dia</h3>
         <div className="flex gap-1">
@@ -58,9 +58,9 @@ export function DashboardVentasChart() {
             <button
               key={p.value}
               onClick={() => setPeriodo(p.value)}
-              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                 periodo === p.value
-                  ? 'bg-primary text-primary-foreground'
+                  ? 'bg-primary text-primary-foreground shadow-sm'
                   : 'text-muted-foreground hover:bg-muted'
               }`}
             >
@@ -87,11 +87,11 @@ export function DashboardVentasChart() {
             return (
               <div key={d.dia} className="flex-1 flex flex-col items-center gap-1 group">
                 <div className="relative w-full flex justify-center">
-                  <div className="absolute bottom-full mb-1 hidden group-hover:block bg-foreground text-background text-xs rounded px-2 py-1 whitespace-nowrap z-10">
+                  <div className="absolute bottom-full mb-1 hidden group-hover:block bg-foreground/90 backdrop-blur-sm text-background text-xs rounded-xl px-2.5 py-1.5 whitespace-nowrap z-10 shadow-lg">
                     {formatUsd(d.totalUsd)}
                   </div>
                   <div
-                    className="w-full max-w-8 bg-primary/80 hover:bg-primary rounded-t transition-all duration-300"
+                    className="w-full max-w-8 bg-primary/80 hover:bg-primary rounded-t-lg transition-all duration-300"
                     style={{ height: `${Math.max(heightPct, d.totalUsd > 0 ? 4 : 1)}%`, minHeight: d.totalUsd > 0 ? '4px' : '1px' }}
                   />
                 </div>

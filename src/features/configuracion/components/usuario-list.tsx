@@ -84,14 +84,14 @@ export function UsuarioList() {
       </PageHeader>
 
       {usuarios.length === 0 ? (
-        <div className="rounded-xl bg-card shadow-md p-6">
+        <div className="rounded-2xl bg-card shadow-lg p-6">
           <div className="text-center py-12 text-muted-foreground">
             <p className="text-base font-medium">No hay usuarios registrados</p>
             <p className="text-sm mt-1">Agrega empleados para que puedan acceder al sistema</p>
           </div>
         </div>
       ) : (
-        <div className="rounded-xl bg-card shadow-md p-6">
+        <div className="rounded-2xl bg-card shadow-lg p-6">
           <div className="overflow-x-auto border border-border rounded-lg">
             <table className="w-full text-sm">
               <thead>

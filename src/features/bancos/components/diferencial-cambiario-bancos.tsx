@@ -138,7 +138,7 @@ export function DiferencialCambiariosbancos() {
 
   if (diferenciales.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
         No hay bancos en moneda extranjera registrados o todos tienen moneda VES.
       </div>
     )
@@ -150,11 +150,11 @@ export function DiferencialCambiariosbancos() {
     <div className="space-y-4">
       {/* Resumen */}
       <div className="grid grid-cols-3 gap-3">
-        <div className="rounded-xl bg-card shadow-md p-3">
+        <div className="rounded-2xl bg-card shadow-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Bancos en moneda extranjera</div>
           <div className="text-lg font-bold">{diferenciales.length}</div>
         </div>
-        <div className={`rounded-xl shadow-sm p-3 ${totalDiferencial >= 0 ? 'bg-green-50 border border-green-200/60' : 'bg-red-50 border border-red-200/60'}`}>
+        <div className={`rounded-2xl shadow-sm p-3 ${totalDiferencial >= 0 ? 'bg-green-50 border border-green-200/60' : 'bg-red-50 border border-red-200/60'}`}>
           <div className={`text-xs mb-1 ${totalDiferencial >= 0 ? 'text-green-600' : 'text-red-600'}`}>
             Diferencial total
           </div>
@@ -162,7 +162,7 @@ export function DiferencialCambiariosbancos() {
             {formatBs(totalDiferencial)}
           </div>
         </div>
-        <div className="rounded-xl bg-card shadow-md p-3">
+        <div className="rounded-2xl bg-card shadow-lg p-3">
           <div className="text-xs text-muted-foreground mb-1">Ajustes pendientes</div>
           <div className="text-lg font-bold text-amber-600">
             {diferenciales.filter((b) => Math.abs(b.diferencial_bs) >= 0.01 && b.cuenta_contable_id && b.tasa > 0).length}
@@ -171,7 +171,7 @@ export function DiferencialCambiariosbancos() {
       </div>
 
       {/* Tabla */}
-      <div className="rounded-xl bg-card shadow-md overflow-hidden">
+      <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
         <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead className="bg-muted/50">

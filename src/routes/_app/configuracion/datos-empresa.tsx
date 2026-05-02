@@ -28,7 +28,7 @@ function DatosEmpresaPage() {
       <div className="space-y-6">
         <PageHeader titulo="Datos de la Empresa" descripcion="Configuracion general y fiscal de la empresa" />
 
-        <motion.div layout className="rounded-xl bg-card shadow-md overflow-hidden">
+        <motion.div layout className="rounded-2xl bg-card shadow-lg overflow-hidden">
           <div className="flex" style={{ minHeight: 420 }}>
             {/* Left nav */}
             <div className="w-56 shrink-0 border-r border-border bg-muted/30 p-3 space-y-1">

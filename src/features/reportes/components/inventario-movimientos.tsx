@@ -22,7 +22,7 @@ export function InventarioMovimientos({ fechaDesde, fechaHasta }: InventarioMovi
   const { movimientos, isLoading } = useMovimientosPeriodo(fechaDesde, fechaHasta)
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-2xl border bg-card p-5">
       <h3 className="text-sm font-semibold">Movimientos del Periodo</h3>
       <p className="text-xs text-muted-foreground mb-3">Ultimos 100 movimientos de kardex</p>
 

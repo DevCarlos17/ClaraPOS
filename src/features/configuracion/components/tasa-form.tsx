@@ -46,7 +46,7 @@ export function TasaForm() {
   return (
     <div className="grid gap-4 md:grid-cols-2">
       {/* Current rate card */}
-      <div className="rounded-xl bg-card shadow-md p-6">
+      <div className="rounded-2xl bg-card shadow-lg p-6">
         <div className="flex items-center gap-2 mb-4">
           <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
             <CurrencyDollar className="w-5 h-5" />
@@ -69,7 +69,7 @@ export function TasaForm() {
       </div>
 
       {/* New rate form */}
-      <div className="rounded-xl bg-card shadow-md p-6">
+      <div className="rounded-2xl bg-card shadow-lg p-6">
         <h3 className="font-semibold mb-4">Registrar Nueva Tasa</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>

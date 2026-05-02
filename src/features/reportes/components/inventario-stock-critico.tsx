@@ -4,7 +4,7 @@ export function InventarioStockCritico() {
   const { productos, isLoading } = useProductosStockCritico()
 
   return (
-    <div className="rounded-xl border bg-card p-5">
+    <div className="rounded-2xl border bg-card p-5">
       <h3 className="text-sm font-semibold">Stock Critico</h3>
       <p className="text-xs text-muted-foreground mb-3">Productos por debajo del minimo</p>
 

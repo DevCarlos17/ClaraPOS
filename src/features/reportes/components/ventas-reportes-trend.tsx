@@ -33,7 +33,7 @@ export function VentasReportesTrend({ fechaDesde, fechaHasta }: VentasReportesTr
   }
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-5">
+    <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold mb-4">Tendencia de Ventas por Dia</h3>
 
       {isLoading ? (

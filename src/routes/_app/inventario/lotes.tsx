@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { createFileRoute } from '@tanstack/react-router'
 import { PageHeader } from '@/components/layout/page-header'
 import { LoteList } from '@/features/inventario/components/lotes/lote-list'
@@ -6,6 +7,7 @@ import { LoteTrazabilidad } from '@/features/inventario/components/lotes/lote-tr
 import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
+import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
 
 export const Route = createFileRoute('/_app/inventario/lotes')({
   component: LotesPage,
@@ -13,41 +15,53 @@ export const Route = createFileRoute('/_app/inventario/lotes')({
 
 type TabActiva = 'lotes' | 'trazabilidad'
 
+const TAB_ORDER: TabActiva[] = ['lotes', 'trazabilidad']
+
+const TABS = [
+  { key: 'lotes'         as const, label: 'Lotes' },
+  { key: 'trazabilidad'  as const, label: 'Trazabilidad' },
+]
+
 function LotesPage() {
   const [tabActiva, setTabActiva] = useState<TabActiva>('lotes')
+  const [prevTab, setPrevTab] = useState<TabActiva>('lotes')
+
+  function handleTabChange(key: TabActiva) {
+    setPrevTab(tabActiva)
+    setTabActiva(key)
+  }
+
+  const direction = TAB_ORDER.indexOf(tabActiva) > TAB_ORDER.indexOf(prevTab) ? 1 : -1
 
   return (
     <RequirePermission permission={PERMISSIONS.INVENTORY_VIEW} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
         <PageHeader titulo="Lotes" descripcion="Gestion de lotes, vencimientos y trazabilidad" />
 
-        <div className="border-b border-border">
-          <nav className="-mb-px flex gap-6">
-            <button
-              onClick={() => setTabActiva('lotes')}
-              className={`pb-3 text-sm font-medium transition-colors ${
-                tabActiva === 'lotes'
-                  ? 'border-b-2 border-blue-600 text-blue-600 cursor-pointer'
-                  : 'text-muted-foreground hover:text-foreground cursor-pointer'
-              }`}
-            >
-              Lotes
-            </button>
-            <button
-              onClick={() => setTabActiva('trazabilidad')}
-              className={`pb-3 text-sm font-medium transition-colors ${
-                tabActiva === 'trazabilidad'
-                  ? 'border-b-2 border-blue-600 text-blue-600 cursor-pointer'
-                  : 'text-muted-foreground hover:text-foreground cursor-pointer'
-              }`}
-            >
-              Trazabilidad
-            </button>
-          </nav>
-        </div>
+        <div className="space-y-0">
+          <SegmentedTabs
+            tabs={TABS}
+            active={tabActiva}
+            onChange={handleTabChange}
+            layoutId="lotes-tab"
+          />
 
-        {tabActiva === 'lotes' && <LoteList />}
-        {tabActiva === 'trazabilidad' && <LoteTrazabilidad />}
+          <div className="overflow-hidden">
+            <AnimatePresence mode="wait" custom={direction}>
+              <motion.div
+                key={tabActiva}
+                custom={direction}
+                variants={tabContentVariants}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+              >
+                {tabActiva === 'lotes'        && <LoteList />}
+                {tabActiva === 'trazabilidad' && <LoteTrazabilidad />}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </div>
       </div>
     </RequirePermission>
   )

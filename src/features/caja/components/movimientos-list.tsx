@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { useMovMetodoCobro } from '@/features/caja/hooks/use-mov-metodo-cobro'
 import { useMovBancarios } from '@/features/caja/hooks/use-mov-bancarios'
 import { usePaymentMethods } from '@/features/configuracion/hooks/use-payment-methods'
 import { useBancos } from '@/features/configuracion/hooks/use-bancos'
 import { formatDate } from '@/lib/format'
+import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
 
 // ─── Badge helpers ────────────────────────────────────────────
 
@@ -48,7 +50,7 @@ function validadoBadge(validado: number) {
     )
   }
   return (
-    <span className="inline-flex items-center rounded-full bg-gray-50 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-500/20 ring-inset">
+    <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground ring-1 ring-border ring-inset">
       No
     </span>
   )
@@ -144,7 +146,7 @@ function TabMetodoCobro() {
             value={selectedMetodoId ?? ''}
             onChange={(e) => setSelectedMetodoId(e.target.value || null)}
             disabled={isLoadingMetodos}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Seleccionar metodo...</option>
             {methods.map((m) => (
@@ -163,7 +165,7 @@ function TabMetodoCobro() {
             type="date"
             value={fechaDesde}
             onChange={(e) => setFechaDesde(e.target.value)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
 
@@ -175,7 +177,7 @@ function TabMetodoCobro() {
             type="date"
             value={fechaHasta}
             onChange={(e) => setFechaHasta(e.target.value)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
       </div>
@@ -268,7 +270,7 @@ function TabBancarios() {
             value={selectedBancoId ?? ''}
             onChange={(e) => setSelectedBancoId(e.target.value || null)}
             disabled={isLoadingBancos}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
           >
             <option value="">Seleccionar banco...</option>
             {bancos.map((b) => (
@@ -287,7 +289,7 @@ function TabBancarios() {
             type="date"
             value={fechaDesdeBanco}
             onChange={(e) => setFechaDesdeBanco(e.target.value)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
 
@@ -299,7 +301,7 @@ function TabBancarios() {
             type="date"
             value={fechaHastaBanco}
             onChange={(e) => setFechaHastaBanco(e.target.value)}
-            className="rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="rounded-md border border-input px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
       </div>
@@ -372,37 +374,50 @@ function TabBancarios() {
 
 type TabActiva = 'metodo' | 'bancario'
 
+const TAB_ORDER: TabActiva[] = ['metodo', 'bancario']
+
+const TABS = [
+  { key: 'metodo'   as const, label: 'Por Metodo de Cobro' },
+  { key: 'bancario' as const, label: 'Bancarios' },
+]
+
 export function MovimientosList() {
   const [tabActiva, setTabActiva] = useState<TabActiva>('metodo')
+  const [prevTab, setPrevTab] = useState<TabActiva>('metodo')
+
+  function handleTabChange(key: TabActiva) {
+    setPrevTab(tabActiva)
+    setTabActiva(key)
+  }
+
+  const direction = TAB_ORDER.indexOf(tabActiva) > TAB_ORDER.indexOf(prevTab) ? 1 : -1
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
-      {/* Barra de tabs */}
-      <div className="flex gap-1 border-b border-border mb-4">
-        <button
-          onClick={() => setTabActiva('metodo')}
-          className={
-            tabActiva === 'metodo'
-              ? 'px-3 pb-3 pt-1 text-sm border-b-2 border-blue-600 text-blue-600 font-medium'
-              : 'px-3 pb-3 pt-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-t-md transition-colors cursor-pointer'
-          }
-        >
-          Por Metodo de Cobro
-        </button>
-        <button
-          onClick={() => setTabActiva('bancario')}
-          className={
-            tabActiva === 'bancario'
-              ? 'px-3 pb-3 pt-1 text-sm border-b-2 border-blue-600 text-blue-600 font-medium'
-              : 'px-3 pb-3 pt-1 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-t-md transition-colors cursor-pointer'
-          }
-        >
-          Bancarios
-        </button>
-      </div>
+    <div className="space-y-0">
+      <SegmentedTabs
+        tabs={TABS}
+        active={tabActiva}
+        onChange={handleTabChange}
+        layoutId="movimientos-tab"
+      />
 
-      {/* Contenido del tab activo */}
-      {tabActiva === 'metodo' ? <TabMetodoCobro /> : <TabBancarios />}
+      <div className="overflow-hidden">
+        <AnimatePresence mode="wait" custom={direction}>
+          <motion.div
+            key={tabActiva}
+            custom={direction}
+            variants={tabContentVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
+          >
+            <div className="rounded-b-xl rounded-tr-xl border border-t-0 bg-card p-6">
+              {tabActiva === 'metodo'   && <TabMetodoCobro />}
+              {tabActiva === 'bancario' && <TabBancarios />}
+            </div>
+          </motion.div>
+        </AnimatePresence>
+      </div>
     </div>
   )
 }

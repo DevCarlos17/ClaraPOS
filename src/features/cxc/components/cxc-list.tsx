@@ -81,7 +81,7 @@ export function CxcList() {
     <div className="space-y-4">
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-xl bg-card shadow-md p-4">
+        <div className="rounded-2xl bg-card shadow-lg p-4">
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
             <Users size={14} />
             Clientes con deuda
@@ -89,7 +89,7 @@ export function CxcList() {
           <p className="text-2xl font-bold">{totalClientes}</p>
         </div>
 
-        <div className="rounded-xl bg-card shadow-md p-4">
+        <div className="rounded-2xl bg-card shadow-lg p-4">
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
             <FileText size={14} />
             Facturas pendientes
@@ -97,7 +97,7 @@ export function CxcList() {
           <p className="text-2xl font-bold">{totalFacturas}</p>
         </div>
 
-        <div className="rounded-xl bg-red-50 shadow-sm border border-red-200/60 p-4">
+        <div className="rounded-2xl bg-red-50 shadow-sm border border-red-200/60 p-4">
           <div className="flex items-center gap-2 text-sm text-red-700/70 mb-1">
             <CurrencyDollar size={14} />
             Deuda total
@@ -112,7 +112,7 @@ export function CxcList() {
       {/* MagnifyingGlass + Table + Detail split layout */}
       <div className={clienteSeleccionado ? 'grid grid-cols-1 xl:grid-cols-[2fr_3fr] gap-4 items-start' : ''}>
         {/* MagnifyingGlass + Table card */}
-        <div className="rounded-xl bg-card shadow-md p-4 space-y-3">
+        <div className="rounded-2xl bg-card shadow-lg p-4 space-y-3">
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
               <MagnifyingGlass

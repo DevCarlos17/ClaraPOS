@@ -119,11 +119,11 @@ export function ClienteList() {
     <div className="space-y-4">
       {/* Cards Resumen */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="rounded-xl bg-card shadow-md p-4">
+        <div className="rounded-2xl bg-card shadow-lg p-4">
           <p className="text-sm text-muted-foreground">Clientes Activos</p>
           <p className="text-2xl font-bold text-foreground">{resumen.totalActivos}</p>
         </div>
-        <div className="rounded-xl bg-card shadow-md p-4">
+        <div className="rounded-2xl bg-card shadow-lg p-4">
           <p className="text-sm text-muted-foreground">Saldo Total Pendiente</p>
           <p className="text-2xl font-bold text-foreground">{formatUsd(resumen.totalSaldo)}</p>
           {tasaValor > 0 && (
@@ -135,7 +135,7 @@ export function ClienteList() {
       {/* Lista + Detalle en split layout cuando hay seleccion */}
       <div className={detalleCliente ? 'grid grid-cols-1 xl:grid-cols-[2fr_3fr] gap-4 items-start' : ''}>
         {/* Card principal: toolbar + tabla */}
-        <div className="rounded-xl bg-card shadow-md overflow-hidden">
+        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
           {/* Toolbar */}
           <div className="px-4 py-3 bg-muted/40 border-b border-border">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">

@@ -24,7 +24,7 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       {/* Total Ventas */}
       <button
         onClick={onClickVentas}
-        className="rounded-xl bg-card shadow-md p-5 text-left hover:shadow-lg transition-shadow"
+        className="rounded-2xl bg-card shadow-lg p-5 text-left hover:shadow-lg transition-shadow"
       >
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">Total Ventas</p>
@@ -47,7 +47,7 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       </button>
 
       {/* Ganancia Estimada */}
-      <div className="rounded-xl bg-card shadow-md p-5">
+      <div className="rounded-2xl bg-card shadow-lg p-5">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">Ganancia Est.</p>
           <div className="p-2 rounded-lg bg-green-100 text-green-600">
@@ -69,7 +69,7 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       </div>
 
       {/* Ticket Promedio */}
-      <div className="rounded-xl bg-card shadow-md p-5">
+      <div className="rounded-2xl bg-card shadow-lg p-5">
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">Ticket Promedio</p>
           <div className="p-2 rounded-lg bg-amber-100 text-amber-600">
@@ -93,7 +93,7 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
       {/* CxC del dia */}
       <button
         onClick={onClickCxc}
-        className="rounded-xl bg-card shadow-md p-5 text-left hover:shadow-lg transition-shadow"
+        className="rounded-2xl bg-card shadow-lg p-5 text-left hover:shadow-lg transition-shadow"
       >
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">CxC Hoy</p>

@@ -22,7 +22,7 @@ export function DashboardPrestamosWidget() {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl border bg-card p-5">
+      <div className="rounded-2xl border bg-card shadow-lg p-5">
         <div className="flex items-center gap-2 mb-4">
           <Handshake size={16} className="text-muted-foreground" />
           <h3 className="text-sm font-semibold">Prestamos</h3>
@@ -35,7 +35,7 @@ export function DashboardPrestamosWidget() {
   if (vencimientos.length === 0) return null
 
   return (
-    <div className="rounded-xl border bg-card overflow-hidden">
+    <div className="rounded-2xl border bg-card shadow-lg overflow-hidden">
       <div className="px-5 py-4 border-b flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Handshake size={16} className="text-purple-600" />

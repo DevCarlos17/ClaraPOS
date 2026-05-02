@@ -184,7 +184,7 @@ export function GastoList() {
   return (
     <div>
       {/* Filtro de fechas + Consultar + Acciones principales */}
-      <div className="rounded-xl bg-card shadow-md p-4 mb-4">
+      <div className="rounded-2xl bg-card shadow-lg p-4 mb-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">

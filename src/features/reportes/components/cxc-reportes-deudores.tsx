@@ -6,7 +6,7 @@ export function CxcReportesDeudores() {
   const { deudores, isLoading } = useTopDeudores()
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-5">
+    <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold">Top 10 Deudores</h3>
       <p className="text-xs text-muted-foreground mb-3">Mayor saldo pendiente</p>
 

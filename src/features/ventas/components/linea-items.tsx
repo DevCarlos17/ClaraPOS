@@ -13,7 +13,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
 
   if (lineas.length === 0) {
     return (
-      <div className="rounded-xl bg-card shadow-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+      <div className="rounded-2xl bg-card shadow-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
         Busca y agrega productos para comenzar la venta
       </div>
     )
@@ -21,7 +21,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
 
   return (
     <div className="space-y-2">
-      <div className="rounded-xl bg-card shadow-md overflow-hidden">
+      <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>

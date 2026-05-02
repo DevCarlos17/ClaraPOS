@@ -24,7 +24,7 @@ function ClientesReportesPage() {
       <div className="space-y-6">
         <PageHeader titulo="Reportes de CxC" descripcion="Analisis de cuentas por cobrar, antiguedad de saldos y cobros" />
 
-        <div className="rounded-xl bg-card shadow-md p-4">
+        <div className="rounded-2xl bg-card shadow-lg p-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Desde</label>

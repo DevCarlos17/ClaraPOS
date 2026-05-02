@@ -83,7 +83,7 @@ export function CuadrePage() {
       </PageHeader>
 
       {/* Funnel bar */}
-      <div className="flex flex-wrap items-end gap-3 rounded-xl bg-card shadow-md p-4">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl bg-card shadow-lg p-4">
         {/* Fecha */}
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-muted-foreground">Fecha</label>

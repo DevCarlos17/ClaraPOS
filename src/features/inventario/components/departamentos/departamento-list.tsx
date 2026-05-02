@@ -131,7 +131,7 @@ export function DepartamentoList() {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl bg-card shadow-md p-6">
+      <div className="rounded-2xl bg-card shadow-lg p-6">
         <div className="flex justify-end gap-2 mb-4">
           <div className="h-9 w-40 bg-muted rounded animate-pulse" />
           <div className="h-9 w-40 bg-muted rounded animate-pulse" />
@@ -144,7 +144,7 @@ export function DepartamentoList() {
   }
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6">
       <div className="flex justify-end items-center gap-2 mb-4">
         <button
           onClick={() => setReporteOpen(true)}

@@ -83,7 +83,7 @@ function SesionActivaCard({
   canMovManual: boolean
 }) {
   return (
-    <div className="rounded-xl bg-card shadow-md p-4 flex flex-col gap-3">
+    <div className="rounded-2xl bg-card shadow-lg p-4 flex flex-col gap-3">
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -208,11 +208,11 @@ export function SesionCajaList() {
       {loadingActivas ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="h-32 bg-muted rounded-xl animate-pulse" />
+            <div key={i} className="h-32 bg-muted rounded-2xl animate-pulse" />
           ))}
         </div>
       ) : sesionesActivas.length === 0 ? (
-        <div className="rounded-xl bg-card shadow-md p-6 text-center text-muted-foreground">
+        <div className="rounded-2xl bg-card shadow-lg p-6 text-center text-muted-foreground">
           <p className="text-sm font-medium">Sin sesiones activas</p>
           <p className="text-xs mt-1">Abre una sesion de caja para comenzar</p>
         </div>
@@ -232,7 +232,7 @@ export function SesionCajaList() {
       )}
 
       {/* Historial de sesiones */}
-      <div className="rounded-xl bg-card shadow-md p-5">
+      <div className="rounded-2xl bg-card shadow-lg p-5">
         <h2 className="text-lg font-semibold mb-3">
           Historial de Sesiones
           <span className="text-sm font-normal text-muted-foreground ml-2">

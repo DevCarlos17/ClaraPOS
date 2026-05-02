@@ -40,7 +40,7 @@ export function CxcReportesMovimientos({ fechaDesde, fechaHasta }: CxcReportesMo
   const { movimientos, isLoading } = useMovimientosCxcPeriodo(fechaDesde, fechaHasta)
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-5">
+    <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold">Movimientos del Periodo</h3>
       <p className="text-xs text-muted-foreground mb-3">Ultimos 100 movimientos de cuentas por cobrar</p>
 

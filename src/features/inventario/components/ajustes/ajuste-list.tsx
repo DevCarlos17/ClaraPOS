@@ -123,7 +123,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl bg-card shadow-md p-6 space-y-3">
+      <div className="rounded-2xl bg-card shadow-lg p-6 space-y-3">
         <div className="flex justify-between items-center mb-4">
           <div className="h-8 w-56 bg-muted rounded animate-pulse" />
           <div className="h-9 w-40 bg-muted rounded animate-pulse" />
@@ -136,7 +136,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
   }
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6">
       {/* Cabecera */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
         <h2 className="text-lg font-semibold">Ajustes de Inventario</h2>

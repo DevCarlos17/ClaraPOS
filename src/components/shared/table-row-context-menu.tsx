@@ -38,7 +38,7 @@ export function TableRowContextMenu({
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      <ContextMenuTrigger asChild onContextMenu={(e) => e.stopPropagation()}>{children}</ContextMenuTrigger>
       <ContextMenuContent>
         {visibleItems.map((action) => (
           <Fragment key={action.key}>

@@ -116,7 +116,7 @@ export function UnidadList() {
 
   if (isLoading) {
     return (
-      <div className="rounded-xl bg-card shadow-md p-6">
+      <div className="rounded-2xl bg-card shadow-lg p-6">
         <div className="flex justify-between items-center mb-4">
           <div className="h-8 w-48 bg-muted rounded animate-pulse" />
           <div className="h-9 w-40 bg-muted rounded animate-pulse" />
@@ -129,7 +129,7 @@ export function UnidadList() {
   }
 
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6">
       <div className="flex flex-wrap justify-between items-center gap-2 mb-4">
         <h2 className="text-lg font-semibold">Unidades de Medida</h2>
         <div className="flex gap-2 flex-wrap">
