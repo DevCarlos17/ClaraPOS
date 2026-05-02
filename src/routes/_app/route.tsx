@@ -36,7 +36,7 @@ function AppLayout() {
         <div
           className={cn(
             'flex-1 flex flex-col relative z-0 min-w-0 overflow-x-hidden transition-all duration-500 ease-in-out',
-            !isMobile ? 'ml-[72px]' : ''
+            !isMobile ? 'ml-[88px]' : ''
           )}
         >
           <TopBar onMenuClick={toggle} />

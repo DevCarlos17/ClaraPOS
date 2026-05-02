@@ -414,13 +414,15 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   // Desktop hover-expand
   return (
-    <div className="fixed left-0 top-0 bottom-0 z-50 flex transition-all duration-300 ease-out">
+    <div
+      className="fixed left-3 top-3 bottom-3 z-50"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <div
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
         className={cn(
-          'flex flex-col py-8 relative transition-all duration-300 ease-out border-r border-primary/20',
-          isHovered ? 'w-64 bg-sidebar shadow-lg' : 'w-[72px] bg-sidebar'
+          'flex flex-col h-full py-6 relative transition-all duration-300 ease-out rounded-2xl shadow-xl border border-border/20 overflow-hidden',
+          isHovered ? 'w-60 bg-sidebar' : 'w-[68px] bg-sidebar'
         )}
       >
         {/* Logo */}

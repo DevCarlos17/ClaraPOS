@@ -1,5 +1,13 @@
 import { useState } from 'react'
-import { Buildings, CaretRight, CurrencyDollar, CaretUp, CaretDown, Printer, Receipt } from '@phosphor-icons/react'
+import {
+  Buildings,
+  CaretRight,
+  CurrencyDollar,
+  CaretUp,
+  CaretDown,
+  Printer,
+  Receipt,
+} from '@phosphor-icons/react'
 import {
   useProveedoresConDeuda,
   useFacturasCompraPendientes,
@@ -14,10 +22,8 @@ import { PagoCxPModal } from './pago-cxp-modal'
 import { PagoGastoCxpModal } from './pago-gasto-cxp-modal'
 import { FacturaProveedorModal } from './factura-proveedor-modal'
 import { formatUsd } from '@/lib/currency'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 
-// ─── Sort types ──────────────────────────────────────────────
+// ─── Sort ─────────────────────────────────────────────────────
 
 type SortKey = 'nro_factura' | 'fecha_factura' | 'total_usd' | 'saldo_pend_usd'
 
@@ -26,6 +32,30 @@ function SortIcon({ field, current, dir }: { field: SortKey; current: SortKey; d
   return dir === 'asc'
     ? <CaretUp className="h-3 w-3 inline ml-1" />
     : <CaretDown className="h-3 w-3 inline ml-1" />
+}
+
+// ─── KPI card ─────────────────────────────────────────────────
+
+function KpiCard({
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  label: string
+  value: string
+  sub?: string
+  accent?: boolean
+}) {
+  return (
+    <div className="rounded-2xl bg-card shadow-lg p-4 border border-border">
+      <p className="text-xs font-medium text-muted-foreground">{label}</p>
+      <p className={`text-xl font-bold mt-1 tabular-nums ${accent ? 'text-destructive' : 'text-foreground'}`}>
+        {value}
+      </p>
+      {sub && <p className="text-xs text-muted-foreground/70 mt-0.5">{sub}</p>}
+    </div>
+  )
 }
 
 // ─── Print helper ─────────────────────────────────────────────
@@ -101,7 +131,270 @@ function printReporteProveedor(
   }
 }
 
-// ─── Main page ────────────────────────────────────────────────
+// ─── Panel derecho: facturas + gastos ─────────────────────────
+
+interface DetallePanelProps {
+  proveedor: ProveedorConDeuda
+  facturas: FacturaCompraPendiente[]
+  facturasSorted: FacturaCompraPendiente[]
+  gastosPendientes: GastoPendiente[]
+  loadingFacturas: boolean
+  loadingGastos: boolean
+  sortKey: SortKey
+  sortDir: 'asc' | 'desc'
+  onToggleSort: (k: SortKey) => void
+  onPagar: (f: FacturaCompraPendiente) => void
+  onPagarGasto: (g: GastoPendiente) => void
+  onVerDetalle: (tipo: 'COMPRA' | 'GASTO', id: string) => void
+}
+
+function DetallePanel({
+  proveedor,
+  facturas,
+  facturasSorted,
+  gastosPendientes,
+  loadingFacturas,
+  loadingGastos,
+  sortKey,
+  sortDir,
+  onToggleSort,
+  onPagar,
+  onPagarGasto,
+  onVerDetalle,
+}: DetallePanelProps) {
+  return (
+    <div className="space-y-4">
+      {/* Card: Facturas Pendientes */}
+      <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+        {/* Toolbar */}
+        <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-foreground truncate">{proveedor.razon_social}</p>
+            <p className="text-xs text-muted-foreground">{proveedor.rif}</p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="text-right">
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Deuda total</p>
+              <p className="text-sm font-bold text-destructive tabular-nums">
+                {formatUsd(parseFloat(proveedor.saldo_actual))}
+              </p>
+            </div>
+            {facturas.length > 0 && (
+              <button
+                type="button"
+                onClick={() => printReporteProveedor(proveedor, facturasSorted)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-foreground bg-background border border-border rounded-xl hover:bg-muted/50 transition-colors"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                Reporte
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Sub-header: Facturas */}
+        <div className="px-4 py-2 border-b border-border/50 bg-muted/20">
+          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+            Facturas de Compra Pendientes
+          </span>
+        </div>
+
+        {loadingFacturas ? (
+          <div className="p-4 space-y-2">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />
+            ))}
+          </div>
+        ) : facturas.length === 0 ? (
+          <div className="py-8 text-center text-muted-foreground">
+            <p className="text-sm">No hay facturas de compra pendientes</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th
+                    className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                    onClick={() => onToggleSort('nro_factura')}
+                  >
+                    Factura<SortIcon field="nro_factura" current={sortKey} dir={sortDir} />
+                  </th>
+                  <th
+                    className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                    onClick={() => onToggleSort('fecha_factura')}
+                  >
+                    Fecha<SortIcon field="fecha_factura" current={sortKey} dir={sortDir} />
+                  </th>
+                  <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Tipo
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                    onClick={() => onToggleSort('total_usd')}
+                  >
+                    Total<SortIcon field="total_usd" current={sortKey} dir={sortDir} />
+                  </th>
+                  <th
+                    className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                    onClick={() => onToggleSort('saldo_pend_usd')}
+                  >
+                    Pendiente<SortIcon field="saldo_pend_usd" current={sortKey} dir={sortDir} />
+                  </th>
+                  <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Accion
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {facturasSorted.map((factura) => (
+                  <tr
+                    key={factura.id}
+                    onClick={() => onVerDetalle('COMPRA', factura.id)}
+                    className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
+                  >
+                    <td className="px-4 py-3 font-mono text-xs text-foreground">
+                      {factura.nro_factura}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground text-sm whitespace-nowrap">
+                      {factura.fecha_factura?.slice(0, 10)}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+                          factura.tipo === 'CREDITO'
+                            ? 'bg-orange-50 text-orange-700 ring-orange-600/20'
+                            : 'bg-green-50 text-green-700 ring-green-600/20'
+                        }`}
+                      >
+                        {factura.tipo}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-foreground text-sm">
+                      {formatUsd(parseFloat(factura.total_usd))}
+                    </td>
+                    <td className="px-4 py-3 text-right tabular-nums font-semibold text-destructive text-sm">
+                      {formatUsd(parseFloat(factura.saldo_pend_usd))}
+                    </td>
+                    <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={() => onPagar(factura)}
+                        className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors"
+                      >
+                        Pagar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {/* Fila de total */}
+              <tfoot>
+                <tr className="border-t-2 border-border bg-muted/30">
+                  <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Total facturas pendientes
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
+                    {formatUsd(facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0))}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+
+        {/* Sub-header: Gastos */}
+        {(loadingGastos || gastosPendientes.length > 0) && (
+          <>
+            <div className="px-4 py-2 border-t border-border bg-muted/20 flex items-center gap-2">
+              <Receipt className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Gastos Pendientes
+              </span>
+            </div>
+
+            {loadingGastos ? (
+              <div className="p-4 space-y-2">
+                {Array.from({ length: 2 }).map((_, i) => (
+                  <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Gasto</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Descripcion</th>
+                      <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Fecha</th>
+                      <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Total</th>
+                      <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Pendiente</th>
+                      <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wider">Accion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gastosPendientes.map((gasto) => (
+                      <tr
+                        key={gasto.id}
+                        onClick={() => onVerDetalle('GASTO', gasto.id)}
+                        className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
+                      >
+                        <td className="px-4 py-3 font-mono text-xs text-foreground">
+                          <div>{gasto.nro_gasto}</div>
+                          {gasto.nro_factura && (
+                            <div className="text-muted-foreground text-[10px]">{gasto.nro_factura}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 max-w-[200px]">
+                          <div className="truncate text-sm text-foreground">{gasto.descripcion}</div>
+                          {gasto.cuenta_nombre && (
+                            <div className="text-muted-foreground text-[10px] truncate">{gasto.cuenta_nombre}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground text-sm whitespace-nowrap">
+                          {gasto.fecha?.slice(0, 10)}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums text-foreground text-sm">
+                          {formatUsd(parseFloat(gasto.monto_usd))}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums font-semibold text-destructive text-sm">
+                          {formatUsd(parseFloat(gasto.saldo_pendiente_usd))}
+                        </td>
+                        <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            onClick={() => onPagarGasto(gasto)}
+                            className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors"
+                          >
+                            Pagar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30">
+                      <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                        Total gastos pendientes
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
+                        {formatUsd(gastosPendientes.reduce((s, g) => s + parseFloat(g.saldo_pendiente_usd), 0))}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Componente principal ─────────────────────────────────────
 
 export function CxpPage() {
   const { proveedores, isLoading } = useProveedoresConDeuda()
@@ -112,25 +405,19 @@ export function CxpPage() {
   const [pagoGastoOpen, setPagoGastoOpen] = useState(false)
   const [detalleFactura, setDetalleFactura] = useState<{ tipo: 'COMPRA' | 'GASTO'; id: string } | null>(null)
 
-  // Sort state for facturas table
   const [sortKey, setSortKey] = useState<SortKey>('fecha_factura')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
 
   const { facturas, isLoading: loadingFacturas } = useFacturasCompraPendientes(
     proveedorSeleccionado?.id ?? null
   )
-
   const { gastosPendientes, isLoading: loadingGastos } = useGastosPendientesProveedor(
     proveedorSeleccionado?.id ?? null
   )
 
   function toggleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortKey(key)
-      setSortDir('asc')
-    }
+    if (key === sortKey) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    else { setSortKey(key); setSortDir('asc') }
   }
 
   const facturasSorted = [...facturas].sort((a, b) => {
@@ -141,297 +428,163 @@ export function CxpPage() {
     return String(a[sortKey]).localeCompare(String(b[sortKey])) * mult
   })
 
-  function handlePagar(factura: FacturaCompraPendiente) {
-    setFacturaSeleccionada(factura)
-    setModalOpen(true)
-  }
+  // KPIs globales derivados de la lista de proveedores
+  const deudaTotal = proveedores.reduce(
+    (sum, p) => sum + parseFloat(p.saldo_actual),
+    0
+  )
+  const nroProveedores = proveedores.length
+  const proveedorMayorDeuda = proveedores.length > 0
+    ? [...proveedores].sort((a, b) => parseFloat(b.saldo_actual) - parseFloat(a.saldo_actual))[0]
+    : null
 
-  function handlePagarGasto(gasto: GastoPendiente) {
-    setGastoSeleccionado(gasto)
-    setPagoGastoOpen(true)
-  }
+  // ─── Estados de carga / vacío ──────────────────────────────
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center py-16 text-muted-foreground">
-        Cargando proveedores con deuda...
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-20 rounded-2xl bg-muted/50 animate-pulse" />
+          ))}
+        </div>
+        <div className="h-64 rounded-2xl bg-muted/50 animate-pulse" />
       </div>
     )
   }
 
   if (proveedores.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
-        <Buildings size={40} className="opacity-30" />
-        <p className="text-sm">No hay proveedores con saldo pendiente</p>
+      <div className="rounded-2xl bg-card shadow-lg p-16 flex flex-col items-center justify-center text-muted-foreground gap-3">
+        <Buildings size={48} className="opacity-20" />
+        <p className="text-base font-medium">Sin cuentas por pagar</p>
+        <p className="text-sm">No hay proveedores con saldo pendiente en este momento</p>
       </div>
     )
   }
 
   return (
-    <div className="rounded-2xl bg-card shadow-lg p-6">
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      {/* Lista de proveedores con deuda */}
-      <div className="md:col-span-1">
-        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-          Proveedores con Deuda
-        </h3>
-        <div className="space-y-2">
-          {proveedores.map((proveedor) => {
-            const isSelected = proveedorSeleccionado?.id === proveedor.id
-            return (
-              <button
-                key={proveedor.id}
-                onClick={() => setProveedorSeleccionado(proveedor)}
-                className={`w-full text-left p-3 rounded-lg border transition-all ${
-                  isSelected
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-muted-foreground/30 hover:bg-muted/30'
-                }`}
-              >
-                <div className="flex items-center justify-between">
+    <div className="space-y-4">
+
+      {/* KPIs globales */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <KpiCard
+          label="Deuda Total"
+          value={formatUsd(deudaTotal)}
+          sub="Suma de todos los proveedores"
+          accent
+        />
+        <KpiCard
+          label="Proveedores con Deuda"
+          value={String(nroProveedores)}
+          sub={nroProveedores === 1 ? '1 proveedor pendiente' : `${nroProveedores} proveedores pendientes`}
+        />
+        <KpiCard
+          label="Mayor Deuda"
+          value={proveedorMayorDeuda ? formatUsd(parseFloat(proveedorMayorDeuda.saldo_actual)) : '—'}
+          sub={proveedorMayorDeuda?.razon_social ?? ''}
+          accent={!!proveedorMayorDeuda}
+        />
+      </div>
+
+      {/* Layout principal */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+
+        {/* Panel izquierdo: proveedores */}
+        <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
+          <div className="px-4 py-3 bg-muted/40 border-b border-border">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Proveedores con Deuda
+            </span>
+          </div>
+          <div className="divide-y divide-border">
+            {proveedores.map((proveedor) => {
+              const isSelected = proveedorSeleccionado?.id === proveedor.id
+              const deuda = parseFloat(proveedor.saldo_actual)
+              return (
+                <button
+                  key={proveedor.id}
+                  type="button"
+                  onClick={() => setProveedorSeleccionado(proveedor)}
+                  className={`w-full text-left px-4 py-3 transition-colors flex items-center justify-between gap-3 ${
+                    isSelected
+                      ? 'bg-primary/5 border-l-2 border-primary'
+                      : 'hover:bg-muted/30 border-l-2 border-transparent'
+                  }`}
+                >
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{proveedor.razon_social}</div>
-                    <div className="text-xs text-muted-foreground">{proveedor.rif}</div>
+                    <p className={`text-sm font-medium truncate ${isSelected ? 'text-primary' : 'text-foreground'}`}>
+                      {proveedor.razon_social}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {proveedor.rif} · {proveedor.facturas_pendientes} doc{proveedor.facturas_pendientes !== 1 ? 's' : ''} pendiente{proveedor.facturas_pendientes !== 1 ? 's' : ''}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 ml-2">
-                    <span className="text-sm font-semibold text-destructive">
-                      {formatUsd(parseFloat(proveedor.saldo_actual))}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`text-sm font-bold tabular-nums ${deuda > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
+                      {formatUsd(deuda)}
                     </span>
-                    <CaretRight size={14} className="text-muted-foreground" />
+                    <CaretRight size={13} className={isSelected ? 'text-primary' : 'text-muted-foreground/40'} />
                   </div>
-                </div>
-                <div className="mt-1">
-                  <Badge variant="outline" className="text-xs">
-                    {proveedor.facturas_pendientes} documento(s) pendiente(s)
-                  </Badge>
-                </div>
-              </button>
-            )
-          })}
+                </button>
+              )
+            })}
+          </div>
+          {/* Total global al pie */}
+          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total</span>
+            <span className="text-sm font-bold text-destructive tabular-nums">{formatUsd(deudaTotal)}</span>
+          </div>
+        </div>
+
+        {/* Panel derecho: detalle */}
+        <div className="md:col-span-2">
+          {!proveedorSeleccionado ? (
+            <div className="rounded-2xl bg-card shadow-lg flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
+              <CurrencyDollar size={40} className="opacity-20" />
+              <p className="text-sm font-medium">Seleccione un proveedor</p>
+              <p className="text-xs">Haga clic en un proveedor de la lista para ver sus documentos pendientes</p>
+            </div>
+          ) : (
+            <DetallePanel
+              proveedor={proveedorSeleccionado}
+              facturas={facturas}
+              facturasSorted={facturasSorted}
+              gastosPendientes={gastosPendientes}
+              loadingFacturas={loadingFacturas}
+              loadingGastos={loadingGastos}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onToggleSort={toggleSort}
+              onPagar={(f) => { setFacturaSeleccionada(f); setModalOpen(true) }}
+              onPagarGasto={(g) => { setGastoSeleccionado(g); setPagoGastoOpen(true) }}
+              onVerDetalle={(tipo, id) => setDetalleFactura({ tipo, id })}
+            />
+          )}
         </div>
       </div>
 
-      {/* Facturas pendientes del proveedor seleccionado */}
-      <div className="md:col-span-2">
-        {!proveedorSeleccionado ? (
-          <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2 border border-dashed rounded-lg">
-            <CurrencyDollar size={32} className="opacity-30" />
-            <p className="text-sm">Seleccione un proveedor para ver sus facturas pendientes</p>
-          </div>
-        ) : (
-          <>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                Facturas Pendientes — {proveedorSeleccionado.razon_social}
-              </h3>
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold text-destructive">
-                  Deuda: {formatUsd(parseFloat(proveedorSeleccionado.saldo_actual))}
-                </span>
-                {facturas.length > 0 && (
-                  <Button
-                    size="sm"
-                    onClick={() => printReporteProveedor(proveedorSeleccionado, facturasSorted)}
-                    className="gap-1.5 text-xs bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
-                  >
-                    <Printer className="h-3.5 w-3.5" />
-                    Reporte
-                  </Button>
-                )}
-              </div>
-            </div>
-
-            {loadingFacturas ? (
-              <div className="py-8 text-center text-muted-foreground text-sm">
-                Cargando facturas...
-              </div>
-            ) : facturas.length === 0 ? (
-              <div className="py-6 text-center text-muted-foreground text-sm border border-dashed rounded-lg">
-                No hay facturas de compra pendientes
-              </div>
-            ) : (
-              <div className="overflow-auto rounded-lg border">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      <th
-                        className="text-left px-4 py-3 font-semibold text-muted-foreground cursor-pointer hover:text-foreground select-none"
-                        onClick={() => toggleSort('nro_factura')}
-                      >
-                        Factura
-                        <SortIcon field="nro_factura" current={sortKey} dir={sortDir} />
-                      </th>
-                      <th
-                        className="text-left px-4 py-3 font-semibold text-muted-foreground cursor-pointer hover:text-foreground select-none"
-                        onClick={() => toggleSort('fecha_factura')}
-                      >
-                        Fecha
-                        <SortIcon field="fecha_factura" current={sortKey} dir={sortDir} />
-                      </th>
-                      <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Tipo</th>
-                      <th
-                        className="text-right px-4 py-3 font-semibold text-muted-foreground cursor-pointer hover:text-foreground select-none"
-                        onClick={() => toggleSort('total_usd')}
-                      >
-                        Total
-                        <SortIcon field="total_usd" current={sortKey} dir={sortDir} />
-                      </th>
-                      <th
-                        className="text-right px-4 py-3 font-semibold text-muted-foreground cursor-pointer hover:text-foreground select-none"
-                        onClick={() => toggleSort('saldo_pend_usd')}
-                      >
-                        Pendiente
-                        <SortIcon field="saldo_pend_usd" current={sortKey} dir={sortDir} />
-                      </th>
-                      <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Accion</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border">
-                    {facturasSorted.map((factura) => (
-                      <tr
-                        key={factura.id}
-                        onClick={() => setDetalleFactura({ tipo: 'COMPRA', id: factura.id })}
-                        className="hover:bg-muted/30 cursor-pointer transition-colors"
-                      >
-                        <td className="px-4 py-3 font-mono text-xs">{factura.nro_factura}</td>
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {factura.fecha_factura?.slice(0, 10)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <Badge variant="outline" className="text-xs">
-                            {factura.tipo}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums">
-                          {formatUsd(parseFloat(factura.total_usd))}
-                        </td>
-                        <td className="px-4 py-3 text-right tabular-nums font-semibold text-destructive">
-                          {formatUsd(parseFloat(factura.saldo_pend_usd))}
-                        </td>
-                        <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                          <Button
-                            size="sm"
-                            onClick={() => handlePagar(factura)}
-                            className="text-xs bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
-                          >
-                            Pagar
-                          </Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {/* Gastos pendientes del proveedor */}
-            {(loadingGastos || gastosPendientes.length > 0) && (
-              <div className="mt-6">
-                <div className="flex items-center gap-2 mb-3">
-                  <Receipt className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-                    Gastos Pendientes
-                  </h3>
-                </div>
-                {loadingGastos ? (
-                  <div className="py-4 text-center text-muted-foreground text-sm">
-                    Cargando gastos...
-                  </div>
-                ) : (
-                  <div className="overflow-auto rounded-lg border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Gasto</th>
-                          <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Descripcion</th>
-                          <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Fecha</th>
-                          <th className="text-right px-4 py-3 font-semibold text-muted-foreground">Total</th>
-                          <th className="text-right px-4 py-3 font-semibold text-muted-foreground">Pendiente</th>
-                          <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Accion</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-border">
-                        {gastosPendientes.map((gasto) => (
-                          <tr
-                            key={gasto.id}
-                            onClick={() => setDetalleFactura({ tipo: 'GASTO', id: gasto.id })}
-                            className="hover:bg-muted/30 cursor-pointer transition-colors"
-                          >
-                            <td className="px-4 py-3 font-mono text-xs">
-                              <div>{gasto.nro_gasto}</div>
-                              {gasto.nro_factura && (
-                                <div className="text-muted-foreground text-[10px]">{gasto.nro_factura}</div>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 max-w-[180px]">
-                              <div className="truncate text-xs">{gasto.descripcion}</div>
-                              {gasto.cuenta_nombre && (
-                                <div className="text-muted-foreground text-[10px] truncate">{gasto.cuenta_nombre}</div>
-                              )}
-                            </td>
-                            <td className="px-4 py-3 text-muted-foreground">
-                              {gasto.fecha?.slice(0, 10)}
-                            </td>
-                            <td className="px-4 py-3 text-right tabular-nums">
-                              {formatUsd(parseFloat(gasto.monto_usd))}
-                            </td>
-                            <td className="px-4 py-3 text-right tabular-nums font-semibold text-destructive">
-                              {formatUsd(parseFloat(gasto.saldo_pendiente_usd))}
-                            </td>
-                            <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                              <Button
-                                size="sm"
-                                onClick={() => handlePagarGasto(gasto)}
-                                className="text-xs bg-primary text-primary-foreground hover:bg-primary/90 cursor-pointer"
-                              >
-                                Pagar
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Pago factura compra modal */}
+      {/* Modales */}
       <PagoCxPModal
         open={modalOpen}
-        onClose={() => {
-          setModalOpen(false)
-          setFacturaSeleccionada(null)
-        }}
+        onClose={() => { setModalOpen(false); setFacturaSeleccionada(null) }}
         factura={facturaSeleccionada}
         proveedorId={proveedorSeleccionado?.id ?? ''}
         proveedorNombre={proveedorSeleccionado?.razon_social ?? ''}
       />
-
-      {/* Pago gasto modal */}
       <PagoGastoCxpModal
         open={pagoGastoOpen}
-        onClose={() => {
-          setPagoGastoOpen(false)
-          setGastoSeleccionado(null)
-        }}
+        onClose={() => { setPagoGastoOpen(false); setGastoSeleccionado(null) }}
         gasto={gastoSeleccionado}
         proveedorId={proveedorSeleccionado?.id ?? ''}
         proveedorNombre={proveedorSeleccionado?.razon_social ?? ''}
       />
-
-      {/* Modal unificado de detalle */}
       <FacturaProveedorModal
         tipo={detalleFactura?.tipo ?? 'COMPRA'}
         id={detalleFactura?.id ?? ''}
         isOpen={!!detalleFactura}
         onClose={() => setDetalleFactura(null)}
       />
-    </div>
     </div>
   )
 }

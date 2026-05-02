@@ -475,12 +475,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const mostrarColumnasSistema = usaTasaParalela && tasaBcvNum > 0
 
   return (
-    <div className="space-y-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
         <button
           onClick={onClose}
-          className="rounded-md p-2 text-muted-foreground hover:bg-muted transition-colors"
+          className="rounded-xl p-2 text-muted-foreground hover:bg-muted transition-colors"
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
@@ -492,7 +492,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Section: Datos de la Factura */}
-        <div className="rounded-lg border bg-card p-4 space-y-4">
+        <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-4">
           <h3 className="text-sm font-semibold text-foreground">Datos de la Factura</h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -506,7 +506,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 type="date"
                 value={fechaFactura}
                 onChange={(e) => setFechaFactura(e.target.value)}
-                className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
                   errors.fecha_factura ? 'border-destructive' : 'border-input'
                 }`}
               />
@@ -529,7 +529,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={nroFactura}
                 onChange={(e) => setNroFactura(e.target.value.toUpperCase())}
                 placeholder="Ej: 00012345"
-                className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
                   errors.nro_factura ? 'border-destructive' : 'border-input'
                 }`}
               />
@@ -547,7 +547,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={nroControl}
                 onChange={(e) => setNroControl(e.target.value.toUpperCase())}
                 placeholder="Ej: 00-0012345"
-                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
           </div>
@@ -574,7 +574,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={proveedorId}
                 onChange={(e) => setProveedorId(e.target.value)}
                 disabled={loadingProveedores}
-                className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
                   errors.proveedor_id ? 'border-destructive' : 'border-input'
                 }`}
               >
@@ -603,7 +603,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={tasa}
                 onChange={(e) => setTasa(e.target.value)}
                 placeholder="0.0000"
-                className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                   errors.tasa ? 'border-destructive' : 'border-input'
                 }`}
               />
@@ -632,7 +632,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 onChange={(e) => !tasaBcvFound && setTasaBcv(e.target.value)}
                 readOnly={tasaBcvFound}
                 placeholder="Ej: 500.0000"
-                className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                className={`w-full rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                   errors.tasa_bcv ? 'border-destructive' : 'border-input'
                 } ${tasaBcvFound ? 'bg-muted cursor-default' : 'bg-background'}`}
               />
@@ -652,7 +652,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
             <p className="text-xs text-muted-foreground mb-2">
               Solo afecta la visualizacion. El asiento contable siempre se genera en Bolivares.
             </p>
-            <div className="inline-flex rounded-lg border border-input overflow-hidden">
+            <div className="inline-flex rounded-xl border border-input overflow-hidden">
               <button
                 type="button"
                 onClick={() => handleMonedaSwitch('USD')}
@@ -723,7 +723,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         </div>
 
         {/* Section: Productos */}
-        <div className="rounded-lg border bg-card p-4 space-y-4">
+        <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-4">
           <h3 className="text-sm font-semibold text-foreground">Productos</h3>
 
           {/* Product search + create button */}
@@ -742,7 +742,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                   placeholder={loadingProductos ? 'Cargando productos...' : 'Buscar producto por nombre o codigo...'}
                   disabled={loadingProductos}
                   autoComplete="off"
-                  className="w-full pl-10 pr-4 py-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full pl-10 pr-4 py-2 rounded-xl border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
 
@@ -779,7 +779,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
               type="button"
               onClick={() => setShowCrearProducto(true)}
               title="Crear nuevo producto"
-              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-input bg-background text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-input bg-background text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             >
               <Package className="h-4 w-4" />
               <span className="hidden sm:inline">Nuevo producto</span>
@@ -788,7 +788,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
           {/* Line items table */}
           {lineas.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-border">
+            <div className="overflow-x-auto rounded-xl border border-border">
               <table className="min-w-full divide-y divide-border">
                 <thead className="bg-muted/50">
                   <tr>
@@ -922,7 +922,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         </div>
 
         {/* Section: Pagos */}
-        <div className="rounded-lg border bg-card p-4 space-y-4">
+        <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-foreground">Pagos</h3>
             {tipoDetectado === 'CONTADO' && (
@@ -945,7 +945,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={pagoMetodoId}
                 onChange={(e) => setPagoMetodoId(e.target.value)}
                 disabled={loadingMetodos}
-                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="">{loadingMetodos ? 'Cargando...' : 'Seleccionar...'}</option>
                 {metodos.map((m) => (
@@ -985,7 +985,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={pagoMonto}
                 onChange={(e) => setPagoMonto(e.target.value)}
                 placeholder="0.00"
-                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
             </div>
 
@@ -996,7 +996,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 value={pagoReferencia}
                 onChange={(e) => setPagoReferencia(e.target.value.toUpperCase())}
                 placeholder="Opcional"
-                className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
 
@@ -1006,7 +1006,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 type="button"
                 onClick={handleAddPago}
                 disabled={!pagoMetodoId || !pagoMonto || parseFloat(pagoMonto) <= 0}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 <Plus className="h-4 w-4" />
                 Agregar
@@ -1025,7 +1025,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                   ? pago.monto / tasaBcvNum
                   : null
                 return (
-                  <li key={index} className="flex items-start justify-between rounded-md bg-muted/50 px-3 py-2 text-sm">
+                  <li key={index} className="flex items-start justify-between rounded-xl bg-muted/50 px-3 py-2 text-sm">
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-3">
                         <span className="font-medium text-foreground">{pago.metodo_nombre}</span>
@@ -1069,7 +1069,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
         {/* Section: Totales */}
         {lineas.length > 0 && (
-          <div className="rounded-lg border bg-card p-4">
+          <div className="rounded-2xl border border-border bg-muted/20 p-4">
             {usaTasaParalela ? (
               <>
                 <div className="grid grid-cols-2 gap-4">
@@ -1142,14 +1142,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
             type="button"
             onClick={onClose}
             disabled={submitting}
-            className="px-5 py-2.5 text-sm font-medium text-muted-foreground bg-muted rounded-md hover:bg-muted/80 transition-colors disabled:opacity-50"
+            className="px-5 py-2.5 text-sm font-medium text-muted-foreground bg-muted rounded-xl hover:bg-muted/80 transition-colors disabled:opacity-50"
           >
             Cancelar
           </button>
           <button
             type="submit"
             disabled={submitting || lineas.length === 0}
-            className="px-5 py-2.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+            className="px-5 py-2.5 text-sm font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {submitLabel}
           </button>
@@ -1200,7 +1200,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
             <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
               Productos ({lineas.length})
             </h4>
-            <div className="overflow-auto rounded-md border max-h-48">
+            <div className="overflow-auto rounded-xl border border-border max-h-48">
               <table className="w-full text-xs">
                 <thead className="bg-muted/50">
                   <tr>
@@ -1269,7 +1269,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
           )}
 
           {/* Totales */}
-          <div className="rounded-lg border p-3 space-y-1 text-sm">
+          <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-1 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Total USD (factura):</span>
               <span className="font-semibold">{formatUsd(totalUsd)}</span>
@@ -1301,7 +1301,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
               type="button"
               onClick={() => setShowConfirm(false)}
               disabled={submitting}
-              className="px-4 py-2 text-sm font-medium text-muted-foreground bg-muted rounded-md hover:bg-muted/80 transition-colors disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-muted-foreground bg-muted rounded-xl hover:bg-muted/80 transition-colors disabled:opacity-50"
             >
               Cancelar — Seguir editando
             </button>
@@ -1309,7 +1309,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
               type="button"
               onClick={handleConfirm}
               disabled={submitting}
-              className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
             >
               <CheckCircle className="h-4 w-4" />
               {submitting ? 'Registrando...' : 'Confirmar y Registrar'}

@@ -69,49 +69,49 @@ function ReportePorCuenta({ gastos, tasaValor }: ReportePorCuentaProps) {
 
   if (filas.length === 0) {
     return (
-      <p className="text-center text-sm text-gray-500 py-8">
+      <p className="text-center text-sm text-muted-foreground py-8">
         No hay gastos registrados para mostrar
       </p>
     )
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-200 bg-gray-50">
-            <th className="text-left px-4 py-3 font-medium text-gray-700">Cuenta</th>
-            <th className="text-right px-4 py-3 font-medium text-gray-700">Total USD</th>
-            <th className="text-right px-4 py-3 font-medium text-gray-700">Total Bs</th>
-            <th className="text-right px-4 py-3 font-medium text-gray-700">Cantidad</th>
+          <tr className="border-b border-border bg-muted/50">
+            <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+            <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Total USD</th>
+            <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Total Bs</th>
+            <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cantidad</th>
           </tr>
         </thead>
         <tbody>
           {filas.map(([id, v]) => (
-            <tr key={id} className="border-b border-gray-100 hover:bg-gray-50">
-              <td className="px-4 py-3 text-gray-900">{v.nombre}</td>
-              <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+            <tr key={id} className="border-b border-border hover:bg-muted/30 transition-colors">
+              <td className="px-4 py-3 text-foreground">{v.nombre}</td>
+              <td className="px-4 py-3 text-right tabular-nums font-medium text-foreground">
                 {formatUsd(v.totalUsd)}
               </td>
-              <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+              <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                 {formatBs(v.totalBs)}
               </td>
-              <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+              <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                 {v.cantidad}
               </td>
             </tr>
           ))}
         </tbody>
         <tfoot>
-          <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
-            <td className="px-4 py-3 text-gray-900">Total General</td>
-            <td className="px-4 py-3 text-right tabular-nums text-gray-900">
+          <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+            <td className="px-4 py-3 text-foreground">Total General</td>
+            <td className="px-4 py-3 text-right tabular-nums text-foreground">
               {formatUsd(grandTotalUsd)}
             </td>
-            <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+            <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
               {formatBs(grandTotalBs)}
             </td>
-            <td className="px-4 py-3 text-right tabular-nums text-gray-600">
+            <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
               {grandCantidad}
             </td>
           </tr>
@@ -131,46 +131,46 @@ interface TablaDetalladaProps {
 function TablaDetallada({ gastos, tasaValor }: TablaDetalladaProps) {
   if (gastos.length === 0) {
     return (
-      <p className="text-center text-sm text-gray-500 py-8">
+      <p className="text-center text-sm text-muted-foreground py-8">
         No hay gastos para mostrar
       </p>
     )
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-gray-200 bg-gray-50">
-            <th className="text-left px-3 py-3 font-medium text-gray-700">Nro</th>
-            <th className="text-left px-3 py-3 font-medium text-gray-700">Fecha</th>
-            <th className="text-left px-3 py-3 font-medium text-gray-700">Cuenta</th>
-            <th className="text-left px-3 py-3 font-medium text-gray-700">Proveedor</th>
-            <th className="text-left px-3 py-3 font-medium text-gray-700">Descripcion</th>
-            <th className="text-right px-3 py-3 font-medium text-gray-700">Monto USD</th>
-            <th className="text-right px-3 py-3 font-medium text-gray-700">Monto Bs</th>
-            <th className="text-center px-3 py-3 font-medium text-gray-700">Status</th>
+          <tr className="border-b border-border bg-muted/50">
+            <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro</th>
+            <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+            <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+            <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+            <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Descripcion</th>
+            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto USD</th>
+            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto Bs</th>
+            <th className="text-center px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
           </tr>
         </thead>
         <tbody>
           {gastos.map((g) => (
             <tr
               key={g.id}
-              className="border-b border-gray-100 hover:bg-gray-50"
+              className="border-b border-border hover:bg-muted/30 transition-colors"
             >
-              <td className="px-3 py-2 font-mono text-gray-700">{g.nro_gasto}</td>
-              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+              <td className="px-3 py-2 font-mono text-foreground">{g.nro_gasto}</td>
+              <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                 {formatDate(g.fecha)}
               </td>
-              <td className="px-3 py-2 text-gray-900">{g.cuenta_nombre}</td>
-              <td className="px-3 py-2 text-gray-600">{g.proveedor_nombre ?? '-'}</td>
-              <td className="px-3 py-2 text-gray-700 max-w-xs truncate">
+              <td className="px-3 py-2 text-foreground">{g.cuenta_nombre}</td>
+              <td className="px-3 py-2 text-muted-foreground">{g.proveedor_nombre ?? '—'}</td>
+              <td className="px-3 py-2 text-muted-foreground max-w-xs truncate">
                 {g.descripcion}
               </td>
-              <td className="px-3 py-2 text-right tabular-nums font-medium text-gray-900">
+              <td className="px-3 py-2 text-right tabular-nums font-medium text-foreground">
                 {formatUsd(g.monto_usd)}
               </td>
-              <td className="px-3 py-2 text-right tabular-nums text-gray-600">
+              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                 {formatBs(parseFloat(g.monto_usd) * tasaValor)}
               </td>
               <td className="px-3 py-2 text-center">
@@ -222,7 +222,7 @@ function ReporteEspecifico({ gastos, tasaValor }: ReporteEspecificoProps) {
       {/* Filtros */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
+          <label className="block text-xs font-medium text-muted-foreground mb-1">
             Nro Gasto
           </label>
           <input
@@ -230,11 +230,11 @@ function ReporteEspecifico({ gastos, tasaValor }: ReporteEspecificoProps) {
             value={nroGasto}
             onChange={(e) => setNroGasto(e.target.value)}
             placeholder="GTO-0001"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
+          <label className="block text-xs font-medium text-muted-foreground mb-1">
             Proveedor
           </label>
           <input
@@ -242,11 +242,11 @@ function ReporteEspecifico({ gastos, tasaValor }: ReporteEspecificoProps) {
             value={proveedor}
             onChange={(e) => setProveedor(e.target.value)}
             placeholder="Nombre del proveedor"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">
+          <label className="block text-xs font-medium text-muted-foreground mb-1">
             Referencia
           </label>
           <input
@@ -254,13 +254,13 @@ function ReporteEspecifico({ gastos, tasaValor }: ReporteEspecificoProps) {
             value={referencia}
             onChange={(e) => setReferencia(e.target.value)}
             placeholder="Nro de referencia"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
       </div>
 
       {/* Resultados */}
-      <p className="text-xs text-gray-500">
+      <p className="text-xs text-muted-foreground">
         {filtrados.length} resultado{filtrados.length !== 1 ? 's' : ''} encontrado
         {filtrados.length !== 1 ? 's' : ''}
       </p>
@@ -298,7 +298,7 @@ export const GastoReportes: FC<GastoReportesProps> = ({
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-4xl shadow-xl"
+      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-4xl shadow-xl bg-card text-foreground"
     >
       {reporte && (
         <>
@@ -307,7 +307,7 @@ export const GastoReportes: FC<GastoReportesProps> = ({
           <div className="p-6 max-h-[90vh] overflow-y-auto">
             {/* Encabezado */}
             <div className="flex items-center justify-between mb-6 no-print">
-              <h2 className="text-lg font-semibold text-gray-900">
+              <h2 className="text-lg font-semibold text-foreground">
                 {tituloReporte(reporte)}
               </h2>
               <div className="flex items-center gap-2">
@@ -315,7 +315,7 @@ export const GastoReportes: FC<GastoReportesProps> = ({
                   <button
                     type="button"
                     onClick={() => window.print()}
-                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                    className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-foreground bg-muted rounded-md hover:bg-muted/80 transition-colors"
                   >
                     <Printer className="h-4 w-4" />
                     Imprimir
@@ -324,7 +324,7 @@ export const GastoReportes: FC<GastoReportesProps> = ({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="p-2 text-gray-500 hover:text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+                  className="p-2 text-muted-foreground hover:text-foreground rounded-md hover:bg-muted transition-colors"
                   aria-label="Cerrar"
                 >
                   <X className="h-5 w-5" />

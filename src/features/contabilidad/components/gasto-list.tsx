@@ -265,8 +265,8 @@ export function GastoList() {
 
           {/* Resumen por Grupo de Cuenta */}
           {resumenPorGrupo.length > 0 && !isLoading && (
-            <div className="mb-4 rounded-lg border border-border overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2.5 bg-muted/50 border-b border-border">
+            <div className="mb-4 rounded-2xl bg-card shadow-lg overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3 bg-muted/40 border-b border-border">
                 <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   Resumen por Grupo
                 </span>
@@ -321,23 +321,24 @@ export function GastoList() {
             </div>
           )}
 
-          {/* Barra de resultados + Reportes */}
-          <div className="flex justify-between items-center mb-3">
-            <p className="text-sm text-muted-foreground">
-              {isLoading
-                ? 'Cargando...'
-                : filtroGrupoId
-                  ? `${gastosFiltrados.length} gasto${gastosFiltrados.length !== 1 ? 's' : ''} · ${grupos.find(g => g.id === filtroGrupoId)?.nombre ?? ''}`
-                  : `${gastos.length} gasto${gastos.length !== 1 ? 's' : ''} encontrado${gastos.length !== 1 ? 's' : ''}`
-              }
-            </p>
-            <div className="flex items-center gap-2">
+          {/* Card: barra de resultados + tabla */}
+          <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+            {/* Toolbar */}
+            <div className="flex justify-between items-center px-4 py-3 bg-muted/40 border-b border-border">
+              <p className="text-sm text-muted-foreground">
+                {isLoading
+                  ? 'Cargando...'
+                  : filtroGrupoId
+                    ? `${gastosFiltrados.length} gasto${gastosFiltrados.length !== 1 ? 's' : ''} · ${grupos.find(g => g.id === filtroGrupoId)?.nombre ?? ''}`
+                    : `${gastos.length} gasto${gastos.length !== 1 ? 's' : ''} encontrado${gastos.length !== 1 ? 's' : ''}`
+                }
+              </p>
               {/* Reportes dropdown */}
               <div className="relative" ref={dropdownRef}>
                 <button
                   type="button"
                   onClick={() => setReporteOpen((prev) => !prev)}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-muted border border-border rounded-md hover:bg-muted/80 transition-colors"
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-background border border-border rounded-md hover:bg-muted/50 transition-colors"
                 >
                   <ChartBar className="h-4 w-4" />
                   Reportes
@@ -361,95 +362,95 @@ export function GastoList() {
                 )}
               </div>
             </div>
-          </div>
 
-          {/* Tabla */}
-          {isLoading ? (
-            <div className="space-y-2">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="h-12 bg-muted/50 rounded animate-pulse" />
-              ))}
-            </div>
-          ) : gastos.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground border border-dashed border-border rounded-lg">
-              <p className="text-base font-medium">Sin gastos en el periodo</p>
-              <p className="text-sm mt-1">No se encontraron gastos entre las fechas seleccionadas</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto border border-border rounded-lg max-h-[60vh] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 sticky top-0 z-[1]">
-                  <tr>
-                    <th
-                      className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
-                      onClick={() => toggleSort('nro_gasto')}
-                    >
-                      Nro Gasto<SortIcon field="nro_gasto" current={sortKey} dir={sortDir} />
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Factura</th>
-                    <th
-                      className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
-                      onClick={() => toggleSort('fecha')}
-                    >
-                      Fecha<SortIcon field="fecha" current={sortKey} dir={sortDir} />
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
-                    <th
-                      className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
-                      onClick={() => toggleSort('monto_usd')}
-                    >
-                      Monto USD<SortIcon field="monto_usd" current={sortKey} dir={sortDir} />
-                    </th>
-                    <th
-                      className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
-                      onClick={() => toggleSort('status')}
-                    >
-                      Status<SortIcon field="status" current={sortKey} dir={sortDir} />
-                    </th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Procesado por</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gastosSorted.map((g) => {
-                    const anulado = g.status === 'ANULADO'
-                    return (
-                      <tr
-                        key={g.id}
-                        onClick={() => setDetalleId(g.id)}
-                        className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
+            {/* Contenido: loading / vacío / tabla */}
+            {isLoading ? (
+              <div className="p-4 space-y-2">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="h-12 bg-muted/50 rounded-lg animate-pulse" />
+                ))}
+              </div>
+            ) : gastos.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p className="text-base font-medium">Sin gastos en el periodo</p>
+                <p className="text-sm mt-1">No se encontraron gastos entre las fechas seleccionadas</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 sticky top-0 z-[1]">
+                    <tr>
+                      <th
+                        className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                        onClick={() => toggleSort('nro_gasto')}
                       >
-                        <td className={`px-4 py-3 font-mono text-foreground ${anulado ? 'line-through opacity-50' : ''}`}>
-                          {g.nro_gasto}
-                        </td>
-                        <td className={`px-4 py-3 font-mono text-muted-foreground text-xs ${anulado ? 'line-through opacity-50' : ''}`}>
-                          {g.nro_factura ?? '—'}
-                        </td>
-                        <td className={`px-4 py-3 text-muted-foreground whitespace-nowrap ${anulado ? 'line-through opacity-50' : ''}`}>
-                          {formatDate(g.fecha)}
-                        </td>
-                        <td className={`px-4 py-3 text-foreground max-w-[180px] truncate ${anulado ? 'opacity-50' : ''}`}>
-                          {g.cuenta_nombre}
-                        </td>
-                        <td className={`px-4 py-3 text-muted-foreground ${anulado ? 'opacity-50' : ''}`}>
-                          {g.proveedor_nombre ?? '—'}
-                        </td>
-                        <td className={`px-4 py-3 text-right tabular-nums font-medium ${anulado ? 'line-through opacity-50' : 'text-foreground'}`}>
-                          {formatUsd(parseFloat(g.monto_usd))}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <StatusBadge status={g.status} />
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground text-xs">
-                          {(g as GastoConJoins).created_by_nombre ?? '—'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                        Nro Gasto<SortIcon field="nro_gasto" current={sortKey} dir={sortDir} />
+                      </th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Factura</th>
+                      <th
+                        className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                        onClick={() => toggleSort('fecha')}
+                      >
+                        Fecha<SortIcon field="fecha" current={sortKey} dir={sortDir} />
+                      </th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+                      <th
+                        className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                        onClick={() => toggleSort('monto_usd')}
+                      >
+                        Monto USD<SortIcon field="monto_usd" current={sortKey} dir={sortDir} />
+                      </th>
+                      <th
+                        className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
+                        onClick={() => toggleSort('status')}
+                      >
+                        Status<SortIcon field="status" current={sortKey} dir={sortDir} />
+                      </th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Procesado por</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {gastosSorted.map((g) => {
+                      const anulado = g.status === 'ANULADO'
+                      return (
+                        <tr
+                          key={g.id}
+                          onClick={() => setDetalleId(g.id)}
+                          className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
+                        >
+                          <td className={`px-4 py-3 font-mono text-foreground ${anulado ? 'line-through opacity-50' : ''}`}>
+                            {g.nro_gasto}
+                          </td>
+                          <td className={`px-4 py-3 font-mono text-muted-foreground text-xs ${anulado ? 'line-through opacity-50' : ''}`}>
+                            {g.nro_factura ?? '—'}
+                          </td>
+                          <td className={`px-4 py-3 text-muted-foreground whitespace-nowrap ${anulado ? 'line-through opacity-50' : ''}`}>
+                            {formatDate(g.fecha)}
+                          </td>
+                          <td className={`px-4 py-3 text-foreground max-w-[180px] truncate ${anulado ? 'opacity-50' : ''}`}>
+                            {g.cuenta_nombre}
+                          </td>
+                          <td className={`px-4 py-3 text-muted-foreground ${anulado ? 'opacity-50' : ''}`}>
+                            {g.proveedor_nombre ?? '—'}
+                          </td>
+                          <td className={`px-4 py-3 text-right tabular-nums font-medium ${anulado ? 'line-through opacity-50' : 'text-foreground'}`}>
+                            {formatUsd(parseFloat(g.monto_usd))}
+                          </td>
+                          <td className="px-4 py-3 text-center">
+                            <StatusBadge status={g.status} />
+                          </td>
+                          <td className="px-4 py-3 text-muted-foreground text-xs">
+                            {(g as GastoConJoins).created_by_nombre ?? '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       )}
 

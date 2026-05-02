@@ -271,7 +271,7 @@ function ResumenConfirm({
           type="button"
           onClick={onVolver}
           disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-muted-foreground bg-muted rounded-md hover:bg-muted/80 transition-colors disabled:opacity-50"
+          className="px-4 py-2 text-sm font-medium text-muted-foreground bg-muted rounded-xl hover:bg-muted/80 transition-colors disabled:opacity-50"
         >
           Volver a editar
         </button>
@@ -279,7 +279,7 @@ function ResumenConfirm({
           type="button"
           onClick={onConfirm}
           disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50"
+          className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50"
         >
           {submitting ? 'Registrando...' : 'Confirmar y Registrar'}
         </button>
@@ -688,13 +688,13 @@ export function GastoForm({ onClose }: GastoFormProps) {
 
   return (
     <>
-      <div className="space-y-6">
+      <div className="rounded-2xl bg-card shadow-lg p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-2 text-muted-foreground hover:bg-muted transition-colors"
+            className="rounded-xl p-2 text-muted-foreground hover:bg-muted transition-colors"
           >
             <ArrowLeft className="h-5 w-5" />
           </button>
@@ -776,7 +776,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       value={nroFactura}
                       onChange={(e) => setNroFactura(e.target.value.toUpperCase())}
                       placeholder="00001234"
-                      className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                      className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
                     />
                   </div>
                   <div>
@@ -788,7 +788,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       value={nroControl}
                       onChange={(e) => setNroControl(e.target.value.toUpperCase())}
                       placeholder="00-0000001"
-                      className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                      className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
                     />
                   </div>
                 </div>
@@ -802,7 +802,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     value={cuentaId}
                     onChange={(e) => setCuentaId(e.target.value)}
                     disabled={loadingCuentas}
-                    className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                    className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
                       errors.cuenta_id ? 'border-destructive' : 'border-input'
                     }`}
                   >
@@ -824,7 +824,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       value={proveedorId}
                       onChange={(e) => setProveedorId(e.target.value)}
                       disabled={loadingProveedores}
-                      className="flex-1 rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                      className="flex-1 rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
                     >
                       <option value="">{loadingProveedores ? 'Cargando...' : 'Sin proveedor'}</option>
                       {proveedores.map((p) => (
@@ -852,7 +852,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     onChange={(e) => setDescripcion(e.target.value)}
                     placeholder="Descripcion del gasto..."
                     rows={2}
-                    className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none ${
+                    className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none ${
                       errors.descripcion ? 'border-destructive' : 'border-input'
                     }`}
                   />
@@ -868,7 +868,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     type="date"
                     value={fecha}
                     onChange={(e) => setFecha(e.target.value)}
-                    className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
+                    className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
                       errors.fecha ? 'border-destructive' : 'border-input'
                     }`}
                   />
@@ -886,7 +886,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                 </div>
 
                 {/* ── SECCIÓN 2: Tipo de factura y tasas ── */}
-                <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-3">
+                <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-3">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                     Tipo de Factura
                   </p>
@@ -946,7 +946,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                         onChange={(e) => setTasaProveedor(e.target.value)}
                         onWheel={(e) => (e.target as HTMLInputElement).blur()}
                         placeholder="0.0000"
-                        className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
+                        className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
                           errors.tasa_proveedor ? 'border-destructive' : 'border-input'
                         }`}
                       />
@@ -983,7 +983,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       onChange={(e) => { setTasaInterna(e.target.value); setTasaInternaManual(true) }}
                       onWheel={(e) => (e.target as HTMLInputElement).blur()}
                       placeholder="0.0000"
-                      className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
+                      className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
                         errors.tasa ? 'border-destructive' : 'border-input'
                       }`}
                     />
@@ -1004,7 +1004,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     onChange={(e) => setMontoFactura(e.target.value)}
                     onWheel={(e) => (e.target as HTMLInputElement).blur()}
                     placeholder={monedaFactura === 'USD' ? '0.00 USD' : '0.00 Bs'}
-                    className={`w-full rounded-md border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
+                    className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
                       errors.monto_factura ? 'border-destructive' : 'border-input'
                     }`}
                   />
@@ -1092,7 +1092,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                   )}
 
                   {pagos.length === 0 && (
-                    <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-3 text-center">
+                    <div className="rounded-xl border border-dashed border-border bg-muted/20 px-4 py-3 text-center">
                       <p className="text-xs text-muted-foreground">
                         Sin abonos — el gasto quedará pendiente en Cuentas por Pagar
                       </p>
@@ -1105,7 +1105,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       const requiereReferencia = metodoSeleccionado?.requiere_referencia === 1
 
                       return (
-                        <div key={pago.id} className="rounded-md border border-border bg-muted/20 p-3 space-y-2">
+                        <div key={pago.id} className="rounded-xl border border-border bg-muted/20 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-medium text-muted-foreground">
                               Abono {index + 1}
@@ -1124,7 +1124,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                             value={pago.metodo_cobro_id}
                             onChange={(e) => actualizarPago(pago.id, 'metodo_cobro_id', e.target.value)}
                             disabled={loadingMetodos}
-                            className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                            className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
                           >
                             <option value="">{loadingMetodos ? 'Cargando...' : 'Seleccionar método'}</option>
                             {metodos.map((m) => (
@@ -1140,7 +1140,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                             onChange={(e) => actualizarPago(pago.id, 'monto', e.target.value)}
                             onWheel={(e) => (e.target as HTMLInputElement).blur()}
                             placeholder={`Monto ${pago.moneda}`}
-                            className={`w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner}`}
+                            className={`w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner}`}
                           />
 
                           {requiereReferencia && (
@@ -1149,7 +1149,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                               value={pago.referencia}
                               onChange={(e) => actualizarPago(pago.id, 'referencia', e.target.value.toUpperCase())}
                               placeholder="Nro de referencia"
-                              className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
+                              className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring font-mono"
                             />
                           )}
                         </div>
@@ -1162,7 +1162,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     <div className="mt-2 space-y-1">
                       {hayTasaParalelaActiva ? (
                         // Dual-rate: mostrar perspectiva proveedor y contable
-                        <div className="rounded-md border border-border bg-muted/40 px-3 py-2.5 text-xs space-y-1.5">
+                        <div className="rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-xs space-y-1.5">
                           {/* Fila proveedor */}
                           <div className={`flex justify-between items-center ${
                             pagosSuperanTotal ? 'text-destructive' : ''
@@ -1234,7 +1234,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     onChange={(e) => setObservaciones(e.target.value)}
                     placeholder="Notas adicionales..."
                     rows={2}
-                    className="w-full rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
+                    className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring resize-none"
                   />
                 </div>
 
@@ -1243,13 +1243,13 @@ export function GastoForm({ onClose }: GastoFormProps) {
                   <button
                     type="button"
                     onClick={onClose}
-                    className="px-4 py-2 text-sm font-medium text-muted-foreground bg-muted rounded-md hover:bg-muted/80 transition-colors"
+                    className="px-4 py-2 text-sm font-medium text-muted-foreground bg-muted rounded-xl hover:bg-muted/80 transition-colors"
                   >
                     Cancelar
                   </button>
                   <button
                     type="submit"
-                    className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors"
+                    className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors"
                   >
                     Revisar y Registrar
                   </button>
@@ -1266,3 +1266,4 @@ export function GastoForm({ onClose }: GastoFormProps) {
     </>
   )
 }
+
