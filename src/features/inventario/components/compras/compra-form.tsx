@@ -89,9 +89,24 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [showConfirm, setShowConfirm] = useState(false)
   const pendingParamsRef = useRef<CrearCompraParams | null>(null)
 
-  // Auto-lookup tasa interna para la fecha de factura (siempre, no solo con tasa paralela)
+  // Auto-lookup tasa interna para la fecha de factura
   useEffect(() => {
     if (!user?.empresa_id || !fechaFactura) return
+
+    const hoyStr = todayStr()
+
+    if (fechaFactura === hoyStr) {
+      // Fecha es hoy: usar tasa vigente actual directamente
+      if (tasaValor > 0) {
+        setTasaInterna(tasaValor.toFixed(4))
+        setTasaInternaFound(true)
+      } else {
+        setTasaInternaFound(false)
+      }
+      return
+    }
+
+    // Fecha pasada: buscar tasa historica para esa fecha
     db.getAll<{ valor: string }>(
       `SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1`,
       [user.empresa_id, fechaFactura]
@@ -100,10 +115,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
         setTasaInterna(parseFloat(rows[0].valor).toFixed(4))
         setTasaInternaFound(true)
       } else {
+        setTasaInterna('')
         setTasaInternaFound(false)
       }
     }).catch(() => setTasaInternaFound(false))
-  }, [fechaFactura, user?.empresa_id])
+  }, [fechaFactura, user?.empresa_id, tasaValor])
 
   // Product search
   const [busqueda, setBusqueda] = useState('')

@@ -306,6 +306,7 @@ export interface Productos {
   updated_by: string | null
   ubicacion: string | null
   presentacion: string | null
+  codigo_barras: string | null
 }
 
 export interface InventarioStock {

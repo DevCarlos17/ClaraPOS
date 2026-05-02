@@ -1,7 +1,11 @@
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { MagnifyingGlass } from '@phosphor-icons/react'
-import { useBuscarProductosVenta, type ProductoVenta } from '../hooks/use-ventas'
+import { toast } from 'sonner'
+import { useBuscarProductosVenta, buscarProductoPorCodigoBarras, type ProductoVenta } from '../hooks/use-ventas'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd } from '@/lib/currency'
+
+const SCANNER_THRESHOLD_MS = 50
 
 interface ProductoBuscadorProps {
   onSelect: (producto: ProductoVenta) => void
@@ -17,10 +21,13 @@ function ProductoBuscador({ onSelect }, ref) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const { productos, isLoading } = useBuscarProductosVenta(query)
+  const { user } = useCurrentUser()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const lastKeyTime = useRef<number>(0)
+  const isScanning = useRef<boolean>(false)
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -50,17 +57,52 @@ function ProductoBuscador({ onSelect }, ref) {
     }
   }, [activeIndex])
 
-  const handleSelect = (producto: ProductoVenta) => {
+  const handleSelect = useCallback((producto: ProductoVenta) => {
     onSelect(producto)
     setQuery('')
     setOpen(false)
     setActiveIndex(-1)
-  }
+  }, [onSelect])
+
+  const buscarYAgregarPorCodigoBarras = useCallback(async (barcode: string) => {
+    if (!user?.empresa_id) return
+    const producto = await buscarProductoPorCodigoBarras(barcode, user.empresa_id)
+    if (producto) {
+      onSelect(producto)
+      setQuery('')
+      setOpen(false)
+      setActiveIndex(-1)
+    } else {
+      toast.error(`Producto no encontrado: ${barcode}`)
+      setQuery('')
+    }
+  }, [user?.empresa_id, onSelect])
 
   const dropdownVisible = open && query.trim().length >= 2
   const totalItems = productos.length
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Deteccion de scanner por velocidad entre teclas
+    const now = Date.now()
+    const delta = now - lastKeyTime.current
+    lastKeyTime.current = now
+
+    if (delta < SCANNER_THRESHOLD_MS) {
+      isScanning.current = true
+    } else {
+      isScanning.current = false
+    }
+
+    if (e.key === 'Enter' && isScanning.current) {
+      e.preventDefault()
+      isScanning.current = false
+      const barcode = query.trim()
+      if (barcode) {
+        void buscarYAgregarPorCodigoBarras(barcode)
+      }
+      return
+    }
+
     if (!dropdownVisible) return
 
     switch (e.key) {
@@ -102,7 +144,7 @@ function ProductoBuscador({ onSelect }, ref) {
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Buscar producto por nombre o codigo..."
+          placeholder="Buscar por nombre, codigo o codigo de barras..."
           autoComplete="off"
           role="combobox"
           aria-expanded={dropdownVisible}
@@ -145,6 +187,9 @@ function ProductoBuscador({ onSelect }, ref) {
                     </p>
                     <p className="text-xs text-muted-foreground">
                       {p.tipo === 'S' ? 'Servicio' : `Stock: ${parseFloat(p.stock).toFixed(3)}`}
+                      {p.codigo_barras && (
+                        <span className="ml-2 font-mono">CB: {p.codigo_barras}</span>
+                      )}
                     </p>
                   </div>
                   <span className="text-sm font-medium shrink-0">

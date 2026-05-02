@@ -48,6 +48,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [isActive, setIsActive] = useState(true)
   const [ubicacion, setUbicacion] = useState('')
+  const [codigoBarras, setCodigoBarras] = useState('')
   const [unidadBaseId, setUnidadBaseId] = useState('')
   const [manejaLotes, setManejaLotes] = useState(false)
   const [depositoId, setDepositoId] = useState('')
@@ -74,6 +75,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setTipoImpuesto((producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento')
         setIsActive(producto.is_active === 1)
         setUbicacion(producto.ubicacion ?? '')
+        setCodigoBarras(producto.codigo_barras ?? '')
         setUnidadBaseId(producto.unidad_base_id ?? '')
         setManejaLotes(producto.maneja_lotes === 1)
         setDepositoId('')
@@ -91,6 +93,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setTipoImpuesto('Exento')
         setIsActive(true)
         setUbicacion('')
+        setCodigoBarras('')
         setUnidadBaseId('')
         setManejaLotes(false)
         setDepositoId('')
@@ -182,6 +185,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       is_active: isActive,
       ubicacion: esServicioOCombo ? '' : ubicacion,
       presentacion: esServicioOCombo ? '' : presentacion,
+      codigo_barras: codigoBarras.trim(),
     }
 
     const parsed = productoSchema.safeParse(data)
@@ -213,6 +217,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           unidad_base_id: esServicioOCombo ? null : (unidadBaseId || null),
           maneja_lotes: esServicioOCombo ? false : manejaLotes,
           presentacion: esServicioOCombo ? null : (parsed.data.presentacion || null),
+          codigo_barras: parsed.data.codigo_barras?.trim() || null,
         })
         toast.success('Producto actualizado correctamente')
       } else {
@@ -231,6 +236,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           unidad_base_id: esServicioOCombo ? undefined : (unidadBaseId || undefined),
           maneja_lotes: esServicioOCombo ? false : manejaLotes,
           presentacion: esServicioOCombo ? undefined : (parsed.data.presentacion || undefined),
+          codigo_barras: parsed.data.codigo_barras?.trim() || undefined,
         })
 
         // Si es producto fisico con stock inicial, crear movimiento y actualizar stock
@@ -459,6 +465,23 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               />
             </div>
           )}
+
+          {/* Codigo de barras */}
+          <div>
+            <label htmlFor="prod-codigo-barras" className="block text-sm font-medium text-gray-700 mb-1">
+              Codigo de Barras <span className="text-gray-400 font-normal">(Opcional)</span>
+            </label>
+            <input
+              id="prod-codigo-barras"
+              type="text"
+              value={codigoBarras}
+              onChange={(e) => setCodigoBarras(e.target.value)}
+              placeholder="Escanear o ingresar EAN-13, UPC, Code128..."
+              autoComplete="off"
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">Puede escanear directamente con un lector de codigo de barras</p>
+          </div>
 
           {/* Departamento */}
           <div>

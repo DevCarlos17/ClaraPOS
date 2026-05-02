@@ -26,6 +26,7 @@ export interface Producto {
   updated_at: string
   ubicacion: string | null
   presentacion: string | null
+  codigo_barras: string | null
 }
 
 export function useProductos() {
@@ -98,6 +99,7 @@ export async function crearProducto(data: {
   unidad_base_id?: string
   maneja_lotes?: boolean
   presentacion?: string
+  codigo_barras?: string
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -127,6 +129,7 @@ export async function crearProducto(data: {
       ubicacion: data.ubicacion?.toUpperCase() || null,
       unidad_base_id: isServicioOCombo ? null : (data.unidad_base_id ?? null),
       presentacion: isServicioOCombo ? null : (data.presentacion?.toUpperCase() || null),
+      codigo_barras: data.codigo_barras?.trim() || null,
     })
     .execute()
 
@@ -149,6 +152,7 @@ export async function actualizarProducto(
     unidad_base_id?: string | null
     maneja_lotes?: boolean
     presentacion?: string | null
+    codigo_barras?: string | null
   }
 ) {
   const now = localNow()
@@ -166,6 +170,7 @@ export async function actualizarProducto(
   if (data.unidad_base_id !== undefined) updates.unidad_base_id = data.unidad_base_id ?? null
   if (data.maneja_lotes !== undefined) updates.maneja_lotes = data.maneja_lotes ? 1 : 0
   if (data.presentacion !== undefined) updates.presentacion = data.presentacion ? data.presentacion.toUpperCase() : null
+  if (data.codigo_barras !== undefined) updates.codigo_barras = data.codigo_barras?.trim() || null
 
   // Servicios y Combos no manejan stock ni presentacion fisica
   if (data.tipo === 'S' || data.tipo === 'C') {

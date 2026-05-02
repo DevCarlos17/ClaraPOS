@@ -14,6 +14,7 @@ export const productoSchema = z
     is_active: z.boolean().default(true),
     ubicacion: z.string().optional().default(''),
     presentacion: z.string().optional().default(''),
+    codigo_barras: z.string().max(100).optional().default(''),
   })
   .refine(
     (data) => {

@@ -55,15 +55,15 @@ export function useBuscarProductosVenta(query: string) {
   const { data, isLoading } = useQuery(
     shouldSearch
       ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
-                COALESCE(u.es_decimal, 1) as es_decimal
+                p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal
          FROM productos p
          LEFT JOIN unidades u ON p.unidad_base_id = u.id
          WHERE p.empresa_id = ? AND p.is_active = 1
-         AND (p.nombre LIKE ? OR p.codigo LIKE ?)
+         AND (p.nombre LIKE ? OR p.codigo LIKE ? OR p.codigo_barras LIKE ?)
          AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
          ORDER BY p.nombre ASC LIMIT 10`
       : '',
-    shouldSearch ? [empresaId, pattern, pattern] : []
+    shouldSearch ? [empresaId, pattern, pattern, pattern] : []
   )
 
   return { productos: (data ?? []) as ProductoVenta[], isLoading }
@@ -77,6 +77,27 @@ export interface ProductoVenta {
   precio_venta_usd: string
   stock: string
   es_decimal: number
+  codigo_barras?: string | null
+}
+
+export async function buscarProductoPorCodigoBarras(
+  barcode: string,
+  empresaId: string
+): Promise<ProductoVenta | null> {
+  const result = await db.execute(
+    `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
+            p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal
+     FROM productos p
+     LEFT JOIN unidades u ON p.unidad_base_id = u.id
+     WHERE p.empresa_id = ?
+       AND p.codigo_barras = ?
+       AND p.is_active = 1
+       AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
+     LIMIT 1`,
+    [empresaId, barcode]
+  )
+  if (!result.rows || result.rows.length === 0) return null
+  return result.rows.item(0) as ProductoVenta
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
