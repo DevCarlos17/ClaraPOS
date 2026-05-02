@@ -73,7 +73,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [nroControl, setNroControl] = useState('')
   const [proveedorId, setProveedorId] = useState('')
   const [moneda, setMoneda] = useState<'USD' | 'BS'>('USD')
-  const [tasa, setTasa] = useState(tasaValor > 0 ? tasaValor.toFixed(4) : '')
 
   // Lines
   const [lineas, setLineas] = useState<LineaUI[]>([])
@@ -82,8 +81,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   // Tasa paralela
   const [usaTasaParalela, setUsaTasaParalela] = useState(false)
-  const [tasaBcv, setTasaBcv] = useState(tasaValor > 0 ? tasaValor.toFixed(4) : '')
-  const [tasaBcvFound, setTasaBcvFound] = useState(false)
+  const [tasaInterna, setTasaInterna] = useState(tasaValor > 0 ? tasaValor.toFixed(4) : '')
+  const [tasaInternaFound, setTasaInternaFound] = useState(false)
+  const [tasaProveedor, setTasaProveedor] = useState('')
 
   // Confirmar registro
   const [showConfirm, setShowConfirm] = useState(false)
@@ -97,12 +97,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
       [user.empresa_id, fechaFactura]
     ).then((rows) => {
       if (rows.length > 0) {
-        setTasaBcv(parseFloat(rows[0].valor).toFixed(4))
-        setTasaBcvFound(true)
+        setTasaInterna(parseFloat(rows[0].valor).toFixed(4))
+        setTasaInternaFound(true)
       } else {
-        setTasaBcvFound(false)
+        setTasaInternaFound(false)
       }
-    }).catch(() => setTasaBcvFound(false))
+    }).catch(() => setTasaInternaFound(false))
   }, [fechaFactura, user?.empresa_id])
 
   // Product search
@@ -119,8 +119,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [showCrearProducto, setShowCrearProducto] = useState(false)
   const [showCrearProveedor, setShowCrearProveedor] = useState(false)
 
-  const tasaNum = parseFloat(tasa) || 0
-  const tasaBcvNum = parseFloat(tasaBcv) || 0
+  const tasaInternaNum = parseFloat(tasaInterna) || 0
+  const tasaProveedorNum = parseFloat(tasaProveedor) || 0
+  const tasaFacturaNum = usaTasaParalela ? tasaProveedorNum : tasaInternaNum
 
   // Validacion de fecha: advertencia si es futura
   const hoy = todayStr()
@@ -170,13 +171,13 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   // Costo sistema por unidad (a tasa interna) para mostrar en gris
   function getCostoSistema(l: LineaUI): number | null {
-    if (!usaTasaParalela || tasaBcvNum <= 0) return null
+    if (!usaTasaParalela || tasaInternaNum <= 0) return null
     if (moneda === 'USD') {
       // costo_usd * tasa_proveedor / tasa_interna
-      return tasaNum > 0 ? l.costo_input * tasaNum / tasaBcvNum : null
+      return tasaFacturaNum > 0 ? l.costo_input * tasaFacturaNum / tasaInternaNum : null
     } else {
       // costo_bs / tasa_interna
-      return l.costo_input / tasaBcvNum
+      return l.costo_input / tasaInternaNum
     }
   }
 
@@ -191,23 +192,23 @@ export function CompraForm({ onClose }: CompraFormProps) {
   // totalUsd: siempre a tasa del proveedor (para CxP)
   const totalUsd = moneda === 'USD'
     ? totalDisplay
-    : (tasaNum > 0 ? totalDisplay / tasaNum : 0)
-  const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaNum
+    : (tasaFacturaNum > 0 ? totalDisplay / tasaFacturaNum : 0)
+  const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaFacturaNum
 
   // totalUsdSistema: a tasa interna (para inventario y contabilidad)
-  const totalUsdSistema = usaTasaParalela && tasaBcvNum > 0
+  const totalUsdSistema = usaTasaParalela && tasaInternaNum > 0
     ? (moneda === 'USD'
-        ? (tasaNum > 0 ? totalDisplay * tasaNum / tasaBcvNum : 0)
-        : totalDisplay / tasaBcvNum)
+        ? (tasaFacturaNum > 0 ? totalDisplay * tasaFacturaNum / tasaInternaNum : 0)
+        : totalDisplay / tasaInternaNum)
     : totalUsd
 
-  // Payment calculations always at proveedor rate (tasaNum)
+  // Payment calculations always at proveedor rate (tasaFacturaNum)
   const totalAbonadoUsd = pagos.reduce((sum, p) => {
-    const mUsd = p.moneda === 'BS' ? (tasaNum > 0 ? p.monto / tasaNum : 0) : p.monto
+    const mUsd = p.moneda === 'BS' ? (tasaFacturaNum > 0 ? p.monto / tasaFacturaNum : 0) : p.monto
     return sum + mUsd
   }, 0)
   const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
-  const pendienteBs = pendienteUsd * tasaNum
+  const pendienteBs = pendienteUsd * tasaFacturaNum
   const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
 
   const metodoSeleccionado = metodos.find((m) => m.id === pagoMetodoId)
@@ -215,7 +216,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   function handleAddProducto(producto: Producto) {
     const options = getUnidadOptions(producto)
     const costoBase = parseFloat(producto.costo_usd) || 0
-    const costoDisplay = moneda === 'USD' ? costoBase : costoBase * tasaNum
+    const costoDisplay = moneda === 'USD' ? costoBase : costoBase * tasaFacturaNum
 
     setLineas((prev) => [
       ...prev,
@@ -285,14 +286,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
   }
 
   function handleMonedaSwitch(newMoneda: 'USD' | 'BS') {
-    if (newMoneda === moneda || tasaNum <= 0) return
+    if (newMoneda === moneda || tasaFacturaNum <= 0) return
 
     setLineas((prev) =>
       prev.map((l) => {
         const newCosto =
           newMoneda === 'BS'
-            ? Number((l.costo_input * tasaNum).toFixed(2))
-            : Number((l.costo_input / tasaNum).toFixed(2))
+            ? Number((l.costo_input * tasaFacturaNum).toFixed(2))
+            : Number((l.costo_input / tasaFacturaNum).toFixed(2))
         return { ...l, costo_input: newCosto }
       })
     )
@@ -325,7 +326,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   function handlePagoMax() {
     if (!metodoSeleccionado || totalUsd <= 0) return
     if (metodoSeleccionado.moneda === 'BS') {
-      setPagoMonto((pendienteUsd * tasaNum).toFixed(2))
+      setPagoMonto((pendienteUsd * tasaFacturaNum).toFixed(2))
     } else {
       setPagoMonto(pendienteUsd.toFixed(2))
     }
@@ -340,9 +341,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
+    if (tasaInternaNum <= 0) {
+      setErrors({ tasa_interna: 'Ingrese la tasa interna (Bs/USD)' })
+      return
+    }
+
+    if (usaTasaParalela && tasaProveedorNum <= 0) {
+      setErrors({ tasa_proveedor: 'Ingrese la tasa del proveedor para usar tasa paralela' })
+      return
+    }
+
     const headerParsed = compraHeaderSchema.safeParse({
       proveedor_id: proveedorId,
-      tasa: tasaNum,
+      tasa: tasaFacturaNum,
       fecha_factura: fechaFactura,
       nro_factura: nroFactura,
       nro_control: nroControl || undefined,
@@ -359,12 +370,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // Validar tasa BCV cuando usa tasa paralela
-    if (usaTasaParalela && tasaBcvNum <= 0) {
-      setErrors({ tasa_bcv: 'Ingrese la tasa BCV / interna para usar tasa paralela' })
-      return
-    }
-
     if (lineas.length === 0) {
       setErrors({ lineas: 'Debe agregar al menos un producto' })
       return
@@ -378,16 +383,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
       if (moneda === 'USD') {
         costoUnitarioUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
-        if (usaTasaParalela && tasaBcvNum > 0 && tasaNum > 0) {
-          costoUsdSistema = costoUnitarioUsd * tasaNum / tasaBcvNum
+        if (usaTasaParalela && tasaInternaNum > 0 && tasaFacturaNum > 0) {
+          costoUsdSistema = costoUnitarioUsd * tasaFacturaNum / tasaInternaNum
         } else {
           costoUsdSistema = costoUnitarioUsd
         }
       } else {
-        const costoOrigPerUnit = tasaNum > 0 ? l.costo_input / tasaNum : 0
+        const costoOrigPerUnit = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
         costoUnitarioUsd = l.factor > 0 ? costoOrigPerUnit / l.factor : costoOrigPerUnit
-        if (usaTasaParalela && tasaBcvNum > 0) {
-          const costoBcvPerUnit = l.costo_input / tasaBcvNum
+        if (usaTasaParalela && tasaInternaNum > 0) {
+          const costoBcvPerUnit = l.costo_input / tasaInternaNum
           costoUsdSistema = l.factor > 0 ? costoBcvPerUnit / l.factor : costoBcvPerUnit
         } else {
           costoUsdSistema = costoUnitarioUsd
@@ -431,8 +436,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
     // Guardar params y mostrar confirmacion
     pendingParamsRef.current = {
       proveedor_id: headerParsed.data.proveedor_id,
-      tasa: headerParsed.data.tasa,
-      tasa_costo: tasaBcvNum > 0 ? tasaBcvNum : undefined,
+      tasa: usaTasaParalela ? tasaProveedorNum : tasaInternaNum,
+      tasa_costo: usaTasaParalela ? tasaInternaNum : undefined,
       fecha_factura: headerParsed.data.fecha_factura,
       nro_factura: headerParsed.data.nro_factura,
       nro_control: headerParsed.data.nro_control,
@@ -472,7 +477,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
     ? `Registrar (${formatUsd(pendienteUsd)} a credito)`
     : 'Registrar Factura de Compra'
 
-  const mostrarColumnasSistema = usaTasaParalela && tasaBcvNum > 0
+  const mostrarColumnasSistema = usaTasaParalela && tasaInternaNum > 0
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-6 space-y-6">
@@ -590,54 +595,25 @@ export function CompraForm({ onClose }: CompraFormProps) {
               {errors.proveedor_id && <p className="text-destructive text-xs mt-1">{errors.proveedor_id}</p>}
             </div>
 
-            {/* Tasa */}
+            {/* Tasa Interna */}
             <div>
-              <label htmlFor="compra-tasa" className="block text-xs font-medium text-muted-foreground mb-1">
-                {usaTasaParalela ? 'Tasa Proveedor (Paralela)' : 'Tasa (Bs/USD)'}
+              <label htmlFor="compra-tasa-interna" className="block text-xs font-medium text-muted-foreground mb-1">
+                Tasa Interna (Bs/USD)
               </label>
               <input
-                id="compra-tasa"
+                id="compra-tasa-interna"
                 type="number"
                 step="0.0001"
                 min="0.0001"
-                value={tasa}
-                onChange={(e) => setTasa(e.target.value)}
+                value={tasaInterna}
+                onChange={(e) => setTasaInterna(e.target.value)}
                 placeholder="0.0000"
                 className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
-                  errors.tasa ? 'border-destructive' : 'border-input'
+                  errors.tasa_interna ? 'border-destructive' : 'border-input'
                 }`}
               />
-              {errors.tasa && <p className="text-destructive text-xs mt-1">{errors.tasa}</p>}
-            </div>
-          </div>
-
-          {/* Tasa BCV / Interna - siempre visible */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="sm:col-span-2">
-              <p className="text-xs text-muted-foreground leading-snug">
-                Tasa BCV / interna vigente a la fecha de la factura.
-                Se usa para registrar el diferencial cambiario al realizar pagos.
-              </p>
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-muted-foreground mb-1">
-                Tasa BCV / Interna
-              </label>
-              <input
-                id="tasa-bcv"
-                type="number"
-                step="0.0001"
-                min="0.0001"
-                value={tasaBcv}
-                onChange={(e) => !tasaBcvFound && setTasaBcv(e.target.value)}
-                readOnly={tasaBcvFound}
-                placeholder="Ej: 500.0000"
-                className={`w-full rounded-xl border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
-                  errors.tasa_bcv ? 'border-destructive' : 'border-input'
-                } ${tasaBcvFound ? 'bg-muted cursor-default' : 'bg-background'}`}
-              />
-              {errors.tasa_bcv && <p className="text-destructive text-xs mt-1">{errors.tasa_bcv}</p>}
-              {tasaBcvFound
+              {errors.tasa_interna && <p className="text-destructive text-xs mt-1">{errors.tasa_interna}</p>}
+              {tasaInternaFound
                 ? <p className="text-xs text-green-600 dark:text-green-400 mt-1">✓ Tasa encontrada para esta fecha</p>
                 : <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">No hay tasa para esta fecha — ingrese manualmente</p>
               }
@@ -696,24 +672,42 @@ export function CompraForm({ onClose }: CompraFormProps) {
             </div>
             {usaTasaParalela && (
               <div className="mt-3 p-3 rounded-lg bg-amber-50/80 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-amber-800 dark:text-amber-300 mb-1">
+                    Tasa Proveedor (Paralela) (Bs/USD)
+                  </label>
+                  <input
+                    id="tasa-proveedor"
+                    type="number"
+                    step="0.0001"
+                    min="0.0001"
+                    value={tasaProveedor}
+                    onChange={(e) => setTasaProveedor(e.target.value)}
+                    placeholder="0.0000"
+                    className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                      errors.tasa_proveedor ? 'border-destructive' : 'border-amber-200 dark:border-amber-700'
+                    }`}
+                  />
+                  {errors.tasa_proveedor && <p className="text-destructive text-xs mt-1">{errors.tasa_proveedor}</p>}
+                </div>
                 <p className="text-xs text-amber-700 dark:text-amber-400">
                   {moneda === 'BS'
-                    ? `Ingrese los costos en Bs al precio del proveedor. El sistema los convierte a USD usando la Tasa Interna/BCV para contabilidad. Ejemplo: producto a Bs 700 (tasa proveedor 700) con tasa BCV 500 → costo sistema = 700 ÷ 500 = `
-                    : `Ingrese los costos en USD segun la factura. El sistema ajusta el costo de inventario multiplicando por el diferencial de tasas. Ejemplo: producto a $1.00 (tasa proveedor 700) con tasa BCV 500 → costo sistema = $1.00 × 700 ÷ 500 = `
+                    ? `Ingrese los costos en Bs al precio del proveedor. El sistema los convierte a USD usando la Tasa Interna para contabilidad. Ejemplo: producto a Bs 700 (tasa proveedor 700) con tasa interna 500 → costo sistema = 700 ÷ 500 = `
+                    : `Ingrese los costos en USD segun la factura. El sistema ajusta el costo de inventario multiplicando por el diferencial de tasas. Ejemplo: producto a $1.00 (tasa proveedor 700) con tasa interna 500 → costo sistema = $1.00 × 700 ÷ 500 = `
                   }
                   <strong>
                     {moneda === 'BS' ? '1.40 USD' : '$1.40'}
                   </strong>.
                 </p>
                 <div className="text-xs text-muted-foreground bg-muted/50 rounded p-2">
-                  <p className="font-medium mb-1">Costo contabilidad (usando tasa BCV arriba):</p>
+                  <p className="font-medium mb-1">Costo contabilidad (usando tasa interna arriba):</p>
                   {moneda === 'BS'
-                    ? <p>Bs ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
-                    : <p>USD × {tasaNum > 0 ? tasaNum.toFixed(2) : '?'} ÷ {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'} = USD</p>
+                    ? <p>Bs ÷ {tasaInternaNum > 0 ? tasaInternaNum.toFixed(2) : '?'} = USD</p>
+                    : <p>USD × {tasaProveedorNum > 0 ? tasaProveedorNum.toFixed(2) : '?'} ÷ {tasaInternaNum > 0 ? tasaInternaNum.toFixed(2) : '?'} = USD</p>
                   }
-                  {tasaNum > 0 && tasaBcvNum > 0 && (
+                  {tasaProveedorNum > 0 && tasaInternaNum > 0 && (
                     <p className="mt-1 text-amber-700 dark:text-amber-400 font-medium">
-                      Factor: ×{(tasaNum / tasaBcvNum).toFixed(4)}
+                      Factor: ×{(tasaProveedorNum / tasaInternaNum).toFixed(4)}
                     </p>
                   )}
                 </div>
@@ -1019,10 +1013,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
             <ul className="space-y-2">
               {pagos.map((pago, index) => {
                 const mUsdProveedor = pago.moneda === 'BS'
-                  ? (tasaNum > 0 ? pago.monto / tasaNum : 0)
+                  ? (tasaFacturaNum > 0 ? pago.monto / tasaFacturaNum : 0)
                   : pago.monto
-                const mUsdInterno = pago.moneda === 'BS' && usaTasaParalela && tasaBcvNum > 0
-                  ? pago.monto / tasaBcvNum
+                const mUsdInterno = pago.moneda === 'BS' && usaTasaParalela && tasaInternaNum > 0
+                  ? pago.monto / tasaInternaNum
                   : null
                 return (
                   <li key={index} className="flex items-start justify-between rounded-xl bg-muted/50 px-3 py-2 text-sm">
@@ -1036,12 +1030,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           <span className="text-muted-foreground text-xs font-mono">{pago.referencia}</span>
                         )}
                       </div>
-                      {pago.moneda === 'BS' && tasaNum > 0 && (
+                      {pago.moneda === 'BS' && tasaFacturaNum > 0 && (
                         <div className="text-xs text-muted-foreground ml-0.5">
-                          <span>= {formatUsd(mUsdProveedor)} (tasa prov. {tasaNum.toFixed(2)})</span>
+                          <span>= {formatUsd(mUsdProveedor)} (tasa prov. {tasaFacturaNum.toFixed(2)})</span>
                           {mUsdInterno !== null && (
                             <span className="ml-3 text-slate-400">
-                              {formatUsd(mUsdInterno)} (tasa int. {tasaBcvNum.toFixed(2)})
+                              {formatUsd(mUsdInterno)} (tasa int. {tasaInternaNum.toFixed(2)})
                             </span>
                           )}
                         </div>
@@ -1078,7 +1072,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                       Costo contabilidad (tasa int.) <span className="text-amber-600 font-medium">→ Inventario</span>
                     </span>
                     <p className="text-xl font-bold text-amber-700 dark:text-amber-400">{formatUsd(totalUsdSistema)}</p>
-                    <p className="text-xs text-muted-foreground">a tasa {tasaBcvNum > 0 ? tasaBcvNum.toFixed(2) : '?'}</p>
+                    <p className="text-xs text-muted-foreground">a tasa {tasaInternaNum > 0 ? tasaInternaNum.toFixed(2) : '?'}</p>
                   </div>
                   <div className="space-y-1">
                     <span className="text-xs text-muted-foreground">
@@ -1091,7 +1085,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 </div>
                 <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800">
                   <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Deuda CxP (tasa proveedor {tasaNum > 0 ? tasaNum.toFixed(2) : '?'}):</span>
+                    <span>Deuda CxP (tasa proveedor {tasaFacturaNum > 0 ? tasaFacturaNum.toFixed(2) : '?'}):</span>
                     <span className="font-medium">{formatUsd(totalUsd)}</span>
                   </div>
                 </div>
@@ -1182,11 +1176,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
               <span>{fechaFactura}</span>
               <span className="text-muted-foreground">Moneda</span>
               <span>{moneda}</span>
-              <span className="text-muted-foreground">Tasa proveedor</span>
-              <span>{tasaNum.toFixed(4)}</span>
-              {usaTasaParalela && tasaBcvNum > 0 && <>
-                <span className="text-muted-foreground">Tasa interna (BCV)</span>
-                <span>{tasaBcvNum.toFixed(4)}</span>
+              <span className="text-muted-foreground">Tasa interna</span>
+              <span>{tasaInternaNum.toFixed(4)}</span>
+              {usaTasaParalela && tasaProveedorNum > 0 && <>
+                <span className="text-muted-foreground">Tasa proveedor</span>
+                <span>{tasaProveedorNum.toFixed(4)}</span>
               </>}
               <span className="text-muted-foreground">Tipo</span>
               <span className={tipoDetectado === 'CONTADO' ? 'text-green-600 font-medium' : 'text-orange-600 font-medium'}>

@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react'
-import { CurrencyDollar, ArrowsClockwise, TrendUp } from '@phosphor-icons/react'
+import { TrendUp, Warning, ArrowsClockwise, Clock } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -33,7 +30,7 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
   const { tasa, tasaValor } = useTasaActual()
   const { tasas } = useTasasHistorial()
   const { user } = useCurrentUser()
-  const prevTasas = tasas.filter((t) => t.id !== tasa?.id).slice(0, 5)
+  const prevTasas = tasas.filter((t) => t.id !== tasa?.id).slice(0, 4)
   const { fetchTasa, isFetching, apiDateText } = useFetchTasaApi()
   const [valor, setValor] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -55,7 +52,6 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
       toast.error('Sesion no disponible')
       return
     }
-
     setIsSubmitting(true)
     try {
       await crearTasa(num, user.empresa_id, user.id)
@@ -91,88 +87,103 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
 
   const valorPreview = parseFloat(valor)
   const tienePreview = !Number.isNaN(valorPreview) && valorPreview > 0
+  const busy = isSubmitting || isFetching
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <TrendUp className="h-5 w-5 text-primary" />
-            Tasa de Cambio
-          </DialogTitle>
-          <DialogDescription>
-            Actualiza el valor del USD en bolivares
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="sm:max-w-sm p-0 gap-0 overflow-hidden">
+        <DialogTitle className="sr-only">Tasa de Cambio</DialogTitle>
 
+        {/* ── Hero header ─────────────────────────────────────────── */}
         <div
           className={cn(
-            'rounded-lg border bg-muted/40 p-4',
-            desactualizada && 'border-red-300 bg-red-50'
+            'px-5 pt-5 pb-4 border-b',
+            desactualizada
+              ? 'bg-amber-50 border-amber-100'
+              : 'bg-primary/[0.04] border-primary/10'
           )}
         >
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-3 mb-4">
             <div
               className={cn(
-                'p-1.5 rounded-md',
-                desactualizada ? 'bg-red-100 text-red-600' : 'bg-amber-50 text-amber-600'
+                'flex h-9 w-9 items-center justify-center rounded-full shrink-0',
+                desactualizada ? 'bg-amber-100' : 'bg-primary/10'
               )}
             >
-              <CurrencyDollar className="h-4 w-4" />
+              {desactualizada
+                ? <Warning size={18} className="text-amber-600" />
+                : <TrendUp size={18} className="text-primary" />
+              }
             </div>
-            <span className="text-xs font-medium text-muted-foreground uppercase">
-              Tasa actual
-            </span>
+            <div>
+              <p className="text-sm font-semibold leading-none">Tasa de Cambio</p>
+              <p className="text-xs text-muted-foreground mt-0.5">USD / Bolivares</p>
+            </div>
           </div>
+
           {tasa ? (
             <div>
-              <p
-                className={cn(
-                  'text-2xl font-bold tabular-nums',
-                  desactualizada && 'text-red-700'
+              <div className="flex items-baseline gap-1.5">
+                <span
+                  className={cn(
+                    'text-4xl font-bold tabular-nums tracking-tight',
+                    desactualizada ? 'text-amber-700' : 'text-foreground'
+                  )}
+                >
+                  {formatTasa(tasa.valor)}
+                </span>
+                <span className="text-base font-medium text-muted-foreground">Bs/$</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1.5 flex items-center gap-1">
+                <Clock size={11} weight="regular" />
+                {formatDateTime(tasa.created_at)}
+                {desactualizada && (
+                  <span className="text-amber-600 font-medium">· Desactualizada</span>
                 )}
-              >
-                {formatTasa(tasa.valor)} Bs/$
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                $1.00 = {formatBs(tasaValor)}
-              </p>
-              <p
-                className={cn(
-                  'text-[11px] mt-2',
-                  desactualizada ? 'text-red-600 font-medium' : 'text-muted-foreground'
-                )}
-              >
-                Actualizada: {formatDateTime(tasa.created_at)}
-                {desactualizada && ' (desactualizada)'}
               </p>
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No hay tasa registrada</p>
+            <p className="text-sm text-muted-foreground">Sin tasa registrada</p>
           )}
         </div>
 
+        {/* ── Historial reciente ───────────────────────────────────── */}
         {prevTasas.length > 0 && (
-          <div className="space-y-1.5">
-            <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-              Historial reciente
+          <div className="px-5 py-3 border-b">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+              Historial
             </p>
-            <div className="rounded-md border divide-y divide-border overflow-hidden">
+            <div className="rounded-lg border divide-y divide-border overflow-hidden">
               {prevTasas.map((t) => (
-                <div key={t.id} className="flex items-center justify-between px-3 py-1.5 bg-background">
-                  <span className="text-xs text-muted-foreground">{formatDateTime(t.created_at)}</span>
-                  <span className="text-xs font-semibold tabular-nums">{formatTasa(parseFloat(t.valor))} Bs/$</span>
+                <div
+                  key={t.id}
+                  className="flex items-center justify-between px-3 py-1.5 bg-background"
+                >
+                  <span className="text-xs text-muted-foreground">
+                    {formatDateTime(t.created_at)}
+                  </span>
+                  <span className="text-xs font-semibold tabular-nums">
+                    {formatTasa(parseFloat(t.valor))} Bs/$
+                  </span>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3">
+        {/* ── Formulario ──────────────────────────────────────────── */}
+        <form onSubmit={handleSubmit} className="px-5 py-4 space-y-3">
           <div>
-            <label htmlFor="tasa-valor" className="text-sm font-medium mb-1.5 block">
-              Nuevo valor (Bs por USD)
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label htmlFor="tasa-valor" className="text-xs font-medium text-muted-foreground">
+                Nuevo valor manual (Bs por USD)
+              </label>
+              {apiDateText && (
+                <span className="text-[10px] text-primary font-medium">
+                  BCV: {apiDateText}
+                </span>
+              )}
+            </div>
             <input
               id="tasa-valor"
               type="number"
@@ -182,41 +193,45 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
               placeholder={tasaValor ? tasaValor.toFixed(4) : '0.0000'}
               value={valor}
               onChange={(e) => setValor(e.target.value)}
-              disabled={isSubmitting}
-              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
+              disabled={busy}
+              className="no-spinner flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm tabular-nums placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-50"
             />
-            <p className="text-[11px] text-muted-foreground mt-1">
-              {apiDateText ? `BCV: ${apiDateText} · Precision de 4 decimales` : 'Precision de 4 decimales'}
-            </p>
           </div>
 
           {tienePreview && (
-            <div className="text-xs text-muted-foreground bg-muted rounded-md p-2.5 space-y-0.5">
-              <p>$1.00 = {formatBs(valorPreview)}</p>
-              <p>$10.00 = {formatBs(valorPreview * 10)}</p>
-              <p>$100.00 = {formatBs(valorPreview * 100)}</p>
+            <div className="grid grid-cols-3 gap-px rounded-lg border overflow-hidden bg-border">
+              {[1, 10, 100].map((amount) => (
+                <div key={amount} className="bg-muted/50 py-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">${amount}.00</p>
+                  <p className="text-xs font-semibold tabular-nums mt-0.5">
+                    {formatBs(valorPreview * amount)}
+                  </p>
+                </div>
+              ))}
             </div>
           )}
 
-          <DialogFooter className="gap-2 sm:gap-2 pt-2">
+          <div className="flex gap-2 pt-1">
             <Button
               type="button"
               variant="outline"
               onClick={handleAutomatica}
-              disabled={isSubmitting || isFetching}
-              className="sm:w-auto w-full"
+              disabled={busy}
+              className="flex-1"
             >
-              <ArrowsClockwise className={cn('h-4 w-4', isFetching && 'animate-spin')} />
-              {isFetching ? 'Consultando...' : 'Automatica'}
+              <ArrowsClockwise
+                className={cn('h-4 w-4', (isFetching || isSubmitting) && 'animate-spin')}
+              />
+              {isFetching ? 'Consultando...' : busy ? 'Guardando...' : 'BCV Automatico'}
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || !valor}
-              className="sm:w-auto w-full"
+              disabled={busy || !valor}
+              className="flex-1"
             >
-              {isSubmitting ? 'Guardando...' : 'Guardar manual'}
+              {isSubmitting ? 'Guardando...' : 'Guardar'}
             </Button>
-          </DialogFooter>
+          </div>
         </form>
       </DialogContent>
     </Dialog>
