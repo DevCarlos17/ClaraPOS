@@ -1,20 +1,23 @@
 import { useState, useMemo } from 'react'
 import {
   Plus,
-  Pencil,
-  Layers,
-  DollarSign,
-  AlertTriangle,
+  PencilSimple,
+  Stack,
+  CurrencyDollar,
+  Warning,
   ArrowUp,
   ArrowDown,
-  ArrowUpDown,
+  ArrowsDownUp,
   Download,
   Upload,
-  FileSpreadsheet,
-} from 'lucide-react'
+  FileXls,
+  ToggleLeft,
+  ToggleRight,
+} from '@phosphor-icons/react'
 import {
   useProductos,
   useResumenInventario,
+  actualizarProducto,
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
@@ -32,6 +35,7 @@ import {
   exportarProductosExcel,
 } from '@/features/inventario/utils/productos-export'
 import { toast } from 'sonner'
+import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 
 type SortKey =
   | 'codigo'
@@ -137,7 +141,7 @@ export function ProductoList() {
 
   function renderSortIcon(key: SortKey) {
     if (sortKey !== key) {
-      return <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+      return <ArrowsDownUp className="h-3.5 w-3.5 text-muted-foreground" />
     }
     return sortDir === 'asc' ? (
       <ArrowUp className="h-3.5 w-3.5 text-foreground" />
@@ -159,6 +163,17 @@ export function ProductoList() {
   function handleCloseForm() {
     setFormOpen(false)
     setEditingProducto(undefined)
+  }
+
+  async function handleToggleActivo(producto: Producto) {
+    const nuevoEstado = producto.is_active !== 1
+    try {
+      await actualizarProducto(producto.id, { is_active: nuevoEstado })
+      toast.success(nuevoEstado ? 'Producto activado' : 'Producto desactivado')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error inesperado'
+      toast.error(message)
+    }
   }
 
   function handleExportCsv() {
@@ -213,7 +228,7 @@ export function ProductoList() {
           className="bg-card border border-border rounded-xl shadow-sm p-4 flex items-center gap-3 text-left hover:shadow-md hover:border-primary/50 transition-all cursor-pointer"
         >
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100">
-            <DollarSign className="h-5 w-5 text-green-600" />
+            <CurrencyDollar className="h-5 w-5 text-green-600" />
           </div>
           <div className="flex-1">
             <p className="text-sm text-muted-foreground">Valor Total Inventario</p>
@@ -233,7 +248,7 @@ export function ProductoList() {
           <div className={`flex h-10 w-10 items-center justify-center rounded-full ${
             stockCritico > 0 ? 'bg-red-100' : 'bg-muted'
           }`}>
-            <AlertTriangle className={`h-5 w-5 ${stockCritico > 0 ? 'text-red-600' : 'text-muted-foreground'}`} />
+            <Warning className={`h-5 w-5 ${stockCritico > 0 ? 'text-red-600' : 'text-muted-foreground'}`} />
           </div>
           <div className="flex-1">
             <p className="text-sm text-muted-foreground">Stock Critico</p>
@@ -312,14 +327,14 @@ export function ProductoList() {
                     onClick={handleExportCsv}
                     className="w-full px-3 py-2 text-left text-sm hover:bg-muted flex items-center gap-2 cursor-pointer"
                   >
-                    <FileSpreadsheet className="h-4 w-4 text-green-600" />
+                    <FileXls className="h-4 w-4 text-green-600" />
                     CSV
                   </button>
                   <button
                     onClick={handleExportExcel}
                     className="w-full px-3 py-2 text-left text-sm hover:bg-muted flex items-center gap-2 cursor-pointer"
                   >
-                    <FileSpreadsheet className="h-4 w-4 text-green-700" />
+                    <FileXls className="h-4 w-4 text-green-700" />
                     Excel (.xlsx)
                   </button>
                 </div>
@@ -419,8 +434,32 @@ export function ProductoList() {
             <tbody>
               {productosOrdenados.map((prod) => {
                 const stockBajo = isStockBajo(prod)
+                const menuItems: ContextMenuAction[] = [
+                  {
+                    key: 'editar',
+                    label: 'Editar',
+                    icon: PencilSimple,
+                    onClick: () => handleEditar(prod),
+                  },
+                  {
+                    key: 'componentes',
+                    label: 'Ver componentes',
+                    icon: Stack,
+                    onClick: () => setComboDetalle(prod),
+                    hidden: prod.tipo !== 'C',
+                    separator: true,
+                  },
+                  {
+                    key: 'toggle',
+                    label: prod.is_active === 1 ? 'Desactivar' : 'Activar',
+                    icon: prod.is_active === 1 ? ToggleLeft : ToggleRight,
+                    onClick: () => handleToggleActivo(prod),
+                    separator: true,
+                  },
+                ]
                 return (
-                  <tr key={prod.id} className="border-b border-border hover:bg-muted/50 transition-colors">
+                  <TableRowContextMenu key={prod.id} items={menuItems}>
+                  <tr className="border-b border-border hover:bg-muted/50 transition-colors">
                     <td className="px-4 py-3 font-mono text-foreground">{prod.codigo}</td>
                     <td className="px-4 py-3">
                       {prod.tipo === 'P' ? (
@@ -472,7 +511,7 @@ export function ProductoList() {
                             onClick={() => setComboDetalle(prod)}
                             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-green-700 bg-green-50 rounded-md hover:bg-green-100 transition-colors cursor-pointer"
                           >
-                            <Layers className="h-3.5 w-3.5" />
+                            <Stack className="h-3.5 w-3.5" />
                             Componentes
                           </button>
                         )}
@@ -480,12 +519,13 @@ export function ProductoList() {
                           onClick={() => handleEditar(prod)}
                           className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
                         >
-                          <Pencil className="h-3.5 w-3.5" />
+                          <PencilSimple className="h-3.5 w-3.5" />
                           Editar
                         </button>
                       </div>
                     </td>
                   </tr>
+                  </TableRowContextMenu>
                 )
               })}
             </tbody>

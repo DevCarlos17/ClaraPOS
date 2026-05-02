@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { X } from '@phosphor-icons/react'
 import { formatDate } from '@/lib/format'
 import {
   useProductosPorDepartamento,

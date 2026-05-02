@@ -1,44 +1,44 @@
 import { useRef, useCallback, useEffect, useState } from 'react'
 import { Link, useRouterState } from '@tanstack/react-router'
 import {
-  LayoutDashboard,
+  SquaresFour,
   Package,
-  FolderTree,
+  Folders,
   ShoppingBag,
-  ArrowLeftRight,
+  ArrowsLeftRight,
   BookOpen,
   Users,
   ShoppingCart,
   CreditCard,
   FileX,
-  BarChart3,
+  ChartBar,
   Heart,
-  Settings,
-  DollarSign,
-  LogOut,
-  ChevronDown,
+  Gear,
+  CurrencyDollar,
+  SignOut,
+  CaretDown,
   Truck,
-  Building2,
-  UserCog,
-  Landmark,
+  Buildings,
+  UserGear,
+  Bank,
   Wallet,
   Receipt,
-  ClipboardList,
+  ClipboardText,
   Calculator,
   Tag,
   Ruler,
   Warehouse,
-  Layers,
+  Stack,
   Monitor,
-  ArrowDownUp,
-  FileSpreadsheet,
-  FileCheck,
+  ArrowsDownUp,
+  FileXls,
+  Percent,
   FileMinus,
-  BookOpenCheck,
+  BookBookmark,
   HandCoins,
-  TrendingUp,
+  TrendUp,
   Handshake,
-} from 'lucide-react'
+} from '@phosphor-icons/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useSidebarStore } from '@/stores/sidebar-store'
@@ -69,14 +69,14 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
-  { title: 'Dashboard', url: '/dashboard', icon: LayoutDashboard },
+  { title: 'Dashboard', url: '/dashboard', icon: SquaresFour },
   {
     title: 'Ventas',
     icon: ShoppingCart,
     children: [
       { title: 'Nueva Venta', url: '/ventas/nueva', icon: ShoppingCart, requiredPermission: PERMISSIONS.SALES_CREATE },
       { title: 'Nota de Credito', url: '/ventas/notas-credito', icon: FileX, requiredPermission: PERMISSIONS.SALES_VOID },
-      { title: 'Dashboard de Ventas', url: '/ventas/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.REPORTS_VIEW },
+      { title: 'Dashboard de Ventas', url: '/ventas/reportes', icon: ChartBar, requiredPermission: PERMISSIONS.REPORTS_VIEW },
       { title: 'Cuadre de Caja', url: '/ventas/cuadre-de-caja', icon: Receipt, requiredPermission: PERMISSIONS.REPORTS_CASHCLOSE },
       { title: 'Prestamos', url: '/ventas/prestamos', icon: Handshake, requiredPermission: PERMISSIONS.CLIENTS_CREDIT },
     ],
@@ -86,7 +86,7 @@ const menuItems: MenuItem[] = [
     icon: Wallet,
     children: [
       { title: 'Sesiones', url: '/caja/sesiones', icon: Monitor, requiredPermission: PERMISSIONS.CAJA_ACCESS },
-      { title: 'Movimientos', url: '/caja/movimientos', icon: ArrowDownUp, requiredPermission: PERMISSIONS.CAJA_ACCESS },
+      { title: 'Movimientos', url: '/caja/movimientos', icon: ArrowsDownUp, requiredPermission: PERMISSIONS.CAJA_ACCESS },
       { title: 'Cajas', url: '/configuracion/cajas', icon: Monitor, requiredPermission: PERMISSIONS.CONFIG_RATES },
     ],
   },
@@ -94,15 +94,15 @@ const menuItems: MenuItem[] = [
     title: 'Inventario',
     icon: Package,
     children: [
-      { title: 'Departamentos', url: '/inventario/departamentos', icon: FolderTree, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Departamentos', url: '/inventario/departamentos', icon: Folders, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Productos / Servicios', url: '/inventario/productos', icon: ShoppingBag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
-      { title: 'Kardex', url: '/inventario/kardex', icon: ArrowLeftRight, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Kardex', url: '/inventario/kardex', icon: ArrowsLeftRight, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Servicios y Recetas', url: '/inventario/recetas', icon: BookOpen, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
-      { title: 'Reportes de Inventario', url: '/inventario/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Reportes de Inventario', url: '/inventario/reportes', icon: ChartBar, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Marcas', url: '/inventario/marcas', icon: Tag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Unidades', url: '/inventario/unidades', icon: Ruler, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Depositos', url: '/inventario/depositos', icon: Warehouse, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
-      { title: 'Lotes', url: '/inventario/lotes', icon: Layers, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Lotes', url: '/inventario/lotes', icon: Stack, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
     ],
   },
   {
@@ -114,14 +114,14 @@ const menuItems: MenuItem[] = [
   },
   {
     title: 'Compras y Gastos',
-    icon: ClipboardList,
+    icon: ClipboardText,
     children: [
-      { title: 'Facturas', url: '/compras/facturas', icon: FileSpreadsheet, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Facturas', url: '/compras/facturas', icon: FileXls, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Cuentas por Pagar', url: '/compras/cxp', icon: CreditCard, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Retenciones', url: '/compras/retenciones', icon: FileCheck, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Retenciones', url: '/compras/retenciones', icon: Percent, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Notas Fiscales', url: '/compras/notas-fiscales', icon: FileMinus, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Gastos', url: '/compras/gastos', icon: HandCoins, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Dashboard Gastos', url: '/compras/gastos-dashboard', icon: BarChart3, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Dashboard Gastos', url: '/compras/gastos-dashboard', icon: ChartBar, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
     ],
   },
   {
@@ -130,27 +130,27 @@ const menuItems: MenuItem[] = [
     children: [
       { title: 'Gestion de Clientes', url: '/clientes/gestion', icon: Users, requiredPermission: PERMISSIONS.CLIENTS_MANAGE },
       { title: 'Cuentas por Cobrar', url: '/clientes/cuentas-por-cobrar', icon: CreditCard, requiredPermission: PERMISSIONS.CLIENTS_CREDIT },
-      { title: 'Reportes de CxC', url: '/clientes/reportes', icon: BarChart3, requiredPermission: PERMISSIONS.CLIENTS_CREDIT },
+      { title: 'Reportes de CxC', url: '/clientes/reportes', icon: ChartBar, requiredPermission: PERMISSIONS.CLIENTS_CREDIT },
     ],
   },
   {
     title: 'Configuracion',
-    icon: Settings,
+    icon: Gear,
     children: [
-      { title: 'Datos Empresa', url: '/configuracion/datos-empresa', icon: Building2, requiredPermission: PERMISSIONS.CONFIG_RATES },
-      { title: 'Tasa de Cambio', url: '/configuracion/tasa-cambio', icon: DollarSign, requiredPermission: PERMISSIONS.CONFIG_RATES },
-      { title: 'Usuarios y Perfiles', url: '/configuracion/usuarios', icon: UserCog, requiredPermission: PERMISSIONS.CONFIG_USERS },
+      { title: 'Datos Empresa', url: '/configuracion/datos-empresa', icon: Buildings, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Tasa de Cambio', url: '/configuracion/tasa-cambio', icon: CurrencyDollar, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Usuarios y Perfiles', url: '/configuracion/usuarios', icon: UserGear, requiredPermission: PERMISSIONS.CONFIG_USERS },
       { title: 'Impuestos', url: '/configuracion/impuestos', icon: Calculator, requiredPermission: PERMISSIONS.CONFIG_RATES },
     ],
   },
   {
     title: 'Informacion Bancaria',
-    icon: Landmark,
+    icon: Bank,
     children: [
-      { title: 'Bancos', url: '/configuracion/bancos', icon: Landmark, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Bancos', url: '/configuracion/bancos', icon: Bank, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Metodos de Pago', url: '/configuracion/metodos-pago', icon: Wallet, requiredPermission: PERMISSIONS.CONFIG_RATES },
-      { title: 'Conciliacion Bancaria', url: '/bancos/conciliacion', icon: BookOpenCheck, requiredPermission: PERMISSIONS.CONFIG_RATES },
-      { title: 'Diferencial Cambiario', url: '/bancos/diferencial-cambiario', icon: TrendingUp, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
+      { title: 'Conciliacion Bancaria', url: '/bancos/conciliacion', icon: BookBookmark, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Diferencial Cambiario', url: '/bancos/diferencial-cambiario', icon: TrendUp, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
     ],
   },
   { title: 'Clinica', url: '/clinica', icon: Heart, requiredPermission: PERMISSIONS.CLINIC_ACCESS },
@@ -168,7 +168,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
 
-  // Filter menu items based on permissions
+  // Funnel menu items based on permissions
   const filteredMenuItems = menuItems
     .filter((item) => {
       if (item.requiredPermission && !hasPermission(item.requiredPermission)) return false
@@ -286,7 +286,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             {expanded && (
               <>
                 <span className="text-sm font-medium flex-1 text-left">{item.title}</span>
-                <ChevronDown
+                <CaretDown
                   size={16}
                   className={cn('transition-transform duration-200', groupExpanded && 'rotate-180')}
                 />
@@ -402,7 +402,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 onClick={handleLogout}
                 className="flex items-center w-full gap-3 p-3 rounded-xl text-destructive hover:bg-destructive/10 transition-all duration-200 active:scale-[0.98]"
               >
-                <LogOut size={20} />
+                <SignOut size={20} />
                 <span className="text-sm font-medium">Cerrar Sesion</span>
               </button>
             </div>
@@ -529,7 +529,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
             title="Cerrar sesion"
           >
             <div className="shrink-0 w-6 flex justify-center">
-              <LogOut size={20} strokeWidth={2} />
+              <SignOut size={20} strokeWidth={2} />
             </div>
             <span
               className={cn(

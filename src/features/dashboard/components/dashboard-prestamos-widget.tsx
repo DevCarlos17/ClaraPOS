@@ -1,4 +1,4 @@
-import { AlertTriangle, Clock, Handshake } from 'lucide-react'
+import { Warning, Clock, Handshake } from '@phosphor-icons/react'
 import { usePrestamosProximos } from '../hooks/use-dashboard'
 import { formatUsd } from '@/lib/currency'
 
@@ -67,7 +67,7 @@ export function DashboardPrestamosWidget() {
                 isVencido ? 'bg-destructive/10' : 'bg-amber-50'
               }`}>
                 {isVencido ? (
-                  <AlertTriangle size={14} className="text-destructive" />
+                  <Warning size={14} className="text-destructive" />
                 ) : (
                   <Clock size={14} className="text-amber-600" />
                 )}

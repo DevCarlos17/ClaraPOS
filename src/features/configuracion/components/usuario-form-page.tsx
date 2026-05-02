@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
-import { ArrowLeft, Loader2, ShieldCheck } from 'lucide-react'
+import { ArrowLeft, CircleNotch, ShieldCheck } from '@phosphor-icons/react'
 import {
   createEmployeeSchema,
   updateEmployeeSchema,
@@ -413,7 +413,7 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
 
                 {isLoadingData ? (
                   <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <CircleNotch className="h-4 w-4 animate-spin" />
                     Cargando roles...
                   </div>
                 ) : (
@@ -448,7 +448,7 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
                 disabled={submitting}
                 className="flex-1 inline-flex items-center justify-center gap-2 px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
               >
-                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {submitting && <CircleNotch className="h-4 w-4 animate-spin" />}
                 {submitting
                   ? 'Guardando...'
                   : isEditing
@@ -534,7 +534,7 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
                     )}
                     {permisosLoading ? (
                       <div className="flex items-center gap-2 text-sm text-gray-500 py-4">
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <CircleNotch className="h-4 w-4 animate-spin" />
                         Cargando permisos...
                       </div>
                     ) : (
@@ -569,7 +569,7 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
             disabled={submitting}
             className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
-            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            {submitting && <CircleNotch className="h-4 w-4 animate-spin" />}
             {submitting
               ? 'Guardando...'
               : isEditing
@@ -654,7 +654,7 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
               disabled={pinSubmitting || !nuevoPin || !confirmarPin}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-amber-600 rounded-md hover:bg-amber-700 transition-colors disabled:opacity-50"
             >
-              {pinSubmitting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {pinSubmitting && <CircleNotch className="h-3.5 w-3.5 animate-spin" />}
               {pinSubmitting
                 ? 'Guardando...'
                 : usuario?.pin_supervisor_hash

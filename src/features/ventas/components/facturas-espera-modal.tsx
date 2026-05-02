@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Clock, ShoppingBag, Trash2, RotateCcw } from 'lucide-react'
+import { Clock, ShoppingBag, Trash, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { formatDateTime } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -116,7 +116,7 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
                           title="Recuperar factura"
                           className="rounded-md p-1.5 text-primary hover:bg-primary/10 transition-colors"
                         >
-                          <RotateCcw size={14} />
+                          <ArrowCounterClockwise size={14} />
                         </button>
                         <button
                           type="button"
@@ -124,7 +124,7 @@ export function FacturasEsperaModal({ isOpen, onClose, onRecuperar }: FacturasEs
                           title="Eliminar factura"
                           className="rounded-md p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                         >
-                          <Trash2 size={14} />
+                          <Trash size={14} />
                         </button>
                       </div>
                     </td>

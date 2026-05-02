@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Trash2, UserPlus, ArrowLeft, AlertTriangle, Info, FileText } from 'lucide-react'
+import { Plus, Trash, UserPlus, ArrowLeft, Warning, Info, FileText } from '@phosphor-icons/react'
 import { gastoSchema } from '@/features/contabilidad/schemas/gasto-schema'
 import { crearGasto, type GastoPago } from '@/features/contabilidad/hooks/use-gastos'
 import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -244,7 +244,7 @@ function ResumenConfirm({
         <div className="space-y-1.5">
           {saldoPendienteProveedor > 0.005 && (
             <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center gap-2 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <Warning className="h-3.5 w-3.5 shrink-0" />
               Saldo Proveedor pendiente: {formatUsd(saldoPendienteProveedor)} — CXP
             </div>
           )}
@@ -260,7 +260,7 @@ function ResumenConfirm({
       ) : (
         saldoPendienteProveedor > 0 && (
           <div className="rounded-md bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-center gap-2 dark:bg-amber-950/30 dark:border-amber-800 dark:text-amber-400">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+            <Warning className="h-3.5 w-3.5 shrink-0" />
             Saldo pendiente: {formatUsd(saldoPendienteProveedor)} — quedará en Cuentas por Pagar
           </div>
         )
@@ -964,7 +964,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       </label>
                       {tasaInternaManual && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
-                          <AlertTriangle className="h-3 w-3" />
+                          <Warning className="h-3 w-3" />
                           Sin tasa registrada para esta fecha
                         </span>
                       )}
@@ -1116,7 +1116,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                               className="text-muted-foreground hover:text-destructive transition-colors"
                               aria-label="Eliminar abono"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash className="h-4 w-4" />
                             </button>
                           </div>
 

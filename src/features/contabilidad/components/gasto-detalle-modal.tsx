@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo } from 'react'
-import { X, RotateCcw } from 'lucide-react'
+import { X, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import {
@@ -178,7 +178,7 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
                   onClick={() => setConfirmandoAnular(true)}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-destructive bg-destructive/10 rounded-md hover:bg-destructive/20 transition-colors"
                 >
-                  <RotateCcw className="h-4 w-4" />
+                  <ArrowCounterClockwise className="h-4 w-4" />
                   Anular
                 </button>
               )
@@ -377,7 +377,7 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
                                   onClick={() => setConfirmandoAbonoId(a.id)}
                                   className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
                                 >
-                                  <RotateCcw className="h-2.5 w-2.5" />
+                                  <ArrowCounterClockwise className="h-2.5 w-2.5" />
                                   Reversar
                                 </button>
                               )

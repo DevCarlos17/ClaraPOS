@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { ShieldCheck } from 'lucide-react'
+import { ShieldCheck } from '@phosphor-icons/react'
 import { hashPin } from '@/lib/crypto'
 import { usePowerSync } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'

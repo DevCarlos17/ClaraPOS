@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Pencil } from 'lucide-react'
+import { Plus, PencilSimple } from '@phosphor-icons/react'
 import {
   usePaymentMethods,
   updatePaymentMethod,
@@ -131,7 +131,7 @@ export function PaymentMethodList() {
                       onClick={() => handleEditar(m)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-muted-foreground border border-border rounded-md hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                     >
-                      <Pencil className="h-3.5 w-3.5" />
+                      <PencilSimple className="h-3.5 w-3.5" />
                       Editar
                     </button>
                   </td>

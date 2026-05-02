@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, ChevronDown, ChevronRight } from 'lucide-react'
+import { Check, CaretDown, CaretRight } from '@phosphor-icons/react'
 import type { Permiso } from '@/features/configuracion/hooks/use-roles'
 
 interface PermisosReadonlyProps {
@@ -143,9 +143,9 @@ function PermisosEditable({
                 className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
               >
                 {isExpanded ? (
-                  <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                  <CaretDown className="h-3.5 w-3.5 text-gray-400 shrink-0" />
                 ) : (
-                  <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                  <CaretRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />
                 )}
                 <span
                   className={`text-sm font-semibold ${someSelected ? 'text-blue-900' : 'text-gray-700'}`}

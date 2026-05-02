@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Trash2, AlertCircle } from 'lucide-react'
+import { Plus, Trash, WarningCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useCuentasDetalle } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { crearAsientoManual } from '@/features/contabilidad/hooks/use-libro-contable'
@@ -241,7 +241,7 @@ export function LibroContableForm({ isOpen, onClose }: LibroContableFormProps) {
                         onClick={() => removeLinea(linea.id)}
                         className="p-1 text-red-400 hover:text-red-600"
                       >
-                        <Trash2 className="h-3 w-3" />
+                        <Trash className="h-3 w-3" />
                       </button>
                     )}
                   </div>
@@ -296,7 +296,7 @@ export function LibroContableForm({ isOpen, onClose }: LibroContableFormProps) {
                         onClick={() => removeLinea(linea.id)}
                         className="p-1 text-red-400 hover:text-red-600"
                       >
-                        <Trash2 className="h-3 w-3" />
+                        <Trash className="h-3 w-3" />
                       </button>
                     )}
                   </div>
@@ -308,7 +308,7 @@ export function LibroContableForm({ isOpen, onClose }: LibroContableFormProps) {
           {/* Error */}
           {error && (
             <div className="flex items-start gap-2 p-3 bg-red-50 rounded-lg border border-red-200">
-              <AlertCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
+              <WarningCircle className="h-4 w-4 text-red-500 mt-0.5 shrink-0" />
               <p className="text-sm text-red-700">{error}</p>
             </div>
           )}

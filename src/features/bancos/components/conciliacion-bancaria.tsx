@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle2, Clock, Landmark } from 'lucide-react'
+import { CheckCircle, Clock, Bank } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useMovBancarios } from '@/features/caja/hooks/use-mov-bancarios'
 import { validarMovimientoBancario } from '../hooks/use-conciliacion'
@@ -182,7 +182,7 @@ export function ConciliacionBancaria() {
               <tr>
                 <td colSpan={8} className="px-4 py-12 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <Landmark size={32} className="opacity-30" />
+                    <Bank size={32} className="opacity-30" />
                     <span className="text-sm">
                       {queryParams.bancoId
                         ? 'No hay movimientos para los filtros seleccionados'
@@ -230,7 +230,7 @@ export function ConciliacionBancaria() {
                 <td className="px-4 py-2.5 text-center">
                   {mov.validado === 1 ? (
                     <span className="inline-flex items-center gap-1 text-green-600 text-xs font-medium">
-                      <CheckCircle2 size={13} />
+                      <CheckCircle size={13} />
                       Validado
                     </span>
                   ) : (

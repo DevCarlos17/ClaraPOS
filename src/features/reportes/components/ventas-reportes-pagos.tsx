@@ -1,4 +1,4 @@
-import { Banknote } from 'lucide-react'
+import { Money } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { usePagosPorMetodoRango } from '../hooks/use-ventas-reportes'
 
@@ -37,7 +37,7 @@ export function VentasReportesPagos({ fechaDesde, fechaHasta }: VentasReportesPa
               className="flex items-center justify-between rounded-lg border px-3 py-2.5"
             >
               <div className="flex items-center gap-2">
-                <Banknote size={16} className="text-muted-foreground" />
+                <Money size={16} className="text-muted-foreground" />
                 <div>
                   <p className="text-sm font-medium">{m.nombre}</p>
                   {m.moneda === 'BS' && (

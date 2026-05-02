@@ -1,4 +1,4 @@
-import { Check, Filter } from 'lucide-react'
+import { Check, Funnel } from '@phosphor-icons/react'
 import { type Column } from '@tanstack/react-table'
 import { cn } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -46,7 +46,7 @@ export function DataTableFacetedFilter<TData, TValue>({
           size="sm"
           className="h-8 px-3 gap-2"
         >
-          <Filter className="size-4 shrink-0" />
+          <Funnel className="size-4 shrink-0" />
           <span className="text-xs font-semibold whitespace-nowrap">{title}</span>
           {hasActiveFilters && (
             <>

@@ -1,4 +1,4 @@
-import { BadgeCheck } from 'lucide-react'
+import { SealCheck } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { PagoEntryForm } from '../schemas/venta-schema'
@@ -44,7 +44,7 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
           <div className="flex flex-col items-center gap-3 text-center">
             <div className="relative flex h-20 w-20 items-center justify-center">
               <div className="absolute inset-0 rounded-full bg-green-100" />
-              <BadgeCheck
+              <SealCheck
                 className="relative text-green-500 drop-shadow-sm"
                 size={64}
                 strokeWidth={1.5}

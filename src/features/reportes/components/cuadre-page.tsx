@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Search } from 'lucide-react'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
@@ -20,7 +20,7 @@ import {
 } from '../hooks/use-cuadre'
 
 export function CuadrePage() {
-  // Filter state
+  // Funnel state
   const [fecha, setFecha] = useState(todayStr)
   const [cajaId, setCajaId] = useState<string | null>(null)
   const [sesionCajaId, setSesionCajaId] = useState<string | null>(null)
@@ -82,7 +82,7 @@ export function CuadrePage() {
         )}
       </PageHeader>
 
-      {/* Filter bar */}
+      {/* Funnel bar */}
       <div className="flex flex-wrap items-end gap-3 rounded-xl bg-card shadow-md p-4">
         {/* Fecha */}
         <div className="flex flex-col gap-1">
@@ -134,7 +134,7 @@ export function CuadrePage() {
           onClick={handleConsultar}
           className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
         >
-          <Search className="w-4 h-4" />
+          <MagnifyingGlass className="w-4 h-4" />
           Consultar
         </button>
       </div>
@@ -142,7 +142,7 @@ export function CuadrePage() {
       {/* Content */}
       {!consulted || !activeFilters ? (
         <div className="text-center py-16 text-muted-foreground">
-          <Search className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <MagnifyingGlass className="w-10 h-10 mx-auto mb-3 opacity-30" />
           <p className="text-sm">Seleccione los filtros y presione Consultar</p>
         </div>
       ) : (

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AlertTriangle, X, RotateCcw } from 'lucide-react'
+import { Warning, X, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { reversarCompra } from '@/features/inventario/hooks/use-compras'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -54,7 +54,7 @@ export function CompraDevolucionModal({
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div className="flex items-center gap-2 text-destructive">
-            <RotateCcw className="h-5 w-5" />
+            <ArrowCounterClockwise className="h-5 w-5" />
             <h3 className="text-base font-semibold">Reversar Factura de Compra</h3>
           </div>
           <button
@@ -71,7 +71,7 @@ export function CompraDevolucionModal({
         <div className="px-5 py-4 space-y-4">
           {/* Advertencia */}
           <div className="flex gap-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
-            <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <Warning className="h-5 w-5 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
             <p className="text-sm text-amber-800 dark:text-amber-300">
               Esta accion es <strong>irreversible</strong>. Se crearan movimientos de reverso en el inventario y cuentas por pagar.
             </p>
@@ -127,7 +127,7 @@ export function CompraDevolucionModal({
             disabled={loading}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-destructive rounded-md hover:bg-destructive/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <RotateCcw className="h-4 w-4" />
+            <ArrowCounterClockwise className="h-4 w-4" />
             {loading ? 'Reversando...' : 'Confirmar Reverso'}
           </button>
         </div>

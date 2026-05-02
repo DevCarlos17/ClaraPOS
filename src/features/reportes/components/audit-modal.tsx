@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { X } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { useVentasAudit, useDetalleVenta, type CuadreFilters } from '../hooks/use-cuadre'

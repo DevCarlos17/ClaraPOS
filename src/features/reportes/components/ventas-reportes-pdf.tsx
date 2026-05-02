@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileDown, Loader2 } from 'lucide-react'
+import { FileArrowDown, CircleNotch } from '@phosphor-icons/react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Button } from '@/components/ui/button'
@@ -336,7 +336,7 @@ export function VentasReportesPdfButton({ fechaDesde, fechaHasta }: VentasReport
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)} className="bg-white">
-        <FileDown className="size-4" />
+        <FileArrowDown className="size-4" />
         Generar PDF
       </Button>
 
@@ -391,12 +391,12 @@ export function VentasReportesPdfButton({ fechaDesde, fechaHasta }: VentasReport
             <Button onClick={handleGenerar} disabled={generando}>
               {generando ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" />
+                  <CircleNotch className="size-4 animate-spin" />
                   Generando...
                 </>
               ) : (
                 <>
-                  <FileDown className="size-4" />
+                  <FileArrowDown className="size-4" />
                   Generar
                 </>
               )}

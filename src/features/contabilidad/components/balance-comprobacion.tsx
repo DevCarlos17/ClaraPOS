@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle2, AlertTriangle, FileSpreadsheet } from 'lucide-react'
+import { CheckCircle, Warning, FileXls } from '@phosphor-icons/react'
 import { useBalanceComprobacion, type FiltrosBalance } from '../hooks/use-balance-comprobacion'
 import { formatUsd } from '@/lib/currency'
 import { Button } from '@/components/ui/button'
@@ -94,12 +94,12 @@ export function BalanceComprobacion() {
         >
           {cuadrado ? (
             <>
-              <CheckCircle2 size={16} />
+              <CheckCircle size={16} />
               Partida doble correcta: DEBE ({formatUsd(totales.totalDebe)}) = HABER ({formatUsd(totales.totalHaber)})
             </>
           ) : (
             <>
-              <AlertTriangle size={16} />
+              <Warning size={16} />
               Advertencia: DEBE ({formatUsd(totales.totalDebe)}) no iguala HABER ({formatUsd(totales.totalHaber)})
             </>
           )}
@@ -132,7 +132,7 @@ export function BalanceComprobacion() {
               <tr>
                 <td colSpan={7} className="px-4 py-12 text-center">
                   <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                    <FileSpreadsheet size={32} className="opacity-30" />
+                    <FileXls size={32} className="opacity-30" />
                     <span className="text-sm">No hay asientos contables en el periodo seleccionado</span>
                   </div>
                 </td>

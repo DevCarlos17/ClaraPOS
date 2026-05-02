@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Eye, Search, CalendarDays, RotateCcw } from 'lucide-react'
+import { Plus, Eye, MagnifyingGlass, CalendarDots, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { useComprasPorFecha } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -81,7 +81,7 @@ export function CompraList() {
       <div className="rounded-xl bg-card shadow-md p-4 mb-4">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <CalendarDays className="h-4 w-4" />
+            <CalendarDots className="h-4 w-4" />
             <span className="font-medium">Periodo:</span>
           </div>
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 flex-1">
@@ -116,7 +116,7 @@ export function CompraList() {
               disabled={!!rangeError || !fechaDesde || !fechaHasta}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
-              <Search className="h-4 w-4" />
+              <MagnifyingGlass className="h-4 w-4" />
               Consultar
             </button>
           </div>
@@ -129,7 +129,7 @@ export function CompraList() {
       {/* Content */}
       {!hasConsulta ? (
         <div className="text-center py-16 text-muted-foreground">
-          <CalendarDays className="h-10 w-10 mx-auto mb-3 opacity-40" />
+          <CalendarDots className="h-10 w-10 mx-auto mb-3 opacity-40" />
           <p className="text-base font-medium">Seleccione un rango de fechas</p>
           <p className="text-sm mt-1">Elija las fechas de inicio y fin, luego presione "Consultar"</p>
         </div>
@@ -194,7 +194,7 @@ export function CompraList() {
                     <td className="px-4 py-3">
                       {compra.status === 'REVERSADA' ? (
                         <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-purple-50 text-purple-700 ring-purple-600/20 dark:bg-purple-950 dark:text-purple-300">
-                          <RotateCcw className="h-2.5 w-2.5" />
+                          <ArrowCounterClockwise className="h-2.5 w-2.5" />
                           REVERSADA
                         </span>
                       ) : compra.status === 'ANULADA' ? (

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Building2, ChevronRight, DollarSign, ChevronUp, ChevronDown, Printer, Receipt } from 'lucide-react'
+import { Buildings, CaretRight, CurrencyDollar, CaretUp, CaretDown, Printer, Receipt } from '@phosphor-icons/react'
 import {
   useProveedoresConDeuda,
   useFacturasCompraPendientes,
@@ -22,10 +22,10 @@ import { Button } from '@/components/ui/button'
 type SortKey = 'nro_factura' | 'fecha_factura' | 'total_usd' | 'saldo_pend_usd'
 
 function SortIcon({ field, current, dir }: { field: SortKey; current: SortKey; dir: 'asc' | 'desc' }) {
-  if (field !== current) return <ChevronDown className="h-3 w-3 opacity-30 inline ml-1" />
+  if (field !== current) return <CaretDown className="h-3 w-3 opacity-30 inline ml-1" />
   return dir === 'asc'
-    ? <ChevronUp className="h-3 w-3 inline ml-1" />
-    : <ChevronDown className="h-3 w-3 inline ml-1" />
+    ? <CaretUp className="h-3 w-3 inline ml-1" />
+    : <CaretDown className="h-3 w-3 inline ml-1" />
 }
 
 // ─── Print helper ─────────────────────────────────────────────
@@ -162,7 +162,7 @@ export function CxpPage() {
   if (proveedores.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-2">
-        <Building2 size={40} className="opacity-30" />
+        <Buildings size={40} className="opacity-30" />
         <p className="text-sm">No hay proveedores con saldo pendiente</p>
       </div>
     )
@@ -198,7 +198,7 @@ export function CxpPage() {
                     <span className="text-sm font-semibold text-destructive">
                       {formatUsd(parseFloat(proveedor.saldo_actual))}
                     </span>
-                    <ChevronRight size={14} className="text-muted-foreground" />
+                    <CaretRight size={14} className="text-muted-foreground" />
                   </div>
                 </div>
                 <div className="mt-1">
@@ -216,7 +216,7 @@ export function CxpPage() {
       <div className="md:col-span-2">
         {!proveedorSeleccionado ? (
           <div className="flex flex-col items-center justify-center h-48 text-muted-foreground gap-2 border border-dashed rounded-lg">
-            <DollarSign size={32} className="opacity-30" />
+            <CurrencyDollar size={32} className="opacity-30" />
             <p className="text-sm">Seleccione un proveedor para ver sus facturas pendientes</p>
           </div>
         ) : (

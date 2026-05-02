@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Search, FileX } from 'lucide-react'
+import { MagnifyingGlass, FileX } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/layout/page-header'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
@@ -36,7 +36,7 @@ export function NotasCreditoPage() {
       {/* Buscar factura */}
       <div className="rounded-xl bg-card shadow-md p-4">
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <input
             type="text"
             value={searchQuery}

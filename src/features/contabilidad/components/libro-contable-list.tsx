@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { CheckCircle, RotateCcw, Plus, ChevronDown } from 'lucide-react'
+import { CheckCircle, ArrowCounterClockwise, Plus, CaretDown } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   useLibroContable,
@@ -175,7 +175,7 @@ export function LibroContableList() {
             className="inline-flex items-center gap-1 px-3 py-1.5 text-xs text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200"
           >
             Filtros
-            <ChevronDown className={`h-3 w-3 transition-transform ${showFiltros ? 'rotate-180' : ''}`} />
+            <CaretDown className={`h-3 w-3 transition-transform ${showFiltros ? 'rotate-180' : ''}`} />
           </button>
         </div>
         <button
@@ -286,7 +286,7 @@ export function LibroContableList() {
                             title="Reversar"
                             className="p-1 text-amber-600 hover:bg-amber-50 rounded disabled:opacity-50"
                           >
-                            <RotateCcw className="h-4 w-4" />
+                            <ArrowCounterClockwise className="h-4 w-4" />
                           </button>
                         </div>
                       )}

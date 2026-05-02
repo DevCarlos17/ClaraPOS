@@ -1,4 +1,4 @@
-import { Trash2 } from 'lucide-react'
+import { Trash } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { LineaVentaForm } from '../schemas/venta-schema'
 
@@ -110,7 +110,7 @@ export function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove }: LineaIt
                         onClick={() => onRemove(index)}
                         className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                       >
-                        <Trash2 size={14} />
+                        <Trash size={14} />
                       </button>
                     </td>
                   </tr>

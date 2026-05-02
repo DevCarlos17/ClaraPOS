@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Printer } from 'lucide-react'
+import { Printer } from '@phosphor-icons/react'
 import { formatUsd } from '@/lib/currency'
 import { useValorPorDepto } from '../hooks/use-inventario-reportes'
 

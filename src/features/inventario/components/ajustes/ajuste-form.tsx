@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { ajusteSchema } from '@/features/inventario/schemas/ajuste-schema'
 import { crearAjuste } from '@/features/inventario/hooks/use-ajustes'

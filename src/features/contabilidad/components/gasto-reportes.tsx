@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FC } from 'react'
-import { Printer, X } from 'lucide-react'
+import { Printer, X } from '@phosphor-icons/react'
 import type { Gasto } from '@/features/contabilidad/hooks/use-gastos'
 import { formatDate } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'

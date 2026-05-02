@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo } from 'react'
-import { X, Printer, FileDown } from 'lucide-react'
+import { X, Printer, FileArrowDown } from '@phosphor-icons/react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { formatDateTime } from '@/lib/format'
@@ -155,7 +155,7 @@ export function DepartamentoReporte({
               disabled={departamentosOrdenados.length === 0}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
             >
-              <FileDown className="h-4 w-4" />
+              <FileArrowDown className="h-4 w-4" />
               Descargar PDF
             </button>
             <button

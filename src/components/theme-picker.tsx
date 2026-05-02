@@ -1,4 +1,4 @@
-import { Palette, Check } from 'lucide-react'
+import { Palette, Check } from '@phosphor-icons/react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { THEMES, useThemeStore } from '@/stores/theme-store'
 import { cn } from '@/lib/utils'

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, ArrowDownCircle, ArrowUpCircle, Wallet, Handshake, X } from 'lucide-react'
+import { Plus, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, X } from '@phosphor-icons/react'
 import {
   useSesionesActivas,
   useSesionesCaja,
@@ -124,14 +124,14 @@ function SesionActivaCard({
             onClick={() => onMovimiento(sesion.id, 'INGRESO_MANUAL')}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors cursor-pointer"
           >
-            <ArrowDownCircle className="h-3.5 w-3.5" />
+            <ArrowCircleDown className="h-3.5 w-3.5" />
             Ingreso
           </button>
           <button
             onClick={() => onMovimiento(sesion.id, 'EGRESO_MANUAL')}
             className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors cursor-pointer"
           >
-            <ArrowUpCircle className="h-3.5 w-3.5" />
+            <ArrowCircleUp className="h-3.5 w-3.5" />
             Egreso
           </button>
           <button

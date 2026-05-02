@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@powersync/react'
-import { Loader2 } from 'lucide-react'
+import { CircleNotch } from '@phosphor-icons/react'
 import { UsuarioFormPage } from '@/features/configuracion/components/usuario-form-page'
 import type { Usuario } from '@/features/configuracion/hooks/use-usuarios'
 
@@ -16,7 +16,7 @@ function EditarUsuarioPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
+        <CircleNotch className="h-6 w-6 animate-spin text-gray-400" />
       </div>
     )
   }

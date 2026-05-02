@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Lock } from 'lucide-react'
+import { Lock } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus } from '@phosphor-icons/react'
 import { useNotasFiscalesCompra, type NotaFiscalCompra } from '@/features/compras/hooks/use-notas-fiscales-compra'
 import { NotaFiscalCompraForm } from './nota-fiscal-compra-form'
 

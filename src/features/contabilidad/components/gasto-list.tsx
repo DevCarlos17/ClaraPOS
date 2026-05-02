@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useMemo } from 'react'
-import { Plus, BarChart3, ChevronDown, ChevronUp, Search, CalendarDays, BookPlus, X } from 'lucide-react'
+import { Plus, ChartBar, CaretDown, CaretUp, MagnifyingGlass, CalendarDots, BookOpen, X } from '@phosphor-icons/react'
 import {
   useGastos,
   type Gasto,
@@ -24,10 +24,10 @@ type GastoConJoins = Gasto & {
 type GastoSortKey = 'nro_gasto' | 'fecha' | 'monto_usd' | 'status'
 
 function SortIcon({ field, current, dir }: { field: GastoSortKey; current: GastoSortKey; dir: 'asc' | 'desc' }) {
-  if (field !== current) return <ChevronDown className="h-3 w-3 opacity-30 inline ml-1" />
+  if (field !== current) return <CaretDown className="h-3 w-3 opacity-30 inline ml-1" />
   return dir === 'asc'
-    ? <ChevronUp className="h-3 w-3 inline ml-1" />
-    : <ChevronDown className="h-3 w-3 inline ml-1" />
+    ? <CaretUp className="h-3 w-3 inline ml-1" />
+    : <CaretDown className="h-3 w-3 inline ml-1" />
 }
 
 // ─── Helpers de fecha ────────────────────────────────────────
@@ -188,7 +188,7 @@ export function GastoList() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <CalendarDays className="h-4 w-4" />
+              <CalendarDots className="h-4 w-4" />
               <span className="font-medium">Periodo:</span>
             </div>
             <div className="flex items-center gap-2">
@@ -218,7 +218,7 @@ export function GastoList() {
               disabled={!!rangeError || !fechaDesde || !fechaHasta}
               className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <Search className="h-4 w-4" />
+              <MagnifyingGlass className="h-4 w-4" />
               Consultar
             </button>
           </div>
@@ -230,7 +230,7 @@ export function GastoList() {
               onClick={() => setCuentaModalOpen(true)}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-muted border border-border rounded-md hover:bg-muted/80 transition-colors cursor-pointer"
             >
-              <BookPlus className="h-4 w-4" />
+              <BookOpen className="h-4 w-4" />
               Crear Cuenta
             </button>
             <button
@@ -250,7 +250,7 @@ export function GastoList() {
       {/* Estado sin consulta activa */}
       {!hasConsulta ? (
         <div className="text-center py-16 text-muted-foreground">
-          <CalendarDays className="h-10 w-10 mx-auto mb-3 opacity-40" />
+          <CalendarDots className="h-10 w-10 mx-auto mb-3 opacity-40" />
           <p className="text-base font-medium">Seleccione un rango de fechas</p>
           <p className="text-sm mt-1">Elija las fechas de inicio y fin, luego presione "Consultar"</p>
         </div>
@@ -339,9 +339,9 @@ export function GastoList() {
                   onClick={() => setReporteOpen((prev) => !prev)}
                   className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-foreground bg-muted border border-border rounded-md hover:bg-muted/80 transition-colors"
                 >
-                  <BarChart3 className="h-4 w-4" />
+                  <ChartBar className="h-4 w-4" />
                   Reportes
-                  <ChevronDown className="h-3.5 w-3.5" />
+                  <CaretDown className="h-3.5 w-3.5" />
                 </button>
                 {reporteOpen && (
                   <div className="absolute right-0 mt-1 w-48 rounded-md border border-border bg-popover shadow-lg z-10">

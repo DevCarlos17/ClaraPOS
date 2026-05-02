@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowDownCircle, ArrowUpCircle } from 'lucide-react'
+import { ArrowCircleDown, ArrowCircleUp } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -253,9 +253,9 @@ export function IngresoRetiroModal({
       <div className="p-6">
         <div className="flex items-center gap-2 mb-1">
           {modo === 'INGRESO' ? (
-            <ArrowDownCircle size={18} className="text-green-600" />
+            <ArrowCircleDown size={18} className="text-green-600" />
           ) : (
-            <ArrowUpCircle size={18} className="text-red-600" />
+            <ArrowCircleUp size={18} className="text-red-600" />
           )}
           <h2 className="text-lg font-semibold">{titulo}</h2>
         </div>

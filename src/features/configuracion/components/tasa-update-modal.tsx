@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { DollarSign, RefreshCw, TrendingUp } from 'lucide-react'
+import { CurrencyDollar, ArrowsClockwise, TrendUp } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -89,7 +89,7 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-primary" />
+            <TrendUp className="h-5 w-5 text-primary" />
             Tasa de Cambio
           </DialogTitle>
           <DialogDescription>
@@ -110,7 +110,7 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
                 desactualizada ? 'bg-red-100 text-red-600' : 'bg-amber-50 text-amber-600'
               )}
             >
-              <DollarSign className="h-4 w-4" />
+              <CurrencyDollar className="h-4 w-4" />
             </div>
             <span className="text-xs font-medium text-muted-foreground uppercase">
               Tasa actual
@@ -198,7 +198,7 @@ export function TasaUpdateModal({ open, onOpenChange }: TasaUpdateModalProps) {
               disabled={isSubmitting || isFetching}
               className="sm:w-auto w-full"
             >
-              <RefreshCw className={cn('h-4 w-4', isFetching && 'animate-spin')} />
+              <ArrowsClockwise className={cn('h-4 w-4', isFetching && 'animate-spin')} />
               {isFetching ? 'Consultando...' : 'Automatica'}
             </Button>
             <Button

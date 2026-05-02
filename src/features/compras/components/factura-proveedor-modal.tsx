@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useQuery } from '@powersync/react'
-import { RotateCcw } from 'lucide-react'
+import { ArrowCounterClockwise } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -154,7 +154,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   const { data: detalleData } = useQuery(
     tipo === 'COMPRA' && id
       ? `SELECT dc.*, p.codigo as producto_codigo, p.nombre as producto_nombre
-         FROM detalle_compra dc
+         FROM facturas_compra_det dc
          LEFT JOIN productos p ON dc.producto_id = p.id
          WHERE dc.factura_compra_id = ?`
       : '',
@@ -390,7 +390,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                       className="text-destructive border-destructive/30 hover:bg-destructive/10"
                       onClick={() => setConfirmandoAnular(true)}
                     >
-                      <RotateCcw className="h-3.5 w-3.5 mr-1" />
+                      <ArrowCounterClockwise className="h-3.5 w-3.5 mr-1" />
                       Anular
                     </Button>
                   )}
@@ -774,7 +774,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                                         onClick={() => setConfirmandoAbonoId(a.id)}
                                         className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
                                       >
-                                        <RotateCcw className="h-2.5 w-2.5" />
+                                        <ArrowCounterClockwise className="h-2.5 w-2.5" />
                                         Reversar
                                       </button>
                                     )

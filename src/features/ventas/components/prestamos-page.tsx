@@ -1,47 +1,182 @@
-import { useState } from 'react'
-import { useQuery } from '@powersync/react'
-import { AlertTriangle, Clock, CheckCircle2 } from 'lucide-react'
-import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { formatUsd } from '@/lib/currency'
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useQuery } from "@powersync/react";
+import { Warning, Clock, CheckCircle } from "@phosphor-icons/react";
+import { useCurrentUser } from "@/core/hooks/use-current-user";
+import { formatUsd } from "@/lib/currency";
+import { cn } from "@/lib/utils";
+import { SegmentedTabs, tabContentVariants } from "@/components/shared/segmented-tabs";
 
 interface VencimientoCobrar {
-  id: string
-  venta_id: string
-  cliente_nombre: string
-  nro_factura: string
-  nro_cuota: number
-  fecha_vencimiento: string
-  monto_original_usd: string
-  monto_pagado_usd: string
-  saldo_pendiente_usd: string
-  status: string
+  id: string;
+  venta_id: string;
+  cliente_nombre: string;
+  nro_factura: string;
+  nro_cuota: number;
+  fecha_vencimiento: string;
+  monto_original_usd: string;
+  monto_pagado_usd: string;
+  saldo_pendiente_usd: string;
+  status: string;
 }
 
-type FiltroStatus = 'TODOS' | 'VENCIDO' | 'PROXIMO' | 'PENDIENTE'
+type TabKey = "TODOS" | "VENCIDO" | "PROXIMO" | "PENDIENTE";
+
+const TAB_ORDER: TabKey[] = ["TODOS", "VENCIDO", "PROXIMO", "PENDIENTE"];
 
 function formatFecha(fecha: string): string {
   try {
-    return new Date(fecha + 'T00:00:00').toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    })
+    return new Date(fecha + "T00:00:00").toLocaleDateString("es-VE", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
   } catch {
-    return fecha
+    return fecha;
   }
 }
 
 function getDiasRestantes(fechaVenc: string): number {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  const venc = new Date(fechaVenc + 'T00:00:00')
-  return Math.floor((venc.getTime() - today.getTime()) / 86400000)
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const venc = new Date(fechaVenc + "T00:00:00");
+  return Math.floor((venc.getTime() - today.getTime()) / 86400000);
+}
+
+interface TablaVencimientosProps {
+  items: (VencimientoCobrar & { diasRestantes: number })[];
+  emptyMessage: string;
+}
+
+function TablaVencimientos({ items, emptyMessage }: TablaVencimientosProps) {
+  if (items.length === 0) {
+    return (
+      <div className="rounded-b-xl rounded-tr-xl border bg-card py-16 text-center">
+        <CheckCircle
+          size={32}
+          className="mx-auto mb-3 text-muted-foreground/40"
+        />
+        <p className="text-sm text-muted-foreground">{emptyMessage}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-b-xl rounded-tr-xl border bg-card overflow-hidden shadow-sm">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b bg-muted/40">
+              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Estado
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Cliente
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Factura
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Vencimiento
+              </th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Original
+              </th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Pagado
+              </th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Pendiente
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/50">
+            {items.map((v) => {
+              const isVencido = v.diasRestantes < 0 && v.status === "PENDIENTE";
+              const isProximo =
+                v.diasRestantes >= 0 &&
+                v.diasRestantes <= 7 &&
+                v.status === "PENDIENTE";
+              const isPagado = v.status === "PAGADO";
+              const diasAbs = Math.abs(v.diasRestantes);
+
+              return (
+                <tr
+                  key={v.id}
+                  className="hover:bg-muted/30 transition-colors duration-150"
+                >
+                  <td className="px-4 py-3">
+                    {isPagado ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-400">
+                        <CheckCircle size={11} weight="fill" />
+                        Pagado
+                      </span>
+                    ) : isVencido ? (
+                      <div className="space-y-0.5">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400">
+                          <Warning size={11} weight="fill" />
+                          Vencido
+                        </span>
+                        <p className="text-xs text-red-500/80 pl-1">
+                          hace {diasAbs} dia{diasAbs !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+                    ) : isProximo ? (
+                      <div className="space-y-0.5">
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-400">
+                          <Clock size={11} weight="fill" />
+                          Proximo
+                        </span>
+                        <p className="text-xs text-amber-500/80 pl-1">
+                          en {diasAbs} dia{diasAbs !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-400">
+                        Pendiente
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 font-medium text-foreground">
+                    {v.cliente_nombre}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                    #{v.nro_factura}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground whitespace-nowrap tabular-nums">
+                    {formatFecha(v.fecha_vencimiento)}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {formatUsd(parseFloat(v.monto_original_usd))}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-green-600 dark:text-green-400">
+                    {formatUsd(parseFloat(v.monto_pagado_usd))}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-4 py-3 text-right tabular-nums font-semibold",
+                      parseFloat(v.saldo_pendiente_usd) > 0.01
+                        ? "text-orange-600 dark:text-orange-400"
+                        : "text-green-600 dark:text-green-400",
+                    )}
+                  >
+                    {formatUsd(parseFloat(v.saldo_pendiente_usd))}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export function PrestamosPage() {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
-  const [filtro, setFiltro] = useState<FiltroStatus>('TODOS')
+  const { user } = useCurrentUser();
+  const empresaId = user?.empresa_id ?? "";
+  const [activeTab, setActiveTab] = useState<TabKey>("TODOS");
+  const [prevTab, setPrevTab] = useState<TabKey>("TODOS");
 
   const { data, isLoading } = useQuery(
     empresaId
@@ -54,151 +189,102 @@ export function PrestamosPage() {
          JOIN clientes c ON vc.cliente_id = c.id
          WHERE vc.empresa_id = ?
          ORDER BY vc.fecha_vencimiento ASC`
-      : '',
-    empresaId ? [empresaId] : []
-  )
+      : "",
+    empresaId ? [empresaId] : [],
+  );
 
-  const todos = (data ?? []) as VencimientoCobrar[]
+  const todos = (data ?? []) as VencimientoCobrar[];
 
   const conDias = todos.map((v) => ({
     ...v,
     diasRestantes: getDiasRestantes(v.fecha_vencimiento),
-  }))
+  }));
 
-  const filtrados = conDias.filter((v) => {
-    if (filtro === 'TODOS') return true
-    if (filtro === 'VENCIDO') return v.diasRestantes < 0 && v.status === 'PENDIENTE'
-    if (filtro === 'PROXIMO') return v.diasRestantes >= 0 && v.diasRestantes <= 7 && v.status === 'PENDIENTE'
-    if (filtro === 'PENDIENTE') return v.status === 'PENDIENTE'
-    return true
-  })
+  const vencidos = conDias.filter(
+    (v) => v.diasRestantes < 0 && v.status === "PENDIENTE",
+  );
+  const proximos = conDias.filter(
+    (v) =>
+      v.diasRestantes >= 0 && v.diasRestantes <= 7 && v.status === "PENDIENTE",
+  );
+  const pendientes = conDias.filter((v) => v.status === "PENDIENTE");
 
-  const totalVencidos = conDias.filter((v) => v.diasRestantes < 0 && v.status === 'PENDIENTE').length
-  const totalProximos = conDias.filter((v) => v.diasRestantes >= 0 && v.diasRestantes <= 7 && v.status === 'PENDIENTE').length
-  const totalPendientes = conDias.filter((v) => v.status === 'PENDIENTE').length
+  const filteredMap: Record<TabKey, typeof conDias> = {
+    TODOS: conDias,
+    VENCIDO: vencidos,
+    PROXIMO: proximos,
+    PENDIENTE: pendientes,
+  };
 
-  const filtros: { key: FiltroStatus; label: string; count: number; colorClass: string }[] = [
-    { key: 'TODOS', label: 'Todos', count: todos.length, colorClass: 'bg-muted text-foreground' },
-    { key: 'VENCIDO', label: 'Vencidos', count: totalVencidos, colorClass: 'bg-destructive/10 text-destructive' },
-    { key: 'PROXIMO', label: 'Proximos (7 dias)', count: totalProximos, colorClass: 'bg-amber-100 text-amber-700' },
-    { key: 'PENDIENTE', label: 'Pendientes', count: totalPendientes, colorClass: 'bg-blue-50 text-blue-700' },
-  ]
+  const tabEmptyMessages: Record<TabKey, string> = {
+    TODOS: "No hay prestamos registrados",
+    VENCIDO: "Sin prestamos vencidos",
+    PROXIMO: "Sin prestamos proximos a vencer",
+    PENDIENTE: "Sin prestamos pendientes",
+  };
+
+  const tabs: { key: TabKey; label: string; count: number }[] = [
+    { key: "TODOS", label: "Todos", count: todos.length },
+    { key: "VENCIDO", label: "Vencidos", count: vencidos.length },
+    { key: "PROXIMO", label: "Proximos", count: proximos.length },
+    { key: "PENDIENTE", label: "Pendientes", count: pendientes.length },
+  ];
+
+  function handleTabChange(key: TabKey) {
+    setPrevTab(activeTab);
+    setActiveTab(key);
+  }
+
+  const direction =
+    TAB_ORDER.indexOf(activeTab) > TAB_ORDER.indexOf(prevTab) ? 1 : -1;
+
+  if (isLoading) {
+    return (
+      <div className="space-y-0">
+        <div className="flex gap-0">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="h-10 w-28 rounded-t-md bg-muted animate-pulse mr-0.5"
+            />
+          ))}
+        </div>
+        <div className="rounded-b-xl rounded-tr-xl border bg-card p-6 space-y-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 bg-muted rounded-lg animate-pulse" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      {/* Filtros */}
-      <div className="flex flex-wrap gap-2">
-        {filtros.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            onClick={() => setFiltro(f.key)}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-              filtro === f.key
-                ? `${f.colorClass} border-transparent`
-                : 'bg-background border-border text-muted-foreground hover:bg-muted'
-            }`}
+    <div className="space-y-0">
+      {/* Compact tab bar */}
+      <SegmentedTabs
+        tabs={tabs}
+        active={activeTab}
+        onChange={handleTabChange}
+      />
+
+      {/* Animated content */}
+      <div className="overflow-hidden">
+        <AnimatePresence mode="wait" custom={direction}>
+          <motion.div
+            key={activeTab}
+            custom={direction}
+            variants={tabContentVariants}
+            initial="initial"
+            animate="animate"
+            exit="exit"
           >
-            {f.label}
-            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${filtro === f.key ? 'bg-white/40' : 'bg-muted'}`}>
-              {f.count}
-            </span>
-          </button>
-        ))}
+            <TablaVencimientos
+              items={filteredMap[activeTab]}
+              emptyMessage={tabEmptyMessages[activeTab]}
+            />
+          </motion.div>
+        </AnimatePresence>
       </div>
-
-      {/* Tabla */}
-      {isLoading ? (
-        <div className="rounded-xl border bg-card p-6">
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-12 bg-muted rounded animate-pulse" />
-            ))}
-          </div>
-        </div>
-      ) : filtrados.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-card p-12 text-center">
-          <CheckCircle2 className="mx-auto h-8 w-8 text-muted-foreground mb-3" />
-          <p className="text-sm text-muted-foreground">
-            {filtro === 'TODOS' ? 'No hay prestamos registrados' : `No hay prestamos en este filtro`}
-          </p>
-        </div>
-      ) : (
-        <div className="rounded-xl border bg-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="text-left px-4 py-3 font-medium text-xs">Estado</th>
-                  <th className="text-left px-4 py-3 font-medium text-xs">Cliente</th>
-                  <th className="text-left px-4 py-3 font-medium text-xs">Factura</th>
-                  <th className="text-left px-4 py-3 font-medium text-xs">Vencimiento</th>
-                  <th className="text-right px-4 py-3 font-medium text-xs">Original</th>
-                  <th className="text-right px-4 py-3 font-medium text-xs">Pagado</th>
-                  <th className="text-right px-4 py-3 font-medium text-xs">Pendiente</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtrados.map((v) => {
-                  const isVencido = v.diasRestantes < 0 && v.status === 'PENDIENTE'
-                  const isProximo = v.diasRestantes >= 0 && v.diasRestantes <= 7 && v.status === 'PENDIENTE'
-                  const isPagado = v.status === 'PAGADO'
-                  const diasAbs = Math.abs(v.diasRestantes)
-
-                  return (
-                    <tr key={v.id} className="border-b border-muted hover:bg-muted/30 transition-colors">
-                      <td className="px-4 py-3">
-                        {isPagado ? (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 text-green-700">
-                            <CheckCircle2 size={11} />
-                            Pagado
-                          </span>
-                        ) : isVencido ? (
-                          <div>
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-destructive/10 text-destructive">
-                              <AlertTriangle size={11} />
-                              Vencido
-                            </span>
-                            <p className="text-xs text-destructive/70 mt-0.5">hace {diasAbs} dia{diasAbs !== 1 ? 's' : ''}</p>
-                          </div>
-                        ) : isProximo ? (
-                          <div>
-                            <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
-                              <Clock size={11} />
-                              Proximo
-                            </span>
-                            <p className="text-xs text-amber-600/70 mt-0.5">en {diasAbs} dia{diasAbs !== 1 ? 's' : ''}</p>
-                          </div>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">
-                            Pendiente
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 font-medium">{v.cliente_nombre}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">#{v.nro_factura}</td>
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                        {formatFecha(v.fecha_vencimiento)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {formatUsd(parseFloat(v.monto_original_usd))}
-                      </td>
-                      <td className="px-4 py-3 text-right text-green-600">
-                        {formatUsd(parseFloat(v.monto_pagado_usd))}
-                      </td>
-                      <td className={`px-4 py-3 text-right font-semibold ${
-                        parseFloat(v.saldo_pendiente_usd) > 0.01 ? 'text-orange-600' : 'text-green-600'
-                      }`}>
-                        {formatUsd(parseFloat(v.saldo_pendiente_usd))}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
-  )
+  );
 }

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Menu, TrendingUp, AlertCircle } from 'lucide-react'
+import { List, TrendUp, WarningCircle } from '@phosphor-icons/react'
 import { createPortal } from 'react-dom'
 import { SyncStatusIndicator } from '@/components/sync/sync-status-indicator'
 import { ThemePicker } from '@/components/theme-picker'
@@ -49,7 +49,7 @@ export function TopBar({ onMenuClick }: TopBarProps) {
           className="lg:hidden p-2 hover:bg-black/5 rounded-xl transition-all duration-200 active:scale-[0.98] z-50 relative cursor-pointer"
           aria-label="Abrir menu"
         >
-          <Menu className="w-5 h-5 text-foreground" />
+          <List className="w-5 h-5 text-foreground" />
         </button>
       </div>
 
@@ -79,9 +79,9 @@ export function TopBar({ onMenuClick }: TopBarProps) {
         >
           {/* Icono visible solo en sm+ */}
           {desactualizada ? (
-            <AlertCircle className="hidden sm:block h-4 w-4 flex-shrink-0" />
+            <WarningCircle className="hidden sm:block h-4 w-4 flex-shrink-0" />
           ) : (
-            <TrendingUp className="hidden sm:block h-4 w-4 flex-shrink-0" />
+            <TrendUp className="hidden sm:block h-4 w-4 flex-shrink-0" />
           )}
 
           {/* Precio siempre visible. Label "USD / Bs" solo en sm+ */}

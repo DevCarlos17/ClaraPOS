@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { X } from '@phosphor-icons/react'
 import { formatUsd } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { useProductosPorDepto, type CuadreFilters } from '../hooks/use-cuadre'

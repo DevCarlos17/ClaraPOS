@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus } from '@phosphor-icons/react'
 import { useRetencionesIslrCompras, type RetencionIslr } from '@/features/compras/hooks/use-ret-islr-compras'
 import { RetIslrCompraForm } from './ret-islr-compra-form'
 

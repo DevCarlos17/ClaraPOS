@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Plus } from 'lucide-react'
+import { Plus } from '@phosphor-icons/react'
 import { useProductosTipo } from '@/features/inventario/hooks/use-productos'
 import { agregarIngrediente } from '@/features/inventario/hooks/use-recetas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Pencil, Plus, X } from 'lucide-react'
+import { PencilSimple, Plus, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useCuentasConfig, actualizarCuentaConfig, useBancosConCuenta } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { useCuentasDetalle } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -270,7 +270,7 @@ function ConfigTable({ items, editingClave, onEdit, onDone, showAddButton }: Con
                       onClick={() => onEdit(cfg.clave)}
                       className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
                     >
-                      <Pencil className="h-3 w-3" />
+                      <PencilSimple className="h-3 w-3" />
                       Cambiar
                     </button>
                   )}
@@ -351,7 +351,7 @@ function BancosContablesSection() {
                         onClick={() => setEditingBancoId(banco.id)}
                         className="inline-flex items-center gap-1 px-2 py-1 text-xs text-gray-600 bg-gray-100 rounded hover:bg-gray-200"
                       >
-                        <Pencil className="h-3 w-3" />
+                        <PencilSimple className="h-3 w-3" />
                         Cambiar
                       </button>
                     )}

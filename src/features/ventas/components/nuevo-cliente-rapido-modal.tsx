@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { UserPlus } from 'lucide-react'
+import { UserPlus } from '@phosphor-icons/react'
 import { clienteSchema } from '@/features/clientes/schemas/cliente-schema'
 import { crearCliente } from '@/features/clientes/hooks/use-clientes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
-import { Search, X } from 'lucide-react'
+import { MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { formatUsd } from '@/lib/currency'
 
@@ -101,7 +101,7 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
 
     <div ref={wrapperRef} className="relative">
       <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input
           ref={inputRef}
           type="text"

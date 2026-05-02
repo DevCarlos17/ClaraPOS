@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
-import { Building2, FileText } from 'lucide-react'
+import { Buildings, FileText } from '@phosphor-icons/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
@@ -16,7 +16,7 @@ export const Route = createFileRoute('/_app/configuracion/datos-empresa')({
 type Section = 'general' | 'fiscal'
 
 const NAV_ITEMS: { id: Section; label: string; description: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { id: 'general', label: 'Datos Generales', description: 'Razon social, RIF y contacto', icon: Building2 },
+  { id: 'general', label: 'Datos Generales', description: 'Razon social, RIF y contacto', icon: Buildings },
   { id: 'fiscal', label: 'Datos Fiscales', description: 'Contribuyente, retenciones y SENIAT', icon: FileText },
 ]
 

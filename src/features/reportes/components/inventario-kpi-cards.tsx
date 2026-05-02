@@ -1,4 +1,4 @@
-import { Package, ShoppingBag, AlertTriangle, ArrowLeftRight } from 'lucide-react'
+import { Package, ShoppingBag, Warning, ArrowsLeftRight } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -42,7 +42,7 @@ export function InventarioKpiCards({ fechaDesde, fechaHasta, onValorClick, onMov
         titulo="Stock Critico"
         valor={isLoading ? '--' : formatNumber(stockCritico, 0)}
         subtitulo="bajo minimo"
-        icon={AlertTriangle}
+        icon={Warning}
         color="red"
       />
 
@@ -51,7 +51,7 @@ export function InventarioKpiCards({ fechaDesde, fechaHasta, onValorClick, onMov
         titulo="Movimientos"
         valor={isLoading ? '--' : formatNumber(movimientosPeriodo, 0)}
         subtitulo="en el periodo"
-        icon={ArrowLeftRight}
+        icon={ArrowsLeftRight}
         color="amber"
         onClick={onMovimientosClick}
       />

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useMemo } from 'react'
-import { X } from 'lucide-react'
+import { X } from '@phosphor-icons/react'
 import {
   BarChart,
   Bar,

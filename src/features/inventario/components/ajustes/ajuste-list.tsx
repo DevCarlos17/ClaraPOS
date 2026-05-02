@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Printer } from 'lucide-react'
+import { Plus, Printer } from '@phosphor-icons/react'
 import { useAjustes } from '@/features/inventario/hooks/use-ajustes'
 import { formatDate } from '@/lib/format'
 import { formatUsd } from '@/lib/currency'

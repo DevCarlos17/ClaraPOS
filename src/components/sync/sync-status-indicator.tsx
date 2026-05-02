@@ -1,5 +1,5 @@
 import { useStatus } from '@powersync/react'
-import { RefreshCw, AlertCircle, Upload, WifiOff } from 'lucide-react'
+import { ArrowsClockwise, WarningCircle, Upload, WifiSlash } from '@phosphor-icons/react'
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
@@ -23,7 +23,7 @@ export function SyncStatusIndicator() {
 
     if (isUploading || isDownloading) {
       const direction = isUploading ? 'subiendo' : 'descargando'
-      return { label: 'Sincronizando', color: 'blue' as const, icon: RefreshCw, animate: true, description: `Sincronizando (${direction} datos)...` }
+      return { label: 'Sincronizando', color: 'blue' as const, icon: ArrowsClockwise, animate: true, description: `Sincronizando (${direction} datos)...` }
     }
 
     const hasDownloadError = status.dataFlowStatus?.downloadError
@@ -35,11 +35,11 @@ export function SyncStatusIndicator() {
       hasUploadError?.message?.includes('connection')
 
     if ((hasDownloadError || hasUploadError) && !isConnectionError && navigator.onLine) {
-      return { label: 'Error', color: 'red' as const, icon: AlertCircle, animate: false, description: 'Error en ultima sincronizacion' }
+      return { label: 'Error', color: 'red' as const, icon: WarningCircle, animate: false, description: 'Error en ultima sincronizacion' }
     }
 
     if (!navigator.onLine || !status.connected) {
-      return { label: 'Sin conexion', color: 'amber' as const, icon: WifiOff, animate: false, description: 'Trabajando sin conexion' }
+      return { label: 'Sin conexion', color: 'amber' as const, icon: WifiSlash, animate: false, description: 'Trabajando sin conexion' }
     }
 
     if (status.hasSynced === false) {

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X } from 'lucide-react'
+import { X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'

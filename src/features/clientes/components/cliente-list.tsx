@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { toast } from 'sonner'
-import { Plus, Pencil, Eye, Search } from 'lucide-react'
+import { Plus, PencilSimple, Eye, MagnifyingGlass, ToggleLeft, ToggleRight } from '@phosphor-icons/react'
 import {
   useClientes,
   actualizarCliente,
@@ -9,6 +9,7 @@ import {
 } from '@/features/clientes/hooks/use-clientes'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 import { ClienteForm } from './cliente-form'
 import { ClienteDetalle } from './cliente-detalle'
 
@@ -140,7 +141,7 @@ export function ClienteList() {
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
               <div className="flex items-center gap-3 flex-1 w-full sm:w-auto">
                 <div className="relative flex-1 sm:max-w-xs">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <input
                     type="text"
                     value={busqueda}
@@ -205,9 +206,30 @@ export function ClienteList() {
                   {clientesFiltrados.map((cli) => {
                     const saldo = parseFloat(cli.saldo_actual || '0')
                     const isSelected = detalleCliente?.id === cli.id
+                    const menuItems: ContextMenuAction[] = [
+                      {
+                        key: 'ver-detalle',
+                        label: 'Ver detalle',
+                        icon: Eye,
+                        onClick: () => handleVerDetalle(cli),
+                      },
+                      {
+                        key: 'editar',
+                        label: 'Editar',
+                        icon: PencilSimple,
+                        onClick: () => handleEditar(cli),
+                        separator: true,
+                      },
+                      {
+                        key: 'toggle',
+                        label: cli.is_active === 1 ? 'Desactivar' : 'Activar',
+                        icon: cli.is_active === 1 ? ToggleLeft : ToggleRight,
+                        onClick: () => handleToggleActivo(cli),
+                      },
+                    ]
                     return (
+                      <TableRowContextMenu key={cli.id} items={menuItems}>
                       <tr
-                        key={cli.id}
                         className={`border-b border-border transition-colors cursor-pointer ${isSelected ? 'bg-primary/5' : 'hover:bg-muted/50'}`}
                         onClick={() => handleVerDetalle(cli)}
                       >
@@ -264,11 +286,12 @@ export function ClienteList() {
                               className="inline-flex items-center gap-1 px-2 py-1.5 text-xs font-medium text-muted-foreground border border-border rounded-md hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
                               title="Editar"
                             >
-                              <Pencil className="h-3.5 w-3.5" />
+                              <PencilSimple className="h-3.5 w-3.5" />
                             </button>
                           </div>
                         </td>
                       </tr>
+                      </TableRowContextMenu>
                     )
                   })}
                 </tbody>

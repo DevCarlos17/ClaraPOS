@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, AlertTriangle } from 'lucide-react'
+import { X, Warning } from '@phosphor-icons/react'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { useDetalleFactura, crearNotaCredito } from '../hooks/use-notas-credito'
@@ -218,7 +218,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
 
             {/* Advertencia */}
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
-              <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+              <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
               <div className="text-sm text-red-700">
                 <p className="font-medium">Esta accion es irreversible</p>
                 <p className="text-xs mt-1">

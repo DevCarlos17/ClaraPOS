@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
-import { Search } from 'lucide-react'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 import { useBuscarProductosVenta, type ProductoVenta } from '../hooks/use-ventas'
 import { formatUsd } from '@/lib/currency'
 
@@ -90,7 +90,7 @@ function ProductoBuscador({ onSelect }, ref) {
   return (
     <div ref={wrapperRef} className="relative">
       <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input
           ref={inputRef}
           type="text"

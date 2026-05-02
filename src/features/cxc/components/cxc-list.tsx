@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Search, Users, DollarSign, FileText, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
+import { MagnifyingGlass, Users, CurrencyDollar, FileText, ArrowUp, ArrowDown, CaretUpDown } from '@phosphor-icons/react'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { useClientesConDeuda, useBuscarClientesDeuda, type ClienteConDeuda } from '../hooks/use-cxc'
@@ -10,7 +10,7 @@ type SortField = 'identificacion' | 'nombre' | 'facturas_pendientes' | 'saldo_ac
 type SortDir = 'asc' | 'desc'
 
 function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
-  if (field !== sortField) return <ChevronsUpDown size={12} className="ml-1 text-muted-foreground/50" />
+  if (field !== sortField) return <CaretUpDown size={12} className="ml-1 text-muted-foreground/50" />
   return sortDir === 'asc'
     ? <ArrowUp size={12} className="ml-1 text-primary" />
     : <ArrowDown size={12} className="ml-1 text-primary" />
@@ -99,7 +99,7 @@ export function CxcList() {
 
         <div className="rounded-xl bg-red-50 shadow-sm border border-red-200/60 p-4">
           <div className="flex items-center gap-2 text-sm text-red-700/70 mb-1">
-            <DollarSign size={14} />
+            <CurrencyDollar size={14} />
             Deuda total
           </div>
           <p className="text-2xl font-bold text-red-600">{formatUsd(totalDeuda)}</p>
@@ -109,13 +109,13 @@ export function CxcList() {
         </div>
       </div>
 
-      {/* Search + Table + Detail split layout */}
+      {/* MagnifyingGlass + Table + Detail split layout */}
       <div className={clienteSeleccionado ? 'grid grid-cols-1 xl:grid-cols-[2fr_3fr] gap-4 items-start' : ''}>
-        {/* Search + Table card */}
+        {/* MagnifyingGlass + Table card */}
         <div className="rounded-xl bg-card shadow-md p-4 space-y-3">
           <div className="flex items-center gap-2">
             <div className="relative flex-1">
-              <Search
+              <MagnifyingGlass
                 size={16}
                 className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
               />
@@ -138,7 +138,7 @@ export function CxcList() {
             </div>
           ) : clientes.length === 0 ? (
             <div className="text-center py-12 border border-dashed rounded-lg">
-              <DollarSign size={40} className="mx-auto text-muted-foreground/30 mb-3" />
+              <CurrencyDollar size={40} className="mx-auto text-muted-foreground/30 mb-3" />
               <p className="text-sm font-medium text-muted-foreground">
                 {isSearching ? 'Sin resultados' : 'No hay clientes con deuda pendiente'}
               </p>

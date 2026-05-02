@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { DollarSign, RefreshCw } from 'lucide-react'
+import { CurrencyDollar, ArrowsClockwise } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useTasaActual, crearTasa, useFetchTasaApi } from '../hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -15,8 +15,9 @@ export function TasaForm() {
   const handleFetchFromApi = async () => {
     try {
       const valorApi = await fetchTasa()
+      await crearTasa(valorApi, user!.empresa_id!, user!.id)
       setValor(valorApi.toFixed(4))
-      toast.success('Tasa obtenida del BCV')
+      toast.success('Tasa BCV registrada automaticamente')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al consultar la API')
     }
@@ -48,7 +49,7 @@ export function TasaForm() {
       <div className="rounded-xl bg-card shadow-md p-6">
         <div className="flex items-center gap-2 mb-4">
           <div className="p-2 rounded-lg bg-amber-50 text-amber-600">
-            <DollarSign className="w-5 h-5" />
+            <CurrencyDollar className="w-5 h-5" />
           </div>
           <h3 className="font-semibold">Tasa Actual</h3>
         </div>
@@ -91,7 +92,7 @@ export function TasaForm() {
                 title="Obtener tasa del BCV"
                 className="inline-flex items-center justify-center h-10 px-3 rounded-md border border-input bg-white text-sm hover:bg-muted transition-colors disabled:opacity-50 disabled:pointer-events-none shrink-0"
               >
-                <RefreshCw className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
+                <ArrowsClockwise className={`w-4 h-4 ${isFetching ? 'animate-spin' : ''}`} />
               </button>
             </div>
             {apiDateText ? (

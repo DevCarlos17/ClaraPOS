@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { X, DollarSign, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
+import { X, CurrencyDollar, ArrowUp, ArrowDown, CaretUpDown } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -31,7 +31,7 @@ function formatFecha(fecha: string): string {
 }
 
 function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
-  if (field !== sortField) return <ChevronsUpDown size={11} className="ml-1 text-muted-foreground/50 inline" />
+  if (field !== sortField) return <CaretUpDown size={11} className="ml-1 text-muted-foreground/50 inline" />
   return sortDir === 'asc'
     ? <ArrowUp size={11} className="ml-1 text-primary inline" />
     : <ArrowDown size={11} className="ml-1 text-primary inline" />
@@ -136,7 +136,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                 )}
               </div>
               <Button onClick={() => setAbonoGlobalOpen(true)} disabled={saldo < 0.01}>
-                <DollarSign size={16} className="mr-1" />
+                <CurrencyDollar size={16} className="mr-1" />
                 Abono Global
               </Button>
             </div>

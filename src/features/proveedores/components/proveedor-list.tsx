@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Pencil } from 'lucide-react'
+import { Plus, PencilSimple, ToggleLeft, ToggleRight } from '@phosphor-icons/react'
 import {
   useProveedores,
   actualizarProveedor,
   type Proveedor,
 } from '@/features/proveedores/hooks/use-proveedores'
 import { formatUsd } from '@/lib/currency'
+import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 import { ProveedorForm } from './proveedor-form'
 
 export function ProveedorList() {
@@ -93,8 +94,25 @@ export function ProveedorList() {
               </tr>
             </thead>
             <tbody>
-              {proveedores.map((prov) => (
-                <tr key={prov.id} className="border-b border-border hover:bg-muted/50 transition-colors">
+              {proveedores.map((prov) => {
+                const menuItems: ContextMenuAction[] = [
+                  {
+                    key: 'editar',
+                    label: 'Editar',
+                    icon: PencilSimple,
+                    onClick: () => handleEditar(prov),
+                  },
+                  {
+                    key: 'toggle',
+                    label: prov.is_active === 1 ? 'Desactivar' : 'Activar',
+                    icon: prov.is_active === 1 ? ToggleLeft : ToggleRight,
+                    onClick: () => handleToggleActivo(prov),
+                    separator: true,
+                  },
+                ]
+                return (
+                <TableRowContextMenu key={prov.id} items={menuItems}>
+                <tr className="border-b border-border hover:bg-muted/50 transition-colors">
                   <td className="px-4 py-3 font-mono text-xs text-foreground">{prov.rif}</td>
                   <td className="px-4 py-3 text-foreground font-medium">{prov.razon_social}</td>
                   <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{prov.telefono || '-'}</td>
@@ -145,12 +163,14 @@ export function ProveedorList() {
                       onClick={() => handleEditar(prov)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
                     >
-                      <Pencil className="h-3.5 w-3.5" />
+                      <PencilSimple className="h-3.5 w-3.5" />
                       Editar
                     </button>
                   </td>
                 </tr>
-              ))}
+                </TableRowContextMenu>
+                )
+              })}
             </tbody>
           </table>
         </div>

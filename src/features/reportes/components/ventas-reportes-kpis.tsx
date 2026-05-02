@@ -1,4 +1,4 @@
-import { ShoppingCart, Receipt, TrendingUp, DollarSign } from 'lucide-react'
+import { ShoppingCart, Receipt, TrendUp, CurrencyDollar } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -41,7 +41,7 @@ export function VentasReportesKpis({ fechaDesde, fechaHasta }: VentasReportesKpi
         titulo="Ticket Promedio"
         valor={isLoading ? '--' : formatUsd(ticketPromedio)}
         subtitulo="por factura"
-        icon={TrendingUp}
+        icon={TrendUp}
         color="amber"
       />
 
@@ -49,7 +49,7 @@ export function VentasReportesKpis({ fechaDesde, fechaHasta }: VentasReportesKpi
         titulo="Ganancia Est."
         valor={loadingGanancia ? '--' : formatUsd(ganancia)}
         subtitulo="basado en costo actual"
-        icon={DollarSign}
+        icon={CurrencyDollar}
         color="purple"
       />
     </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { Mail, Lock, Eye, EyeOff } from 'lucide-react'
+import { Envelope, Lock, Eye, EyeSlash } from '@phosphor-icons/react'
 import { connector } from '@/core/db/powersync/connector'
 import { toast } from 'sonner'
 
@@ -78,7 +78,7 @@ export function LoginPage() {
             <div>
               <label className="text-sm font-medium mb-1.5 block">Correo</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Envelope className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="email"
                   placeholder="usuario@clarapos.com"
@@ -109,7 +109,7 @@ export function LoginPage() {
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   disabled={isLoading}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeSlash className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
               {errors.password && <p className="text-xs text-destructive mt-1">{errors.password}</p>}

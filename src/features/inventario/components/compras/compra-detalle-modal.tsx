@@ -1,5 +1,5 @@
 import { useRef, useState, useMemo } from 'react'
-import { X, Printer, RotateCcw } from 'lucide-react'
+import { X, Printer, ArrowCounterClockwise } from '@phosphor-icons/react'
 import {
   useDetalleCompra,
   useAbonosCompra,
@@ -176,7 +176,7 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                 disabled={isLoading}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-destructive bg-destructive/10 rounded-md hover:bg-destructive/20 transition-colors disabled:opacity-50"
               >
-                <RotateCcw className="h-4 w-4" />
+                <ArrowCounterClockwise className="h-4 w-4" />
                 Reversar
               </button>
             )}
@@ -185,7 +185,7 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                 title="La factura tiene abonos. Reverse los abonos desde CxP para poder reversar la factura."
                 className="inline-flex items-center gap-1 px-2 py-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md cursor-help dark:bg-amber-950/30 dark:text-amber-400 dark:border-amber-800"
               >
-                <RotateCcw className="h-3 w-3" />
+                <ArrowCounterClockwise className="h-3 w-3" />
                 Tiene abonos
               </span>
             )}
@@ -408,7 +408,7 @@ export function CompraDetalleModal({ compra, isOpen, onClose }: CompraDetalleMod
                                       onClick={() => setConfirmandoAbonoId(abono.id)}
                                       className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors"
                                     >
-                                      <RotateCcw className="h-2.5 w-2.5" />
+                                      <ArrowCounterClockwise className="h-2.5 w-2.5" />
                                       Reversar
                                     </button>
                                   )

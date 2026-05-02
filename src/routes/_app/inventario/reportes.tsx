@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Printer } from 'lucide-react'
+import { Printer } from '@phosphor-icons/react'
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@powersync/react'
 import { PageHeader } from '@/components/layout/page-header'

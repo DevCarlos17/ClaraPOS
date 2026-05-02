@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Pencil, Printer, Package } from 'lucide-react'
+import { Plus, PencilSimple, Printer, Package } from '@phosphor-icons/react'
 import {
   useUnidades,
   actualizarUnidad,
@@ -222,7 +222,7 @@ export function UnidadList() {
                       onClick={() => handleEditar(u)}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
                     >
-                      <Pencil className="h-3.5 w-3.5" />
+                      <PencilSimple className="h-3.5 w-3.5" />
                       Editar
                     </button>
                   </td>

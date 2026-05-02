@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import { toast } from 'sonner'
-import { Plus, Pencil, FileText, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
+import { Plus, PencilSimple, FileText, ArrowUp, ArrowDown, ArrowsDownUp, ListBullets, ToggleLeft, ToggleRight } from '@phosphor-icons/react'
 import {
   useDepartamentos,
   tieneProductosConExistencia,
@@ -8,6 +8,7 @@ import {
   type Departamento,
   type DepartamentoConConteo,
 } from '@/features/inventario/hooks/use-departamentos'
+import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 import { DepartamentoForm } from './departamento-form'
 import { DepartamentoArticulosModal } from './departamento-articulos-modal'
 import { DepartamentoReporte } from './departamento-reporte'
@@ -72,8 +73,7 @@ export function DepartamentoList() {
     setFormOpen(true)
   }
 
-  function handleEditar(e: React.MouseEvent, departamento: Departamento) {
-    e.stopPropagation()
+  function handleEditar(departamento: Departamento) {
     setEditingDepartamento(departamento)
     setFormOpen(true)
   }
@@ -93,8 +93,7 @@ export function DepartamentoList() {
     setSelectedDepartamento(null)
   }
 
-  async function handleToggleActivo(e: React.MouseEvent, departamento: DepartamentoConConteo) {
-    e.stopPropagation()
+  async function handleToggleActivo(departamento: DepartamentoConConteo) {
     const nuevoEstado = departamento.is_active !== 1
 
     setTogglingId(departamento.id)
@@ -121,7 +120,7 @@ export function DepartamentoList() {
 
   function renderSortIcon(key: SortKey) {
     if (sortKey !== key) {
-      return <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+      return <ArrowsDownUp className="h-3.5 w-3.5 text-muted-foreground" />
     }
     return sortDir === 'asc' ? (
       <ArrowUp className="h-3.5 w-3.5 text-muted-foreground" />
@@ -214,9 +213,31 @@ export function DepartamentoList() {
               </tr>
             </thead>
             <tbody>
-              {sortedDepartamentos.map((dep) => (
+              {sortedDepartamentos.map((dep) => {
+                const menuItems: ContextMenuAction[] = [
+                  {
+                    key: 'ver-productos',
+                    label: 'Ver productos',
+                    icon: ListBullets,
+                    onClick: () => handleRowClick(dep),
+                  },
+                  {
+                    key: 'editar',
+                    label: 'Editar',
+                    icon: PencilSimple,
+                    onClick: () => handleEditar(dep),
+                    separator: true,
+                  },
+                  {
+                    key: 'toggle',
+                    label: dep.is_active === 1 ? 'Desactivar' : 'Activar',
+                    icon: dep.is_active === 1 ? ToggleLeft : ToggleRight,
+                    onClick: () => handleToggleActivo(dep),
+                  },
+                ]
+                return (
+                <TableRowContextMenu key={dep.id} items={menuItems}>
                 <tr
-                  key={dep.id}
                   onClick={() => handleRowClick(dep)}
                   className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                 >
@@ -227,7 +248,7 @@ export function DepartamentoList() {
                   </td>
                   <td className="px-4 py-3">
                     <button
-                      onClick={(e) => handleToggleActivo(e, dep)}
+                      onClick={(e) => { e.stopPropagation(); void handleToggleActivo(dep) }}
                       disabled={togglingId === dep.id}
                       className="disabled:opacity-50 cursor-pointer"
                     >
@@ -244,15 +265,17 @@ export function DepartamentoList() {
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button
-                      onClick={(e) => handleEditar(e, dep)}
+                      onClick={(e) => { e.stopPropagation(); handleEditar(dep) }}
                       className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
                     >
-                      <Pencil className="h-3.5 w-3.5" />
+                      <PencilSimple className="h-3.5 w-3.5" />
                       Editar
                     </button>
                   </td>
                 </tr>
-              ))}
+                </TableRowContextMenu>
+                )
+              })}
             </tbody>
           </table>
         </div>

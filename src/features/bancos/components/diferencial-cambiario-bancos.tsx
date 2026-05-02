@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { TrendingUp, TrendingDown, AlertCircle, Minus } from 'lucide-react'
+import { TrendUp, TrendDown, WarningCircle, Minus } from '@phosphor-icons/react'
 import { useDiferencialBancos, aplicarDiferencialBanco, type DiferencialBanco } from '../hooks/use-diferencial-banco'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatBs, formatUsd } from '@/lib/currency'
@@ -76,12 +76,12 @@ function BancoRow({ banco, onAplicar }: { banco: DiferencialBanco; onAplicar: (b
           </span>
         ) : diferencial > 0 ? (
           <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700">
-            <TrendingUp size={13} />
+            <TrendUp size={13} />
             {formatBs(diferencial)}
           </span>
         ) : (
           <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700">
-            <TrendingDown size={13} />
+            <TrendDown size={13} />
             {formatBs(diferencial)}
           </span>
         )}
@@ -91,7 +91,7 @@ function BancoRow({ banco, onAplicar }: { banco: DiferencialBanco; onAplicar: (b
       <td className="px-4 py-3 text-center">
         {sinCuenta ? (
           <span className="inline-flex items-center gap-1 text-xs text-amber-600">
-            <AlertCircle size={12} />
+            <WarningCircle size={12} />
             Sin cuenta contable
           </span>
         ) : sinTasa ? (

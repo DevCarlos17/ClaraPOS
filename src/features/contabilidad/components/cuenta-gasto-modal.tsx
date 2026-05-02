@@ -1,15 +1,22 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   X,
   Plus,
-  Trash2,
-  Pencil,
+  Trash,
+  PencilSimple,
   Check,
-  FolderTree,
-  ChevronRight,
-  ChevronDown,
-  ChevronsUpDown,
-} from 'lucide-react'
+  Folders,
+  CaretRight,
+  CaretDown,
+  CaretUpDown,
+} from '@phosphor-icons/react'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { toast } from 'sonner'
 import {
   useGruposGastoConSubcuentas,
@@ -30,14 +37,6 @@ import { v4 as uuidv4 } from 'uuid'
 interface CuentaGastoModalProps {
   isOpen: boolean
   onClose: () => void
-}
-
-// ─── Menú contextual ──────────────────────────────────────────
-
-interface ContextMenu {
-  grupoId: string
-  x: number
-  y: number
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -79,25 +78,6 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
 
   const todosExpandidos = grupos.length > 0 && expandidos.size === grupos.length
 
-  // ─── Menú contextual ──────────────────────────────────────
-  const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
-  const contextRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (contextRef.current && !contextRef.current.contains(e.target as Node)) {
-        setContextMenu(null)
-      }
-    }
-    if (contextMenu) document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [contextMenu])
-
-  function handleContextMenu(e: React.MouseEvent, grupoId: string) {
-    e.preventDefault()
-    setContextMenu({ grupoId, x: e.clientX, y: e.clientY })
-  }
-
   // ─── Estado edicion inline ────────────────────────────────
   const [editandoId, setEditandoId] = useState<string | null>(null)
   const [nombreEditando, setNombreEditando] = useState('')
@@ -137,7 +117,6 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
     setNuevoGrupoNombre('')
     setNuevasSubs([nuevaSubRow()])
     setErrGrupo('')
-    setContextMenu(null)
     onClose()
   }
 
@@ -150,7 +129,6 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
   function iniciarEdicion(cuenta: CuentaContable) {
     setConfirmandoEliminarId(null)
     setAgregandoEnGrupoId(null)
-    setContextMenu(null)
     setEditandoId(cuenta.id)
     setNombreEditando(cuenta.nombre)
   }
@@ -214,7 +192,6 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
   // ─── Agregar subcuenta ────────────────────────────────────
 
   function abrirAgregarSubcuenta(grupoId: string) {
-    setContextMenu(null)
     setAgregandoEnGrupoId(grupoId)
     setNuevaSubNombre('')
     setEditandoId(null)
@@ -299,7 +276,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
           {/* Header */}
           <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border shrink-0">
             <div className="flex items-center gap-2">
-              <FolderTree className="h-5 w-5 text-muted-foreground" />
+              <Folders className="h-5 w-5 text-muted-foreground" />
               <h2 className="text-lg font-semibold text-foreground">Cuentas de Gasto</h2>
             </div>
             <button
@@ -325,8 +302,8 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                   Nuevo Grupo de Cuentas
                 </span>
                 {formExpandido
-                  ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                  : <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  ? <CaretDown className="h-4 w-4 text-muted-foreground" />
+                  : <CaretRight className="h-4 w-4 text-muted-foreground" />
                 }
               </button>
 
@@ -389,7 +366,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                               onClick={() => setNuevasSubs((prev) => prev.filter((s) => s.id !== sub.id))}
                               className="text-muted-foreground hover:text-destructive transition-colors"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash className="h-4 w-4" />
                             </button>
                           )}
                         </div>
@@ -429,7 +406,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                     title={todosExpandidos ? 'Colapsar todos' : 'Expandir todos'}
                   >
-                    <ChevronsUpDown className="h-3.5 w-3.5" />
+                    <CaretUpDown className="h-3.5 w-3.5" />
                     {todosExpandidos ? 'Colapsar todos' : 'Expandir todos'}
                   </button>
                 </div>
@@ -446,7 +423,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                 </div>
               ) : grupos.length === 0 ? (
                 <div className="text-center py-10 text-muted-foreground border border-dashed border-border rounded-lg">
-                  <FolderTree className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                  <Folders className="h-8 w-8 mx-auto mb-2 opacity-30" />
                   <p className="text-sm font-medium">Sin cuentas de gasto</p>
                   <p className="text-xs mt-1 text-muted-foreground/70">
                     Crea tu primer grupo usando el formulario de arriba
@@ -464,9 +441,10 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                       <div key={grupo.id} className="rounded-lg border border-border overflow-hidden">
 
                         {/* Fila del grupo */}
+                        <ContextMenu>
+                        <ContextMenuTrigger asChild>
                         <div
                           className="flex items-center gap-2 px-3 py-2.5 bg-muted/40 select-none"
-                          onContextMenu={(e) => handleContextMenu(e, grupo.id)}
                         >
                           {/* Toggle colapsar */}
                           <button
@@ -476,8 +454,8 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                             title={estaExpandido ? 'Colapsar' : 'Expandir'}
                           >
                             {estaExpandido
-                              ? <ChevronDown className="h-3.5 w-3.5" />
-                              : <ChevronRight className="h-3.5 w-3.5" />
+                              ? <CaretDown className="h-3.5 w-3.5" />
+                              : <CaretRight className="h-3.5 w-3.5" />
                             }
                           </button>
 
@@ -556,7 +534,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                                 className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                                 title="Editar nombre"
                               >
-                                <Pencil className="h-3.5 w-3.5" />
+                                <PencilSimple className="h-3.5 w-3.5" />
                               </button>
                               <button
                                 type="button"
@@ -573,12 +551,25 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                                   className="p-1 text-muted-foreground hover:text-destructive transition-colors"
                                   title="Eliminar grupo"
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <Trash className="h-3.5 w-3.5" />
                                 </button>
                               )}
                             </>
                           )}
                         </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem onClick={() => abrirAgregarSubcuenta(grupo.id)}>
+                            <Plus className="h-3.5 w-3.5 text-primary" />
+                            Agregar subcuenta
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => iniciarEdicion(grupo)}>
+                            <PencilSimple className="h-3.5 w-3.5 text-muted-foreground" />
+                            Editar nombre
+                          </ContextMenuItem>
+                        </ContextMenuContent>
+                        </ContextMenu>
 
                         {/* Subcuentas — solo si expandido */}
                         {estaExpandido && (
@@ -590,7 +581,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
 
                               return (
                                 <div key={sub.id} className="flex items-center gap-2 px-3 py-2 pl-8">
-                                  <ChevronRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+                                  <CaretRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
                                   <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/60 px-1.5 py-0.5 rounded shrink-0">
                                     {sub.codigo}
                                   </span>
@@ -658,7 +649,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                                         className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                                         title="Editar nombre"
                                       >
-                                        <Pencil className="h-3 w-3" />
+                                        <PencilSimple className="h-3 w-3" />
                                       </button>
                                       {!subTieneGastos && (
                                         <button
@@ -667,7 +658,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                                           className="p-1 text-muted-foreground hover:text-destructive transition-colors"
                                           title="Eliminar subcuenta"
                                         >
-                                          <Trash2 className="h-3 w-3" />
+                                          <Trash className="h-3 w-3" />
                                         </button>
                                       )}
                                     </>
@@ -679,7 +670,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                             {/* Fila para agregar subcuenta inline */}
                             {agregandoEnGrupoId === grupo.id ? (
                               <div className="flex items-center gap-2 px-3 py-2 pl-8 bg-muted/20">
-                                <ChevronRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+                                <CaretRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
                                 <input
                                   type="text"
                                   value={nuevaSubNombre}
@@ -722,37 +713,6 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
         </div>
       </dialog>
 
-      {/* Menú contextual (clic derecho en grupo) */}
-      {contextMenu && (
-        <div
-          ref={contextRef}
-          style={{ position: 'fixed', top: contextMenu.y, left: contextMenu.x, zIndex: 9999 }}
-          className="rounded-md border border-border bg-popover shadow-lg py-1 min-w-[160px]"
-        >
-          <button
-            type="button"
-            onClick={() => abrirAgregarSubcuenta(contextMenu.grupoId)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5 text-primary" />
-            Agregar subcuenta
-          </button>
-          {(() => {
-            const grupo = grupos.find((g) => g.id === contextMenu.grupoId)
-            if (!grupo) return null
-            return (
-              <button
-                type="button"
-                onClick={() => { iniciarEdicion(grupo); setContextMenu(null) }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-foreground hover:bg-muted transition-colors border-t border-border"
-              >
-                <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
-                Editar nombre
-              </button>
-            )
-          })()}
-        </div>
-      )}
     </>
   )
 }

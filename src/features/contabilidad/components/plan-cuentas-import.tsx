@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload } from 'lucide-react'
+import { Download, Upload } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   crearCuenta,

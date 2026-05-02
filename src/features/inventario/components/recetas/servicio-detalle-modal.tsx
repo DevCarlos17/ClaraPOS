@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
-import { Pencil, Trash2, Check, X } from 'lucide-react'
+import { PencilSimple, Trash, Check, X } from '@phosphor-icons/react'
 import { type Producto } from '@/features/inventario/hooks/use-productos'
 import {
   useRecetasPorServicio,
@@ -284,7 +284,7 @@ export function ServicioDetalleModal({ servicio, onClose }: ServicioDetalleModal
                                 className="inline-flex items-center p-1.5 text-gray-500 hover:bg-gray-100 rounded transition-colors"
                                 title="Editar cantidad"
                               >
-                                <Pencil className="h-3.5 w-3.5" />
+                                <PencilSimple className="h-3.5 w-3.5" />
                               </button>
                               <button
                                 onClick={() => handleDelete(receta.id)}
@@ -295,7 +295,7 @@ export function ServicioDetalleModal({ servicio, onClose }: ServicioDetalleModal
                                 }`}
                                 title={isConfirmingDelete ? 'Confirmar eliminacion' : 'Eliminar'}
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
+                                <Trash className="h-3.5 w-3.5" />
                               </button>
                             </>
                           )}

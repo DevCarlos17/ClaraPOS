@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus } from 'lucide-react'
+import { Plus } from '@phosphor-icons/react'
 import { useRetencionesIvaCompras, type RetencionIva } from '@/features/compras/hooks/use-ret-iva-compras'
 import { RetIvaCompraForm } from './ret-iva-compra-form'
 

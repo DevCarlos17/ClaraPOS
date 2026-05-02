@@ -1,4 +1,4 @@
-import { Search, X } from 'lucide-react'
+import { MagnifyingGlass, X } from '@phosphor-icons/react'
 import { type Table } from '@tanstack/react-table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,7 +43,7 @@ export function DataTableToolbar<TData>({
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 w-full">
         <div className="flex flex-1 min-w-0 items-center gap-2 md:gap-3">
           <div className="relative w-full sm:w-[220px] lg:w-[280px] min-w-0 shrink-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder={searchPlaceholder}
               value={searchValue}

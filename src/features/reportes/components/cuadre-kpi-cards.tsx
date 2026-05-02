@@ -1,4 +1,4 @@
-import { ShoppingCart, TrendingUp, Receipt, CreditCard } from 'lucide-react'
+import { ShoppingCart, TrendUp, Receipt, CreditCard } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import {
   useVentasDelDia,
@@ -51,7 +51,7 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
         <div className="flex items-center justify-between">
           <p className="text-sm font-medium text-muted-foreground">Ganancia Est.</p>
           <div className="p-2 rounded-lg bg-green-100 text-green-600">
-            <TrendingUp className="w-4 h-4" />
+            <TrendUp className="w-4 h-4" />
           </div>
         </div>
         <div className="mt-2">

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Download, Pencil, Plus, Upload } from 'lucide-react'
+import { CaretDown, CaretRight, Copy, Download, PencilSimple, Plus, Upload } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   usePlanCuentas,
@@ -7,8 +7,8 @@ import {
   type CuentaContable,
 } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 import { CuentaForm } from './cuenta-form'
-import { CuentaContextMenu } from './cuenta-context-menu'
 import { PlanCuentasImport } from './plan-cuentas-import'
 import {
   exportPlanCuentasCsv,
@@ -79,13 +79,6 @@ function TablaSkeleton() {
   )
 }
 
-// ─── Tipo para el estado del menu contextual ───────────────────
-
-interface ContextMenuState {
-  cuenta: CuentaContable
-  position: { x: number; y: number }
-}
-
 // ─── Componente principal ──────────────────────────────────────
 
 export function PlanCuentasList() {
@@ -102,9 +95,6 @@ export function PlanCuentasList() {
 
   // ─── Estado del arbol ────────────────────────────────────────
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
-
-  // ─── Estado del menu contextual ──────────────────────────────
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
 
   // ─── Estado del dialogo de importacion ───────────────────────
   const [importOpen, setImportOpen] = useState(false)
@@ -213,13 +203,6 @@ export function PlanCuentasList() {
     setExpandedIds(new Set())
   }
 
-  // ─── Menu contextual ─────────────────────────────────────────
-
-  function handleContextMenu(e: React.MouseEvent, cuenta: CuentaContable) {
-    e.preventDefault()
-    setContextMenu({ cuenta, position: { x: e.clientX, y: e.clientY } })
-  }
-
   // ─── Exportar CSV ─────────────────────────────────────────────
 
   function handleExportarCsv() {
@@ -313,11 +296,35 @@ export function PlanCuentasList() {
                 const hasChildren = (childrenMap.get(c.id)?.length ?? 0) > 0
                 const isExpanded = expandedIds.has(c.id)
                 const isGroup = c.es_cuenta_detalle === 0
+                const menuItems: ContextMenuAction[] = [
+                  {
+                    key: 'copiar',
+                    label: 'Copiar codigo',
+                    icon: Copy,
+                    onClick: () => {
+                      void navigator.clipboard.writeText(c.codigo)
+                      toast.success('Codigo copiado')
+                    },
+                  },
+                  {
+                    key: 'editar',
+                    label: 'Editar',
+                    icon: PencilSimple,
+                    onClick: () => handleEditar(c),
+                    separator: true,
+                  },
+                  {
+                    key: 'subcuenta',
+                    label: 'Agregar Subcuenta',
+                    icon: Plus,
+                    onClick: () => handleAgregarSubcuenta(c),
+                    hidden: c.es_cuenta_detalle !== 0,
+                  },
+                ]
 
                 return (
+                  <TableRowContextMenu key={c.id} items={menuItems}>
                   <tr
-                    key={c.id}
-                    onContextMenu={(e) => handleContextMenu(e, c)}
                     className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-default"
                   >
                     {/* Codigo con sangria por nivel y boton de expansion */}
@@ -334,9 +341,9 @@ export function PlanCuentasList() {
                           >
                             {hasChildren ? (
                               isExpanded ? (
-                                <ChevronDown className="h-3.5 w-3.5" />
+                                <CaretDown className="h-3.5 w-3.5" />
                               ) : (
-                                <ChevronRight className="h-3.5 w-3.5" />
+                                <CaretRight className="h-3.5 w-3.5" />
                               )
                             ) : (
                               // Espacio reservado para alinear cuentas sin hijos
@@ -394,27 +401,17 @@ export function PlanCuentasList() {
                         onClick={() => handleEditar(c)}
                         className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
                       >
-                        <Pencil className="h-3.5 w-3.5" />
+                        <PencilSimple className="h-3.5 w-3.5" />
                         Editar
                       </button>
                     </td>
                   </tr>
+                  </TableRowContextMenu>
                 )
               })}
             </tbody>
           </table>
         </div>
-      )}
-
-      {/* Menu contextual */}
-      {contextMenu && (
-        <CuentaContextMenu
-          cuenta={contextMenu.cuenta}
-          position={contextMenu.position}
-          onClose={() => setContextMenu(null)}
-          onEditar={handleEditar}
-          onAgregarSubcuenta={handleAgregarSubcuenta}
-        />
       )}
 
       {/* Dialogo de creacion / edicion */}

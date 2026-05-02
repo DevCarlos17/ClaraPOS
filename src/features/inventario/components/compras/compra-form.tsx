@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
-import { ArrowLeft, Plus, Trash2, Search, Banknote, PackagePlus, UserPlus, X, CheckCircle2 } from 'lucide-react'
+import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle } from '@phosphor-icons/react'
 import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
@@ -662,7 +662,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     : 'bg-background text-muted-foreground hover:bg-muted'
                 }`}
               >
-                <Banknote className="h-4 w-4" />
+                <Money className="h-4 w-4" />
                 USD
               </button>
               <button
@@ -674,7 +674,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     : 'bg-background text-muted-foreground hover:bg-muted'
                 }`}
               >
-                <Banknote className="h-4 w-4" />
+                <Money className="h-4 w-4" />
                 Bs
               </button>
             </div>
@@ -730,7 +730,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
           <div className="flex gap-2">
             <div className="relative flex-1">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <input
                   type="text"
                   value={busqueda}
@@ -781,7 +781,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
               title="Crear nuevo producto"
               className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-input bg-background text-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
             >
-              <PackagePlus className="h-4 w-4" />
+              <Package className="h-4 w-4" />
               <span className="hidden sm:inline">Nuevo producto</span>
             </button>
           </div>
@@ -867,7 +867,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                             onClick={() => handleRemoveLinea(index)}
                             className="text-muted-foreground hover:text-destructive transition-colors"
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash className="h-4 w-4" />
                           </button>
                         </td>
                       </tr>
@@ -1161,7 +1161,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-primary" />
+              <CheckCircle className="h-5 w-5 text-primary" />
               Confirmar Factura de Compra
             </DialogTitle>
           </DialogHeader>
@@ -1311,7 +1311,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
               disabled={submitting}
               className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center gap-2"
             >
-              <CheckCircle2 className="h-4 w-4" />
+              <CheckCircle className="h-4 w-4" />
               {submitting ? 'Registrando...' : 'Confirmar y Registrar'}
             </button>
           </div>

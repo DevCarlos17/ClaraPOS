@@ -1,4 +1,4 @@
-import { Landmark, Users, AlertTriangle, ArrowDownCircle } from 'lucide-react'
+import { Bank, Users, Warning, ArrowCircleDown } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatNumber } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -20,7 +20,7 @@ export function CxcReportesKpis({ fechaDesde, fechaHasta }: CxcReportesKpisProps
         titulo="Deuda Total"
         valor={isLoading ? '--' : formatUsd(deudaTotalUsd)}
         subtitulo={isLoading || loadingTasa ? '...' : formatBs(usdToBs(deudaTotalUsd, tasaValor))}
-        icon={Landmark}
+        icon={Bank}
         color="red"
       />
 
@@ -36,7 +36,7 @@ export function CxcReportesKpis({ fechaDesde, fechaHasta }: CxcReportesKpisProps
         titulo="Sobre Limite"
         valor={isLoading ? '--' : formatNumber(sobreLimite, 0)}
         subtitulo="exceden su limite"
-        icon={AlertTriangle}
+        icon={Warning}
         color="red"
       />
 
@@ -44,7 +44,7 @@ export function CxcReportesKpis({ fechaDesde, fechaHasta }: CxcReportesKpisProps
         titulo="Cobros del Periodo"
         valor={loadingCobros ? '--' : formatUsd(cobrosUsd)}
         subtitulo="recibidos en el periodo"
-        icon={ArrowDownCircle}
+        icon={ArrowCircleDown}
         color="green"
       />
     </div>

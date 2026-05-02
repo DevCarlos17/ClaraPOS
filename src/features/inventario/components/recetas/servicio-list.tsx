@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Printer, FileText } from 'lucide-react'
+import { Printer, FileText } from '@phosphor-icons/react'
 import { useProductosTipo, type Producto } from '@/features/inventario/hooks/use-productos'
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { ServicioDetalleModal } from './servicio-detalle-modal'

@@ -9,7 +9,7 @@ import {
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCuentasDetalle, crearCuenta } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { db } from '@/core/db/powersync/db'
-import { Plus } from 'lucide-react'
+import { Plus } from '@phosphor-icons/react'
 
 interface BancoFormProps {
   isOpen: boolean

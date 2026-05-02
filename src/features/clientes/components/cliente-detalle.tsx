@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useQuery } from '@powersync/react'
-import { X, Phone, MapPin, CreditCard, RotateCcw, Printer, Calendar } from 'lucide-react'
+import { X, Phone, MapPin, CreditCard, ArrowCounterClockwise, Printer, Calendar } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   useMovimientosClienteFiltrados,
@@ -229,7 +229,7 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
       <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
-            <RotateCcw size={18} className="text-destructive" />
+            <ArrowCounterClockwise size={18} className="text-destructive" />
           </div>
           <div>
             <h3 className="text-base font-semibold">Reversar abono</h3>
@@ -606,7 +606,7 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
                                   onClick={() => handleReversar(matchedPago)}
                                   className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors whitespace-nowrap"
                                 >
-                                  <RotateCcw size={12} />
+                                  <ArrowCounterClockwise size={12} />
                                   Reversar
                                 </button>
                               )

@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Printer, Search, PackageSearch } from 'lucide-react'
+import { Printer, MagnifyingGlass } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
 import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useLotesPorProducto, type Lote } from '@/features/inventario/hooks/use-lotes'
@@ -203,7 +203,7 @@ function TrazabilidadDetalleTable({
       {/* Tabla de despachos */}
       {despachos.length === 0 ? (
         <div className="text-center py-10 text-gray-400 border border-dashed border-gray-200 rounded-lg">
-          <PackageSearch className="h-10 w-10 mx-auto mb-2 opacity-40" />
+          <MagnifyingGlass className="h-10 w-10 mx-auto mb-2 opacity-40" />
           <p className="text-sm font-medium text-gray-500">Sin despachos registrados para este lote</p>
           <p className="text-xs mt-1">Los despachos aparecen cuando se vende un producto del lote</p>
         </div>
@@ -335,19 +335,19 @@ export function LoteTrazabilidad() {
       {!selectedProductoId ? (
         productosConLotes.length === 0 && !loadingProductos ? (
           <div className="text-center py-12 text-gray-400 border border-dashed border-gray-200 rounded-lg">
-            <PackageSearch className="h-10 w-10 mx-auto mb-2 opacity-40" />
+            <MagnifyingGlass className="h-10 w-10 mx-auto mb-2 opacity-40" />
             <p className="text-sm font-medium text-gray-500">No hay productos con gestion de lotes</p>
             <p className="text-xs mt-1">Activa la opcion Maneja Lotes en el formulario de producto</p>
           </div>
         ) : (
           <div className="text-center py-12 text-gray-400">
-            <Search className="h-10 w-10 mx-auto mb-2 opacity-40" />
+            <MagnifyingGlass className="h-10 w-10 mx-auto mb-2 opacity-40" />
             <p className="text-sm font-medium text-gray-500">Seleccione un producto y un lote para ver su trazabilidad</p>
           </div>
         )
       ) : !selectedLoteId ? (
         <div className="text-center py-12 text-gray-400">
-          <Search className="h-10 w-10 mx-auto mb-2 opacity-40" />
+          <MagnifyingGlass className="h-10 w-10 mx-auto mb-2 opacity-40" />
           <p className="text-sm font-medium text-gray-500">Seleccione un lote para ver sus despachos</p>
           {lotes.length === 0 && !loadingLotes && (
             <p className="text-xs mt-1 text-gray-400">Este producto no tiene lotes registrados</p>

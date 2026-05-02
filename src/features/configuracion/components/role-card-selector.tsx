@@ -1,4 +1,4 @@
-import { Check, Plus, Shield } from 'lucide-react'
+import { Check, Plus, Shield } from '@phosphor-icons/react'
 import type { Rol } from '@/features/configuracion/hooks/use-roles'
 
 interface RoleCardSelectorProps {

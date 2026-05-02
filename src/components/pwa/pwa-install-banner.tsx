@@ -1,4 +1,4 @@
-import { X, Download, Smartphone, Lightbulb } from 'lucide-react'
+import { X, Download, DeviceMobile, Lightbulb } from '@phosphor-icons/react'
 import { usePWAInstall } from '@/hooks/use-pwa-install'
 import { useState } from 'react'
 
@@ -21,7 +21,7 @@ export function PWAInstallBanner() {
 
         <div className="flex items-start gap-3 pr-6">
           <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center flex-shrink-0">
-            <Smartphone className="w-5 h-5 text-white" />
+            <DeviceMobile className="w-5 h-5 text-white" />
           </div>
 
           <div className="flex-1">

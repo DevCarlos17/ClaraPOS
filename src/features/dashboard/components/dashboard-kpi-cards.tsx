@@ -1,4 +1,4 @@
-import { ShoppingCart, DollarSign, Package, CreditCard } from 'lucide-react'
+import { ShoppingCart, CurrencyDollar, Package, CreditCard } from '@phosphor-icons/react'
 import { formatUsd, formatBs, formatTasa, usdToBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -46,7 +46,7 @@ export function DashboardKpiCards() {
         titulo="Tasa Actual"
         valor={!tasa ? '--' : formatTasa(tasa.valor)}
         subtitulo={tasaSubtitulo}
-        icon={DollarSign}
+        icon={CurrencyDollar}
         color={tasaDesactualizada ? 'red' : 'amber'}
         subtitleClassName={tasaDesactualizada ? 'text-red-600 font-medium' : undefined}
       />
@@ -87,23 +87,25 @@ function KpiCard({
   color: string
   subtitleClassName?: string
 }) {
-  const colorMap: Record<string, string> = {
-    blue:   'bg-blue-100 text-blue-600',
-    green:  'bg-green-100 text-green-600',
-    amber:  'bg-amber-100 text-amber-600',
-    red:    'bg-red-100 text-red-600',
-    purple: 'bg-purple-100 text-purple-600',
+  const colorMap: Record<string, { gradient: string; iconColor: string }> = {
+    blue:   { gradient: 'from-blue-500 to-blue-700',    iconColor: 'text-blue-600' },
+    green:  { gradient: 'from-green-500 to-green-700',  iconColor: 'text-green-600' },
+    amber:  { gradient: 'from-amber-400 to-amber-600',  iconColor: 'text-amber-500' },
+    red:    { gradient: 'from-red-500 to-red-700',      iconColor: 'text-red-600' },
+    purple: { gradient: 'from-purple-500 to-purple-700',iconColor: 'text-purple-600' },
   }
 
+  const { gradient, iconColor } = colorMap[color] ?? colorMap.blue
+
   return (
-    <div className="rounded-xl bg-card shadow-md p-6">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-medium text-muted-foreground">{titulo}</p>
-        <div className={`p-2 rounded-lg ${colorMap[color] ?? colorMap.blue}`}>
-          <Icon className="w-4 h-4" />
+    <div className="rounded-xl bg-card shadow-md overflow-hidden">
+      <div className={`relative bg-gradient-to-br ${gradient} px-5 pt-4 pb-6`}>
+        <p className="text-sm font-semibold text-white/90 leading-tight">{titulo}</p>
+        <div className="absolute -bottom-5 left-5 p-2.5 rounded-xl bg-card shadow-md">
+          <Icon className={`w-6 h-6 ${iconColor}`} />
         </div>
       </div>
-      <div className="mt-2">
+      <div className="px-5 pt-8 pb-4">
         <p className="text-2xl font-bold">{valor}</p>
         <p className={`text-xs mt-1 ${subtitleClassName ?? 'text-muted-foreground'}`}>{subtitulo}</p>
       </div>

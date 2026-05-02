@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FileText, ChevronDown, Loader2 } from 'lucide-react'
+import { FileText, CaretDown, CircleNotch } from '@phosphor-icons/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
@@ -376,12 +376,12 @@ export function CxcClienteReporte({ cliente, facturas }: CxcClienteReporteProps)
         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary bg-primary/10 rounded-md hover:bg-primary/20 transition-colors disabled:opacity-50"
       >
         {generating ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <CircleNotch className="h-4 w-4 animate-spin" />
         ) : (
           <FileText className="h-4 w-4" />
         )}
         Imprimir
-        <ChevronDown className="h-3.5 w-3.5" />
+        <CaretDown className="h-3.5 w-3.5" />
       </button>
 
       {menuOpen && (

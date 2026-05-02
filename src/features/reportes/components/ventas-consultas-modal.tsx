@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Search, FileText, Users, Package, ArrowLeft, FileDown, Loader2 } from 'lucide-react'
+import { MagnifyingGlass, FileText, Users, Package, ArrowLeft, FileArrowDown, CircleNotch } from '@phosphor-icons/react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { Button } from '@/components/ui/button'
@@ -96,7 +96,7 @@ function BuscarPorFactura({ onSelect }: { onSelect: (f: FacturaBusqueda) => void
   return (
     <div className="space-y-3">
       <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input
           type="text"
           value={query}
@@ -160,7 +160,7 @@ function BuscarPorCliente({ onSelect }: { onSelect: (f: FacturaBusqueda) => void
   return (
     <div className="space-y-3">
       <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input
           type="text"
           value={clienteQuery}
@@ -282,7 +282,7 @@ function BuscarPorProducto() {
   return (
     <div className="space-y-3">
       <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <MagnifyingGlass size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input
           type="text"
           value={prodQuery}
@@ -557,9 +557,9 @@ function FacturaDetalle({
         </div>
         <Button variant="outline" size="sm" onClick={handleImprimirPdf} disabled={generandoPdf || isLoading}>
           {generandoPdf ? (
-            <Loader2 className="size-4 animate-spin" />
+            <CircleNotch className="size-4 animate-spin" />
           ) : (
-            <FileDown className="size-4" />
+            <FileArrowDown className="size-4" />
           )}
           Reimprimir PDF
         </Button>

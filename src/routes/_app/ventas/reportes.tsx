@@ -13,7 +13,7 @@ import { VentasReportesRankings } from '@/features/reportes/components/ventas-re
 import { VentasReportesPdfButton } from '@/features/reportes/components/ventas-reportes-pdf'
 import { VentasConsultasModal } from '@/features/reportes/components/ventas-consultas-modal'
 import { Button } from '@/components/ui/button'
-import { Search } from 'lucide-react'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 
 export const Route = createFileRoute('/_app/ventas/reportes')({
   component: VentasReportesPage,
@@ -45,7 +45,7 @@ function VentasReportesPage() {
             />
             <VentasReportesPdfButton fechaDesde={fechaDesde} fechaHasta={fechaHasta} />
             <Button variant="outline" size="sm" onClick={() => setConsultasOpen(true)} className="bg-white">
-              <Search className="size-4" />
+              <MagnifyingGlass className="size-4" />
               Consultas
             </Button>
           </div>

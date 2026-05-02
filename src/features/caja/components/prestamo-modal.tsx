@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Handshake, Info } from 'lucide-react'
+import { Handshake, Info } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'

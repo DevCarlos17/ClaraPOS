@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { CaretLeft, CaretRight, CaretDoubleLeft, CaretDoubleRight } from '@phosphor-icons/react'
 import { type Table } from '@tanstack/react-table'
 import { cn, getPageNumbers } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -68,7 +68,7 @@ export function DataTablePagination<TData>({
             disabled={!table.getCanPreviousPage()}
           >
             <span className="sr-only">Ir a primera página</span>
-            <ChevronsLeft className="h-4 w-4" />
+            <CaretDoubleLeft className="h-4 w-4" />
           </Button>
           <Button
             variant="outline"
@@ -77,7 +77,7 @@ export function DataTablePagination<TData>({
             disabled={!table.getCanPreviousPage()}
           >
             <span className="sr-only">Página anterior</span>
-            <ChevronLeft className="h-4 w-4" />
+            <CaretLeft className="h-4 w-4" />
           </Button>
 
           <div className="flex items-center gap-1 flex-wrap justify-center">
@@ -106,7 +106,7 @@ export function DataTablePagination<TData>({
             disabled={!table.getCanNextPage()}
           >
             <span className="sr-only">Página siguiente</span>
-            <ChevronRight className="h-4 w-4" />
+            <CaretRight className="h-4 w-4" />
           </Button>
           <Button
             variant="outline"
@@ -115,7 +115,7 @@ export function DataTablePagination<TData>({
             disabled={!table.getCanNextPage()}
           >
             <span className="sr-only">Ir a última página</span>
-            <ChevronsRight className="h-4 w-4" />
+            <CaretDoubleRight className="h-4 w-4" />
           </Button>
         </div>
       </div>

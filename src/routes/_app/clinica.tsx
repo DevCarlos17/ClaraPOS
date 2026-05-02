@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { PlaceholderPage } from '@/components/shared/placeholder-page'
-import { Heart } from 'lucide-react'
+import { Heart } from '@phosphor-icons/react'
 import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'

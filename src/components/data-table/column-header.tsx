@@ -1,4 +1,4 @@
-import { ArrowDown, ArrowUp, ChevronsUpDown, EyeOff } from 'lucide-react'
+import { ArrowDown, ArrowUp, CaretUpDown, EyeSlash } from '@phosphor-icons/react'
 import { type Column } from '@tanstack/react-table'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -43,7 +43,7 @@ export function DataTableColumnHeader<TData, TValue>({
             ) : column.getIsSorted() === 'asc' ? (
               <ArrowUp className="ms-2 h-4 w-4" />
             ) : (
-              <ChevronsUpDown className="ms-2 h-4 w-4" />
+              <CaretUpDown className="ms-2 h-4 w-4" />
             )}
           </Button>
         </DropdownMenuTrigger>
@@ -60,7 +60,7 @@ export function DataTableColumnHeader<TData, TValue>({
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => column.toggleVisibility(false)}>
-                <EyeOff className="text-muted-foreground/70 size-3.5" />
+                <EyeSlash className="text-muted-foreground/70 size-3.5" />
                 Ocultar
               </DropdownMenuItem>
             </>

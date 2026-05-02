@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
-import { User, Mail, Lock, Eye, EyeOff, Building2 } from 'lucide-react'
+import { User, Envelope, Lock, Eye, EyeSlash, Buildings } from '@phosphor-icons/react'
 import { connector } from '@/core/db/powersync/connector'
 import { toast } from 'sonner'
 
@@ -99,7 +99,7 @@ export function RegisterPage() {
             <div>
               <label className="text-sm font-medium mb-1.5 block">Nombre de tu Empresa</label>
               <div className="relative">
-                <Building2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Buildings className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
                   placeholder="Mi Negocio S.A."
@@ -133,7 +133,7 @@ export function RegisterPage() {
             <div>
               <label className="text-sm font-medium mb-1.5 block">Correo</label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Envelope className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="email"
                   placeholder="usuario@clarapos.com"
@@ -164,7 +164,7 @@ export function RegisterPage() {
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   disabled={isLoading}
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeSlash className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
               {errors.password && <p className="text-xs text-destructive mt-1">{errors.password}</p>}
@@ -188,7 +188,7 @@ export function RegisterPage() {
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   disabled={isLoading}
                 >
-                  {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showConfirmPassword ? <EyeSlash className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
               {errors.confirmPassword && (

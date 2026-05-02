@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Printer } from 'lucide-react'
+import { Printer } from '@phosphor-icons/react'
 import { useAjusteDetalle, useAjuste, aplicarAjuste, anularAjuste } from '@/features/inventario/hooks/use-ajustes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatDate } from '@/lib/format'

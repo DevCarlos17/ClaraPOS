@@ -1,4 +1,4 @@
-import { Banknote } from 'lucide-react'
+import { Money } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { usePagosPorMetodo, type CuadreFilters } from '../hooks/use-cuadre'
 
@@ -42,7 +42,7 @@ export function PagosResumen({ filters, onMetodoClick }: PagosResumenProps) {
                 className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 text-left ${clickable ? 'hover:bg-muted/50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
               >
                 <div className="flex items-center gap-2">
-                  <Banknote size={16} className="text-muted-foreground" />
+                  <Money size={16} className="text-muted-foreground" />
                   <div>
                     <p className="text-sm font-medium">{m.nombre}</p>
                     {m.moneda === 'BS' && (

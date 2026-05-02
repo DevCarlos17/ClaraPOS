@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@powersync/react'
-import { Plus, Trash2, Save, List, ArrowDownCircle, ArrowUpCircle, Wallet, Handshake, XCircle, User, Building2, CreditCard, ShoppingCart } from 'lucide-react'
+import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, Buildings, CreditCard, ShoppingCart } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useBlocker } from '@tanstack/react-router'
@@ -640,7 +640,7 @@ export function PosTerminal() {
                       className="rounded p-1 text-amber-600 hover:text-destructive hover:bg-destructive/10 transition-colors"
                       title="Quitar cargo (no revierte el efectivo entregado)"
                     >
-                      <Trash2 size={13} />
+                      <Trash size={13} />
                     </button>
                   </div>
                 </div>
@@ -676,7 +676,7 @@ export function PosTerminal() {
                   )}
                   {empresaNombre && (
                     <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Building2 size={11} />
+                      <Buildings size={11} />
                       <span>{empresaNombre}</span>
                     </div>
                   )}
@@ -689,7 +689,7 @@ export function PosTerminal() {
                         onClick={() => setShowIngresoModal(true)}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors"
                       >
-                        <ArrowDownCircle size={12} />
+                        <ArrowCircleDown size={12} />
                         Ingreso
                         <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
                       </button>
@@ -698,7 +698,7 @@ export function PosTerminal() {
                         onClick={() => setShowRetiroModal(true)}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors"
                       >
-                        <ArrowUpCircle size={12} />
+                        <ArrowCircleUp size={12} />
                         Retiro
                         <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
                       </button>
@@ -914,7 +914,7 @@ export function PosTerminal() {
                             onClick={() => handleRemovePago(i)}
                             className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
                           >
-                            <Trash2 size={13} />
+                            <Trash size={13} />
                           </button>
                         </div>
                       </div>
@@ -936,7 +936,7 @@ export function PosTerminal() {
                 size="sm"
                 className="w-full"
               >
-                <Save size={14} className="mr-1.5" />
+                <FloppyDisk size={14} className="mr-1.5" />
                 Guardar
                 <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
               </Button>
@@ -946,7 +946,7 @@ export function PosTerminal() {
                 size="sm"
                 className="w-full"
               >
-                <List size={14} className="mr-1.5" />
+                <ListBullets size={14} className="mr-1.5" />
                 {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
                 <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
               </Button>

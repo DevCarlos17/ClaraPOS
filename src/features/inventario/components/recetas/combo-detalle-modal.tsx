@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from 'react'
 import { toast } from 'sonner'
-import { Trash2, Check, X, Pencil } from 'lucide-react'
+import { Trash, Check, X, PencilSimple } from '@phosphor-icons/react'
 import { type Producto, actualizarProducto } from '@/features/inventario/hooks/use-productos'
 import {
   useRecetasPorServicio,
@@ -371,7 +371,7 @@ export function ComboDetalleModal({ combo, onClose }: ComboDetalleModalProps) {
                                   className="inline-flex items-center p-1.5 text-gray-500 hover:bg-gray-100 rounded transition-colors"
                                   title="Editar cantidad"
                                 >
-                                  <Pencil className="h-3.5 w-3.5" />
+                                  <PencilSimple className="h-3.5 w-3.5" />
                                 </button>
                                 <button
                                   onClick={() => handleDelete(receta.id)}
@@ -382,7 +382,7 @@ export function ComboDetalleModal({ combo, onClose }: ComboDetalleModalProps) {
                                   }`}
                                   title={isConfirmingDelete ? 'Confirmar eliminacion' : 'Eliminar'}
                                 >
-                                  <Trash2 className="h-3.5 w-3.5" />
+                                  <Trash className="h-3.5 w-3.5" />
                                 </button>
                               </>
                             )}

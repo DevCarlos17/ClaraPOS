@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Plus, Printer } from 'lucide-react'
+import { Plus, Printer } from '@phosphor-icons/react'
 import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useLotesPorProducto } from '@/features/inventario/hooks/use-lotes'
 import { formatDate } from '@/lib/format'

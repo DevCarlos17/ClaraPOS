@@ -1,5 +1,5 @@
 import { useRef, useEffect } from 'react'
-import { X, Printer } from 'lucide-react'
+import { X, Printer } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import type { Deposito } from '@/features/inventario/hooks/use-depositos'
