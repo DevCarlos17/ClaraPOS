@@ -119,15 +119,19 @@ export function PosTerminal() {
   const totalBs = usdToBs(totalUsd, tasaValor)
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
-  // Egresos de caja pendientes (avances/prestamos ya en la factura, aun no debitados)
+  // Egresos de caja pendientes: factura actual + todas las facturas en espera (aun no debitados de DB)
   const efectivoUsdMetodo = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
   const efectivoBsMetodo = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
-  const pendingCajaUsd = cargosEspeciales
+  const allPendingCargos = [
+    ...cargosEspeciales,
+    ...esperaStore.facturas.flatMap((f) => f.cargosEspeciales),
+  ]
+  const pendingCajaUsd = allPendingCargos
     .filter((c) => c.origenFondosTipo === 'CAJA')
     .flatMap((c) => c.egresosCaja ?? [])
     .filter((e) => efectivoUsdMetodo != null && e.metodo_cobro_id === efectivoUsdMetodo.id)
     .reduce((sum, e) => sum + e.monto, 0)
-  const pendingCajaBs = cargosEspeciales
+  const pendingCajaBs = allPendingCargos
     .filter((c) => c.origenFondosTipo === 'CAJA')
     .flatMap((c) => c.egresosCaja ?? [])
     .filter((e) => efectivoBsMetodo != null && e.metodo_cobro_id === efectivoBsMetodo.id)
