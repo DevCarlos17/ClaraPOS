@@ -1,24 +1,17 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@powersync/react";
-import { Warning, Clock, CheckCircle } from "@phosphor-icons/react";
+import { Warning, Clock, CheckCircle, Plus } from "@phosphor-icons/react";
 import { useCurrentUser } from "@/core/hooks/use-current-user";
 import { formatUsd } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 import { SegmentedTabs, tabContentVariants } from "@/components/shared/segmented-tabs";
+import { type VencimientoPrestamo } from "@/features/cxc/hooks/use-cxc";
+import { PrestamoDetalleModal } from "./prestamo-detalle-modal";
+import { PrestamoStandaloneModal } from "./prestamo-standalone-modal";
 
-interface VencimientoCobrar {
-  id: string;
-  venta_id: string;
-  cliente_nombre: string;
-  nro_factura: string;
-  nro_cuota: number;
-  fecha_vencimiento: string;
-  monto_original_usd: string;
-  monto_pagado_usd: string;
-  saldo_pendiente_usd: string;
-  status: string;
-}
+// Alias local para compatibilidad con el resto del archivo
+type VencimientoCobrar = VencimientoPrestamo;
 
 type TabKey = "TODOS" | "VENCIDO" | "PROXIMO" | "PENDIENTE";
 
@@ -46,9 +39,10 @@ function getDiasRestantes(fechaVenc: string): number {
 interface TablaVencimientosProps {
   items: (VencimientoCobrar & { diasRestantes: number })[];
   emptyMessage: string;
+  onSelect: (item: VencimientoCobrar) => void;
 }
 
-function TablaVencimientos({ items, emptyMessage }: TablaVencimientosProps) {
+function TablaVencimientos({ items, emptyMessage, onSelect }: TablaVencimientosProps) {
   if (items.length === 0) {
     return (
       <div className="rounded-b-xl rounded-tr-xl border bg-card py-16 text-center">
@@ -103,7 +97,8 @@ function TablaVencimientos({ items, emptyMessage }: TablaVencimientosProps) {
               return (
                 <tr
                   key={v.id}
-                  className="hover:bg-muted/30 transition-colors duration-150"
+                  onClick={() => onSelect(v)}
+                  className="hover:bg-muted/30 transition-colors duration-150 cursor-pointer"
                 >
                   <td className="px-4 py-3">
                     {isPagado ? (
@@ -141,7 +136,10 @@ function TablaVencimientos({ items, emptyMessage }: TablaVencimientosProps) {
                     {v.cliente_nombre}
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                    #{v.nro_factura}
+                    {v.nro_factura
+                      ? `#${v.nro_factura}`
+                      : <span className="italic text-muted-foreground/50">Sin factura</span>
+                    }
                   </td>
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap tabular-nums">
                     {formatFecha(v.fecha_vencimiento)}
@@ -177,15 +175,18 @@ export function PrestamosPage() {
   const empresaId = user?.empresa_id ?? "";
   const [activeTab, setActiveTab] = useState<TabKey>("TODOS");
   const [prevTab, setPrevTab] = useState<TabKey>("TODOS");
+  const [prestamoSeleccionado, setPrestamoSeleccionado] = useState<VencimientoCobrar | null>(null);
+  const [showNuevoPrestamo, setShowNuevoPrestamo] = useState(false);
 
   const { data, isLoading } = useQuery(
     empresaId
       ? `SELECT vc.id, vc.venta_id, vc.nro_cuota, vc.fecha_vencimiento,
                vc.monto_original_usd, vc.monto_pagado_usd, vc.saldo_pendiente_usd, vc.status,
+               vc.origen_fondos_tipo,
                v.nro_factura,
                c.nombre as cliente_nombre
          FROM vencimientos_cobrar vc
-         JOIN ventas v ON vc.venta_id = v.id
+         LEFT JOIN ventas v ON vc.venta_id = v.id
          JOIN clientes c ON vc.cliente_id = c.id
          WHERE vc.empresa_id = ?
          ORDER BY vc.fecha_vencimiento ASC`
@@ -259,32 +260,62 @@ export function PrestamosPage() {
   }
 
   return (
-    <div className="space-y-0">
-      {/* Compact tab bar */}
-      <SegmentedTabs
-        tabs={tabs}
-        active={activeTab}
-        onChange={handleTabChange}
+    <>
+      <div className="space-y-0">
+        {/* Header row */}
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Prestamos activos
+          </h2>
+          <button
+            type="button"
+            onClick={() => setShowNuevoPrestamo(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-purple-600 hover:bg-purple-700 text-white text-xs font-medium px-3 py-1.5 transition-colors"
+          >
+            <Plus size={13} weight="bold" />
+            Nuevo Prestamo
+          </button>
+        </div>
+
+        {/* Compact tab bar */}
+        <SegmentedTabs
+          tabs={tabs}
+          active={activeTab}
+          onChange={handleTabChange}
+        />
+
+        {/* Animated content */}
+        <div className="overflow-hidden">
+          <AnimatePresence mode="wait" custom={direction}>
+            <motion.div
+              key={activeTab}
+              custom={direction}
+              variants={tabContentVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <TablaVencimientos
+                items={filteredMap[activeTab]}
+                emptyMessage={tabEmptyMessages[activeTab]}
+                onSelect={setPrestamoSeleccionado}
+              />
+            </motion.div>
+          </AnimatePresence>
+        </div>
+      </div>
+
+      <PrestamoDetalleModal
+        isOpen={prestamoSeleccionado !== null}
+        onClose={() => setPrestamoSeleccionado(null)}
+        prestamo={prestamoSeleccionado}
       />
 
-      {/* Animated content */}
-      <div className="overflow-hidden">
-        <AnimatePresence mode="wait" custom={direction}>
-          <motion.div
-            key={activeTab}
-            custom={direction}
-            variants={tabContentVariants}
-            initial="initial"
-            animate="animate"
-            exit="exit"
-          >
-            <TablaVencimientos
-              items={filteredMap[activeTab]}
-              emptyMessage={tabEmptyMessages[activeTab]}
-            />
-          </motion.div>
-        </AnimatePresence>
-      </div>
-    </div>
+      <PrestamoStandaloneModal
+        isOpen={showNuevoPrestamo}
+        onClose={() => setShowNuevoPrestamo(false)}
+        onCreado={() => setShowNuevoPrestamo(false)}
+      />
+    </>
   );
 }

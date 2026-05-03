@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@powersync/react'
-import { ArrowCounterClockwise, Wallet } from '@phosphor-icons/react'
+import { ArrowCounterClockwise, Wallet, Handshake, CheckCircle, Warning, Clock } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -19,9 +19,11 @@ import {
   useDetalleFactura,
   usePagosFactura,
   useCargosEspecialesVenta,
+  useVencimientosVenta,
   registrarReversoAbono,
   type VentaPendiente,
   type PagoFacturaCxc,
+  type VencimientoVenta,
 } from '../hooks/use-cxc'
 import { PagoFacturaModal } from './pago-factura-modal'
 
@@ -108,6 +110,49 @@ function ReversarAbonoDialog({
   )
 }
 
+// ─── Helpers ──────────────────────────────────────────────────
+
+function getDiasRestantes(fechaVenc: string): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const venc = new Date(fechaVenc + 'T00:00:00')
+  return Math.floor((venc.getTime() - today.getTime()) / 86400000)
+}
+
+function VencimientoStatusBadge({ v }: { v: VencimientoVenta }) {
+  const dias = getDiasRestantes(v.fecha_vencimiento)
+  const isPagado = v.status === 'PAGADO'
+  const isVencido = dias < 0 && v.status === 'PENDIENTE'
+  const isProximo = dias >= 0 && dias <= 7 && v.status === 'PENDIENTE'
+
+  if (isPagado) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+        <CheckCircle size={9} weight="fill" /> Pagado
+      </span>
+    )
+  }
+  if (isVencido) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">
+        <Warning size={9} weight="fill" /> Vencido
+      </span>
+    )
+  }
+  if (isProximo) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+        <Clock size={9} weight="fill" /> Proximo
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">
+      Pendiente
+    </span>
+  )
+}
+
 // ─── Props ────────────────────────────────────────────────────
 
 interface FacturaDetalleCxcProps {
@@ -125,6 +170,11 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(factura?.id ?? null)
   const { pagos, isLoading: loadingPagos } = usePagosFactura(factura?.id ?? null)
   const { cargos: cargosEspeciales } = useCargosEspecialesVenta(factura?.id ?? null)
+  const { vencimientos } = useVencimientosVenta(factura?.id ?? null)
+
+  const avances = cargosEspeciales.filter((c) => c.tipo === 'AVANCE')
+  const prestamoCargos = cargosEspeciales.filter((c) => c.tipo === 'PRESTAMO')
+  const tieneOperacionesFinancieras = avances.length > 0 || vencimientos.length > 0
 
   // Datos extra de la venta (status, procesado_por, cliente)
   const { data: extraData } = useQuery(
@@ -348,43 +398,115 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
               )}
             </div>
 
-            {/* ── Cargos especiales (avance / prestamo) ────── */}
-            {cargosEspeciales.length > 0 && (
-              <div>
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
-                  <Wallet size={12} className="text-amber-600" />
-                  Cargos Especiales
+            {/* ── Operaciones financieras (avance / prestamo) ─ */}
+            {tieneOperacionesFinancieras && (
+              <div className="space-y-3">
+                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Operaciones Financieras
                 </h4>
-                <div className="overflow-auto rounded-md border border-amber-200/60 max-h-32">
-                  <table className="w-full text-xs">
-                    <thead className="bg-amber-50">
-                      <tr>
-                        <th className="text-left px-3 py-2 font-medium text-amber-800">Tipo</th>
-                        <th className="text-left px-3 py-2 font-medium text-amber-800">Concepto</th>
-                        <th className="text-right px-3 py-2 font-medium text-amber-800">Monto</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-amber-100">
-                      {cargosEspeciales.map((c) => (
-                        <tr key={c.id}>
-                          <td className="px-3 py-1.5">
-                            <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                              c.tipo === 'PRESTAMO'
-                                ? 'bg-purple-100 text-purple-700'
-                                : 'bg-amber-100 text-amber-700'
-                            }`}>
-                              {c.tipo}
-                            </span>
-                          </td>
-                          <td className="px-3 py-1.5 text-muted-foreground">{c.concepto}</td>
-                          <td className="px-3 py-1.5 text-right tabular-nums font-medium">
+
+                {/* AVANCES */}
+                {avances.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <Wallet size={11} className="text-amber-600" />
+                      <span className="text-xs font-medium text-amber-700">Avances de Efectivo</span>
+                    </div>
+                    <div className="rounded-md border border-amber-200/60 overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead className="bg-amber-50">
+                          <tr>
+                            <th className="text-left px-3 py-2 font-medium text-amber-800">Concepto</th>
+                            <th className="text-right px-3 py-2 font-medium text-amber-800">Entregado</th>
+                            <th className="text-center px-3 py-2 font-medium text-amber-800">Estado</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-amber-100">
+                          {avances.map((c) => (
+                            <tr key={c.id}>
+                              <td className="px-3 py-1.5 text-muted-foreground">{c.concepto}</td>
+                              <td className="px-3 py-1.5 text-right tabular-nums font-medium">
+                                {formatUsd(parseFloat(c.monto))}
+                              </td>
+                              <td className="px-3 py-1.5 text-center">
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-green-100 text-green-700">
+                                  <CheckCircle size={9} weight="fill" />
+                                  Cobrado en factura
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* PRESTAMOS */}
+                {(prestamoCargos.length > 0 || vencimientos.length > 0) && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <Handshake size={11} className="text-purple-600" />
+                      <span className="text-xs font-medium text-purple-700">Prestamos</span>
+                    </div>
+
+                    {/* Concepto y principal de cada movimiento de prestamo */}
+                    {prestamoCargos.length > 0 && (
+                      <div className="rounded-t-md border border-purple-200/60 bg-purple-50/60 px-3 py-2 space-y-0.5">
+                        {prestamoCargos.map((c) => (
+                          <p key={c.id} className="text-xs text-purple-900">
+                            <span className="font-medium">Principal entregado:</span>{' '}
                             {formatUsd(parseFloat(c.monto))}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                            {c.concepto && (
+                              <span className="text-purple-600 ml-1">— {c.concepto}</span>
+                            )}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Estado del vencimiento desde vencimientos_cobrar */}
+                    {vencimientos.length > 0 && (
+                      <div className={`border border-purple-200/60 overflow-hidden ${prestamoCargos.length > 0 ? 'border-t-0 rounded-b-md' : 'rounded-md'}`}>
+                        <table className="w-full text-xs">
+                          <thead className="bg-purple-50/50">
+                            <tr>
+                              <th className="text-left px-3 py-2 font-medium text-purple-800">Estado</th>
+                              <th className="text-right px-3 py-2 font-medium text-purple-800">Total c/interes</th>
+                              <th className="text-right px-3 py-2 font-medium text-purple-800">Pagado</th>
+                              <th className="text-right px-3 py-2 font-medium text-purple-800">Saldo</th>
+                              <th className="text-left px-3 py-2 font-medium text-purple-800">Vence</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-purple-100">
+                            {vencimientos.map((v) => {
+                              const saldo = parseFloat(v.saldo_pendiente_usd)
+                              return (
+                                <tr key={v.id}>
+                                  <td className="px-3 py-2">
+                                    <VencimientoStatusBadge v={v} />
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums">
+                                    {formatUsd(parseFloat(v.monto_original_usd))}
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums text-green-600">
+                                    {formatUsd(parseFloat(v.monto_pagado_usd))}
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums font-semibold text-destructive">
+                                    {saldo > 0.005 ? formatUsd(saldo) : '—'}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                                    {formatDate(v.fecha_vencimiento)}
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -507,7 +629,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
               <Button variant="outline" onClick={onClose}>
                 Cerrar
               </Button>
-              {saldoPend > 0.01 && !esAnulada && (
+              {!esAnulada && (saldoPend > 0.01 || vencimientos.some((v) => parseFloat(v.saldo_pendiente_usd) > 0.01)) && (
                 <Button onClick={() => setPagoOpen(true)}>
                   Registrar Pago
                 </Button>
@@ -525,6 +647,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
         clienteId={factura.cliente_id}
         clienteNombre={extra?.cliente_nombre ?? undefined}
         onSuccess={() => setPagoOpen(false)}
+        vencimientos={vencimientos}
       />
 
       {/* PIN supervisor */}

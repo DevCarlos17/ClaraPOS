@@ -510,6 +510,7 @@ export function PosTerminal() {
         movimientoIds: prestamo.movimientoIds,
         diasPlazo: prestamo.diasPlazo,
         clienteId: clienteId ?? undefined,
+        origenFondosTipo: prestamo.origenFondosTipo,
       },
     ])
   }

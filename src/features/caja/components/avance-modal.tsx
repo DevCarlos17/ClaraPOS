@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Wallet, Info } from '@phosphor-icons/react'
+import { Wallet, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { createMovimientoManualMulti } from '@/features/caja/hooks/use-movimientos-manual'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+
+// ─── Types ────────────────────────────────────────────────────
+
+export type OrigenFondos = 'CAJA' | 'EFECTIVO_EMPRESA' | 'BANCO'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -15,6 +19,7 @@ export interface AvanceAplicado {
   totalCargoUsd: number   // avance convertido a USD + cargo
   movimientoIds: string[] // IDs de movimientos_metodo_cobro creados
   descripcion: string
+  origenFondosTipo: OrigenFondos
 }
 
 interface AvanceModalProps {
@@ -61,6 +66,9 @@ function FormAvance({
   const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
 
+  // Origen de fondos
+  const [origenFondos, setOrigenFondos] = useState<OrigenFondos>('CAJA')
+
   // Montos del avance entregado al cliente
   const [montoUsd, setMontoUsd] = useState('')
   const [montoBs, setMontoBs] = useState('')
@@ -84,6 +92,7 @@ function FormAvance({
   const totalCargoBs = usdToBs(totalCargoUsd, tasaActual)
 
   function reset() {
+    setOrigenFondos('CAJA')
     setMontoUsd('')
     setMontoBs('')
     setPorcentajeFee('10')
@@ -104,13 +113,15 @@ function FormAvance({
     if (!concepto.trim() || concepto.trim().length < 3) {
       newErrors.concepto = 'El concepto debe tener al menos 3 caracteres'
     }
-    if (usd > 0 && !efectivoUsd) {
-      newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
-        'No hay un metodo EFECTIVO en USD configurado'
-    }
-    if (bs > 0 && !efectivoBs) {
-      newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
-        'No hay un metodo EFECTIVO en Bs configurado'
+    if (origenFondos === 'CAJA') {
+      if (usd > 0 && !efectivoUsd) {
+        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+          'No hay un metodo EFECTIVO en USD configurado'
+      }
+      if (bs > 0 && !efectivoBs) {
+        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+          'No hay un metodo EFECTIVO en Bs configurado'
+      }
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -120,23 +131,26 @@ function FormAvance({
 
     if (!user) return
 
-    const entradas: Array<{ metodo_cobro_id: string; monto: number }> = []
-    if (usd > 0 && efectivoUsd) entradas.push({ metodo_cobro_id: efectivoUsd.id, monto: usd })
-    if (bs > 0 && efectivoBs) entradas.push({ metodo_cobro_id: efectivoBs.id, monto: bs })
-
     const conceptoFinal = concepto.trim() ||
       `Avance de efectivo${clienteNombre ? ` - ${clienteNombre}` : ''}`
 
     setSubmitting(true)
     try {
-      const movimientoIds = await createMovimientoManualMulti({
-        entradas,
-        origen: 'AVANCE',
-        concepto: conceptoFinal,
-        sesion_caja_id: sesionCajaId,
-        empresa_id: user.empresa_id!,
-        usuario_id: user.id,
-      })
+      let movimientoIds: string[] = []
+
+      if (origenFondos === 'CAJA') {
+        const entradas: Array<{ metodo_cobro_id: string; monto: number }> = []
+        if (usd > 0 && efectivoUsd) entradas.push({ metodo_cobro_id: efectivoUsd.id, monto: usd })
+        if (bs > 0 && efectivoBs) entradas.push({ metodo_cobro_id: efectivoBs.id, monto: bs })
+        movimientoIds = await createMovimientoManualMulti({
+          entradas,
+          origen: 'AVANCE',
+          concepto: conceptoFinal,
+          sesion_caja_id: sesionCajaId,
+          empresa_id: user.empresa_id!,
+          usuario_id: user.id,
+        })
+      }
 
       toast.success(
         `Avance registrado. Cargo al cliente: ${formatUsd(totalCargoUsd)} (${fee}% recargo)`
@@ -149,6 +163,7 @@ function FormAvance({
         totalCargoUsd,
         movimientoIds,
         descripcion: conceptoFinal,
+        origenFondosTipo: origenFondos,
       })
 
       reset()
@@ -170,16 +185,47 @@ function FormAvance({
         </div>
       )}
 
+      {/* Origen de fondos */}
+      <div>
+        <p className="text-sm font-medium text-gray-700 mb-2">Origen de los fondos</p>
+        <div className="flex rounded-md border border-gray-300 overflow-hidden text-xs">
+          {([
+            { key: 'CAJA' as OrigenFondos, label: 'Caja', Icon: CashRegister },
+            { key: 'EFECTIVO_EMPRESA' as OrigenFondos, label: 'Efectivo empresa', Icon: Vault },
+            { key: 'BANCO' as OrigenFondos, label: 'Banco', Icon: Bank },
+          ] as const).map(({ key, label, Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setOrigenFondos(key)}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 font-medium transition-colors ${
+                origenFondos === key
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <Icon size={13} weight={origenFondos === key ? 'fill' : 'regular'} />
+              {label}
+            </button>
+          ))}
+        </div>
+        {origenFondos !== 'CAJA' && (
+          <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+            Los fondos no se descontaran de la caja activa. El modulo bancario esta pendiente de implementacion.
+          </p>
+        )}
+      </div>
+
       {/* Monto del avance entregado */}
       <div>
         <p className="text-sm font-medium text-gray-700 mb-2">
           Efectivo entregado al cliente
         </p>
         <div className="grid grid-cols-2 gap-3">
-          <div className={`rounded-lg border p-3 space-y-1 ${!efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
+          <div className={`rounded-lg border p-3 space-y-1 ${origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
             <div className="flex items-center justify-between">
               <label className="text-xs font-medium text-gray-600">USD</label>
-              {efectivoUsd && (
+              {origenFondos === 'CAJA' && efectivoUsd && (
                 <span className="text-xs text-muted-foreground">
                   Disp: {formatUsd(parseFloat(efectivoUsd.saldo_actual || '0'))}
                 </span>
@@ -194,18 +240,18 @@ function FormAvance({
               onChange={(e) => setMontoUsd(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={!efectivoUsd || loadingMetodos}
+              disabled={origenFondos === 'CAJA' && (!efectivoUsd || loadingMetodos)}
               className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
             />
-            {!efectivoUsd && !loadingMetodos && (
+            {origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos && (
               <p className="text-xs text-amber-600">No configurado</p>
             )}
           </div>
 
-          <div className={`rounded-lg border p-3 space-y-1 ${!efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
+          <div className={`rounded-lg border p-3 space-y-1 ${origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
             <div className="flex items-center justify-between">
               <label className="text-xs font-medium text-gray-600">Bs</label>
-              {efectivoBs && (
+              {origenFondos === 'CAJA' && efectivoBs && (
                 <span className="text-xs text-muted-foreground">
                   Disp: {formatBs(parseFloat(efectivoBs.saldo_actual || '0'))}
                 </span>
@@ -220,10 +266,10 @@ function FormAvance({
               onChange={(e) => setMontoBs(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={!efectivoBs || loadingMetodos}
+              disabled={origenFondos === 'CAJA' && (!efectivoBs || loadingMetodos)}
               className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
             />
-            {!efectivoBs && !loadingMetodos && (
+            {origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos && (
               <p className="text-xs text-amber-600">No configurado</p>
             )}
           </div>

@@ -545,6 +545,7 @@ const vencimientos_cobrar = new Table(
     monto_pagado_usd: column.text,
     saldo_pendiente_usd: column.text,
     status: column.text,
+    origen_fondos_tipo: column.text,
     created_at: column.text,
     updated_at: column.text,
   },

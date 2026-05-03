@@ -215,6 +215,33 @@ export function useCargosEspecialesVenta(ventaId: string | null) {
   return { cargos: (data ?? []) as CargoEspecialVenta[], isLoading }
 }
 
+export interface VencimientoVenta {
+  id: string
+  nro_cuota: number
+  fecha_vencimiento: string
+  monto_original_usd: string
+  monto_pagado_usd: string
+  saldo_pendiente_usd: string
+  status: string
+}
+
+/**
+ * Vencimientos de prestamo vinculados a una venta especifica.
+ * Creados automaticamente al cerrar una venta con cargos PRESTAMO.
+ */
+export function useVencimientosVenta(ventaId: string | null) {
+  const { data, isLoading } = useQuery(
+    ventaId
+      ? `SELECT id, nro_cuota, fecha_vencimiento, monto_original_usd, monto_pagado_usd, saldo_pendiente_usd, status
+         FROM vencimientos_cobrar
+         WHERE venta_id = ?
+         ORDER BY nro_cuota ASC`
+      : '',
+    ventaId ? [ventaId] : []
+  )
+  return { vencimientos: (data ?? []) as VencimientoVenta[], isLoading }
+}
+
 /**
  * Pagos realizados a una factura
  */
@@ -668,6 +695,151 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
   return { facturasAfectadas, montoAplicado }
 }
 
+export interface AbonoPrestamoParams {
+  vencimiento_id: string
+  metodo_cobro_id: string
+  moneda: 'USD' | 'BS'
+  tasa: number
+  monto: number
+  fechaPago?: string
+  referencia?: string
+  empresa_id: string
+  procesado_por: string
+  procesado_por_nombre: string
+  sesion_caja_id?: string | null
+}
+
+/**
+ * Abono a un préstamo (vencimiento_cobrar).
+ * Actualiza monto_pagado_usd, saldo_pendiente_usd y status del vencimiento.
+ * NO afecta ventas.saldo_pend_usd ni clientes.saldo_actual —
+ * el préstamo es una deuda independiente de la factura.
+ */
+export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promise<void> {
+  const {
+    vencimiento_id, metodo_cobro_id, moneda, tasa, monto,
+    fechaPago, referencia, empresa_id, procesado_por, sesion_caja_id,
+  } = params
+
+  if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+  if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+    const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
+
+    // 1. Leer el vencimiento
+    const vencResult = await tx.execute(
+      `SELECT id, saldo_pendiente_usd, monto_pagado_usd, status
+       FROM vencimientos_cobrar WHERE id = ? AND empresa_id = ?`,
+      [vencimiento_id, empresa_id]
+    )
+    if (!vencResult.rows?.length) throw new Error('Préstamo no encontrado')
+    const venc = vencResult.rows.item(0) as {
+      id: string
+      saldo_pendiente_usd: string
+      monto_pagado_usd: string
+      status: string
+    }
+    if (venc.status === 'PAGADO') throw new Error('Este préstamo ya está completamente pagado')
+
+    const saldoActual = parseFloat(venc.saldo_pendiente_usd)
+    const pagadoActual = parseFloat(venc.monto_pagado_usd)
+
+    // 2. Calcular monto en USD
+    const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+
+    // 3. Validar que no exceda saldo
+    if (montoUsd > saldoActual + 0.01) {
+      throw new Error(
+        `El abono (${montoUsd.toFixed(2)}) excede el saldo pendiente del préstamo ($${saldoActual.toFixed(2)})`
+      )
+    }
+
+    // 4. Nuevos valores
+    const nuevoSaldo = Math.max(0, Number((saldoActual - montoUsd).toFixed(2)))
+    const nuevoPagado = Number((pagadoActual + montoUsd).toFixed(2))
+    const nuevoStatus = nuevoSaldo <= 0.005 ? 'PAGADO' : venc.status
+
+    // 5. Actualizar vencimiento
+    await tx.execute(
+      `UPDATE vencimientos_cobrar
+       SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?, updated_at = ?
+       WHERE id = ?`,
+      [nuevoPagado.toFixed(2), nuevoSaldo.toFixed(2), nuevoStatus, now, vencimiento_id]
+    )
+
+    // 6. Registrar ingreso en metodo_cobro
+    // saldo_anterior/saldo_nuevo almacenan el saldo del préstamo antes/después del abono
+    const movId = uuidv4()
+    await tx.execute(
+      `INSERT INTO movimientos_metodo_cobro
+         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'INGRESO', 'COBRO_PRESTAMO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        movId, empresa_id, metodo_cobro_id,
+        montoUsd.toFixed(2),
+        saldoActual.toFixed(2),
+        nuevoSaldo.toFixed(2),
+        vencimiento_id,
+        `PREST-${vencimiento_id.slice(0, 8).toUpperCase()}`,
+        `Abono préstamo${referencia ? ` - ${referencia}` : ''}`,
+        sesion_caja_id ?? null,
+        fechaDoc, now, procesado_por,
+      ]
+    )
+  })
+}
+
+// ─── Tipos para módulo de préstamos ───────────────────────────
+
+export interface VencimientoPrestamo {
+  id: string
+  venta_id: string | null
+  cliente_nombre: string
+  nro_factura: string | null
+  nro_cuota: number
+  fecha_vencimiento: string
+  monto_original_usd: string
+  monto_pagado_usd: string
+  saldo_pendiente_usd: string
+  status: string
+  origen_fondos_tipo: string
+}
+
+export interface AbonoPrestamo {
+  id: string
+  monto: string
+  saldo_anterior: string   // saldo del préstamo antes del abono
+  saldo_nuevo: string      // saldo del préstamo después del abono
+  concepto: string
+  metodo_nombre: string
+  fecha: string
+  created_by: string | null
+}
+
+/**
+ * Historial de abonos de un préstamo específico.
+ * Consulta movimientos_metodo_cobro con origen = 'COBRO_PRESTAMO'
+ * y doc_origen_id = vencimientoId.
+ */
+export function useHistorialPrestamo(vencimientoId: string | null) {
+  const { data, isLoading } = useQuery(
+    vencimientoId
+      ? `SELECT mmc.id, mmc.monto, mmc.saldo_anterior, mmc.saldo_nuevo,
+               mmc.concepto, mmc.fecha, mmc.created_by,
+               mc.nombre as metodo_nombre
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         WHERE mmc.doc_origen_id = ? AND mmc.origen = 'COBRO_PRESTAMO'
+         ORDER BY mmc.fecha ASC`
+      : '',
+    vencimientoId ? [vencimientoId] : []
+  )
+  return { historial: (data ?? []) as AbonoPrestamo[], isLoading }
+}
+
 /**
  * Reverso de un abono/pago.
  * Marca el pago como reversado, restaura el saldo de la factura
@@ -823,5 +995,144 @@ export async function registrarReversoAbono(params: {
     } catch {
       // Fallo en contabilidad no bloquea el reverso
     }
+  })
+}
+
+// ─── Préstamo standalone (sin venta) ──────────────────────────
+
+export interface CrearPrestamoStandaloneParams {
+  clienteId: string
+  empresaId: string
+  montoPrestamoUsd: number
+  montoPrestamoBs: number
+  tasaActual: number
+  porcentajeInteres: number
+  diasPlazo: number
+  concepto: string
+  origenFondos: 'CAJA' | 'EFECTIVO_EMPRESA' | 'BANCO'
+  sesionCajaId: string | null
+  usuarioId: string
+}
+
+/**
+ * Crea un préstamo sin factura asociada directamente desde el módulo de préstamos.
+ * Si origenFondos = 'CAJA': descuenta el efectivo de la sesión activa.
+ * Si origenFondos != 'CAJA': registra solo el vencimiento (stub bancario).
+ * NO afecta ventas.saldo_pend_usd ni clientes.saldo_actual.
+ */
+export async function crearPrestamoStandalone(
+  params: CrearPrestamoStandaloneParams
+): Promise<void> {
+  const {
+    clienteId, empresaId, montoPrestamoUsd, montoPrestamoBs, tasaActual,
+    porcentajeInteres, diasPlazo, concepto, origenFondos, sesionCajaId, usuarioId,
+  } = params
+
+  if (montoPrestamoUsd <= 0 && montoPrestamoBs <= 0) {
+    throw new Error('Ingresa al menos un monto mayor a 0')
+  }
+  if (origenFondos === 'CAJA' && !sesionCajaId) {
+    throw new Error('No hay sesion de caja activa. Selecciona otro origen de fondos.')
+  }
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // Calcular montos
+    const bsEnUsd = tasaActual > 0 ? Number((montoPrestamoBs / tasaActual).toFixed(2)) : 0
+    const principalUsd = Number((montoPrestamoUsd + bsEnUsd).toFixed(2))
+    const interesUsd = Number((principalUsd * porcentajeInteres / 100).toFixed(2))
+    const totalDeudaUsd = Number((principalUsd + interesUsd).toFixed(2))
+
+    // Fecha de vencimiento
+    const hoy = new Date()
+    hoy.setDate(hoy.getDate() + diasPlazo)
+    const fechaVencimiento = hoy.toISOString().slice(0, 10)
+
+    // Egreso de caja (solo si origen = CAJA)
+    if (origenFondos === 'CAJA') {
+      if (montoPrestamoUsd > 0) {
+        const r = await tx.execute(
+          `SELECT id, saldo_actual FROM metodos_cobro
+           WHERE empresa_id = ? AND tipo = 'EFECTIVO' AND moneda = 'USD' AND is_active = 1
+           LIMIT 1`,
+          [empresaId]
+        )
+        if (!r.rows?.length) throw new Error('No hay metodo EFECTIVO en USD configurado')
+        const m = r.rows.item(0) as { id: string; saldo_actual: string }
+        const saldo = parseFloat(m.saldo_actual)
+        if (saldo < montoPrestamoUsd) {
+          throw new Error(
+            `Saldo insuficiente en USD. Disponible: ${saldo.toFixed(2)}, Solicitado: ${montoPrestamoUsd.toFixed(2)}`
+          )
+        }
+        const nuevoSaldo = Number((saldo - montoPrestamoUsd).toFixed(2))
+        await tx.execute(
+          `INSERT INTO movimientos_metodo_cobro
+             (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+              doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+           VALUES (?, ?, ?, 'EGRESO', 'PRESTAMO', ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(), empresaId, m.id,
+            montoPrestamoUsd.toFixed(2), saldo.toFixed(2), nuevoSaldo.toFixed(2),
+            concepto.trim(), sesionCajaId, now, now, usuarioId,
+          ]
+        )
+        await tx.execute(
+          'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [nuevoSaldo.toFixed(2), now, m.id]
+        )
+      }
+
+      if (montoPrestamoBs > 0) {
+        const r = await tx.execute(
+          `SELECT id, saldo_actual FROM metodos_cobro
+           WHERE empresa_id = ? AND tipo = 'EFECTIVO' AND moneda = 'BS' AND is_active = 1
+           LIMIT 1`,
+          [empresaId]
+        )
+        if (!r.rows?.length) throw new Error('No hay metodo EFECTIVO en Bs configurado')
+        const m = r.rows.item(0) as { id: string; saldo_actual: string }
+        const saldo = parseFloat(m.saldo_actual)
+        if (saldo < montoPrestamoBs) {
+          throw new Error(
+            `Saldo insuficiente en Bs. Disponible: ${saldo.toFixed(2)}, Solicitado: ${montoPrestamoBs.toFixed(2)}`
+          )
+        }
+        const nuevoSaldo = Number((saldo - montoPrestamoBs).toFixed(2))
+        await tx.execute(
+          `INSERT INTO movimientos_metodo_cobro
+             (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+              doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+           VALUES (?, ?, ?, 'EGRESO', 'PRESTAMO', ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(), empresaId, m.id,
+            montoPrestamoBs.toFixed(2), saldo.toFixed(2), nuevoSaldo.toFixed(2),
+            concepto.trim(), sesionCajaId, now, now, usuarioId,
+          ]
+        )
+        await tx.execute(
+          'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [nuevoSaldo.toFixed(2), now, m.id]
+        )
+      }
+    }
+
+    // Crear vencimiento_cobrar (venta_id = NULL = standalone)
+    await tx.execute(
+      `INSERT INTO vencimientos_cobrar
+         (id, empresa_id, venta_id, cliente_id, nro_cuota, fecha_vencimiento,
+          monto_original_usd, monto_pagado_usd, saldo_pendiente_usd, status,
+          origen_fondos_tipo, created_at, updated_at)
+       VALUES (?, ?, NULL, ?, 1, ?, ?, '0.00', ?, 'PENDIENTE', ?, ?, ?)`,
+      [
+        uuidv4(), empresaId, clienteId,
+        fechaVencimiento,
+        totalDeudaUsd.toFixed(2),
+        totalDeudaUsd.toFixed(2),
+        origenFondos,
+        now, now,
+      ]
+    )
   })
 }

@@ -26,6 +26,7 @@ export interface CargoEspecial {
   movimientoIds: string[] // IDs de movimientos_metodo_cobro ya creados (para linkear)
   diasPlazo?: number      // solo PRESTAMO: plazo en dias para vencimiento_cobrar
   clienteId?: string      // para crear vencimiento_cobrar
+  origenFondosTipo?: string  // CAJA | EFECTIVO_EMPRESA | BANCO
 }
 
 export interface CrearVentaParams {
@@ -546,8 +547,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           await tx.execute(
             `INSERT INTO vencimientos_cobrar
                (id, empresa_id, venta_id, cliente_id, nro_cuota, fecha_vencimiento,
-                monto_original_usd, monto_pagado_usd, saldo_pendiente_usd, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 1, ?, ?, '0.00', ?, 'PENDIENTE', ?, ?)`,
+                monto_original_usd, monto_pagado_usd, saldo_pendiente_usd, status,
+                origen_fondos_tipo, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 1, ?, ?, '0.00', ?, 'PENDIENTE', ?, ?, ?)`,
             [
               vencId,
               empresa_id,
@@ -556,6 +558,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               fechaVencStr,
               cargo.montoCargoUsd.toFixed(2),
               cargo.montoCargoUsd.toFixed(2),
+              cargo.origenFondosTipo ?? 'CAJA',
               now,
               now,
             ]
