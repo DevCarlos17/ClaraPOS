@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@powersync/react'
-import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, Buildings, CreditCard, ShoppingCart } from '@phosphor-icons/react'
+import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, CreditCard, ShoppingCart } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useBlocker } from '@tanstack/react-router'
@@ -561,7 +561,9 @@ export function PosTerminal() {
     setCargosEspeciales((prev) => prev.filter((_, i) => i !== index))
   }
 
-  // --- Atajos de teclado ---
+  // --- Atajos de teclado (Option B) ---
+  // F5=Ingreso  F6=Retiro  F7=Avance  F8=Prestamo
+  // F9=GuardarFactura  F10=FacturasGuardadas  F12=ConfirmarVenta  Esc=Cancelar  Alt+A=AgregarPago
   keyboardHandlerRef.current = (e: KeyboardEvent) => {
     const anyModalOpen =
       showConfirm || showSupervisorPin || showEsperaModal || showNuevoClienteModal ||
@@ -597,13 +599,17 @@ export function PosTerminal() {
         break
       case 'F8':
         e.preventDefault()
-        handleGuardarFactura()
+        if (sesion && canMovManualPos) setShowPrestamoModal(true)
         break
       case 'F9':
         e.preventDefault()
-        setShowEsperaModal(true)
+        handleGuardarFactura()
         break
       case 'F10':
+        e.preventDefault()
+        setShowEsperaModal(true)
+        break
+      case 'F12':
         e.preventDefault()
         handleConfirmVenta()
         break
@@ -648,6 +654,9 @@ export function PosTerminal() {
 
   const esperaCount = esperaStore.facturas.length
 
+  // Suppress unused variable warning — empresaNombre is available for future use
+  void empresaNombre
+
   return (
     <>
       {/* Modal de apertura de sesion si no hay sesion activa */}
@@ -658,394 +667,296 @@ export function PosTerminal() {
         />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6 items-start">
+      {/* MAIN POS CONTAINER */}
+      <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-muted/30 p-3 gap-3">
 
-        {/* ── COLUMNA IZQUIERDA: buscador + tabla de productos ── */}
-        <div className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              Agregar producto
-              <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none text-muted-foreground">F1</kbd>
+        {/* ── HEADER BAR (3 rows) ── */}
+        <div className="shrink-0 rounded-2xl bg-card shadow-lg overflow-hidden">
+
+          {/* Row 1: Session info + Cliente selector */}
+          <div className="px-4 py-2.5 flex items-center gap-3 border-b">
+            {/* Session status */}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="h-2 w-2 rounded-full bg-green-500" />
+              {user?.nombre && <span className="text-sm font-medium">{user.nombre}</span>}
+              {cajaNombre && <span className="text-sm text-muted-foreground">· {cajaNombre}</span>}
+            </div>
+            {/* Divider */}
+            <div className="h-4 w-px bg-border shrink-0" />
+            {/* Cliente label + selector + new button */}
+            <label className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
+              <User size={12} />
+              <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F2</kbd>
             </label>
-            <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} />
+            <div className="flex-1 min-w-0 max-w-sm">
+              <ClienteSelector
+                ref={clienteSelectorRef}
+                clienteId={clienteId}
+                onSelect={handleSelectCliente}
+                onClear={handleClearCliente}
+              />
+            </div>
+            {!clienteId && (
+              <button
+                type="button"
+                onClick={() => setShowNuevoClienteModal(true)}
+                className="shrink-0 flex items-center gap-1 rounded border border-primary/40 bg-primary/5 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/15 transition-colors"
+              >
+                <Plus size={12} />Nuevo
+              </button>
+            )}
+            {/* Credit info shown inline when client selected */}
+            {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
+              <div className="shrink-0 flex items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+                <span>Credito:</span>
+                <span className={`font-semibold ${
+                  Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)) < pendienteUsd - 0.01
+                    ? 'text-destructive' : 'text-green-600'
+                }`}>
+                  {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
+                </span>
+                <span>/ {formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
+              </div>
+            )}
           </div>
 
-          <LineaItems
-            ref={lineaItemsRef}
-            lineas={lineas}
-            tasa={tasaValor}
-            onUpdateCantidad={handleUpdateCantidad}
-            onRemove={handleRemoveLinea}
-            onCantidadEnter={() => productoBuscadorRef.current?.focus()}
-          />
-
-          {/* Cargos especiales (avance / prestamo) */}
-          {cargosEspeciales.length > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-1.5">
-              <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide">
-                Cargos especiales
-              </p>
-              {cargosEspeciales.map((cargo, i) => (
-                <div key={i} className="flex items-center justify-between text-sm">
-                  <div className="min-w-0">
-                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded mr-2 ${
-                      cargo.tipo === 'PRESTAMO'
-                        ? 'bg-purple-100 text-purple-700'
-                        : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {cargo.tipo}
-                    </span>
-                    <span className="text-amber-800 truncate">{cargo.descripcion}</span>
-                    {cargo.tipo === 'PRESTAMO' && cargo.diasPlazo && (
-                      <span className="ml-1 text-xs text-amber-600">({cargo.diasPlazo} dias)</span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="font-semibold text-amber-900">{formatUsd(cargo.montoCargoUsd)}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveCargo(i)}
-                      className="rounded p-1 text-amber-600 hover:text-destructive hover:bg-destructive/10 transition-colors"
-                      title="Quitar cargo (no revierte el efectivo entregado)"
-                    >
-                      <Trash size={13} />
-                    </button>
-                  </div>
-                </div>
-              ))}
-              <div className="flex justify-between text-xs font-medium text-amber-800 border-t border-amber-200 pt-1.5">
-                <span>Total cargos</span>
-                <span>{formatUsd(totalCargosEspUsd)}</span>
+          {/* Row 2: Product search */}
+          <div className="px-4 py-2.5 border-b">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground shrink-0 flex items-center gap-1">
+                <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F1</kbd>
+              </label>
+              <div className="flex-1 max-w-2xl">
+                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} />
               </div>
+            </div>
+          </div>
+
+          {/* Row 3: Caja operation buttons (only when sesion active and has permissions) */}
+          {sesion && (canMovManualPos || canCloseCajaPos) && (
+            <div className="px-4 py-2 flex items-center gap-1.5 flex-wrap">
+              {canMovManualPos && (
+                <>
+                  <button type="button" onClick={() => setShowIngresoModal(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors">
+                    <ArrowCircleDown size={12} />Ingreso
+                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
+                  </button>
+                  <button type="button" onClick={() => setShowRetiroModal(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors">
+                    <ArrowCircleUp size={12} />Retiro
+                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
+                  </button>
+                  <button type="button" onClick={() => setShowAvanceModal(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors">
+                    <Wallet size={12} />Avance
+                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F7</kbd>
+                  </button>
+                  <button type="button" onClick={() => setShowPrestamoModal(true)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors">
+                    <Handshake size={12} />Prestamo
+                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
+                  </button>
+                </>
+              )}
+              {canCloseCajaPos && (
+                <button type="button" onClick={handleCerrarCajaPos}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
+                  <XCircle size={12} />Cerrar Caja
+                </button>
+              )}
             </div>
           )}
         </div>
 
-        {/* ── COLUMNA DERECHA ── */}
-        <div className="rounded-2xl bg-card shadow-lg lg:sticky lg:top-6 flex flex-col lg:h-[calc(100vh-6.5rem)] overflow-hidden">
+        {/* ── 2-COLUMN BODY ── */}
+        <div className="flex-1 min-h-0 grid grid-cols-[1fr_320px] gap-3 overflow-hidden">
 
-          {/* ── Zona scrolleable ── */}
-          <div className="flex-1 overflow-y-auto min-h-0 p-4 space-y-4">
+          {/* COL LEFT: Items table + cargos (scrollable) */}
+          <div className="flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-hidden">
+            <div className="flex-1 min-h-0 overflow-y-auto">
+              <LineaItems
+                ref={lineaItemsRef}
+                lineas={lineas}
+                tasa={tasaValor}
+                onUpdateCantidad={handleUpdateCantidad}
+                onRemove={handleRemoveLinea}
+                onCantidadEnter={() => productoBuscadorRef.current?.focus()}
+                compact
+              />
 
-            {/* Operaciones de Caja */}
-            {sesion && (canMovManualPos || canCloseCajaPos) && (
-              <div className="space-y-2">
-                {/* Contexto: usuario, caja, empresa */}
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 shrink-0" />
-                  {user?.nombre && (
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <User size={11} />
-                      <span className="font-medium text-foreground">{user.nombre}</span>
+              {/* Cargos especiales */}
+              {cargosEspeciales.length > 0 && (
+                <div className="mx-3 my-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 space-y-1.5">
+                  <p className="text-xs font-semibold text-amber-900 uppercase tracking-wide">Cargos especiales</p>
+                  {cargosEspeciales.map((cargo, i) => (
+                    <div key={i} className="flex items-center justify-between">
+                      <div className="min-w-0 flex items-center gap-1.5">
+                        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
+                          cargo.tipo === 'PRESTAMO' ? 'bg-purple-100 text-purple-700' : 'bg-amber-100 text-amber-700'
+                        }`}>{cargo.tipo}</span>
+                        <span className="text-amber-800 truncate text-xs">{cargo.descripcion}</span>
+                        {cargo.tipo === 'PRESTAMO' && cargo.diasPlazo && (
+                          <span className="text-[10px] text-amber-600">({cargo.diasPlazo}d)</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-xs font-semibold text-amber-900">{formatUsd(cargo.montoCargoUsd)}</span>
+                        <button type="button" onClick={() => handleRemoveCargo(i)}
+                          className="rounded p-0.5 text-amber-600 hover:text-destructive hover:bg-destructive/10 transition-colors">
+                          <Trash size={12} />
+                        </button>
+                      </div>
                     </div>
-                  )}
-                  {cajaNombre && (
-                    <span className="text-xs text-muted-foreground">· {cajaNombre}</span>
-                  )}
-                  {empresaNombre && (
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Buildings size={11} />
-                      <span>{empresaNombre}</span>
-                    </div>
-                  )}
+                  ))}
                 </div>
-                <div className="flex flex-wrap gap-1">
-                  {canMovManualPos && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setShowIngresoModal(true)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors"
-                      >
-                        <ArrowCircleDown size={12} />
-                        Ingreso
-                        <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowRetiroModal(true)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors"
-                      >
-                        <ArrowCircleUp size={12} />
-                        Retiro
-                        <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowAvanceModal(true)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors"
-                      >
-                        <Wallet size={12} />
-                        Avance
-                        <kbd className="ml-0.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F7</kbd>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setShowPrestamoModal(true)}
-                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors"
-                      >
-                        <Handshake size={12} />
-                        Prestamo
-                      </button>
-                    </>
-                  )}
-                  {canCloseCajaPos && (
-                    <button
-                      type="button"
-                      onClick={handleCerrarCajaPos}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                    >
-                      <XCircle size={12} />
-                      Cerrar Caja
-                    </button>
-                  )}
+              )}
+            </div>
+
+            {/* Cargos footer */}
+            <div className="shrink-0 border-t px-3 py-1.5 flex items-center justify-between text-xs text-muted-foreground bg-muted/20">
+              <span>Cargos especiales</span>
+              <span className={totalCargosEspUsd > 0 ? 'font-medium text-amber-700' : ''}>
+                {formatUsd(totalCargosEspUsd)}
+              </span>
+            </div>
+          </div>
+
+          {/* COL RIGHT: Total + payments (sticky panel) */}
+          <div className="flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-hidden">
+
+            {/* Total */}
+            <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
+              <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
+              <p className="text-3xl font-bold leading-tight tabular-nums">{formatUsd(totalUsd)}</p>
+              <p className="text-sm text-muted-foreground mt-0.5">{formatBs(totalBs)}</p>
+            </div>
+
+            {/* Status summary */}
+            {(pagos.length > 0 || lineas.length > 0 || cargosEspeciales.length > 0) && (
+              <div className="px-4 py-2.5 border-b space-y-1.5 shrink-0">
+                {pagos.length > 0 && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Abonado</span>
+                    <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Pendiente</span>
+                  <span className={`font-medium ${pendienteUsd > 0.01 ? 'text-orange-600' : 'text-green-600'}`}>
+                    {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Estado</span>
+                  <span className={`font-semibold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
+                    {tipoDetectado}
+                  </span>
                 </div>
               </div>
             )}
 
-            {sesion && (canMovManualPos || canCloseCajaPos) && <div className="border-t" />}
-
-            {/* Cliente */}
-            <div className="space-y-2">
-              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                Cliente
-                <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F2</kbd>
-              </label>
+            {/* Payment form */}
+            <div className="p-3 space-y-2 shrink-0 border-b">
+              <div>
+                <label className="text-xs text-muted-foreground">Metodo</label>
+                <NativeSelect value={metodoId} onChange={(e) => setMetodoId(e.target.value)}>
+                  <option value="">Seleccionar...</option>
+                  {metodos.map((m) => (
+                    <option key={m.id} value={m.id}>{m.nombre} ({m.moneda})</option>
+                  ))}
+                </NativeSelect>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">
+                  Monto{monedaMetodo ? ` (${monedaMetodo})` : ''}
+                </label>
+                <input
+                  type="number" min="0.01" step="0.01" value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
+                  placeholder="0.00"
+                  className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+              </div>
               <div className="flex gap-2">
-                <div className="flex-1 min-w-0">
-                  <ClienteSelector
-                    ref={clienteSelectorRef}
-                    clienteId={clienteId}
-                    onSelect={handleSelectCliente}
-                    onClear={handleClearCliente}
-                  />
-                </div>
-                {!clienteId && (
-                  <button
-                    type="button"
-                    onClick={() => setShowNuevoClienteModal(true)}
-                    title="Nuevo cliente rapido"
-                    className="shrink-0 flex items-center gap-1 rounded-md border border-primary/40 bg-primary/5 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/15 transition-colors"
-                  >
-                    <Plus size={13} />
-                    Nuevo
-                  </button>
-                )}
-              </div>
-              {/* Info de credito del cliente seleccionado */}
-              {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
-                <div className="flex items-center justify-between rounded-md bg-muted/40 px-2.5 py-1.5 text-xs text-muted-foreground">
-                  <span>Credito disponible</span>
-                  <span className={`font-semibold ${
-                    Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)) < pendienteUsd - 0.01
-                      ? 'text-destructive'
-                      : 'text-green-600'
-                  }`}>
-                    {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
-                    {' / '}
-                    <span className="font-normal">{formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <div className="border-t" />
-
-            {/* Totales */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Total USD</span>
-                <span className="text-xl font-bold">{formatUsd(totalUsd)}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-muted-foreground">Total Bs</span>
-                <span className="text-sm font-semibold text-muted-foreground">{formatBs(totalBs)}</span>
-              </div>
-              <div className="flex items-center justify-between border-t pt-1.5">
-                <span className="text-xs text-muted-foreground">Articulos</span>
-                <span className="text-sm font-medium">{totalItems}</span>
+                <input
+                  type="text" value={referencia} onChange={(e) => setReferencia(e.target.value)}
+                  placeholder="Referencia (opcional)" autoComplete="one-time-code"
+                  className="flex-1 rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                />
+                <Button type="button" variant="outline" size="sm"
+                  onClick={handleAddPago}
+                  disabled={!metodoId || !monto || parseFloat(monto) <= 0}>
+                  <Plus size={14} className="mr-1" />Agregar
+                  <kbd className="ml-1 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Alt+A</kbd>
+                </Button>
               </div>
             </div>
 
-            <div className="border-t" />
-
-            {/* Pagos */}
-            <div className="space-y-3">
-              <p className="text-sm font-semibold">Pagos</p>
-
-              {/* Resumen abonado / pendiente / tipo */}
-              {(pagos.length > 0 || lineas.length > 0) && (
-                <div className="rounded-md bg-muted/50 px-3 py-2.5 space-y-1.5 text-sm">
-                  {pagos.length > 0 && (
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Abonado</span>
-                      <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
-                    </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <span className="text-muted-foreground">Pendiente</span>
-                    <span className={`font-medium ${pendienteUsd > 0.01 ? 'text-orange-600' : 'text-green-600'}`}>
-                      {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between border-t pt-1.5">
-                    <span className="text-muted-foreground">Estado</span>
-                    <span className={`font-semibold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
-                      {tipoDetectado}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Formulario para agregar un pago */}
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs text-muted-foreground">Metodo</label>
-                    <NativeSelect
-                      value={metodoId}
-                      onChange={(e) => setMetodoId(e.target.value)}
-                    >
-                      <option value="">Seleccionar...</option>
-                      {metodos.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.nombre} ({m.moneda})
-                        </option>
-                      ))}
-                    </NativeSelect>
-                  </div>
-                  <div>
-                    <label className="text-xs text-muted-foreground">
-                      Monto{monedaMetodo ? ` (${monedaMetodo})` : ''}
-                    </label>
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      value={monto}
-                      onChange={(e) => setMonto(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
-                      placeholder="0.00"
-                      className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                    />
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={referencia}
-                    onChange={(e) => setReferencia(e.target.value)}
-                    placeholder="Referencia (opcional)"
-                    autoComplete="one-time-code"
-                    className="flex-1 rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={handleAddPago}
-                    disabled={!metodoId || !monto || parseFloat(monto) <= 0}
-                  >
-                    <Plus size={14} className="mr-1" />
-                    Agregar
-                    <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Alt+A</kbd>
-                  </Button>
-                </div>
-              </div>
-
-              {/* Lista de pagos registrados */}
-              {pagos.length > 0 && (
-                <div className="space-y-1.5">
-                  {pagos.map((p, i) => {
-                    const equiv = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
-                    return (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2 text-sm"
-                      >
-                        <div className="min-w-0">
-                          <span className="font-medium">{p.metodo_nombre}</span>
-                          {p.referencia && (
-                            <span className="ml-2 text-xs text-muted-foreground">Ref: {p.referencia}</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span>
-                            {p.moneda === 'BS' ? formatBs(p.monto) : formatUsd(p.monto)}
-                            {p.moneda === 'BS' && (
-                              <span className="ml-1 text-xs text-muted-foreground">({formatUsd(equiv)})</span>
-                            )}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemovePago(i)}
-                            className="rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                          >
-                            <Trash size={13} />
-                          </button>
-                        </div>
+            {/* Payment list (scrollable) */}
+            <div className="flex-1 overflow-y-auto min-h-0 divide-y">
+              {pagos.length > 0 ? (
+                pagos.map((p, i) => {
+                  const equiv = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
+                  return (
+                    <div key={i} className="flex items-center justify-between px-3 py-2.5 hover:bg-muted/30">
+                      <div className="min-w-0">
+                        <span className="text-xs font-medium">{p.metodo_nombre}</span>
+                        {p.referencia && (
+                          <span className="ml-1.5 text-[10px] text-muted-foreground">Ref: {p.referencia}</span>
+                        )}
                       </div>
-                    )
-                  })}
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className="text-xs">
+                          {p.moneda === 'BS' ? formatBs(p.monto) : formatUsd(p.monto)}
+                          {p.moneda === 'BS' && (
+                            <span className="ml-1 text-[10px] text-muted-foreground">({formatUsd(equiv)})</span>
+                          )}
+                        </span>
+                        <button type="button" onClick={() => handleRemovePago(i)}
+                          className="rounded p-0.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
+                          <Trash size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })
+              ) : (
+                <div className="flex items-center justify-center h-full text-xs text-muted-foreground p-4 text-center">
+                  Sin pagos registrados
                 </div>
               )}
             </div>
-
           </div>
+        </div>
 
-          {/* ── Footer sticky: acciones principales ── */}
-          <div className="shrink-0 border-t bg-card p-4 space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                onClick={handleGuardarFactura}
-                disabled={submitting || (lineas.length === 0 && cargosEspeciales.length === 0)}
-                size="sm"
-                className="w-full"
-              >
-                <FloppyDisk size={14} className="mr-1.5" />
-                Guardar
-                <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
-              </Button>
-              <Button
-                variant={esperaCount > 0 ? 'secondary' : 'outline'}
-                onClick={() => setShowEsperaModal(true)}
-                size="sm"
-                className="w-full"
-              >
-                <ListBullets size={14} className="mr-1.5" />
-                {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
-                <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
-              </Button>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant="outline"
-                onClick={handleCancelar}
-                disabled={submitting}
-                size="sm"
-                className="w-full"
-              >
-                Cancelar
-                <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
-              </Button>
-              <Button
-                onClick={handleConfirmVenta}
-                disabled={!puedeConfirmar}
-                size="sm"
-                className={`w-full ${tipoDetectado === 'CREDITO' && tieneContenido && clienteId ? 'bg-orange-600 hover:bg-orange-700' : ''}`}
-              >
-                {tipoDetectado === 'CREDITO' && tieneContenido && clienteId ? (
-                  <CreditCard size={14} className="mr-1.5" />
-                ) : (
-                  <ShoppingCart size={14} className="mr-1.5" />
-                )}
-                {textoConfirmar}
-                <kbd className="ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F10</kbd>
-              </Button>
-            </div>
-          </div>
-
+        {/* ── FOOTER ── */}
+        <div className="shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex items-center gap-2">
+          <Button variant="outline" size="sm"
+            onClick={handleGuardarFactura}
+            disabled={submitting || (lineas.length === 0 && cargosEspeciales.length === 0)}>
+            <FloppyDisk size={14} className="mr-1.5" />Guardar
+            <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
+          </Button>
+          <Button variant={esperaCount > 0 ? 'secondary' : 'outline'} size="sm"
+            onClick={() => setShowEsperaModal(true)}>
+            <ListBullets size={14} className="mr-1.5" />
+            {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
+            <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F10</kbd>
+          </Button>
+          <div className="flex-1" />
+          <Button variant="outline" size="sm" onClick={handleCancelar} disabled={submitting}>
+            Cancelar<kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
+          </Button>
+          <Button size="sm" onClick={handleConfirmVenta} disabled={!puedeConfirmar}
+            className={`${tipoDetectado === 'CREDITO' && tieneContenido && clienteId ? 'bg-orange-600 hover:bg-orange-700' : ''}`}>
+            {tipoDetectado === 'CREDITO' && tieneContenido && clienteId
+              ? <CreditCard size={14} className="mr-1.5" />
+              : <ShoppingCart size={14} className="mr-1.5" />}
+            {textoConfirmar}
+            <kbd className="ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F12</kbd>
+          </Button>
         </div>
       </div>
 

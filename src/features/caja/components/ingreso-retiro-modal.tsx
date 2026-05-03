@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowCircleDown, ArrowCircleUp } from '@phosphor-icons/react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { createMovimientoManualMulti } from '@/features/caja/hooks/use-movimientos-manual'
@@ -105,20 +106,18 @@ function FormIngresoRetiro({
       )}
 
       {/* Seccion Efectivo USD */}
-      <div className={`rounded-lg border p-3 space-y-2 ${!efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
+      <div className={`rounded-xl border bg-muted/20 p-3 space-y-1.5 ${!efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">Efectivo USD</span>
-          <div className="flex items-center gap-2">
-            {efectivoUsd ? (
-              <span className="text-xs text-muted-foreground">
-                Saldo: {formatUsd(parseFloat(efectivoUsd.saldo_actual || '0'))}
-              </span>
-            ) : (
-              !loadingMetodos && (
-                <span className="text-xs text-amber-600">No configurado</span>
-              )
-            )}
-          </div>
+          <span className="text-xs font-medium text-muted-foreground">Efectivo USD</span>
+          {efectivoUsd ? (
+            <span className="text-xs text-muted-foreground">
+              Saldo: {formatUsd(parseFloat(efectivoUsd.saldo_actual || '0'))}
+            </span>
+          ) : (
+            !loadingMetodos && (
+              <span className="text-xs text-amber-600">No configurado</span>
+            )
+          )}
         </div>
         <input
           type="number"
@@ -130,25 +129,23 @@ function FormIngresoRetiro({
           onWheel={(e) => e.currentTarget.blur()}
           placeholder="0.00"
           disabled={!efectivoUsd || loadingMetodos}
-          className="no-spinner w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:cursor-not-allowed"
+          className="no-spinner w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
         />
       </div>
 
       {/* Seccion Efectivo Bs */}
-      <div className={`rounded-lg border p-3 space-y-2 ${!efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
+      <div className={`rounded-xl border bg-muted/20 p-3 space-y-1.5 ${!efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium">Efectivo Bs</span>
-          <div className="flex items-center gap-2">
-            {efectivoBs ? (
-              <span className="text-xs text-muted-foreground">
-                Saldo: {formatBs(parseFloat(efectivoBs.saldo_actual || '0'))}
-              </span>
-            ) : (
-              !loadingMetodos && (
-                <span className="text-xs text-amber-600">No configurado</span>
-              )
-            )}
-          </div>
+          <span className="text-xs font-medium text-muted-foreground">Efectivo Bs</span>
+          {efectivoBs ? (
+            <span className="text-xs text-muted-foreground">
+              Saldo: {formatBs(parseFloat(efectivoBs.saldo_actual || '0'))}
+            </span>
+          ) : (
+            !loadingMetodos && (
+              <span className="text-xs text-amber-600">No configurado</span>
+            )
+          )}
         </div>
         <input
           type="number"
@@ -160,13 +157,13 @@ function FormIngresoRetiro({
           onWheel={(e) => e.currentTarget.blur()}
           placeholder="0.00"
           disabled={!efectivoBs || loadingMetodos}
-          className="no-spinner w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:cursor-not-allowed"
+          className="no-spinner w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
         />
       </div>
 
       {/* Concepto */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium mb-1">
           Concepto / Descripcion
         </label>
         <textarea
@@ -174,42 +171,39 @@ function FormIngresoRetiro({
           onChange={(e) => setConcepto(e.target.value)}
           placeholder="Descripcion del movimiento..."
           rows={2}
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none ${
-            errors.concepto ? 'border-red-500' : 'border-gray-300'
+          className={`w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-none ${
+            errors.concepto ? 'border-destructive' : ''
           }`}
         />
         {errors.concepto && (
-          <p className="text-red-500 text-xs mt-1">{errors.concepto}</p>
+          <p className="text-destructive text-xs mt-1">{errors.concepto}</p>
         )}
       </div>
 
       {errors.general && (
-        <p className="text-red-500 text-sm text-center rounded-md bg-red-50 p-2">{errors.general}</p>
+        <p className="rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm text-center p-2.5">
+          {errors.general}
+        </p>
       )}
 
       {/* Acciones */}
       <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
-        >
+        <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
           Cancelar
-        </button>
-        <button
+        </Button>
+        <Button
           type="submit"
           disabled={submitting}
-          className={`px-4 py-2 text-sm font-medium text-white rounded-md transition-colors disabled:opacity-50 ${
+          className={
             modo === 'INGRESO'
-              ? 'bg-green-600 hover:bg-green-700'
-              : 'bg-red-600 hover:bg-red-700'
-          }`}
+              ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              : 'bg-red-600 hover:bg-red-700 text-white'
+          }
         >
           {submitting
             ? 'Registrando...'
             : `Registrar ${modo === 'INGRESO' ? 'Ingreso' : 'Retiro'}`}
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -248,18 +242,36 @@ export function IngresoRetiroModal({
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl m-auto"
+      className="backdrop:bg-black/60 backdrop:backdrop-blur-sm rounded-2xl p-0 w-full max-w-md shadow-2xl m-auto border-0 outline-none"
     >
-      <div className="p-6">
-        <div className="flex items-center gap-2 mb-1">
-          {modo === 'INGRESO' ? (
-            <ArrowCircleDown size={18} className="text-green-600" />
-          ) : (
-            <ArrowCircleUp size={18} className="text-red-600" />
-          )}
-          <h2 className="text-lg font-semibold">{titulo}</h2>
+      {/* iOS-style colored header */}
+      <div
+        className={`px-6 pt-5 pb-4 border-b ${
+          modo === 'INGRESO'
+            ? 'bg-gradient-to-br from-emerald-500/15 to-emerald-400/5'
+            : 'bg-gradient-to-br from-red-500/15 to-red-400/5'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`p-2 rounded-xl ${
+              modo === 'INGRESO' ? 'bg-emerald-500/15' : 'bg-red-500/15'
+            }`}
+          >
+            {modo === 'INGRESO' ? (
+              <ArrowCircleDown size={18} className="text-emerald-600" weight="fill" />
+            ) : (
+              <ArrowCircleUp size={18} className="text-red-600" weight="fill" />
+            )}
+          </div>
+          <div>
+            <h2 className="text-base font-semibold leading-tight">{titulo}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{descripcion}</p>
+          </div>
         </div>
-        <p className="text-sm text-muted-foreground mb-5">{descripcion}</p>
+      </div>
+      {/* Form body */}
+      <div className="p-5">
         <FormIngresoRetiro
           onClose={onClose}
           sesionCajaId={sesionCajaId}

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { Wallet, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 
@@ -182,15 +184,16 @@ function FormAvance({
 
       {/* Cliente */}
       {clienteNombre && (
-        <div className="rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800">
-          Cliente: <span className="font-medium">{clienteNombre}</span>
+        <div className="rounded-xl bg-muted/60 border px-3 py-2 text-sm flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">Cliente</span>
+          <span className="font-medium text-foreground">{clienteNombre}</span>
         </div>
       )}
 
       {/* Origen de fondos */}
       <div>
-        <p className="text-sm font-medium text-gray-700 mb-2">Origen de los fondos</p>
-        <div className="flex rounded-md border border-gray-300 overflow-hidden text-xs">
+        <p className="text-sm font-medium mb-2">Origen de los fondos</p>
+        <div className="flex rounded-xl border bg-muted/30 overflow-hidden text-xs p-0.5 gap-0.5">
           {([
             { key: 'CAJA' as OrigenFondos, label: 'Caja', Icon: CashRegister },
             { key: 'EFECTIVO_EMPRESA' as OrigenFondos, label: 'Efectivo empresa', Icon: Vault },
@@ -200,19 +203,28 @@ function FormAvance({
               key={key}
               type="button"
               onClick={() => setOrigenFondos(key)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 font-medium transition-colors ${
+              className={`relative flex-1 flex items-center justify-center gap-1.5 py-1.5 font-medium transition-colors rounded-lg ${
                 origenFondos === key
-                  ? 'bg-amber-500 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
+                  ? 'text-white'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Icon size={13} weight={origenFondos === key ? 'fill' : 'regular'} />
-              {label}
+              {origenFondos === key && (
+                <motion.div
+                  layoutId="avance-tab-pill"
+                  className="absolute inset-0 bg-amber-500 rounded-lg shadow-sm"
+                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <Icon size={13} weight={origenFondos === key ? 'fill' : 'regular'} />
+                {label}
+              </span>
             </button>
           ))}
         </div>
         {origenFondos !== 'CAJA' && (
-          <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          <p className="mt-2 text-xs text-amber-700 bg-amber-50/80 border border-amber-200/60 rounded-xl px-3 py-2">
             Los fondos no se descontaran de la caja activa. El modulo bancario esta pendiente de implementacion.
           </p>
         )}
@@ -220,13 +232,13 @@ function FormAvance({
 
       {/* Monto del avance entregado */}
       <div>
-        <p className="text-sm font-medium text-gray-700 mb-2">
+        <p className="text-sm font-medium mb-2">
           Efectivo entregado al cliente
         </p>
         <div className="grid grid-cols-2 gap-3">
-          <div className={`rounded-lg border p-3 space-y-1 ${origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
+          <div className={`rounded-xl border bg-muted/20 p-3 space-y-1 transition-opacity ${origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-gray-600">USD</label>
+              <label className="text-xs font-medium text-muted-foreground">USD</label>
               {origenFondos === 'CAJA' && efectivoUsd && (
                 <span className="text-xs text-muted-foreground">
                   Disp: {formatUsd(dispUsd)}
@@ -243,16 +255,16 @@ function FormAvance({
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
               disabled={origenFondos === 'CAJA' && (!efectivoUsd || loadingMetodos)}
-              className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
+              className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos && (
               <p className="text-xs text-amber-600">No configurado</p>
             )}
           </div>
 
-          <div className={`rounded-lg border p-3 space-y-1 ${origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
+          <div className={`rounded-xl border bg-muted/20 p-3 space-y-1 transition-opacity ${origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-gray-600">Bs</label>
+              <label className="text-xs font-medium text-muted-foreground">Bs</label>
               {origenFondos === 'CAJA' && efectivoBs && (
                 <span className="text-xs text-muted-foreground">
                   Disp: {formatBs(dispBs)}
@@ -269,7 +281,7 @@ function FormAvance({
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
               disabled={origenFondos === 'CAJA' && (!efectivoBs || loadingMetodos)}
-              className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
+              className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos && (
               <p className="text-xs text-amber-600">No configurado</p>
@@ -280,7 +292,7 @@ function FormAvance({
 
       {/* Porcentaje de cargo */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium mb-1">
           Porcentaje de recargo (%)
         </label>
         <div className="flex items-center gap-2">
@@ -293,22 +305,22 @@ function FormAvance({
             value={porcentajeFee}
             onChange={(e) => setPorcentajeFee(e.target.value)}
             onWheel={(e) => e.currentTarget.blur()}
-            className={`no-spinner w-24 rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.fee ? 'border-red-500' : 'border-gray-300'
+            className={`no-spinner w-24 rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+              errors.fee ? 'border-destructive' : ''
             }`}
           />
-          <span className="text-sm text-gray-500">%</span>
-          <span className="text-xs text-gray-400 flex items-center gap-1">
+          <span className="text-sm text-muted-foreground">%</span>
+          <span className="text-xs text-muted-foreground flex items-center gap-1">
             <Info size={12} />
             Se configurara desde Configuracion &gt; POS
           </span>
         </div>
-        {errors.fee && <p className="text-red-500 text-xs mt-1">{errors.fee}</p>}
+        {errors.fee && <p className="text-destructive text-xs mt-1">{errors.fee}</p>}
       </div>
 
       {/* Resumen del cargo al cliente */}
       {avanceTotalUsd > 0 && (
-        <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-1.5 text-sm">
+        <div className="rounded-xl bg-amber-50/80 border border-amber-200/60 p-3.5 space-y-1.5 text-sm">
           <p className="font-medium text-amber-900">Cargo al cliente</p>
           <div className="flex justify-between text-amber-800">
             <span>Avance total</span>
@@ -332,7 +344,7 @@ function FormAvance({
 
       {/* Concepto */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium mb-1">
           Concepto / Descripcion
         </label>
         <textarea
@@ -340,34 +352,29 @@ function FormAvance({
           onChange={(e) => setConcepto(e.target.value)}
           placeholder={`Avance de efectivo${clienteNombre ? ` - ${clienteNombre}` : ''}...`}
           rows={2}
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none ${
-            errors.concepto ? 'border-red-500' : 'border-gray-300'
+          className={`w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-none ${
+            errors.concepto ? 'border-destructive' : ''
           }`}
         />
-        {errors.concepto && <p className="text-red-500 text-xs mt-1">{errors.concepto}</p>}
+        {errors.concepto && <p className="text-destructive text-xs mt-1">{errors.concepto}</p>}
       </div>
 
       {errors.general && (
-        <p className="text-red-500 text-sm text-center rounded-md bg-red-50 p-2">{errors.general}</p>
+        <p className="rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm text-center p-2.5">{errors.general}</p>
       )}
 
       {/* Acciones */}
       <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
-        >
+        <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
           Cancelar
-        </button>
-        <button
+        </Button>
+        <Button
           type="submit"
           disabled={submitting || (usd <= 0 && bs <= 0)}
-          className="px-4 py-2 text-sm font-medium text-white bg-amber-600 hover:bg-amber-700 rounded-md transition-colors disabled:opacity-50"
+          className="bg-amber-500 hover:bg-amber-600 text-white"
         >
           {submitting ? 'Registrando...' : 'Registrar Avance'}
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -404,16 +411,24 @@ export function AvanceModal({
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl m-auto"
+      className="backdrop:bg-black/60 backdrop:backdrop-blur-sm rounded-2xl p-0 w-full max-w-md shadow-2xl m-auto border-0 outline-none"
     >
-      <div className="p-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Wallet size={18} className="text-amber-600" />
-          <h2 className="text-lg font-semibold">Avance de Efectivo</h2>
+      {/* iOS-style colored header */}
+      <div className="bg-gradient-to-br from-amber-500/15 to-amber-400/5 px-6 pt-5 pb-4 border-b">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-xl bg-amber-500/15">
+            <Wallet size={18} className="text-amber-600" weight="fill" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold leading-tight">Avance de Efectivo</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Efectivo al cliente con recargo en factura
+            </p>
+          </div>
         </div>
-        <p className="text-sm text-muted-foreground mb-5">
-          Entrega de efectivo al cliente con recargo incluido en la factura
-        </p>
+      </div>
+      {/* Form body */}
+      <div className="p-5">
         <FormAvance
           onClose={onClose}
           sesionCajaId={sesionCajaId}

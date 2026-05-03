@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { motion } from 'framer-motion'
 import { Handshake, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
 import { toast } from 'sonner'
+import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -189,15 +191,16 @@ function FormPrestamo({
 
       {/* Cliente */}
       {clienteNombre && (
-        <div className="rounded-md bg-blue-50 border border-blue-200 px-3 py-2 text-sm text-blue-800">
-          Cliente: <span className="font-medium">{clienteNombre}</span>
+        <div className="rounded-xl bg-muted/60 border px-3 py-2 text-sm flex items-center gap-2">
+          <span className="text-muted-foreground text-xs">Cliente</span>
+          <span className="font-medium text-foreground">{clienteNombre}</span>
         </div>
       )}
 
       {/* Origen de fondos */}
       <div>
-        <p className="text-sm font-medium text-gray-700 mb-2">Origen de los fondos</p>
-        <div className="flex rounded-md border border-gray-300 overflow-hidden text-xs">
+        <p className="text-sm font-medium mb-2">Origen de los fondos</p>
+        <div className="flex rounded-xl border bg-muted/30 overflow-hidden text-xs p-0.5 gap-0.5">
           {([
             { key: 'CAJA' as OrigenFondos, label: 'Caja', Icon: CashRegister },
             { key: 'EFECTIVO_EMPRESA' as OrigenFondos, label: 'Efectivo empresa', Icon: Vault },
@@ -207,19 +210,28 @@ function FormPrestamo({
               key={key}
               type="button"
               onClick={() => setOrigenFondos(key)}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 font-medium transition-colors ${
+              className={`relative flex-1 flex items-center justify-center gap-1.5 py-1.5 font-medium transition-colors rounded-lg ${
                 origenFondos === key
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-white text-gray-600 hover:bg-gray-50'
+                  ? 'text-white'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <Icon size={13} weight={origenFondos === key ? 'fill' : 'regular'} />
-              {label}
+              {origenFondos === key && (
+                <motion.div
+                  layoutId="prestamo-tab-pill"
+                  className="absolute inset-0 bg-purple-600 rounded-lg shadow-sm"
+                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                <Icon size={13} weight={origenFondos === key ? 'fill' : 'regular'} />
+                {label}
+              </span>
             </button>
           ))}
         </div>
         {origenFondos !== 'CAJA' && (
-          <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          <p className="mt-2 text-xs text-amber-700 bg-amber-50/80 border border-amber-200/60 rounded-xl px-3 py-2">
             Los fondos no se descontaran de la caja activa. El modulo bancario esta pendiente de implementacion.
           </p>
         )}
@@ -227,13 +239,13 @@ function FormPrestamo({
 
       {/* Monto del prestamo */}
       <div>
-        <p className="text-sm font-medium text-gray-700 mb-2">
+        <p className="text-sm font-medium mb-2">
           {origenFondos === 'CAJA' ? 'Monto del prestamo (de la caja)' : 'Monto del prestamo'}
         </p>
         <div className="grid grid-cols-2 gap-3">
-          <div className={`rounded-lg border p-3 space-y-1 ${origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
+          <div className={`rounded-xl border bg-muted/20 p-3 space-y-1 transition-opacity ${origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos ? 'opacity-50' : ''}`}>
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-gray-600">USD</label>
+              <label className="text-xs font-medium text-muted-foreground">USD</label>
               {origenFondos === 'CAJA' && efectivoUsd && (
                 <span className="text-xs text-muted-foreground">
                   Disp: {formatUsd(dispUsd)}
@@ -250,16 +262,16 @@ function FormPrestamo({
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
               disabled={origenFondos === 'CAJA' && (!efectivoUsd || loadingMetodos)}
-              className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
+              className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos && (
               <p className="text-xs text-amber-600">No configurado</p>
             )}
           </div>
 
-          <div className={`rounded-lg border p-3 space-y-1 ${origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
+          <div className={`rounded-xl border bg-muted/20 p-3 space-y-1 transition-opacity ${origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos ? 'opacity-50' : ''}`}>
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-gray-600">Bs</label>
+              <label className="text-xs font-medium text-muted-foreground">Bs</label>
               {origenFondos === 'CAJA' && efectivoBs && (
                 <span className="text-xs text-muted-foreground">
                   Disp: {formatBs(dispBs)}
@@ -276,7 +288,7 @@ function FormPrestamo({
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
               disabled={origenFondos === 'CAJA' && (!efectivoBs || loadingMetodos)}
-              className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
+              className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos && (
               <p className="text-xs text-amber-600">No configurado</p>
@@ -289,7 +301,7 @@ function FormPrestamo({
       <div className="grid grid-cols-2 gap-3">
         {/* Interes */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium mb-1">
             Interes (%)
           </label>
           <div className="flex items-center gap-1">
@@ -302,18 +314,18 @@ function FormPrestamo({
               value={porcentajeInteres}
               onChange={(e) => setPorcentajeInteres(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
-              className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.interes ? 'border-red-500' : 'border-gray-300'
+              className={`no-spinner w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+                errors.interes ? 'border-destructive' : ''
               }`}
             />
-            <span className="text-sm text-gray-500">%</span>
+            <span className="text-sm text-muted-foreground">%</span>
           </div>
-          {errors.interes && <p className="text-red-500 text-xs mt-1">{errors.interes}</p>}
+          {errors.interes && <p className="text-destructive text-xs mt-1">{errors.interes}</p>}
         </div>
 
         {/* Dias plazo */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="block text-sm font-medium mb-1">
             Plazo (dias)
           </label>
           <input
@@ -326,25 +338,25 @@ function FormPrestamo({
             onChange={(e) => setDiasPlazo(e.target.value)}
             onWheel={(e) => e.currentTarget.blur()}
             disabled={!puedeModificarDias}
-            className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50 disabled:cursor-not-allowed ${
-              errors.dias ? 'border-red-500' : 'border-gray-300'
+            className={`no-spinner w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed ${
+              errors.dias ? 'border-destructive' : ''
             }`}
           />
-          {errors.dias && <p className="text-red-500 text-xs mt-1">{errors.dias}</p>}
+          {errors.dias && <p className="text-destructive text-xs mt-1">{errors.dias}</p>}
           {!puedeModificarDias && (
-            <p className="text-xs text-gray-400 mt-1">Solo supervisores pueden modificar el plazo</p>
+            <p className="text-xs text-muted-foreground mt-1">Solo supervisores pueden modificar el plazo</p>
           )}
         </div>
       </div>
 
-      <p className="text-xs text-gray-400 flex items-center gap-1">
+      <p className="text-xs text-muted-foreground flex items-center gap-1">
         <Info size={12} />
         Los valores por defecto se configuraran desde Configuracion &gt; POS
       </p>
 
       {/* Resumen de la deuda */}
       {prestamoTotalUsd > 0 && (
-        <div className="rounded-lg bg-purple-50 border border-purple-200 p-3 space-y-1.5 text-sm">
+        <div className="rounded-xl bg-purple-50/80 border border-purple-200/60 p-3.5 space-y-1.5 text-sm">
           <p className="font-medium text-purple-900">Resumen del prestamo</p>
           <div className="flex justify-between text-purple-800">
             <span>Monto prestado</span>
@@ -369,7 +381,7 @@ function FormPrestamo({
 
       {/* Concepto */}
       <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">
+        <label className="block text-sm font-medium mb-1">
           Concepto / Descripcion
         </label>
         <textarea
@@ -377,34 +389,29 @@ function FormPrestamo({
           onChange={(e) => setConcepto(e.target.value)}
           placeholder={`Prestamo${clienteNombre ? ` - ${clienteNombre}` : ''} - ${dias} dias...`}
           rows={2}
-          className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none ${
-            errors.concepto ? 'border-red-500' : 'border-gray-300'
+          className={`w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-none ${
+            errors.concepto ? 'border-destructive' : ''
           }`}
         />
-        {errors.concepto && <p className="text-red-500 text-xs mt-1">{errors.concepto}</p>}
+        {errors.concepto && <p className="text-destructive text-xs mt-1">{errors.concepto}</p>}
       </div>
 
       {errors.general && (
-        <p className="text-red-500 text-sm text-center rounded-md bg-red-50 p-2">{errors.general}</p>
+        <p className="rounded-xl bg-destructive/10 border border-destructive/20 text-destructive text-sm text-center p-2.5">{errors.general}</p>
       )}
 
       {/* Acciones */}
       <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
-        >
+        <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
           Cancelar
-        </button>
-        <button
+        </Button>
+        <Button
           type="submit"
           disabled={submitting || (usd <= 0 && bs <= 0)}
-          className="px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md transition-colors disabled:opacity-50"
+          className="bg-purple-600 hover:bg-purple-700 text-white"
         >
           {submitting ? 'Registrando...' : 'Registrar Prestamo'}
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -441,16 +448,24 @@ export function PrestamoModal({
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl m-auto"
+      className="backdrop:bg-black/60 backdrop:backdrop-blur-sm rounded-2xl p-0 w-full max-w-md shadow-2xl m-auto border-0 outline-none"
     >
-      <div className="p-6">
-        <div className="flex items-center gap-2 mb-1">
-          <Handshake size={18} className="text-purple-600" />
-          <h2 className="text-lg font-semibold">Prestamo</h2>
+      {/* iOS-style colored header */}
+      <div className="bg-gradient-to-br from-purple-500/15 to-purple-400/5 px-6 pt-5 pb-4 border-b">
+        <div className="flex items-center gap-2.5">
+          <div className="p-2 rounded-xl bg-purple-500/15">
+            <Handshake size={18} className="text-purple-600" weight="fill" />
+          </div>
+          <div>
+            <h2 className="text-base font-semibold leading-tight">Prestamo</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Credito con interes y plazo de devolucion
+            </p>
+          </div>
         </div>
-        <p className="text-sm text-muted-foreground mb-5">
-          Entrega de efectivo en condicion de credito (con interes y plazo)
-        </p>
+      </div>
+      {/* Form body */}
+      <div className="p-5">
         <FormPrestamo
           onClose={onClose}
           sesionCajaId={sesionCajaId}

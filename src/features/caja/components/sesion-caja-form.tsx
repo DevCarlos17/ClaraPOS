@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useQuery } from '@powersync/react'
+import { CashRegister, Lock } from '@phosphor-icons/react'
+import { Button } from '@/components/ui/button'
 import {
   sesionCajaAperturaSchema,
   sesionCajaCierreSchema,
@@ -98,7 +100,7 @@ function FormApertura({ onClose }: { onClose: () => void }) {
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* Caja */}
       <div>
-        <label htmlFor="apertura-caja" className="block text-sm font-medium text-gray-700 mb-1">
+        <label htmlFor="apertura-caja" className="block text-sm font-medium mb-1">
           Caja
         </label>
         <NativeSelect
@@ -117,17 +119,17 @@ function FormApertura({ onClose }: { onClose: () => void }) {
           ))}
         </NativeSelect>
         {errors.caja_id && (
-          <p className="text-red-500 text-xs mt-1">{errors.caja_id}</p>
+          <p className="text-destructive text-xs mt-1">{errors.caja_id}</p>
         )}
       </div>
 
       {/* Fondos de apertura bimonetarios */}
       <div className="space-y-3">
-        <p className="text-sm font-medium text-gray-700">Fondo de Apertura</p>
+        <p className="text-sm font-medium">Fondo de Apertura</p>
 
         {/* USD */}
-        <div>
-          <label htmlFor="apertura-monto-usd" className="block text-xs font-medium text-gray-600 mb-1">
+        <div className="rounded-xl border bg-muted/20 p-3 space-y-1.5">
+          <label htmlFor="apertura-monto-usd" className="block text-xs font-medium text-muted-foreground">
             Efectivo USD
           </label>
           <input
@@ -140,18 +142,18 @@ function FormApertura({ onClose }: { onClose: () => void }) {
             onChange={(e) => setMontoUsd(e.target.value)}
             onWheel={(e) => e.currentTarget.blur()}
             placeholder="0.00"
-            className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.monto_apertura_usd ? 'border-red-500' : 'border-gray-300'
+            className={`no-spinner w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+              errors.monto_apertura_usd ? 'border-destructive' : ''
             }`}
           />
           {errors.monto_apertura_usd && (
-            <p className="text-red-500 text-xs mt-1">{errors.monto_apertura_usd}</p>
+            <p className="text-destructive text-xs">{errors.monto_apertura_usd}</p>
           )}
         </div>
 
         {/* Bs */}
-        <div>
-          <label htmlFor="apertura-monto-bs" className="block text-xs font-medium text-gray-600 mb-1">
+        <div className="rounded-xl border bg-muted/20 p-3 space-y-1.5">
+          <label htmlFor="apertura-monto-bs" className="block text-xs font-medium text-muted-foreground">
             Efectivo Bs
           </label>
           <input
@@ -164,19 +166,19 @@ function FormApertura({ onClose }: { onClose: () => void }) {
             onChange={(e) => setMontoBs(e.target.value)}
             onWheel={(e) => e.currentTarget.blur()}
             placeholder="0.00"
-            className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-              errors.monto_apertura_bs ? 'border-red-500' : 'border-gray-300'
+            className={`no-spinner w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+              errors.monto_apertura_bs ? 'border-destructive' : ''
             }`}
           />
           {errors.monto_apertura_bs && (
-            <p className="text-red-500 text-xs mt-1">{errors.monto_apertura_bs}</p>
+            <p className="text-destructive text-xs">{errors.monto_apertura_bs}</p>
           )}
         </div>
 
         {/* Total equivalente */}
         {(montoUsdNum > 0 || montoBsNum > 0) && tasaValor > 0 && (
-          <p className="text-xs text-gray-500 bg-gray-50 rounded px-2 py-1.5">
-            Total equivalente: <span className="font-medium">USD {totalEquivUsd.toFixed(2)}</span>
+          <p className="text-xs text-muted-foreground bg-muted/50 rounded-xl px-3 py-2">
+            Total equivalente: <span className="font-medium text-foreground">USD {totalEquivUsd.toFixed(2)}</span>
             {montoBsNum > 0 && (
               <span className="ml-1">(tasa: {tasaValor.toFixed(4)})</span>
             )}
@@ -186,21 +188,16 @@ function FormApertura({ onClose }: { onClose: () => void }) {
 
       {/* Acciones */}
       <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
-        >
+        <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
           Cancelar
-        </button>
-        <button
+        </Button>
+        <Button
           type="submit"
           disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50"
+          className="bg-emerald-600 hover:bg-emerald-700 text-white"
         >
           {submitting ? 'Abriendo...' : 'Abrir Sesion'}
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -209,7 +206,6 @@ function FormApertura({ onClose }: { onClose: () => void }) {
 // ─── Resumen de sesion (para cierre) ─────────────────────────
 
 function ResumenSesion({ sesionId }: { sesionId: string }) {
-  // Pagos por metodo de cobro en esta sesion
   const { data: pagosData } = useQuery(
     sesionId
       ? `SELECT mc.nombre as metodo_nombre, mc.tipo as tipo_metodo,
@@ -224,7 +220,6 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
     sesionId ? [sesionId] : []
   )
 
-  // Movimientos manuales por metodo
   const { data: movsData } = useQuery(
     sesionId
       ? `SELECT mc.nombre as metodo_nombre,
@@ -239,7 +234,6 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
     sesionId ? [sesionId] : []
   )
 
-  // Sesion (para apertura)
   const { data: sesionData } = useQuery(
     sesionId ? 'SELECT monto_apertura_usd FROM sesiones_caja WHERE id = ?' : '',
     sesionId ? [sesionId] : []
@@ -267,7 +261,6 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
     })
   }
 
-  // Total esperado en efectivo
   const pagosEfectivo = pagos
     .filter((p) => p.tipo_metodo === 'EFECTIVO')
     .reduce((acc, p) => acc + p.total_pagos, 0)
@@ -288,15 +281,15 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
   if (!hayData) return null
 
   return (
-    <div className="bg-gray-50 rounded-md border border-gray-200 p-3 space-y-2">
-      <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">
+    <div className="rounded-xl border bg-muted/40 p-3 space-y-2">
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
         Resumen de la Sesion
       </p>
 
       {/* Apertura */}
-      <div className="flex justify-between text-xs text-gray-600">
+      <div className="flex justify-between text-xs text-muted-foreground">
         <span>Monto de apertura</span>
-        <span className="font-medium">USD {montoApertura.toFixed(2)}</span>
+        <span className="font-medium text-foreground">USD {montoApertura.toFixed(2)}</span>
       </div>
 
       {/* Pagos por metodo */}
@@ -304,20 +297,20 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
         const manual = movsManualesMap.get(p.metodo_nombre) ?? { ingreso: 0, egreso: 0 }
         return (
           <div key={p.metodo_nombre} className="space-y-0.5">
-            <div className="flex justify-between text-xs text-gray-600">
+            <div className="flex justify-between text-xs text-muted-foreground">
               <span>Pagos — {p.metodo_nombre}</span>
-              <span className="font-medium text-green-700">+{p.total_pagos.toFixed(2)}</span>
+              <span className="font-medium text-emerald-600">+{p.total_pagos.toFixed(2)}</span>
             </div>
             {manual.ingreso > 0 && (
-              <div className="flex justify-between text-xs text-gray-500 pl-3">
+              <div className="flex justify-between text-xs text-muted-foreground pl-3">
                 <span>Ingresos manuales</span>
-                <span className="text-green-600">+{manual.ingreso.toFixed(2)}</span>
+                <span className="text-emerald-600">+{manual.ingreso.toFixed(2)}</span>
               </div>
             )}
             {manual.egreso > 0 && (
-              <div className="flex justify-between text-xs text-gray-500 pl-3">
+              <div className="flex justify-between text-xs text-muted-foreground pl-3">
                 <span>Egresos manuales</span>
-                <span className="text-red-600">-{manual.egreso.toFixed(2)}</span>
+                <span className="text-red-500">-{manual.egreso.toFixed(2)}</span>
               </div>
             )}
           </div>
@@ -325,7 +318,7 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
       })}
 
       {/* Total efectivo esperado */}
-      <div className="flex justify-between text-xs font-semibold text-gray-800 border-t border-gray-200 pt-2">
+      <div className="flex justify-between text-xs font-semibold text-foreground border-t pt-2">
         <span>Total efectivo esperado</span>
         <span>USD {totalEsperadoEfectivo.toFixed(2)}</span>
       </div>
@@ -404,7 +397,7 @@ function FormCierre({
 
       {/* Monto fisico */}
       <div>
-        <label htmlFor="cierre-monto" className="block text-sm font-medium text-gray-700 mb-1">
+        <label htmlFor="cierre-monto" className="block text-sm font-medium mb-1">
           Monto Fisico en Caja (USD)
         </label>
         <input
@@ -417,19 +410,19 @@ function FormCierre({
           onChange={(e) => setMontoFisico(e.target.value)}
           onWheel={(e) => e.currentTarget.blur()}
           placeholder="0.00"
-          className={`no-spinner w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            errors.monto_fisico_usd ? 'border-red-500' : 'border-gray-300'
+          className={`no-spinner w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+            errors.monto_fisico_usd ? 'border-destructive' : ''
           }`}
         />
         {errors.monto_fisico_usd && (
-          <p className="text-red-500 text-xs mt-1">{errors.monto_fisico_usd}</p>
+          <p className="text-destructive text-xs mt-1">{errors.monto_fisico_usd}</p>
         )}
       </div>
 
       {/* Observaciones */}
       <div>
-        <label htmlFor="cierre-obs" className="block text-sm font-medium text-gray-700 mb-1">
-          Observaciones <span className="text-gray-400 font-normal">(opcional)</span>
+        <label htmlFor="cierre-obs" className="block text-sm font-medium mb-1">
+          Observaciones <span className="text-muted-foreground font-normal">(opcional)</span>
         </label>
         <textarea
           id="cierre-obs"
@@ -437,27 +430,22 @@ function FormCierre({
           onChange={(e) => setObservaciones(e.target.value)}
           placeholder="Notas sobre el cierre..."
           rows={3}
-          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-ring resize-none"
         />
       </div>
 
       {/* Acciones */}
       <div className="flex justify-end gap-3 pt-2">
-        <button
-          type="button"
-          onClick={onClose}
-          disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors disabled:opacity-50"
-        >
+        <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
           Cancelar
-        </button>
-        <button
+        </Button>
+        <Button
           type="submit"
           disabled={submitting}
-          className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors disabled:opacity-50"
+          className="bg-red-600 hover:bg-red-700 text-white"
         >
           {submitting ? 'Cerrando...' : 'Cerrar Sesion'}
-        </button>
+        </Button>
       </div>
     </form>
   )
@@ -482,19 +470,51 @@ export function SesionCajaForm({ mode, isOpen, onClose, sesionId }: SesionCajaFo
     }
   }
 
-  const titulo = mode === 'apertura' ? 'Abrir Sesion de Caja' : 'Cerrar Sesion de Caja'
+  const isApertura = mode === 'apertura'
 
   return (
     <dialog
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl m-auto"
+      className="backdrop:bg-black/60 backdrop:backdrop-blur-sm rounded-2xl p-0 w-full max-w-md shadow-2xl m-auto border-0 outline-none"
     >
-      <div className="p-6">
-        <h2 className="text-lg font-semibold mb-4">{titulo}</h2>
+      {/* iOS-style colored header */}
+      <div
+        className={`px-6 pt-5 pb-4 border-b ${
+          isApertura
+            ? 'bg-gradient-to-br from-emerald-500/15 to-emerald-400/5'
+            : 'bg-gradient-to-br from-amber-500/15 to-amber-400/5'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`p-2 rounded-xl ${
+              isApertura ? 'bg-emerald-500/15' : 'bg-amber-500/15'
+            }`}
+          >
+            {isApertura ? (
+              <CashRegister size={18} className="text-emerald-600" weight="fill" />
+            ) : (
+              <Lock size={18} className="text-amber-600" weight="fill" />
+            )}
+          </div>
+          <div>
+            <h2 className="text-base font-semibold leading-tight">
+              {isApertura ? 'Abrir Sesion de Caja' : 'Cerrar Sesion de Caja'}
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {isApertura
+                ? 'Registra el fondo inicial de la caja'
+                : 'Reconcilia y cierra la sesion activa'}
+            </p>
+          </div>
+        </div>
+      </div>
 
-        {mode === 'apertura' ? (
+      {/* Form body */}
+      <div className="p-5">
+        {isApertura ? (
           <FormApertura onClose={onClose} />
         ) : (
           sesionId && <FormCierre sesionId={sesionId} onClose={onClose} />
