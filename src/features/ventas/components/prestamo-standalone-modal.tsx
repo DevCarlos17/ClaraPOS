@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
-import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
+import { useSesionesActivas, type SesionCajaConNombre } from '@/features/caja/hooks/use-sesiones-caja'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { crearPrestamoStandalone, type CrearPrestamoStandaloneParams } from '@/features/cxc/hooks/use-cxc'
@@ -137,8 +137,17 @@ function FormPrestamoStandalone({
   const { user } = useCurrentUser()
   const { isOwner, hasPermission } = usePermissions()
   const { tasaValor, isLoading: loadingTasa } = useTasaActual()
-  const { sesion: sesionActiva } = useSesionActiva()
+  const { sesiones: sesionesActivas, isLoading: loadingSesiones } = useSesionesActivas()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+
+  const [sesionSeleccionadaId, setSesionSeleccionadaId] = useState<string | null>(null)
+
+  const sesionEfectiva: SesionCajaConNombre | null =
+    sesionesActivas.length === 1
+      ? sesionesActivas[0]
+      : sesionSeleccionadaId
+        ? (sesionesActivas.find((s) => s.id === sesionSeleccionadaId) ?? null)
+        : null
 
   const [cliente, setCliente] = useState<Cliente | null>(null)
   const [origenFondos, setOrigenFondos] = useState<OrigenFondos>('CAJA')
@@ -176,6 +185,7 @@ function FormPrestamoStandalone({
     setDiasPlazo(String(DEFAULT_DIAS_PLAZO))
     setConcepto('')
     setErrors({})
+    setSesionSeleccionadaId(null)
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -196,9 +206,9 @@ function FormPrestamoStandalone({
       newErrors.concepto = 'El concepto debe tener al menos 3 caracteres'
     }
     if (origenFondos === 'CAJA') {
-      if (!sesionActiva) {
+      if (!sesionEfectiva) {
         newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
-          'No hay sesion de caja activa'
+          'Selecciona una sesion de caja activa'
       } else {
         if (usd > 0 && !efectivoUsd) {
           newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
@@ -233,7 +243,7 @@ function FormPrestamoStandalone({
         diasPlazo: dias,
         concepto: conceptoFinal,
         origenFondos,
-        sesionCajaId: sesionActiva?.id ?? null,
+        sesionCajaId: sesionEfectiva?.id ?? null,
         usuarioId: user.id,
       }
       await crearPrestamoStandalone(p)
@@ -295,10 +305,39 @@ function FormPrestamoStandalone({
             </button>
           ))}
         </div>
-        {origenFondos === 'CAJA' && !sesionActiva && (
-          <p className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
-            No hay sesion de caja activa. Abre una sesion o selecciona otro origen.
-          </p>
+        {origenFondos === 'CAJA' && (
+          <div className="mt-2">
+            {loadingSesiones ? (
+              <div className="h-9 bg-muted/50 rounded animate-pulse" />
+            ) : sesionesActivas.length === 0 ? (
+              <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+                No hay sesion de caja activa. Abre una sesion o selecciona otro origen.
+              </p>
+            ) : sesionesActivas.length === 1 ? (
+              <p className="text-xs text-green-700 bg-green-50 border border-green-200 rounded-md px-3 py-2">
+                Sesion activa: <span className="font-medium">{sesionesActivas[0].caja_nombre ?? 'Caja sin nombre'}</span>
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-gray-700">Sesion de caja</label>
+                <select
+                  value={sesionSeleccionadaId ?? ''}
+                  onChange={(e) => setSesionSeleccionadaId(e.target.value || null)}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="">Seleccionar sesion...</option>
+                  {sesionesActivas.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.caja_nombre ?? 'Caja'} — Apertura: {s.fecha_apertura.slice(0, 10)}
+                    </option>
+                  ))}
+                </select>
+                {!sesionSeleccionadaId && (
+                  <p className="text-xs text-amber-600">Selecciona la sesion de caja que prestara los fondos</p>
+                )}
+              </div>
+            )}
+          </div>
         )}
         {origenFondos !== 'CAJA' && (
           <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
@@ -331,7 +370,7 @@ function FormPrestamoStandalone({
               onChange={(e) => setMontoUsd(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={origenFondos === 'CAJA' && (!sesionActiva || (!efectivoUsd && !loadingMetodos))}
+              disabled={origenFondos === 'CAJA' && (!sesionEfectiva || (!efectivoUsd && !loadingMetodos))}
               className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-50"
             />
             {origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos && (
@@ -357,7 +396,7 @@ function FormPrestamoStandalone({
               onChange={(e) => setMontoBs(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={origenFondos === 'CAJA' && (!sesionActiva || (!efectivoBs && !loadingMetodos))}
+              disabled={origenFondos === 'CAJA' && (!sesionEfectiva || (!efectivoBs && !loadingMetodos))}
               className="no-spinner w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-50"
             />
             {origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos && (

@@ -1,15 +1,29 @@
 import { useState, useRef, useEffect } from 'react'
+import { useQuery } from '@powersync/react'
 import { X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
-import { registrarAbonoGlobal, useFacturasPendientes } from '../hooks/use-cxc'
+import {
+  registrarAbonoGlobal,
+  registrarAbonoPrestamo,
+  useFacturasPendientes,
+} from '../hooks/use-cxc'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
 import { NativeSelect } from '@/components/ui/native-select'
+
+interface PrestamoPendiente {
+  id: string
+  saldo_pendiente_usd: string
+  monto_original_usd: string
+  fecha_vencimiento: string
+  nro_cuota: number
+  nro_factura: string | null
+}
 
 interface AbonoGlobalModalProps {
   isOpen: boolean
@@ -34,12 +48,30 @@ export function AbonoGlobalModal({
   const { metodos } = useMetodosPagoActivos()
   const { facturas } = useFacturasPendientes(isOpen ? clienteId : null)
 
+  // Préstamos pendientes del cliente
+  const empresaId = user?.empresa_id ?? ''
+  const { data: prestamosData } = useQuery(
+    `SELECT vc.id, vc.saldo_pendiente_usd, vc.monto_original_usd,
+            vc.fecha_vencimiento, vc.nro_cuota, v.nro_factura
+     FROM vencimientos_cobrar vc
+     LEFT JOIN ventas v ON vc.venta_id = v.id
+     WHERE vc.empresa_id = ? AND vc.cliente_id = ? AND vc.status = 'PENDIENTE'
+     ORDER BY vc.fecha_vencimiento ASC`,
+    [empresaId, isOpen ? clienteId : '']
+  )
+  const prestamosActivos = (prestamosData ?? []) as PrestamoPendiente[]
+
   const [metodoPagoId, setMetodoPagoId] = useState('')
   const [montoStr, setMontoStr] = useState('')
   const [referencia, setReferencia] = useState('')
   const [fechaPago, setFechaPago] = useState(() => todayStr())
   const [tasaFecha, setTasaFecha] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+
+  // Estado para sección de préstamo
+  const [incluirPrestamo, setIncluirPrestamo] = useState(false)
+  const [prestamoIdSeleccionado, setPrestamoIdSeleccionado] = useState('')
+  const [montoPrestamoStr, setMontoPrestamoStr] = useState('')
 
   // Buscar tasa BCV correspondiente a la fecha del abono
   useEffect(() => {
@@ -60,10 +92,20 @@ export function AbonoGlobalModal({
       setMontoStr('')
       setReferencia('')
       setFechaPago(todayStr())
+      setIncluirPrestamo(false)
+      setPrestamoIdSeleccionado('')
+      setMontoPrestamoStr('')
     } else {
       dialogRef.current?.close()
     }
   }, [isOpen])
+
+  // Auto-seleccionar préstamo cuando solo hay uno y se activa la sección
+  useEffect(() => {
+    if (incluirPrestamo && prestamosActivos.length === 1 && !prestamoIdSeleccionado) {
+      setPrestamoIdSeleccionado(prestamosActivos[0].id)
+    }
+  }, [incluirPrestamo, prestamosActivos, prestamoIdSeleccionado])
 
   const metodoSeleccionado = metodos.find((m) => m.id === metodoPagoId)
   const moneda = metodoSeleccionado?.moneda ?? 'USD'
@@ -75,9 +117,25 @@ export function AbonoGlobalModal({
   const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva) : monto
   const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva) : monto
 
-  const canSubmit = metodoPagoId && monto > 0 && !submitting && tasaEfectiva > 0
+  const montoPrestamo = parseFloat(montoPrestamoStr) || 0
+  const montoPrestamoUsd = moneda === 'BS' ? bsToUsd(montoPrestamo, tasaEfectiva) : montoPrestamo
+  const prestamoSeleccionado = prestamosActivos.find((p) => p.id === prestamoIdSeleccionado) ?? null
 
-  // Simulacion FIFO para preview
+  const excedeSaldoPrestamo =
+    prestamoSeleccionado !== null &&
+    montoPrestamoUsd > parseFloat(prestamoSeleccionado.saldo_pendiente_usd) + 0.01
+
+  const tieneAbonoFactura = monto > 0
+  const tieneAbonoPrestamo =
+    incluirPrestamo && !!prestamoIdSeleccionado && montoPrestamo > 0 && !excedeSaldoPrestamo
+
+  const canSubmit =
+    !!metodoPagoId &&
+    tasaEfectiva > 0 &&
+    !submitting &&
+    (tieneAbonoFactura || tieneAbonoPrestamo)
+
+  // Simulacion FIFO para preview (solo relevante cuando hay abono a facturas)
   const fifoPreview = (() => {
     if (montoUsd <= 0) return []
     let restante = montoUsd
@@ -108,20 +166,44 @@ export function AbonoGlobalModal({
 
     setSubmitting(true)
     try {
-      const result = await registrarAbonoGlobal({
-        cliente_id: clienteId,
-        metodo_cobro_id: metodoPagoId,
-        moneda: moneda as 'USD' | 'BS',
-        tasa: tasaEfectiva,
-        monto,
-        referencia: referencia.trim() || undefined,
-        empresa_id: user!.empresa_id!,
-        procesado_por: user!.id,
-        procesado_por_nombre: user!.nombre,
-      })
-      toast.success(
-        `Abono de ${formatUsd(result.montoAplicado)} registrado. ${result.facturasAfectadas} factura(s) afectada(s).`
-      )
+      const mensajes: string[] = []
+
+      // 1. Abono global a facturas (FIFO)
+      if (tieneAbonoFactura) {
+        const result = await registrarAbonoGlobal({
+          cliente_id: clienteId,
+          metodo_cobro_id: metodoPagoId,
+          moneda: moneda as 'USD' | 'BS',
+          tasa: tasaEfectiva,
+          monto,
+          referencia: referencia.trim() || undefined,
+          empresa_id: user!.empresa_id!,
+          procesado_por: user!.id,
+          procesado_por_nombre: user!.nombre,
+        })
+        mensajes.push(
+          `${formatUsd(result.montoAplicado)} a ${result.facturasAfectadas} factura(s)`
+        )
+      }
+
+      // 2. Abono al préstamo seleccionado
+      if (tieneAbonoPrestamo) {
+        await registrarAbonoPrestamo({
+          vencimiento_id: prestamoIdSeleccionado,
+          metodo_cobro_id: metodoPagoId,
+          moneda: moneda as 'USD' | 'BS',
+          tasa: tasaEfectiva,
+          monto: montoPrestamo,
+          fechaPago,
+          referencia: referencia.trim() || undefined,
+          empresa_id: user!.empresa_id!,
+          procesado_por: user!.id,
+          procesado_por_nombre: user!.nombre,
+        })
+        mensajes.push(`${formatUsd(montoPrestamoUsd)} al préstamo`)
+      }
+
+      toast.success(mensajes.join(' + '))
       onSuccess()
       onClose()
     } catch (error) {
@@ -134,6 +216,13 @@ export function AbonoGlobalModal({
   function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
     if (e.target === dialogRef.current) onClose()
   }
+
+  const submitLabel = (() => {
+    if (submitting) return 'Registrando...'
+    if (tieneAbonoFactura && tieneAbonoPrestamo) return 'Abonar facturas y préstamo'
+    if (tieneAbonoPrestamo) return `Abonar préstamo ${formatUsd(montoPrestamoUsd)}`
+    return `Abonar ${formatUsd(montoUsd)}`
+  })()
 
   return (
     <dialog
@@ -157,7 +246,7 @@ export function AbonoGlobalModal({
         {/* Resumen saldo */}
         <div className="rounded-lg border bg-muted/50 p-3 mb-4">
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">Deuda total</span>
+            <span className="text-muted-foreground">Deuda total (facturas)</span>
             <span className="font-bold text-red-600">{formatUsd(saldoActual)}</span>
           </div>
           {tasaEfectiva > 0 && (
@@ -172,6 +261,12 @@ export function AbonoGlobalModal({
             <span className="text-muted-foreground">Facturas pendientes</span>
             <span className="font-medium">{facturas.length}</span>
           </div>
+          {prestamosActivos.length > 0 && (
+            <div className="flex justify-between text-sm mt-1">
+              <span className="text-muted-foreground">Préstamos pendientes</span>
+              <span className="font-medium text-amber-700">{prestamosActivos.length}</span>
+            </div>
+          )}
           {tasaEfectiva > 0 && (
             <div className="flex justify-between text-sm border-t border-border/50 pt-1 mt-1">
               <span className="text-muted-foreground font-medium">
@@ -226,11 +321,11 @@ export function AbonoGlobalModal({
             </NativeSelect>
           </div>
 
-          {/* Monto */}
+          {/* Monto facturas */}
           <div>
             <div className="flex items-center justify-between">
               <label className="text-xs font-medium text-muted-foreground">
-                Monto ({moneda})
+                {incluirPrestamo ? `Monto facturas (${moneda})` : `Monto (${moneda})`}
               </label>
               <button
                 type="button"
@@ -272,6 +367,112 @@ export function AbonoGlobalModal({
             />
           </div>
         </div>
+
+        {/* Sección préstamos */}
+        {prestamosActivos.length > 0 && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={incluirPrestamo}
+                onChange={(e) => {
+                  setIncluirPrestamo(e.target.checked)
+                  if (!e.target.checked) {
+                    setPrestamoIdSeleccionado('')
+                    setMontoPrestamoStr('')
+                  }
+                }}
+                className="h-4 w-4 rounded border-input"
+              />
+              <span className="text-sm font-medium text-amber-800">
+                ¿Incluir pago a préstamo? ({prestamosActivos.length} pendiente
+                {prestamosActivos.length !== 1 ? 's' : ''})
+              </span>
+            </label>
+
+            {incluirPrestamo && (
+              <div className="mt-3 space-y-2 border-t border-amber-200/60 pt-3">
+                {/* Selector solo si hay más de un préstamo */}
+                {prestamosActivos.length > 1 && (
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground">Préstamo</label>
+                    <NativeSelect
+                      value={prestamoIdSeleccionado}
+                      onChange={(e) => {
+                        setPrestamoIdSeleccionado(e.target.value)
+                        setMontoPrestamoStr('')
+                      }}
+                      wrapperClassName="mt-1"
+                    >
+                      <option value="">Seleccionar préstamo...</option>
+                      {prestamosActivos.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.nro_factura
+                            ? `Fact. #${p.nro_factura}`
+                            : `Cuota ${p.nro_cuota}`}{' '}
+                          — Saldo: ${parseFloat(p.saldo_pendiente_usd).toFixed(2)}
+                        </option>
+                      ))}
+                    </NativeSelect>
+                  </div>
+                )}
+
+                {/* Monto del préstamo */}
+                {prestamoSeleccionado && (
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Monto préstamo ({moneda})
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const saldo = parseFloat(prestamoSeleccionado.saldo_pendiente_usd)
+                          setMontoPrestamoStr(
+                            moneda === 'BS'
+                              ? usdToBs(saldo, tasaEfectiva).toFixed(2)
+                              : saldo.toFixed(2)
+                          )
+                        }}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Pagar saldo total
+                      </button>
+                    </div>
+                    <p className="text-xs text-amber-700 mt-1 mb-1.5">
+                      Saldo: {formatUsd(parseFloat(prestamoSeleccionado.saldo_pendiente_usd))}
+                      {prestamoSeleccionado.nro_factura
+                        ? ` · Factura #${prestamoSeleccionado.nro_factura}`
+                        : ' · Préstamo sin factura'}
+                    </p>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={montoPrestamoStr}
+                      onChange={(e) => setMontoPrestamoStr(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    />
+                    {montoPrestamo > 0 && tasaEfectiva > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {moneda === 'USD'
+                          ? `Equivale a ${formatBs(usdToBs(montoPrestamo, tasaEfectiva))}`
+                          : `Equivale a ${formatUsd(bsToUsd(montoPrestamo, tasaEfectiva))}`}
+                      </p>
+                    )}
+                    {excedeSaldoPrestamo && (
+                      <p className="text-xs text-red-600 mt-1">
+                        El monto excede el saldo del préstamo (
+                        {formatUsd(parseFloat(prestamoSeleccionado.saldo_pendiente_usd))})
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Preview FIFO */}
         {fifoPreview.length > 0 && (
@@ -318,7 +519,7 @@ export function AbonoGlobalModal({
             Cancelar
           </Button>
           <Button onClick={handleSubmit} disabled={!canSubmit}>
-            {submitting ? 'Registrando...' : `Abonar ${formatUsd(montoUsd)}`}
+            {submitLabel}
           </Button>
         </div>
       </div>

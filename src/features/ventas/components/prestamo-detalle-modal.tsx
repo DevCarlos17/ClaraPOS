@@ -1,4 +1,6 @@
+import { useState, useEffect } from 'react'
 import { CheckCircle, Warning, Clock, Handshake, Vault, Bank } from '@phosphor-icons/react'
+import { toast } from 'sonner'
 import {
   Dialog,
   DialogContent,
@@ -6,9 +8,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { db } from '@/core/db/powersync/db'
+import { localNow } from '@/lib/dates'
 import {
   useHistorialPrestamo,
+  registrarAbonoPrestamo,
   type VencimientoPrestamo,
 } from '@/features/cxc/hooks/use-cxc'
 
@@ -99,6 +107,213 @@ function StatusBadge({ status, fechaVenc }: { status: string; fechaVenc: string 
   )
 }
 
+// ─── Form Abono Prestamo ──────────────────────────────────────
+
+interface FormAbonoPrestamoProps {
+  prestamo: VencimientoPrestamo
+  onSuccess: () => void
+  onCancel: () => void
+}
+
+function FormAbonoPrestamo({ prestamo, onSuccess, onCancel }: FormAbonoPrestamoProps) {
+  const { user } = useCurrentUser()
+  const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { tasaValor } = useTasaActual()
+
+  const today = localNow().slice(0, 10)
+  const [fechaPago, setFechaPago] = useState(today)
+  const [tasaStr, setTasaStr] = useState('')
+  const [tasaInternaNum, setTasaInternaNum] = useState(0)
+  const [metodoCobro, setMetodoCobro] = useState('')
+  const [montoStr, setMontoStr] = useState('')
+  const [referencia, setReferencia] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (!user?.empresa_id || !fechaPago) return
+    db.execute(
+      'SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND DATE(fecha) <= ? ORDER BY fecha DESC, created_at DESC LIMIT 1',
+      [user.empresa_id, fechaPago]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { valor: string } | undefined
+      const val = row ? parseFloat(row.valor) : 0
+      setTasaInternaNum(val)
+      setTasaStr(val > 0 ? val.toFixed(4) : '')
+    }).catch(() => {
+      setTasaInternaNum(0)
+      setTasaStr('')
+    })
+  }, [fechaPago, user?.empresa_id])
+
+  const saldoPendiente = parseFloat(prestamo.saldo_pendiente_usd)
+  const metodoSeleccionado = metodos.find((m) => m.id === metodoCobro)
+  const moneda = (metodoSeleccionado?.moneda ?? 'USD') as 'USD' | 'BS'
+  const montoNum = parseFloat(montoStr) || 0
+  const tasaNum = parseFloat(tasaStr) || 0
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum) : montoNum
+  const excedeSaldo = montoUsd > saldoPendiente + 0.01
+
+  function handlePayMax() {
+    if (moneda === 'BS') {
+      setMontoStr(usdToBs(saldoPendiente, tasaNum > 0 ? tasaNum : tasaValor).toFixed(2))
+    } else {
+      setMontoStr(saldoPendiente.toFixed(2))
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!user?.empresa_id || !user.id) return
+    setSubmitting(true)
+    try {
+      await registrarAbonoPrestamo({
+        vencimiento_id: prestamo.id,
+        metodo_cobro_id: metodoCobro,
+        moneda,
+        tasa: tasaNum,
+        monto: montoNum,
+        fechaPago,
+        referencia: referencia.trim() || undefined,
+        empresa_id: user.empresa_id,
+        procesado_por: user.id,
+        procesado_por_nombre: user.nombre,
+      })
+      toast.success(`Abono de ${formatUsd(montoUsd)} registrado al préstamo`)
+      onSuccess()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar abono')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">Fecha del abono</label>
+          <input
+            type="date"
+            value={fechaPago}
+            onChange={(e) => { setFechaPago(e.target.value); setMontoStr('') }}
+            max={today}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs font-medium text-gray-700">Tasa (Bs/USD)</label>
+            {tasaValor > 0 && tasaNum !== tasaValor && (
+              <button
+                type="button"
+                onClick={() => setTasaStr(tasaValor.toFixed(4))}
+                className="text-[10px] text-purple-600 hover:underline"
+              >
+                Usar actual ({tasaValor.toFixed(2)})
+              </button>
+            )}
+          </div>
+          <input
+            type="number"
+            step="0.0001"
+            min="0.0001"
+            value={tasaStr}
+            onChange={(e) => setTasaStr(e.target.value)}
+            onWheel={(e) => e.currentTarget.blur()}
+            placeholder="0.0000"
+            className="no-spinner w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+          />
+          {tasaInternaNum > 0 && (
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              Tasa a esta fecha: {tasaInternaNum.toFixed(4)}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">Metodo de cobro</label>
+        <select
+          value={metodoCobro}
+          onChange={(e) => { setMetodoCobro(e.target.value); setMontoStr('') }}
+          disabled={loadingMetodos}
+          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 disabled:bg-gray-50"
+        >
+          <option value="">Seleccionar...</option>
+          {metodos.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.nombre} ({m.moneda})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs font-medium text-gray-700">Monto ({moneda})</label>
+          <button
+            type="button"
+            onClick={handlePayMax}
+            disabled={tasaNum <= 0}
+            className="text-[10px] text-purple-600 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Pagar total ({formatUsd(saldoPendiente)})
+          </button>
+        </div>
+        <input
+          type="number"
+          step="0.01"
+          min="0.01"
+          value={montoStr}
+          onChange={(e) => setMontoStr(e.target.value)}
+          onWheel={(e) => e.currentTarget.blur()}
+          placeholder="0.00"
+          className="no-spinner w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+        />
+        {montoNum > 0 && moneda === 'USD' && tasaNum > 0 && (
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            Equivale a {formatBs(usdToBs(montoNum, tasaNum))} a tasa {tasaNum.toFixed(2)}
+          </p>
+        )}
+        {montoNum > 0 && moneda === 'BS' && tasaNum > 0 && (
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            Equivale a {formatUsd(montoUsd)} a tasa {tasaNum.toFixed(2)}
+          </p>
+        )}
+        {excedeSaldo && (
+          <p className="text-xs text-red-500 mt-1">El abono excede el saldo pendiente del préstamo</p>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-700 mb-1">
+          Referencia (opcional)
+        </label>
+        <input
+          type="text"
+          value={referencia}
+          onChange={(e) => setReferencia(e.target.value)}
+          placeholder="Nro. transferencia, etc."
+          className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+        />
+      </div>
+
+      <div className="flex gap-2 justify-end pt-1 border-t border-border">
+        <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
+          Cancelar
+        </Button>
+        <Button
+          type="submit"
+          disabled={submitting || !metodoCobro || montoNum <= 0 || tasaNum <= 0 || excedeSaldo}
+          className="bg-purple-600 hover:bg-purple-700 text-white"
+        >
+          {submitting ? 'Registrando...' : `Registrar ${formatUsd(montoUsd)}`}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
 // ─── Props ────────────────────────────────────────────────────
 
 interface PrestamoDetalleModalProps {
@@ -111,6 +326,7 @@ interface PrestamoDetalleModalProps {
 
 export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDetalleModalProps) {
   const { historial, isLoading } = useHistorialPrestamo(prestamo?.id ?? null)
+  const [showAbonoForm, setShowAbonoForm] = useState(false)
 
   if (!prestamo) return null
 
@@ -120,7 +336,7 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
   const porcentajePagado = montoOriginal > 0 ? (montoPagado / montoOriginal) * 100 : 0
 
   return (
-    <Dialog open={isOpen} onOpenChange={(v) => { if (!v) onClose() }}>
+    <Dialog open={isOpen} onOpenChange={(v) => { if (!v) { setShowAbonoForm(false); onClose() } }}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-2">
@@ -283,11 +499,33 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
             </div>
           )}
 
+          {/* ── Formulario de abono ─────────────────────── */}
+          {showAbonoForm && prestamo.status !== 'PAGADO' && (
+            <div className="rounded-lg bg-purple-50/40 border border-purple-200/60 p-4">
+              <h4 className="text-xs font-semibold text-purple-800 uppercase tracking-wide mb-3">
+                Registrar Abono
+              </h4>
+              <FormAbonoPrestamo
+                prestamo={prestamo}
+                onSuccess={() => setShowAbonoForm(false)}
+                onCancel={() => setShowAbonoForm(false)}
+              />
+            </div>
+          )}
+
           {/* ── Footer ─────────────────────────────────── */}
-          <div className="flex justify-end pt-3 border-t border-border">
+          <div className="flex justify-between items-center pt-3 border-t border-border">
             <Button variant="outline" onClick={onClose}>
               Cerrar
             </Button>
+            {!showAbonoForm && prestamo.status !== 'PAGADO' && saldoPend > 0.005 && (
+              <Button
+                onClick={() => setShowAbonoForm(true)}
+                className="bg-purple-600 hover:bg-purple-700 text-white"
+              >
+                Registrar Abono
+              </Button>
+            )}
           </div>
 
         </div>

@@ -1053,8 +1053,9 @@ export async function crearPrestamoStandalone(
     if (origenFondos === 'CAJA') {
       if (montoPrestamoUsd > 0) {
         const r = await tx.execute(
-          `SELECT id, saldo_actual FROM metodos_cobro
-           WHERE empresa_id = ? AND tipo = 'EFECTIVO' AND moneda = 'USD' AND is_active = 1
+          `SELECT mc.id, mc.saldo_actual FROM metodos_cobro mc
+           JOIN monedas mo ON mc.moneda_id = mo.id
+           WHERE mc.empresa_id = ? AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD' AND mc.is_active = 1
            LIMIT 1`,
           [empresaId]
         )
@@ -1086,8 +1087,9 @@ export async function crearPrestamoStandalone(
 
       if (montoPrestamoBs > 0) {
         const r = await tx.execute(
-          `SELECT id, saldo_actual FROM metodos_cobro
-           WHERE empresa_id = ? AND tipo = 'EFECTIVO' AND moneda = 'BS' AND is_active = 1
+          `SELECT mc.id, mc.saldo_actual FROM metodos_cobro mc
+           JOIN monedas mo ON mc.moneda_id = mo.id
+           WHERE mc.empresa_id = ? AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES' AND mc.is_active = 1
            LIMIT 1`,
           [empresaId]
         )
