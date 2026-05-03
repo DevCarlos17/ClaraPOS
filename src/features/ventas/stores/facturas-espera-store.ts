@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
+import type { CargoEspecial } from '../hooks/use-ventas'
 
 export interface FacturaEnEspera {
   id: string
@@ -8,6 +9,7 @@ export interface FacturaEnEspera {
   clienteNombre: string
   lineas: LineaVentaForm[]
   pagos: PagoEntryForm[]
+  cargosEspeciales: CargoEspecial[]
   tasa: number
   totalUsd: number
   totalBs: number
@@ -22,6 +24,7 @@ export interface FacturaBorrador {
   clienteNombre: string
   lineas: LineaVentaForm[]
   pagos: PagoEntryForm[]
+  cargosEspeciales: CargoEspecial[]
   tasa: number
   usuarioId: string
   empresaId: string

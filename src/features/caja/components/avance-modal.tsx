@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Wallet, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
-import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { createMovimientoManualMulti } from '@/features/caja/hooks/use-movimientos-manual'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 
 // ─── Types ────────────────────────────────────────────────────
@@ -17,15 +15,17 @@ export interface AvanceAplicado {
   montoAvanceBs: number
   cargoUsd: number        // fee en USD
   totalCargoUsd: number   // avance convertido a USD + cargo
-  movimientoIds: string[] // IDs de movimientos_metodo_cobro creados
+  movimientoIds: string[] // siempre [] - egresos se crean al confirmar la factura
   descripcion: string
   origenFondosTipo: OrigenFondos
+  // Datos raw para crear los egresos de caja al finalizar la factura
+  egresosCaja: Array<{ metodo_cobro_id: string; monto: number }>
 }
 
 interface AvanceModalProps {
   isOpen: boolean
   onClose: () => void
-  sesionCajaId: string
+  sesionCajaId?: string
   tasaActual: number
   /** Nombre del cliente actual en el POS (solo display) */
   clienteNombre?: string
@@ -52,18 +52,17 @@ function calcularAvance(
 
 function FormAvance({
   onClose,
-  sesionCajaId,
+  sesionCajaId: _sesionCajaId,
   tasaActual,
   clienteNombre,
   onAplicado,
 }: {
   onClose: () => void
-  sesionCajaId: string
+  sesionCajaId?: string
   tasaActual: number
   clienteNombre?: string
   onAplicado?: (avance: AvanceAplicado) => void
 }) {
-  const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
 
   // Origen de fondos
@@ -78,7 +77,7 @@ function FormAvance({
 
   const [concepto, setConcepto] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [submitting, setSubmitting] = useState(false)
+  const submitting = false
 
   // Metodos de efectivo disponibles
   const efectivoUsd = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
@@ -100,7 +99,7 @@ function FormAvance({
     setErrors({})
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
 
@@ -129,50 +128,32 @@ function FormAvance({
       return
     }
 
-    if (!user) return
-
     const conceptoFinal = concepto.trim() ||
       `Avance de efectivo${clienteNombre ? ` - ${clienteNombre}` : ''}`
 
-    setSubmitting(true)
-    try {
-      let movimientoIds: string[] = []
-
-      if (origenFondos === 'CAJA') {
-        const entradas: Array<{ metodo_cobro_id: string; monto: number }> = []
-        if (usd > 0 && efectivoUsd) entradas.push({ metodo_cobro_id: efectivoUsd.id, monto: usd })
-        if (bs > 0 && efectivoBs) entradas.push({ metodo_cobro_id: efectivoBs.id, monto: bs })
-        movimientoIds = await createMovimientoManualMulti({
-          entradas,
-          origen: 'AVANCE',
-          concepto: conceptoFinal,
-          sesion_caja_id: sesionCajaId,
-          empresa_id: user.empresa_id!,
-          usuario_id: user.id,
-        })
-      }
-
-      toast.success(
-        `Avance registrado. Cargo al cliente: ${formatUsd(totalCargoUsd)} (${fee}% recargo)`
-      )
-
-      onAplicado?.({
-        montoAvanceUsd: usd,
-        montoAvanceBs: bs,
-        cargoUsd,
-        totalCargoUsd,
-        movimientoIds,
-        descripcion: conceptoFinal,
-        origenFondosTipo: origenFondos,
-      })
-
-      reset()
-      onClose()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Error inesperado')
-    } finally {
-      setSubmitting(false)
+    const egresosCaja: Array<{ metodo_cobro_id: string; monto: number }> = []
+    if (origenFondos === 'CAJA') {
+      if (usd > 0 && efectivoUsd) egresosCaja.push({ metodo_cobro_id: efectivoUsd.id, monto: usd })
+      if (bs > 0 && efectivoBs) egresosCaja.push({ metodo_cobro_id: efectivoBs.id, monto: bs })
     }
+
+    toast.success(
+      `Avance agregado a la factura. Cargo al cliente: ${formatUsd(totalCargoUsd)} (${fee}% recargo)`
+    )
+
+    onAplicado?.({
+      montoAvanceUsd: usd,
+      montoAvanceBs: bs,
+      cargoUsd,
+      totalCargoUsd,
+      movimientoIds: [],
+      descripcion: conceptoFinal,
+      origenFondosTipo: origenFondos,
+      egresosCaja,
+    })
+
+    reset()
+    onClose()
   }
 
   return (

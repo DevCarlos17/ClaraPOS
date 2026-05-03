@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Handshake, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
-import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
-import { createMovimientoManualMulti } from '@/features/caja/hooks/use-movimientos-manual'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 
 // ─── Types ────────────────────────────────────────────────────
@@ -19,15 +17,17 @@ export interface PrestamoAplicado {
   interesUsd: number
   totalDeudaUsd: number
   diasPlazo: number
-  movimientoIds: string[] // IDs de movimientos_metodo_cobro creados
+  movimientoIds: string[] // siempre [] - egresos se crean al confirmar la factura
   descripcion: string
   origenFondosTipo: OrigenFondos
+  // Datos raw para crear los egresos de caja al finalizar la factura
+  egresosCaja: Array<{ metodo_cobro_id: string; monto: number }>
 }
 
 interface PrestamoModalProps {
   isOpen: boolean
   onClose: () => void
-  sesionCajaId: string
+  sesionCajaId?: string
   tasaActual: number
   /** Nombre del cliente actual en el POS (solo display) */
   clienteNombre?: string
@@ -44,18 +44,17 @@ const DEFAULT_PORCENTAJE_INTERES = 5
 
 function FormPrestamo({
   onClose,
-  sesionCajaId,
+  sesionCajaId: _sesionCajaId,
   tasaActual,
   clienteNombre,
   onAplicado,
 }: {
   onClose: () => void
-  sesionCajaId: string
+  sesionCajaId?: string
   tasaActual: number
   clienteNombre?: string
   onAplicado?: (prestamo: PrestamoAplicado) => void
 }) {
-  const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
   const { isOwner, hasPermission } = usePermissions()
 
@@ -72,7 +71,7 @@ function FormPrestamo({
 
   const [concepto, setConcepto] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const [submitting, setSubmitting] = useState(false)
+  const submitting = false
 
   // Solo pueden modificar dias quienes tengan permiso
   const puedeModificarDias = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)
@@ -103,7 +102,7 @@ function FormPrestamo({
     setErrors({})
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
 
@@ -135,51 +134,33 @@ function FormPrestamo({
       return
     }
 
-    if (!user) return
-
     const conceptoFinal = concepto.trim() ||
       `Prestamo${clienteNombre ? ` - ${clienteNombre}` : ''} - ${dias} dias`
 
-    setSubmitting(true)
-    try {
-      let movimientoIds: string[] = []
-
-      if (origenFondos === 'CAJA') {
-        const entradas: Array<{ metodo_cobro_id: string; monto: number }> = []
-        if (usd > 0 && efectivoUsd) entradas.push({ metodo_cobro_id: efectivoUsd.id, monto: usd })
-        if (bs > 0 && efectivoBs) entradas.push({ metodo_cobro_id: efectivoBs.id, monto: bs })
-        movimientoIds = await createMovimientoManualMulti({
-          entradas,
-          origen: 'PRESTAMO',
-          concepto: conceptoFinal,
-          sesion_caja_id: sesionCajaId,
-          empresa_id: user.empresa_id!,
-          usuario_id: user.id,
-        })
-      }
-
-      toast.success(
-        `Prestamo registrado. Deuda: ${formatUsd(totalDeudaUsd)} en ${dias} dias`
-      )
-
-      onAplicado?.({
-        montoPrestamoUsd: usd,
-        montoPrestamoBs: bs,
-        interesUsd,
-        totalDeudaUsd,
-        diasPlazo: dias,
-        movimientoIds,
-        descripcion: conceptoFinal,
-        origenFondosTipo: origenFondos,
-      })
-
-      reset()
-      onClose()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Error inesperado')
-    } finally {
-      setSubmitting(false)
+    const egresosCaja: Array<{ metodo_cobro_id: string; monto: number }> = []
+    if (origenFondos === 'CAJA') {
+      if (usd > 0 && efectivoUsd) egresosCaja.push({ metodo_cobro_id: efectivoUsd.id, monto: usd })
+      if (bs > 0 && efectivoBs) egresosCaja.push({ metodo_cobro_id: efectivoBs.id, monto: bs })
     }
+
+    toast.success(
+      `Prestamo agregado a la factura. Deuda: ${formatUsd(totalDeudaUsd)} en ${dias} dias`
+    )
+
+    onAplicado?.({
+      montoPrestamoUsd: usd,
+      montoPrestamoBs: bs,
+      interesUsd,
+      totalDeudaUsd,
+      diasPlazo: dias,
+      movimientoIds: [],
+      descripcion: conceptoFinal,
+      origenFondosTipo: origenFondos,
+      egresosCaja,
+    })
+
+    reset()
+    onClose()
   }
 
   return (

@@ -98,10 +98,12 @@ export function PosTerminal() {
   const pagosRef = useRef(pagos)
   const clienteIdRef = useRef(clienteId)
   const clienteNombreRef = useRef(clienteNombre)
+  const cargosEspecialesRef = useRef(cargosEspeciales)
   lineasRef.current = lineas
   pagosRef.current = pagos
   clienteIdRef.current = clienteId
   clienteNombreRef.current = clienteNombre
+  cargosEspecialesRef.current = cargosEspeciales
 
   // Refs para atajos de teclado y flujo de foco
   const productoBuscadorRef = useRef<ProductoBuscadorHandle>(null)
@@ -155,12 +157,13 @@ export function PosTerminal() {
       borrador &&
       borrador.usuarioId === user.id &&
       borrador.empresaId === user.empresa_id &&
-      borrador.lineas.length > 0
+      (borrador.lineas.length > 0 || (borrador.cargosEspeciales ?? []).length > 0)
     ) {
       setClienteId(borrador.clienteId)
       setClienteNombre(borrador.clienteNombre === 'Sin cliente' ? '' : borrador.clienteNombre)
       setLineas(borrador.lineas)
       setPagos(borrador.pagos)
+      setCargosEspeciales(borrador.cargosEspeciales ?? [])
       toast.info('Se restauro tu factura en proceso')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -169,36 +172,41 @@ export function PosTerminal() {
   // --- Guardar borrador en cada cambio significativo ---
   useEffect(() => {
     if (!user?.empresa_id) return
-    if (lineas.length === 0 && pagos.length === 0) return
+    if (lineas.length === 0 && pagos.length === 0 && cargosEspeciales.length === 0) return
     esperaStore.guardarBorrador({
       clienteId,
       clienteNombre: clienteNombre || 'Sin cliente',
       lineas: [...lineas],
       pagos: [...pagos],
+      cargosEspeciales: [...cargosEspeciales],
       tasa: tasaValor,
       usuarioId: user.id,
       empresaId: user.empresa_id,
       ultimaActualizacion: localNow(),
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lineas, pagos, clienteId, clienteNombre])
+  }, [lineas, pagos, cargosEspeciales, clienteId, clienteNombre])
 
   // --- Bloqueador de navegacion: auto-guarda en Facturas Guardadas antes de navegar ---
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   useBlocker(async (): Promise<any> => {
     const lineasActuales = lineasRef.current
     const pagosActuales = pagosRef.current
-    if (lineasActuales.length > 0 && user) {
+    const cargosActuales = cargosEspecialesRef.current
+    if ((lineasActuales.length > 0 || cargosActuales.length > 0) && user) {
       const totalLineasUsd = lineasActuales.reduce((s, l) => s + l.cantidad * l.precio_unitario_usd, 0)
+      const totalCargosUsd = cargosActuales.reduce((s, c) => s + c.montoCargoUsd, 0)
+      const totalUsdFactura = totalLineasUsd + totalCargosUsd
       const factura: FacturaEnEspera = {
         id: uuidv4(),
         clienteId: clienteIdRef.current,
         clienteNombre: clienteNombreRef.current || 'Sin cliente',
         lineas: [...lineasActuales],
         pagos: [...pagosActuales],
+        cargosEspeciales: [...cargosActuales],
         tasa: tasaValor,
-        totalUsd: totalLineasUsd,
-        totalBs: usdToBs(totalLineasUsd, tasaValor),
+        totalUsd: totalUsdFactura,
+        totalBs: usdToBs(totalUsdFactura, tasaValor),
         itemsCount: lineasActuales.reduce((s, l) => s + l.cantidad, 0),
         usuarioId: user.id,
         usuarioNombre: user.nombre ?? user.email ?? '',
@@ -209,7 +217,7 @@ export function PosTerminal() {
       toast.info('Factura guardada en "Facturas Guardadas". Puedes recuperarla luego.')
     }
     return false // Permitir la navegacion
-  }, lineas.length > 0 || pagos.length > 0)
+  }, lineas.length > 0 || pagos.length > 0 || cargosEspeciales.length > 0)
 
   // --- Accion protegida ---
   const handleProtectedAction = (
@@ -353,6 +361,7 @@ export function PosTerminal() {
       clienteNombre: clienteNombre || 'Sin cliente',
       lineas: [...lineas],
       pagos: [...pagos],
+      cargosEspeciales: [...cargosEspeciales],
       tasa: tasaValor,
       totalUsd,
       totalBs,
@@ -380,6 +389,7 @@ export function PosTerminal() {
     setClienteNombre(recuperada.clienteNombre === 'Sin cliente' ? '' : recuperada.clienteNombre)
     setLineas(recuperada.lineas)
     setPagos(recuperada.pagos)
+    setCargosEspeciales(recuperada.cargosEspeciales ?? [])
     toast.success('Factura recuperada')
   }
 
@@ -495,7 +505,9 @@ export function PosTerminal() {
         tipo: 'AVANCE',
         descripcion: avance.descripcion,
         montoCargoUsd: avance.totalCargoUsd,
-        movimientoIds: avance.movimientoIds,
+        movimientoIds: [],
+        origenFondosTipo: avance.origenFondosTipo,
+        egresosCaja: avance.egresosCaja,
       },
     ])
   }
@@ -507,10 +519,11 @@ export function PosTerminal() {
         tipo: 'PRESTAMO',
         descripcion: prestamo.descripcion,
         montoCargoUsd: prestamo.totalDeudaUsd,
-        movimientoIds: prestamo.movimientoIds,
+        movimientoIds: [],
         diasPlazo: prestamo.diasPlazo,
         clienteId: clienteId ?? undefined,
         origenFondosTipo: prestamo.origenFondosTipo,
+        egresosCaja: prestamo.egresosCaja,
       },
     ])
   }

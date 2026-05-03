@@ -23,10 +23,12 @@ export interface CargoEspecial {
   tipo: 'AVANCE' | 'PRESTAMO'
   descripcion: string
   montoCargoUsd: number   // lo que el cliente adeuda (avance+fee o prestamo+interes)
-  movimientoIds: string[] // IDs de movimientos_metodo_cobro ya creados (para linkear)
+  movimientoIds: string[] // IDs de movimientos_metodo_cobro ya creados (legado)
   diasPlazo?: number      // solo PRESTAMO: plazo en dias para vencimiento_cobrar
   clienteId?: string      // para crear vencimiento_cobrar
   origenFondosTipo?: string  // CAJA | EFECTIVO_EMPRESA | BANCO
+  // Datos raw para crear los egresos de caja al finalizar la factura
+  egresosCaja?: Array<{ metodo_cobro_id: string; monto: number }>
 }
 
 export interface CrearVentaParams {
@@ -527,15 +529,58 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       ])
     }
 
-    // 7b. Linkear movimientos de cargos especiales a esta venta + vencimientos prestamo
+    // 7b. Crear egresos de caja para cargos especiales + vencimientos prestamo
     if (cargosEspeciales.length > 0) {
       for (const cargo of cargosEspeciales) {
-        // Vincular cada movimiento_metodo_cobro al doc de venta
-        for (const movId of cargo.movimientoIds) {
-          await tx.execute(
-            'UPDATE movimientos_metodo_cobro SET doc_origen_id = ?, doc_origen_ref = ? WHERE id = ?',
-            [ventaId, `VEN-${nroFactura}`, movId]
-          )
+        // Nuevo flujo: crear movimientos_metodo_cobro al finalizar la factura
+        if (cargo.egresosCaja && cargo.egresosCaja.length > 0) {
+          for (const entrada of cargo.egresosCaja) {
+            if (entrada.monto <= 0) continue
+
+            const metodoResult = await tx.execute(
+              'SELECT saldo_actual FROM metodos_cobro WHERE id = ? AND empresa_id = ?',
+              [entrada.metodo_cobro_id, empresa_id]
+            )
+            if (!metodoResult.rows?.length) throw new Error('Metodo de cobro no encontrado')
+
+            const saldoActual = parseFloat(
+              (metodoResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+            )
+            if (saldoActual < entrada.monto) {
+              throw new Error(
+                `Saldo insuficiente en caja para ${cargo.tipo === 'AVANCE' ? 'avance' : 'prestamo'}. ` +
+                `Disponible: ${saldoActual.toFixed(2)}, Solicitado: ${entrada.monto.toFixed(2)}`
+              )
+            }
+            const saldoNuevo = Number((saldoActual - entrada.monto).toFixed(2))
+            const movId = uuidv4()
+            await tx.execute(
+              `INSERT INTO movimientos_metodo_cobro
+                 (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                  doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+               VALUES (?, ?, ?, 'EGRESO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                movId, empresa_id, entrada.metodo_cobro_id,
+                cargo.tipo,
+                entrada.monto.toFixed(2), saldoActual.toFixed(2), saldoNuevo.toFixed(2),
+                ventaId, `VEN-${nroFactura}`,
+                cargo.descripcion,
+                sesion_caja_id ?? null, now, now, usuario_id,
+              ]
+            )
+            await tx.execute(
+              'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+              [saldoNuevo.toFixed(2), now, entrada.metodo_cobro_id]
+            )
+          }
+        } else {
+          // Flujo legado: vincular movimientos ya creados previamente
+          for (const movId of cargo.movimientoIds) {
+            await tx.execute(
+              'UPDATE movimientos_metodo_cobro SET doc_origen_id = ?, doc_origen_ref = ? WHERE id = ?',
+              [ventaId, `VEN-${nroFactura}`, movId]
+            )
+          }
         }
 
         // Para PRESTAMO: crear vencimiento_cobrar
@@ -551,16 +596,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 origen_fondos_tipo, created_at, updated_at)
              VALUES (?, ?, ?, ?, 1, ?, ?, '0.00', ?, 'PENDIENTE', ?, ?, ?)`,
             [
-              vencId,
-              empresa_id,
-              ventaId,
-              cliente_id,
-              fechaVencStr,
-              cargo.montoCargoUsd.toFixed(2),
-              cargo.montoCargoUsd.toFixed(2),
-              cargo.origenFondosTipo ?? 'CAJA',
-              now,
-              now,
+              vencId, empresa_id, ventaId, cliente_id, fechaVencStr,
+              cargo.montoCargoUsd.toFixed(2), cargo.montoCargoUsd.toFixed(2),
+              cargo.origenFondosTipo ?? 'CAJA', now, now,
             ]
           )
         }
