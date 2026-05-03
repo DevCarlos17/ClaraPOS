@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { MagnifyingGlass } from '@phosphor-icons/react'
+import { MagnifyingGlass, CheckSquare, Square } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
@@ -13,6 +13,11 @@ import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
 import { CuadreMetodoModal } from './cuadre-metodo-modal'
 import { CuadreDeptoModal } from './cuadre-depto-modal'
+import { CuadreTotalesFiscales } from './cuadre-totales-fiscales'
+import { CuadreConteoFisico } from './cuadre-conteo-fisico'
+import { CuadreDetallePagos } from './cuadre-detalle-pagos'
+import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
+import { CuadreBusquedaFacturas } from './cuadre-busqueda-facturas'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
@@ -24,7 +29,7 @@ export function CuadrePage() {
   // Funnel state
   const [fecha, setFecha] = useState(todayStr)
   const [cajaId, setCajaId] = useState<string | null>(null)
-  const [sesionCajaId, setSesionCajaId] = useState<string | null>(null)
+  const [sesionCajaIds, setSesionCajaIds] = useState<string[]>([])
 
   // Consulted state
   const [consulted, setConsulted] = useState(false)
@@ -42,13 +47,13 @@ export function CuadrePage() {
   const { tasaPromedio, tasaCount } = useTasaDelDia(activeFilters?.fecha ?? null)
 
   const handleConsultar = useCallback(() => {
-    setActiveFilters({ fecha, cajaId, sesionCajaId })
+    setActiveFilters({ fecha, cajaId, sesionCajaIds })
     setConsulted(true)
-  }, [fecha, cajaId, sesionCajaId])
+  }, [fecha, cajaId, sesionCajaIds])
 
   const handleFechaChange = useCallback((newFecha: string) => {
     setFecha(newFecha)
-    setSesionCajaId(null)
+    setSesionCajaIds([])
     setConsulted(false)
     setActiveFilters(null)
   }, [])
@@ -56,21 +61,40 @@ export function CuadrePage() {
   const handleCajaChange = useCallback((newCajaId: string) => {
     const val = newCajaId === '' ? null : newCajaId
     setCajaId(val)
-    setSesionCajaId(null)
+    setSesionCajaIds([])
     setConsulted(false)
     setActiveFilters(null)
   }, [])
 
-  const handleSesionChange = useCallback((newSesionId: string) => {
-    const val = newSesionId === '' ? null : newSesionId
-    setSesionCajaId(val)
+  const toggleSesion = useCallback((sesionId: string) => {
+    setSesionCajaIds((prev) => {
+      const set = new Set(prev)
+      if (set.has(sesionId)) set.delete(sesionId)
+      else set.add(sesionId)
+      return Array.from(set)
+    })
     setConsulted(false)
     setActiveFilters(null)
   }, [])
+
+  const toggleAllSesiones = useCallback(() => {
+    setSesionCajaIds((prev) =>
+      prev.length === sesiones.length ? [] : sesiones.map((s) => s.id)
+    )
+    setConsulted(false)
+    setActiveFilters(null)
+  }, [sesiones])
+
+  function getSesionLabel(s: { status: string; fecha_apertura: string; usuario_nombre: string | null }) {
+    const hora = s.fecha_apertura.substring(11, 16)
+    const estado = s.status === 'ABIERTA' ? 'Abierta' : 'Cerrada'
+    const user = s.usuario_nombre ? ` · ${s.usuario_nombre}` : ''
+    return `${hora}${user} (${estado})`
+  }
 
   return (
     <div className="space-y-6">
-      <PageHeader titulo="Cuadre de Caja" descripcion="Resumen de operaciones del dia">
+      <PageHeader titulo="Cuadre de Caja" descripcion="Resumen de operaciones y cierre de caja">
         {/* Tasa del dia */}
         {consulted && tasaCount > 0 && (
           <div className="text-right text-xs mr-2">
@@ -84,60 +108,95 @@ export function CuadrePage() {
       </PageHeader>
 
       {/* Funnel bar */}
-      <div className="flex flex-wrap items-end gap-3 rounded-2xl bg-card shadow-lg p-4">
-        {/* Fecha */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-muted-foreground">Fecha</label>
-          <input
-            type="date"
-            value={fecha}
-            onChange={(e) => handleFechaChange(e.target.value)}
-            className="rounded-md border border-input bg-white px-3 py-2 text-sm"
-          />
-        </div>
-
-        {/* Caja */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-muted-foreground">Caja</label>
-          <NativeSelect
-            value={cajaId ?? ''}
-            onChange={(e) => handleCajaChange(e.target.value)}
-            className="min-w-[160px]"
-          >
-            <option value="">Todas las cajas</option>
-            {cajas.map((c) => (
-              <option key={c.id} value={c.id}>{c.nombre}</option>
-            ))}
-          </NativeSelect>
-        </div>
-
-        {/* Sesion */}
-        {cajaId && (
+      <div className="rounded-2xl bg-card shadow-lg p-4 space-y-3">
+        <div className="flex flex-wrap items-end gap-3">
+          {/* Fecha */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground">Sesion</label>
+            <label className="text-xs font-medium text-muted-foreground">Fecha</label>
+            <input
+              type="date"
+              value={fecha}
+              onChange={(e) => handleFechaChange(e.target.value)}
+              className="rounded-md border border-input bg-white px-3 py-2 text-sm"
+            />
+          </div>
+
+          {/* Caja */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-muted-foreground">Caja</label>
             <NativeSelect
-              value={sesionCajaId ?? ''}
-              onChange={(e) => handleSesionChange(e.target.value)}
-              className="min-w-[200px]"
+              value={cajaId ?? ''}
+              onChange={(e) => handleCajaChange(e.target.value)}
+              className="min-w-[160px]"
             >
-              <option value="">Todas las sesiones</option>
-              {sesiones.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.fecha_apertura.substring(11, 16)} - {s.status}
-                </option>
+              <option value="">Todas las cajas</option>
+              {cajas.map((c) => (
+                <option key={c.id} value={c.id}>{c.nombre}</option>
               ))}
             </NativeSelect>
           </div>
-        )}
 
-        {/* Consultar button */}
-        <button
-          onClick={handleConsultar}
-          className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          <MagnifyingGlass className="w-4 h-4" />
-          Consultar
-        </button>
+          {/* Consultar button */}
+          <button
+            onClick={handleConsultar}
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            <MagnifyingGlass className="w-4 h-4" />
+            Consultar
+          </button>
+        </div>
+
+        {/* Multi-session selector */}
+        {cajaId && sesiones.length > 0 && (
+          <div>
+            <div className="flex items-center gap-2 mb-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                Sesiones del dia ({sesiones.length})
+              </p>
+              <button
+                type="button"
+                onClick={toggleAllSesiones}
+                className="flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                {sesionCajaIds.length === sesiones.length ? (
+                  <CheckSquare size={12} />
+                ) : (
+                  <Square size={12} />
+                )}
+                {sesionCajaIds.length === sesiones.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {sesiones.map((s) => {
+                const checked = sesionCajaIds.includes(s.id)
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => toggleSesion(s.id)}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs border transition-colors ${
+                      checked
+                        ? 'bg-primary/10 border-primary/50 text-primary font-medium'
+                        : 'bg-background border-input text-muted-foreground hover:border-primary/30'
+                    }`}
+                  >
+                    {checked ? (
+                      <CheckSquare size={12} weight="fill" />
+                    ) : (
+                      <Square size={12} />
+                    )}
+                    {getSesionLabel(s)}
+                  </button>
+                )
+              })}
+            </div>
+            {sesionCajaIds.length === 0 && (
+              <p className="text-xs text-muted-foreground mt-1">
+                Sin sesion seleccionada = todas las sesiones de la caja en la fecha
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -155,11 +214,23 @@ export function CuadrePage() {
             onClickCxc={() => setCxcOpen(true)}
           />
 
-          {/* Content grid */}
+          {/* Fiscal + Dept chart */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <CuadreTotalesFiscales
+              filters={activeFilters}
+              tasaDelDia={tasaPromedio}
+            />
             <VentasDeptChart
               filters={activeFilters}
               onDeptoClick={(nombre) => setDeptoModal(nombre)}
+            />
+          </div>
+
+          {/* Physical count + Payment method summary */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <CuadreConteoFisico
+              filters={activeFilters}
+              tasaDelDia={tasaPromedio}
             />
             <PagosResumen
               filters={activeFilters}
@@ -171,6 +242,15 @@ export function CuadrePage() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <TopProductos filters={activeFilters} />
             <CuadreTopGanancias filters={activeFilters} />
+          </div>
+
+          {/* Detail sections (expandable) */}
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+              Detalle del periodo
+            </h2>
+            <CuadreDetallePagos filters={activeFilters} />
+            <CuadreDetalleFacturas filters={activeFilters} />
           </div>
 
           {/* Modals */}
@@ -194,6 +274,14 @@ export function CuadrePage() {
           )}
         </>
       )}
+
+      {/* Invoice search — always visible */}
+      <div className="space-y-3">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+          Herramienta de consulta
+        </h2>
+        <CuadreBusquedaFacturas />
+      </div>
     </div>
   )
 }

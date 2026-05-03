@@ -26,7 +26,7 @@ export function DashboardKpiCards() {
   const { totalVentasUsd, isLoading: loadingVentas } = useVentasDelDia({
     fecha,
     cajaId: null,
-    sesionCajaId: null,
+    sesionCajaIds: [],
   });
   const { tasa, tasaValor, isLoading: loadingTasa } = useTasaActual();
   const { valorTotal, stockCritico } = useResumenInventario();
