@@ -31,6 +31,9 @@ interface AvanceModalProps {
   clienteNombre?: string
   /** Callback cuando el avance es aplicado exitosamente */
   onAplicado?: (avance: AvanceAplicado) => void
+  /** Egresos de caja ya comprometidos en esta factura (aun no debitados) */
+  pendingCajaUsd?: number
+  pendingCajaBs?: number
 }
 
 // ─── Utilidades ───────────────────────────────────────────────
@@ -56,12 +59,16 @@ function FormAvance({
   tasaActual,
   clienteNombre,
   onAplicado,
+  pendingCajaUsd = 0,
+  pendingCajaBs = 0,
 }: {
   onClose: () => void
   sesionCajaId?: string
   tasaActual: number
   clienteNombre?: string
   onAplicado?: (avance: AvanceAplicado) => void
+  pendingCajaUsd?: number
+  pendingCajaBs?: number
 }) {
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
 
@@ -82,6 +89,10 @@ function FormAvance({
   // Metodos de efectivo disponibles
   const efectivoUsd = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
   const efectivoBs = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
+
+  // Saldo disponible real = saldo_actual - egresos pendientes en esta factura
+  const dispUsd = Math.max(0, parseFloat(efectivoUsd?.saldo_actual || '0') - pendingCajaUsd)
+  const dispBs = Math.max(0, parseFloat(efectivoBs?.saldo_actual || '0') - pendingCajaBs)
 
   const usd = parseFloat(montoUsd) || 0
   const bs = parseFloat(montoBs) || 0
@@ -113,13 +124,23 @@ function FormAvance({
       newErrors.concepto = 'El concepto debe tener al menos 3 caracteres'
     }
     if (origenFondos === 'CAJA') {
-      if (usd > 0 && !efectivoUsd) {
-        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
-          'No hay un metodo EFECTIVO en USD configurado'
+      if (usd > 0) {
+        if (!efectivoUsd) {
+          newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+            'No hay un metodo EFECTIVO en USD configurado'
+        } else if (usd > dispUsd + 0.01) {
+          newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+            `Saldo insuficiente en USD. Disponible: ${formatUsd(dispUsd)}`
+        }
       }
-      if (bs > 0 && !efectivoBs) {
-        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
-          'No hay un metodo EFECTIVO en Bs configurado'
+      if (bs > 0) {
+        if (!efectivoBs) {
+          newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+            'No hay un metodo EFECTIVO en Bs configurado'
+        } else if (bs > dispBs + 0.01) {
+          newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+            `Saldo insuficiente en Bs. Disponible: ${formatBs(dispBs)}`
+        }
       }
     }
 
@@ -208,7 +229,7 @@ function FormAvance({
               <label className="text-xs font-medium text-gray-600">USD</label>
               {origenFondos === 'CAJA' && efectivoUsd && (
                 <span className="text-xs text-muted-foreground">
-                  Disp: {formatUsd(parseFloat(efectivoUsd.saldo_actual || '0'))}
+                  Disp: {formatUsd(dispUsd)}
                 </span>
               )}
             </div>
@@ -234,7 +255,7 @@ function FormAvance({
               <label className="text-xs font-medium text-gray-600">Bs</label>
               {origenFondos === 'CAJA' && efectivoBs && (
                 <span className="text-xs text-muted-foreground">
-                  Disp: {formatBs(parseFloat(efectivoBs.saldo_actual || '0'))}
+                  Disp: {formatBs(dispBs)}
                 </span>
               )}
             </div>
@@ -361,6 +382,8 @@ export function AvanceModal({
   tasaActual,
   clienteNombre,
   onAplicado,
+  pendingCajaUsd,
+  pendingCajaBs,
 }: AvanceModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -397,6 +420,8 @@ export function AvanceModal({
           tasaActual={tasaActual}
           clienteNombre={clienteNombre}
           onAplicado={onAplicado}
+          pendingCajaUsd={pendingCajaUsd}
+          pendingCajaBs={pendingCajaBs}
         />
       </div>
     </dialog>

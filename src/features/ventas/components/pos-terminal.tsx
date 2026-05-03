@@ -119,6 +119,20 @@ export function PosTerminal() {
   const totalBs = usdToBs(totalUsd, tasaValor)
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
+  // Egresos de caja pendientes (avances/prestamos ya en la factura, aun no debitados)
+  const efectivoUsdMetodo = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
+  const efectivoBsMetodo = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
+  const pendingCajaUsd = cargosEspeciales
+    .filter((c) => c.origenFondosTipo === 'CAJA')
+    .flatMap((c) => c.egresosCaja ?? [])
+    .filter((e) => efectivoUsdMetodo != null && e.metodo_cobro_id === efectivoUsdMetodo.id)
+    .reduce((sum, e) => sum + e.monto, 0)
+  const pendingCajaBs = cargosEspeciales
+    .filter((c) => c.origenFondosTipo === 'CAJA')
+    .flatMap((c) => c.egresosCaja ?? [])
+    .filter((e) => efectivoBsMetodo != null && e.metodo_cobro_id === efectivoBsMetodo.id)
+    .reduce((sum, e) => sum + e.monto, 0)
+
   // Calculos de pago
   const selectedMetodo = metodos.find((m) => m.id === metodoId)
   const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
@@ -422,6 +436,17 @@ export function PosTerminal() {
         )
         return
       }
+    }
+
+    // Validacion: avances no pueden quedar pendientes (no se aceptan a credito)
+    const totalAvancesUsd = cargosEspeciales
+      .filter((c) => c.tipo === 'AVANCE')
+      .reduce((sum, c) => sum + c.montoCargoUsd, 0)
+    if (totalAvancesUsd > 0.01 && totalAbonadoUsd < totalAvancesUsd - 0.01) {
+      toast.error(
+        `El avance de efectivo debe pagarse en su totalidad. Registra un pago de al menos ${formatUsd(totalAvancesUsd)}.`
+      )
+      return
     }
 
     // Validacion de stock negativo
@@ -1093,6 +1118,8 @@ export function PosTerminal() {
             tasaActual={tasaValor}
             clienteNombre={clienteNombre || undefined}
             onAplicado={handleAvanceAplicado}
+            pendingCajaUsd={pendingCajaUsd}
+            pendingCajaBs={pendingCajaBs}
           />
           <PrestamoModal
             isOpen={showPrestamoModal}
@@ -1101,6 +1128,8 @@ export function PosTerminal() {
             tasaActual={tasaValor}
             clienteNombre={clienteNombre || undefined}
             onAplicado={handlePrestamoAplicado}
+            pendingCajaUsd={pendingCajaUsd}
+            pendingCajaBs={pendingCajaBs}
           />
         </>
       )}
