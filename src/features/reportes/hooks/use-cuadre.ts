@@ -89,6 +89,7 @@ export interface VentaDeptItem {
 export interface MetodoPagoResumen {
   nombre: string
   moneda: string
+  tipo: string
   totalUsd: number
   totalOriginal: number
 }
@@ -118,6 +119,8 @@ export interface VentaAudit {
   tipo: string
   fecha: string
   status: string
+  saldo_pend_usd: string
+  metodos_pago: string | null
 }
 
 export interface DetalleCxc {
@@ -273,6 +276,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     `SELECT
        mp.id as metodo_cobro_id,
        mp.nombre,
+       mp.tipo,
        CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
        COALESCE(SUM(CAST(pg.monto_usd AS REAL)), 0) as total_usd,
        COALESCE(SUM(CAST(pg.monto AS REAL)), 0) as total_original
@@ -280,7 +284,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
      JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      WHERE ${where}
-     GROUP BY mp.id, mp.nombre, moneda
+     GROUP BY mp.id, mp.nombre, mp.tipo, moneda
      ORDER BY total_usd DESC`,
     params
   )
@@ -288,6 +292,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
   const items: (MetodoPagoResumen & { metodo_cobro_id: string })[] = (data ?? []).map((row: Record<string, unknown>) => ({
     metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
     nombre: String(row.nombre ?? ''),
+    tipo: String(row.tipo ?? ''),
     moneda: String(row.moneda ?? 'USD'),
     totalUsd: Number(Number(row.total_usd ?? 0).toFixed(2)),
     totalOriginal: Number(Number(row.total_original ?? 0).toFixed(2)),
@@ -343,8 +348,13 @@ export function useVentasAudit(filters: CuadreFilters | null) {
   const { data, isLoading } = useQuery(
     `SELECT
        v.id, v.nro_factura, v.total_usd, v.total_bs, v.tasa, v.tipo, v.fecha, v.status,
+       v.saldo_pend_usd,
        c.nombre as cliente_nombre,
-       c.identificacion as cliente_identificacion
+       c.identificacion as cliente_identificacion,
+       (SELECT GROUP_CONCAT(DISTINCT mp.nombre, ', ')
+        FROM pagos pg
+        JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+        WHERE pg.venta_id = v.id) as metodos_pago
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
      WHERE ${where}
@@ -698,6 +708,7 @@ export interface PagoDetalleCompleto {
   clienteNombre: string | null
   metodoNombre: string
   metodoCobro_id: string
+  metodoTipo: string
   moneda: string
   monto: string
   montoUsd: string
@@ -724,6 +735,7 @@ export function usePagosDetalleCompleto(filters: CuadreFilters | null) {
        v.nro_factura,
        c.nombre as cliente_nombre,
        mp.nombre as metodo_nombre,
+       mp.tipo as metodo_tipo,
        CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda
      FROM pagos pg
      LEFT JOIN ventas v ON pg.venta_id = v.id
@@ -742,6 +754,7 @@ export function usePagosDetalleCompleto(filters: CuadreFilters | null) {
     clienteNombre: row.cliente_nombre ? String(row.cliente_nombre) : null,
     metodoNombre: String(row.metodo_nombre ?? ''),
     metodoCobro_id: String(row.metodo_cobro_id ?? ''),
+    metodoTipo: String(row.metodo_tipo ?? ''),
     moneda: String(row.moneda ?? 'USD'),
     monto: String(row.monto ?? '0'),
     montoUsd: String(row.monto_usd ?? '0'),

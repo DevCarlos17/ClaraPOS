@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { CaretRight, CaretDown, MagnifyingGlass } from '@phosphor-icons/react'
+import { useState, useCallback } from 'react'
+import { CaretRight, CaretDown, MagnifyingGlass, ArrowsOutSimple, ArrowsInSimple } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import {
   useVentasAudit,
@@ -17,18 +17,31 @@ function formatHora(fechaStr: string): string {
   }
 }
 
-function FacturaRow({ venta, showProductos }: {
-  venta: { id: string; nro_factura: string; cliente_nombre: string; cliente_identificacion: string; total_usd: string; total_bs: string; tipo: string; status: string; fecha: string }
-  showProductos: boolean
+function FacturaRow({ venta, expanded, onToggle }: {
+  venta: {
+    id: string
+    nro_factura: string
+    cliente_nombre: string
+    cliente_identificacion: string
+    total_usd: string
+    total_bs: string
+    tipo: string
+    status: string
+    fecha: string
+    saldo_pend_usd: string
+    metodos_pago: string | null
+  }
+  expanded: boolean
+  onToggle: () => void
 }) {
-  const [expanded, setExpanded] = useState(false)
   const { detalles, isLoading } = useDetalleVenta(expanded ? venta.id : null)
+  const saldo = parseFloat(venta.saldo_pend_usd ?? '0')
 
   return (
     <>
       <tr
         className={`border-b border-muted/50 cursor-pointer transition-colors ${expanded ? 'bg-primary/5' : 'hover:bg-muted/20'}`}
-        onClick={() => setExpanded((v) => !v)}
+        onClick={onToggle}
       >
         <td className="px-2 py-2 w-6">
           {expanded ? (
@@ -53,15 +66,17 @@ function FacturaRow({ venta, showProductos }: {
             )}
           </div>
         </td>
-        {showProductos && (
-          <td className="px-2 py-2 text-xs truncate max-w-[140px]">
-            <span className="font-medium">{venta.cliente_nombre}</span>
-            <span className="text-muted-foreground ml-1">({venta.cliente_identificacion})</span>
-          </td>
-        )}
-        {!showProductos && (
-          <td className="px-2 py-2 text-xs truncate max-w-[140px]">{venta.cliente_nombre}</td>
-        )}
+        <td className="px-2 py-2 text-xs truncate max-w-[140px]">{venta.cliente_nombre}</td>
+        <td className="px-2 py-2 text-xs text-muted-foreground truncate max-w-[120px]">
+          {venta.metodos_pago ?? '-'}
+        </td>
+        <td className="px-2 py-2 text-right text-xs tabular-nums">
+          {saldo > 0.005 ? (
+            <span className="text-red-600 font-semibold">{formatUsd(saldo)}</span>
+          ) : (
+            <span className="text-muted-foreground">-</span>
+          )}
+        </td>
         <td className="px-2 py-2 text-right text-xs text-muted-foreground tabular-nums">
           {formatBs(parseFloat(venta.total_bs))}
         </td>
@@ -73,7 +88,7 @@ function FacturaRow({ venta, showProductos }: {
       {/* Expanded product detail */}
       {expanded && (
         <tr className="bg-muted/10">
-          <td colSpan={showProductos ? 6 : 6} className="px-4 pb-2 pt-1">
+          <td colSpan={8} className="px-4 pb-2 pt-1">
             {isLoading ? (
               <div className="h-8 bg-muted rounded animate-pulse" />
             ) : detalles.length === 0 ? (
@@ -109,8 +124,7 @@ interface DetalleFacturasProps {
 
 export function CuadreDetalleFacturas({ filters }: DetalleFacturasProps) {
   const [visible, setVisible] = useState(false)
-  const [showTitular, setShowTitular] = useState(true)
-  const [showProductos, setShowProductos] = useState(false)
+  const [expandedIds, setExpandedIds] = useState(new Set<string>())
   const [busq, setBusq] = useState('')
   const { ventas, isLoading } = useVentasAudit(visible ? filters : null)
 
@@ -122,6 +136,25 @@ export function CuadreDetalleFacturas({ filters }: DetalleFacturasProps) {
           v.cliente_identificacion.toLowerCase().includes(busq.toLowerCase())
       )
     : ventas
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const allExpanded = filtradas.length > 0 && filtradas.every((v) => expandedIds.has(v.id))
+
+  const toggleAll = useCallback(() => {
+    if (allExpanded) {
+      setExpandedIds(new Set())
+    } else {
+      setExpandedIds(new Set(filtradas.map((v) => v.id)))
+    }
+  }, [allExpanded, filtradas])
 
   return (
     <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
@@ -149,38 +182,40 @@ export function CuadreDetalleFacturas({ filters }: DetalleFacturasProps) {
 
       {visible && (
         <div className="px-5 pb-5">
-          {/* Options row */}
-          <div className="flex flex-wrap items-center gap-4 mb-3">
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+          {/* Controls row */}
+          <div className="flex items-center gap-3 mb-3">
+            {/* Search */}
+            <div className="relative flex-1">
+              <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
               <input
-                type="checkbox"
-                checked={showTitular}
-                onChange={(e) => setShowTitular(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-gray-300 text-primary"
+                type="text"
+                placeholder="Buscar por nro. factura, nombre o identificacion..."
+                value={busq}
+                onChange={(e) => setBusq(e.target.value)}
+                className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-sm"
               />
-              Mostrar titular e identificacion
-            </label>
-            <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showProductos}
-                onChange={(e) => setShowProductos(e.target.checked)}
-                className="h-3.5 w-3.5 rounded border-gray-300 text-primary"
-              />
-              Mostrar detalle de productos (click en fila)
-            </label>
-          </div>
+            </div>
 
-          {/* Search */}
-          <div className="relative mb-3">
-            <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <input
-              type="text"
-              placeholder="Buscar por nro. factura, nombre o identificacion..."
-              value={busq}
-              onChange={(e) => setBusq(e.target.value)}
-              className="w-full rounded-md border border-input bg-white pl-8 pr-3 py-1.5 text-sm"
-            />
+            {/* Expand / collapse all button */}
+            {filtradas.length > 0 && (
+              <button
+                type="button"
+                onClick={toggleAll}
+                className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors whitespace-nowrap"
+              >
+                {allExpanded ? (
+                  <>
+                    <ArrowsInSimple size={13} />
+                    Colapsar todo
+                  </>
+                ) : (
+                  <>
+                    <ArrowsOutSimple size={13} />
+                    Expandir todo
+                  </>
+                )}
+              </button>
+            )}
           </div>
 
           {isLoading ? (
@@ -202,9 +237,9 @@ export function CuadreDetalleFacturas({ filters }: DetalleFacturasProps) {
                       <th className="text-left px-2 py-2 font-medium text-xs w-6"></th>
                       <th className="text-left px-2 py-2 font-medium text-xs">Hora</th>
                       <th className="text-left px-2 py-2 font-medium text-xs">Factura</th>
-                      <th className="text-left px-2 py-2 font-medium text-xs">
-                        {showTitular ? 'Titular' : 'Cliente'}
-                      </th>
+                      <th className="text-left px-2 py-2 font-medium text-xs">Cliente</th>
+                      <th className="text-left px-2 py-2 font-medium text-xs">Pagado con</th>
+                      <th className="text-right px-2 py-2 font-medium text-xs">Credito</th>
                       <th className="text-right px-2 py-2 font-medium text-xs">Bs</th>
                       <th className="text-right px-2 py-2 font-medium text-xs">USD</th>
                     </tr>
@@ -214,7 +249,8 @@ export function CuadreDetalleFacturas({ filters }: DetalleFacturasProps) {
                       <FacturaRow
                         key={v.id}
                         venta={v}
-                        showProductos={showProductos}
+                        expanded={expandedIds.has(v.id)}
+                        onToggle={() => toggleExpanded(v.id)}
                       />
                     ))}
                   </tbody>

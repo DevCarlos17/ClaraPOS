@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { Calculator, ArrowsClockwise } from '@phosphor-icons/react'
+import { Calculator, ArrowsClockwise, CheckCircle } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { usePagosPorMetodo, type CuadreFilters } from '../hooks/use-cuadre'
 import { CuadreBilletesModal } from './cuadre-billetes-modal'
@@ -7,9 +7,10 @@ import { CuadreBilletesModal } from './cuadre-billetes-modal'
 interface ConteoFisicoProps {
   filters: CuadreFilters
   tasaDelDia: number
+  verifiedAmountsByMetodoId: Record<string, number>
 }
 
-export function CuadreConteoFisico({ filters, tasaDelDia }: ConteoFisicoProps) {
+export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetodoId }: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   // fisico[metodoNombre] = string amount entered by user (in the method's own currency)
   const [fisico, setFisico] = useState<Record<string, string>>({})
@@ -63,6 +64,7 @@ export function CuadreConteoFisico({ filters, tasaDelDia }: ConteoFisicoProps) {
 
       <div className="space-y-3">
         {metodos.map((m) => {
+          const esEfectivo = m.tipo === 'EFECTIVO'
           const sistemaUsd = m.totalUsd
           const sistemaBs = m.totalOriginal
           const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
@@ -74,6 +76,9 @@ export function CuadreConteoFisico({ filters, tasaDelDia }: ConteoFisicoProps) {
           const difUsd = fisicoUsd - sistemaUsd
           const hasFisico = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
 
+          // Verified amount for non-EFECTIVO methods
+          const verifiedUsd = verifiedAmountsByMetodoId[m.metodo_cobro_id] ?? 0
+
           totalSistema += sistemaUsd
           if (hasFisico) totalFisico += fisicoUsd
 
@@ -83,7 +88,14 @@ export function CuadreConteoFisico({ filters, tasaDelDia }: ConteoFisicoProps) {
             <div key={m.nombre} className="rounded-lg border bg-background p-3 space-y-2">
               {/* Method name + system total */}
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">{m.nombre}</span>
+                <div>
+                  <span className="text-sm font-medium">{m.nombre}</span>
+                  {!esEfectivo && (
+                    <span className="ml-2 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
+                      {m.tipo.replace('_', ' ')}
+                    </span>
+                  )}
+                </div>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Sistema</p>
                   <p className="text-sm font-bold tabular-nums">
@@ -112,16 +124,38 @@ export function CuadreConteoFisico({ filters, tasaDelDia }: ConteoFisicoProps) {
                   />
                 </div>
 
-                {/* Bill counter button */}
-                <button
-                  type="button"
-                  title="Contar billetes"
-                  onClick={() => setBilletesModal({ nombre: m.nombre, moneda: m.moneda === 'BS' ? 'BS' : 'USD' })}
-                  className="mt-5 p-2 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                >
-                  <Calculator size={16} />
-                </button>
+                {/* Bill counter button — only for EFECTIVO */}
+                {esEfectivo && (
+                  <button
+                    type="button"
+                    title="Contar billetes"
+                    onClick={() => setBilletesModal({ nombre: m.nombre, moneda: m.moneda === 'BS' ? 'BS' : 'USD' })}
+                    className="mt-5 p-2 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                  >
+                    <Calculator size={16} />
+                  </button>
+                )}
+
+                {/* Use verified amount button — for non-EFECTIVO methods */}
+                {!esEfectivo && verifiedUsd > 0.001 && (
+                  <button
+                    type="button"
+                    title="Usar total verificado en Detalle de pagos"
+                    onClick={() => setFisicoValue(m.nombre, String(verifiedUsd.toFixed(2)))}
+                    className="mt-5 p-2 rounded-md border border-green-300 hover:bg-green-50 transition-colors text-green-700"
+                  >
+                    <CheckCircle size={16} />
+                  </button>
+                )}
               </div>
+
+              {/* Verified hint for non-EFECTIVO */}
+              {!esEfectivo && verifiedUsd > 0.001 && (
+                <p className="text-xs text-green-700 flex items-center gap-1">
+                  <CheckCircle size={11} weight="fill" />
+                  {formatUsd(verifiedUsd)} verificado(s) en detalle de pagos
+                </p>
+              )}
 
               {/* Conversion + difference */}
               {hasFisico && (

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { CheckCircle, Circle, MagnifyingGlass } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { usePagosDetalleCompleto, type CuadreFilters } from '../hooks/use-cuadre'
@@ -15,13 +15,17 @@ function formatHora(fechaStr: string): string {
 
 interface DetallePagosProps {
   filters: CuadreFilters
+  onVerifiedChange: (amounts: Record<string, number>) => void
 }
 
-export function CuadreDetallePagos({ filters }: DetallePagosProps) {
+export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosProps) {
   const [visible, setVisible] = useState(false)
   const [verificados, setVerificados] = useState(new Set<string>())
   const [busq, setBusq] = useState('')
-  const { pagos, isLoading } = usePagosDetalleCompleto(visible ? filters : null)
+  const { pagos: todosPagos, isLoading } = usePagosDetalleCompleto(visible ? filters : null)
+
+  // Filter to non-EFECTIVO payments only
+  const pagos = todosPagos.filter((p) => p.metodoTipo !== 'EFECTIVO')
 
   const toggleVerificado = useCallback((id: string) => {
     setVerificados((prev) => {
@@ -31,6 +35,20 @@ export function CuadreDetallePagos({ filters }: DetallePagosProps) {
       return next
     })
   }, [])
+
+  // Emit verified amounts by metodo_cobro_id whenever verificados or pagos change.
+  // Only runs when visible so closing the section preserves last reported amounts in parent.
+  useEffect(() => {
+    if (!visible) return
+    const amounts: Record<string, number> = {}
+    pagos.forEach((p) => {
+      if (verificados.has(p.id)) {
+        const key = p.metodoCobro_id
+        amounts[key] = (amounts[key] ?? 0) + parseFloat(p.montoUsd)
+      }
+    })
+    onVerifiedChange(amounts)
+  }, [verificados, pagos, onVerifiedChange, visible])
 
   const filtrados = busq.trim()
     ? pagos.filter(
@@ -42,7 +60,7 @@ export function CuadreDetallePagos({ filters }: DetallePagosProps) {
       )
     : pagos
 
-  const totalVerificado = filtrados
+  const totalVerificado = pagos
     .filter((p) => verificados.has(p.id))
     .reduce((sum, p) => sum + parseFloat(p.montoUsd), 0)
 
@@ -67,6 +85,7 @@ export function CuadreDetallePagos({ filters }: DetallePagosProps) {
               {pagos.length} transacciones
             </span>
           )}
+          <span className="text-xs text-muted-foreground">(transferencias y otros)</span>
         </div>
         {visible && verificados.size > 0 && (
           <span className="text-xs text-green-600 font-medium">
@@ -97,7 +116,7 @@ export function CuadreDetallePagos({ filters }: DetallePagosProps) {
             </div>
           ) : filtrados.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">
-              {pagos.length === 0 ? 'Sin pagos en este periodo' : 'Sin coincidencias'}
+              {pagos.length === 0 ? 'Sin pagos no-efectivo en este periodo' : 'Sin coincidencias'}
             </p>
           ) : (
             <div className="border rounded-lg overflow-hidden">

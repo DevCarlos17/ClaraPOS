@@ -5,19 +5,14 @@ import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
 import { formatTasa } from '@/lib/currency'
 import { CuadreKpiCards } from './cuadre-kpi-cards'
-import { VentasDeptChart } from './ventas-dept-chart'
 import { PagosResumen } from './pagos-resumen'
-import { TopProductos } from './top-productos'
-import { CuadreTopGanancias } from './cuadre-top-ganancias'
 import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
 import { CuadreMetodoModal } from './cuadre-metodo-modal'
-import { CuadreDeptoModal } from './cuadre-depto-modal'
 import { CuadreTotalesFiscales } from './cuadre-totales-fiscales'
 import { CuadreConteoFisico } from './cuadre-conteo-fisico'
 import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
-import { CuadreBusquedaFacturas } from './cuadre-busqueda-facturas'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
@@ -39,7 +34,14 @@ export function CuadrePage() {
   const [auditOpen, setAuditOpen] = useState(false)
   const [cxcOpen, setCxcOpen] = useState(false)
   const [metodoModal, setMetodoModal] = useState<string | null>(null)
-  const [deptoModal, setDeptoModal] = useState<string | null>(null)
+
+  // Verified non-cash payment amounts shared between CuadreDetallePagos → CuadreConteoFisico
+  // Key: metodo_cobro_id (UUID), Value: total verified USD
+  const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, number>>({})
+
+  const handleVerifiedChange = useCallback((amounts: Record<string, number>) => {
+    setVerifiedAmountsByMetodoId(amounts)
+  }, [])
 
   // Data
   const { cajas } = useCajasActivas()
@@ -214,23 +216,18 @@ export function CuadrePage() {
             onClickCxc={() => setCxcOpen(true)}
           />
 
-          {/* Fiscal + Dept chart */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <CuadreTotalesFiscales
-              filters={activeFilters}
-              tasaDelDia={tasaPromedio}
-            />
-            <VentasDeptChart
-              filters={activeFilters}
-              onDeptoClick={(nombre) => setDeptoModal(nombre)}
-            />
-          </div>
+          {/* Fiscal totals — full width */}
+          <CuadreTotalesFiscales
+            filters={activeFilters}
+            tasaDelDia={tasaPromedio}
+          />
 
           {/* Physical count + Payment method summary */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <CuadreConteoFisico
               filters={activeFilters}
               tasaDelDia={tasaPromedio}
+              verifiedAmountsByMetodoId={verifiedAmountsByMetodoId}
             />
             <PagosResumen
               filters={activeFilters}
@@ -238,18 +235,15 @@ export function CuadrePage() {
             />
           </div>
 
-          {/* Top tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <TopProductos filters={activeFilters} />
-            <CuadreTopGanancias filters={activeFilters} />
-          </div>
-
           {/* Detail sections (expandable) */}
           <div className="space-y-3">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
               Detalle del periodo
             </h2>
-            <CuadreDetallePagos filters={activeFilters} />
+            <CuadreDetallePagos
+              filters={activeFilters}
+              onVerifiedChange={handleVerifiedChange}
+            />
             <CuadreDetalleFacturas filters={activeFilters} />
           </div>
 
@@ -264,24 +258,8 @@ export function CuadrePage() {
               metodoNombre={metodoModal}
             />
           )}
-          {deptoModal && (
-            <CuadreDeptoModal
-              isOpen={!!deptoModal}
-              onClose={() => setDeptoModal(null)}
-              filters={activeFilters}
-              deptoNombre={deptoModal}
-            />
-          )}
         </>
       )}
-
-      {/* Invoice search — always visible */}
-      <div className="space-y-3">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
-          Herramienta de consulta
-        </h2>
-        <CuadreBusquedaFacturas />
-      </div>
     </div>
   )
 }

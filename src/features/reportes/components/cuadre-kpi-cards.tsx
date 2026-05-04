@@ -1,8 +1,7 @@
-import { ShoppingCart, TrendUp, Receipt, CreditCard } from '@phosphor-icons/react'
+import { ShoppingCart, CreditCard } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import {
   useVentasDelDia,
-  useGananciaEstimada,
   useCxcDelDia,
   type CuadreFilters,
 } from '../hooks/use-cuadre'
@@ -14,13 +13,12 @@ interface CuadreKpiCardsProps {
 }
 
 export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpiCardsProps) {
-  const { totalVentasUsd, totalVentasBs, facturasCount, ticketPromedio, isLoading: loadingVentas } =
+  const { totalVentasUsd, totalVentasBs, facturasCount, isLoading: loadingVentas } =
     useVentasDelDia(filters)
-  const { ganancia, isLoading: loadingGanancia } = useGananciaEstimada(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2">
       {/* Total Ventas */}
       <button
         onClick={onClickVentas}
@@ -45,50 +43,6 @@ export function CuadreKpiCards({ filters, onClickVentas, onClickCxc }: CuadreKpi
           )}
         </div>
       </button>
-
-      {/* Ganancia Estimada */}
-      <div className="rounded-2xl bg-card shadow-lg p-5">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium text-muted-foreground">Ganancia Est.</p>
-          <div className="p-2 rounded-lg bg-green-100 text-green-600">
-            <TrendUp className="w-4 h-4" />
-          </div>
-        </div>
-        <div className="mt-2">
-          {loadingGanancia ? (
-            <div className="h-8 w-24 bg-muted rounded animate-pulse" />
-          ) : (
-            <>
-              <p className="text-2xl font-bold">{formatUsd(ganancia)}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Basado en costo actual de productos
-              </p>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Ticket Promedio */}
-      <div className="rounded-2xl bg-card shadow-lg p-5">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-medium text-muted-foreground">Ticket Promedio</p>
-          <div className="p-2 rounded-lg bg-amber-100 text-amber-600">
-            <Receipt className="w-4 h-4" />
-          </div>
-        </div>
-        <div className="mt-2">
-          {loadingVentas ? (
-            <div className="h-8 w-24 bg-muted rounded animate-pulse" />
-          ) : (
-            <>
-              <p className="text-2xl font-bold">{formatUsd(ticketPromedio)}</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {facturasCount} factura(s) emitida(s)
-              </p>
-            </>
-          )}
-        </div>
-      </div>
 
       {/* CxC del dia */}
       <button
