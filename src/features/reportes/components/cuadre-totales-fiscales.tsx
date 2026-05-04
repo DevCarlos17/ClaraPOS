@@ -3,17 +3,16 @@ import { useTotalesFiscales, useIvaPorAlicuota, type CuadreFilters } from '../ho
 
 interface CuadreTotalesFiscalesProps {
   filters: CuadreFilters
-  tasaDelDia: number
 }
 
-function Row({ label, usd, tasaDelDia, destacado = false, negativo = false }: {
+function Row({ label, usd, bs, destacado = false, negativo = false }: {
   label: string
   usd: number
-  tasaDelDia: number
+  bs: number
   destacado?: boolean
   negativo?: boolean
 }) {
-  const bs = tasaDelDia > 0 ? usd * tasaDelDia : 0
+  const prefix = negativo ? '-' : ''
   return (
     <div className={`flex items-center justify-between py-1.5 px-2 rounded ${destacado ? 'bg-muted/60 font-semibold' : ''}`}>
       <span className={`text-sm ${negativo ? 'text-red-600' : destacado ? '' : 'text-muted-foreground'}`}>
@@ -21,21 +20,22 @@ function Row({ label, usd, tasaDelDia, destacado = false, negativo = false }: {
       </span>
       <div className="text-right">
         <span className={`text-sm font-mono ${negativo ? 'text-red-600' : ''}`}>
-          {negativo ? '-' : ''}{formatUsd(usd)}
+          {prefix}{formatBs(bs)}
         </span>
-        {tasaDelDia > 0 && (
-          <span className="text-xs text-muted-foreground ml-2">
-            {negativo ? '-' : ''}{formatBs(bs)}
-          </span>
-        )}
+        <span className="text-xs text-muted-foreground ml-2">
+          ({prefix}{formatUsd(usd)})
+        </span>
       </div>
     </div>
   )
 }
 
-export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFiscalesProps) {
+export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
   const { totales, isLoading } = useTotalesFiscales(filters)
   const { alicuotas, isLoading: loadingAlicuotas } = useIvaPorAlicuota(filters)
+
+  const baseNetaUsd = Math.max(0, totales.baseImponibleUsd - totales.totalNcrUsd)
+  const baseNetaBs = Math.max(0, totales.baseImponibleBs - totales.totalNcrBs)
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -53,7 +53,7 @@ export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFisc
           <Row
             label="Base imponible bruta"
             usd={totales.baseImponibleUsd}
-            tasaDelDia={tasaDelDia}
+            bs={totales.baseImponibleBs}
           />
 
           {/* NCR / Devoluciones */}
@@ -61,7 +61,7 @@ export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFisc
             <Row
               label="Devoluciones (NCR)"
               usd={totales.totalNcrUsd}
-              tasaDelDia={tasaDelDia}
+              bs={totales.totalNcrBs}
               negativo
             />
           )}
@@ -69,8 +69,8 @@ export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFisc
           {/* Base neta */}
           <Row
             label="Base imponible neta"
-            usd={Math.max(0, totales.baseImponibleUsd - totales.totalNcrUsd)}
-            tasaDelDia={tasaDelDia}
+            usd={baseNetaUsd}
+            bs={baseNetaBs}
             destacado
           />
 
@@ -81,7 +81,7 @@ export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFisc
             <Row
               label="Ventas exentas"
               usd={totales.totalExentoUsd}
-              tasaDelDia={tasaDelDia}
+              bs={totales.totalExentoBs}
             />
           )}
 
@@ -89,9 +89,9 @@ export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFisc
           {alicuotas.map((a) => (
             <Row
               key={a.impuestoPct}
-              label={`IVA ${a.impuestoPct}% (sobre ${formatUsd(a.baseUsd)})`}
+              label={`IVA ${a.impuestoPct}% (s/ ${formatBs(a.baseBs)})`}
               usd={a.montoIvaUsd}
-              tasaDelDia={tasaDelDia}
+              bs={a.montoIvaBs}
             />
           ))}
 
@@ -100,7 +100,7 @@ export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFisc
             <Row
               label="IGTF"
               usd={totales.totalIgtfUsd}
-              tasaDelDia={tasaDelDia}
+              bs={totales.totalIgtfBs}
             />
           )}
 
@@ -110,7 +110,7 @@ export function CuadreTotalesFiscales({ filters, tasaDelDia }: CuadreTotalesFisc
           <Row
             label="Total facturado"
             usd={totales.totalFacturadoUsd}
-            tasaDelDia={tasaDelDia}
+            bs={totales.totalFacturadoBs}
             destacado
           />
         </div>

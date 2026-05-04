@@ -601,11 +601,17 @@ export function useProductosPorDepto(filters: CuadreFilters | null, deptoNombre:
 
 export interface TotalesFiscales {
   baseImponibleUsd: number
+  baseImponibleBs: number
   totalExentoUsd: number
+  totalExentoBs: number
   totalIvaUsd: number
+  totalIvaBs: number
   totalIgtfUsd: number
+  totalIgtfBs: number
   totalFacturadoUsd: number
+  totalFacturadoBs: number
   totalNcrUsd: number
+  totalNcrBs: number
 }
 
 export function useTotalesFiscales(filters: CuadreFilters | null) {
@@ -618,10 +624,15 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
   const { data: dataVentas, isLoading: loadingVentas } = useQuery(
     `SELECT
        COALESCE(SUM(CAST(total_base_usd AS REAL)), 0) as base_imponible,
+       COALESCE(SUM(CAST(total_base_usd AS REAL) * CAST(tasa AS REAL)), 0) as base_imponible_bs,
        COALESCE(SUM(CAST(total_exento_usd AS REAL)), 0) as total_exento,
+       COALESCE(SUM(CAST(total_exento_usd AS REAL) * CAST(tasa AS REAL)), 0) as total_exento_bs,
        COALESCE(SUM(CAST(total_iva_usd AS REAL)), 0) as total_iva,
+       COALESCE(SUM(CAST(total_iva_usd AS REAL) * CAST(tasa AS REAL)), 0) as total_iva_bs,
        COALESCE(SUM(CAST(total_igtf_usd AS REAL)), 0) as total_igtf,
-       COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_facturado
+       COALESCE(SUM(CAST(total_igtf_usd AS REAL) * CAST(tasa AS REAL)), 0) as total_igtf_bs,
+       COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_facturado,
+       COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_facturado_bs
      FROM ventas
      WHERE ${whereV}`,
     paramsV
@@ -629,32 +640,45 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
 
   const row = (dataVentas?.[0] ?? {}) as {
     base_imponible: number
+    base_imponible_bs: number
     total_exento: number
+    total_exento_bs: number
     total_iva: number
+    total_iva_bs: number
     total_igtf: number
+    total_igtf_bs: number
     total_facturado: number
+    total_facturado_bs: number
   }
 
   // NCR del mismo dia/sesion — usando fecha y empresa_id
   const { data: dataNcr, isLoading: loadingNcr } = useQuery(
     filters
-      ? `SELECT COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_ncr
+      ? `SELECT
+           COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_ncr,
+           COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_ncr_bs
          FROM notas_credito
          WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) = ?`
       : '',
     filters ? [empresaId, filters.fecha] : []
   )
 
-  const totalNcr = Number((dataNcr?.[0] as { total_ncr: number } | undefined)?.total_ncr ?? 0)
+  const ncrRow = (dataNcr?.[0] ?? {}) as { total_ncr: number; total_ncr_bs: number }
 
   return {
     totales: {
       baseImponibleUsd: Number(Number(row.base_imponible ?? 0).toFixed(2)),
+      baseImponibleBs: Number(Number(row.base_imponible_bs ?? 0).toFixed(2)),
       totalExentoUsd: Number(Number(row.total_exento ?? 0).toFixed(2)),
+      totalExentoBs: Number(Number(row.total_exento_bs ?? 0).toFixed(2)),
       totalIvaUsd: Number(Number(row.total_iva ?? 0).toFixed(2)),
+      totalIvaBs: Number(Number(row.total_iva_bs ?? 0).toFixed(2)),
       totalIgtfUsd: Number(Number(row.total_igtf ?? 0).toFixed(2)),
+      totalIgtfBs: Number(Number(row.total_igtf_bs ?? 0).toFixed(2)),
       totalFacturadoUsd: Number(Number(row.total_facturado ?? 0).toFixed(2)),
-      totalNcrUsd: Number(totalNcr.toFixed(2)),
+      totalFacturadoBs: Number(Number(row.total_facturado_bs ?? 0).toFixed(2)),
+      totalNcrUsd: Number(Number(ncrRow.total_ncr ?? 0).toFixed(2)),
+      totalNcrBs: Number(Number(ncrRow.total_ncr_bs ?? 0).toFixed(2)),
     } as TotalesFiscales,
     isLoading: loadingVentas || loadingNcr,
   }
@@ -665,7 +689,9 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
 export interface IvaAlicuota {
   impuestoPct: number
   baseUsd: number
+  baseBs: number
   montoIvaUsd: number
+  montoIvaBs: number
 }
 
 export function useIvaPorAlicuota(filters: CuadreFilters | null) {
@@ -679,7 +705,9 @@ export function useIvaPorAlicuota(filters: CuadreFilters | null) {
     `SELECT
        CAST(dv.impuesto_pct AS REAL) as impuesto_pct,
        COALESCE(SUM(CAST(dv.subtotal_usd AS REAL)), 0) as base_usd,
-       COALESCE(SUM(CAST(dv.subtotal_usd AS REAL) * CAST(dv.impuesto_pct AS REAL) / 100), 0) as monto_iva
+       COALESCE(SUM(CAST(dv.subtotal_usd AS REAL) * CAST(v.tasa AS REAL)), 0) as base_bs,
+       COALESCE(SUM(CAST(dv.subtotal_usd AS REAL) * CAST(dv.impuesto_pct AS REAL) / 100), 0) as monto_iva,
+       COALESCE(SUM(CAST(dv.subtotal_usd AS REAL) * CAST(dv.impuesto_pct AS REAL) / 100 * CAST(v.tasa AS REAL)), 0) as monto_iva_bs
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      WHERE ${where}
@@ -693,7 +721,9 @@ export function useIvaPorAlicuota(filters: CuadreFilters | null) {
   const items: IvaAlicuota[] = (data ?? []).map((row: Record<string, unknown>) => ({
     impuestoPct: Number(row.impuesto_pct ?? 0),
     baseUsd: Number(Number(row.base_usd ?? 0).toFixed(2)),
+    baseBs: Number(Number(row.base_bs ?? 0).toFixed(2)),
     montoIvaUsd: Number(Number(row.monto_iva ?? 0).toFixed(2)),
+    montoIvaBs: Number(Number(row.monto_iva_bs ?? 0).toFixed(2)),
   }))
 
   return { alicuotas: items, isLoading }

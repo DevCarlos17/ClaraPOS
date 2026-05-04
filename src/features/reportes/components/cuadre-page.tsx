@@ -48,7 +48,7 @@ export function CuadrePage() {
   const { sesiones } = useSesionesPorCajaYFecha(cajaId, fecha)
   const { tasaPromedio, tasaCount } = useTasaDelDia(activeFilters?.fecha ?? null)
 
-  // KPI data — shown in the funnel card after consultar
+  // KPI data — shown after consultar
   const { totalVentasUsd, totalVentasBs, facturasCount, isLoading: loadingVentas } =
     useVentasDelDia(activeFilters)
   const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(activeFilters)
@@ -103,127 +103,128 @@ export function CuadrePage() {
     <div className="space-y-6">
       <PageHeader titulo="Cuadre de Caja" descripcion="Resumen de operaciones y cierre de caja" />
 
-      {/* Funnel + KPI card */}
-      <div className="rounded-2xl bg-card shadow-lg p-4 space-y-3">
-        {/* Filter controls row */}
-        <div className="flex flex-wrap items-end gap-3">
-          {/* Fecha */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground">Fecha</label>
-            <input
-              type="date"
-              value={fecha}
-              onChange={(e) => handleFechaChange(e.target.value)}
-              className="rounded-md border border-input bg-white px-3 py-2 text-sm"
-            />
-          </div>
+      {/* Filter card + KPI cards — same row */}
+      <div className="flex flex-wrap gap-4 items-start">
+        {/* Filter card */}
+        <div className="flex-1 min-w-[280px] rounded-2xl bg-card shadow-lg p-4 space-y-3">
+          {/* Filter controls row */}
+          <div className="flex flex-wrap items-end gap-3">
+            {/* Fecha */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">Fecha</label>
+              <input
+                type="date"
+                value={fecha}
+                onChange={(e) => handleFechaChange(e.target.value)}
+                className="rounded-md border border-input bg-white px-3 py-2 text-sm"
+              />
+            </div>
 
-          {/* Caja */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium text-muted-foreground">Caja</label>
-            <NativeSelect
-              value={cajaId ?? ''}
-              onChange={(e) => handleCajaChange(e.target.value)}
-              className="min-w-[160px]"
+            {/* Caja */}
+            <div className="flex flex-col gap-1">
+              <label className="text-xs font-medium text-muted-foreground">Caja</label>
+              <NativeSelect
+                value={cajaId ?? ''}
+                onChange={(e) => handleCajaChange(e.target.value)}
+                className="min-w-[160px]"
+              >
+                <option value="">Todas las cajas</option>
+                {cajas.map((c) => (
+                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                ))}
+              </NativeSelect>
+            </div>
+
+            {/* Consultar button */}
+            <button
+              onClick={handleConsultar}
+              className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              <option value="">Todas las cajas</option>
-              {cajas.map((c) => (
-                <option key={c.id} value={c.id}>{c.nombre}</option>
-              ))}
-            </NativeSelect>
+              <MagnifyingGlass className="w-4 h-4" />
+              Consultar
+            </button>
           </div>
 
-          {/* Consultar button */}
-          <button
-            onClick={handleConsultar}
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            <MagnifyingGlass className="w-4 h-4" />
-            Consultar
-          </button>
+          {/* Multi-session selector */}
+          {cajaId && sesiones.length > 0 && (
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Sesiones del dia ({sesiones.length})
+                </p>
+                <button
+                  type="button"
+                  onClick={toggleAllSesiones}
+                  className="flex items-center gap-1 text-xs text-primary hover:underline"
+                >
+                  {sesionCajaIds.length === sesiones.length ? (
+                    <CheckSquare size={12} />
+                  ) : (
+                    <Square size={12} />
+                  )}
+                  {sesionCajaIds.length === sesiones.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {sesiones.map((s) => {
+                  const checked = sesionCajaIds.includes(s.id)
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => toggleSesion(s.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs border transition-colors ${
+                        checked
+                          ? 'bg-primary/10 border-primary/50 text-primary font-medium'
+                          : 'bg-background border-input text-muted-foreground hover:border-primary/30'
+                      }`}
+                    >
+                      {checked ? (
+                        <CheckSquare size={12} weight="fill" />
+                      ) : (
+                        <Square size={12} />
+                      )}
+                      {getSesionLabel(s)}
+                    </button>
+                  )
+                })}
+              </div>
+              {sesionCajaIds.length === 0 && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Sin sesion seleccionada = todas las sesiones de la caja en la fecha
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Tasa del dia — shown after consultar */}
+          {consulted && activeFilters && tasaCount > 0 && (
+            <div className="text-xs text-muted-foreground border-t pt-2">
+              Tasa del dia: <span className="font-semibold text-foreground">{formatTasa(tasaPromedio)} Bs/$</span>
+              {tasaCount > 1 && <span className="ml-1">(prom. {tasaCount} registros)</span>}
+            </div>
+          )}
         </div>
 
-        {/* Multi-session selector */}
-        {cajaId && sesiones.length > 0 && (
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <p className="text-xs font-medium text-muted-foreground">
-                Sesiones del dia ({sesiones.length})
-              </p>
-              <button
-                type="button"
-                onClick={toggleAllSesiones}
-                className="flex items-center gap-1 text-xs text-primary hover:underline"
-              >
-                {sesionCajaIds.length === sesiones.length ? (
-                  <CheckSquare size={12} />
-                ) : (
-                  <Square size={12} />
-                )}
-                {sesionCajaIds.length === sesiones.length ? 'Deseleccionar todas' : 'Seleccionar todas'}
-              </button>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {sesiones.map((s) => {
-                const checked = sesionCajaIds.includes(s.id)
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => toggleSesion(s.id)}
-                    className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs border transition-colors ${
-                      checked
-                        ? 'bg-primary/10 border-primary/50 text-primary font-medium'
-                        : 'bg-background border-input text-muted-foreground hover:border-primary/30'
-                    }`}
-                  >
-                    {checked ? (
-                      <CheckSquare size={12} weight="fill" />
-                    ) : (
-                      <Square size={12} />
-                    )}
-                    {getSesionLabel(s)}
-                  </button>
-                )
-              })}
-            </div>
-            {sesionCajaIds.length === 0 && (
-              <p className="text-xs text-muted-foreground mt-1">
-                Sin sesion seleccionada = todas las sesiones de la caja en la fecha
-              </p>
-            )}
-          </div>
-        )}
-
-        {/* KPI summary strip — shown after consultar */}
+        {/* KPI cards — shown after consultar */}
         {consulted && activeFilters && (
-          <div className="border-t pt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-            {/* Tasa del dia */}
-            {tasaCount > 0 && (
-              <div className="text-xs text-muted-foreground">
-                Tasa: <span className="font-semibold text-foreground">{formatTasa(tasaPromedio)} Bs/$</span>
-                {tasaCount > 1 && <span className="ml-1">(prom. {tasaCount})</span>}
-              </div>
-            )}
-
-            <div className="flex-1" />
-
+          <>
             {/* Total Ventas */}
             <button
               onClick={() => setAuditOpen(true)}
-              className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+              className="rounded-2xl bg-card shadow-lg p-4 flex items-center gap-3 hover:bg-muted/30 transition-colors text-left min-w-[180px]"
             >
-              <div className="p-1.5 rounded-md bg-blue-100 text-blue-600">
-                <ShoppingCart size={14} />
+              <div className="p-2 rounded-xl bg-blue-100 text-blue-600">
+                <ShoppingCart size={20} />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground leading-none mb-0.5">Total Ventas</p>
+                <p className="text-xs text-muted-foreground mb-1">Total Ventas</p>
                 {loadingVentas ? (
-                  <div className="h-5 w-20 bg-muted rounded animate-pulse" />
+                  <div className="h-5 w-24 bg-muted rounded animate-pulse" />
                 ) : (
                   <>
-                    <p className="text-base font-bold leading-none">{formatUsd(totalVentasUsd)}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                    <p className="text-lg font-bold leading-none">{formatUsd(totalVentasUsd)}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">
                       {formatBs(totalVentasBs)} · {facturasCount} fact.
                     </p>
                   </>
@@ -231,28 +232,26 @@ export function CuadrePage() {
               </div>
             </button>
 
-            <div className="w-px h-10 bg-border hidden sm:block" />
-
             {/* CxC Hoy */}
             <button
               onClick={() => setCxcOpen(true)}
-              className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+              className="rounded-2xl bg-card shadow-lg p-4 flex items-center gap-3 hover:bg-muted/30 transition-colors text-left min-w-[160px]"
             >
-              <div className="p-1.5 rounded-md bg-red-100 text-red-600">
-                <CreditCard size={14} />
+              <div className="p-2 rounded-xl bg-red-100 text-red-600">
+                <CreditCard size={20} />
               </div>
               <div>
-                <p className="text-xs text-muted-foreground leading-none mb-0.5">CxC Hoy</p>
+                <p className="text-xs text-muted-foreground mb-1">CxC Hoy</p>
                 {loadingCxc ? (
                   <div className="h-5 w-20 bg-muted rounded animate-pulse" />
                 ) : (
-                  <p className="text-base font-bold leading-none text-red-600">
+                  <p className="text-lg font-bold leading-none text-red-600">
                     {formatUsd(cxcTotalUsd)}
                   </p>
                 )}
               </div>
             </button>
-          </div>
+          </>
         )}
       </div>
 
@@ -265,10 +264,7 @@ export function CuadrePage() {
       ) : (
         <>
           {/* Fiscal totals — full width */}
-          <CuadreTotalesFiscales
-            filters={activeFilters}
-            tasaDelDia={tasaPromedio}
-          />
+          <CuadreTotalesFiscales filters={activeFilters} />
 
           {/* Physical count + Payment method summary */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
