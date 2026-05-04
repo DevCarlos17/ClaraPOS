@@ -780,6 +780,79 @@ const movimientos_bancarios = new Table(
     validado_por: column.text,
     validado_at: column.text,
     observacion: column.text,
+    descripcion: column.text,
+    reversado: column.integer,
+    reverso_de: column.text,
+    fecha: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+// =============================================
+// CONCILIACION TESORERIA
+// =============================================
+
+const caja_fuerte = new Table(
+  {
+    empresa_id: column.text,
+    nombre: column.text,
+    moneda_id: column.text,
+    saldo_actual: column.text,
+    descripcion: column.text,
+    is_active: column.integer,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
+    updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const mov_caja_fuerte = new Table(
+  {
+    empresa_id: column.text,
+    caja_fuerte_id: column.text,
+    tipo: column.text,
+    origen: column.text,
+    monto: column.text,
+    saldo_anterior: column.text,
+    saldo_nuevo: column.text,
+    doc_origen_id: column.text,
+    doc_origen_tipo: column.text,
+    referencia: column.text,
+    descripcion: column.text,
+    validado: column.integer,
+    validado_por: column.text,
+    validado_at: column.text,
+    reversado: column.integer,
+    reverso_de: column.text,
+    fecha: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const traspasos_tesoreria = new Table(
+  {
+    empresa_id: column.text,
+    cuenta_origen_tipo: column.text,
+    cuenta_origen_id: column.text,
+    mov_origen_id: column.text,
+    cuenta_destino_tipo: column.text,
+    cuenta_destino_id: column.text,
+    mov_destino_id: column.text,
+    monto_origen: column.text,
+    moneda_origen_id: column.text,
+    monto_destino: column.text,
+    moneda_destino_id: column.text,
+    tasa_cambio: column.text,
+    reversado: column.integer,
+    reversado_at: column.text,
+    reversado_por: column.text,
+    observacion: column.text,
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,
@@ -1208,6 +1281,9 @@ export const AppSchema = new Schema({
   sesiones_caja_detalle,
   movimientos_metodo_cobro,
   movimientos_bancarios,
+  caja_fuerte,
+  mov_caja_fuerte,
+  traspasos_tesoreria,
   // Retenciones ventas
   retenciones_iva_ventas,
   retenciones_islr_ventas,

@@ -1,10 +1,9 @@
 import { useState, useCallback } from 'react'
-import { MagnifyingGlass, CheckSquare, Square } from '@phosphor-icons/react'
+import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
-import { formatTasa } from '@/lib/currency'
-import { CuadreKpiCards } from './cuadre-kpi-cards'
+import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
 import { PagosResumen } from './pagos-resumen'
 import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
@@ -16,6 +15,8 @@ import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
+  useVentasDelDia,
+  useCxcDelDia,
   type CuadreFilters,
 } from '../hooks/use-cuadre'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -36,7 +37,6 @@ export function CuadrePage() {
   const [metodoModal, setMetodoModal] = useState<string | null>(null)
 
   // Verified non-cash payment amounts shared between CuadreDetallePagos → CuadreConteoFisico
-  // Key: metodo_cobro_id (UUID), Value: total verified USD
   const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, number>>({})
 
   const handleVerifiedChange = useCallback((amounts: Record<string, number>) => {
@@ -47,6 +47,11 @@ export function CuadrePage() {
   const { cajas } = useCajasActivas()
   const { sesiones } = useSesionesPorCajaYFecha(cajaId, fecha)
   const { tasaPromedio, tasaCount } = useTasaDelDia(activeFilters?.fecha ?? null)
+
+  // KPI data — shown in the funnel card after consultar
+  const { totalVentasUsd, totalVentasBs, facturasCount, isLoading: loadingVentas } =
+    useVentasDelDia(activeFilters)
+  const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(activeFilters)
 
   const handleConsultar = useCallback(() => {
     setActiveFilters({ fecha, cajaId, sesionCajaIds })
@@ -96,21 +101,11 @@ export function CuadrePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader titulo="Cuadre de Caja" descripcion="Resumen de operaciones y cierre de caja">
-        {/* Tasa del dia */}
-        {consulted && tasaCount > 0 && (
-          <div className="text-right text-xs mr-2">
-            <p className="text-muted-foreground">Tasa del dia</p>
-            <p className="font-bold">{formatTasa(tasaPromedio)} Bs/$</p>
-            {tasaCount > 1 && (
-              <p className="text-muted-foreground">({tasaCount} tasas, promedio)</p>
-            )}
-          </div>
-        )}
-      </PageHeader>
+      <PageHeader titulo="Cuadre de Caja" descripcion="Resumen de operaciones y cierre de caja" />
 
-      {/* Funnel bar */}
+      {/* Funnel + KPI card */}
       <div className="rounded-2xl bg-card shadow-lg p-4 space-y-3">
+        {/* Filter controls row */}
         <div className="flex flex-wrap items-end gap-3">
           {/* Fecha */}
           <div className="flex flex-col gap-1">
@@ -199,6 +194,66 @@ export function CuadrePage() {
             )}
           </div>
         )}
+
+        {/* KPI summary strip — shown after consultar */}
+        {consulted && activeFilters && (
+          <div className="border-t pt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
+            {/* Tasa del dia */}
+            {tasaCount > 0 && (
+              <div className="text-xs text-muted-foreground">
+                Tasa: <span className="font-semibold text-foreground">{formatTasa(tasaPromedio)} Bs/$</span>
+                {tasaCount > 1 && <span className="ml-1">(prom. {tasaCount})</span>}
+              </div>
+            )}
+
+            <div className="flex-1" />
+
+            {/* Total Ventas */}
+            <button
+              onClick={() => setAuditOpen(true)}
+              className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+            >
+              <div className="p-1.5 rounded-md bg-blue-100 text-blue-600">
+                <ShoppingCart size={14} />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground leading-none mb-0.5">Total Ventas</p>
+                {loadingVentas ? (
+                  <div className="h-5 w-20 bg-muted rounded animate-pulse" />
+                ) : (
+                  <>
+                    <p className="text-base font-bold leading-none">{formatUsd(totalVentasUsd)}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {formatBs(totalVentasBs)} · {facturasCount} fact.
+                    </p>
+                  </>
+                )}
+              </div>
+            </button>
+
+            <div className="w-px h-10 bg-border hidden sm:block" />
+
+            {/* CxC Hoy */}
+            <button
+              onClick={() => setCxcOpen(true)}
+              className="flex items-center gap-2 rounded-lg px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+            >
+              <div className="p-1.5 rounded-md bg-red-100 text-red-600">
+                <CreditCard size={14} />
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground leading-none mb-0.5">CxC Hoy</p>
+                {loadingCxc ? (
+                  <div className="h-5 w-20 bg-muted rounded animate-pulse" />
+                ) : (
+                  <p className="text-base font-bold leading-none text-red-600">
+                    {formatUsd(cxcTotalUsd)}
+                  </p>
+                )}
+              </div>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -209,13 +264,6 @@ export function CuadrePage() {
         </div>
       ) : (
         <>
-          {/* KPI Cards */}
-          <CuadreKpiCards
-            filters={activeFilters}
-            onClickVentas={() => setAuditOpen(true)}
-            onClickCxc={() => setCxcOpen(true)}
-          />
-
           {/* Fiscal totals — full width */}
           <CuadreTotalesFiscales
             filters={activeFilters}
@@ -232,6 +280,7 @@ export function CuadrePage() {
             <PagosResumen
               filters={activeFilters}
               onMetodoClick={(nombre) => setMetodoModal(nombre)}
+              onCreditoClick={() => setCxcOpen(true)}
             />
           </div>
 

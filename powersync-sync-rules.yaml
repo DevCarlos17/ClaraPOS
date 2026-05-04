@@ -79,6 +79,9 @@ bucket_definitions:
       - SELECT * FROM sesiones_caja_detalle WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_metodo_cobro WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_bancarios WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM caja_fuerte WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM mov_caja_fuerte WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM traspasos_tesoreria WHERE empresa_id = bucket.empresa_id
 
       # --- RETENCIONES VENTAS ---
       - SELECT * FROM retenciones_iva_ventas WHERE empresa_id = bucket.empresa_id

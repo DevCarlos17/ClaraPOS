@@ -3,21 +3,21 @@ import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
-import { ConciliacionBancaria } from '@/features/bancos/components/conciliacion-bancaria'
+import { ConciliacionTesoreria } from '@/features/tesoreria/components/conciliacion-tesoreria'
 
 export const Route = createFileRoute('/_app/bancos/conciliacion')({
-  component: ConciliacionBancariaPage,
+  component: ConciliacionTesoreriaPage,
 })
 
-function ConciliacionBancariaPage() {
+function ConciliacionTesoreriaPage() {
   return (
     <RequirePermission permission={PERMISSIONS.CONFIG_RATES} fallback={<AccessDeniedPage />}>
       <div className="space-y-6">
         <PageHeader
-          titulo="Conciliacion Bancaria"
-          descripcion="Control y validacion de movimientos bancarios"
+          titulo="Conciliacion de Tesoreria"
+          descripcion="Control de movimientos bancarios, caja fuerte y traspasos"
         />
-        <ConciliacionBancaria />
+        <ConciliacionTesoreria />
       </div>
     </RequirePermission>
   )
