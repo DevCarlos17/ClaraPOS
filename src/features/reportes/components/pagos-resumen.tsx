@@ -1,23 +1,34 @@
 import { Money, CreditCard } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, useCxcDelDia, type CuadreFilters } from '../hooks/use-cuadre'
+import { usePagosPorMetodo, useCxcDelDia, useTotalesFiscales, type CuadreFilters } from '../hooks/use-cuadre'
 
 interface PagosResumenProps {
   filters: CuadreFilters
+  tasaDelDia: number
   onMetodoClick?: (metodoNombre: string) => void
   onCreditoClick?: () => void
 }
 
-export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosResumenProps) {
+export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
-  const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(filters)
+  const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
+  const { totales, isLoading: loadingTotales } = useTotalesFiscales(filters)
 
   const totalCobradoUsd = metodos.reduce((sum, m) => sum + m.totalUsd, 0)
   const totalCobradoBs = metodos.reduce((sum, m) => {
     return sum + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs)
   }, 0)
 
-  const isLoadingAll = isLoading || loadingCxc
+  // Diferencial cambiario por redondeo
+  // Formula: Total Facturado = Total Cobrado + CxC Pendiente ± Diferencial
+  // Positivo = faltan Bs en caja | Negativo = sobran Bs en caja
+  const diferencial = Number((totales.totalFacturadoBs - totalCobradoBs - cxcTotalBs).toFixed(2))
+  const toleranciaBs = tasaDelDia > 0 ? tasaDelDia * 0.01 : 1.0 // equivalente a $0.01 USD
+  const diferencialAbs = Math.abs(diferencial)
+  const hasDiferencial = diferencialAbs > 0.005
+  const dentroTolerancia = diferencialAbs <= toleranciaBs
+
+  const isLoadingAll = isLoading || loadingCxc || loadingTotales
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -77,7 +88,12 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
                   <p className="text-xs text-red-500">Pendiente de cobro</p>
                 </div>
               </div>
-              <span className="text-sm font-bold text-red-600">{formatUsd(cxcTotalUsd)}</span>
+              <div className="flex items-center gap-2">
+                {cxcTotalBs > 0 && (
+                  <span className="text-xs text-red-400">{formatBs(cxcTotalBs)}</span>
+                )}
+                <span className="text-sm font-bold text-red-600">{formatUsd(cxcTotalUsd)}</span>
+              </div>
             </button>
           )}
 
@@ -96,18 +112,41 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
               <>
                 <div className="flex justify-between items-center text-sm text-red-600">
                   <span>A credito</span>
-                  <span className="text-sm font-bold">{formatUsd(cxcTotalUsd)}</span>
+                  <div className="flex items-center gap-2">
+                    {cxcTotalBs > 0 && (
+                      <span className="text-xs text-red-400">{formatBs(cxcTotalBs)}</span>
+                    )}
+                    <span className="text-sm font-bold">{formatUsd(cxcTotalUsd)}</span>
+                  </div>
                 </div>
                 <div className="flex justify-between items-center text-sm font-bold pt-1 border-t">
                   <span>Total facturado</span>
                   <div className="flex items-center gap-2">
                     {totalCobradoBs > 0 && (
-                      <span className="text-xs text-muted-foreground font-normal">{formatBs(totalCobradoBs)}</span>
+                      <span className="text-xs text-muted-foreground font-normal">{formatBs(totalCobradoBs + cxcTotalBs)}</span>
                     )}
                     <span>{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
                   </div>
                 </div>
               </>
+            )}
+
+            {/* Diferencial cambiario por redondeo */}
+            {hasDiferencial && (
+              <div className={`flex justify-between items-center text-xs rounded-md px-2.5 py-1.5 mt-1 ${
+                dentroTolerancia
+                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                  : 'bg-red-50 text-red-700 border border-red-200'
+              }`}>
+                <span className="font-medium">
+                  {dentroTolerancia
+                    ? 'Ajuste por redondeo cambiario'
+                    : 'Diferencial sin cuadrar \u2014 revisar cobros'}
+                </span>
+                <span className="font-mono font-semibold">
+                  {diferencial > 0 ? '+' : ''}{formatBs(diferencial)}
+                </span>
+              </div>
             )}
           </div>
         </div>

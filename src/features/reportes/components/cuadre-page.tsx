@@ -275,6 +275,7 @@ export function CuadrePage() {
             />
             <PagosResumen
               filters={activeFilters}
+              tasaDelDia={tasaPromedio}
               onMetodoClick={(nombre) => setMetodoModal(nombre)}
               onCreditoClick={() => setCxcOpen(true)}
             />
