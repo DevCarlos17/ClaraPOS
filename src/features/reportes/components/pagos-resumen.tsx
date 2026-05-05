@@ -1,6 +1,6 @@
 import { Money, CreditCard } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, useCxcDelDia, useTasaDelDia, type CuadreFilters } from '../hooks/use-cuadre'
+import { usePagosPorMetodo, useCxcDelDia, type CuadreFilters } from '../hooks/use-cuadre'
 
 interface PagosResumenProps {
   filters: CuadreFilters
@@ -11,12 +11,10 @@ interface PagosResumenProps {
 export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(filters)
-  const { tasaPromedio } = useTasaDelDia(filters.fecha)
 
   const totalCobradoUsd = metodos.reduce((sum, m) => sum + m.totalUsd, 0)
   const totalCobradoBs = metodos.reduce((sum, m) => {
-    if (m.moneda === 'BS') return sum + m.totalOriginal
-    return sum + (tasaPromedio > 0 ? m.totalUsd * tasaPromedio : 0)
+    return sum + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs)
   }, 0)
 
   const isLoadingAll = isLoading || loadingCxc
@@ -40,8 +38,8 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
           {/* Payment method rows */}
           {metodos.map((m) => {
             const clickable = !!onMetodoClick
-            const bsAmount = m.moneda === 'BS' ? m.totalOriginal : m.totalUsd * tasaPromedio
-            const hasBs = bsAmount > 0 && (m.moneda === 'BS' || tasaPromedio > 0)
+            const bsAmount = m.moneda === 'BS' ? m.totalOriginal : m.totalBs
+            const hasBs = bsAmount > 0
             return (
               <button
                 key={m.nombre}
@@ -104,7 +102,7 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
                   <span>Total facturado</span>
                   <div className="flex items-center gap-2">
                     {totalCobradoBs > 0 && (
-                      <span className="text-xs text-muted-foreground font-normal">{formatBs(totalCobradoBs + cxcTotalUsd * tasaPromedio)}</span>
+                      <span className="text-xs text-muted-foreground font-normal">{formatBs(totalCobradoBs)}</span>
                     )}
                     <span>{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
                   </div>

@@ -92,6 +92,7 @@ export interface MetodoPagoResumen {
   tipo: string
   totalUsd: number
   totalOriginal: number
+  totalBs: number
 }
 
 export interface TopProducto {
@@ -279,10 +280,12 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
        mp.tipo,
        CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
        COALESCE(SUM(CAST(pg.monto_usd AS REAL)), 0) as total_usd,
-       COALESCE(SUM(CAST(pg.monto AS REAL)), 0) as total_original
+       COALESCE(SUM(CAST(pg.monto AS REAL)), 0) as total_original,
+       COALESCE(SUM(CAST(pg.monto_usd AS REAL) * CAST(v.tasa AS REAL)), 0) as total_bs
      FROM pagos pg
      JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
+     LEFT JOIN ventas v ON pg.venta_id = v.id
      WHERE ${where}
      GROUP BY mp.id, mp.nombre, mp.tipo, moneda
      ORDER BY total_usd DESC`,
@@ -296,6 +299,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     moneda: String(row.moneda ?? 'USD'),
     totalUsd: Number(Number(row.total_usd ?? 0).toFixed(2)),
     totalOriginal: Number(Number(row.total_original ?? 0).toFixed(2)),
+    totalBs: Number(Number(row.total_bs ?? 0).toFixed(2)),
   }))
 
   return { metodos: items, isLoading }
