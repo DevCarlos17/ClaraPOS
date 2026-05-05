@@ -54,13 +54,11 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
                   <Money size={16} className="text-muted-foreground" />
                   <p className="text-sm font-medium">{m.nombre}</p>
                 </div>
-                <div className="text-right">
+                <div className="flex items-center gap-2">
                   {hasBs && (
-                    <span className="text-sm font-bold">{formatBs(bsAmount)}</span>
+                    <span className="text-xs text-muted-foreground">{formatBs(bsAmount)}</span>
                   )}
-                  <span className="text-xs text-muted-foreground ml-1.5">
-                    ({formatUsd(m.totalUsd)})
-                  </span>
+                  <span className="text-sm font-bold">{formatUsd(m.totalUsd)}</span>
                 </div>
               </button>
             )
@@ -87,28 +85,28 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
 
           {/* Totales */}
           <div className="pt-3 mt-2 border-t space-y-1">
-            <div className="flex justify-between items-baseline text-sm font-semibold">
+            <div className="flex justify-between items-center text-sm font-semibold">
               <span>Total cobrado</span>
-              <div className="text-right">
+              <div className="flex items-center gap-2">
                 {totalCobradoBs > 0 && (
-                  <span className="text-sm font-bold">{formatBs(totalCobradoBs)}</span>
+                  <span className="text-xs text-muted-foreground">{formatBs(totalCobradoBs)}</span>
                 )}
-                <span className="text-xs text-muted-foreground ml-1.5">({formatUsd(totalCobradoUsd)})</span>
+                <span className="text-sm font-bold">{formatUsd(totalCobradoUsd)}</span>
               </div>
             </div>
             {cxcTotalUsd > 0.005 && (
               <>
-                <div className="flex justify-between items-baseline text-sm text-red-600">
+                <div className="flex justify-between items-center text-sm text-red-600">
                   <span>A credito</span>
-                  <span className="text-xs">({formatUsd(cxcTotalUsd)})</span>
+                  <span className="text-sm font-bold">{formatUsd(cxcTotalUsd)}</span>
                 </div>
-                <div className="flex justify-between items-baseline text-sm font-bold pt-1 border-t">
+                <div className="flex justify-between items-center text-sm font-bold pt-1 border-t">
                   <span>Total facturado</span>
-                  <div className="text-right">
+                  <div className="flex items-center gap-2">
                     {totalCobradoBs > 0 && (
-                      <span className="text-sm font-bold">{formatBs(totalCobradoBs + cxcTotalUsd * tasaPromedio)}</span>
+                      <span className="text-xs text-muted-foreground font-normal">{formatBs(totalCobradoBs + cxcTotalUsd * tasaPromedio)}</span>
                     )}
-                    <span className="text-xs text-muted-foreground ml-1.5">({formatUsd(totalCobradoUsd + cxcTotalUsd)})</span>
+                    <span>{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
                   </div>
                 </div>
               </>
