@@ -1,6 +1,6 @@
 import { Money, CreditCard } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, useCxcDelDia, type CuadreFilters } from '../hooks/use-cuadre'
+import { usePagosPorMetodo, useCxcDelDia, useTasaDelDia, type CuadreFilters } from '../hooks/use-cuadre'
 
 interface PagosResumenProps {
   filters: CuadreFilters
@@ -11,11 +11,13 @@ interface PagosResumenProps {
 export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(filters)
+  const { tasaPromedio } = useTasaDelDia(filters.fecha)
 
   const totalCobradoUsd = metodos.reduce((sum, m) => sum + m.totalUsd, 0)
-  const totalCobradoBs = metodos
-    .filter((m) => m.moneda === 'BS')
-    .reduce((sum, m) => sum + m.totalOriginal, 0)
+  const totalCobradoBs = metodos.reduce((sum, m) => {
+    if (m.moneda === 'BS') return sum + m.totalOriginal
+    return sum + (tasaPromedio > 0 ? m.totalUsd * tasaPromedio : 0)
+  }, 0)
 
   const isLoadingAll = isLoading || loadingCxc
 
@@ -55,6 +57,11 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
                         {formatBs(m.totalOriginal)}
                       </p>
                     )}
+                    {m.moneda !== 'BS' && tasaPromedio > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {formatBs(m.totalUsd * tasaPromedio)}
+                      </p>
+                    )}
                   </div>
                 </div>
                 <span className="text-sm font-bold">{formatUsd(m.totalUsd)}</span>
@@ -87,9 +94,9 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
               <span>Total cobrado</span>
               <span>{formatUsd(totalCobradoUsd)}</span>
             </div>
-            {totalCobradoBs > 0 && (
+            {totalCobradoBs > 0 && tasaPromedio > 0 && (
               <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Cobrado en Bs</span>
+                <span>Total en Bs</span>
                 <span>{formatBs(totalCobradoBs)}</span>
               </div>
             )}
