@@ -40,6 +40,8 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
           {/* Payment method rows */}
           {metodos.map((m) => {
             const clickable = !!onMetodoClick
+            const bsAmount = m.moneda === 'BS' ? m.totalOriginal : m.totalUsd * tasaPromedio
+            const hasBs = bsAmount > 0 && (m.moneda === 'BS' || tasaPromedio > 0)
             return (
               <button
                 key={m.nombre}
@@ -50,21 +52,16 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
               >
                 <div className="flex items-center gap-2">
                   <Money size={16} className="text-muted-foreground" />
-                  <div>
-                    <p className="text-sm font-medium">{m.nombre}</p>
-                    {m.moneda === 'BS' && (
-                      <p className="text-xs text-muted-foreground">
-                        {formatBs(m.totalOriginal)}
-                      </p>
-                    )}
-                    {m.moneda !== 'BS' && tasaPromedio > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {formatBs(m.totalUsd * tasaPromedio)}
-                      </p>
-                    )}
-                  </div>
+                  <p className="text-sm font-medium">{m.nombre}</p>
                 </div>
-                <span className="text-sm font-bold">{formatUsd(m.totalUsd)}</span>
+                <div className="text-right">
+                  {hasBs && (
+                    <span className="text-sm font-bold">{formatBs(bsAmount)}</span>
+                  )}
+                  <span className="text-xs text-muted-foreground ml-1.5">
+                    ({formatUsd(m.totalUsd)})
+                  </span>
+                </div>
               </button>
             )
           })}
@@ -90,25 +87,29 @@ export function PagosResumen({ filters, onMetodoClick, onCreditoClick }: PagosRe
 
           {/* Totales */}
           <div className="pt-3 mt-2 border-t space-y-1">
-            <div className="flex justify-between text-sm font-semibold">
+            <div className="flex justify-between items-baseline text-sm font-semibold">
               <span>Total cobrado</span>
-              <span>{formatUsd(totalCobradoUsd)}</span>
-            </div>
-            {totalCobradoBs > 0 && tasaPromedio > 0 && (
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Total en Bs</span>
-                <span>{formatBs(totalCobradoBs)}</span>
+              <div className="text-right">
+                {totalCobradoBs > 0 && (
+                  <span className="text-sm font-bold">{formatBs(totalCobradoBs)}</span>
+                )}
+                <span className="text-xs text-muted-foreground ml-1.5">({formatUsd(totalCobradoUsd)})</span>
               </div>
-            )}
+            </div>
             {cxcTotalUsd > 0.005 && (
               <>
-                <div className="flex justify-between text-sm text-red-600">
+                <div className="flex justify-between items-baseline text-sm text-red-600">
                   <span>A credito</span>
-                  <span>{formatUsd(cxcTotalUsd)}</span>
+                  <span className="text-xs">({formatUsd(cxcTotalUsd)})</span>
                 </div>
-                <div className="flex justify-between text-sm font-bold pt-1 border-t">
+                <div className="flex justify-between items-baseline text-sm font-bold pt-1 border-t">
                   <span>Total facturado</span>
-                  <span>{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
+                  <div className="text-right">
+                    {totalCobradoBs > 0 && (
+                      <span className="text-sm font-bold">{formatBs(totalCobradoBs + cxcTotalUsd * tasaPromedio)}</span>
+                    )}
+                    <span className="text-xs text-muted-foreground ml-1.5">({formatUsd(totalCobradoUsd + cxcTotalUsd)})</span>
+                  </div>
                 </div>
               </>
             )}
