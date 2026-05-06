@@ -131,22 +131,33 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
               </>
             )}
 
-            {/* Diferencial cambiario por redondeo */}
+            {/* Diferencial cambiario + Total cuadrado */}
             {hasDiferencial && (
-              <div className={`flex justify-between items-center text-xs rounded-md px-2.5 py-1.5 mt-1 ${
-                dentroTolerancia
-                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                  : 'bg-red-50 text-red-700 border border-red-200'
-              }`}>
-                <span className="font-medium">
-                  {dentroTolerancia
-                    ? 'Ajuste por redondeo cambiario'
-                    : 'Diferencial sin cuadrar \u2014 revisar cobros'}
-                </span>
-                <span className="font-mono font-semibold">
-                  {diferencial > 0 ? '+' : ''}{formatBs(diferencial)}
-                </span>
-              </div>
+              <>
+                <div className={`flex justify-between items-center text-xs rounded-md px-2.5 py-1.5 mt-1 ${
+                  dentroTolerancia
+                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                    : 'bg-red-50 text-red-700 border border-red-200'
+                }`}>
+                  <span className="font-medium">
+                    {dentroTolerancia
+                      ? 'Ajuste por redondeo cambiario'
+                      : 'Diferencial sin cuadrar \u2014 revisar cobros'}
+                  </span>
+                  <span className="font-mono font-semibold">
+                    {diferencial > 0 ? '+' : ''}{formatBs(diferencial)}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-1.5 border-t">
+                  <span className="text-sm font-bold">Total cuadrado</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-normal">
+                      {formatBs(totales.totalFacturadoBs)}
+                    </span>
+                    <span className="text-sm font-bold">{formatUsd(totales.totalFacturadoUsd)}</span>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         </div>

@@ -11,6 +11,7 @@ export const productoSchema = z
     precio_mayor_usd: z.number().nullable().optional(),
     stock_minimo: z.number().min(0, 'No puede ser negativo'),
     tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
+    impuesto_iva_id: z.string().uuid().nullable().optional(),
     is_active: z.boolean().default(true),
     ubicacion: z.string().optional().default(''),
     presentacion: z.string().optional().default(''),

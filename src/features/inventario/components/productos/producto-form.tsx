@@ -11,6 +11,7 @@ import { useDepartamentosActivos } from '@/features/inventario/hooks/use-departa
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -35,6 +36,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const { depositos } = useDepositosActivos()
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
+  const { impuestos: todosImpuestos } = useImpuestosActivos()
+  const impuestosIva = todosImpuestos.filter((i) => i.tipo_tributo === 'IVA')
 
   const [codigo, setCodigo] = useState('')
   const [tipo, setTipo] = useState<'P' | 'S' | 'C'>('P')
@@ -46,6 +49,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [precioMayorUsd, setPrecioMayorUsd] = useState('')
   const [stockMinimo, setStockMinimo] = useState('')
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
+  const [impuestoIvaId, setImpuestoIvaId] = useState<string>('')
   const [isActive, setIsActive] = useState(true)
   const [ubicacion, setUbicacion] = useState('')
   const [codigoBarras, setCodigoBarras] = useState('')
@@ -73,6 +77,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioMayorUsd(producto.precio_mayor_usd ?? '')
         setStockMinimo(producto.stock_minimo)
         setTipoImpuesto((producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento')
+        setImpuestoIvaId(producto.impuesto_iva_id ?? '')
         setIsActive(producto.is_active === 1)
         setUbicacion(producto.ubicacion ?? '')
         setCodigoBarras(producto.codigo_barras ?? '')
@@ -91,6 +96,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioMayorUsd('')
         setStockMinimo('')
         setTipoImpuesto('Exento')
+        setImpuestoIvaId('')
         setIsActive(true)
         setUbicacion('')
         setCodigoBarras('')
@@ -122,6 +128,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   function handleUbicacionChange(value: string) {
     setUbicacion(value.toUpperCase())
+  }
+
+  function handleTipoImpuestoChange(valor: 'Gravable' | 'Exento' | 'Exonerado') {
+    setTipoImpuesto(valor)
+    if (valor !== 'Gravable') setImpuestoIvaId('')
   }
 
   function handleTipoChange(nuevoTipo: 'P' | 'S' | 'C') {
@@ -182,6 +193,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       precio_mayor_usd: precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd),
       stock_minimo: esServicioOCombo ? 0 : parseNumOrZero(stockMinimo),
       tipo_impuesto: tipoImpuesto,
+      impuesto_iva_id: tipoImpuesto === 'Gravable' && impuestoIvaId ? impuestoIvaId : null,
       is_active: isActive,
       ubicacion: esServicioOCombo ? '' : ubicacion,
       presentacion: esServicioOCombo ? '' : presentacion,
@@ -211,6 +223,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
           tipo_impuesto: parsed.data.tipo_impuesto,
+          impuesto_iva_id: parsed.data.impuesto_iva_id ?? null,
           is_active: parsed.data.is_active,
           tipo: parsed.data.tipo,
           ubicacion: esServicioOCombo ? null : (parsed.data.ubicacion || null),
@@ -231,6 +244,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
           stock_minimo: parsed.data.stock_minimo,
           tipo_impuesto: parsed.data.tipo_impuesto,
+          impuesto_iva_id: parsed.data.impuesto_iva_id ?? null,
           empresa_id: user!.empresa_id!,
           ubicacion: esServicioOCombo ? undefined : (parsed.data.ubicacion || undefined),
           unidad_base_id: esServicioOCombo ? undefined : (unidadBaseId || undefined),
@@ -748,7 +762,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             <select
               id="prod-tipo-impuesto"
               value={tipoImpuesto}
-              onChange={(e) => setTipoImpuesto(e.target.value as 'Gravable' | 'Exento' | 'Exonerado')}
+              onChange={(e) => handleTipoImpuestoChange(e.target.value as 'Gravable' | 'Exento' | 'Exonerado')}
               className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="Exento">Exento</option>
@@ -759,6 +773,38 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               <p className="text-red-500 text-xs mt-1">{errors.tipo_impuesto}</p>
             )}
           </div>
+
+          {/* Tasa IVA - solo cuando el producto es Gravable */}
+          {tipoImpuesto === 'Gravable' && (
+            <div>
+              <label htmlFor="prod-impuesto-iva" className="block text-sm font-medium text-gray-700 mb-1">
+                Tasa IVA
+              </label>
+              <select
+                id="prod-impuesto-iva"
+                value={impuestoIvaId}
+                onChange={(e) => setImpuestoIvaId(e.target.value)}
+                className={`w-full rounded-md border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  errors.impuesto_iva_id ? 'border-red-500' : 'border-gray-300'
+                }`}
+              >
+                <option value="">Sin tasa especifica</option>
+                {impuestosIva.map((imp) => (
+                  <option key={imp.id} value={imp.id}>
+                    {imp.nombre} ({parseFloat(imp.porcentaje).toFixed(2)}%)
+                  </option>
+                ))}
+              </select>
+              {impuestosIva.length === 0 && (
+                <p className="text-amber-600 text-xs mt-1">
+                  No hay tasas IVA configuradas. Agrega una en Configuracion &gt; Impuestos.
+                </p>
+              )}
+              {errors.impuesto_iva_id && (
+                <p className="text-red-500 text-xs mt-1">{errors.impuesto_iva_id}</p>
+              )}
+            </div>
+          )}
 
           {/* Activo */}
           {isEditing && (

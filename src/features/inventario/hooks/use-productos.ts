@@ -20,6 +20,7 @@ export interface Producto {
   stock: string
   stock_minimo: string
   tipo_impuesto: string
+  impuesto_iva_id: string | null
   maneja_lotes: number
   is_active: number
   created_at: string
@@ -95,6 +96,7 @@ export async function crearProducto(data: {
   stock_minimo: number
   empresa_id: string
   tipo_impuesto?: string
+  impuesto_iva_id?: string | null
   ubicacion?: string
   unidad_base_id?: string
   maneja_lotes?: boolean
@@ -121,6 +123,7 @@ export async function crearProducto(data: {
       costo_promedio: '0.00',
       costo_ultimo: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
       tipo_impuesto: data.tipo_impuesto ?? 'Exento',
+      impuesto_iva_id: data.tipo_impuesto === 'Gravable' ? (data.impuesto_iva_id ?? null) : null,
       maneja_lotes: isServicioOCombo ? 0 : (data.maneja_lotes ? 1 : 0),
       is_active: 1,
       empresa_id: data.empresa_id,
@@ -146,6 +149,7 @@ export async function actualizarProducto(
     precio_mayor_usd?: number | null
     stock_minimo?: number
     tipo_impuesto?: string
+    impuesto_iva_id?: string | null
     is_active?: boolean
     tipo?: string
     ubicacion?: string | null
@@ -165,6 +169,9 @@ export async function actualizarProducto(
   if (data.precio_mayor_usd !== undefined) updates.precio_mayor_usd = data.precio_mayor_usd?.toFixed(2) ?? null
   if (data.stock_minimo !== undefined) updates.stock_minimo = data.stock_minimo.toFixed(3)
   if (data.tipo_impuesto !== undefined) updates.tipo_impuesto = data.tipo_impuesto
+  if (data.impuesto_iva_id !== undefined) {
+    updates.impuesto_iva_id = data.tipo_impuesto === 'Gravable' ? (data.impuesto_iva_id ?? null) : null
+  }
   if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
   if (data.ubicacion !== undefined) updates.ubicacion = data.ubicacion ? data.ubicacion.toUpperCase() : null
   if (data.unidad_base_id !== undefined) updates.unidad_base_id = data.unidad_base_id ?? null
