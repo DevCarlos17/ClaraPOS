@@ -15,6 +15,7 @@ export interface Producto {
   costo_usd: string
   precio_venta_usd: string
   precio_mayor_usd: string | null
+  precio_especial_usd: string | null
   costo_promedio: string
   costo_ultimo: string
   stock: string
@@ -93,6 +94,7 @@ export async function crearProducto(data: {
   costo_usd: number
   precio_venta_usd: number
   precio_mayor_usd: number | null
+  precio_especial_usd?: number | null
   stock_minimo: number
   empresa_id: string
   tipo_impuesto?: string
@@ -118,6 +120,7 @@ export async function crearProducto(data: {
       costo_usd: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
       precio_venta_usd: data.precio_venta_usd.toFixed(2),
       precio_mayor_usd: data.precio_mayor_usd?.toFixed(2) ?? null,
+      precio_especial_usd: data.precio_especial_usd?.toFixed(2) ?? null,
       stock: '0.000',
       stock_minimo: isServicioOCombo ? '0.000' : data.stock_minimo.toFixed(3),
       costo_promedio: '0.00',
@@ -147,6 +150,7 @@ export async function actualizarProducto(
     costo_usd?: number
     precio_venta_usd?: number
     precio_mayor_usd?: number | null
+    precio_especial_usd?: number | null
     stock_minimo?: number
     tipo_impuesto?: string
     impuesto_iva_id?: string | null
@@ -167,6 +171,7 @@ export async function actualizarProducto(
   if (data.costo_usd !== undefined) updates.costo_usd = data.costo_usd.toFixed(2)
   if (data.precio_venta_usd !== undefined) updates.precio_venta_usd = data.precio_venta_usd.toFixed(2)
   if (data.precio_mayor_usd !== undefined) updates.precio_mayor_usd = data.precio_mayor_usd?.toFixed(2) ?? null
+  if (data.precio_especial_usd !== undefined) updates.precio_especial_usd = data.precio_especial_usd?.toFixed(2) ?? null
   if (data.stock_minimo !== undefined) updates.stock_minimo = data.stock_minimo.toFixed(3)
   if (data.tipo_impuesto !== undefined) updates.tipo_impuesto = data.tipo_impuesto
   if (data.impuesto_iva_id !== undefined) {

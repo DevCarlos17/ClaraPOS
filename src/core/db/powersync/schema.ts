@@ -323,6 +323,7 @@ const productos = new Table(
     costo_usd: column.text,
     precio_venta_usd: column.text,
     precio_mayor_usd: column.text,
+    precio_especial_usd: column.text,
     costo_promedio: column.text,
     costo_ultimo: column.text,
     stock: column.text,

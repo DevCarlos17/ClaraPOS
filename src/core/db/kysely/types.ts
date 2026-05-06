@@ -291,6 +291,7 @@ export interface Productos {
   costo_usd: string
   precio_venta_usd: string
   precio_mayor_usd: string | null
+  precio_especial_usd: string | null
   costo_promedio: string
   costo_ultimo: string
   stock: string

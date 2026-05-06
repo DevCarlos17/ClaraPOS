@@ -9,6 +9,7 @@ export const productoSchema = z
     costo_usd: z.number().min(0, 'El costo no puede ser negativo'),
     precio_venta_usd: z.number().min(0, 'El precio no puede ser negativo'),
     precio_mayor_usd: z.number().nullable().optional(),
+    precio_especial_usd: z.number().nullable().optional(),
     stock_minimo: z.number().min(0, 'No puede ser negativo'),
     tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
     impuesto_iva_id: z.string().uuid().nullable().optional(),
