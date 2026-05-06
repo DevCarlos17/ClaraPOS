@@ -19,8 +19,172 @@ import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 import { useDebounce } from '@/hooks/use-debounce'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
+import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
+
+// CSS para inputs numericos sin flechas y sin scroll
+const noSpinner =
+  '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
+const stopScroll = (e: React.WheelEvent<HTMLInputElement>) => e.currentTarget.blur()
+
+// ============================================================
+// SearchSelect — combobox con busqueda, reemplaza <select>
+// ============================================================
+interface SelectOption {
+  value: string
+  label: string
+  sublabel?: string
+}
+
+function SearchSelect({
+  id,
+  options,
+  value,
+  onChange,
+  placeholder = 'Seleccionar...',
+  searchPlaceholder = 'Buscar...',
+  error,
+  disabled,
+}: {
+  id?: string
+  options: SelectOption[]
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  searchPlaceholder?: string
+  error?: string
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [search, setSearch] = useState('')
+
+  const filtered = search.trim()
+    ? options.filter(
+        (opt) =>
+          opt.label.toLowerCase().includes(search.toLowerCase()) ||
+          (opt.sublabel?.toLowerCase().includes(search.toLowerCase()) ?? false)
+      )
+    : options
+
+  const selected = options.find((opt) => opt.value === value)
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o)
+        if (!o) setSearch('')
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          id={id}
+          type="button"
+          disabled={disabled}
+          className={`w-full rounded-md border px-3 py-2 text-sm text-left flex items-center justify-between gap-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            disabled
+              ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+              : 'bg-white hover:bg-gray-50 cursor-pointer'
+          } ${error ? 'border-red-500' : 'border-gray-300'}`}
+        >
+          <span className={`truncate ${selected ? 'text-gray-900' : 'text-gray-400'}`}>
+            {selected ? selected.label : placeholder}
+          </span>
+          <svg
+            className="w-4 h-4 text-gray-400 shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        className="p-0"
+        style={{ width: 'var(--radix-popover-trigger-width, 280px)' }}
+      >
+        <div className="border-b border-gray-100 px-3 flex items-center gap-2">
+          <svg
+            className="w-3.5 h-3.5 text-gray-400 shrink-0"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M21 21l-4.35-4.35M11 19A8 8 0 1 0 11 3a8 8 0 0 0 0 16z"
+            />
+          </svg>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={searchPlaceholder}
+            className="flex-1 py-2.5 text-sm outline-none bg-transparent placeholder:text-gray-400"
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+          />
+        </div>
+        <Command shouldFilter={false}>
+          <CommandList className="max-h-48 overflow-y-auto">
+            <CommandGroup>
+              {filtered.length === 0 ? (
+                <div className="py-6 text-center text-xs text-gray-400">Sin resultados</div>
+              ) : (
+                filtered.map((opt) => (
+                  <CommandItem
+                    key={opt.value}
+                    value={opt.value}
+                    onSelect={() => {
+                      onChange(opt.value)
+                      setSearch('')
+                      setOpen(false)
+                    }}
+                    className="flex items-center justify-between gap-2 cursor-pointer px-3 py-1.5"
+                  >
+                    <div className="flex flex-col min-w-0">
+                      <span
+                        className={`truncate text-sm ${
+                          opt.value === value ? 'font-medium text-blue-600' : 'text-gray-800'
+                        }`}
+                      >
+                        {opt.label}
+                      </span>
+                      {opt.sublabel && (
+                        <span className="text-xs text-gray-400 truncate">{opt.sublabel}</span>
+                      )}
+                    </div>
+                    {opt.value === value && (
+                      <svg
+                        className="w-4 h-4 text-blue-500 shrink-0"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M5 13l4 4L19 7"
+                        />
+                      </svg>
+                    )}
+                  </CommandItem>
+                ))
+              )}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// ============================================================
 
 type TabId = 'general' | 'precios' | 'inventario'
 
@@ -69,6 +233,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [costoUsd, setCostoUsd] = useState('')
   const [costoBs, setCostoBs] = useState('')
   const [margen, setMargen] = useState('')
+  const [margenMayor, setMargenMayor] = useState('')
+  const [margenEspecial, setMargenEspecial] = useState('')
   const [margenTipo, setMargenTipo] = useState<'pct' | 'abs'>('pct')
   const [precioVentaUsd, setPrecioVentaUsd] = useState('')
   const [precioVentaBs, setPrecioVentaBs] = useState('')
@@ -137,17 +303,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           setPrecioVentaBs(ventaN > 0 ? usdToBs(ventaN, tasaValor).toFixed(2) : '')
           setPrecioMayorBs(mayorN > 0 ? usdToBs(mayorN, tasaValor).toFixed(2) : '')
           setPrecioEspecialBs(especN > 0 ? usdToBs(especN, tasaValor).toFixed(2) : '')
-          if (costoN > 0 && ventaN > 0) {
-            setMargen(((ventaN - costoN) / costoN * 100).toFixed(1))
-          } else {
-            setMargen('')
-          }
+          setMargen(costoN > 0 && ventaN > 0 ? ((ventaN - costoN) / costoN * 100).toFixed(1) : '')
+          setMargenMayor(costoN > 0 && mayorN > 0 ? ((mayorN - costoN) / costoN * 100).toFixed(1) : '')
+          setMargenEspecial(costoN > 0 && especN > 0 ? ((especN - costoN) / costoN * 100).toFixed(1) : '')
         } else {
           setCostoBs('')
           setPrecioVentaBs('')
           setPrecioMayorBs('')
           setPrecioEspecialBs('')
           setMargen('')
+          setMargenMayor('')
+          setMargenEspecial('')
         }
       } else {
         setCodigo('')
@@ -168,6 +334,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioEspecialUsd('')
         setPrecioEspecialBs('')
         setMargen('')
+        setMargenMayor('')
+        setMargenEspecial('')
         setMargenTipo('pct')
         setTipoImpuesto('Exento')
         setImpuestoIvaId('')
@@ -204,7 +372,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handleTipoChange(nuevoTipo: 'P' | 'S' | 'C') {
     setTipo(nuevoTipo)
     if (nuevoTipo === 'S') {
-      // Limpiar campos de inventario al pasar a Servicio
       setUbicacion('')
       setPresentacion('')
       setStockMinimo('0')
@@ -239,9 +406,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) setCostoBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = isNaN(num) ? 0 : num
     const ventaN = parseFloat(precioVentaUsd) || 0
-    if (costoN > 0) {
-      const m = margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)
-      setMargen(m.toFixed(2))
+    const mayorN = parseFloat(precioMayorUsd) || 0
+    const especN = parseFloat(precioEspecialUsd) || 0
+    // Solo recalcula margen si ya hay un precio de venta definido (evita mostrar -100)
+    if (costoN > 0 && ventaN > 0) {
+      setMargen((margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)).toFixed(2))
+    }
+    if (costoN > 0 && mayorN > 0) {
+      setMargenMayor((margenTipo === 'pct' ? ((mayorN - costoN) / costoN * 100) : (mayorN - costoN)).toFixed(2))
+    }
+    if (costoN > 0 && especN > 0) {
+      setMargenEspecial((margenTipo === 'pct' ? ((especN - costoN) / costoN * 100) : (especN - costoN)).toFixed(2))
     }
   }
 
@@ -252,9 +427,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       const usd = bsToUsd(num, tasaValor)
       setCostoUsd(usd.toFixed(2))
       const ventaN = parseFloat(precioVentaUsd) || 0
-      if (usd > 0) {
-        const m = margenTipo === 'pct' ? ((ventaN - usd) / usd * 100) : (ventaN - usd)
-        setMargen(m.toFixed(2))
+      const mayorN = parseFloat(precioMayorUsd) || 0
+      const especN = parseFloat(precioEspecialUsd) || 0
+      if (usd > 0 && ventaN > 0) {
+        setMargen((margenTipo === 'pct' ? ((ventaN - usd) / usd * 100) : (ventaN - usd)).toFixed(2))
+      }
+      if (usd > 0 && mayorN > 0) {
+        setMargenMayor((margenTipo === 'pct' ? ((mayorN - usd) / usd * 100) : (mayorN - usd)).toFixed(2))
+      }
+      if (usd > 0 && especN > 0) {
+        setMargenEspecial((margenTipo === 'pct' ? ((especN - usd) / usd * 100) : (especN - usd)).toFixed(2))
       }
     }
   }
@@ -266,9 +448,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) setPrecioVentaBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const ventaN = isNaN(num) ? 0 : num
-    if (costoN > 0) {
-      const m = margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)
-      setMargen(m.toFixed(2))
+    if (costoN > 0 && ventaN > 0) {
+      setMargen((margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)).toFixed(2))
     }
   }
 
@@ -279,14 +460,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       const usd = bsToUsd(num, tasaValor)
       setPrecioVentaUsd(usd.toFixed(2))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-      if (costoN > 0) {
-        const m = margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)
-        setMargen(m.toFixed(2))
+      if (costoN > 0 && usd > 0) {
+        setMargen((margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)).toFixed(2))
       }
     }
   }
 
-  // --- Margen ---
+  // --- Margen Detal ---
   function handleMargenChange(val: string) {
     setMargen(val)
     const margenN = parseFloat(val)
@@ -298,14 +478,42 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     }
   }
 
+  // --- Margen Mayor ---
+  function handleMargenMayorChange(val: string) {
+    setMargenMayor(val)
+    const margenN = parseFloat(val)
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (!isNaN(margenN) && costoN > 0) {
+      const pvp = Math.max(0, margenTipo === 'pct' ? costoN * (1 + margenN / 100) : costoN + margenN)
+      setPrecioMayorUsd(pvp.toFixed(2))
+      if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
+    }
+  }
+
+  // --- Margen Especial ---
+  function handleMargenEspecialChange(val: string) {
+    setMargenEspecial(val)
+    const margenN = parseFloat(val)
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (!isNaN(margenN) && costoN > 0) {
+      const pvp = Math.max(0, margenTipo === 'pct' ? costoN * (1 + margenN / 100) : costoN + margenN)
+      setPrecioEspecialUsd(pvp.toFixed(2))
+      if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
+    }
+  }
+
   function handleMargenTipoChange(mt: 'pct' | 'abs') {
     setMargenTipo(mt)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const ventaN = parseFloat(precioVentaUsd) || 0
-    if (costoN > 0) {
-      const m = mt === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)
-      setMargen(m.toFixed(2))
-    }
+    const mayorN = parseFloat(precioMayorUsd) || 0
+    const especN = parseFloat(precioEspecialUsd) || 0
+    if (costoN > 0 && ventaN > 0)
+      setMargen((mt === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)).toFixed(2))
+    if (costoN > 0 && mayorN > 0)
+      setMargenMayor((mt === 'pct' ? ((mayorN - costoN) / costoN * 100) : (mayorN - costoN)).toFixed(2))
+    if (costoN > 0 && especN > 0)
+      setMargenEspecial((mt === 'pct' ? ((especN - costoN) / costoN * 100) : (especN - costoN)).toFixed(2))
   }
 
   // --- Bidireccionales: PVP Mayor ---
@@ -313,12 +521,24 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioMayorUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioMayorBs(usdToBs(num, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    const mayorN = isNaN(num) ? 0 : num
+    if (costoN > 0 && mayorN > 0) {
+      setMargenMayor((margenTipo === 'pct' ? ((mayorN - costoN) / costoN * 100) : (mayorN - costoN)).toFixed(2))
+    }
   }
 
   function handlePrecioMayorBsChange(val: string) {
     setPrecioMayorBs(val)
     const num = parseFloat(val)
-    if (!isNaN(num) && tasaValor > 0) setPrecioMayorUsd(bsToUsd(num, tasaValor).toFixed(2))
+    if (!isNaN(num) && tasaValor > 0) {
+      const usd = bsToUsd(num, tasaValor)
+      setPrecioMayorUsd(usd.toFixed(2))
+      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+      if (costoN > 0 && usd > 0) {
+        setMargenMayor((margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)).toFixed(2))
+      }
+    }
   }
 
   // --- Bidireccionales: PVP Especial ---
@@ -326,12 +546,24 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioEspecialUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioEspecialBs(usdToBs(num, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    const especN = isNaN(num) ? 0 : num
+    if (costoN > 0 && especN > 0) {
+      setMargenEspecial((margenTipo === 'pct' ? ((especN - costoN) / costoN * 100) : (especN - costoN)).toFixed(2))
+    }
   }
 
   function handlePrecioEspecialBsChange(val: string) {
     setPrecioEspecialBs(val)
     const num = parseFloat(val)
-    if (!isNaN(num) && tasaValor > 0) setPrecioEspecialUsd(bsToUsd(num, tasaValor).toFixed(2))
+    if (!isNaN(num) && tasaValor > 0) {
+      const usd = bsToUsd(num, tasaValor)
+      setPrecioEspecialUsd(usd.toFixed(2))
+      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+      if (costoN > 0 && usd > 0) {
+        setMargenEspecial((margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)).toFixed(2))
+      }
+    }
   }
 
   function handleSugerenciaSelect(s: {
@@ -397,7 +629,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         if (field) fieldErrors[field] = issue.message
       }
       setErrors(fieldErrors)
-      // Navegar al tab con el primer error
       const precioFields = ['costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'precio_especial_usd', 'tipo_impuesto', 'impuesto_iva_id']
       const generalFields = ['departamento_id', 'stock_minimo']
       const hasPrecios = precioFields.some((f) => fieldErrors[f])
@@ -512,7 +743,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
-  // Deshabilitar submit si faltan datos criticos
   const isSubmitDisabled =
     submitting ||
     !codigo.trim() ||
@@ -524,6 +754,28 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     { id: 'precios', label: 'Precios y Fiscalidad' },
     ...(tipo !== 'S' ? [{ id: 'inventario' as TabId, label: 'Inventario' }] : []),
   ]
+
+  // Opciones para SearchSelect
+  const deptOptions: SelectOption[] = departamentos.map((d) => ({ value: d.id, label: d.nombre }))
+  const unidadOptions: SelectOption[] = [
+    { value: '', label: 'Sin unidad' },
+    ...unidades.map((u) => ({ value: u.id, label: `${u.nombre} (${u.abreviatura})` })),
+  ]
+  const tipoImpuestoOptions: SelectOption[] = [
+    { value: 'Exento', label: 'Exento' },
+    { value: 'Gravable', label: 'Gravable (IVA General)' },
+    { value: 'Exonerado', label: 'Exonerado' },
+  ]
+  const tasaIvaOptions: SelectOption[] = [
+    { value: '', label: 'Sin tasa especifica' },
+    ...impuestosIva.map((imp) => ({
+      value: imp.id,
+      label: `${imp.nombre} (${parseFloat(imp.porcentaje).toFixed(2)}%)`,
+    })),
+  ]
+  const depositoOptions: SelectOption[] = depositos.map((d) => ({ value: d.id, label: d.nombre }))
+
+  const margenSuffix = margenTipo === 'pct' ? '%' : '$'
 
   return (
     <dialog
@@ -703,22 +955,18 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             <>
               {/* Departamento */}
               <div>
-                <label htmlFor="prod-depto" className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   Departamento <span className="text-red-500">*</span>
                 </label>
-                <select
+                <SearchSelect
                   id="prod-depto"
+                  options={deptOptions}
                   value={departamentoId}
-                  onChange={(e) => setDepartamentoId(e.target.value)}
-                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                    errors.departamento_id ? 'border-red-500' : 'border-gray-300'
-                  }`}
-                >
-                  <option value="">Seleccionar departamento</option>
-                  {departamentos.map((dep) => (
-                    <option key={dep.id} value={dep.id}>{dep.nombre}</option>
-                  ))}
-                </select>
+                  onChange={setDepartamentoId}
+                  placeholder="Seleccionar departamento"
+                  searchPlaceholder="Buscar departamento..."
+                  error={errors.departamento_id}
+                />
                 {errors.departamento_id && (
                   <p className="text-red-500 text-xs mt-1">{errors.departamento_id}</p>
                 )}
@@ -727,22 +975,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               {/* Unidad de Medida — solo Producto */}
               {!esServicioOComboLocal && (
                 <div>
-                  <label htmlFor="prod-unidad" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
                     Unidad de Medida <span className="text-gray-400 font-normal">(Opcional)</span>
                   </label>
-                  <select
+                  <SearchSelect
                     id="prod-unidad"
+                    options={unidadOptions}
                     value={unidadBaseId}
-                    onChange={(e) => setUnidadBaseId(e.target.value)}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Sin unidad</option>
-                    {unidades.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.nombre} ({u.abreviatura})
-                      </option>
-                    ))}
-                  </select>
+                    onChange={setUnidadBaseId}
+                    placeholder="Sin unidad"
+                    searchPlaceholder="Buscar unidad..."
+                  />
                 </div>
               )}
 
@@ -776,13 +1019,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   <input
                     id="prod-stock-min"
                     type="number"
+                    inputMode="decimal"
                     step="0.001"
                     min="0"
                     value={esServicioOComboLocal ? '0' : stockMinimo}
                     onChange={(e) => setStockMinimo(e.target.value)}
+                    onWheel={stopScroll}
                     disabled={esServicioOComboLocal}
                     placeholder="0"
-                    className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${noSpinner} ${
                       esServicioOComboLocal
                         ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
                         : 'bg-white'
@@ -835,7 +1080,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           {activeTab === 'precios' && (
             <div className="space-y-5">
 
-              {/* Seccion Costos */}
+              {/* Costos */}
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                   Costos
@@ -848,13 +1093,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     <input
                       id="prod-costo"
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min="0"
                       value={esComboLocal ? '0' : costoUsd}
                       onChange={(e) => handleCostoUsdChange(e.target.value)}
+                      onWheel={stopScroll}
                       disabled={esComboLocal}
                       placeholder="0.00"
-                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${noSpinner} ${
                         esComboLocal ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
                       } ${errors.costo_usd ? 'border-red-500' : 'border-gray-300'}`}
                     />
@@ -872,13 +1119,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     <input
                       id="prod-costo-bs"
                       type="number"
+                      inputMode="decimal"
                       step="0.01"
                       min="0"
                       value={esComboLocal ? '0' : costoBs}
                       onChange={(e) => handleCostoBsChange(e.target.value)}
+                      onWheel={stopScroll}
                       disabled={esComboLocal || tasaValor <= 0}
                       placeholder="0,00"
-                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${noSpinner} ${
                         esComboLocal || tasaValor <= 0
                           ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
                           : 'bg-white'
@@ -888,201 +1137,224 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 </div>
               </div>
 
-              {/* Margen de Ganancia */}
+              {/* Tabla de Precios por Nivel */}
               {!esComboLocal && (
                 <div>
-                  <label htmlFor="prod-margen" className="block text-xs font-medium text-gray-600 mb-1">
-                    Margen de Ganancia
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      id="prod-margen"
-                      type="number"
-                      step="0.1"
-                      value={margen}
-                      onChange={(e) => handleMargenChange(e.target.value)}
-                      placeholder={margenTipo === 'pct' ? 'Ej: 30' : 'Ej: 5.00'}
-                      className="flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                      Esquema de Precios
+                    </p>
                     <div className="flex rounded-md border border-gray-300 overflow-hidden shrink-0">
                       <button
                         type="button"
                         onClick={() => handleMargenTipoChange('pct')}
-                        className={`px-3 py-2 text-xs font-medium transition-colors ${
+                        className={`px-3 py-1 text-xs font-medium transition-colors ${
                           margenTipo === 'pct'
                             ? 'bg-blue-600 text-white'
                             : 'bg-white text-gray-600 hover:bg-gray-50'
                         }`}
                       >
-                        %
+                        Margen %
                       </button>
                       <button
                         type="button"
                         onClick={() => handleMargenTipoChange('abs')}
-                        className={`px-3 py-2 text-xs font-medium border-l border-gray-300 transition-colors ${
+                        className={`px-3 py-1 text-xs font-medium border-l border-gray-300 transition-colors ${
                           margenTipo === 'abs'
                             ? 'bg-blue-600 text-white'
                             : 'bg-white text-gray-600 hover:bg-gray-50'
                         }`}
                       >
-                        $
+                        Margen $
                       </button>
                     </div>
                   </div>
+
+                  <div className="border border-gray-200 rounded-md overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 border-b border-gray-200">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-20">Nivel</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">
+                            Margen ({margenSuffix})
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">USD</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Bs</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {/* Detal */}
+                        <tr>
+                          <td className="px-3 py-2 text-xs font-medium text-gray-700">
+                            Detal<span className="text-red-500">*</span>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              value={margen}
+                              onChange={(e) => handleMargenChange(e.target.value)}
+                              onWheel={stopScroll}
+                              placeholder="0"
+                              className={`w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner}`}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              id="prod-venta"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              value={precioVentaUsd}
+                              onChange={(e) => handlePrecioVentaUsdChange(e.target.value)}
+                              onWheel={stopScroll}
+                              placeholder="0.00"
+                              className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
+                                errors.precio_venta_usd ? 'border-red-500' : 'border-gray-300'
+                              }`}
+                            />
+                            {errors.precio_venta_usd && (
+                              <p className="text-red-500 text-xs mt-0.5">{errors.precio_venta_usd}</p>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              value={precioVentaBs}
+                              onChange={(e) => handlePrecioVentaBsChange(e.target.value)}
+                              onWheel={stopScroll}
+                              disabled={tasaValor <= 0}
+                              placeholder="0,00"
+                              className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner} ${
+                                tasaValor <= 0
+                                  ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                                  : 'bg-white'
+                              } border-gray-300`}
+                            />
+                          </td>
+                        </tr>
+
+                        {/* Mayor */}
+                        <tr>
+                          <td className="px-3 py-2 text-xs text-gray-500">
+                            Mayor
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              value={margenMayor}
+                              onChange={(e) => handleMargenMayorChange(e.target.value)}
+                              onWheel={stopScroll}
+                              placeholder="0"
+                              className={`w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner}`}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              id="prod-mayor"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              value={precioMayorUsd}
+                              onChange={(e) => handlePrecioMayorUsdChange(e.target.value)}
+                              onWheel={stopScroll}
+                              placeholder="0.00"
+                              className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
+                                errors.precio_mayor_usd ? 'border-red-500' : 'border-gray-300'
+                              }`}
+                            />
+                            {errors.precio_mayor_usd && (
+                              <p className="text-red-500 text-xs mt-0.5">{errors.precio_mayor_usd}</p>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              value={precioMayorBs}
+                              onChange={(e) => handlePrecioMayorBsChange(e.target.value)}
+                              onWheel={stopScroll}
+                              disabled={tasaValor <= 0}
+                              placeholder="0,00"
+                              className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner} ${
+                                tasaValor <= 0
+                                  ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                                  : 'bg-white'
+                              } border-gray-300`}
+                            />
+                          </td>
+                        </tr>
+
+                        {/* Especial */}
+                        <tr>
+                          <td className="px-3 py-2 text-xs text-gray-500">
+                            Especial
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              value={margenEspecial}
+                              onChange={(e) => handleMargenEspecialChange(e.target.value)}
+                              onWheel={stopScroll}
+                              placeholder="0"
+                              className={`w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner}`}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              id="prod-especial"
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              value={precioEspecialUsd}
+                              onChange={(e) => handlePrecioEspecialUsdChange(e.target.value)}
+                              onWheel={stopScroll}
+                              placeholder="0.00"
+                              className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
+                                errors.precio_especial_usd ? 'border-red-500' : 'border-gray-300'
+                              }`}
+                            />
+                            {errors.precio_especial_usd && (
+                              <p className="text-red-500 text-xs mt-0.5">{errors.precio_especial_usd}</p>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              value={precioEspecialBs}
+                              onChange={(e) => handlePrecioEspecialBsChange(e.target.value)}
+                              onWheel={stopScroll}
+                              disabled={tasaValor <= 0}
+                              placeholder="0,00"
+                              className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner} ${
+                                tasaValor <= 0
+                                  ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
+                                  : 'bg-white'
+                              } border-gray-300`}
+                            />
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
-
-              {/* Esquema de Precios (3 niveles) */}
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                  Esquema de Precios
-                </p>
-
-                {/* PVP Detal */}
-                <div className="mb-3">
-                  <p className="text-xs text-gray-500 mb-1.5 font-medium">PVP Detal</p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="prod-venta" className="block text-xs font-medium text-gray-600 mb-1">
-                        USD
-                      </label>
-                      <input
-                        id="prod-venta"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={precioVentaUsd}
-                        onChange={(e) => handlePrecioVentaUsdChange(e.target.value)}
-                        placeholder="0.00"
-                        className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                          errors.precio_venta_usd ? 'border-red-500' : 'border-gray-300'
-                        }`}
-                      />
-                      {errors.precio_venta_usd && (
-                        <p className="text-red-500 text-xs mt-0.5">{errors.precio_venta_usd}</p>
-                      )}
-                    </div>
-                    <div>
-                      <label htmlFor="prod-venta-bs" className="block text-xs font-medium text-gray-600 mb-1">
-                        Bs
-                      </label>
-                      <input
-                        id="prod-venta-bs"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={precioVentaBs}
-                        onChange={(e) => handlePrecioVentaBsChange(e.target.value)}
-                        disabled={tasaValor <= 0}
-                        placeholder="0,00"
-                        className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                          tasaValor <= 0
-                            ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
-                            : 'bg-white'
-                        } border-gray-300`}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* PVP Mayor */}
-                <div className="mb-3">
-                  <p className="text-xs text-gray-500 mb-1.5 font-medium">
-                    PVP Mayor <span className="text-gray-400 font-normal">(Opcional)</span>
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="prod-mayor" className="block text-xs font-medium text-gray-600 mb-1">
-                        USD
-                      </label>
-                      <input
-                        id="prod-mayor"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={precioMayorUsd}
-                        onChange={(e) => handlePrecioMayorUsdChange(e.target.value)}
-                        placeholder="0.00"
-                        className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                          errors.precio_mayor_usd ? 'border-red-500' : 'border-gray-300'
-                        }`}
-                      />
-                      {errors.precio_mayor_usd && (
-                        <p className="text-red-500 text-xs mt-0.5">{errors.precio_mayor_usd}</p>
-                      )}
-                    </div>
-                    <div>
-                      <label htmlFor="prod-mayor-bs" className="block text-xs font-medium text-gray-600 mb-1">
-                        Bs
-                      </label>
-                      <input
-                        id="prod-mayor-bs"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={precioMayorBs}
-                        onChange={(e) => handlePrecioMayorBsChange(e.target.value)}
-                        disabled={tasaValor <= 0}
-                        placeholder="0,00"
-                        className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                          tasaValor <= 0
-                            ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
-                            : 'bg-white'
-                        } border-gray-300`}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* PVP Especial / Distribuidor */}
-                <div>
-                  <p className="text-xs text-gray-500 mb-1.5 font-medium">
-                    PVP Especial / Distribuidor <span className="text-gray-400 font-normal">(Opcional)</span>
-                  </p>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label htmlFor="prod-especial" className="block text-xs font-medium text-gray-600 mb-1">
-                        USD
-                      </label>
-                      <input
-                        id="prod-especial"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={precioEspecialUsd}
-                        onChange={(e) => handlePrecioEspecialUsdChange(e.target.value)}
-                        placeholder="0.00"
-                        className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                          errors.precio_especial_usd ? 'border-red-500' : 'border-gray-300'
-                        }`}
-                      />
-                      {errors.precio_especial_usd && (
-                        <p className="text-red-500 text-xs mt-0.5">{errors.precio_especial_usd}</p>
-                      )}
-                    </div>
-                    <div>
-                      <label htmlFor="prod-especial-bs" className="block text-xs font-medium text-gray-600 mb-1">
-                        Bs
-                      </label>
-                      <input
-                        id="prod-especial-bs"
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={precioEspecialBs}
-                        onChange={(e) => handlePrecioEspecialBsChange(e.target.value)}
-                        disabled={tasaValor <= 0}
-                        placeholder="0,00"
-                        className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                          tasaValor <= 0
-                            ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
-                            : 'bg-white'
-                        } border-gray-300`}
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
 
               {/* Configuracion de IVA */}
               <div>
@@ -1091,23 +1363,19 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 </p>
 
                 <div className="mb-3">
-                  <label htmlFor="prod-tipo-impuesto" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
                     Tipo de Impuesto
                   </label>
-                  <select
+                  <SearchSelect
                     id="prod-tipo-impuesto"
+                    options={tipoImpuestoOptions}
                     value={tipoImpuesto}
-                    onChange={(e) =>
-                      handleTipoImpuestoChange(
-                        e.target.value as 'Gravable' | 'Exento' | 'Exonerado'
-                      )
+                    onChange={(val) =>
+                      handleTipoImpuestoChange(val as 'Gravable' | 'Exento' | 'Exonerado')
                     }
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="Exento">Exento</option>
-                    <option value="Gravable">Gravable (IVA General)</option>
-                    <option value="Exonerado">Exonerado</option>
-                  </select>
+                    searchPlaceholder="Buscar tipo..."
+                    error={errors.tipo_impuesto}
+                  />
                   {errors.tipo_impuesto && (
                     <p className="text-red-500 text-xs mt-1">{errors.tipo_impuesto}</p>
                   )}
@@ -1116,24 +1384,18 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 {/* Tasa IVA % — solo si Gravable */}
                 {tipoImpuesto === 'Gravable' && (
                   <div>
-                    <label htmlFor="prod-impuesto-iva" className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
                       Tasa IVA (%)
                     </label>
-                    <select
+                    <SearchSelect
                       id="prod-impuesto-iva"
+                      options={tasaIvaOptions}
                       value={impuestoIvaId}
-                      onChange={(e) => setImpuestoIvaId(e.target.value)}
-                      className={`w-full rounded-md border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                        errors.impuesto_iva_id ? 'border-red-500' : 'border-gray-300'
-                      }`}
-                    >
-                      <option value="">Sin tasa especifica</option>
-                      {impuestosIva.map((imp) => (
-                        <option key={imp.id} value={imp.id}>
-                          {imp.nombre} ({parseFloat(imp.porcentaje).toFixed(2)}%)
-                        </option>
-                      ))}
-                    </select>
+                      onChange={setImpuestoIvaId}
+                      placeholder="Sin tasa especifica"
+                      searchPlaceholder="Buscar tasa IVA..."
+                      error={errors.impuesto_iva_id}
+                    />
                     {impuestosIva.length === 0 && (
                       <p className="text-amber-600 text-xs mt-1">
                         No hay tasas IVA configuradas. Agrega una en Configuracion &gt; Impuestos.
@@ -1188,22 +1450,18 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 <div className="border border-gray-200 rounded-md p-3 space-y-3 bg-gray-50">
                   <p className="text-xs font-medium text-gray-600">Inventario Inicial</p>
                   <div>
-                    <label htmlFor="prod-deposito" className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
                       Deposito <span className="text-red-500">*</span>
                     </label>
-                    <select
+                    <SearchSelect
                       id="prod-deposito"
+                      options={depositoOptions}
                       value={depositoId}
-                      onChange={(e) => setDepositoId(e.target.value)}
-                      className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
-                        errors.deposito_id ? 'border-red-500' : 'border-gray-300'
-                      }`}
-                    >
-                      <option value="">Seleccionar deposito</option>
-                      {depositos.map((d) => (
-                        <option key={d.id} value={d.id}>{d.nombre}</option>
-                      ))}
-                    </select>
+                      onChange={setDepositoId}
+                      placeholder="Seleccionar deposito"
+                      searchPlaceholder="Buscar deposito..."
+                      error={errors.deposito_id}
+                    />
                     {errors.deposito_id && (
                       <p className="text-red-500 text-xs mt-1">{errors.deposito_id}</p>
                     )}
@@ -1215,12 +1473,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     <input
                       id="prod-stock-inicial"
                       type="number"
+                      inputMode="decimal"
                       step="0.001"
                       min="0"
                       value={stockInicial}
                       onChange={(e) => setStockInicial(e.target.value)}
+                      onWheel={stopScroll}
                       placeholder="0.000"
-                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${noSpinner}`}
                     />
                     <p className="text-xs text-gray-400 mt-1">
                       Los movimientos posteriores se gestionan via Compras o Ajustes
@@ -1240,21 +1500,23 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 </div>
               )}
 
-              {/* Ubicacion Fisica */}
-              <div>
-                <label htmlFor="prod-ubicacion" className="block text-sm font-medium text-gray-700 mb-1">
-                  Ubicacion Fisica <span className="text-gray-400 font-normal">(Opcional)</span>
-                </label>
-                <input
-                  id="prod-ubicacion"
-                  type="text"
-                  value={ubicacion}
-                  onChange={(e) => setUbicacion(e.target.value.toUpperCase())}
-                  placeholder="Ej: PASILLO 3, ESTANTE A"
-                  autoComplete="off"
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+              {/* Ubicacion Fisica — solo Producto (no Combo) */}
+              {tipo === 'P' && (
+                <div>
+                  <label htmlFor="prod-ubicacion" className="block text-sm font-medium text-gray-700 mb-1">
+                    Ubicacion Fisica <span className="text-gray-400 font-normal">(Opcional)</span>
+                  </label>
+                  <input
+                    id="prod-ubicacion"
+                    type="text"
+                    value={ubicacion}
+                    onChange={(e) => setUbicacion(e.target.value.toUpperCase())}
+                    placeholder="Ej: PASILLO 3, ESTANTE A"
+                    autoComplete="off"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              )}
 
               {/* Manejo de Lotes */}
               <div className="flex items-center gap-2">
