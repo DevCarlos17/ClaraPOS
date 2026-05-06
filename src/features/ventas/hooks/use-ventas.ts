@@ -41,6 +41,10 @@ export interface CrearVentaParams {
   empresa_id: string
   sesion_caja_id: string | null
   cargosEspeciales?: CargoEspecial[]
+  /** Descuento comercial en USD (calculado como descuentoBs / tasa en el POS) */
+  descuentoUsd?: number
+  /** Motivo del descuento (cortesia, ajuste, etc.) */
+  descuentoMotivo?: string
 }
 
 export interface CrearVentaResult {
@@ -104,7 +108,7 @@ export async function buscarProductoPorCodigoBarras(
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [] } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0 } = params
 
   if (lineas.length === 0 && cargosEspeciales.length === 0) {
     throw new Error('Debe agregar al menos una linea o cargo especial a la venta')
@@ -166,6 +170,13 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       totalUsd += cargo.montoCargoUsd
     }
     totalUsd = Number(totalUsd.toFixed(2))
+
+    // Descuento comercial: se resta del total BRUTO antes de almacenar.
+    // total_usd y total_bs quedan como montos NETOS (lo que el cliente paga).
+    // descuento_usd y descuento_bs se guardan aparte para reportes del cuadre.
+    const descuentoUsdFinal = Math.min(Number(descuentoUsd.toFixed(2)), totalUsd)
+    const descuentoBsFinal = Number((descuentoUsdFinal * tasa).toFixed(2))
+    totalUsd = Number((totalUsd - descuentoUsdFinal).toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
 
     // 2. Generar nro_factura (por empresa)
@@ -178,8 +189,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
     // 3. INSERT venta
     await tx.execute(
-      `INSERT INTO ventas (id, cliente_id, nro_factura, deposito_id, sesion_caja_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?, ?)`,
+      `INSERT INTO ventas (id, cliente_id, nro_factura, deposito_id, sesion_caja_id, tasa, total_exento_usd, total_base_usd, total_iva_usd, total_igtf_usd, total_usd, total_bs, descuento_usd, descuento_bs, saldo_pend_usd, tipo, status, usuario_id, fecha, empresa_id, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVA', ?, ?, ?, ?, ?)`,
       [
         ventaId,
         cliente_id,
@@ -193,6 +204,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         '0.00',
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
+        descuentoUsdFinal.toFixed(2),
+        descuentoBsFinal.toFixed(2),
         totalUsd.toFixed(2),
         tipo,
         usuario_id,
@@ -481,8 +494,12 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       totalAbonadoUsd += montoUsd
     }
 
-    // 6. UPDATE venta saldo_pend_usd
-    const saldoPend = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
+    // 6. UPDATE venta saldo_pend_usd (ancla en Bs, consistente con el calculo del POS)
+    const abonado_BsNativo = pagos.filter((p) => p.moneda === 'BS').reduce((s, p) => s + p.monto, 0)
+    const abonado_UsdNativo = pagos.filter((p) => p.moneda === 'USD').reduce((s, p) => s + p.monto, 0)
+    const pendienteBs4_db = Math.max(0, totalUsd * tasa - abonado_BsNativo - abonado_UsdNativo * tasa)
+    // Si el residuo en Bs es <= $0.01 equivalente, es diferencial de redondeo: se absorbe (saldo = 0)
+    const saldoPend = pendienteBs4_db <= tasa * 0.01 ? 0 : Number((pendienteBs4_db / tasa).toFixed(2))
     await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
       saldoPend.toFixed(2),
       ventaId,

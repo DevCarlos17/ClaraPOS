@@ -614,6 +614,8 @@ export interface TotalesFiscales {
   totalIgtfBs: number
   totalFacturadoUsd: number
   totalFacturadoBs: number
+  totalDescuentoUsd: number
+  totalDescuentoBs: number
   totalNcrUsd: number
   totalNcrBs: number
 }
@@ -636,7 +638,9 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
        COALESCE(SUM(CAST(total_igtf_usd AS REAL)), 0) as total_igtf,
        COALESCE(SUM(CAST(total_igtf_usd AS REAL) * CAST(tasa AS REAL)), 0) as total_igtf_bs,
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_facturado,
-       COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_facturado_bs
+       COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_facturado_bs,
+       COALESCE(SUM(CAST(COALESCE(descuento_usd, '0') AS REAL)), 0) as total_descuento,
+       COALESCE(SUM(CAST(COALESCE(descuento_bs, '0') AS REAL)), 0) as total_descuento_bs
      FROM ventas
      WHERE ${whereV}`,
     paramsV
@@ -653,6 +657,8 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
     total_igtf_bs: number
     total_facturado: number
     total_facturado_bs: number
+    total_descuento: number
+    total_descuento_bs: number
   }
 
   // NCR del mismo dia/sesion — usando fecha y empresa_id
@@ -681,6 +687,8 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
       totalIgtfBs: Number(Number(row.total_igtf_bs ?? 0).toFixed(2)),
       totalFacturadoUsd: Number(Number(row.total_facturado ?? 0).toFixed(2)),
       totalFacturadoBs: Number(Number(row.total_facturado_bs ?? 0).toFixed(2)),
+      totalDescuentoUsd: Number(Number(row.total_descuento ?? 0).toFixed(2)),
+      totalDescuentoBs: Number(Number(row.total_descuento_bs ?? 0).toFixed(2)),
       totalNcrUsd: Number(Number(ncrRow.total_ncr ?? 0).toFixed(2)),
       totalNcrBs: Number(Number(ncrRow.total_ncr_bs ?? 0).toFixed(2)),
     } as TotalesFiscales,

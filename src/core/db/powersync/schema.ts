@@ -572,6 +572,8 @@ const ventas = new Table(
     total_igtf_usd: column.text,
     total_usd: column.text,
     total_bs: column.text,
+    descuento_usd: column.text,
+    descuento_bs: column.text,
     saldo_pend_usd: column.text,
     tipo: column.text,
     status: column.text,

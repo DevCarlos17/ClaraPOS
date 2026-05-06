@@ -56,6 +56,16 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
             bs={totales.baseImponibleBs}
           />
 
+          {/* Descuentos comerciales */}
+          {totales.totalDescuentoUsd > 0 && (
+            <Row
+              label="Descuentos comerciales"
+              usd={totales.totalDescuentoUsd}
+              bs={totales.totalDescuentoBs}
+              negativo
+            />
+          )}
+
           {/* NCR / Devoluciones */}
           {totales.totalNcrUsd > 0 && (
             <Row

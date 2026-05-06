@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@powersync/react'
-import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, CreditCard, ShoppingCart } from '@phosphor-icons/react'
+import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, CreditCard, ShoppingCart, Tag, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useBlocker } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
@@ -141,13 +142,41 @@ export function PosTerminal() {
   const selectedMetodo = metodos.find((m) => m.id === metodoId)
   const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
 
-  const totalAbonadoUsd = pagos.reduce((sum, p) => {
-    const montoUsd = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
-    return sum + montoUsd
-  }, 0)
-  const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
-  const pendienteBs = usdToBs(pendienteUsd, tasaValor)
-  const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
+  // --- Descuento comercial / cortesia ---
+  const [descuentoBs, setDescuentoBs] = useState(0)
+  const [descuentoMotivo, setDescuentoMotivo] = useState('')
+  const [showDescuento, setShowDescuento] = useState(false)
+
+  // Ancla en Bs: los pagos en Bs se mantienen exactos; los pagos en USD se convierten a Bs.
+  // Nunca al reves (Bs -> USD -> Bs acumula error de redondeo en cada conversion).
+  const totalAbonado_BsNativo = pagos
+    .filter((p) => p.moneda === 'BS')
+    .reduce((sum, p) => sum + p.monto, 0)
+  const totalAbonado_UsdNativo = pagos
+    .filter((p) => p.moneda === 'USD')
+    .reduce((sum, p) => sum + p.monto, 0)
+
+  // Referencia USD para mostrar en pantalla (no se usa como ancla de calculo)
+  const totalAbonadoUsd = Number(
+    (totalAbonado_UsdNativo + totalAbonado_BsNativo / tasaValor).toFixed(2)
+  )
+
+  // Pendiente real en Bs sin redondeo intermedio (4+ decimales de precision).
+  // El descuentoBs reduce el monto que el cliente debe pagar.
+  const pendienteBs4 = Math.max(
+    0,
+    totalUsd * tasaValor - descuentoBs - totalAbonado_BsNativo - totalAbonado_UsdNativo * tasaValor
+  )
+  const pendienteBs = Number(pendienteBs4.toFixed(2))
+  const pendienteUsd = Number((pendienteBs4 / tasaValor).toFixed(2))
+
+  // Umbral de diferencial cambiario: equivalente a $0.01 USD en Bs
+  const umbralDiferencialBs = tasaValor * 0.01
+  // Diferencial puro de redondeo de tasa: pendiente existe pero es menor al umbral
+  const esDiferencialRedondeo = pendienteBs4 > 0.001 && pendienteBs4 <= umbralDiferencialBs
+
+  // CONTADO si esta totalmente pagado O si el residuo es diferencial de redondeo
+  const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteBs4 <= umbralDiferencialBs ? 'CONTADO' : 'CREDITO'
 
   // --- Auto-focus en buscador cuando carga el POS ---
   useEffect(() => {
@@ -348,6 +377,9 @@ export function PosTerminal() {
     setLineas([])
     setPagos([])
     setCargosEspeciales([])
+    setDescuentoBs(0)
+    setDescuentoMotivo('')
+    setShowDescuento(false)
     setMetodoId('')
     setMonto('')
     setReferencia('')
@@ -487,6 +519,8 @@ export function PosTerminal() {
         empresa_id: user.empresa_id!,
         sesion_caja_id: sesion?.id ?? null,
         cargosEspeciales,
+        descuentoUsd: descuentoBs > 0 ? Number((descuentoBs / tasaValor).toFixed(4)) : 0,
+        descuentoMotivo: descuentoMotivo.trim() || undefined,
       })
 
       setVentaExitosa({
@@ -832,6 +866,70 @@ export function PosTerminal() {
               <p className="text-sm text-muted-foreground mt-0.5">{formatBs(totalBs)}</p>
             </div>
 
+            {/* Descuento Comercial / Cortesia */}
+            {!showDescuento ? (
+              <div className="px-4 py-1.5 shrink-0 border-b">
+                <button
+                  type="button"
+                  onClick={() => setShowDescuento(true)}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-orange-600 transition-colors"
+                >
+                  <Tag size={12} />
+                  Agregar descuento comercial
+                </button>
+              </div>
+            ) : (
+              <div className="px-4 py-3 shrink-0 border-b bg-orange-50/60">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-orange-700 flex items-center gap-1">
+                    <Tag size={12} />
+                    Descuento comercial
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setShowDescuento(false); setDescuentoBs(0); setDescuentoMotivo('') }}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="flex gap-2 items-end">
+                  <div className="w-28">
+                    <p className="text-[10px] text-muted-foreground mb-0.5">Monto Bs.</p>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={totalBs}
+                      step={1}
+                      value={descuentoBs || ''}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value) || 0
+                        setDescuentoBs(Math.min(Math.max(0, v), totalBs))
+                      }}
+                      className="h-7 text-sm"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[10px] text-muted-foreground mb-0.5">Motivo</p>
+                    <Input
+                      type="text"
+                      value={descuentoMotivo}
+                      onChange={(e) => setDescuentoMotivo(e.target.value)}
+                      className="h-7 text-sm"
+                      placeholder="Cortesia, ajuste..."
+                      maxLength={100}
+                    />
+                  </div>
+                </div>
+                {descuentoBs > 0 && (
+                  <p className="text-xs font-medium text-orange-600 mt-1.5 text-right">
+                    −{formatBs(descuentoBs)} ({formatUsd(Number((descuentoBs / tasaValor).toFixed(2)))})
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Status summary */}
             {(pagos.length > 0 || lineas.length > 0 || cargosEspeciales.length > 0) && (
               <div className="px-4 py-2.5 border-b space-y-1.5 shrink-0">
@@ -841,12 +939,22 @@ export function PosTerminal() {
                     <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
                   </div>
                 )}
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Pendiente</span>
-                  <span className={`font-medium ${pendienteUsd > 0.01 ? 'text-orange-600' : 'text-green-600'}`}>
-                    {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
-                  </span>
-                </div>
+                {/* Pendiente normal (mayor al umbral de redondeo) */}
+                {!esDiferencialRedondeo && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted-foreground">Pendiente</span>
+                    <span className={`font-medium ${pendienteBs4 > umbralDiferencialBs ? 'text-orange-600' : 'text-green-600'}`}>
+                      {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
+                    </span>
+                  </div>
+                )}
+                {/* Diferencial cambiario por redondeo de tasa */}
+                {esDiferencialRedondeo && (
+                  <div className="flex items-center justify-between text-xs rounded bg-amber-50 border border-amber-200 px-2 py-1">
+                    <span className="text-amber-700 font-medium">Dif. cambiario</span>
+                    <span className="font-mono font-semibold text-amber-700">{formatBs(pendienteBs)}</span>
+                  </div>
+                )}
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-muted-foreground">Estado</span>
                   <span className={`font-semibold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
