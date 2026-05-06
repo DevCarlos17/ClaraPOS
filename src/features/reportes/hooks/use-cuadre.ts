@@ -22,7 +22,7 @@ function buildCuadreWhere(
   dateColumn = 'fecha'
 ): [string, unknown[]] {
   const prefix = tableAlias ? `${tableAlias}.` : ''
-  const clauses: string[] = [`${prefix}empresa_id = ?`, `SUBSTR(${prefix}${dateColumn}, 1, 10) = ?`]
+  const clauses: string[] = [`${prefix}empresa_id = ?`, `DATE(${prefix}${dateColumn}, 'localtime') = ?`]
   const params: unknown[] = [empresaId, filters.fecha]
 
   if (filters.sesionCajaIds.length > 0) {
@@ -51,7 +51,7 @@ function buildCuadreWhereViaVenta(
 ): [string, unknown[]] {
   const clauses: string[] = [
     `${ventaAlias}.empresa_id = ?`,
-    `SUBSTR(${ventaAlias}.${dateColumn}, 1, 10) = ?`,
+    `DATE(${ventaAlias}.${dateColumn}, 'localtime') = ?`,
   ]
   const params: unknown[] = [empresaId, filters.fecha]
 
@@ -170,6 +170,8 @@ export function useVentasDelDia(filters: CuadreFilters | null) {
     params
   )
 
+  console.log('[useVentasDelDia]', { empresaId, filters, where, params, data, isLoading })
+
   const row = (data?.[0] ?? {}) as { cnt: number; sum_usd: number; sum_bs: number }
   const count = Number(row.cnt ?? 0)
   const totalUsd = Number(row.sum_usd ?? 0)
@@ -224,6 +226,8 @@ export function useCxcDelDia(filters: CuadreFilters | null) {
        AND CAST(saldo_pend_usd AS REAL) > 0.01`,
     params
   )
+
+  console.log('[useCxcDelDia]', { empresaId, filters, where, params, data, isLoading })
 
   const row = (data?.[0] ?? {}) as { cxc_usd: number; cxc_bs: number }
   return {
@@ -291,6 +295,8 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
      ORDER BY total_usd DESC`,
     params
   )
+
+  console.log('[usePagosPorMetodo]', { empresaId, filters, where, params, data, isLoading })
 
   const items: (MetodoPagoResumen & { metodo_cobro_id: string })[] = (data ?? []).map((row: Record<string, unknown>) => ({
     metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
@@ -460,7 +466,7 @@ export function useSesionesPorCajaYFecha(cajaId: string | null, fecha: string) {
       ? `SELECT sc.id, sc.status, sc.fecha_apertura, u.nombre as usuario_nombre
          FROM sesiones_caja sc
          LEFT JOIN usuarios u ON sc.usuario_apertura_id = u.id
-         WHERE sc.empresa_id = ? AND sc.caja_id = ? AND SUBSTR(sc.fecha_apertura, 1, 10) = ?
+         WHERE sc.empresa_id = ? AND sc.caja_id = ? AND DATE(sc.fecha_apertura, 'localtime') = ?
          ORDER BY sc.fecha_apertura ASC`
       : '',
     cajaId ? [empresaId, cajaId, fecha] : []
@@ -481,7 +487,7 @@ export function useTasaDelDia(fecha: string | null) {
            COALESCE(AVG(CAST(tasa AS REAL)), 0) as avg_tasa,
            COUNT(*) as cnt
          FROM tasas_cambio
-         WHERE empresa_id = ? AND SUBSTR(created_at, 1, 10) = ?`
+         WHERE empresa_id = ? AND DATE(created_at, 'localtime') = ?`
       : '',
     fecha ? [empresaId, fecha] : []
   )
@@ -646,6 +652,8 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
     paramsV
   )
 
+  console.log('[useTotalesFiscales]', { empresaId, filters, whereV, paramsV, dataVentas, loadingVentas })
+
   const row = (dataVentas?.[0] ?? {}) as {
     base_imponible: number
     base_imponible_bs: number
@@ -668,7 +676,7 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
            COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_ncr,
            COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_ncr_bs
          FROM notas_credito
-         WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) = ?`
+         WHERE empresa_id = ? AND DATE(fecha, 'localtime') = ?`
       : '',
     filters ? [empresaId, filters.fecha] : []
   )
@@ -837,10 +845,10 @@ export function useFacturasBusqueda(params: BusquedaParams | null) {
     clauses.push('v.empresa_id = ?')
     sqlParams.push(params.empresaId)
 
-    clauses.push("SUBSTR(v.fecha, 1, 10) >= ?")
+    clauses.push("DATE(v.fecha, 'localtime') >= ?")
     sqlParams.push(params.fechaInicio)
 
-    clauses.push("SUBSTR(v.fecha, 1, 10) <= ?")
+    clauses.push("DATE(v.fecha, 'localtime') <= ?")
     sqlParams.push(params.fechaFin)
 
     if (params.busqFactura.trim()) {

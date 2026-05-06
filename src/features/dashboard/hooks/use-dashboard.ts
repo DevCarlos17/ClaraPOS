@@ -119,11 +119,11 @@ export function useVentasRango(fechaInicio: string, fechaFin: string) {
   const empresaId = user?.empresa_id ?? ''
   const { data, isLoading } = useQuery(
     `SELECT
-       SUBSTR(fecha, 1, 10) as dia,
+       DATE(fecha, 'localtime') as dia,
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_usd
      FROM ventas
-     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?
-     GROUP BY SUBSTR(fecha, 1, 10)
+     WHERE empresa_id = ? AND DATE(fecha, 'localtime') >= ? AND DATE(fecha, 'localtime') <= ?
+     GROUP BY DATE(fecha, 'localtime')
      ORDER BY dia ASC`,
     [empresaId, fechaInicio, fechaFin]
   )
@@ -220,7 +220,7 @@ export function useTopProductosRango(
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
-     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) >= ? AND SUBSTR(v.fecha, 1, 10) <= ?
+     WHERE v.empresa_id = ? AND DATE(v.fecha, 'localtime') >= ? AND DATE(v.fecha, 'localtime') <= ?
      GROUP BY p.id, p.nombre, p.codigo
      ORDER BY cantidad ${order}
      LIMIT ${limit}`,
