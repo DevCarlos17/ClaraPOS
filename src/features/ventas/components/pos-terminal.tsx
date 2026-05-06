@@ -116,7 +116,10 @@ export function PosTerminal() {
   // Totales de la factura
   const totalProductosUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
   const totalCargosEspUsd = cargosEspeciales.reduce((sum, c) => sum + c.montoCargoUsd, 0)
-  const totalUsd = totalProductosUsd + totalCargosEspUsd
+  const totalIvaUsd = lineas
+    .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') !== 'Exento')
+    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd * (((l.impuesto_pct as number | undefined) ?? 0) / 100), 0)
+  const totalUsd = totalProductosUsd + totalIvaUsd + totalCargosEspUsd
   const totalBs = usdToBs(totalUsd, tasaValor)
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
@@ -332,6 +335,8 @@ export function PosTerminal() {
         precio_unitario_usd: parseFloat(producto.precio_venta_usd),
         stock_actual: parseFloat(producto.stock),
         es_decimal: producto.es_decimal === 1,
+        tipo_impuesto: (producto.tipo_impuesto ?? 'Exento') as 'Gravable' | 'Exento' | 'Exonerado',
+        impuesto_pct: producto.impuesto_pct ?? 0,
       },
     ])
   }
@@ -508,6 +513,8 @@ export function PosTerminal() {
           producto_id: l.producto_id,
           cantidad: l.cantidad,
           precio_unitario_usd: l.precio_unitario_usd,
+          tipo_impuesto: (l.tipo_impuesto as string | undefined) ?? 'Exento',
+          impuesto_pct: (l.impuesto_pct as number | undefined) ?? 0,
         })),
         pagos: pagos.map((p) => ({
           metodo_cobro_id: p.metodo_cobro_id,
@@ -862,6 +869,18 @@ export function PosTerminal() {
             {/* Total */}
             <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
               <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
+              {totalIvaUsd > 0.001 && (
+                <div className="space-y-0.5 mb-2">
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Subtotal</span>
+                    <span>{formatUsd(Number(totalProductosUsd.toFixed(2)))}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-amber-700 font-medium">
+                    <span>IVA</span>
+                    <span>+{formatUsd(Number(totalIvaUsd.toFixed(2)))}</span>
+                  </div>
+                </div>
+              )}
               <p className="text-3xl font-bold leading-tight tabular-nums">{formatUsd(totalUsd)}</p>
               <p className="text-sm text-muted-foreground mt-0.5">{formatBs(totalBs)}</p>
             </div>

@@ -9,6 +9,8 @@ export const lineaVentaSchema = z.object({
   precio_unitario_usd: z.number().min(0, 'El precio no puede ser negativo'),
   stock_actual: z.number().min(0).default(0),
   es_decimal: z.boolean().default(true),
+  tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
+  impuesto_pct: z.number().min(0).default(0),
 })
 
 export type LineaVentaForm = z.infer<typeof lineaVentaSchema>

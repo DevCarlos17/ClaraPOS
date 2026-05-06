@@ -10,6 +10,8 @@ export interface LineaVenta {
   producto_id: string
   cantidad: number
   precio_unitario_usd: number
+  tipo_impuesto?: string
+  impuesto_pct?: number
 }
 
 export interface PagoEntry {
@@ -62,9 +64,11 @@ export function useBuscarProductosVenta(query: string) {
   const { data, isLoading } = useQuery(
     shouldSearch
       ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
-                p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal
+                p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
+                p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
          FROM productos p
          LEFT JOIN unidades u ON p.unidad_base_id = u.id
+         LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
          WHERE p.empresa_id = ? AND p.is_active = 1
          AND (p.nombre LIKE ? OR p.codigo LIKE ? OR p.codigo_barras LIKE ?)
          AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
@@ -85,6 +89,8 @@ export interface ProductoVenta {
   stock: string
   es_decimal: number
   codigo_barras?: string | null
+  tipo_impuesto?: string | null
+  impuesto_pct?: number
 }
 
 export async function buscarProductoPorCodigoBarras(
@@ -93,9 +99,11 @@ export async function buscarProductoPorCodigoBarras(
 ): Promise<ProductoVenta | null> {
   const result = await db.execute(
     `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
-            p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal
+            p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
+            p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
      FROM productos p
      LEFT JOIN unidades u ON p.unidad_base_id = u.id
+     LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
      WHERE p.empresa_id = ?
        AND p.codigo_barras = ?
        AND p.is_active = 1
@@ -160,11 +168,25 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     const monedaUsdId = (monedaUsdResult.rows.item(0) as { id: string }).id
     const monedaBsId = (monedaBsResult.rows.item(0) as { id: string }).id
 
-    // 1. Calcular totales
-    let totalUsd = 0
+    // 1. Calcular totales con desglose fiscal
+    let totalExentoUsd = 0
+    let totalBaseUsd = 0
+    let totalIvaUsd = 0
     for (const linea of lineas) {
-      totalUsd += linea.cantidad * linea.precio_unitario_usd
+      const subtotal = Number((linea.cantidad * linea.precio_unitario_usd).toFixed(2))
+      const tipoImp = (linea.tipo_impuesto as string | undefined) ?? 'Exento'
+      if (tipoImp === 'Exento') {
+        totalExentoUsd += subtotal
+      } else {
+        totalBaseUsd += subtotal
+        const pct = (linea.impuesto_pct as number | undefined) ?? 0
+        totalIvaUsd += Number((subtotal * (pct / 100)).toFixed(2))
+      }
     }
+    totalExentoUsd = Number(totalExentoUsd.toFixed(2))
+    totalBaseUsd = Number(totalBaseUsd.toFixed(2))
+    totalIvaUsd = Number(totalIvaUsd.toFixed(2))
+    let totalUsd = totalExentoUsd + totalBaseUsd + totalIvaUsd
     // Agregar cargos especiales (avance/prestamo) al total
     for (const cargo of cargosEspeciales) {
       totalUsd += cargo.montoCargoUsd
@@ -198,9 +220,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         depositoId,
         sesion_caja_id ?? null,
         tasa.toFixed(4),
-        '0.00',
-        totalUsd.toFixed(2),
-        '0.00',
+        totalExentoUsd.toFixed(2),
+        totalBaseUsd.toFixed(2),
+        totalIvaUsd.toFixed(2),
         '0.00',
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
@@ -234,8 +256,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           depositoId,
           linea.cantidad.toFixed(3),
           linea.precio_unitario_usd.toFixed(2),
-          'Exento',
-          '0.00',
+          (linea.tipo_impuesto as string | undefined) ?? 'Exento',
+          ((linea.impuesto_pct as number | undefined) ?? 0).toFixed(2),
           subtotalUsd.toFixed(2),
           subtotalBs.toFixed(2),
           empresa_id,

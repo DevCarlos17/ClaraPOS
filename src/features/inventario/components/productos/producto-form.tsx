@@ -14,7 +14,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
-import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 import { useDebounce } from '@/hooks/use-debounce'
@@ -61,6 +61,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [submitting, setSubmitting] = useState(false)
   const [popoverOpen, setPopoverOpen] = useState(false)
 
+  // Bs inputs (bidireccionales) y margen
+  const [costoBs, setCostoBs] = useState('')
+  const [precioVentaBs, setPrecioVentaBs] = useState('')
+  const [precioMayorBs, setPrecioMayorBs] = useState('')
+  const [margen, setMargen] = useState('')
+  const [margenTipo, setMargenTipo] = useState<'pct' | 'abs'>('pct')
+
   const debouncedNombre = useDebounce(nombre, 300)
   const { sugerencias } = useCatalogoGlobal(isEditing ? '' : debouncedNombre)
 
@@ -85,6 +92,25 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setManejaLotes(producto.maneja_lotes === 1)
         setDepositoId('')
         setStockInicial('')
+        // Inicializar campos Bs y margen
+        if (tasaValor > 0) {
+          const costoN = parseFloat(producto.costo_usd) || 0
+          const ventaN = parseFloat(producto.precio_venta_usd) || 0
+          const mayorN = parseFloat(producto.precio_mayor_usd ?? '') || 0
+          setCostoBs(costoN > 0 ? usdToBs(costoN, tasaValor).toFixed(2) : '')
+          setPrecioVentaBs(ventaN > 0 ? usdToBs(ventaN, tasaValor).toFixed(2) : '')
+          setPrecioMayorBs(mayorN > 0 ? usdToBs(mayorN, tasaValor).toFixed(2) : '')
+          if (costoN > 0 && ventaN > 0) {
+            setMargen(((ventaN - costoN) / costoN * 100).toFixed(1))
+          } else {
+            setMargen('')
+          }
+        } else {
+          setCostoBs('')
+          setPrecioVentaBs('')
+          setPrecioMayorBs('')
+          setMargen('')
+        }
       } else {
         setCodigo('')
         setTipo('P')
@@ -104,6 +130,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setManejaLotes(false)
         setDepositoId('')
         setStockInicial('')
+        setCostoBs('')
+        setPrecioVentaBs('')
+        setPrecioMayorBs('')
+        setMargen('')
       }
       setErrors({})
       setPopoverOpen(false)
@@ -111,6 +141,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     } else {
       dialogRef.current?.close()
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, producto])
 
   function handleCodigoChange(value: string) {
@@ -148,6 +179,113 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     }
     if (nuevoTipo === 'C') {
       setCostoUsd('0')
+    }
+  }
+
+  // Sync Bs values when tasa changes while form is open
+  useEffect(() => {
+    if (!isOpen || tasaValor <= 0) return
+    const costoN = parseFloat(costoUsd) || 0
+    const ventaN = parseFloat(precioVentaUsd) || 0
+    const mayorN = parseFloat(precioMayorUsd) || 0
+    if (costoN > 0) setCostoBs(usdToBs(costoN, tasaValor).toFixed(2))
+    if (ventaN > 0) setPrecioVentaBs(usdToBs(ventaN, tasaValor).toFixed(2))
+    if (mayorN > 0) setPrecioMayorBs(usdToBs(mayorN, tasaValor).toFixed(2))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasaValor])
+
+  // --- Handlers bidireccionales de precios ---
+
+  function handleCostoUsdChange(val: string) {
+    setCostoUsd(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && tasaValor > 0) {
+      setCostoBs(usdToBs(num, tasaValor).toFixed(2))
+    }
+    const ventaN = parseFloat(precioVentaUsd) || 0
+    const costoN = isNaN(parseFloat(val)) ? 0 : parseFloat(val)
+    if (costoN > 0) {
+      const m = margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)
+      setMargen(m.toFixed(2))
+    }
+  }
+
+  function handleCostoBsChange(val: string) {
+    setCostoBs(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && tasaValor > 0) {
+      const usd = bsToUsd(num, tasaValor)
+      setCostoUsd(usd.toFixed(2))
+      const ventaN = parseFloat(precioVentaUsd) || 0
+      if (usd > 0) {
+        const m = margenTipo === 'pct' ? ((ventaN - usd) / usd * 100) : (ventaN - usd)
+        setMargen(m.toFixed(2))
+      }
+    }
+  }
+
+  function handlePrecioVentaUsdChange(val: string) {
+    setPrecioVentaUsd(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && tasaValor > 0) {
+      setPrecioVentaBs(usdToBs(num, tasaValor).toFixed(2))
+    }
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    const ventaN = isNaN(parseFloat(val)) ? 0 : parseFloat(val)
+    if (costoN > 0) {
+      const m = margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)
+      setMargen(m.toFixed(2))
+    }
+  }
+
+  function handlePrecioVentaBsChange(val: string) {
+    setPrecioVentaBs(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && tasaValor > 0) {
+      const usd = bsToUsd(num, tasaValor)
+      setPrecioVentaUsd(usd.toFixed(2))
+      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+      if (costoN > 0) {
+        const m = margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)
+        setMargen(m.toFixed(2))
+      }
+    }
+  }
+
+  function handleMargenChange(val: string) {
+    setMargen(val)
+    const margenN = parseFloat(val)
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (!isNaN(margenN) && costoN > 0) {
+      const pvp = Math.max(0, margenTipo === 'pct' ? costoN * (1 + margenN / 100) : costoN + margenN)
+      setPrecioVentaUsd(pvp.toFixed(2))
+      if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
+    }
+  }
+
+  function handleMargenTipoChange(tipo: 'pct' | 'abs') {
+    setMargenTipo(tipo)
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    const ventaN = parseFloat(precioVentaUsd) || 0
+    if (costoN > 0) {
+      const m = tipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)
+      setMargen(m.toFixed(2))
+    }
+  }
+
+  function handlePrecioMayorUsdChange(val: string) {
+    setPrecioMayorUsd(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && tasaValor > 0) {
+      setPrecioMayorBs(usdToBs(num, tasaValor).toFixed(2))
+    }
+  }
+
+  function handlePrecioMayorBsChange(val: string) {
+    setPrecioMayorBs(val)
+    const num = parseFloat(val)
+    if (!isNaN(num) && tasaValor > 0) {
+      setPrecioMayorUsd(bsToUsd(num, tasaValor).toFixed(2))
     }
   }
 
@@ -320,6 +458,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const costoNum = esComboLocal ? 0 : parseNumOrZero(costoUsd)
   const ventaNum = parseNumOrZero(precioVentaUsd)
   const mayorNum = precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd)
+
+  const selectedImpuesto = impuestosIva.find((i) => i.id === impuestoIvaId)
+  const alicuota = tipoImpuesto === 'Gravable' && selectedImpuesto
+    ? parseFloat(selectedImpuesto.porcentaje)
+    : 0
+  const ivaMontoUsd = ventaNum * (alicuota / 100)
+  const precioFinalUsd = ventaNum + ivaMontoUsd
+  const mostrarResumenFiscal = ventaNum > 0 && tipoImpuesto !== 'Exento'
 
   const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
@@ -544,85 +690,169 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             </div>
           )}
 
-          {/* Precios */}
-          <div className="grid grid-cols-2 gap-4">
-            {/* Costo USD */}
-            <div>
-              <label htmlFor="prod-costo" className="block text-sm font-medium text-gray-700 mb-1">
-                Costo (USD)
-              </label>
-              <input
-                id="prod-costo"
-                type="number"
-                step="0.01"
-                min="0"
-                value={esComboLocal ? '0' : costoUsd}
-                onChange={(e) => setCostoUsd(e.target.value)}
-                disabled={esComboLocal}
-                placeholder="0.00"
-                className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  esComboLocal ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
-                } ${errors.costo_usd ? 'border-red-500' : 'border-gray-300'}`}
-              />
-              {errors.costo_usd && <p className="text-red-500 text-xs mt-1">{errors.costo_usd}</p>}
-              {esComboLocal ? (
-                <p className="text-gray-400 text-xs mt-1">Se calcula desde ingredientes</p>
-              ) : (
-                tasaValor > 0 && (
-                  <p className="text-xs text-gray-400 mt-1">{formatBs(usdToBs(costoNum, tasaValor))}</p>
-                )
-              )}
+          {/* Precios bidireccionales */}
+          <div className="space-y-3">
+            {/* Costo: USD | Bs */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="prod-costo" className="block text-xs font-medium text-gray-600 mb-1">
+                  Costo (USD)
+                </label>
+                <input
+                  id="prod-costo"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={esComboLocal ? '0' : costoUsd}
+                  onChange={(e) => handleCostoUsdChange(e.target.value)}
+                  disabled={esComboLocal}
+                  placeholder="0.00"
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    esComboLocal ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                  } ${errors.costo_usd ? 'border-red-500' : 'border-gray-300'}`}
+                />
+                {errors.costo_usd && <p className="text-red-500 text-xs mt-1">{errors.costo_usd}</p>}
+                {esComboLocal && <p className="text-gray-400 text-xs mt-1">Se calcula desde ingredientes</p>}
+              </div>
+              <div>
+                <label htmlFor="prod-costo-bs" className="block text-xs font-medium text-gray-600 mb-1">
+                  Costo (Bs)
+                </label>
+                <input
+                  id="prod-costo-bs"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={esComboLocal ? '0' : costoBs}
+                  onChange={(e) => handleCostoBsChange(e.target.value)}
+                  disabled={esComboLocal || tasaValor <= 0}
+                  placeholder="0,00"
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    esComboLocal || tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                  } border-gray-300`}
+                />
+              </div>
             </div>
 
-            {/* Precio Venta USD */}
-            <div>
-              <label htmlFor="prod-venta" className="block text-sm font-medium text-gray-700 mb-1">
-                Precio Venta (USD)
-              </label>
-              <input
-                id="prod-venta"
-                type="number"
-                step="0.01"
-                min="0"
-                value={precioVentaUsd}
-                onChange={(e) => setPrecioVentaUsd(e.target.value)}
-                placeholder="0.00"
-                className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  errors.precio_venta_usd ? 'border-red-500' : 'border-gray-300'
-                }`}
-              />
-              {errors.precio_venta_usd && (
-                <p className="text-red-500 text-xs mt-1">{errors.precio_venta_usd}</p>
-              )}
-              {tasaValor > 0 && (
-                <p className="text-xs text-gray-400 mt-1">{formatBs(usdToBs(ventaNum, tasaValor))}</p>
-              )}
-            </div>
-          </div>
+            {/* Margen */}
+            {!esComboLocal && (
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <label htmlFor="prod-margen" className="block text-xs font-medium text-gray-600 mb-1">
+                    Margen de ganancia
+                  </label>
+                  <input
+                    id="prod-margen"
+                    type="number"
+                    step="0.1"
+                    value={margen}
+                    onChange={(e) => handleMargenChange(e.target.value)}
+                    placeholder={margenTipo === 'pct' ? 'Ej: 30' : 'Ej: 5.00'}
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="flex rounded-md border border-gray-300 overflow-hidden shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleMargenTipoChange('pct')}
+                    className={`px-3 py-2 text-xs font-medium transition-colors ${
+                      margenTipo === 'pct' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >%</button>
+                  <button
+                    type="button"
+                    onClick={() => handleMargenTipoChange('abs')}
+                    className={`px-3 py-2 text-xs font-medium border-l border-gray-300 transition-colors ${
+                      margenTipo === 'abs' ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >$</button>
+                </div>
+              </div>
+            )}
 
-          {/* Precio Mayor USD */}
-          <div>
-            <label htmlFor="prod-mayor" className="block text-sm font-medium text-gray-700 mb-1">
-              Precio Mayor (USD) <span className="text-gray-400 font-normal">- Opcional</span>
-            </label>
-            <input
-              id="prod-mayor"
-              type="number"
-              step="0.01"
-              min="0"
-              value={precioMayorUsd}
-              onChange={(e) => setPrecioMayorUsd(e.target.value)}
-              placeholder="0.00"
-              className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                errors.precio_mayor_usd ? 'border-red-500' : 'border-gray-300'
-              }`}
-            />
-            {errors.precio_mayor_usd && (
-              <p className="text-red-500 text-xs mt-1">{errors.precio_mayor_usd}</p>
-            )}
-            {tasaValor > 0 && mayorNum !== null && (
-              <p className="text-xs text-gray-400 mt-1">{formatBs(usdToBs(mayorNum, tasaValor))}</p>
-            )}
+            {/* PVP: USD | Bs */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="prod-venta" className="block text-xs font-medium text-gray-600 mb-1">
+                  PVP (USD)
+                </label>
+                <input
+                  id="prod-venta"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={precioVentaUsd}
+                  onChange={(e) => handlePrecioVentaUsdChange(e.target.value)}
+                  placeholder="0.00"
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                    errors.precio_venta_usd ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                />
+                {errors.precio_venta_usd && (
+                  <p className="text-red-500 text-xs mt-1">{errors.precio_venta_usd}</p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="prod-venta-bs" className="block text-xs font-medium text-gray-600 mb-1">
+                  PVP (Bs)
+                </label>
+                <input
+                  id="prod-venta-bs"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={precioVentaBs}
+                  onChange={(e) => handlePrecioVentaBsChange(e.target.value)}
+                  disabled={tasaValor <= 0}
+                  placeholder="0,00"
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                  } border-gray-300`}
+                />
+              </div>
+            </div>
+
+            {/* Mayor: USD | Bs */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="prod-mayor" className="block text-xs font-medium text-gray-600 mb-1">
+                  Precio Mayor (USD) <span className="text-gray-400 font-normal">- Opcional</span>
+                </label>
+                <input
+                  id="prod-mayor"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={precioMayorUsd}
+                  onChange={(e) => handlePrecioMayorUsdChange(e.target.value)}
+                  placeholder="0.00"
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white ${
+                    errors.precio_mayor_usd ? 'border-red-500' : 'border-gray-300'
+                  }`}
+                />
+                {errors.precio_mayor_usd && (
+                  <p className="text-red-500 text-xs mt-1">{errors.precio_mayor_usd}</p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="prod-mayor-bs" className="block text-xs font-medium text-gray-600 mb-1">
+                  Precio Mayor (Bs) <span className="text-gray-400 font-normal">- Opcional</span>
+                </label>
+                <input
+                  id="prod-mayor-bs"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={precioMayorBs}
+                  onChange={(e) => handlePrecioMayorBsChange(e.target.value)}
+                  disabled={tasaValor <= 0}
+                  placeholder="0,00"
+                  className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                  } border-gray-300`}
+                />
+              </div>
+            </div>
           </div>
 
           {/* Stock Minimo */}
@@ -806,6 +1036,33 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             </div>
           )}
 
+          {/* Resumen Fiscal */}
+          {mostrarResumenFiscal && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-1.5">
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">Resumen Fiscal</p>
+              <div className="flex justify-between text-xs text-amber-700">
+                <span>Base imponible</span>
+                <span className="font-medium tabular-nums">
+                  {formatUsd(ventaNum)}&nbsp;/&nbsp;{tasaValor > 0 ? formatBs(usdToBs(ventaNum, tasaValor)) : '—'}
+                </span>
+              </div>
+              {alicuota > 0 && (
+                <div className="flex justify-between text-xs text-amber-700">
+                  <span>IVA ({alicuota.toFixed(2)}%)</span>
+                  <span className="font-medium tabular-nums">
+                    {formatUsd(ivaMontoUsd)}&nbsp;/&nbsp;{tasaValor > 0 ? formatBs(usdToBs(ivaMontoUsd, tasaValor)) : '—'}
+                  </span>
+                </div>
+              )}
+              <div className="border-t border-amber-200 pt-1.5 flex justify-between text-xs font-bold text-amber-900">
+                <span>Precio Final</span>
+                <span className="tabular-nums">
+                  {formatUsd(precioFinalUsd)}&nbsp;/&nbsp;{tasaValor > 0 ? formatBs(usdToBs(precioFinalUsd, tasaValor)) : '—'}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Activo */}
           {isEditing && (
             <div className="flex items-center gap-2">
@@ -819,34 +1076,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               <label htmlFor="prod-activo" className="text-sm font-medium text-gray-700">
                 Activo
               </label>
-            </div>
-          )}
-
-          {/* Preview de precios en Bs */}
-          {tasaValor > 0 && (!esComboLocal ? costoNum > 0 : false || ventaNum > 0) && (
-            <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
-              <p className="text-xs font-medium text-blue-700 mb-2">Vista previa en Bolivares (Tasa: {tasaValor.toFixed(4)})</p>
-              <div className="grid grid-cols-3 gap-2 text-xs">
-                {!esComboLocal && costoNum > 0 && (
-                  <div>
-                    <span className="text-blue-600">Costo:</span>
-                    <p className="font-medium text-blue-900">{formatUsd(costoNum)}</p>
-                    <p className="text-blue-600">{formatBs(usdToBs(costoNum, tasaValor))}</p>
-                  </div>
-                )}
-                <div>
-                  <span className="text-blue-600">Venta:</span>
-                  <p className="font-medium text-blue-900">{formatUsd(ventaNum)}</p>
-                  <p className="text-blue-600">{formatBs(usdToBs(ventaNum, tasaValor))}</p>
-                </div>
-                {mayorNum !== null && (
-                  <div>
-                    <span className="text-blue-600">Mayor:</span>
-                    <p className="font-medium text-blue-900">{formatUsd(mayorNum)}</p>
-                    <p className="text-blue-600">{formatBs(usdToBs(mayorNum, tasaValor))}</p>
-                  </div>
-                )}
-              </div>
             </div>
           )}
 
