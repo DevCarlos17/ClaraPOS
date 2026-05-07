@@ -238,7 +238,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   useEffect(() => {
     setMounted(true)
     const checkMobile = () => {
-      const isMobileView = window.innerWidth < 768
+      const isMobileView = window.innerWidth < 1024
       setMobile(isMobileView)
       if (!isMobileView && isOpen) setOpen(false)
     }

@@ -46,6 +46,7 @@ function SearchSelect({
   searchPlaceholder = 'Buscar...',
   error,
   disabled,
+  container,
 }: {
   id?: string
   options: SelectOption[]
@@ -55,6 +56,7 @@ function SearchSelect({
   searchPlaceholder?: string
   error?: string
   disabled?: boolean
+  container?: HTMLElement | null
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -106,6 +108,7 @@ function SearchSelect({
         sideOffset={4}
         className="p-0"
         style={{ width: 'var(--radix-popover-trigger-width, 280px)' }}
+        container={container}
       >
         <div className="border-b border-gray-100 px-3 flex items-center gap-2">
           <svg
@@ -1057,6 +1060,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   placeholder="Seleccionar departamento"
                   searchPlaceholder="Buscar departamento..."
                   error={errors.departamento_id}
+                  container={dialogRef.current}
                 />
                 {errors.departamento_id && (
                   <p className="text-red-500 text-xs mt-1">{errors.departamento_id}</p>
@@ -1076,6 +1080,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     onChange={setUnidadBaseId}
                     placeholder="Sin unidad"
                     searchPlaceholder="Buscar unidad..."
+                    container={dialogRef.current}
                   />
                 </div>
               )}
@@ -1190,6 +1195,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     }
                     searchPlaceholder="Buscar tipo..."
                     error={errors.tipo_impuesto}
+                    container={dialogRef.current}
                   />
                   {errors.tipo_impuesto && (
                     <p className="text-red-500 text-xs mt-1">{errors.tipo_impuesto}</p>
@@ -1210,6 +1216,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       placeholder="Sin tasa especifica"
                       searchPlaceholder="Buscar tasa IVA..."
                       error={errors.impuesto_iva_id}
+                      container={dialogRef.current}
                     />
                     {impuestosIva.length === 0 && (
                       <p className="text-amber-600 text-xs mt-1">
@@ -1638,6 +1645,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       placeholder="Seleccionar deposito"
                       searchPlaceholder="Buscar deposito..."
                       error={errors.deposito_id}
+                      container={dialogRef.current}
                     />
                     {errors.deposito_id && (
                       <p className="text-red-500 text-xs mt-1">{errors.deposito_id}</p>
