@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { MagnifyingGlass } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useBuscarProductosVenta, buscarProductoPorCodigoBarras, type ProductoVenta } from '../hooks/use-ventas'
@@ -81,6 +81,24 @@ function ProductoBuscador({ onSelect }, ref) {
   const dropdownVisible = open && query.trim().length >= 2
   const totalItems = productos.length
 
+  // Calcular posicion fija del dropdown para escapar de parents con overflow-hidden
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
+  useLayoutEffect(() => {
+    if (!dropdownVisible || !inputRef.current) return
+    const updatePos = () => {
+      if (!inputRef.current) return
+      const rect = inputRef.current.getBoundingClientRect()
+      setDropdownStyle({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+    }
+    updatePos()
+    window.addEventListener('scroll', updatePos, true)
+    window.addEventListener('resize', updatePos)
+    return () => {
+      window.removeEventListener('scroll', updatePos, true)
+      window.removeEventListener('resize', updatePos)
+    }
+  }, [dropdownVisible])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     // Deteccion de scanner por velocidad entre teclas
     const now = Date.now()
@@ -157,7 +175,8 @@ function ProductoBuscador({ onSelect }, ref) {
         <div
           ref={listRef}
           role="listbox"
-          className="absolute z-50 mt-1 w-full rounded-lg border bg-white shadow-md max-h-60 overflow-y-auto"
+          style={dropdownStyle}
+          className="fixed z-[9999] rounded-lg border bg-white shadow-lg max-h-60 overflow-y-auto"
         >
           {isLoading ? (
             <div className="p-3 text-sm text-muted-foreground text-center">Buscando...</div>

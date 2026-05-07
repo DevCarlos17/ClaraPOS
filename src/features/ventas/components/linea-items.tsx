@@ -136,6 +136,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                 <th className="text-center px-3 py-2 font-medium w-24">Cant.</th>
                 <th className="text-center px-3 py-2 font-medium w-24">Stock Disp.</th>
                 <th className="text-right px-3 py-2 font-medium w-28">Precio USD</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Precio Bs</th>
                 <th className="text-right px-3 py-2 font-medium w-28">Subtotal USD</th>
                 <th className="text-right px-3 py-2 font-medium w-28">Subtotal Bs</th>
                 <th className="w-10"></th>
@@ -210,6 +211,9 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                     </td>
                     <td className="px-3 py-2 text-right text-muted-foreground">
                       {formatUsd(linea.precio_unitario_usd)}
+                    </td>
+                    <td className="px-3 py-2 text-right text-muted-foreground">
+                      {tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
                     </td>
                     <td className="px-3 py-2 text-right font-medium">{formatUsd(subtotalUsd)}</td>
                     <td className="px-3 py-2 text-right text-muted-foreground">{formatBs(subtotalBs)}</td>

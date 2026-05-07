@@ -120,6 +120,29 @@ export function PosTerminal() {
     .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') !== 'Exento')
     .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd * (((l.impuesto_pct as number | undefined) ?? 0) / 100), 0)
   const totalUsd = totalProductosUsd + totalIvaUsd + totalCargosEspUsd
+
+  // Desglose fiscal por alicuota y tipo
+  const _ivaByAlicuota = new Map<number, number>()
+  for (const l of lineas) {
+    if ((l.tipo_impuesto as string | undefined) === 'Gravable') {
+      const pct = (l.impuesto_pct as number | undefined) ?? 0
+      if (pct > 0) {
+        const iva = l.cantidad * l.precio_unitario_usd * pct / 100
+        _ivaByAlicuota.set(pct, (_ivaByAlicuota.get(pct) ?? 0) + iva)
+      }
+    }
+  }
+  const ivaEntries = [..._ivaByAlicuota.entries()].filter(([, v]) => v > 0.001).sort((a, b) => b[0] - a[0])
+  const baseGravableUsd = lineas
+    .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') === 'Gravable')
+    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
+  const baseExentoUsd = lineas
+    .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') === 'Exento')
+    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
+  const baseExoneradoUsd = lineas
+    .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') === 'Exonerado')
+    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
+  const mostrarDesgloseFiscal = ivaEntries.length > 0 || baseExentoUsd > 0.001 || baseExoneradoUsd > 0.001
   const totalBs = usdToBs(totalUsd, tasaValor)
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
@@ -869,16 +892,32 @@ export function PosTerminal() {
             {/* Total */}
             <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
               <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
-              {totalIvaUsd > 0.001 && (
+              {mostrarDesgloseFiscal && (
                 <div className="space-y-0.5 mb-2">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Subtotal</span>
-                    <span>{formatUsd(Number(totalProductosUsd.toFixed(2)))}</span>
-                  </div>
-                  <div className="flex justify-between text-xs text-amber-700 font-medium">
-                    <span>IVA</span>
-                    <span>+{formatUsd(Number(totalIvaUsd.toFixed(2)))}</span>
-                  </div>
+                  {baseGravableUsd > 0.001 && (
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Base Gravable</span>
+                      <span>{formatUsd(Number(baseGravableUsd.toFixed(2)))}</span>
+                    </div>
+                  )}
+                  {ivaEntries.map(([pct, iva]) => (
+                    <div key={pct} className="flex justify-between text-xs text-amber-700 font-medium">
+                      <span>IVA {pct}%</span>
+                      <span>+{formatUsd(Number(iva.toFixed(2)))}</span>
+                    </div>
+                  ))}
+                  {baseExentoUsd > 0.001 && (
+                    <div className="flex justify-between text-xs text-blue-600">
+                      <span>Exento</span>
+                      <span>{formatUsd(Number(baseExentoUsd.toFixed(2)))}</span>
+                    </div>
+                  )}
+                  {baseExoneradoUsd > 0.001 && (
+                    <div className="flex justify-between text-xs text-green-700">
+                      <span>Exonerado</span>
+                      <span>{formatUsd(Number(baseExoneradoUsd.toFixed(2)))}</span>
+                    </div>
+                  )}
                 </div>
               )}
               <p className="text-3xl font-bold leading-tight tabular-nums">{formatUsd(totalUsd)}</p>
