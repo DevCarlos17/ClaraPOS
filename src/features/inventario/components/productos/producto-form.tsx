@@ -15,7 +15,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
-import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
+import { usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 import { useDebounce } from '@/hooks/use-debounce'
@@ -566,6 +566,87 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     }
   }
 
+  // --- Precio Final Detal → back-calcula base imponible ---
+  function handlePrecioFinalDetalUsdChange(val: string) {
+    const pfN = parseFloat(val)
+    if (isNaN(pfN) || pfN <= 0) return
+    const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
+    const baseUsd = pfN / factor
+    setPrecioVentaUsd(baseUsd.toFixed(2))
+    if (tasaValor > 0) setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (costoN > 0 && baseUsd > 0)
+      setMargen((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+  }
+
+  function handlePrecioFinalDetalBsChange(val: string) {
+    if (tasaValor <= 0) return
+    const pfBsN = parseFloat(val)
+    if (isNaN(pfBsN) || pfBsN <= 0) return
+    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
+    const baseUsd = pfUsd / factor
+    setPrecioVentaUsd(baseUsd.toFixed(2))
+    setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (costoN > 0 && baseUsd > 0)
+      setMargen((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+  }
+
+  // --- Precio Final Mayor → back-calcula base imponible ---
+  function handlePrecioFinalMayorUsdChange(val: string) {
+    const pfN = parseFloat(val)
+    if (isNaN(pfN) || pfN <= 0) return
+    const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
+    const baseUsd = pfN / factor
+    setPrecioMayorUsd(baseUsd.toFixed(2))
+    if (tasaValor > 0) setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (costoN > 0 && baseUsd > 0)
+      setMargenMayor((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+  }
+
+  function handlePrecioFinalMayorBsChange(val: string) {
+    if (tasaValor <= 0) return
+    const pfBsN = parseFloat(val)
+    if (isNaN(pfBsN) || pfBsN <= 0) return
+    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
+    const baseUsd = pfUsd / factor
+    setPrecioMayorUsd(baseUsd.toFixed(2))
+    setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (costoN > 0 && baseUsd > 0)
+      setMargenMayor((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+  }
+
+  // --- Precio Final Especial → back-calcula base imponible ---
+  function handlePrecioFinalEspecialUsdChange(val: string) {
+    const pfN = parseFloat(val)
+    if (isNaN(pfN) || pfN <= 0) return
+    const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
+    const baseUsd = pfN / factor
+    setPrecioEspecialUsd(baseUsd.toFixed(2))
+    if (tasaValor > 0) setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (costoN > 0 && baseUsd > 0)
+      setMargenEspecial((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+  }
+
+  function handlePrecioFinalEspecialBsChange(val: string) {
+    if (tasaValor <= 0) return
+    const pfBsN = parseFloat(val)
+    if (isNaN(pfBsN) || pfBsN <= 0) return
+    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
+    const baseUsd = pfUsd / factor
+    setPrecioEspecialUsd(baseUsd.toFixed(2))
+    setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
+    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
+    if (costoN > 0 && baseUsd > 0)
+      setMargenEspecial((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+  }
+
   function handleSugerenciaSelect(s: {
     nombre: string
     presentacion: string | null
@@ -730,16 +811,26 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (e.target === dialogRef.current) onClose()
   }
 
-  // Valores computados para resumen fiscal
-  const ventaNum = parseNumOrZero(precioVentaUsd)
+  // IVA config
   const selectedImpuesto = impuestosIva.find((i) => i.id === impuestoIvaId)
   const alicuota =
     tipoImpuesto === 'Gravable' && selectedImpuesto
       ? parseFloat(selectedImpuesto.porcentaje)
       : 0
-  const ivaMontoUsd = ventaNum * (alicuota / 100)
-  const precioFinalUsd = ventaNum + ivaMontoUsd
-  const mostrarResumenFiscal = ventaNum > 0 && tipoImpuesto !== 'Exento'
+  const showIvaCols = alicuota > 0
+
+  // IVA y Precio Final por nivel
+  const ivaDetalUsd = (parseFloat(precioVentaUsd) || 0) * alicuota / 100
+  const pfDetalUsd = (parseFloat(precioVentaUsd) || 0) + ivaDetalUsd
+  const pfDetalBs = tasaValor > 0 ? usdToBs(pfDetalUsd, tasaValor) : 0
+
+  const ivaMayorUsd = (parseFloat(precioMayorUsd) || 0) * alicuota / 100
+  const pfMayorUsd = (parseFloat(precioMayorUsd) || 0) + ivaMayorUsd
+  const pfMayorBs = tasaValor > 0 ? usdToBs(pfMayorUsd, tasaValor) : 0
+
+  const ivaEspecialUsd = (parseFloat(precioEspecialUsd) || 0) * alicuota / 100
+  const pfEspecialUsd = (parseFloat(precioEspecialUsd) || 0) + ivaEspecialUsd
+  const pfEspecialBs = tasaValor > 0 ? usdToBs(pfEspecialUsd, tasaValor) : 0
 
   const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
@@ -1170,8 +1261,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     </div>
                   </div>
 
-                  <div className="border border-gray-200 rounded-md overflow-hidden">
-                    <table className="w-full text-sm">
+                  <div className="border border-gray-200 rounded-md overflow-x-auto">
+                    <table className="w-full text-sm min-w-max">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-20">Nivel</th>
@@ -1180,6 +1271,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           </th>
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">USD</th>
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Bs</th>
+                          {showIvaCols && (
+                            <>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-blue-500">IVA $</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-blue-500">IVA Bs</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-green-600">PF $</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-green-600">PF Bs</th>
+                            </>
+                          )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
@@ -1237,6 +1336,49 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               } border-gray-300`}
                             />
                           </td>
+                          {showIvaCols && (
+                            <>
+                              <td className="px-2 py-1.5 bg-blue-50 text-xs text-blue-700 tabular-nums text-right whitespace-nowrap">
+                                {ivaDetalUsd > 0 ? ivaDetalUsd.toFixed(2) : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 bg-blue-50 text-xs text-blue-700 tabular-nums text-right whitespace-nowrap">
+                                {tasaValor > 0 && ivaDetalUsd > 0 ? usdToBs(ivaDetalUsd, tasaValor).toFixed(2) : '—'}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  key={`pf-detal-usd-${pfDetalUsd.toFixed(4)}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  defaultValue={pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : ''}
+                                  onBlur={(e) => handlePrecioFinalDetalUsdChange(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                  onWheel={stopScroll}
+                                  placeholder="0.00"
+                                  className={`w-full rounded border border-green-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-green-500 ${noSpinner}`}
+                                />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  key={`pf-detal-bs-${pfDetalBs.toFixed(4)}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  defaultValue={pfDetalBs > 0 ? pfDetalBs.toFixed(2) : ''}
+                                  onBlur={(e) => handlePrecioFinalDetalBsChange(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                  onWheel={stopScroll}
+                                  disabled={tasaValor <= 0}
+                                  placeholder="0,00"
+                                  className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-green-500 ${noSpinner} ${
+                                    tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'border-green-300 bg-white'
+                                  }`}
+                                />
+                              </td>
+                            </>
+                          )}
                         </tr>
 
                         {/* Mayor */}
@@ -1293,6 +1435,49 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               } border-gray-300`}
                             />
                           </td>
+                          {showIvaCols && (
+                            <>
+                              <td className="px-2 py-1.5 bg-blue-50 text-xs text-blue-700 tabular-nums text-right whitespace-nowrap">
+                                {ivaMayorUsd > 0 ? ivaMayorUsd.toFixed(2) : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 bg-blue-50 text-xs text-blue-700 tabular-nums text-right whitespace-nowrap">
+                                {tasaValor > 0 && ivaMayorUsd > 0 ? usdToBs(ivaMayorUsd, tasaValor).toFixed(2) : '—'}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  key={`pf-mayor-usd-${pfMayorUsd.toFixed(4)}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  defaultValue={pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : ''}
+                                  onBlur={(e) => handlePrecioFinalMayorUsdChange(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                  onWheel={stopScroll}
+                                  placeholder="0.00"
+                                  className={`w-full rounded border border-green-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-green-500 ${noSpinner}`}
+                                />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  key={`pf-mayor-bs-${pfMayorBs.toFixed(4)}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  defaultValue={pfMayorBs > 0 ? pfMayorBs.toFixed(2) : ''}
+                                  onBlur={(e) => handlePrecioFinalMayorBsChange(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                  onWheel={stopScroll}
+                                  disabled={tasaValor <= 0}
+                                  placeholder="0,00"
+                                  className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-green-500 ${noSpinner} ${
+                                    tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'border-green-300 bg-white'
+                                  }`}
+                                />
+                              </td>
+                            </>
+                          )}
                         </tr>
 
                         {/* Especial */}
@@ -1349,6 +1534,49 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               } border-gray-300`}
                             />
                           </td>
+                          {showIvaCols && (
+                            <>
+                              <td className="px-2 py-1.5 bg-blue-50 text-xs text-blue-700 tabular-nums text-right whitespace-nowrap">
+                                {ivaEspecialUsd > 0 ? ivaEspecialUsd.toFixed(2) : '—'}
+                              </td>
+                              <td className="px-2 py-1.5 bg-blue-50 text-xs text-blue-700 tabular-nums text-right whitespace-nowrap">
+                                {tasaValor > 0 && ivaEspecialUsd > 0 ? usdToBs(ivaEspecialUsd, tasaValor).toFixed(2) : '—'}
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  key={`pf-especial-usd-${pfEspecialUsd.toFixed(4)}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  defaultValue={pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : ''}
+                                  onBlur={(e) => handlePrecioFinalEspecialUsdChange(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                  onWheel={stopScroll}
+                                  placeholder="0.00"
+                                  className={`w-full rounded border border-green-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-green-500 ${noSpinner}`}
+                                />
+                              </td>
+                              <td className="px-2 py-1.5">
+                                <input
+                                  key={`pf-especial-bs-${pfEspecialBs.toFixed(4)}`}
+                                  type="number"
+                                  inputMode="decimal"
+                                  step="0.01"
+                                  min="0"
+                                  defaultValue={pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : ''}
+                                  onBlur={(e) => handlePrecioFinalEspecialBsChange(e.target.value)}
+                                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                  onWheel={stopScroll}
+                                  disabled={tasaValor <= 0}
+                                  placeholder="0,00"
+                                  className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-green-500 ${noSpinner} ${
+                                    tasaValor <= 0 ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'border-green-300 bg-white'
+                                  }`}
+                                />
+                              </td>
+                            </>
+                          )}
                         </tr>
                       </tbody>
                     </table>
@@ -1408,37 +1636,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 )}
               </div>
 
-              {/* Resumen Fiscal */}
-              {mostrarResumenFiscal && (
-                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-1.5">
-                  <p className="text-xs font-semibold text-amber-800 uppercase tracking-wide">
-                    Resumen Fiscal
-                  </p>
-                  <div className="flex justify-between text-xs text-amber-700">
-                    <span>Base imponible</span>
-                    <span className="font-medium tabular-nums">
-                      {formatUsd(ventaNum)}&nbsp;/&nbsp;
-                      {tasaValor > 0 ? formatBs(usdToBs(ventaNum, tasaValor)) : '—'}
-                    </span>
-                  </div>
-                  {alicuota > 0 && (
-                    <div className="flex justify-between text-xs text-amber-700">
-                      <span>IVA ({alicuota.toFixed(2)}%)</span>
-                      <span className="font-medium tabular-nums">
-                        {formatUsd(ivaMontoUsd)}&nbsp;/&nbsp;
-                        {tasaValor > 0 ? formatBs(usdToBs(ivaMontoUsd, tasaValor)) : '—'}
-                      </span>
-                    </div>
-                  )}
-                  <div className="border-t border-amber-200 pt-1.5 flex justify-between text-xs font-bold text-amber-900">
-                    <span>Precio Final</span>
-                    <span className="tabular-nums">
-                      {formatUsd(precioFinalUsd)}&nbsp;/&nbsp;
-                      {tasaValor > 0 ? formatBs(usdToBs(precioFinalUsd, tasaValor)) : '—'}
-                    </span>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
