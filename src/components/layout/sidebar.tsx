@@ -312,7 +312,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                       <Link
                         key={child.url}
                         to={child.url}
-                        search={{}}
+                        search={(prev) => prev}
                         onClick={handleLinkClick}
                         className={cn(
                           'flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 text-sm',
@@ -351,7 +351,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <Link
         key={item.url}
         to={item.url!}
-        search={{}}
+        search={(prev) => prev}
         onClick={handleLinkClick}
         className={cn(
           'flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 active:scale-[0.98]',
@@ -479,7 +479,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               <Link
                 key={item.url}
                 to={item.url!}
-                search={{}}
+                search={(prev) => prev}
                 className={cn(
                   'flex items-center h-11 rounded-2xl transition-all duration-300 group relative active:scale-[0.98] overflow-visible',
                   isHovered ? 'px-3' : 'justify-center w-11 mx-auto',
