@@ -1,5 +1,4 @@
 import { Outlet, createRootRoute } from "@tanstack/react-router";
-import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { Toaster } from "@/components/ui/sonner";
 import { PWAInstallBanner } from "@/components/pwa/pwa-install-banner";
 
@@ -11,7 +10,6 @@ function RootComponent() {
   return (
     <>
       <Outlet />
-      <TanStackRouterDevtools position="bottom-right" />
       <Toaster position="top-right" richColors duration={1500} />
       <PWAInstallBanner />
     </>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Plus, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, X } from '@phosphor-icons/react'
+import { Plus, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, X, ArrowSquareOut, Eye } from '@phosphor-icons/react'
+import { useNavigate } from '@tanstack/react-router'
 import {
   useSesionesActivas,
   useSesionesCaja,
@@ -156,9 +157,21 @@ function SesionActivaCard({
 // ─── Componente principal ─────────────────────────────────────
 
 export function SesionCajaList() {
+  const navigate = useNavigate()
   const { sesiones: sesionesActivas, isLoading: loadingActivas } = useSesionesActivas()
   const { sesiones, isLoading: loadingSesiones } = useSesionesCaja()
   const { hasPermission, isOwner } = usePermissions()
+
+  function irAlCuadre(s: { id: string; caja_id: string; fecha_apertura: string }) {
+    navigate({
+      to: '/ventas/cuadre-de-caja',
+      search: {
+        fecha: s.fecha_apertura.substring(0, 10),
+        cajaId: s.caja_id,
+        sesionId: s.id,
+      },
+    })
+  }
 
   const canClose = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
   const canMovManual = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)
@@ -269,6 +282,7 @@ export function SesionCajaList() {
                   <th className="text-center px-4 py-3 font-medium text-muted-foreground">
                     Status
                   </th>
+                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
@@ -312,6 +326,27 @@ export function SesionCajaList() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         <StatusBadge status={s.status} />
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {s.status === 'ABIERTA' ? (
+                          <button
+                            onClick={() => irAlCuadre(s)}
+                            title="Ir al cuadre"
+                            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          >
+                            <ArrowSquareOut size={13} />
+                            Cuadre
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => irAlCuadre(s)}
+                            title="Ver resumen"
+                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            <Eye size={13} />
+                            Resumen
+                          </button>
+                        )}
                       </td>
                     </tr>
                   )

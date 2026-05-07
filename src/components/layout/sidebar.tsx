@@ -46,6 +46,7 @@ import { useSidebarStore } from '@/stores/sidebar-store'
 import { useAuth } from '@/core/auth/auth-provider'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS, type PermissionKey } from '@/core/hooks/use-permissions'
+import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
 import { toast } from 'sonner'
 
 interface SidebarProps {
@@ -169,6 +170,8 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { signOut } = useAuth()
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
+  const { sesiones: sesionesActivas } = useSesionesActivas()
+  const haySesionAbierta = sesionesActivas.length > 0
 
   // Funnel menu items based on permissions
   const filteredMenuItems = menuItems
@@ -284,7 +287,12 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                 : 'text-[var(--color-sidebar-muted-fg)] hover:text-[var(--color-sidebar-fg)] hover:bg-[var(--color-sidebar-hover)]'
             )}
           >
-            <item.icon size={20} />
+            <div className="relative shrink-0">
+              <item.icon size={20} />
+              {item.title === 'Caja' && haySesionAbierta && (
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-amber-500" />
+              )}
+            </div>
             {expanded && (
               <>
                 <span className="text-sm font-medium flex-1 text-left">{item.title}</span>
@@ -450,8 +458,11 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               if (!isHovered) {
                 // Collapsed: just show icon, active if any child is active
                 return (
-                  <div key={item.title} className={cn('flex items-center justify-center h-11 w-11 mx-auto rounded-2xl', groupIsActive ? 'text-[var(--color-sidebar-accent)]' : 'text-[var(--color-sidebar-muted-fg)]')}>
+                  <div key={item.title} className={cn('relative flex items-center justify-center h-11 w-11 mx-auto rounded-2xl', groupIsActive ? 'text-[var(--color-sidebar-accent)]' : 'text-[var(--color-sidebar-muted-fg)]')}>
                     <item.icon size={20} strokeWidth={groupIsActive ? 2.5 : 2} />
+                    {item.title === 'Caja' && haySesionAbierta && (
+                      <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-500" />
+                    )}
                   </div>
                 )
               }

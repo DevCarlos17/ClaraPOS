@@ -926,31 +926,31 @@ export function PosTerminal() {
                   {baseGravableUsd > 0.001 && (
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>Base Gravable</span>
-                      <span>{formatUsd(Number(baseGravableUsd.toFixed(2)))}</span>
+                      <span>{formatBs(usdToBs(Number(baseGravableUsd.toFixed(2)), tasaValor))}</span>
                     </div>
                   )}
                   {ivaEntries.map(([pct, iva]) => (
                     <div key={pct} className="flex justify-between text-xs text-amber-700 font-medium">
                       <span>IVA {pct}%</span>
-                      <span>+{formatUsd(Number(iva.toFixed(2)))}</span>
+                      <span>+{formatBs(usdToBs(Number(iva.toFixed(2)), tasaValor))}</span>
                     </div>
                   ))}
                   {baseExentoUsd > 0.001 && (
                     <div className="flex justify-between text-xs text-blue-600">
                       <span>Exento</span>
-                      <span>{formatUsd(Number(baseExentoUsd.toFixed(2)))}</span>
+                      <span>{formatBs(usdToBs(Number(baseExentoUsd.toFixed(2)), tasaValor))}</span>
                     </div>
                   )}
                   {baseExoneradoUsd > 0.001 && (
                     <div className="flex justify-between text-xs text-green-700">
                       <span>Exonerado</span>
-                      <span>{formatUsd(Number(baseExoneradoUsd.toFixed(2)))}</span>
+                      <span>{formatBs(usdToBs(Number(baseExoneradoUsd.toFixed(2)), tasaValor))}</span>
                     </div>
                   )}
                 </div>
               )}
-              <p className="text-3xl font-bold leading-tight tabular-nums">{formatUsd(totalUsd)}</p>
-              <p className="text-sm text-muted-foreground mt-0.5">{formatBs(totalBs)}</p>
+              <p className="text-3xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+              <p className="text-sm text-muted-foreground mt-0.5">{formatUsd(totalUsd)}</p>
             </div>
 
             {/* Descuento Comercial / Cortesia */}

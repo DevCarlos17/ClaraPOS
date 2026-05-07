@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
 import { Calculator, ArrowsClockwise, CheckCircle } from '@phosphor-icons/react'
+import { useQuery } from '@powersync/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { usePagosPorMetodo, type CuadreFilters, type VerifiedEntry } from '../hooks/use-cuadre'
 import { CuadreBilletesModal } from './cuadre-billetes-modal'
@@ -9,6 +10,10 @@ interface ConteoFisicoProps {
   tasaDelDia: number
   verifiedAmountsByMetodoId: Record<string, VerifiedEntry>
   onTotalesChange?: (sistema: number, fisico: number) => void
+  /** Callback con el conteo fisico keyed por metodo_cobro_id (valor nativo) y total de metodos */
+  onConteoFisicoChange?: (conteo: Record<string, number>, totalMetodos: number) => void
+  /** Si true, los inputs se muestran en modo lectura con valores guardados en sesiones_caja_detalle */
+  readOnly?: boolean
 }
 
 export function CuadreConteoFisico({
@@ -16,18 +21,72 @@ export function CuadreConteoFisico({
   tasaDelDia,
   verifiedAmountsByMetodoId,
   onTotalesChange,
+  onConteoFisicoChange,
+  readOnly = false,
 }: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
-  // fisico[metodoNombre] = string amount entered by user (in the method's own currency)
+  // keyed por m.nombre
   const [fisico, setFisico] = useState<Record<string, string>>({})
   const [billetesModal, setBilletesModal] = useState<{
     nombre: string
     moneda: 'USD' | 'BS'
   } | null>(null)
 
+  // Clave de localStorage: combinacion de sesion IDs
+  const storageKey = filters.sesionCajaIds.length > 0
+    ? `cuadre-fisico-${filters.sesionCajaIds.sort().join(',')}`
+    : null
+
+  // Para sesiones cerradas: cargar total_fisico guardado en sesiones_caja_detalle
+  const sesionId = filters.sesionCajaIds.length === 1 ? filters.sesionCajaIds[0] : null
+  const { data: detalleData } = useQuery(
+    readOnly && sesionId
+      ? `SELECT scd.metodo_cobro_id, mc.nombre, scd.total_fisico
+         FROM sesiones_caja_detalle scd
+         JOIN metodos_cobro mc ON scd.metodo_cobro_id = mc.id
+         WHERE scd.sesion_caja_id = ?`
+      : '',
+    readOnly && sesionId ? [sesionId] : []
+  )
+
+  // Modo lectura: pre-poblar desde sesiones_caja_detalle
+  useEffect(() => {
+    if (!readOnly || !detalleData || metodos.length === 0) return
+    const saved: Record<string, string> = {}
+    for (const row of detalleData as { nombre: string; total_fisico: string | null }[]) {
+      if (row.total_fisico !== null) {
+        saved[row.nombre] = row.total_fisico
+      }
+    }
+    if (Object.keys(saved).length > 0) {
+      setFisico(saved)
+    }
+  }, [readOnly, detalleData, metodos])
+
+  // Persistencia en localStorage (solo cuando no es readOnly)
+  useEffect(() => {
+    if (readOnly || !storageKey) return
+    const saved = localStorage.getItem(storageKey)
+    if (saved) {
+      try {
+        setFisico(JSON.parse(saved))
+      } catch {
+        // ignorar si el JSON es invalido
+      }
+    }
+  // Solo al montar o cuando cambia la clave de sesion
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey])
+
   const setFisicoValue = useCallback((nombre: string, value: string) => {
-    setFisico((prev) => ({ ...prev, [nombre]: value }))
-  }, [])
+    setFisico((prev) => {
+      const next = { ...prev, [nombre]: value }
+      if (!readOnly && storageKey) {
+        localStorage.setItem(storageKey, JSON.stringify(next))
+      }
+      return next
+    })
+  }, [readOnly, storageKey])
 
   const handleUseBilletes = useCallback(
     (total: number) => {
@@ -38,7 +97,7 @@ export function CuadreConteoFisico({
     [billetesModal, setFisicoValue]
   )
 
-  // Compute system and physical totals (both in USD) for the summary row and parent callback.
+  // Totales en USD para el resumen y callback del padre
   const totals = useMemo(() => {
     let sistema = 0
     let fisicoTotal = 0
@@ -56,6 +115,26 @@ export function CuadreConteoFisico({
   useEffect(() => {
     onTotalesChange?.(totals.totalSistema, totals.totalFisico)
   }, [totals, onTotalesChange])
+
+  // Conteo fisico keyed por metodo_cobro_id (valor nativo) para cerrarSesionCaja
+  useEffect(() => {
+    const conteo: Record<string, number> = {}
+    for (const m of metodos) {
+      const raw = parseFloat(fisico[m.nombre] ?? '') || 0
+      const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
+      if (has) {
+        conteo[m.metodo_cobro_id] = raw
+      }
+    }
+    onConteoFisicoChange?.(conteo, metodos.length)
+  }, [metodos, fisico, onConteoFisicoChange])
+
+  const handleLimpiar = useCallback(() => {
+    setFisico({})
+    if (!readOnly && storageKey) {
+      localStorage.removeItem(storageKey)
+    }
+  }, [readOnly, storageKey])
 
   if (isLoading) {
     return (
@@ -83,7 +162,9 @@ export function CuadreConteoFisico({
     <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold mb-1">Conteo Fisico por Metodo</h3>
       <p className="text-xs text-muted-foreground mb-4">
-        Ingrese el monto fisico contado para compararlo con el sistema
+        {readOnly
+          ? 'Valores registrados al cerrar la sesion'
+          : 'Ingrese el monto fisico contado para compararlo con el sistema'}
       </p>
 
       <div className="space-y-3">
@@ -92,14 +173,12 @@ export function CuadreConteoFisico({
           const sistemaUsd = m.totalUsd
           const sistemaBs = m.totalOriginal
           const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
-          // For USD methods: fisicoRaw is in USD; for BS methods: fisicoRaw is in Bs
           const fisicoUsd = m.moneda === 'BS'
             ? (tasaDelDia > 0 ? fisicoRaw / tasaDelDia : 0)
             : fisicoRaw
           const difUsd = fisicoUsd - sistemaUsd
           const hasFisico = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
 
-          // Verified entry for non-EFECTIVO methods — contains native amount in method's currency
           const verifiedEntry = verifiedAmountsByMetodoId[m.metodo_cobro_id]
           const hasVerified = !esEfectivo && verifiedEntry && verifiedEntry.native > 0.001
 
@@ -145,14 +224,17 @@ export function CuadreConteoFisico({
                     min="0"
                     step="0.01"
                     value={fisico[m.nombre] ?? ''}
-                    onChange={(e) => setFisicoValue(m.nombre, e.target.value)}
-                    placeholder="0.00"
-                    className="w-full rounded-md border border-input bg-white px-3 py-1.5 text-sm tabular-nums"
+                    onChange={(e) => !readOnly && setFisicoValue(m.nombre, e.target.value)}
+                    readOnly={readOnly}
+                    placeholder={readOnly ? '—' : '0.00'}
+                    className={`w-full rounded-md border border-input px-3 py-1.5 text-sm tabular-nums ${
+                      readOnly ? 'bg-muted/40 text-muted-foreground cursor-default' : 'bg-white'
+                    }`}
                   />
                 </div>
 
-                {/* Bill counter — only for EFECTIVO */}
-                {esEfectivo && (
+                {/* Bill counter — only for EFECTIVO, not readOnly */}
+                {esEfectivo && !readOnly && (
                   <button
                     type="button"
                     title="Contar billetes"
@@ -165,9 +247,8 @@ export function CuadreConteoFisico({
                   </button>
                 )}
 
-                {/* Use verified amount — for non-EFECTIVO methods.
-                    Uses native currency so the fisico input receives the correct unit. */}
-                {hasVerified && (
+                {/* Use verified amount — for non-EFECTIVO, not readOnly */}
+                {hasVerified && !readOnly && (
                   <button
                     type="button"
                     title="Usar total verificado del detalle de pagos"
@@ -182,7 +263,7 @@ export function CuadreConteoFisico({
               </div>
 
               {/* Verified hint for non-EFECTIVO */}
-              {hasVerified && (
+              {hasVerified && !readOnly && (
                 <p className="text-xs text-green-700 flex items-center gap-1">
                   <CheckCircle size={11} weight="fill" />
                   {verifiedEntry.moneda === 'BS'
@@ -246,14 +327,16 @@ export function CuadreConteoFisico({
               </div>
             </>
           )}
-          <button
-            type="button"
-            onClick={() => setFisico({})}
-            className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <ArrowsClockwise size={12} />
-            Limpiar conteo
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={handleLimpiar}
+              className="mt-2 flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ArrowsClockwise size={12} />
+              Limpiar conteo
+            </button>
+          )}
         </div>
       </div>
 

@@ -37,6 +37,10 @@ export interface CerrarSesionParams {
   monto_fisico_usd: number
   observaciones_cierre?: string
   usuario_cierre_id: string
+  /** Conteo fisico por metodo: keyed por metodo_cobro_id, valor en moneda nativa del metodo */
+  conteoFisicoPorMetodo?: Record<string, number>
+  /** Tasa del dia para convertir Bs → USD en el calculo de diferencia */
+  tasaDelDia?: number
 }
 
 // ─── Interfaces extendidas ───────────────────────────────────
@@ -171,7 +175,7 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
  * Tambien genera sesiones_caja_detalle con el desglose por metodo de cobro.
  */
 export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): Promise<void> {
-  const { monto_fisico_usd, observaciones_cierre, usuario_cierre_id } = params
+  const { monto_fisico_usd, observaciones_cierre, usuario_cierre_id, conteoFisicoPorMetodo, tasaDelDia } = params
 
   if (monto_fisico_usd < 0) {
     throw new Error('El monto fisico no puede ser negativo')
@@ -323,17 +327,31 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
           (row.total_pagos + manual.ingreso - manual.egreso).toFixed(2)
         )
 
+        // Calcular total_fisico y diferencia si se recibio conteo del usuario
+        let totalFisicoNativo: number | null = null
+        let diferenciaValor: number | null = null
+        if (conteoFisicoPorMetodo && row.metodo_cobro_id in conteoFisicoPorMetodo) {
+          totalFisicoNativo = conteoFisicoPorMetodo[row.metodo_cobro_id]
+          // Convertir a USD para calcular diferencia homogenea
+          const fisicoUsd = row.moneda_id !== 'USD' && (tasaDelDia ?? 0) > 0
+            ? totalFisicoNativo / tasaDelDia!
+            : totalFisicoNativo
+          diferenciaValor = Number((fisicoUsd - totalSistema).toFixed(2))
+        }
+
         const detalleId = uuidv4()
         await tx.execute(
           `INSERT OR IGNORE INTO sesiones_caja_detalle
              (id, sesion_caja_id, metodo_cobro_id, moneda_id, total_sistema, total_fisico, diferencia, num_transacciones, empresa_id, created_at)
-           VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             detalleId,
             id,
             row.metodo_cobro_id,
             row.moneda_id,
             totalSistema.toFixed(2),
+            totalFisicoNativo !== null ? totalFisicoNativo.toFixed(2) : null,
+            diferenciaValor !== null ? diferenciaValor.toFixed(2) : null,
             row.num_transacciones,
             empresaId,
             now,

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { useQuery } from '@powersync/react'
+import { useNavigate } from '@tanstack/react-router'
 import { CashRegister, Lock } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import {
@@ -389,6 +390,18 @@ function FormCierre({
   onClose: () => void
 }) {
   const { user } = useCurrentUser()
+  const navigate = useNavigate()
+
+  // Leer caja_id y fecha_apertura para navegar al cuadre tras cerrar
+  const { data: sesionMetaData } = useQuery(
+    sesionId
+      ? 'SELECT caja_id, fecha_apertura FROM sesiones_caja WHERE id = ?'
+      : '',
+    sesionId ? [sesionId] : []
+  )
+  const sesionMeta = (sesionMetaData ?? [])[0] as
+    | { caja_id: string; fecha_apertura: string }
+    | undefined
 
   const [montoFisico, setMontoFisico] = useState('')
   const [observaciones, setObservaciones] = useState('')
@@ -435,6 +448,14 @@ function FormCierre({
       toast.success('Sesion de caja cerrada exitosamente')
       resetFields()
       onClose()
+      // Navegar al cuadre con la sesion pre-cargada para que el supervisor complete el cuadre formal
+      if (sesionMeta) {
+        const fecha = sesionMeta.fecha_apertura.substring(0, 10)
+        navigate({
+          to: '/ventas/cuadre-de-caja',
+          search: { fecha, cajaId: sesionMeta.caja_id, sesionId },
+        })
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
       toast.error(message)
