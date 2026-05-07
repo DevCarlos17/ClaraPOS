@@ -192,7 +192,7 @@ export function ValorInventarioModal({
                       const pct = total > 0 ? (d.valor / total) * 100 : 0
                       return (
                         <tr
-                          key={d.nombre}
+                          key={`${d.nombre}-${i}`}
                           className="border-b border-gray-100 last:border-0"
                         >
                           <td className="px-4 py-2">

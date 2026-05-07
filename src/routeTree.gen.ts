@@ -45,9 +45,9 @@ import { Route as AppContabilidadCuentasConfigRouteImport } from './routes/_app/
 import { Route as AppContabilidadBalanceComprobacionRouteImport } from './routes/_app/contabilidad/balance-comprobacion'
 import { Route as AppConfiguracionUsuariosRouteImport } from './routes/_app/configuracion/usuarios'
 import { Route as AppConfiguracionTasaCambioRouteImport } from './routes/_app/configuracion/tasa-cambio'
+import { Route as AppConfiguracionNivelesPrecioRouteImport } from './routes/_app/configuracion/niveles-precio'
 import { Route as AppConfiguracionMetodosPagoRouteImport } from './routes/_app/configuracion/metodos-pago'
 import { Route as AppConfiguracionImpuestosRouteImport } from './routes/_app/configuracion/impuestos'
-import { Route as AppConfiguracionNivelesPrecioRouteImport } from './routes/_app/configuracion/niveles-precio'
 import { Route as AppConfiguracionDatosEmpresaRouteImport } from './routes/_app/configuracion/datos-empresa'
 import { Route as AppConfiguracionCajasRouteImport } from './routes/_app/configuracion/cajas'
 import { Route as AppConfiguracionBancosRouteImport } from './routes/_app/configuracion/bancos'
@@ -254,6 +254,12 @@ const AppConfiguracionTasaCambioRoute =
     path: '/configuracion/tasa-cambio',
     getParentRoute: () => AppRouteRoute,
   } as any)
+const AppConfiguracionNivelesPrecioRoute =
+  AppConfiguracionNivelesPrecioRouteImport.update({
+    id: '/configuracion/niveles-precio',
+    path: '/configuracion/niveles-precio',
+    getParentRoute: () => AppRouteRoute,
+  } as any)
 const AppConfiguracionMetodosPagoRoute =
   AppConfiguracionMetodosPagoRouteImport.update({
     id: '/configuracion/metodos-pago',
@@ -264,12 +270,6 @@ const AppConfiguracionImpuestosRoute =
   AppConfiguracionImpuestosRouteImport.update({
     id: '/configuracion/impuestos',
     path: '/configuracion/impuestos',
-    getParentRoute: () => AppRouteRoute,
-  } as any)
-const AppConfiguracionNivelesPrecioRoute =
-  AppConfiguracionNivelesPrecioRouteImport.update({
-    id: '/configuracion/niveles-precio',
-    path: '/configuracion/niveles-precio',
     getParentRoute: () => AppRouteRoute,
   } as any)
 const AppConfiguracionDatosEmpresaRoute =
@@ -401,8 +401,8 @@ export interface FileRoutesByFullPath {
   '/configuracion/cajas': typeof AppConfiguracionCajasRoute
   '/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
   '/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
-  '/configuracion/niveles-precio': typeof AppConfiguracionNivelesPrecioRoute
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
+  '/configuracion/niveles-precio': typeof AppConfiguracionNivelesPrecioRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
   '/contabilidad/balance-comprobacion': typeof AppContabilidadBalanceComprobacionRoute
@@ -458,8 +458,8 @@ export interface FileRoutesByTo {
   '/configuracion/cajas': typeof AppConfiguracionCajasRoute
   '/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
   '/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
-  '/configuracion/niveles-precio': typeof AppConfiguracionNivelesPrecioRoute
   '/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
+  '/configuracion/niveles-precio': typeof AppConfiguracionNivelesPrecioRoute
   '/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/contabilidad/balance-comprobacion': typeof AppContabilidadBalanceComprobacionRoute
   '/contabilidad/cuentas-config': typeof AppContabilidadCuentasConfigRoute
@@ -518,8 +518,8 @@ export interface FileRoutesById {
   '/_app/configuracion/cajas': typeof AppConfiguracionCajasRoute
   '/_app/configuracion/datos-empresa': typeof AppConfiguracionDatosEmpresaRoute
   '/_app/configuracion/impuestos': typeof AppConfiguracionImpuestosRoute
-  '/_app/configuracion/niveles-precio': typeof AppConfiguracionNivelesPrecioRoute
   '/_app/configuracion/metodos-pago': typeof AppConfiguracionMetodosPagoRoute
+  '/_app/configuracion/niveles-precio': typeof AppConfiguracionNivelesPrecioRoute
   '/_app/configuracion/tasa-cambio': typeof AppConfiguracionTasaCambioRoute
   '/_app/configuracion/usuarios': typeof AppConfiguracionUsuariosRouteWithChildren
   '/_app/contabilidad/balance-comprobacion': typeof AppContabilidadBalanceComprobacionRoute
@@ -578,8 +578,8 @@ export interface FileRouteTypes {
     | '/configuracion/cajas'
     | '/configuracion/datos-empresa'
     | '/configuracion/impuestos'
-    | '/configuracion/niveles-precio'
     | '/configuracion/metodos-pago'
+    | '/configuracion/niveles-precio'
     | '/configuracion/tasa-cambio'
     | '/configuracion/usuarios'
     | '/contabilidad/balance-comprobacion'
@@ -635,8 +635,8 @@ export interface FileRouteTypes {
     | '/configuracion/cajas'
     | '/configuracion/datos-empresa'
     | '/configuracion/impuestos'
-    | '/configuracion/niveles-precio'
     | '/configuracion/metodos-pago'
+    | '/configuracion/niveles-precio'
     | '/configuracion/tasa-cambio'
     | '/contabilidad/balance-comprobacion'
     | '/contabilidad/cuentas-config'
@@ -694,8 +694,8 @@ export interface FileRouteTypes {
     | '/_app/configuracion/cajas'
     | '/_app/configuracion/datos-empresa'
     | '/_app/configuracion/impuestos'
-    | '/_app/configuracion/niveles-precio'
     | '/_app/configuracion/metodos-pago'
+    | '/_app/configuracion/niveles-precio'
     | '/_app/configuracion/tasa-cambio'
     | '/_app/configuracion/usuarios'
     | '/_app/contabilidad/balance-comprobacion'
@@ -987,6 +987,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConfiguracionTasaCambioRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/configuracion/niveles-precio': {
+      id: '/_app/configuracion/niveles-precio'
+      path: '/configuracion/niveles-precio'
+      fullPath: '/configuracion/niveles-precio'
+      preLoaderRoute: typeof AppConfiguracionNivelesPrecioRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/configuracion/metodos-pago': {
       id: '/_app/configuracion/metodos-pago'
       path: '/configuracion/metodos-pago'
@@ -999,13 +1006,6 @@ declare module '@tanstack/react-router' {
       path: '/configuracion/impuestos'
       fullPath: '/configuracion/impuestos'
       preLoaderRoute: typeof AppConfiguracionImpuestosRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/_app/configuracion/niveles-precio': {
-      id: '/_app/configuracion/niveles-precio'
-      path: '/configuracion/niveles-precio'
-      fullPath: '/configuracion/niveles-precio'
-      preLoaderRoute: typeof AppConfiguracionNivelesPrecioRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/configuracion/datos-empresa': {
@@ -1215,8 +1215,8 @@ interface AppRouteRouteChildren {
   AppConfiguracionCajasRoute: typeof AppConfiguracionCajasRoute
   AppConfiguracionDatosEmpresaRoute: typeof AppConfiguracionDatosEmpresaRoute
   AppConfiguracionImpuestosRoute: typeof AppConfiguracionImpuestosRoute
-  AppConfiguracionNivelesPrecioRoute: typeof AppConfiguracionNivelesPrecioRoute
   AppConfiguracionMetodosPagoRoute: typeof AppConfiguracionMetodosPagoRoute
+  AppConfiguracionNivelesPrecioRoute: typeof AppConfiguracionNivelesPrecioRoute
   AppConfiguracionTasaCambioRoute: typeof AppConfiguracionTasaCambioRoute
   AppConfiguracionUsuariosRoute: typeof AppConfiguracionUsuariosRouteWithChildren
   AppContabilidadBalanceComprobacionRoute: typeof AppContabilidadBalanceComprobacionRoute
@@ -1264,8 +1264,8 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppConfiguracionCajasRoute: AppConfiguracionCajasRoute,
   AppConfiguracionDatosEmpresaRoute: AppConfiguracionDatosEmpresaRoute,
   AppConfiguracionImpuestosRoute: AppConfiguracionImpuestosRoute,
-  AppConfiguracionNivelesPrecioRoute: AppConfiguracionNivelesPrecioRoute,
   AppConfiguracionMetodosPagoRoute: AppConfiguracionMetodosPagoRoute,
+  AppConfiguracionNivelesPrecioRoute: AppConfiguracionNivelesPrecioRoute,
   AppConfiguracionTasaCambioRoute: AppConfiguracionTasaCambioRoute,
   AppConfiguracionUsuariosRoute: AppConfiguracionUsuariosRouteWithChildren,
   AppContabilidadBalanceComprobacionRoute:
