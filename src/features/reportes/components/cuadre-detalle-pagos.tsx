@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
-import { CheckCircle, Circle, MagnifyingGlass } from '@phosphor-icons/react'
+import { CheckCircle, Circle, MagnifyingGlass, PencilSimple, Check, X } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosDetalleCompleto, type CuadreFilters } from '../hooks/use-cuadre'
+import { usePagosDetalleCompleto, type CuadreFilters, type VerifiedEntry } from '../hooks/use-cuadre'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 
 function formatHora(fechaStr: string): string {
   try {
@@ -13,18 +14,27 @@ function formatHora(fechaStr: string): string {
   }
 }
 
+interface PagoOverride {
+  amount: string
+  supervisorId: string
+}
+
 interface DetallePagosProps {
   filters: CuadreFilters
-  onVerifiedChange: (amounts: Record<string, number>) => void
+  onVerifiedChange: (amounts: Record<string, VerifiedEntry>) => void
 }
 
 export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosProps) {
   const [visible, setVisible] = useState(false)
   const [verificados, setVerificados] = useState(new Set<string>())
   const [busq, setBusq] = useState('')
-  const { pagos: todosPagos, isLoading } = usePagosDetalleCompleto(visible ? filters : null)
+  const [overrides, setOverrides] = useState<Record<string, PagoOverride>>({})
+  const [pinTargetId, setPinTargetId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editAmount, setEditAmount] = useState('')
+  const [editSupervisorId, setEditSupervisorId] = useState('')
 
-  // Filter to non-EFECTIVO payments only
+  const { pagos: todosPagos, isLoading } = usePagosDetalleCompleto(visible ? filters : null)
   const pagos = todosPagos.filter((p) => p.metodoTipo !== 'EFECTIVO')
 
   const toggleVerificado = useCallback((id: string) => {
@@ -36,19 +46,70 @@ export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosPr
     })
   }, [])
 
-  // Emit verified amounts by metodo_cobro_id whenever verificados or pagos change.
-  // Only runs when visible so closing the section preserves last reported amounts in parent.
+  // Emit verified amounts by metodo_cobro_id. Uses native currency; includes override count.
   useEffect(() => {
     if (!visible) return
-    const amounts: Record<string, number> = {}
-    pagos.forEach((p) => {
-      if (verificados.has(p.id)) {
-        const key = p.metodoCobro_id
-        amounts[key] = (amounts[key] ?? 0) + parseFloat(p.montoUsd)
+    const amounts: Record<string, VerifiedEntry> = {}
+    for (const p of pagos) {
+      if (!verificados.has(p.id)) continue
+      const key = p.metodoCobro_id
+      const override = overrides[p.id]
+      let native: number
+      let usd: number
+      if (override) {
+        native = parseFloat(override.amount) || 0
+        const origNative = parseFloat(p.monto)
+        const origUsd = parseFloat(p.montoUsd)
+        // Pro-rata USD conversion when native amount is adjusted
+        usd = origNative > 0 ? origUsd * (native / origNative) : 0
+      } else {
+        native = parseFloat(p.monto)
+        usd = parseFloat(p.montoUsd)
       }
-    })
+      const existing = amounts[key]
+      amounts[key] = {
+        native: (existing?.native ?? 0) + native,
+        usd: (existing?.usd ?? 0) + usd,
+        moneda: p.moneda,
+        overrideCount: (existing?.overrideCount ?? 0) + (override ? 1 : 0),
+      }
+    }
     onVerifiedChange(amounts)
-  }, [verificados, pagos, onVerifiedChange, visible])
+  }, [verificados, pagos, overrides, onVerifiedChange, visible])
+
+  const handleRequestOverride = useCallback((id: string) => {
+    setPinTargetId(id)
+  }, [])
+
+  const handlePinAuthorized = useCallback(
+    (supervisorId: string) => {
+      if (!pinTargetId) return
+      const pago = pagos.find((p) => p.id === pinTargetId)
+      const defaultAmount = overrides[pinTargetId]?.amount ?? (pago ? parseFloat(pago.monto).toFixed(2) : '0')
+      setEditSupervisorId(supervisorId)
+      setEditAmount(defaultAmount)
+      setEditingId(pinTargetId)
+      setPinTargetId(null)
+    },
+    [pinTargetId, pagos, overrides]
+  )
+
+  const handleConfirmEdit = useCallback(() => {
+    if (!editingId || !editSupervisorId) return
+    setOverrides((prev) => ({
+      ...prev,
+      [editingId]: { amount: editAmount, supervisorId: editSupervisorId },
+    }))
+    setEditingId(null)
+    setEditAmount('')
+    setEditSupervisorId('')
+  }, [editingId, editAmount, editSupervisorId])
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingId(null)
+    setEditAmount('')
+    setEditSupervisorId('')
+  }, [])
 
   const filtrados = busq.trim()
     ? pagos.filter(
@@ -60,9 +121,20 @@ export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosPr
       )
     : pagos
 
-  const totalVerificado = pagos
+  const activeOverrides = Object.keys(overrides).filter((id) => verificados.has(id))
+
+  const totalVerificadoUsd = pagos
     .filter((p) => verificados.has(p.id))
-    .reduce((sum, p) => sum + parseFloat(p.montoUsd), 0)
+    .reduce((sum, p) => {
+      const override = overrides[p.id]
+      if (override) {
+        const origNative = parseFloat(p.monto)
+        const origUsd = parseFloat(p.montoUsd)
+        const native = parseFloat(override.amount) || 0
+        return sum + (origNative > 0 ? origUsd * (native / origNative) : 0)
+      }
+      return sum + parseFloat(p.montoUsd)
+    }, 0)
 
   return (
     <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
@@ -89,7 +161,10 @@ export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosPr
         </div>
         {visible && verificados.size > 0 && (
           <span className="text-xs text-green-600 font-medium">
-            {verificados.size} verificado(s) · {formatUsd(totalVerificado)}
+            {verificados.size} verificado(s) · {formatUsd(totalVerificadoUsd)}
+            {activeOverrides.length > 0 && (
+              <span className="ml-1 text-amber-600">· {activeOverrides.length} ajustado(s)</span>
+            )}
           </span>
         )}
       </button>
@@ -137,16 +212,28 @@ export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosPr
                   <tbody>
                     {filtrados.map((p) => {
                       const esVerificado = verificados.has(p.id)
+                      const hasOverride = !!overrides[p.id]
+                      const isEditing = editingId === p.id
+                      const displayNative = hasOverride
+                        ? parseFloat(overrides[p.id].amount) || 0
+                        : parseFloat(p.monto)
+
                       return (
                         <tr
                           key={p.id}
-                          className={`border-b border-muted/50 transition-colors ${esVerificado ? 'bg-green-50/50' : 'hover:bg-muted/20'}`}
+                          className={`border-b border-muted/50 transition-colors ${
+                            hasOverride && esVerificado
+                              ? 'bg-amber-50/50'
+                              : esVerificado
+                              ? 'bg-green-50/50'
+                              : 'hover:bg-muted/20'
+                          }`}
                         >
                           <td className="px-2 py-1.5">
                             <button
                               type="button"
                               onClick={() => toggleVerificado(p.id)}
-                              title={esVerificado ? 'Marcar como no verificado' : 'Marcar como verificado'}
+                              title={esVerificado ? 'Desmarcar' : 'Verificar'}
                               className="text-muted-foreground hover:text-green-600 transition-colors"
                             >
                               {esVerificado ? (
@@ -174,9 +261,66 @@ export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosPr
                             {p.referencia ?? '-'}
                           </td>
                           <td className="px-2 py-1.5 text-right text-xs tabular-nums">
-                            {p.moneda === 'BS'
-                              ? formatBs(parseFloat(p.monto))
-                              : formatUsd(parseFloat(p.monto))}
+                            {isEditing ? (
+                              <div className="flex items-center justify-end gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={editAmount}
+                                  onChange={(e) => setEditAmount(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') handleConfirmEdit()
+                                    if (e.key === 'Escape') handleCancelEdit()
+                                  }}
+                                  className="w-24 rounded border border-amber-300 bg-white px-1.5 py-0.5 text-xs tabular-nums text-right focus:outline-none focus:ring-1 focus:ring-amber-400"
+                                  autoFocus
+                                />
+                                <button
+                                  type="button"
+                                  onClick={handleConfirmEdit}
+                                  className="text-green-600 hover:text-green-700"
+                                  title="Confirmar"
+                                >
+                                  <Check size={13} weight="bold" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleCancelEdit}
+                                  className="text-muted-foreground hover:text-red-500"
+                                  title="Cancelar"
+                                >
+                                  <X size={13} weight="bold" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-1">
+                                <span
+                                  className={
+                                    hasOverride && esVerificado
+                                      ? 'text-amber-700 font-semibold'
+                                      : ''
+                                  }
+                                >
+                                  {p.moneda === 'BS'
+                                    ? formatBs(displayNative)
+                                    : formatUsd(displayNative)}
+                                  {hasOverride && esVerificado && (
+                                    <span className="text-amber-500 ml-0.5">*</span>
+                                  )}
+                                </span>
+                                {esVerificado && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRequestOverride(p.id)}
+                                    title="Ajustar monto (requiere supervisor)"
+                                    className="text-muted-foreground hover:text-amber-600 transition-colors"
+                                  >
+                                    <PencilSimple size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </td>
                           <td className="px-2 py-1.5 text-right text-xs font-bold tabular-nums">
                             {formatUsd(parseFloat(p.montoUsd))}
@@ -199,6 +343,15 @@ export function CuadreDetallePagos({ filters, onVerifiedChange }: DetallePagosPr
           )}
         </div>
       )}
+
+      <SupervisorPinDialog
+        isOpen={!!pinTargetId}
+        onClose={() => setPinTargetId(null)}
+        onAuthorized={handlePinAuthorized}
+        titulo="Autorizar ajuste de monto"
+        mensaje="Se requiere autorizacion de supervisor para modificar el monto de esta transferencia."
+        requiredPermission="caja.movimientos_manual"
+      />
     </div>
   )
 }

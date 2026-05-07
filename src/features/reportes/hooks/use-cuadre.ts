@@ -1,6 +1,22 @@
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
+// ─── Shared types ───────────────────────────────────────────
+
+/**
+ * Verified payment entry emitted by CuadreDetallePagos per metodo_cobro_id.
+ * native  = amount in the method's own currency (Bs for BS methods, USD for USD methods)
+ * usd     = USD equivalent
+ * moneda  = 'USD' | 'BS'
+ * overrideCount = number of payments whose amount was adjusted by a supervisor
+ */
+export interface VerifiedEntry {
+  native: number
+  usd: number
+  moneda: string
+  overrideCount: number
+}
+
 // ─── Filters ────────────────────────────────────────────────
 
 export interface CuadreFilters {
@@ -361,10 +377,12 @@ export function useVentasAudit(filters: CuadreFilters | null) {
        v.saldo_pend_usd,
        c.nombre as cliente_nombre,
        c.identificacion as cliente_identificacion,
-       (SELECT GROUP_CONCAT(DISTINCT mp.nombre, ', ')
-        FROM pagos pg
-        JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
-        WHERE pg.venta_id = v.id) as metodos_pago
+       (SELECT GROUP_CONCAT(nombre, ', ')
+        FROM (SELECT DISTINCT mp.nombre as nombre
+              FROM pagos pg
+              JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+              WHERE pg.venta_id = v.id AND pg.is_reversed = 0
+              ORDER BY mp.nombre)) as metodos_pago
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
      WHERE ${where}

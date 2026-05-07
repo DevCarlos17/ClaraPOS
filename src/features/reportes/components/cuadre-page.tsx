@@ -1,9 +1,12 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard } from '@phosphor-icons/react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard, LockKey } from '@phosphor-icons/react'
+import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
 import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { cerrarSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { PagosResumen } from './pagos-resumen'
 import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
@@ -18,6 +21,7 @@ import {
   useVentasDelDia,
   useCxcDelDia,
   type CuadreFilters,
+  type VerifiedEntry,
 } from '../hooks/use-cuadre'
 import { NativeSelect } from '@/components/ui/native-select'
 
@@ -28,6 +32,8 @@ interface CuadrePageProps {
 }
 
 export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: CuadrePageProps = {}) {
+  const { user } = useCurrentUser()
+
   // Funnel state
   const [fecha, setFecha] = useState(initialFecha ?? todayStr)
   const [cajaId, setCajaId] = useState<string | null>(initialCajaId ?? null)
@@ -44,11 +50,25 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [cxcOpen, setCxcOpen] = useState(false)
   const [metodoModal, setMetodoModal] = useState<string | null>(null)
 
-  // Verified non-cash payment amounts shared between CuadreDetallePagos → CuadreConteoFisico
-  const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, number>>({})
+  // Verified non-cash payment amounts (keyed by metodo_cobro_id)
+  const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, VerifiedEntry>>({})
 
-  const handleVerifiedChange = useCallback((amounts: Record<string, number>) => {
+  // Totals lifted from CuadreConteoFisico
+  const [totalSistemaUsd, setTotalSistemaUsd] = useState(0)
+  const [totalFisicoUsd, setTotalFisicoUsd] = useState(0)
+
+  // Finalizar cuadre modal state
+  const [finalizarOpen, setFinalizarOpen] = useState(false)
+  const [observaciones, setObservaciones] = useState('')
+  const [isCerrando, setIsCerrando] = useState(false)
+
+  const handleVerifiedChange = useCallback((amounts: Record<string, VerifiedEntry>) => {
     setVerifiedAmountsByMetodoId(amounts)
+  }, [])
+
+  const handleTotalesChange = useCallback((sistema: number, fisico: number) => {
+    setTotalSistemaUsd(sistema)
+    setTotalFisicoUsd(fisico)
   }, [])
 
   // Data
@@ -60,6 +80,22 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { totalVentasUsd, totalVentasBs, facturasCount, isLoading: loadingVentas } =
     useVentasDelDia(activeFilters)
   const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(activeFilters)
+
+  // Determine if there is exactly one ABIERTA session selected (enables finalizar cuadre)
+  const sesionAbiertaId = useMemo(() => {
+    if (sesionCajaIds.length !== 1) return null
+    const id = sesionCajaIds[0]
+    const found = sesiones.find((s) => s.id === id)
+    return found?.status === 'ABIERTA' ? id : null
+  }, [sesionCajaIds, sesiones])
+
+  // Total overrides across all verified methods
+  const totalOverrides = Object.values(verifiedAmountsByMetodoId).reduce(
+    (sum, e) => sum + e.overrideCount,
+    0
+  )
+
+  const diferencia = Number((totalFisicoUsd - totalSistemaUsd).toFixed(2))
 
   const handleConsultar = useCallback(() => {
     setActiveFilters({ fecha, cajaId, sesionCajaIds })
@@ -117,6 +153,35 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     return `${hora}${user} (${estado})`
   }
 
+  const handleCerrarSesion = async () => {
+    if (!sesionAbiertaId || !user) return
+    setIsCerrando(true)
+    try {
+      // Build observations: prepend override note if any
+      const parts: string[] = []
+      if (totalOverrides > 0) {
+        parts.push(`${totalOverrides} transferencia(s) con monto ajustado por supervisor`)
+      }
+      if (observaciones.trim()) parts.push(observaciones.trim())
+      const observacionesCierre = parts.join(' | ') || undefined
+
+      await cerrarSesionCaja(sesionAbiertaId, {
+        monto_fisico_usd: totalFisicoUsd,
+        observaciones_cierre: observacionesCierre,
+        usuario_cierre_id: user.id,
+      })
+      toast.success('Sesion cerrada exitosamente')
+      setFinalizarOpen(false)
+      setObservaciones('')
+      // Refresh by re-consulting so the session now shows as CERRADA
+      setActiveFilters({ fecha, cajaId, sesionCajaIds })
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al cerrar la sesion')
+    } finally {
+      setIsCerrando(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader titulo="Cuadre de Caja" descripcion="Resumen de operaciones y cierre de caja" />
@@ -161,6 +226,17 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <MagnifyingGlass className="w-4 h-4" />
               Consultar
             </button>
+
+            {/* Finalizar Cuadre — only when exactly 1 ABIERTA session is selected */}
+            {consulted && sesionAbiertaId && (
+              <button
+                onClick={() => setFinalizarOpen(true)}
+                className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 transition-colors"
+              >
+                <LockKey className="w-4 h-4" />
+                Finalizar Cuadre
+              </button>
+            )}
           </div>
 
           {/* Multi-session selector */}
@@ -290,6 +366,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               filters={activeFilters}
               tasaDelDia={tasaPromedio}
               verifiedAmountsByMetodoId={verifiedAmountsByMetodoId}
+              onTotalesChange={handleTotalesChange}
             />
             <PagosResumen
               filters={activeFilters}
@@ -323,6 +400,101 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             />
           )}
         </>
+      )}
+
+      {/* Finalizar Cuadre modal */}
+      {finalizarOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-card rounded-2xl shadow-xl w-full max-w-md p-6 space-y-5">
+            <h2 className="text-base font-semibold">Finalizar Cuadre de Caja</h2>
+
+            {/* Reconciliation summary */}
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Total sistema (USD)</span>
+                <span className="font-mono font-bold tabular-nums">{formatUsd(totalSistemaUsd)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Total fisico contado (USD)</span>
+                <span className="font-mono font-bold tabular-nums">{formatUsd(totalFisicoUsd)}</span>
+              </div>
+              <div className="flex items-center justify-between border-t pt-2">
+                <span className="font-semibold">Diferencia</span>
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`font-mono font-bold tabular-nums ${
+                      diferencia > 0.001
+                        ? 'text-green-600'
+                        : diferencia < -0.001
+                        ? 'text-red-600'
+                        : 'text-muted-foreground'
+                    }`}
+                  >
+                    {diferencia > 0 ? '+' : ''}
+                    {formatUsd(diferencia)}
+                  </span>
+                  {diferencia > 0.001 && (
+                    <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                      SOBRANTE
+                    </span>
+                  )}
+                  {diferencia < -0.001 && (
+                    <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                      FALTANTE
+                    </span>
+                  )}
+                  {Math.abs(diferencia) <= 0.001 && (
+                    <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                      CUADRADO
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Override notice */}
+            {totalOverrides > 0 && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                {totalOverrides} transferencia(s) con monto ajustado por supervisor quedaran registradas en las observaciones.
+              </div>
+            )}
+
+            {/* Observations */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">
+                Observaciones de cierre (opcional)
+              </label>
+              <textarea
+                value={observaciones}
+                onChange={(e) => setObservaciones(e.target.value)}
+                rows={3}
+                placeholder="Observaciones adicionales..."
+                className="w-full rounded-md border border-input bg-white px-3 py-2 text-sm resize-none"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 justify-end">
+              <button
+                type="button"
+                onClick={() => setFinalizarOpen(false)}
+                disabled={isCerrando}
+                className="rounded-md border px-4 py-2 text-sm hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleCerrarSesion}
+                disabled={isCerrando}
+                className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 transition-colors disabled:opacity-50"
+              >
+                <LockKey size={15} />
+                {isCerrando ? 'Cerrando...' : 'Cerrar Sesion'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

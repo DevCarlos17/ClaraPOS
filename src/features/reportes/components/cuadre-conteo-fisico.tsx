@@ -1,16 +1,22 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import { Calculator, ArrowsClockwise, CheckCircle } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, type CuadreFilters } from '../hooks/use-cuadre'
+import { usePagosPorMetodo, type CuadreFilters, type VerifiedEntry } from '../hooks/use-cuadre'
 import { CuadreBilletesModal } from './cuadre-billetes-modal'
 
 interface ConteoFisicoProps {
   filters: CuadreFilters
   tasaDelDia: number
-  verifiedAmountsByMetodoId: Record<string, number>
+  verifiedAmountsByMetodoId: Record<string, VerifiedEntry>
+  onTotalesChange?: (sistema: number, fisico: number) => void
 }
 
-export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetodoId }: ConteoFisicoProps) {
+export function CuadreConteoFisico({
+  filters,
+  tasaDelDia,
+  verifiedAmountsByMetodoId,
+  onTotalesChange,
+}: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   // fisico[metodoNombre] = string amount entered by user (in the method's own currency)
   const [fisico, setFisico] = useState<Record<string, string>>({})
@@ -23,11 +29,33 @@ export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetod
     setFisico((prev) => ({ ...prev, [nombre]: value }))
   }, [])
 
-  const handleUseBilletes = useCallback((total: number) => {
-    if (billetesModal) {
-      setFisicoValue(billetesModal.nombre, String(total))
+  const handleUseBilletes = useCallback(
+    (total: number) => {
+      if (billetesModal) {
+        setFisicoValue(billetesModal.nombre, String(total))
+      }
+    },
+    [billetesModal, setFisicoValue]
+  )
+
+  // Compute system and physical totals (both in USD) for the summary row and parent callback.
+  const totals = useMemo(() => {
+    let sistema = 0
+    let fisicoTotal = 0
+    for (const m of metodos) {
+      sistema += m.totalUsd
+      const raw = parseFloat(fisico[m.nombre] ?? '') || 0
+      const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
+      if (has) {
+        fisicoTotal += m.moneda === 'BS' ? (tasaDelDia > 0 ? raw / tasaDelDia : 0) : raw
+      }
     }
-  }, [billetesModal, setFisicoValue])
+    return { totalSistema: Number(sistema.toFixed(2)), totalFisico: Number(fisicoTotal.toFixed(2)) }
+  }, [metodos, fisico, tasaDelDia])
+
+  useEffect(() => {
+    onTotalesChange?.(totals.totalSistema, totals.totalFisico)
+  }, [totals, onTotalesChange])
 
   if (isLoading) {
     return (
@@ -51,10 +79,6 @@ export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetod
     )
   }
 
-  // Totals for summary row
-  let totalSistema = 0
-  let totalFisico = 0
-
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold mb-1">Conteo Fisico por Metodo</h3>
@@ -68,21 +92,24 @@ export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetod
           const sistemaUsd = m.totalUsd
           const sistemaBs = m.totalOriginal
           const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
-          // For USD methods: fisicoRaw is in USD
-          // For BS methods: fisicoRaw is in BS, convert to USD
+          // For USD methods: fisicoRaw is in USD; for BS methods: fisicoRaw is in Bs
           const fisicoUsd = m.moneda === 'BS'
             ? (tasaDelDia > 0 ? fisicoRaw / tasaDelDia : 0)
             : fisicoRaw
           const difUsd = fisicoUsd - sistemaUsd
           const hasFisico = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
 
-          // Verified amount for non-EFECTIVO methods
-          const verifiedUsd = verifiedAmountsByMetodoId[m.metodo_cobro_id] ?? 0
+          // Verified entry for non-EFECTIVO methods — contains native amount in method's currency
+          const verifiedEntry = verifiedAmountsByMetodoId[m.metodo_cobro_id]
+          const hasVerified = !esEfectivo && verifiedEntry && verifiedEntry.native > 0.001
 
-          totalSistema += sistemaUsd
-          if (hasFisico) totalFisico += fisicoUsd
-
-          const difColor = !hasFisico ? '' : difUsd > 0.001 ? 'text-green-600' : difUsd < -0.001 ? 'text-red-600' : 'text-green-600'
+          const difColor = !hasFisico
+            ? ''
+            : difUsd > 0.001
+            ? 'text-green-600'
+            : difUsd < -0.001
+            ? 'text-red-600'
+            : 'text-green-600'
 
           return (
             <div key={m.nombre} className="rounded-lg border bg-background p-3 space-y-2">
@@ -124,24 +151,29 @@ export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetod
                   />
                 </div>
 
-                {/* Bill counter button — only for EFECTIVO */}
+                {/* Bill counter — only for EFECTIVO */}
                 {esEfectivo && (
                   <button
                     type="button"
                     title="Contar billetes"
-                    onClick={() => setBilletesModal({ nombre: m.nombre, moneda: m.moneda === 'BS' ? 'BS' : 'USD' })}
+                    onClick={() =>
+                      setBilletesModal({ nombre: m.nombre, moneda: m.moneda === 'BS' ? 'BS' : 'USD' })
+                    }
                     className="mt-5 p-2 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
                   >
                     <Calculator size={16} />
                   </button>
                 )}
 
-                {/* Use verified amount button — for non-EFECTIVO methods */}
-                {!esEfectivo && verifiedUsd > 0.001 && (
+                {/* Use verified amount — for non-EFECTIVO methods.
+                    Uses native currency so the fisico input receives the correct unit. */}
+                {hasVerified && (
                   <button
                     type="button"
-                    title="Usar total verificado en Detalle de pagos"
-                    onClick={() => setFisicoValue(m.nombre, String(verifiedUsd.toFixed(2)))}
+                    title="Usar total verificado del detalle de pagos"
+                    onClick={() =>
+                      setFisicoValue(m.nombre, verifiedEntry.native.toFixed(2))
+                    }
                     className="mt-5 p-2 rounded-md border border-green-300 hover:bg-green-50 transition-colors text-green-700"
                   >
                     <CheckCircle size={16} />
@@ -150,10 +182,18 @@ export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetod
               </div>
 
               {/* Verified hint for non-EFECTIVO */}
-              {!esEfectivo && verifiedUsd > 0.001 && (
+              {hasVerified && (
                 <p className="text-xs text-green-700 flex items-center gap-1">
                   <CheckCircle size={11} weight="fill" />
-                  {formatUsd(verifiedUsd)} verificado(s) en detalle de pagos
+                  {verifiedEntry.moneda === 'BS'
+                    ? formatBs(verifiedEntry.native)
+                    : formatUsd(verifiedEntry.native)}{' '}
+                  verificado(s) en detalle de pagos
+                  {verifiedEntry.overrideCount > 0 && (
+                    <span className="ml-1 text-amber-600">
+                      · {verifiedEntry.overrideCount} ajustado(s)
+                    </span>
+                  )}
                 </p>
               )}
 
@@ -168,7 +208,8 @@ export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetod
                     <span />
                   )}
                   <span className={`font-semibold tabular-nums ${difColor}`}>
-                    {difUsd > 0.001 ? '+' : ''}{formatUsd(difUsd)} dif.
+                    {difUsd > 0.001 ? '+' : ''}
+                    {formatUsd(difUsd)} dif.
                   </span>
                 </div>
               )}
@@ -180,21 +221,27 @@ export function CuadreConteoFisico({ filters, tasaDelDia, verifiedAmountsByMetod
         <div className="rounded-lg border bg-muted/30 p-3">
           <div className="flex items-center justify-between text-sm">
             <span className="font-semibold">Total cobrado (sistema)</span>
-            <span className="font-bold tabular-nums">{formatUsd(totalSistema)}</span>
+            <span className="font-bold tabular-nums">{formatUsd(totals.totalSistema)}</span>
           </div>
           {Object.keys(fisico).length > 0 && (
             <>
               <div className="flex items-center justify-between text-sm mt-1">
                 <span className="font-semibold">Total fisico ingresado</span>
-                <span className="font-bold tabular-nums">{formatUsd(totalFisico)}</span>
+                <span className="font-bold tabular-nums">{formatUsd(totals.totalFisico)}</span>
               </div>
               <div className="flex items-center justify-between text-sm mt-1 pt-1 border-t">
                 <span className="font-semibold">Diferencia total</span>
-                <span className={`font-bold tabular-nums ${
-                  totalFisico - totalSistema > 0.001 ? 'text-green-600' :
-                  totalFisico - totalSistema < -0.001 ? 'text-red-600' : 'text-green-600'
-                }`}>
-                  {totalFisico - totalSistema > 0 ? '+' : ''}{formatUsd(totalFisico - totalSistema)}
+                <span
+                  className={`font-bold tabular-nums ${
+                    totals.totalFisico - totals.totalSistema > 0.001
+                      ? 'text-green-600'
+                      : totals.totalFisico - totals.totalSistema < -0.001
+                      ? 'text-red-600'
+                      : 'text-green-600'
+                  }`}
+                >
+                  {totals.totalFisico - totals.totalSistema > 0 ? '+' : ''}
+                  {formatUsd(totals.totalFisico - totals.totalSistema)}
                 </span>
               </div>
             </>
