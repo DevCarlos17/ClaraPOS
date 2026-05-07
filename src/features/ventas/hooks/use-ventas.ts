@@ -5,6 +5,58 @@ import { localNow } from '@/lib/dates'
 import { v4 as uuidv4 } from 'uuid'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
+import { connector } from '@/core/db/powersync/connector'
+
+// ============================================================
+// Validacion de stock en servidor antes de escribir localmente.
+// Llama a la Edge Function validar-stock que lee el stock real
+// en PostgreSQL (fuente de verdad), no el SQLite local.
+// ============================================================
+export interface LineaValidarStock {
+  producto_id: string
+  cantidad: number
+  nombre: string
+  tipo: string
+}
+
+export async function validarStockServidor(
+  lineas: LineaValidarStock[],
+  empresa_id: string,
+): Promise<void> {
+  const session = connector.currentSession
+  if (!session?.access_token) {
+    // Sin sesion activa no se puede llamar al servidor;
+    // la validacion local del writeTransaction es la unica capa disponible.
+    return
+  }
+
+  const supabaseUrl = connector.config.supabaseUrl
+  const anonKey = connector.config.supabaseAnonKey
+
+  let res: Response
+  try {
+    res = await fetch(`${supabaseUrl}/functions/v1/validar-stock`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: anonKey,
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ lineas, empresa_id }),
+    })
+  } catch {
+    // Error de red (offline): no bloquear la venta.
+    // El trigger en PostgreSQL es la red de seguridad final.
+    return
+  }
+
+  const data = await res.json() as { ok?: boolean; error?: string }
+
+  if (!res.ok && res.status !== 200) {
+    // 409 = stock insuficiente en servidor
+    throw new Error(data.error ?? 'Error al validar stock en servidor')
+  }
+}
 
 export interface LineaVenta {
   producto_id: string

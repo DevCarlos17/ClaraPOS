@@ -12,7 +12,7 @@ import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-paymen
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
-import { crearVenta, type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
+import { crearVenta, validarStockServidor, type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -528,6 +528,22 @@ export function PosTerminal() {
 
     setSubmitting(true)
     try {
+      // Validar stock contra el servidor (PostgreSQL) antes de escribir localmente.
+      // Esto previene que dos cajas descuenten el mismo stock simultaneamente.
+      // Si hay error de red (offline), la funcion no lanza excepcion y la venta
+      // continua — el trigger en PostgreSQL es la red de seguridad final.
+      await validarStockServidor(
+        lineas
+          .filter((l) => l.tipo === 'P')
+          .map((l) => ({
+            producto_id: l.producto_id,
+            cantidad: l.cantidad,
+            nombre: l.nombre,
+            tipo: l.tipo,
+          })),
+        user.empresa_id!,
+      )
+
       const result = await crearVenta({
         cliente_id: clienteId,
         tipo: tipoDetectado,
