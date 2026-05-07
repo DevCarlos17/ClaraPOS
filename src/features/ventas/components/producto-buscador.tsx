@@ -3,12 +3,13 @@ import { MagnifyingGlass } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { useBuscarProductosVenta, buscarProductoPorCodigoBarras, type ProductoVenta } from '../hooks/use-ventas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 
 const SCANNER_THRESHOLD_MS = 50
 
 interface ProductoBuscadorProps {
   onSelect: (producto: ProductoVenta) => void
+  tasa: number
 }
 
 export interface ProductoBuscadorHandle {
@@ -16,7 +17,7 @@ export interface ProductoBuscadorHandle {
 }
 
 export const ProductoBuscador = forwardRef<ProductoBuscadorHandle, ProductoBuscadorProps>(
-function ProductoBuscador({ onSelect }, ref) {
+function ProductoBuscador({ onSelect, tasa }, ref) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -211,9 +212,14 @@ function ProductoBuscador({ onSelect }, ref) {
                       )}
                     </p>
                   </div>
-                  <span className="text-sm font-medium shrink-0">
-                    {formatUsd(p.precio_venta_usd)}
-                  </span>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-medium">{formatUsd(p.precio_venta_usd)}</p>
+                    {tasa > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {formatBs(usdToBs(parseFloat(p.precio_venta_usd), tasa))}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </button>
             ))

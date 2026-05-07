@@ -791,7 +791,7 @@ export function PosTerminal() {
                 <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F1</kbd>
               </label>
               <div className="flex-1 max-w-2xl">
-                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} />
+                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} tasa={tasaValor} />
               </div>
             </div>
           </div>
