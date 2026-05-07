@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
@@ -60,6 +60,8 @@ function SearchSelect({
 }) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [activeIdx, setActiveIdx] = useState(-1)
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([])
 
   const filtered = search.trim()
     ? options.filter(
@@ -71,12 +73,59 @@ function SearchSelect({
 
   const selected = options.find((opt) => opt.value === value)
 
+  // Reset active index when search or filtered list changes
+  useEffect(() => {
+    setActiveIdx(-1)
+    itemRefs.current = []
+  }, [search, open])
+
+  // Scroll active item into view
+  useEffect(() => {
+    if (activeIdx >= 0) {
+      itemRefs.current[activeIdx]?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [activeIdx])
+
+  const selectOption = useCallback((opt: SelectOption) => {
+    onChange(opt.value)
+    setSearch('')
+    setOpen(false)
+    setActiveIdx(-1)
+  }, [onChange])
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!open || filtered.length === 0) return
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault()
+        setActiveIdx((prev) => (prev < filtered.length - 1 ? prev + 1 : 0))
+        break
+      case 'ArrowUp':
+        e.preventDefault()
+        setActiveIdx((prev) => (prev > 0 ? prev - 1 : filtered.length - 1))
+        break
+      case 'Enter':
+        e.preventDefault()
+        if (activeIdx >= 0 && filtered[activeIdx]) {
+          selectOption(filtered[activeIdx])
+        } else if (filtered.length > 0) {
+          selectOption(filtered[0])
+        }
+        break
+      case 'Escape':
+        e.preventDefault()
+        setOpen(false)
+        setActiveIdx(-1)
+        break
+    }
+  }
+
   return (
     <Popover
       open={open}
       onOpenChange={(o) => {
         setOpen(o)
-        if (!o) setSearch('')
+        if (!o) { setSearch(''); setActiveIdx(-1) }
       }}
     >
       <PopoverTrigger asChild>
@@ -127,6 +176,7 @@ function SearchSelect({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
             placeholder={searchPlaceholder}
             className="flex-1 py-2.5 text-sm outline-none bg-transparent placeholder:text-gray-400"
             // eslint-disable-next-line jsx-a11y/no-autofocus
@@ -139,16 +189,16 @@ function SearchSelect({
               {filtered.length === 0 ? (
                 <div className="py-6 text-center text-xs text-gray-400">Sin resultados</div>
               ) : (
-                filtered.map((opt) => (
+                filtered.map((opt, i) => (
                   <CommandItem
                     key={opt.value}
                     value={opt.value}
-                    onSelect={() => {
-                      onChange(opt.value)
-                      setSearch('')
-                      setOpen(false)
-                    }}
-                    className="flex items-center justify-between gap-2 cursor-pointer px-3 py-1.5"
+                    ref={(el) => { itemRefs.current[i] = el }}
+                    onSelect={() => selectOption(opt)}
+                    onMouseEnter={() => setActiveIdx(i)}
+                    className={`flex items-center justify-between gap-2 cursor-pointer px-3 py-1.5 ${
+                      i === activeIdx ? 'bg-blue-50 text-blue-900' : ''
+                    }`}
                   >
                     <div className="flex flex-col min-w-0">
                       <span
@@ -419,24 +469,47 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   // --- Bidireccionales: Costo ---
+  // Recalcula precios cuando cambia el costo.
+  // Prioridad: si hay margen configurado → calcula precio; si no → recalcula margen del precio existente.
+  function applyPricesFromCosto(costoN: number) {
+    if (costoN <= 0) return
+
+    const margenN = parseFloat(margen)
+    const ventaN = parseFloat(precioVentaUsd) || 0
+    if (!isNaN(margenN) && margenN !== 0) {
+      const pvp = Math.max(0, costoN * (1 + margenN / 100))
+      setPrecioVentaUsd(pvp.toFixed(2))
+      if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
+    } else if (ventaN > 0) {
+      setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
+    }
+
+    const margenMayorN = parseFloat(margenMayor)
+    const mayorN = parseFloat(precioMayorUsd) || 0
+    if (!isNaN(margenMayorN) && margenMayorN !== 0) {
+      const pvp = Math.max(0, costoN * (1 + margenMayorN / 100))
+      setPrecioMayorUsd(pvp.toFixed(2))
+      if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
+    } else if (mayorN > 0) {
+      setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
+    }
+
+    const margenEspecialN = parseFloat(margenEspecial)
+    const especN = parseFloat(precioEspecialUsd) || 0
+    if (!isNaN(margenEspecialN) && margenEspecialN !== 0) {
+      const pvp = Math.max(0, costoN * (1 + margenEspecialN / 100))
+      setPrecioEspecialUsd(pvp.toFixed(2))
+      if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
+    } else if (especN > 0) {
+      setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
+    }
+  }
+
   function handleCostoUsdChange(val: string) {
     setCostoUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setCostoBs(usdToBs(num, tasaValor).toFixed(2))
-    const costoN = isNaN(num) ? 0 : num
-    const ventaN = parseFloat(precioVentaUsd) || 0
-    const mayorN = parseFloat(precioMayorUsd) || 0
-    const especN = parseFloat(precioEspecialUsd) || 0
-    // Solo recalcula margen si ya hay un precio de venta definido (evita mostrar -100)
-    if (costoN > 0 && ventaN > 0) {
-      setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
-    }
-    if (costoN > 0 && mayorN > 0) {
-      setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
-    }
-    if (costoN > 0 && especN > 0) {
-      setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
-    }
+    applyPricesFromCosto(isNaN(num) ? 0 : num)
   }
 
   function handleCostoBsChange(val: string) {
@@ -445,18 +518,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
       setCostoUsd(usd.toFixed(2))
-      const ventaN = parseFloat(precioVentaUsd) || 0
-      const mayorN = parseFloat(precioMayorUsd) || 0
-      const especN = parseFloat(precioEspecialUsd) || 0
-      if (usd > 0 && ventaN > 0) {
-        setMargen(((ventaN - usd) / usd * 100).toFixed(2))
-      }
-      if (usd > 0 && mayorN > 0) {
-        setMargenMayor(((mayorN - usd) / usd * 100).toFixed(2))
-      }
-      if (usd > 0 && especN > 0) {
-        setMargenEspecial(((especN - usd) / usd * 100).toFixed(2))
-      }
+      applyPricesFromCosto(usd)
     }
   }
 
