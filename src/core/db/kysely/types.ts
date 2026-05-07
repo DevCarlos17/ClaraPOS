@@ -209,6 +209,19 @@ export interface ImpuestosVe {
   updated_by: string | null
 }
 
+export interface NivelesPrecio {
+  id: string
+  empresa_id: string
+  nombre: string
+  orden: number
+  porcentaje_defecto: string
+  is_active: number
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
 // =============================================
 // INVENTARIO
 // =============================================
@@ -1025,6 +1038,7 @@ export interface DB {
   bancos_empresa: BancosEmpresa
   cajas: Cajas
   impuestos_ve: ImpuestosVe
+  niveles_precio: NivelesPrecio
   // Inventario
   departamentos: Departamentos
   marcas: Marcas

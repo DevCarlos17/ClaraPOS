@@ -4,7 +4,6 @@ import {
   useSesionesActivas,
   useSesionesCaja,
   type SesionCajaConNombre,
-  type SesionCaja,
 } from '@/features/caja/hooks/use-sesiones-caja'
 import { SesionCajaForm } from './sesion-caja-form'
 import { MovimientoManualForm } from './movimiento-manual-form'

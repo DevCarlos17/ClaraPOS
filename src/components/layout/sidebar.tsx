@@ -38,6 +38,7 @@ import {
   HandCoins,
   TrendUp,
   Handshake,
+  ListNumbers,
 } from '@phosphor-icons/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -141,6 +142,7 @@ const menuItems: MenuItem[] = [
       { title: 'Tasa de Cambio', url: '/configuracion/tasa-cambio', icon: CurrencyDollar, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Usuarios y Perfiles', url: '/configuracion/usuarios', icon: UserGear, requiredPermission: PERMISSIONS.CONFIG_USERS },
       { title: 'Impuestos', url: '/configuracion/impuestos', icon: Calculator, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Niveles de Precio', url: '/configuracion/niveles-precio', icon: ListNumbers, requiredPermission: PERMISSIONS.CONFIG_RATES },
     ],
   },
   {
@@ -310,6 +312,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
                       <Link
                         key={child.url}
                         to={child.url}
+                        search={{}}
                         onClick={handleLinkClick}
                         className={cn(
                           'flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200 text-sm',
@@ -348,6 +351,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       <Link
         key={item.url}
         to={item.url!}
+        search={{}}
         onClick={handleLinkClick}
         className={cn(
           'flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 active:scale-[0.98]',
@@ -475,6 +479,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
               <Link
                 key={item.url}
                 to={item.url!}
+                search={{}}
                 className={cn(
                   'flex items-center h-11 rounded-2xl transition-all duration-300 group relative active:scale-[0.98] overflow-visible',
                   isHovered ? 'px-3' : 'justify-center w-11 mx-auto',

@@ -188,6 +188,6 @@ export async function reversarAsientoManual(
 /**
  * Genera numero de asiento sin insertarlo (para preview).
  */
-export async function generarNroAsiento(empresaId: string): Promise<string> {
+export async function generarNroAsiento(_empresaId: string): Promise<string> {
   return `LC-${uuidv4().slice(0, 6).toUpperCase()}`;
 }

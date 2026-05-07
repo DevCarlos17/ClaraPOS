@@ -65,7 +65,7 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   useEffect(() => {
     if (isOpen) {
       setMotivoId('')
-      setFecha(getTodayIso())
+      setFecha(todayStr())
       setObservaciones('')
       setLineas([])
       setErrors({})

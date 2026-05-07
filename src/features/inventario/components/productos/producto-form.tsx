@@ -13,6 +13,7 @@ import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
+import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { usdToBs, bsToUsd } from '@/lib/currency'
@@ -211,6 +212,20 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
   const { impuestos: todosImpuestos } = useImpuestosActivos()
+  const { niveles: nivelesActivos } = useNivelesPrecioActivos()
+
+  // Fallback si la tabla aun no tiene datos sincronizados
+  const NIVELES_DEFAULT: NivelPrecio[] = [
+    { id: 'default-1', empresa_id: '', orden: 1, nombre: 'Detal', porcentaje_defecto: '0', is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null },
+    { id: 'default-2', empresa_id: '', orden: 2, nombre: 'Mayor', porcentaje_defecto: '0', is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null },
+    { id: 'default-3', empresa_id: '', orden: 3, nombre: 'Especial', porcentaje_defecto: '0', is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null },
+  ]
+  const nivelesConfig = nivelesActivos.length > 0 ? nivelesActivos : NIVELES_DEFAULT
+
+  const nivel1 = nivelesConfig.find((n) => n.orden === 1)
+  const nivel2 = nivelesConfig.find((n) => n.orden === 2)
+  const nivel3 = nivelesConfig.find((n) => n.orden === 3)
+
   const impuestosIva = todosImpuestos.filter((i) => i.tipo_tributo === 'IVA')
 
   // === STICKY HEADER: identidad primaria ===
@@ -235,7 +250,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [margen, setMargen] = useState('')
   const [margenMayor, setMargenMayor] = useState('')
   const [margenEspecial, setMargenEspecial] = useState('')
-  const [margenTipo, setMargenTipo] = useState<'pct' | 'abs'>('pct')
   const [precioVentaUsd, setPrecioVentaUsd] = useState('')
   const [precioVentaBs, setPrecioVentaBs] = useState('')
   const [precioMayorUsd, setPrecioMayorUsd] = useState('')
@@ -333,10 +347,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioMayorBs('')
         setPrecioEspecialUsd('')
         setPrecioEspecialBs('')
-        setMargen('')
-        setMargenMayor('')
-        setMargenEspecial('')
-        setMargenTipo('pct')
+        const pct1 = nivel1 ? parseFloat(nivel1.porcentaje_defecto) : 0
+        const pct2 = nivel2 ? parseFloat(nivel2.porcentaje_defecto) : 0
+        const pct3 = nivel3 ? parseFloat(nivel3.porcentaje_defecto) : 0
+        setMargen(pct1 > 0 ? pct1.toFixed(1) : '')
+        setMargenMayor(pct2 > 0 ? pct2.toFixed(1) : '')
+        setMargenEspecial(pct3 > 0 ? pct3.toFixed(1) : '')
         setTipoImpuesto('Exento')
         setImpuestoIvaId('')
         setUbicacion('')
@@ -410,13 +426,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const especN = parseFloat(precioEspecialUsd) || 0
     // Solo recalcula margen si ya hay un precio de venta definido (evita mostrar -100)
     if (costoN > 0 && ventaN > 0) {
-      setMargen((margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)).toFixed(2))
+      setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
     }
     if (costoN > 0 && mayorN > 0) {
-      setMargenMayor((margenTipo === 'pct' ? ((mayorN - costoN) / costoN * 100) : (mayorN - costoN)).toFixed(2))
+      setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
     }
     if (costoN > 0 && especN > 0) {
-      setMargenEspecial((margenTipo === 'pct' ? ((especN - costoN) / costoN * 100) : (especN - costoN)).toFixed(2))
+      setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
     }
   }
 
@@ -430,13 +446,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       const mayorN = parseFloat(precioMayorUsd) || 0
       const especN = parseFloat(precioEspecialUsd) || 0
       if (usd > 0 && ventaN > 0) {
-        setMargen((margenTipo === 'pct' ? ((ventaN - usd) / usd * 100) : (ventaN - usd)).toFixed(2))
+        setMargen(((ventaN - usd) / usd * 100).toFixed(2))
       }
       if (usd > 0 && mayorN > 0) {
-        setMargenMayor((margenTipo === 'pct' ? ((mayorN - usd) / usd * 100) : (mayorN - usd)).toFixed(2))
+        setMargenMayor(((mayorN - usd) / usd * 100).toFixed(2))
       }
       if (usd > 0 && especN > 0) {
-        setMargenEspecial((margenTipo === 'pct' ? ((especN - usd) / usd * 100) : (especN - usd)).toFixed(2))
+        setMargenEspecial(((especN - usd) / usd * 100).toFixed(2))
       }
     }
   }
@@ -449,7 +465,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const ventaN = isNaN(num) ? 0 : num
     if (costoN > 0 && ventaN > 0) {
-      setMargen((margenTipo === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)).toFixed(2))
+      setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
     }
   }
 
@@ -461,7 +477,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioVentaUsd(usd.toFixed(2))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       if (costoN > 0 && usd > 0) {
-        setMargen((margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)).toFixed(2))
+        setMargen(((usd - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
@@ -472,7 +488,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (!isNaN(margenN) && costoN > 0) {
-      const pvp = Math.max(0, margenTipo === 'pct' ? costoN * (1 + margenN / 100) : costoN + margenN)
+      const pvp = Math.max(0, costoN * (1 + margenN / 100))
       setPrecioVentaUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
@@ -484,7 +500,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (!isNaN(margenN) && costoN > 0) {
-      const pvp = Math.max(0, margenTipo === 'pct' ? costoN * (1 + margenN / 100) : costoN + margenN)
+      const pvp = Math.max(0, costoN * (1 + margenN / 100))
       setPrecioMayorUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
@@ -496,24 +512,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (!isNaN(margenN) && costoN > 0) {
-      const pvp = Math.max(0, margenTipo === 'pct' ? costoN * (1 + margenN / 100) : costoN + margenN)
+      const pvp = Math.max(0, costoN * (1 + margenN / 100))
       setPrecioEspecialUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
-  }
-
-  function handleMargenTipoChange(mt: 'pct' | 'abs') {
-    setMargenTipo(mt)
-    const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    const ventaN = parseFloat(precioVentaUsd) || 0
-    const mayorN = parseFloat(precioMayorUsd) || 0
-    const especN = parseFloat(precioEspecialUsd) || 0
-    if (costoN > 0 && ventaN > 0)
-      setMargen((mt === 'pct' ? ((ventaN - costoN) / costoN * 100) : (ventaN - costoN)).toFixed(2))
-    if (costoN > 0 && mayorN > 0)
-      setMargenMayor((mt === 'pct' ? ((mayorN - costoN) / costoN * 100) : (mayorN - costoN)).toFixed(2))
-    if (costoN > 0 && especN > 0)
-      setMargenEspecial((mt === 'pct' ? ((especN - costoN) / costoN * 100) : (especN - costoN)).toFixed(2))
   }
 
   // --- Bidireccionales: PVP Mayor ---
@@ -524,7 +526,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const mayorN = isNaN(num) ? 0 : num
     if (costoN > 0 && mayorN > 0) {
-      setMargenMayor((margenTipo === 'pct' ? ((mayorN - costoN) / costoN * 100) : (mayorN - costoN)).toFixed(2))
+      setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
     }
   }
 
@@ -536,7 +538,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioMayorUsd(usd.toFixed(2))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       if (costoN > 0 && usd > 0) {
-        setMargenMayor((margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)).toFixed(2))
+        setMargenMayor(((usd - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
@@ -549,7 +551,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const especN = isNaN(num) ? 0 : num
     if (costoN > 0 && especN > 0) {
-      setMargenEspecial((margenTipo === 'pct' ? ((especN - costoN) / costoN * 100) : (especN - costoN)).toFixed(2))
+      setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
     }
   }
 
@@ -561,7 +563,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioEspecialUsd(usd.toFixed(2))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       if (costoN > 0 && usd > 0) {
-        setMargenEspecial((margenTipo === 'pct' ? ((usd - costoN) / costoN * 100) : (usd - costoN)).toFixed(2))
+        setMargenEspecial(((usd - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
@@ -576,7 +578,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor > 0) setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
-      setMargen((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+      setMargen(((baseUsd - costoN) / costoN * 100).toFixed(2))
   }
 
   function handlePrecioFinalDetalBsChange(val: string) {
@@ -590,7 +592,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
-      setMargen((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+      setMargen(((baseUsd - costoN) / costoN * 100).toFixed(2))
   }
 
   // --- Precio Final Mayor → back-calcula base imponible ---
@@ -603,7 +605,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor > 0) setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
-      setMargenMayor((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+      setMargenMayor(((baseUsd - costoN) / costoN * 100).toFixed(2))
   }
 
   function handlePrecioFinalMayorBsChange(val: string) {
@@ -617,7 +619,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
-      setMargenMayor((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+      setMargenMayor(((baseUsd - costoN) / costoN * 100).toFixed(2))
   }
 
   // --- Precio Final Especial → back-calcula base imponible ---
@@ -630,7 +632,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor > 0) setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
-      setMargenEspecial((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+      setMargenEspecial(((baseUsd - costoN) / costoN * 100).toFixed(2))
   }
 
   function handlePrecioFinalEspecialBsChange(val: string) {
@@ -644,7 +646,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
-      setMargenEspecial((margenTipo === 'pct' ? ((baseUsd - costoN) / costoN * 100) : (baseUsd - costoN)).toFixed(2))
+      setMargenEspecial(((baseUsd - costoN) / costoN * 100).toFixed(2))
   }
 
   function handleSugerenciaSelect(s: {
@@ -691,8 +693,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       departamento_id: departamentoId,
       costo_usd: esCombo ? 0 : parseNumOrZero(costoUsd),
       precio_venta_usd: parseNumOrZero(precioVentaUsd),
-      precio_mayor_usd: precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd),
-      precio_especial_usd: precioEspecialUsd.trim() === '' ? null : parseNumOrZero(precioEspecialUsd),
+      precio_mayor_usd: nivel2 ? (precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd)) : null,
+      precio_especial_usd: nivel3 ? (precioEspecialUsd.trim() === '' ? null : parseNumOrZero(precioEspecialUsd)) : null,
       stock_minimo: esServicioOCombo ? 0 : parseNumOrZero(stockMinimo),
       tipo_impuesto: tipoImpuesto,
       impuesto_iva_id: tipoImpuesto === 'Gravable' && impuestoIvaId ? impuestoIvaId : null,
@@ -865,8 +867,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     })),
   ]
   const depositoOptions: SelectOption[] = depositos.map((d) => ({ value: d.id, label: d.nombre }))
-
-  const margenSuffix = margenTipo === 'pct' ? '%' : '$'
 
   return (
     <dialog
@@ -1171,6 +1171,58 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           {activeTab === 'precios' && (
             <div className="space-y-5">
 
+              {/* Configuracion de IVA */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                  Configuracion de IVA
+                </p>
+
+                <div className="mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Tipo de Impuesto
+                  </label>
+                  <SearchSelect
+                    id="prod-tipo-impuesto"
+                    options={tipoImpuestoOptions}
+                    value={tipoImpuesto}
+                    onChange={(val) =>
+                      handleTipoImpuestoChange(val as 'Gravable' | 'Exento' | 'Exonerado')
+                    }
+                    searchPlaceholder="Buscar tipo..."
+                    error={errors.tipo_impuesto}
+                  />
+                  {errors.tipo_impuesto && (
+                    <p className="text-red-500 text-xs mt-1">{errors.tipo_impuesto}</p>
+                  )}
+                </div>
+
+                {/* Tasa IVA % — solo si Gravable */}
+                {tipoImpuesto === 'Gravable' && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Tasa IVA (%)
+                    </label>
+                    <SearchSelect
+                      id="prod-impuesto-iva"
+                      options={tasaIvaOptions}
+                      value={impuestoIvaId}
+                      onChange={setImpuestoIvaId}
+                      placeholder="Sin tasa especifica"
+                      searchPlaceholder="Buscar tasa IVA..."
+                      error={errors.impuesto_iva_id}
+                    />
+                    {impuestosIva.length === 0 && (
+                      <p className="text-amber-600 text-xs mt-1">
+                        No hay tasas IVA configuradas. Agrega una en Configuracion &gt; Impuestos.
+                      </p>
+                    )}
+                    {errors.impuesto_iva_id && (
+                      <p className="text-red-500 text-xs mt-1">{errors.impuesto_iva_id}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Costos */}
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
@@ -1231,52 +1283,28 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               {/* Tabla de Precios por Nivel */}
               {!esComboLocal && (
                 <div>
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="mb-2">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
                       Esquema de Precios
                     </p>
-                    <div className="flex rounded-md border border-gray-300 overflow-hidden shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => handleMargenTipoChange('pct')}
-                        className={`px-3 py-1 text-xs font-medium transition-colors ${
-                          margenTipo === 'pct'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white text-gray-600 hover:bg-gray-50'
-                        }`}
-                      >
-                        Margen %
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMargenTipoChange('abs')}
-                        className={`px-3 py-1 text-xs font-medium border-l border-gray-300 transition-colors ${
-                          margenTipo === 'abs'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-white text-gray-600 hover:bg-gray-50'
-                        }`}
-                      >
-                        Margen $
-                      </button>
-                    </div>
                   </div>
 
                   <div className="border border-gray-200 rounded-md overflow-x-auto">
                     <table className="w-full text-sm min-w-max">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-20">Nivel</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-20">Precio</th>
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">
-                            Margen ({margenSuffix})
+                            Margen (%)
                           </th>
-                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">USD</th>
-                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Bs</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Precio Venta $</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">Precio Venta Bs</th>
                           {showIvaCols && (
                             <>
                               <th className="px-3 py-2 text-left text-xs font-medium text-blue-500">IVA $</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-blue-500">IVA Bs</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-green-600">PF $</th>
-                              <th className="px-3 py-2 text-left text-xs font-medium text-green-600">PF Bs</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-green-600">Precio Final $</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-green-600">Precio Final Bs</th>
                             </>
                           )}
                         </tr>
@@ -1285,7 +1313,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                         {/* Detal */}
                         <tr>
                           <td className="px-3 py-2 text-xs font-medium text-gray-700">
-                            Detal<span className="text-red-500">*</span>
+                            {nivel1?.nombre ?? 'Detal'}<span className="text-red-500">*</span>
                           </td>
                           <td className="px-2 py-1.5">
                             <input
@@ -1382,9 +1410,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                         </tr>
 
                         {/* Mayor */}
+                        {nivel2 && (
                         <tr>
                           <td className="px-3 py-2 text-xs text-gray-500">
-                            Mayor
+                            {nivel2?.nombre ?? 'Mayor'}
                           </td>
                           <td className="px-2 py-1.5">
                             <input
@@ -1479,11 +1508,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             </>
                           )}
                         </tr>
+                        )}
 
                         {/* Especial */}
+                        {nivel3 && (
                         <tr>
                           <td className="px-3 py-2 text-xs text-gray-500">
-                            Especial
+                            {nivel3?.nombre ?? 'Especial'}
                           </td>
                           <td className="px-2 py-1.5">
                             <input
@@ -1578,63 +1609,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             </>
                           )}
                         </tr>
+                        )}
                       </tbody>
                     </table>
                   </div>
                 </div>
               )}
-
-              {/* Configuracion de IVA */}
-              <div>
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                  Configuracion de IVA
-                </p>
-
-                <div className="mb-3">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Tipo de Impuesto
-                  </label>
-                  <SearchSelect
-                    id="prod-tipo-impuesto"
-                    options={tipoImpuestoOptions}
-                    value={tipoImpuesto}
-                    onChange={(val) =>
-                      handleTipoImpuestoChange(val as 'Gravable' | 'Exento' | 'Exonerado')
-                    }
-                    searchPlaceholder="Buscar tipo..."
-                    error={errors.tipo_impuesto}
-                  />
-                  {errors.tipo_impuesto && (
-                    <p className="text-red-500 text-xs mt-1">{errors.tipo_impuesto}</p>
-                  )}
-                </div>
-
-                {/* Tasa IVA % — solo si Gravable */}
-                {tipoImpuesto === 'Gravable' && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tasa IVA (%)
-                    </label>
-                    <SearchSelect
-                      id="prod-impuesto-iva"
-                      options={tasaIvaOptions}
-                      value={impuestoIvaId}
-                      onChange={setImpuestoIvaId}
-                      placeholder="Sin tasa especifica"
-                      searchPlaceholder="Buscar tasa IVA..."
-                      error={errors.impuesto_iva_id}
-                    />
-                    {impuestosIva.length === 0 && (
-                      <p className="text-amber-600 text-xs mt-1">
-                        No hay tasas IVA configuradas. Agrega una en Configuracion &gt; Impuestos.
-                      </p>
-                    )}
-                    {errors.impuesto_iva_id && (
-                      <p className="text-red-500 text-xs mt-1">{errors.impuesto_iva_id}</p>
-                    )}
-                  </div>
-                )}
-              </div>
 
             </div>
           )}

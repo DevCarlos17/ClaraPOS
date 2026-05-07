@@ -483,6 +483,21 @@ const impuestos_ve = new Table(
   { indexes: {} }
 )
 
+const niveles_precio = new Table(
+  {
+    empresa_id: column.text,
+    nombre: column.text,
+    orden: column.integer,
+    porcentaje_defecto: column.text,
+    is_active: column.integer,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
+    updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
 // =============================================
 // CLIENTES / CXC
 // =============================================
@@ -1253,6 +1268,7 @@ export const AppSchema = new Schema({
   bancos_empresa,
   cajas,
   impuestos_ve,
+  niveles_precio,
   // Inventario
   departamentos,
   marcas,
