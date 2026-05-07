@@ -203,124 +203,177 @@ function FormApertura({ onClose }: { onClose: () => void }) {
   )
 }
 
+// ─── Fila de cuadre ──────────────────────────────────────────
+
+function CuadreRow({
+  sign,
+  label,
+  usd,
+  bs,
+  isEgreso = false,
+  isTotals = false,
+  showZero = false,
+}: {
+  sign: string
+  label: string
+  usd: number
+  bs: number
+  isEgreso?: boolean
+  isTotals?: boolean
+  showZero?: boolean
+}) {
+  const amountClass = isTotals
+    ? 'font-semibold text-foreground'
+    : isEgreso
+    ? 'text-red-500'
+    : 'text-emerald-600'
+  const signClass = isTotals ? 'text-muted-foreground' : isEgreso ? 'text-red-500' : 'text-emerald-600'
+  const showValue = (v: number) => (v !== 0 || showZero || isTotals) ? v.toFixed(2) : '–'
+
+  return (
+    <div className="flex items-center gap-1 text-xs">
+      <span className={`shrink-0 w-3 font-bold ${signClass}`}>{sign}</span>
+      <span className={`flex-1 min-w-0 ${isTotals ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>
+        {label}
+      </span>
+      <span className={`shrink-0 w-20 text-right tabular-nums ${amountClass}`}>
+        {showValue(usd)}
+      </span>
+      <span className={`shrink-0 w-20 text-right tabular-nums ${amountClass}`}>
+        {showValue(bs)}
+      </span>
+    </div>
+  )
+}
+
 // ─── Resumen de sesion (para cierre) ─────────────────────────
 
 function ResumenSesion({ sesionId }: { sesionId: string }) {
-  const { data: pagosData } = useQuery(
+  const { data: sesionData } = useQuery(
     sesionId
-      ? `SELECT mc.nombre as metodo_nombre, mc.tipo as tipo_metodo,
-                COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total_pagos,
-                COUNT(*) as num_pagos
-         FROM pagos p
-         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
-         WHERE p.sesion_caja_id = ? AND p.is_reversed = 0
-         GROUP BY mc.id, mc.nombre, mc.tipo
-         ORDER BY mc.tipo, mc.nombre`
+      ? 'SELECT monto_apertura_usd, monto_apertura_bs FROM sesiones_caja WHERE id = ?'
       : '',
     sesionId ? [sesionId] : []
   )
 
+  // Ingresos de efectivo por venta, separados por moneda del metodo de cobro
+  const { data: pagosEfectivoData } = useQuery(
+    sesionId
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) AS ventas_usd,
+           COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(p.monto_bs  AS REAL) ELSE 0 END), 0) AS ventas_bs
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0`
+      : '',
+    sesionId ? [sesionId] : []
+  )
+
+  // Movimientos manuales de efectivo agrupados por origen y moneda
   const { data: movsData } = useQuery(
     sesionId
-      ? `SELECT mc.nombre as metodo_nombre,
-                SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END) as total_ingreso_manual,
-                SUM(CASE WHEN mmc.tipo = 'EGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END) as total_egreso_manual
+      ? `SELECT
+           mmc.origen,
+           COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_usd,
+           COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_bs
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          WHERE mmc.sesion_caja_id = ?
+           AND mc.tipo = 'EFECTIVO'
            AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
-         GROUP BY mc.id, mc.nombre`
+         GROUP BY mmc.origen`
       : '',
     sesionId ? [sesionId] : []
   )
 
-  const { data: sesionData } = useQuery(
-    sesionId ? 'SELECT monto_apertura_usd FROM sesiones_caja WHERE id = ?' : '',
-    sesionId ? [sesionId] : []
-  )
+  const sesion = (sesionData ?? [])[0] as
+    | { monto_apertura_usd: string; monto_apertura_bs: string }
+    | undefined
 
-  const sesion = (sesionData ?? [])[0] as { monto_apertura_usd: string } | undefined
-  const montoApertura = sesion ? parseFloat(sesion.monto_apertura_usd) : 0
+  if (!sesion) return null
 
-  const pagos = (pagosData ?? []) as Array<{
-    metodo_nombre: string
-    tipo_metodo: string
-    total_pagos: number
-    num_pagos: number
-  }>
+  const aperturaUsd = parseFloat(sesion.monto_apertura_usd) || 0
+  const aperturaBs  = parseFloat(sesion.monto_apertura_bs)  || 0
 
-  const movsManualesMap = new Map<string, { ingreso: number; egreso: number }>()
-  for (const row of (movsData ?? []) as Array<{
-    metodo_nombre: string
-    total_ingreso_manual: number
-    total_egreso_manual: number
-  }>) {
-    movsManualesMap.set(row.metodo_nombre, {
-      ingreso: row.total_ingreso_manual,
-      egreso: row.total_egreso_manual,
-    })
+  const pagosRow = (pagosEfectivoData ?? [])[0] as
+    | { ventas_usd: number; ventas_bs: number }
+    | undefined
+  const ventasUsd = pagosRow?.ventas_usd ?? 0
+  const ventasBs  = pagosRow?.ventas_bs  ?? 0
+
+  type MovRow = { origen: string; total_usd: number; total_bs: number }
+  const movsMap = new Map<string, { usd: number; bs: number }>()
+  for (const row of (movsData ?? []) as MovRow[]) {
+    movsMap.set(row.origen, { usd: row.total_usd, bs: row.total_bs })
   }
 
-  const pagosEfectivo = pagos
-    .filter((p) => p.tipo_metodo === 'EFECTIVO')
-    .reduce((acc, p) => acc + p.total_pagos, 0)
+  const ingManualUsd = movsMap.get('INGRESO_MANUAL')?.usd ?? 0
+  const ingManualBs  = movsMap.get('INGRESO_MANUAL')?.bs  ?? 0
+  const egrManualUsd = movsMap.get('EGRESO_MANUAL')?.usd  ?? 0
+  const egrManualBs  = movsMap.get('EGRESO_MANUAL')?.bs   ?? 0
+  const avancesUsd   = movsMap.get('AVANCE')?.usd ?? 0
+  const avancesBs    = movsMap.get('AVANCE')?.bs  ?? 0
+  const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? 0
+  const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? 0
 
-  const ingresosManualEfectivo = pagos
-    .filter((p) => p.tipo_metodo === 'EFECTIVO')
-    .reduce((acc, p) => {
-      const manual = movsManualesMap.get(p.metodo_nombre) ?? { ingreso: 0, egreso: 0 }
-      return acc + manual.ingreso - manual.egreso
-    }, 0)
+  const totalUsd = Number((
+    aperturaUsd + ventasUsd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
+  ).toFixed(2))
+  const totalBs = Number((
+    aperturaBs + ventasBs + ingManualBs - egrManualBs - avancesBs - prestamosBs
+  ).toFixed(2))
 
-  const totalEsperadoEfectivo = Number(
-    (montoApertura + pagosEfectivo + ingresosManualEfectivo).toFixed(2)
-  )
-
-  const hayData = pagos.length > 0 || movsData?.length
-
-  if (!hayData) return null
+  const hayEgresos =
+    egrManualUsd > 0 || egrManualBs > 0 ||
+    avancesUsd > 0   || avancesBs > 0   ||
+    prestamosUsd > 0 || prestamosBs > 0
 
   return (
-    <div className="rounded-xl border bg-muted/40 p-3 space-y-2">
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-        Resumen de la Sesion
+    <div className="rounded-xl border bg-muted/40 p-3 space-y-1">
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide pb-1">
+        Cuadre de Efectivo
       </p>
 
-      {/* Apertura */}
-      <div className="flex justify-between text-xs text-muted-foreground">
-        <span>Monto de apertura</span>
-        <span className="font-medium text-foreground">USD {montoApertura.toFixed(2)}</span>
+      {/* Cabecera de columnas */}
+      <div className="flex items-center gap-1 text-xs text-muted-foreground border-b pb-1.5">
+        <span className="shrink-0 w-3" />
+        <span className="flex-1" />
+        <span className="shrink-0 w-20 text-right font-medium">USD</span>
+        <span className="shrink-0 w-20 text-right font-medium">Bs</span>
       </div>
 
-      {/* Pagos por metodo */}
-      {pagos.map((p) => {
-        const manual = movsManualesMap.get(p.metodo_nombre) ?? { ingreso: 0, egreso: 0 }
-        return (
-          <div key={p.metodo_nombre} className="space-y-0.5">
-            <div className="flex justify-between text-xs text-muted-foreground">
-              <span>Pagos — {p.metodo_nombre}</span>
-              <span className="font-medium text-emerald-600">+{p.total_pagos.toFixed(2)}</span>
-            </div>
-            {manual.ingreso > 0 && (
-              <div className="flex justify-between text-xs text-muted-foreground pl-3">
-                <span>Ingresos manuales</span>
-                <span className="text-emerald-600">+{manual.ingreso.toFixed(2)}</span>
-              </div>
-            )}
-            {manual.egreso > 0 && (
-              <div className="flex justify-between text-xs text-muted-foreground pl-3">
-                <span>Egresos manuales</span>
-                <span className="text-red-500">-{manual.egreso.toFixed(2)}</span>
-              </div>
-            )}
-          </div>
-        )
-      })}
+      {/* Saldo inicial */}
+      <CuadreRow sign="+" label="Saldo inicial" usd={aperturaUsd} bs={aperturaBs} showZero />
 
-      {/* Total efectivo esperado */}
-      <div className="flex justify-between text-xs font-semibold text-foreground border-t pt-2">
-        <span>Total efectivo esperado</span>
-        <span>USD {totalEsperadoEfectivo.toFixed(2)}</span>
+      {/* Ingresos por venta */}
+      <CuadreRow sign="+" label="Ingresos por venta" usd={ventasUsd} bs={ventasBs} showZero />
+
+      {/* Ingresos manuales de caja */}
+      {(ingManualUsd > 0 || ingManualBs > 0) && (
+        <CuadreRow sign="+" label="Ingresos de caja" usd={ingManualUsd} bs={ingManualBs} />
+      )}
+
+      {/* Separador antes de egresos */}
+      {hayEgresos && <div className="border-t border-dashed" />}
+
+      {/* Egresos manuales */}
+      {(egrManualUsd > 0 || egrManualBs > 0) && (
+        <CuadreRow sign="−" label="Egresos de caja" usd={egrManualUsd} bs={egrManualBs} isEgreso />
+      )}
+
+      {/* Avances entregados */}
+      {(avancesUsd > 0 || avancesBs > 0) && (
+        <CuadreRow sign="−" label="Avances entregados" usd={avancesUsd} bs={avancesBs} isEgreso />
+      )}
+
+      {/* Prestamos entregados */}
+      {(prestamosUsd > 0 || prestamosBs > 0) && (
+        <CuadreRow sign="−" label="Prestamos entregados" usd={prestamosUsd} bs={prestamosBs} isEgreso />
+      )}
+
+      {/* Total esperado */}
+      <div className="border-t pt-1">
+        <CuadreRow sign="=" label="Total efectivo esperado" usd={totalUsd} bs={totalBs} isTotals />
       </div>
     </div>
   )

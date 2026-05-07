@@ -230,9 +230,10 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     if (movsManualResult.rows) {
       for (let i = 0; i < movsManualResult.rows.length; i++) {
         const row = movsManualResult.rows.item(i) as { origen: string; total: number }
-        if (row.origen === 'INGRESO_MANUAL' || row.origen === 'AVANCE' || row.origen === 'PRESTAMO') {
+        if (row.origen === 'INGRESO_MANUAL') {
           ingresosManual += row.total
-        } else if (row.origen === 'EGRESO_MANUAL') {
+        } else {
+          // EGRESO_MANUAL, AVANCE y PRESTAMO son salidas de efectivo
           egresosManual += row.total
         }
       }
