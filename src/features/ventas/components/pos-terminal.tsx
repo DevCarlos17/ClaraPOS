@@ -3,7 +3,7 @@ import { useQuery } from '@powersync/react'
 import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, CreditCard, ShoppingCart, Tag, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
-import { useBlocker } from '@tanstack/react-router'
+import { useBlocker, useNavigate } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -41,6 +41,7 @@ export function PosTerminal() {
   const canCloseCajaPos = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
   const esperaStore = useFacturasEsperaStore()
   const { sesion, isLoading: sesionLoading } = useSesionActiva()
+  const navigate = useNavigate()
 
   // Datos de contexto para la barra de caja
   const { data: empresaData } = useQuery(
@@ -588,9 +589,21 @@ export function PosTerminal() {
   }
 
   // --- Caja desde POS ---
+  const navigateToCuadre = () => {
+    if (sesion) {
+      const fecha = sesion.fecha_apertura.substring(0, 10)
+      void navigate({
+        to: '/ventas/cuadre-de-caja',
+        search: { fecha, cajaId: sesion.caja_id, sesionId: sesion.id },
+      })
+    } else {
+      void navigate({ to: '/ventas/cuadre-de-caja' })
+    }
+  }
+
   const handleCerrarCajaPos = () => {
     if (canCloseCajaPos) {
-      setShowCierrePos(true)
+      navigateToCuadre()
     } else {
       setShowCierrePosPin(true)
     }
@@ -1235,7 +1248,7 @@ export function PosTerminal() {
       <SupervisorPinDialog
         isOpen={showCierrePosPin}
         onClose={() => setShowCierrePosPin(false)}
-        onAuthorized={() => setShowCierrePos(true)}
+        onAuthorized={() => navigateToCuadre()}
         titulo="Cerrar Sesion de Caja"
         mensaje="Ingresa el PIN de supervisor para cerrar la sesion de caja."
         requiredPermission="caja.close"

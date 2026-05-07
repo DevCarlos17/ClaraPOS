@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard } from '@phosphor-icons/react'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
@@ -21,11 +21,19 @@ import {
 } from '../hooks/use-cuadre'
 import { NativeSelect } from '@/components/ui/native-select'
 
-export function CuadrePage() {
+interface CuadrePageProps {
+  initialFecha?: string
+  initialCajaId?: string
+  initialSesionId?: string
+}
+
+export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: CuadrePageProps = {}) {
   // Funnel state
-  const [fecha, setFecha] = useState(todayStr)
-  const [cajaId, setCajaId] = useState<string | null>(null)
-  const [sesionCajaIds, setSesionCajaIds] = useState<string[]>([])
+  const [fecha, setFecha] = useState(initialFecha ?? todayStr)
+  const [cajaId, setCajaId] = useState<string | null>(initialCajaId ?? null)
+  const [sesionCajaIds, setSesionCajaIds] = useState<string[]>(
+    initialSesionId ? [initialSesionId] : []
+  )
 
   // Consulted state
   const [consulted, setConsulted] = useState(false)
@@ -57,6 +65,16 @@ export function CuadrePage() {
     setActiveFilters({ fecha, cajaId, sesionCajaIds })
     setConsulted(true)
   }, [fecha, cajaId, sesionCajaIds])
+
+  // Auto-consult on mount when navigated from POS with pre-loaded session
+  const didAutoConsult = useRef(false)
+  useEffect(() => {
+    if (!didAutoConsult.current && initialFecha && initialCajaId && initialSesionId) {
+      didAutoConsult.current = true
+      setActiveFilters({ fecha: initialFecha, cajaId: initialCajaId, sesionCajaIds: [initialSesionId] })
+      setConsulted(true)
+    }
+  }, [initialFecha, initialCajaId, initialSesionId])
 
   const handleFechaChange = useCallback((newFecha: string) => {
     setFecha(newFecha)

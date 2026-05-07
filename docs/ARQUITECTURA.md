@@ -1,10 +1,12 @@
 # Arquitectura de Carpetas - ClaraPOS
 
+> Ultima actualizacion: 2026-05-07
+
 ## Tipo de Arquitectura
 
 ClaraPOS utiliza una arquitectura **Feature-Based (por modulo de negocio)** combinada con **File-Based Routing** (TanStack Router). Este patron organiza el codigo por dominio funcional en lugar de por tipo de archivo, lo que significa que todo lo relacionado con "inventario" vive junto, en vez de tener todos los hooks en una carpeta, todos los schemas en otra, etc.
 
-Esta arquitectura tambien se conoce como **"Screaming Architecture"** porque al ver la estructura de carpetas, el proyecto "grita" de que se trata: configuracion, inventario, ventas, clientes, etc.
+Esta arquitectura tambien se conoce como **"Screaming Architecture"** porque al ver la estructura de carpetas, el proyecto "grita" de que se trata: configuracion, inventario, ventas, clientes, contabilidad, etc.
 
 ---
 
@@ -14,7 +16,14 @@ Esta arquitectura tambien se conoce como **"Screaming Architecture"** porque al 
 ClaraPOS/
 ├── CLAUDE.md                 # Contexto maestro para agentes IA
 ├── PLANIFICACION.md          # Plan de implementacion por fases
-├── instrucciones.md          # Especificaciones de UI/UX
+├── docs/                     # Documentacion tecnica del proyecto
+│   ├── ARQUITECTURA.md       # (este archivo)
+│   ├── PANTALLAS.md          # Estado de implementacion de pantallas
+│   ├── PERMISOS.md           # Sistema de roles y permisos
+│   ├── POWERSYNC.md          # Guia de sincronizacion offline
+│   └── bd/                   # Analisis y planes de base de datos
+├── migrations/               # SQL migrations numeradas secuencialmente
+├── supabase/                 # Edge Functions (Deno)
 ├── package.json              # Dependencias del proyecto
 ├── tsconfig.json             # Configuracion TypeScript (modo estricto)
 ├── vite.config.ts            # Configuracion de Vite (plugins: React, Tailwind, PWA, WASM)
@@ -25,7 +34,7 @@ ClaraPOS/
 
 ---
 
-## Estructura de `src/` - Las 7 Capas
+## Estructura de `src/` - Las 9 Capas
 
 ```
 src/
@@ -35,7 +44,7 @@ src/
 ├── routes/           # 4. Paginas (file-based routing)
 ├── features/         # 5. Modulos de negocio (el corazon de la app)
 ├── components/       # 6. Componentes compartidos
-├── hooks/            # 7. Hooks globales
+├── hooks/            # 7. Hooks globales de plataforma
 ├── stores/           # 8. Estado global (Zustand)
 └── lib/              # 9. Utilidades puras
 ```
@@ -67,7 +76,7 @@ Cada provider envuelve al siguiente, asegurando que la autenticacion este dispon
 src/index.css
 ```
 
-Contiene la configuracion de **Tailwind CSS 4** y las **CSS variables** del tema. Define los colores del sistema (primario: azul `#2563eb`), los radios de borde, tipografia y variables para modo claro/oscuro. Todos los componentes de la app heredan estos estilos base.
+Contiene la configuracion de **Tailwind CSS 4** y las **CSS variables** del tema. Define los colores del sistema (primario: azul `#2563eb`), los radios de borde, tipografia y variables para modo claro/oscuro. El store `theme-store.ts` permite cambiar entre 5 temas (clara/jade/rosa/violeta/ambar) sobrescribiendo las variables CSS en runtime.
 
 ---
 
@@ -79,7 +88,7 @@ src/core/
 │   └── auth-provider.tsx       # Sesion Supabase + conexion PowerSync
 ├── db/
 │   ├── powersync/
-│   │   ├── schema.ts           # Esquema de tablas en SQLite local
+│   │   ├── schema.ts           # Esquema de 45+ tablas en SQLite local
 │   │   ├── db.ts               # Instancia de la base de datos SQLite
 │   │   ├── connector.ts        # Logica de sync: upload/download con Supabase
 │   │   ├── provider.tsx        # React context para acceder a la DB
@@ -88,15 +97,17 @@ src/core/
 │       ├── types.ts            # Tipos TypeScript generados del schema
 │       └── kysely.ts           # Instancia del query builder tipado
 └── hooks/
-    └── use-current-user.ts     # Hook para obtener el usuario autenticado
+    ├── use-current-user.ts     # Hook para obtener el usuario autenticado
+    └── use-permissions.ts      # Hook para verificar permisos granulares por nivel
 ```
 
 **Que es**: La "fontaneria" del sistema. Nada de logica de negocio aqui.
 
 **Como funciona**:
 - **`auth/`**: Maneja el ciclo de vida de sesion (login, logout, refresh de tokens). Conecta Supabase Auth con PowerSync para que la sincronizacion funcione con las credenciales del usuario.
-- **`db/powersync/`**: Define que tablas existen localmente en SQLite, crea la instancia de la base de datos, y maneja como se sincronizan los cambios locales con Supabase PostgreSQL en la nube.
+- **`db/powersync/`**: Define que tablas existen localmente en SQLite (~45 tablas), crea la instancia de la base de datos, y maneja como se sincronizan los cambios locales con Supabase PostgreSQL en la nube.
 - **`db/kysely/`**: Proporciona un query builder tipado. En vez de escribir SQL crudo, usas funciones como `db.selectFrom('productos').where('tipo', '=', 'P')` con autocompletado TypeScript.
+- **`use-permissions.ts`**: Lee los permisos del usuario (nivel 1/2/3) desde PowerSync y expone helpers como `can('inventory.adjust')` para controlar acceso en UI.
 
 ---
 
@@ -113,51 +124,89 @@ src/routes/
 └── _app/                         # Grupo: rutas PROTEGIDAS (auth requerido)
     ├── route.tsx                 # Layout app: guard de auth + Sidebar + TopBar
     ├── dashboard.tsx             # /dashboard
-    ├── configuracion/
+    ├── clinica.tsx               # /clinica (placeholder, modulo futuro)
+    ├── reportes.tsx              # /reportes
+    │
+    ├── configuracion/            # Modulo: Configuracion del sistema
     │   ├── tasa-cambio.tsx       # /configuracion/tasa-cambio
     │   ├── datos-empresa.tsx     # /configuracion/datos-empresa
-    │   ├── usuarios.tsx          # /configuracion/usuarios
+    │   ├── metodos-pago.tsx      # /configuracion/metodos-pago
     │   ├── bancos.tsx            # /configuracion/bancos
-    │   └── metodos-pago.tsx      # /configuracion/metodos-pago
-    ├── inventario/
-    │   ├── departamentos.tsx     # /inventario/departamentos
-    │   ├── productos.tsx         # /inventario/productos
-    │   ├── kardex.tsx            # /inventario/kardex
-    │   ├── recetas.tsx           # /inventario/recetas
-    │   ├── compras.tsx           # /inventario/compras
-    │   └── reportes.tsx          # /inventario/reportes
-    ├── clientes.tsx              # /clientes
-    ├── clientes/
-    │   ├── gestion.tsx           # /clientes/gestion
-    │   ├── cuentas-por-cobrar.tsx # /clientes/cuentas-por-cobrar
-    │   └── reportes.tsx          # /clientes/reportes
-    ├── ventas/
-    │   ├── nueva.tsx             # /ventas/nueva (POS)
-    │   ├── notas-credito.tsx     # /ventas/notas-credito
-    │   ├── cuadre-de-caja.tsx    # /ventas/cuadre-de-caja
-    │   └── reportes.tsx          # /ventas/reportes
-    ├── cxc.tsx                   # /cxc (cuentas por cobrar)
-    ├── reportes.tsx              # /reportes
-    └── clinica.tsx               # /clinica
+    │   ├── cajas.tsx             # /configuracion/cajas
+    │   ├── impuestos.tsx         # /configuracion/impuestos
+    │   ├── niveles-precio.tsx    # /configuracion/niveles-precio
+    │   └── usuarios/
+    │       ├── index.tsx         # /configuracion/usuarios
+    │       ├── nuevo.tsx         # /configuracion/usuarios/nuevo
+    │       └── $usuarioId.editar.tsx
+    │
+    ├── inventario/               # Modulo: Inventario
+    │   ├── departamentos.tsx
+    │   ├── productos.tsx
+    │   ├── kardex.tsx
+    │   ├── recetas.tsx
+    │   ├── marcas.tsx
+    │   ├── unidades.tsx
+    │   ├── depositos.tsx
+    │   ├── lotes.tsx
+    │   ├── ajustes.tsx
+    │   ├── compras.tsx
+    │   └── reportes.tsx
+    │
+    ├── clientes/                 # Modulo: Clientes
+    │   ├── index.tsx
+    │   ├── gestion.tsx
+    │   ├── cuentas-por-cobrar.tsx
+    │   └── reportes.tsx
+    │
+    ├── ventas/                   # Modulo: Ventas / POS
+    │   ├── nueva.tsx
+    │   ├── notas-credito.tsx
+    │   ├── notas-debito.tsx
+    │   ├── cuadre-de-caja.tsx
+    │   ├── prestamos.tsx
+    │   └── reportes.tsx
+    │
+    ├── caja/                     # Modulo: Tesoreria / Caja
+    │   ├── sesiones.tsx
+    │   └── movimientos.tsx
+    │
+    ├── compras/                  # Modulo: Compras / Proveedores
+    │   ├── facturas.tsx
+    │   ├── notas-fiscales.tsx
+    │   ├── cxp.tsx
+    │   ├── gastos.tsx
+    │   ├── gastos-dashboard.tsx
+    │   └── retenciones.tsx
+    │
+    ├── contabilidad/             # Modulo: Contabilidad General
+    │   ├── plan-cuentas.tsx
+    │   ├── gastos.tsx
+    │   ├── gastos-dashboard.tsx
+    │   ├── libro-contable.tsx
+    │   ├── balance-comprobacion.tsx
+    │   └── cuentas-config.tsx
+    │
+    ├── bancos/                   # Modulo: Bancos
+    │   ├── conciliacion.tsx
+    │   └── diferencial-cambiario.tsx
+    │
+    └── cxc/                      # Cuentas por cobrar (shortcut)
+        └── ...
 ```
 
-**Que es**: Cada archivo `.tsx` en `routes/` se convierte automaticamente en una URL de la aplicacion.
+**Convenciones de TanStack Router**:
 
-**Como funciona**:
-- **TanStack Router file-based**: El nombre del archivo define la ruta. `inventario/productos.tsx` = URL `/inventario/productos`.
-- **`(auth)/`**: El parentesis indica un **grupo de layout** sin segmento de URL. Las rutas dentro comparten el layout de `route.tsx` (pagina de login sin sidebar).
-- **`_app/`**: El guion bajo indica un **layout wrapper**. Todas las rutas dentro comparten el layout protegido (sidebar + topbar + guard de autenticacion).
-- **`__root.tsx`**: Layout que envuelve TODA la app (notificaciones toast, banner PWA).
-- **Los archivos de ruta son delgados**: Solo importan el componente correspondiente de `features/` y lo renderizan. La logica real vive en `features/`.
-
-**Convencion de TanStack Router**:
 | Prefijo/Sufijo | Significado |
 |---|---|
 | `__root.tsx` | Layout raiz global |
 | `(nombre)/` | Grupo de layout (no afecta URL) |
 | `_nombre/` | Layout wrapper con prefijo |
 | `route.tsx` | Layout del directorio padre |
+| `$param.tsx` | Parametro dinamico en URL |
 | `archivo.tsx` | Pagina con URL = ruta del archivo |
+
+**Nota**: Los archivos de ruta son **delgados**. Solo importan el componente correspondiente de `features/` y lo renderizan. La logica real vive en `features/`.
 
 ---
 
@@ -165,56 +214,80 @@ src/routes/
 
 ```
 src/features/
-├── auth/                   # Autenticacion
-├── dashboard/              # Panel principal
-├── configuracion/          # Tasas de cambio, empresa, etc.
-├── inventario/             # Departamentos, productos, kardex, recetas
-├── clientes/               # Ficha de clientes
-├── ventas/                 # POS, notas de credito
-├── cxc/                    # Cuentas por cobrar
-└── reportes/               # Reportes y cuadre de caja
+├── auth/                   # Autenticacion (login, registro)
+├── dashboard/              # Panel principal con KPIs y graficos
+├── configuracion/          # Tasas, empresa, usuarios, cajas, bancos, metodos pago
+├── inventario/             # Departamentos, productos, kardex, recetas, ajustes, lotes
+├── clientes/               # Ficha de clientes + libro auxiliar de cuenta
+├── ventas/                 # POS, notas de credito/debito, cuadre de caja
+├── caja/                   # Sesiones de caja, movimientos de tesoreria
+├── compras/                # Facturas de compra, CxP, retenciones, gastos
+├── cxc/                    # Cuentas por cobrar: vencimientos y reportes
+├── contabilidad/           # Plan de cuentas, libro contable, balance de comprobacion
+├── proveedores/            # Ficha maestra de proveedores
+├── bancos/                 # Conciliacion bancaria, diferencial cambiario
+└── reportes/               # Reportes transversales (ventas, inventario, CxC)
 ```
 
 **Que es**: El **corazon** de la aplicacion. Cada carpeta es un modulo de negocio completo e independiente.
 
-**Estructura interna de cada feature** (ejemplo: `inventario/`):
+**Estructura interna de cada feature** (ejemplo completo: `inventario/`):
 
 ```
 inventario/
 ├── hooks/                          # CAPA DE DATOS
-│   ├── use-departamentos.ts        # Queries y mutaciones para departamentos
-│   ├── use-productos.ts            # Queries y mutaciones para productos
-│   ├── use-kardex.ts               # Queries para movimientos de inventario
-│   └── use-recetas.ts              # Queries y mutaciones para recetas
-├── schemas/                        # CAPA DE VALIDACION
-│   ├── departamento-schema.ts      # Reglas Zod: codigo obligatorio, unico, inmutable
-│   ├── producto-schema.ts          # Reglas Zod: precio_venta >= costo, etc.
-│   ├── kardex-schema.ts            # Reglas Zod: cantidad > 0, tipo entrada/salida
-│   └── receta-schema.ts            # Reglas Zod: cantidad > 0, producto padre tipo 'S'
-└── components/                     # CAPA DE PRESENTACION
-    ├── departamentos/
-    │   ├── departamento-list.tsx    # Tabla con busqueda y ordenamiento
-    │   └── departamento-form.tsx    # Dialog modal para crear/editar
-    ├── productos/
-    │   ├── producto-list.tsx        # Tabla con precios USD/Bs
-    │   ├── producto-form.tsx        # Formulario bimonetario
-    │   └── precio-display.tsx       # Componente de visualizacion USD + Bs
-    ├── kardex/
-    │   ├── kardex-list.tsx          # Journal inmutable (sin editar/borrar)
-    │   └── movimiento-form.tsx      # Formulario de entrada/salida
-    └── recetas/
-        ├── receta-manager.tsx       # Editor de recetas para servicios
-        └── ingrediente-form.tsx     # Lineas de ingredientes
+│   ├── use-departamentos.ts
+│   ├── use-productos.ts
+│   ├── use-kardex.ts
+│   ├── use-recetas.ts
+│   ├── use-marcas.ts
+│   ├── use-unidades.ts
+│   ├── use-unidades-conversion.ts
+│   ├── use-depositos.ts
+│   ├── use-ajuste-motivos.ts
+│   ├── use-ajustes.ts
+│   ├── use-lotes.ts
+│   ├── use-inventario-stock.ts
+│   ├── use-compras.ts
+│   └── use-catalogo-global.ts
+├── schemas/                        # CAPA DE VALIDACION (Zod)
+│   ├── departamento-schema.ts
+│   ├── producto-schema.ts
+│   ├── kardex-schema.ts
+│   └── ... (12 schemas)
+├── components/                     # CAPA DE PRESENTACION
+│   ├── departamentos/
+│   ├── productos/
+│   ├── kardex/
+│   └── recetas/
+└── utils/                          # Utilidades especificas del feature
+    └── productos-export.ts         # Logica de exportacion a Excel
 ```
 
-**Como funciona el flujo de datos**:
+**Variacion - features con estado propio** (ejemplo: `contabilidad/`):
+
+```
+contabilidad/
+├── hooks/
+├── schemas/
+├── components/
+├── stores/                         # Store Zustand LOCAL al feature
+│   └── gasto-borrador-store.ts     # Estado de borrador de gastos
+└── lib/                            # Utilidades locales del feature
+    ├── plan-cuentas-csv.ts         # Importacion/exportacion CSV
+    └── generar-asientos.ts         # Logica de asientos contables
+```
+
+> **Patron avanzado**: Cuando un feature necesita estado complejo especifico (no global), puede tener su propio `stores/` y `lib/`. Esto evita contaminar los stores globales con logica de un solo modulo.
+
+**Flujo de datos**:
 
 ```
 ┌─────────────┐     ┌──────────┐     ┌──────────────┐     ┌──────────────┐
 │  Componente │────>│   Hook   │────>│  Kysely Query │────>│  PowerSync   │
 │  (UI/Form)  │     │ (logica) │     │  (SQL tipado) │     │  (SQLite)    │
 └─────────────┘     └──────────┘     └──────────────┘     └──────┬───────┘
-                                                                  │ sync
+                                                                  │ sync bg
                                                            ┌──────▼───────┐
                                                            │   Supabase   │
                                                            │ (PostgreSQL) │
@@ -233,6 +306,9 @@ inventario/
 | `hooks/` | Acceso a datos, mutaciones, logica de negocio | `useProductos()` retorna `{ productos, crear, editar }` |
 | `schemas/` | Validacion de formularios con Zod | `productoSchema` valida que `precio_venta >= costo` |
 | `components/` | Componentes React de presentacion | `ProductoForm` renderiza inputs, usa el hook para guardar |
+| `stores/` | Estado Zustand local al feature (opcional) | `gasto-borrador-store.ts` persiste borrador entre renders |
+| `lib/` | Utilidades puras del feature (opcional) | `generar-asientos.ts` calcula asientos contables |
+| `utils/` | Helpers del feature (opcional) | `productos-export.ts` exporta a Excel |
 
 ---
 
@@ -240,30 +316,33 @@ inventario/
 
 ```
 src/components/
-├── ui/                         # Primitivos shadcn/ui
+├── ui/                         # Primitivos shadcn/ui + custom
 │   ├── button.tsx
 │   ├── input.tsx
+│   ├── label.tsx
 │   ├── dialog.tsx
-│   ├── card.tsx
-│   ├── table.tsx
-│   ├── badge.tsx
-│   ├── select.tsx
-│   ├── checkbox.tsx
+│   ├── dropdown-menu.tsx
+│   ├── select.tsx              # Select nativo Radix
+│   ├── native-select.tsx       # Select nativo HTML (performance)
+│   ├── separator.tsx
 │   ├── tabs.tsx
 │   ├── tooltip.tsx
-│   ├── popover.tsx
-│   ├── dropdown-menu.tsx
+│   ├── checkbox.tsx
 │   ├── scroll-area.tsx
-│   ├── separator.tsx
+│   ├── card.tsx
+│   ├── badge.tsx
+│   ├── table.tsx
 │   ├── skeleton.tsx
-│   ├── label.tsx
-│   ├── sonner.tsx              # Wrapper de toast notifications
 │   ├── command.tsx             # Command palette (cmdk)
+│   ├── popover.tsx
+│   ├── context-menu.tsx
+│   ├── sonner.tsx              # Wrapper de toast notifications
+│   ├── currency-display.tsx    # Visualizador USD/Bs bimonetario
 │   ├── confirm-dialog.tsx      # Modal de confirmacion reutilizable
-│   └── currency-display.tsx    # Visualizador USD/Bs
+│   └── supervisor-pin-dialog.tsx # Dialog de verificacion PIN supervisor
 │
-├── data-table/                 # Tabla generica reutilizable
-│   ├── data-table.tsx          # Componente principal (TanStack Table)
+├── data-table/                 # Tabla generica reutilizable (TanStack Table)
+│   ├── data-table.tsx          # Componente principal
 │   ├── toolbar.tsx             # Barra de busqueda y filtros
 │   ├── pagination.tsx          # Controles de paginacion
 │   ├── column-header.tsx       # Headers ordenables
@@ -272,46 +351,53 @@ src/components/
 │   └── index.ts                # Exportaciones
 │
 ├── layout/                     # Estructura visual de la app
-│   ├── sidebar.tsx             # Navegacion lateral (drawer en mobile)
-│   ├── top-bar.tsx             # Barra superior con menu de usuario
+│   ├── sidebar.tsx             # Navegacion lateral (drawer mobile, hover-expand desktop)
+│   ├── top-bar.tsx             # Barra superior con sync + menu usuario
 │   └── page-header.tsx         # Titulo de pagina + breadcrumbs
 │
+├── shared/                     # Componentes transversales
+│   ├── placeholder-page.tsx    # Pagina stub para features futuras
+│   ├── access-denied-page.tsx  # Pagina de acceso denegado (403)
+│   ├── require-permission.tsx  # Guard de permisos: oculta children si sin permiso
+│   ├── global-context-menu.tsx # Menu contextual global (click derecho)
+│   ├── table-row-context-menu.tsx # Menu contextual para filas de tabla
+│   └── segmented-tabs.tsx      # Tabs estilo segmented control
+│
 ├── sync/
-│   └── sync-status-indicator.tsx  # Indicador de conexion/sincronizacion
+│   └── sync-status-indicator.tsx  # Indicador de conexion/sincronizacion offline
 │
 ├── pwa/
 │   └── pwa-install-banner.tsx     # Banner para instalar la PWA
 │
-└── shared/
-    └── placeholder-page.tsx       # Pagina stub para features futuras
+└── theme-picker.tsx               # Selector de tema de color (5 temas)
 ```
-
-**Que es**: Componentes que se usan en **multiples features**. Si un componente solo se usa en una feature, vive dentro de esa feature.
 
 **Organizacion**:
 
 | Carpeta | Que contiene | Quien lo usa |
 |---|---|---|
-| `ui/` | Componentes atomicos de shadcn/ui (botones, inputs, modals) | Toda la app |
-| `data-table/` | Tabla generica con filtros, paginacion, ordenamiento | Todas las listas (departamentos, productos, kardex, etc.) |
-| `layout/` | Estructura visual: sidebar, topbar, encabezados de pagina | El layout protegido `_app/route.tsx` |
+| `ui/` | Componentes atomicos de shadcn/ui + custom | Toda la app |
+| `data-table/` | Tabla generica con filtros, paginacion, ordenamiento | Todas las listas |
+| `layout/` | Estructura visual: sidebar, topbar, encabezados | Layout protegido `_app/route.tsx` |
+| `shared/` | Guards de permisos, menus contextuales, pages stub | Features que necesitan control de acceso |
 | `sync/` | Indicador de estado de sincronizacion offline | TopBar |
 | `pwa/` | Banner de instalacion PWA | Root layout |
-| `shared/` | Componentes genericos (placeholders, etc.) | Paginas futuras |
+| `theme-picker.tsx` | Cambia paleta de colores de la app | TopBar / Config |
+
+**Regla**: Si un componente se usa en **un solo** feature, vive dentro de ese feature. Si se reutiliza en 2+, va a `components/`.
 
 ---
 
-## 7. `hooks/` - Hooks Globales
+## 7. `hooks/` - Hooks Globales de Plataforma
 
 ```
 src/hooks/
 ├── use-pwa-install.ts    # Detecta si la PWA se puede instalar y maneja el prompt
-└── use-mobile.ts         # Detecta si el viewport es mobile (para sidebar responsive)
+├── use-mobile.ts         # Detecta si el viewport es mobile (para sidebar responsive)
+└── use-debounce.ts       # Debounce generico para inputs de busqueda
 ```
 
-**Que es**: Hooks que no pertenecen a ningun feature especifico. Son transversales a toda la app.
-
-**Diferencia con `features/*/hooks/`**: Los hooks de features encapsulan acceso a datos de negocio (`useProductos`, `useTasas`). Los hooks globales manejan comportamiento de plataforma (PWA, responsive).
+**Diferencia con `features/*/hooks/`**: Los hooks de features encapsulan acceso a datos de negocio (`useProductos`, `useTasas`). Los hooks globales manejan comportamiento de plataforma (PWA, responsive, debounce).
 
 ---
 
@@ -319,12 +405,14 @@ src/hooks/
 
 ```
 src/stores/
-└── sidebar-store.ts      # Estado del sidebar: abierto/cerrado, mobile toggle
+├── sidebar-store.ts          # Estado del sidebar: abierto/cerrado, mobile toggle
+├── theme-store.ts            # Tema de color activo (clara/jade/rosa/violeta/ambar)
+└── moneda-contable-store.ts  # Moneda preferida para el modulo de contabilidad
 ```
 
-**Que es**: Stores de Zustand para estado de UI global que necesita compartirse entre componentes sin relacion padre-hijo.
-
-**Por que Zustand y no Context**: Zustand es mas eficiente para re-renders. Solo los componentes que usan un selector especifico se re-renderizan cuando ese valor cambia.
+**Que va aqui vs en `features/*/stores/`**:
+- `stores/` globales: estado que afecta a multiples features o al layout (sidebar, tema)
+- `features/*/stores/`: estado que solo tiene sentido dentro de ese modulo (ej: borrador de gasto)
 
 ---
 
@@ -335,14 +423,15 @@ src/lib/
 ├── utils.ts          # cn() = twMerge + clsx (combinar clases Tailwind)
 ├── currency.ts       # usdToBs(), bsToUsd(), formatUsd(), formatBs()
 ├── format.ts         # Formateo de fechas y numeros en espanol
-├── dates.ts          # Utilidades de manejo de fechas
-└── auth-utils.ts     # Helpers de autenticacion
+├── dates.ts          # Utilidades de manejo de fechas (wrappers date-fns)
+├── auth-utils.ts     # Helpers de autenticacion (extraer claims de JWT, etc.)
+└── crypto.ts         # Utilidades de cifrado (PINs, hash)
 ```
 
 **Que es**: Funciones puras sin estado ni side effects. No usan React, no usan hooks, no importan componentes.
 
 **Funciones clave**:
-- `cn()`: Combina clases de Tailwind resolviendo conflictos (ej: `cn("p-4", "p-2")` → `"p-2"`)
+- `cn()`: Combina clases de Tailwind resolviendo conflictos (`cn("p-4", "p-2")` → `"p-2"`)
 - `usdToBs(usd, tasa)`: Convierte dolares a bolivares usando tasa de cambio
 - `formatUsd(amount)`: Formatea `1234.5` → `$1,234.50`
 - `formatBs(amount)`: Formatea `1234.5` → `Bs. 1.234,50`
@@ -370,35 +459,47 @@ src/routeTree.gen.ts    # Generado automaticamente por TanStack Router
                                    │
                     ┌──────────────▼──────────────┐
                     │         routes/              │
-                    │  (Paginas = URLs)            │
+                    │  (Paginas = URLs, ~52 rutas) │
                     │  Solo importan de features/  │
                     └──────────────┬──────────────┘
                                    │
-                    ┌──────────────▼──────────────┐
-                    │        features/             │
-                    │  ┌────────┬────────┬──────┐  │
-                    │  │ hooks/ │schemas/│comps/ │  │
-                    │  │(datos) │(valid.)│ (UI)  │  │
-                    │  └───┬────┴────────┴──┬───┘  │
-                    └──────┼────────────────┼──────┘
-                           │                │
-              ┌────────────▼──┐    ┌────────▼─────────┐
-              │    core/db/   │    │   components/     │
-              │ (PowerSync +  │    │ (ui/, data-table/ │
-              │  Kysely)      │    │  layout/, etc.)   │
-              └───────────────┘    └──────────────────┘
-                           │
-              ┌────────────▼──────────────┐
-              │    lib/ (utilidades)       │
-              │ currency, format, utils    │
-              └───────────────────────────┘
+                    ┌──────────────▼──────────────────────────────┐
+                    │              features/ (13 modulos)          │
+                    │                                              │
+                    │  auth  dashboard  configuracion  inventario  │
+                    │  clientes  ventas  caja  compras  cxc        │
+                    │  contabilidad  proveedores  bancos  reportes │
+                    │                                              │
+                    │  ┌────────┬────────┬───────┬───────┬──────┐ │
+                    │  │ hooks/ │schemas/│comps/ │stores/│ lib/ │ │
+                    │  │(datos) │(valid.)│ (UI)  │(local)│(util)│ │
+                    │  └───┬────┴────────┴───┬───┴───────┴──────┘ │
+                    └──────┼─────────────────┼────────────────────┘
+                           │                 │
+              ┌────────────▼──┐    ┌─────────▼──────────┐
+              │    core/db/   │    │   components/       │
+              │ (PowerSync +  │    │ (ui/, data-table/   │
+              │  Kysely)      │    │  layout/, shared/)  │
+              └───────┬───────┘    └────────────────────┘
+                      │
+              ┌───────▼───────────────┐
+              │  stores/ (globales)   │
+              │  sidebar, tema, moneda│
+              └───────┬───────────────┘
+                      │
+              ┌───────▼───────────────┐
+              │    lib/ (utilidades)  │
+              │ currency, format,     │
+              │ dates, utils, crypto  │
+              └───────────────────────┘
 ```
 
 **Flujo de dependencias** (de arriba hacia abajo, nunca al reves):
 1. `routes/` importa de `features/`
-2. `features/` importa de `core/`, `components/`, `lib/`
+2. `features/` importa de `core/`, `components/`, `lib/`, `stores/`
 3. `core/` importa de `lib/`
-4. `lib/` no importa de nadie (funciones puras)
+4. `components/` importa de `lib/` y `stores/`
+5. `lib/` no importa de nadie (funciones puras)
 
 ---
 
@@ -414,3 +515,30 @@ src/routeTree.gen.ts    # Generado automaticamente por TanStack Router
 | **TypeScript estricto** | Sin `any`, tipos generados del schema de DB |
 | **Componentes delgados** | Las rutas solo renderizan, la logica vive en hooks |
 | **DRY via compartidos** | `components/ui/` y `data-table/` evitan duplicacion entre features |
+| **Encapsulacion de features** | Features complejos pueden tener stores/ y lib/ propios |
+| **Control de acceso granular** | `require-permission.tsx` + `use-permissions.ts` para RBAC en UI |
+
+---
+
+## Patron de Control de Acceso en UI
+
+```tsx
+// En cualquier componente:
+import { RequirePermission } from '@/components/shared/require-permission'
+import { PERMISSIONS } from '@/core/hooks/use-permissions'
+
+function InventarioActions() {
+  return (
+    <RequirePermission permission={PERMISSIONS.INVENTORY_ADJUST}>
+      <Button onClick={abrirFormularioAjuste}>Ajustar Stock</Button>
+    </RequirePermission>
+  )
+}
+```
+
+Los niveles de acceso son:
+- **Nivel 1 (Dueno)**: Acceso total, hardcoded `return true`
+- **Nivel 2 (Supervisor)**: Todos los permisos operativos
+- **Nivel 3 (Cajero)**: Permisos basicos de operacion diaria
+
+Ver `docs/PERMISOS.md` para la matriz completa de permisos.

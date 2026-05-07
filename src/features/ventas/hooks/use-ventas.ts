@@ -253,13 +253,55 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     totalUsd = Number((totalUsd - descuentoUsdFinal).toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
 
-    // 2. Generar nro_factura (por empresa)
-    const countResult = await tx.execute(
-      'SELECT COUNT(*) as cnt FROM ventas WHERE empresa_id = ?',
-      [empresa_id]
-    )
-    const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
-    nroFactura = String(count + 1).padStart(6, '0')
+    // 2. Generar nro_factura con prefijo por caja (C01-000001).
+    //    Cada caja tiene su propio contador acumulado a traves de todas sus sesiones.
+    //    Esto elimina colisiones entre cajas en escenarios multi-caja offline.
+    //    Si no hay sesion activa se usa el contador global por empresa como fallback.
+    if (sesion_caja_id) {
+      // Obtener caja_id de la sesion actual
+      const sesionRow = await tx.execute(
+        'SELECT caja_id FROM sesiones_caja WHERE id = ? LIMIT 1',
+        [sesion_caja_id]
+      )
+      const cajaId = sesionRow.rows?.length
+        ? (sesionRow.rows.item(0) as { caja_id: string }).caja_id
+        : null
+
+      if (cajaId) {
+        // Obtener nro_caja
+        const cajaRow = await tx.execute(
+          'SELECT nro_caja FROM cajas WHERE id = ? LIMIT 1',
+          [cajaId]
+        )
+        const nroCaja = cajaRow.rows?.length
+          ? (cajaRow.rows.item(0) as { nro_caja: number | null }).nro_caja
+          : null
+
+        if (nroCaja !== null) {
+          // Contar facturas emitidas por TODAS las sesiones de esta caja
+          const countRow = await tx.execute(
+            `SELECT COUNT(*) as cnt
+             FROM ventas v
+             INNER JOIN sesiones_caja sc ON v.sesion_caja_id = sc.id
+             WHERE v.empresa_id = ? AND sc.caja_id = ?`,
+            [empresa_id, cajaId]
+          )
+          const cnt = Number((countRow.rows?.item(0) as { cnt: number })?.cnt ?? 0)
+          const prefijo = `C${String(nroCaja).padStart(2, '0')}`
+          nroFactura = `${prefijo}-${String(cnt + 1).padStart(6, '0')}`
+        }
+      }
+    }
+
+    // Fallback: sin sesion de caja o caja sin nro_caja — correlativo global por empresa
+    if (!nroFactura) {
+      const countResult = await tx.execute(
+        'SELECT COUNT(*) as cnt FROM ventas WHERE empresa_id = ?',
+        [empresa_id]
+      )
+      const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
+      nroFactura = String(count + 1).padStart(6, '0')
+    }
 
     // 3. INSERT venta
     await tx.execute(

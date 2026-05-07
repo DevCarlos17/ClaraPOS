@@ -222,6 +222,7 @@ const cajas = new Table(
     nombre: column.text,
     ubicacion: column.text,
     deposito_id: column.text,
+    nro_caja: column.integer,
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,
