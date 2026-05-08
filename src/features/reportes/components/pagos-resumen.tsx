@@ -99,37 +99,42 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
 
           {/* Totales */}
           <div className="pt-3 mt-2 border-t space-y-1">
-            <div className="flex justify-between items-center text-sm font-semibold">
+            {/* Siempre mostrar Total Facturado primero */}
+            <div className="flex justify-between items-center text-sm text-muted-foreground">
+              <span>Total facturado</span>
+              <div className="flex items-center gap-2">
+                {(totalCobradoBs + cxcTotalBs) > 0 && (
+                  <span className="text-xs">{formatBs(totalCobradoBs + cxcTotalBs)}</span>
+                )}
+                <span className="font-semibold">{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
+              </div>
+            </div>
+
+            {/* Restar CxC si existe */}
+            {cxcTotalUsd > 0.005 && (
+              <div className="flex justify-between items-center text-sm text-red-600">
+                <span className="flex items-center gap-1">
+                  <span className="text-red-400">–</span> A credito (CxC)
+                </span>
+                <div className="flex items-center gap-2">
+                  {cxcTotalBs > 0 && (
+                    <span className="text-xs text-red-400">{formatBs(cxcTotalBs)}</span>
+                  )}
+                  <span className="font-bold">{formatUsd(cxcTotalUsd)}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Total Cobrado — linea enfatizada para comparar con metodos */}
+            <div className="flex justify-between items-center text-sm font-bold pt-1.5 border-t">
               <span>Total cobrado</span>
               <div className="flex items-center gap-2">
                 {totalCobradoBs > 0 && (
-                  <span className="text-xs text-muted-foreground">{formatBs(totalCobradoBs)}</span>
+                  <span className="text-xs font-normal text-muted-foreground">{formatBs(totalCobradoBs)}</span>
                 )}
-                <span className="text-sm font-bold">{formatUsd(totalCobradoUsd)}</span>
+                <span className="text-base">{formatUsd(totalCobradoUsd)}</span>
               </div>
             </div>
-            {cxcTotalUsd > 0.005 && (
-              <>
-                <div className="flex justify-between items-center text-sm text-red-600">
-                  <span>A credito</span>
-                  <div className="flex items-center gap-2">
-                    {cxcTotalBs > 0 && (
-                      <span className="text-xs text-red-400">{formatBs(cxcTotalBs)}</span>
-                    )}
-                    <span className="text-sm font-bold">{formatUsd(cxcTotalUsd)}</span>
-                  </div>
-                </div>
-                <div className="flex justify-between items-center text-sm font-bold pt-1 border-t">
-                  <span>Total facturado</span>
-                  <div className="flex items-center gap-2">
-                    {totalCobradoBs > 0 && (
-                      <span className="text-xs text-muted-foreground font-normal">{formatBs(totalCobradoBs + cxcTotalBs)}</span>
-                    )}
-                    <span>{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
-                  </div>
-                </div>
-              </>
-            )}
 
             {/* Diferencial cambiario + Total cuadrado */}
             {hasDiferencial && (

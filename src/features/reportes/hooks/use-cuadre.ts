@@ -158,6 +158,7 @@ export interface FacturaMetodoItem {
   monto_usd: string
   referencia: string | null
   fecha: string
+  moneda: string
 }
 
 export interface ProductoDeptoItem {
@@ -574,11 +575,13 @@ export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre
            pg.monto,
            pg.monto_usd,
            pg.referencia,
-           pg.fecha
+           pg.fecha,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda
          FROM pagos pg
          JOIN ventas v ON pg.venta_id = v.id
          JOIN clientes c ON v.cliente_id = c.id
          JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+         LEFT JOIN monedas mon ON mp.moneda_id = mon.id
          WHERE ${where} AND mp.nombre = ?
          ORDER BY pg.fecha DESC`
       : '',

@@ -271,30 +271,20 @@ export function CuadreConteoFisico({
                 {hasVerified && !readOnly && (
                   <button
                     type="button"
-                    title="Usar total verificado del detalle de pagos"
-                    onClick={() =>
-                      setFisicoValue(m.nombre, verifiedEntry.native.toFixed(2))
-                    }
-                    className="mt-5 p-2 rounded-md border border-green-300 hover:bg-green-50 transition-colors text-green-700"
+                    onClick={() => setFisicoValue(m.nombre, verifiedEntry.native.toFixed(2))}
+                    className="mt-5 inline-flex items-center gap-1 rounded-md border border-green-300 bg-green-50 hover:bg-green-100 px-2 py-1.5 text-xs font-medium text-green-700 transition-colors whitespace-nowrap"
                   >
-                    <CheckCircle size={16} />
+                    <CheckCircle size={13} weight="fill" />
+                    Usar {verifiedEntry.moneda === 'BS' ? formatBs(verifiedEntry.native) : formatUsd(verifiedEntry.native)}
                   </button>
                 )}
               </div>
 
-              {/* Verified hint for non-EFECTIVO */}
-              {hasVerified && !readOnly && (
-                <p className="text-xs text-green-700 flex items-center gap-1">
+              {/* Verified hint — solo mostrar si hay ajustes de supervisor */}
+              {hasVerified && !readOnly && verifiedEntry.overrideCount > 0 && (
+                <p className="text-xs text-amber-600 flex items-center gap-1">
                   <CheckCircle size={11} weight="fill" />
-                  {verifiedEntry.moneda === 'BS'
-                    ? formatBs(verifiedEntry.native)
-                    : formatUsd(verifiedEntry.native)}{' '}
-                  verificado(s) en detalle de pagos
-                  {verifiedEntry.overrideCount > 0 && (
-                    <span className="ml-1 text-amber-600">
-                      · {verifiedEntry.overrideCount} ajustado(s)
-                    </span>
-                  )}
+                  {verifiedEntry.overrideCount} monto(s) ajustado(s) por supervisor
                 </p>
               )}
 

@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react'
 import { X } from '@phosphor-icons/react'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { useFacturasPorMetodo, type CuadreFilters } from '../hooks/use-cuadre'
 
 interface CuadreMetodoModalProps {
@@ -82,7 +82,7 @@ export function CuadreMetodoModal({ isOpen, onClose, filters, metodoNombre }: Cu
                         {f.cliente_nombre}
                       </td>
                       <td className="px-3 py-2 text-right text-xs">
-                        {formatUsd(parseFloat(f.monto))}
+                        {f.moneda === 'BS' ? formatBs(parseFloat(f.monto)) : formatUsd(parseFloat(f.monto))}
                       </td>
                       <td className="px-3 py-2 text-right">
                         <span className="font-bold text-xs">{formatUsd(parseFloat(f.monto_usd))}</span>

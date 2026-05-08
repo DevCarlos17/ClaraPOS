@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@powersync/react'
-import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard, LockKey, Eye, Warning, Printer } from '@phosphor-icons/react'
+import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
@@ -86,6 +86,25 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [observaciones, setObservaciones] = useState('')
   const [isCerrando, setIsCerrando] = useState(false)
 
+  // Post-cierre success banner
+  const [postCierreInfo, setPostCierreInfo] = useState<{
+    diferencia: number
+    resultado: 'CUADRADO' | 'SOBRANTE' | 'FALTANTE'
+  } | null>(null)
+
+  // Supervisor selector (for close modal + print header)
+  const [selectedSupervisorId, setSelectedSupervisorId] = useState<string>('')
+
+  // Query supervisors (propietario + supervisor)
+  const { data: supervisoresData } = useQuery(
+    user?.empresa_id
+      ? `SELECT id, nombre FROM usuarios WHERE empresa_id = ? AND level <= 2 AND activo = 1 ORDER BY nombre`
+      : '',
+    user?.empresa_id ? [user.empresa_id] : []
+  )
+  const supervisores = (supervisoresData ?? []) as { id: string; nombre: string }[]
+  const selectedSupervisorNombre = supervisores.find((s) => s.id === selectedSupervisorId)?.nombre
+
   const handleVerifiedChange = useCallback((amounts: Record<string, VerifiedEntry>) => {
     setVerifiedAmountsByMetodoId(amounts)
   }, [])
@@ -131,6 +150,12 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   )
 
   const diferencia = Number((totalFisicoUsd - totalSistemaUsd).toFixed(2))
+
+  // Cajero name from the selected session's apertura user (for print header)
+  const cajeroNombreImprimir = useMemo(() => {
+    if (sesionCajaIds.length !== 1) return undefined
+    return sesiones.find((s) => s.id === sesionCajaIds[0])?.usuario_nombre ?? undefined
+  }, [sesionCajaIds, sesiones])
 
   // Metodos sin conteo fisico ingresado
   const metodosSinConteo = totalMetodosCount - Object.keys(conteoFisicoRecord).length
@@ -196,6 +221,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     setIsCerrando(true)
     try {
       const parts: string[] = []
+      if (selectedSupervisorNombre) {
+        parts.push(`Supervisado por: ${selectedSupervisorNombre}`)
+      }
       if (totalOverrides > 0) {
         parts.push(`${totalOverrides} transferencia(s) con monto ajustado por supervisor`)
       }
@@ -216,9 +244,14 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         localStorage.removeItem(key)
       }
 
+      const resultado: 'CUADRADO' | 'SOBRANTE' | 'FALTANTE' =
+        diferencia > 0.001 ? 'SOBRANTE' : diferencia < -0.001 ? 'FALTANTE' : 'CUADRADO'
+      setPostCierreInfo({ diferencia, resultado })
+
       toast.success('Sesion cerrada exitosamente')
       setFinalizarOpen(false)
       setObservaciones('')
+      setSelectedSupervisorId('')
       setActiveFilters({ fecha, cajaId, sesionCajaIds })
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al cerrar la sesion')
@@ -231,6 +264,43 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     <>
     <div className="space-y-6 print:hidden">
       <PageHeader titulo="Cuadre de Caja" descripcion="Resumen de operaciones y cierre de caja" />
+
+      {/* Banner post-cierre */}
+      {postCierreInfo && (
+        <div className="rounded-xl border border-green-200 bg-green-50 p-4 flex items-start gap-3">
+          <CheckCircle size={20} weight="fill" className="text-green-600 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-green-800">
+              Sesion cerrada &mdash; {postCierreInfo.resultado}
+              <span className={`text-xs font-normal ml-2 ${postCierreInfo.diferencia > 0.001 ? 'text-green-700' : postCierreInfo.diferencia < -0.001 ? 'text-red-600' : 'text-green-700'}`}>
+                ({postCierreInfo.diferencia > 0 ? '+' : ''}{formatUsd(postCierreInfo.diferencia)})
+              </span>
+            </p>
+            <p className="text-xs text-green-700 mt-0.5">
+              El reporte de cierre esta listo para imprimir.
+            </p>
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                type="button"
+                disabled
+                title="Modulo en desarrollo"
+                className="inline-flex items-center gap-1.5 rounded-md border border-green-300 bg-white px-3 py-1.5 text-xs text-green-700 opacity-60 cursor-not-allowed"
+              >
+                <Bank size={13} />
+                Conciliacion Bancaria
+              </button>
+              <span className="text-[10px] text-green-600 italic">Modulo en desarrollo</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPostCierreInfo(null)}
+            className="text-green-500 hover:text-green-700 transition-colors"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      )}
 
       {/* Filter card + KPI cards */}
       <div className="flex flex-wrap gap-4 items-start">
@@ -551,6 +621,25 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               </div>
             )}
 
+            {/* Supervisor que autoriza */}
+            {supervisores.length > 0 && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">
+                  Supervisor que autoriza (opcional)
+                </label>
+                <NativeSelect
+                  value={selectedSupervisorId}
+                  onChange={(e) => setSelectedSupervisorId(e.target.value)}
+                  className="w-full"
+                >
+                  <option value="">— Sin especificar —</option>
+                  {supervisores.map((s) => (
+                    <option key={s.id} value={s.id}>{s.nombre}</option>
+                  ))}
+                </NativeSelect>
+              </div>
+            )}
+
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">
                 Observaciones de cierre (opcional)
@@ -609,6 +698,8 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         totalFisicoUsd={totalFisicoUsd}
         diferencia={diferencia}
         conteoFisicoRecord={conteoFisicoRecord}
+        cajeroNombre={cajeroNombreImprimir}
+        supervisorNombre={selectedSupervisorNombre}
         printOptions={printOptions}
       />
     )}
@@ -626,9 +717,13 @@ function ResumenSesionCerradaModal({
   onClose: () => void
 }) {
   const { data: sesionData } = useQuery(
-    `SELECT sc.*, u.nombre as usuario_cierre_nombre, c.nombre as caja_nombre
+    `SELECT sc.*,
+            ua.nombre as usuario_apertura_nombre,
+            uc.nombre as usuario_cierre_nombre,
+            c.nombre as caja_nombre
      FROM sesiones_caja sc
-     LEFT JOIN usuarios u ON sc.usuario_cierre_id = u.id
+     LEFT JOIN usuarios ua ON sc.usuario_apertura_id = ua.id
+     LEFT JOIN usuarios uc ON sc.usuario_cierre_id = uc.id
      LEFT JOIN cajas c ON sc.caja_id = c.id
      WHERE sc.id = ?`,
     [sesionId]
@@ -653,6 +748,7 @@ function ResumenSesionCerradaModal({
     observaciones_cierre: string | null
     fecha_cierre: string | null
     fecha_apertura: string
+    usuario_apertura_nombre: string | null
     usuario_cierre_nombre: string | null
     caja_nombre: string | null
   } | undefined
@@ -698,6 +794,9 @@ function ResumenSesionCerradaModal({
               <div className="rounded-lg bg-muted/40 p-3">
                 <p className="text-xs text-muted-foreground mb-1">Apertura</p>
                 <p className="font-medium">{formatDateTime(sesion.fecha_apertura)}</p>
+                {sesion.usuario_apertura_nombre && (
+                  <p className="text-xs text-muted-foreground mt-0.5">Cajero: {sesion.usuario_apertura_nombre}</p>
+                )}
                 <p className="text-xs text-muted-foreground mt-1">
                   Fondo: USD {parseFloat(sesion.monto_apertura_usd).toFixed(2)}
                   {parseFloat(sesion.monto_apertura_bs) > 0 && (
