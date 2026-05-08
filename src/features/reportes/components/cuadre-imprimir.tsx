@@ -1,7 +1,20 @@
 import { useQuery } from '@powersync/react'
-import { usePagosPorMetodo, type CuadreFilters } from '../hooks/use-cuadre'
+import {
+  usePagosPorMetodo,
+  useTotalesFiscales,
+  useIvaPorAlicuota,
+  usePagosDetalleCompleto,
+  useVentasAudit,
+  type CuadreFilters,
+} from '../hooks/use-cuadre'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
+
+interface PrintOptions {
+  desgloseFiscal: boolean
+  detalleTransferencias: boolean
+  listaFacturas: boolean
+}
 
 interface CuadreImprimirProps {
   filters: CuadreFilters
@@ -14,6 +27,7 @@ interface CuadreImprimirProps {
   totalFisicoUsd: number
   diferencia: number
   conteoFisicoRecord: Record<string, number>
+  printOptions?: PrintOptions
 }
 
 export function CuadreImprimir({
@@ -27,8 +41,14 @@ export function CuadreImprimir({
   totalFisicoUsd,
   diferencia,
   conteoFisicoRecord,
+  printOptions = { desgloseFiscal: true, detalleTransferencias: false, listaFacturas: false },
 }: CuadreImprimirProps) {
   const { metodos } = usePagosPorMetodo(filters)
+  const { totales } = useTotalesFiscales(printOptions.desgloseFiscal ? filters : null)
+  const { alicuotas } = useIvaPorAlicuota(printOptions.desgloseFiscal ? filters : null)
+  const { pagos: todosPagos } = usePagosDetalleCompleto(printOptions.detalleTransferencias ? filters : null)
+  const pagosTransf = todosPagos.filter((p) => p.metodoTipo !== 'EFECTIVO')
+  const { ventas } = useVentasAudit(printOptions.listaFacturas ? filters : null)
 
   const sesionId = filters.sesionCajaIds.length === 1 ? filters.sesionCajaIds[0] : null
   const { data: sesionRaw } = useQuery(
@@ -136,6 +156,72 @@ export function CuadreImprimir({
         </table>
       </div>
 
+      {/* Desglose Fiscal (opcional) */}
+      {printOptions.desgloseFiscal && totales && (
+        <div className="mb-5 border rounded p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+            Desglose Fiscal
+          </p>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-xs text-gray-500">
+                <th className="text-left py-1 font-medium">Concepto</th>
+                <th className="text-right py-1 font-medium">USD</th>
+                <th className="text-right py-1 font-medium pl-3">Bs.</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="py-0.5">Base imponible</td>
+                <td className="text-right font-mono">{formatUsd(totales.baseImponibleUsd)}</td>
+                <td className="text-right font-mono pl-3">{formatBs(totales.baseImponibleBs)}</td>
+              </tr>
+              {totales.totalExentoUsd > 0.001 && (
+                <tr>
+                  <td className="py-0.5">Exentos</td>
+                  <td className="text-right font-mono">{formatUsd(totales.totalExentoUsd)}</td>
+                  <td className="text-right font-mono pl-3">{formatBs(totales.totalExentoBs)}</td>
+                </tr>
+              )}
+              {/* IVA por alicuota */}
+              {alicuotas.map((a) => (
+                <tr key={a.impuestoPct}>
+                  <td className="py-0.5 text-gray-600">IVA {a.impuestoPct}%</td>
+                  <td className="text-right font-mono">{formatUsd(a.montoIvaUsd)}</td>
+                  <td className="text-right font-mono pl-3">{formatBs(a.montoIvaBs)}</td>
+                </tr>
+              ))}
+              {totales.totalIgtfUsd > 0.001 && (
+                <tr>
+                  <td className="py-0.5 text-gray-600">IGTF</td>
+                  <td className="text-right font-mono">{formatUsd(totales.totalIgtfUsd)}</td>
+                  <td className="text-right font-mono pl-3">{formatBs(totales.totalIgtfBs)}</td>
+                </tr>
+              )}
+              {totales.totalDescuentoUsd > 0.001 && (
+                <tr>
+                  <td className="py-0.5 text-gray-600">Descuentos</td>
+                  <td className="text-right font-mono text-red-700">-{formatUsd(totales.totalDescuentoUsd)}</td>
+                  <td className="text-right font-mono pl-3 text-red-700">-{formatBs(totales.totalDescuentoBs)}</td>
+                </tr>
+              )}
+              {totales.totalNcrUsd > 0.001 && (
+                <tr>
+                  <td className="py-0.5 text-gray-600">Notas de Credito</td>
+                  <td className="text-right font-mono text-red-700">-{formatUsd(totales.totalNcrUsd)}</td>
+                  <td className="text-right font-mono pl-3 text-red-700">-{formatBs(totales.totalNcrBs)}</td>
+                </tr>
+              )}
+              <tr className="border-t font-bold">
+                <td className="py-1">Total Facturado</td>
+                <td className="text-right font-mono">{formatUsd(totales.totalFacturadoUsd)}</td>
+                <td className="text-right font-mono pl-3">{formatBs(totales.totalFacturadoBs)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {/* Conteo por metodo */}
       {metodos.length > 0 && (
         <div className="mb-5">
@@ -154,10 +240,15 @@ export function CuadreImprimir({
             <tbody>
               {metodos.map((m) => {
                 const fisicoNativo = conteoFisicoRecord[m.metodo_cobro_id]
+                const efectivaTasa = tasaDelDia > 0
+                  ? tasaDelDia
+                  : m.totalOriginal > 0 && m.totalUsd > 0
+                  ? m.totalOriginal / m.totalUsd
+                  : 0
                 const fisicoUsd =
                   fisicoNativo !== undefined
-                    ? m.moneda === 'BS' && tasaDelDia > 0
-                      ? fisicoNativo / tasaDelDia
+                    ? m.moneda === 'BS' && efectivaTasa > 0
+                      ? fisicoNativo / efectivaTasa
                       : fisicoNativo
                     : null
                 const dif =
@@ -244,6 +335,106 @@ export function CuadreImprimir({
             Observaciones
           </p>
           <p className="text-sm">{sesion.observaciones_cierre}</p>
+        </div>
+      )}
+
+      {/* Detalle de transferencias (opcional) */}
+      {printOptions.detalleTransferencias && pagosTransf.length > 0 && (
+        <div className="mb-5 break-before-page">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+            Detalle de Transferencias ({pagosTransf.length})
+          </p>
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-y bg-gray-50">
+                <th className="text-left py-1 px-2 font-semibold">Hora</th>
+                <th className="text-left py-1 px-2 font-semibold">Factura</th>
+                <th className="text-left py-1 px-2 font-semibold">Cliente</th>
+                <th className="text-left py-1 px-2 font-semibold">Metodo</th>
+                <th className="text-left py-1 px-2 font-semibold">Referencia</th>
+                <th className="text-right py-1 px-2 font-semibold">Monto</th>
+                <th className="text-right py-1 px-2 font-semibold">USD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagosTransf.map((p) => {
+                const hora = (() => {
+                  try {
+                    const parts = p.fecha.split(' ')
+                    return parts.length >= 2 ? parts[1].substring(0, 5) : ''
+                  } catch { return '' }
+                })()
+                return (
+                  <tr key={p.id} className="border-b">
+                    <td className="py-0.5 px-2 text-gray-500">{hora}</td>
+                    <td className="py-0.5 px-2 font-mono">{p.nroFactura ? `#${p.nroFactura}` : '—'}</td>
+                    <td className="py-0.5 px-2">{p.clienteNombre ?? '—'}</td>
+                    <td className="py-0.5 px-2">{p.metodoNombre}</td>
+                    <td className="py-0.5 px-2 text-gray-500">{p.referencia ?? '—'}</td>
+                    <td className="py-0.5 px-2 text-right font-mono">
+                      {p.moneda === 'BS' ? formatBs(parseFloat(p.monto)) : formatUsd(parseFloat(p.monto))}
+                    </td>
+                    <td className="py-0.5 px-2 text-right font-mono font-bold">
+                      {formatUsd(parseFloat(p.montoUsd))}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 font-bold">
+                <td colSpan={6} className="py-1 px-2">Total</td>
+                <td className="py-1 px-2 text-right font-mono">
+                  {formatUsd(pagosTransf.reduce((s, p) => s + parseFloat(p.montoUsd), 0))}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* Lista de facturas (opcional) */}
+      {printOptions.listaFacturas && ventas.length > 0 && (
+        <div className="mb-5 break-before-page">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+            Lista de Facturas ({ventas.length})
+          </p>
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-y bg-gray-50">
+                <th className="text-left py-1 px-2 font-semibold">Factura</th>
+                <th className="text-left py-1 px-2 font-semibold">Cliente</th>
+                <th className="text-left py-1 px-2 font-semibold">Tipo</th>
+                <th className="text-right py-1 px-2 font-semibold">Total USD</th>
+                <th className="text-right py-1 px-2 font-semibold">Total Bs.</th>
+                <th className="text-left py-1 px-2 font-semibold">Metodos</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ventas.map((v) => (
+                <tr key={v.id} className={`border-b ${v.status === 'ANULADA' ? 'line-through text-gray-400' : ''}`}>
+                  <td className="py-0.5 px-2 font-mono">#{v.nro_factura}</td>
+                  <td className="py-0.5 px-2">{v.cliente_nombre}</td>
+                  <td className="py-0.5 px-2">{v.tipo}</td>
+                  <td className="py-0.5 px-2 text-right font-mono">{formatUsd(parseFloat(v.total_usd))}</td>
+                  <td className="py-0.5 px-2 text-right font-mono">{formatBs(parseFloat(v.total_bs))}</td>
+                  <td className="py-0.5 px-2 text-gray-500">{v.metodos_pago ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 font-bold">
+                <td colSpan={3} className="py-1 px-2">Total</td>
+                <td className="py-1 px-2 text-right font-mono">
+                  {formatUsd(ventas.filter(v => v.status !== 'ANULADA').reduce((s, v) => s + parseFloat(v.total_usd), 0))}
+                </td>
+                <td className="py-1 px-2 text-right font-mono">
+                  {formatBs(ventas.filter(v => v.status !== 'ANULADA').reduce((s, v) => s + parseFloat(v.total_bs), 0))}
+                </td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
         </div>
       )}
 

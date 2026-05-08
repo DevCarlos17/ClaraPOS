@@ -65,6 +65,22 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [conteoFisicoRecord, setConteoFisicoRecord] = useState<Record<string, number>>({})
   const [totalMetodosCount, setTotalMetodosCount] = useState(0)
 
+  // Reset key para propagar limpiar conteo a CuadreDetallePagos
+  const [detallePagosResetKey, setDetallePagosResetKey] = useState(0)
+  const handleLimpiarConteo = useCallback(() => {
+    setDetallePagosResetKey((k) => k + 1)
+  }, [])
+
+  // Opciones de impresion
+  const [printOptions, setPrintOptions] = useState({
+    desgloseFiscal: true,
+    detalleTransferencias: false,
+    listaFacturas: false,
+  })
+  const togglePrintOption = useCallback((key: keyof typeof printOptions) => {
+    setPrintOptions((prev) => ({ ...prev, [key]: !prev[key] }))
+  }, [])
+
   // Finalizar cuadre modal state
   const [finalizarOpen, setFinalizarOpen] = useState(false)
   const [observaciones, setObservaciones] = useState('')
@@ -279,13 +295,33 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
             {/* Imprimir — visible cuando hay datos consultados */}
             {consulted && activeFilters && (
-              <button
-                onClick={() => window.print()}
-                className="inline-flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
-              >
-                <Printer className="w-4 h-4" />
-                Imprimir
-              </button>
+              <div className="flex flex-col gap-1">
+                <button
+                  onClick={() => window.print()}
+                  className="inline-flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
+                >
+                  <Printer className="w-4 h-4" />
+                  Imprimir
+                </button>
+                {/* Opciones de impresion */}
+                <div className="flex flex-wrap gap-x-3 gap-y-1 pl-1">
+                  {([
+                    ['desgloseFiscal', 'Fiscal'],
+                    ['detalleTransferencias', 'Transf.'],
+                    ['listaFacturas', 'Facturas'],
+                  ] as [keyof typeof printOptions, string][]).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-1 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={printOptions[key]}
+                        onChange={() => togglePrintOption(key)}
+                        className="h-3 w-3 rounded border-gray-300 text-primary"
+                      />
+                      <span className="text-[11px] text-muted-foreground">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 
@@ -414,6 +450,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               verifiedAmountsByMetodoId={verifiedAmountsByMetodoId}
               onTotalesChange={handleTotalesChange}
               onConteoFisicoChange={handleConteoFisicoChange}
+              onLimpiar={handleLimpiarConteo}
               readOnly={!!sesionCerradaId}
             />
             <PagosResumen
@@ -431,6 +468,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             <CuadreDetallePagos
               filters={activeFilters}
               onVerifiedChange={handleVerifiedChange}
+              resetKey={detallePagosResetKey}
             />
             <CuadreDetalleFacturas filters={activeFilters} />
           </div>
@@ -571,6 +609,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         totalFisicoUsd={totalFisicoUsd}
         diferencia={diferencia}
         conteoFisicoRecord={conteoFisicoRecord}
+        printOptions={printOptions}
       />
     )}
     </>

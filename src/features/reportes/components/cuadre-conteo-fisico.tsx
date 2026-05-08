@@ -12,6 +12,8 @@ interface ConteoFisicoProps {
   onTotalesChange?: (sistema: number, fisico: number) => void
   /** Callback con el conteo fisico keyed por metodo_cobro_id (valor nativo) y total de metodos */
   onConteoFisicoChange?: (conteo: Record<string, number>, totalMetodos: number) => void
+  /** Callback disparado al limpiar el conteo (para que el padre resetee otros componentes) */
+  onLimpiar?: () => void
   /** Si true, los inputs se muestran en modo lectura con valores guardados en sesiones_caja_detalle */
   readOnly?: boolean
 }
@@ -22,6 +24,7 @@ export function CuadreConteoFisico({
   verifiedAmountsByMetodoId,
   onTotalesChange,
   onConteoFisicoChange,
+  onLimpiar,
   readOnly = false,
 }: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
@@ -106,7 +109,17 @@ export function CuadreConteoFisico({
       const raw = parseFloat(fisico[m.nombre] ?? '') || 0
       const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
       if (has) {
-        fisicoTotal += m.moneda === 'BS' ? (tasaDelDia > 0 ? raw / tasaDelDia : 0) : raw
+        if (m.moneda === 'BS') {
+          // Tasa efectiva: derivar de los pagos si tasaDelDia no esta disponible
+          const efectivaTasa = tasaDelDia > 0
+            ? tasaDelDia
+            : m.totalOriginal > 0 && m.totalUsd > 0
+            ? m.totalOriginal / m.totalUsd
+            : 0
+          fisicoTotal += efectivaTasa > 0 ? raw / efectivaTasa : 0
+        } else {
+          fisicoTotal += raw
+        }
       }
     }
     return { totalSistema: Number(sistema.toFixed(2)), totalFisico: Number(fisicoTotal.toFixed(2)) }
@@ -134,7 +147,8 @@ export function CuadreConteoFisico({
     if (!readOnly && storageKey) {
       localStorage.removeItem(storageKey)
     }
-  }, [readOnly, storageKey])
+    onLimpiar?.()
+  }, [readOnly, storageKey, onLimpiar])
 
   if (isLoading) {
     return (
@@ -173,10 +187,16 @@ export function CuadreConteoFisico({
           const sistemaUsd = m.totalUsd
           const sistemaBs = m.totalOriginal
           const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
+          const efectivaTasa = tasaDelDia > 0
+            ? tasaDelDia
+            : m.totalOriginal > 0 && m.totalUsd > 0
+            ? m.totalOriginal / m.totalUsd
+            : 0
           const fisicoUsd = m.moneda === 'BS'
-            ? (tasaDelDia > 0 ? fisicoRaw / tasaDelDia : 0)
+            ? (efectivaTasa > 0 ? fisicoRaw / efectivaTasa : 0)
             : fisicoRaw
           const difUsd = fisicoUsd - sistemaUsd
+          const tasaParaEquiv = tasaDelDia > 0 ? tasaDelDia : efectivaTasa
           const hasFisico = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
 
           const verifiedEntry = verifiedAmountsByMetodoId[m.metodo_cobro_id]
@@ -281,10 +301,10 @@ export function CuadreConteoFisico({
               {/* Conversion + difference */}
               {hasFisico && (
                 <div className="flex items-center justify-between text-xs pt-1 border-t">
-                  {m.moneda === 'BS' && tasaDelDia > 0 ? (
+                  {m.moneda === 'BS' && efectivaTasa > 0 ? (
                     <span className="text-muted-foreground">{formatUsd(fisicoUsd)} equiv.</span>
-                  ) : m.moneda !== 'BS' && tasaDelDia > 0 ? (
-                    <span className="text-muted-foreground">{formatBs(fisicoRaw * tasaDelDia)} equiv.</span>
+                  ) : m.moneda !== 'BS' && tasaParaEquiv > 0 ? (
+                    <span className="text-muted-foreground">{formatBs(fisicoRaw * tasaParaEquiv)} equiv.</span>
                   ) : (
                     <span />
                   )}
