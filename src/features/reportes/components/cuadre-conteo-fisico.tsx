@@ -6,6 +6,7 @@ import {
   usePagosPorMetodo,
   useMovimientosManualesDia,
   useSesionApertura,
+  useSaldoEfectivoBimonetario,
   type CuadreFilters,
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
@@ -15,7 +16,7 @@ interface ConteoFisicoProps {
   filters: CuadreFilters
   tasaDelDia: number
   verifiedAmountsByMetodoId: Record<string, VerifiedEntry>
-  onTotalesChange?: (sistema: number, fisico: number) => void
+  onTotalesChange?: (sistema: number, fisico: number, fisicoBs: number) => void
   /** Callback con el conteo fisico keyed por metodo_cobro_id (valor nativo) y total de metodos */
   onConteoFisicoChange?: (conteo: Record<string, number>, totalMetodos: number) => void
   /** Callback disparado al limpiar el conteo (para que el padre resetee otros componentes) */
@@ -36,6 +37,7 @@ export function CuadreConteoFisico({
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { movimientos } = useMovimientosManualesDia(filters)
   const { aperturaUsd, aperturaBs } = useSesionApertura(filters)
+  const { saldoEsperadoBs } = useSaldoEfectivoBimonetario(filters)
   // keyed por m.nombre
   const [fisico, setFisico] = useState<Record<string, string>>({})
   const [billetesModal, setBilletesModal] = useState<{
@@ -108,23 +110,24 @@ export function CuadreConteoFisico({
     [billetesModal, setFisicoValue]
   )
 
-  // Totales en USD para el resumen y callback del padre
+  // Totales en USD para el resumen y callback del padre; fisicoBs en Bs. nativos
   const totals = useMemo(() => {
     let sistema = 0
     let fisicoTotal = 0
+    let fisicoBs = 0
     for (const m of metodos) {
       sistema += m.totalUsd
       const raw = parseFloat(fisico[m.nombre] ?? '') || 0
       const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
       if (has) {
         if (m.moneda === 'BS') {
-          // Tasa efectiva: derivar de los pagos si tasaDelDia no esta disponible
           const efectivaTasa = tasaDelDia > 0
             ? tasaDelDia
             : m.totalOriginal > 0 && m.totalUsd > 0
             ? m.totalOriginal / m.totalUsd
             : 0
           fisicoTotal += efectivaTasa > 0 ? raw / efectivaTasa : 0
+          fisicoBs += raw
         } else {
           fisicoTotal += raw
         }
@@ -142,11 +145,15 @@ export function CuadreConteoFisico({
         : mov.total
       sistema += mov.mov_tipo === 'INGRESO' ? montoUsd : -montoUsd
     }
-    return { totalSistema: Number(sistema.toFixed(2)), totalFisico: Number(fisicoTotal.toFixed(2)) }
+    return {
+      totalSistema: Number(sistema.toFixed(2)),
+      totalFisico: Number(fisicoTotal.toFixed(2)),
+      totalFisicoBs: Number(fisicoBs.toFixed(2)),
+    }
   }, [metodos, fisico, tasaDelDia, aperturaUsd, aperturaBs, movimientos])
 
   useEffect(() => {
-    onTotalesChange?.(totals.totalSistema, totals.totalFisico)
+    onTotalesChange?.(totals.totalSistema, totals.totalFisico, totals.totalFisicoBs)
   }, [totals, onTotalesChange])
 
   // Conteo fisico keyed por metodo_cobro_id (valor nativo) para cerrarSesionCaja
@@ -345,10 +352,15 @@ export function CuadreConteoFisico({
             )}
             {movimientos.length > 0 ? (
               (() => {
+                const toUsd = (m: { metodo_moneda: string; total: number }) =>
+                  m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total
                 const ingresos = movimientos.filter((m) => m.mov_tipo === 'INGRESO')
-                const egresos = movimientos.filter((m) => m.mov_tipo === 'EGRESO')
-                const totalIngUsd = ingresos.reduce((s, m) => s + (m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total), 0)
-                const totalEgrUsd = egresos.reduce((s, m) => s + (m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total), 0)
+                const vueltos = movimientos.filter((m) => m.origen === 'VUELTO')
+                const otrosEgresos = movimientos.filter((m) => m.mov_tipo === 'EGRESO' && m.origen !== 'VUELTO')
+                const totalIngUsd = ingresos.reduce((s, m) => s + toUsd(m), 0)
+                const totalVueltosUsd = vueltos.reduce((s, m) => s + toUsd(m), 0)
+                const totalVueltosBs = vueltos.filter((m) => m.metodo_moneda === 'BS').reduce((s, m) => s + m.total, 0)
+                const totalOtrosEgrUsd = otrosEgresos.reduce((s, m) => s + toUsd(m), 0)
                 return (
                   <>
                     {totalIngUsd > 0.001 && (
@@ -357,10 +369,21 @@ export function CuadreConteoFisico({
                         <span className="font-mono text-green-700">+{formatUsd(totalIngUsd)}</span>
                       </div>
                     )}
-                    {totalEgrUsd > 0.001 && (
+                    {totalVueltosUsd > 0.001 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Vueltos entregados</span>
+                        <span className="font-mono text-red-600">
+                          -{formatUsd(totalVueltosUsd)}
+                          {totalVueltosBs > 0.001 && (
+                            <span className="ml-1 text-[10px] text-red-400">/ {formatBs(totalVueltosBs)}</span>
+                          )}
+                        </span>
+                      </div>
+                    )}
+                    {totalOtrosEgrUsd > 0.001 && (
                       <div className="flex items-center justify-between">
                         <span className="text-muted-foreground">Egresos / Pagos</span>
-                        <span className="font-mono text-red-600">-{formatUsd(totalEgrUsd)}</span>
+                        <span className="font-mono text-red-600">-{formatUsd(totalOtrosEgrUsd)}</span>
                       </div>
                     )}
                   </>
@@ -368,7 +391,7 @@ export function CuadreConteoFisico({
               })()
             ) : (
               <p className="text-[10px] text-muted-foreground italic">
-                Sin movimientos manuales. Los vueltos e ingresos/egresos de caja se registran desde el modulo Caja.
+                Sin movimientos del periodo.
               </p>
             )}
           </div>
@@ -380,6 +403,12 @@ export function CuadreConteoFisico({
             <span className="font-semibold">Total cobrado (sistema)</span>
             <span className="font-bold tabular-nums">{formatUsd(totals.totalSistema)}</span>
           </div>
+          {saldoEsperadoBs > 0.001 && (
+            <div className="flex items-center justify-between text-xs mt-1">
+              <span className="text-muted-foreground">Efectivo Bs. esperado</span>
+              <span className="font-mono tabular-nums text-blue-600">{formatBs(saldoEsperadoBs)}</span>
+            </div>
+          )}
           {Object.keys(fisico).length > 0 && (
             <>
               <div className="flex items-center justify-between text-sm mt-1">

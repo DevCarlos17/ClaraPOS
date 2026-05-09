@@ -19,6 +19,10 @@ export interface SesionCaja {
   monto_sistema_usd: string | null
   monto_fisico_usd: string | null
   diferencia_usd: string | null
+  // 0041: saldos VES independientes del USD
+  monto_sistema_bs: string | null
+  monto_fisico_bs: string | null
+  diferencia_bs: string | null
   observaciones_cierre: string | null
   status: string
   created_at: string
@@ -35,6 +39,8 @@ export interface AbrirSesionParams {
 
 export interface CerrarSesionParams {
   monto_fisico_usd: number
+  /** Conteo fisico de efectivo en Bs declarado por el cajero */
+  monto_fisico_bs?: number
   observaciones_cierre?: string
   usuario_cierre_id: string
   /** Conteo fisico por metodo: keyed por metodo_cobro_id, valor en moneda nativa del metodo */
@@ -170,23 +176,34 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
 
 /**
  * Cierra una sesion de caja activa.
- * monto_sistema_usd = monto_apertura + pagos_efectivo_sesion + ingresos_manuales - egresos_manuales
- * diferencia_usd = monto_fisico_usd - monto_sistema_usd
+ *
+ * Calcula saldos esperados por divisa de forma independiente (USD y VES):
+ *   monto_sistema_X = apertura_X + pagos_efectivo_X + ingresos_manuales_X
+ *                     - egresos_manuales_X - vueltos_X
+ *   diferencia_X    = monto_fisico_X - monto_sistema_X
+ *
  * Tambien genera sesiones_caja_detalle con el desglose por metodo de cobro.
  */
 export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): Promise<void> {
-  const { monto_fisico_usd, observaciones_cierre, usuario_cierre_id, conteoFisicoPorMetodo, tasaDelDia } = params
+  const {
+    monto_fisico_usd,
+    monto_fisico_bs = 0,
+    observaciones_cierre,
+    usuario_cierre_id,
+    conteoFisicoPorMetodo,
+    tasaDelDia,
+  } = params
 
-  if (monto_fisico_usd < 0) {
-    throw new Error('El monto fisico no puede ser negativo')
-  }
+  if (monto_fisico_usd < 0) throw new Error('El monto fisico USD no puede ser negativo')
+  if (monto_fisico_bs < 0) throw new Error('El monto fisico Bs no puede ser negativo')
 
   const now = localNow()
 
   await db.writeTransaction(async (tx) => {
     // 1. Leer sesion y validar que este abierta
     const result = await tx.execute(
-      `SELECT status, monto_apertura_usd, empresa_id FROM sesiones_caja WHERE id = ?`,
+      `SELECT status, monto_apertura_usd, monto_apertura_bs, empresa_id
+       FROM sesiones_caja WHERE id = ?`,
       [id]
     )
 
@@ -197,6 +214,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     const sesion = result.rows.item(0) as {
       status: string
       monto_apertura_usd: string
+      monto_apertura_bs: string
       empresa_id: string
     }
 
@@ -204,52 +222,109 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       throw new Error('La sesion de caja ya fue cerrada')
     }
 
-    const montoApertura = parseFloat(sesion.monto_apertura_usd)
-    const empresaId = sesion.empresa_id
+    const aperturaUsd = parseFloat(sesion.monto_apertura_usd)
+    const aperturaBs  = parseFloat(sesion.monto_apertura_bs ?? '0')
+    const empresaId   = sesion.empresa_id
 
-    // 2. Calcular total de pagos en EFECTIVO de esta sesion
-    const pagosEfectivoResult = await tx.execute(
-      `SELECT COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total
+    // 2a. Pagos en EFECTIVO cobrados en USD (monto nativo = USD)
+    const pagosEfectivoUsdResult = await tx.execute(
+      `SELECT COALESCE(SUM(CAST(p.monto AS REAL)), 0) as total
        FROM pagos p
        JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
-       WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0`,
+       JOIN monedas mo ON p.moneda_id = mo.id
+       WHERE p.sesion_caja_id = ?
+         AND mc.tipo = 'EFECTIVO'
+         AND mo.codigo_iso = 'USD'
+         AND p.is_reversed = 0`,
       [id]
     )
-    const pagosEfectivo = Number(
-      (pagosEfectivoResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
+    const pagosEfectivoUsd = Number(
+      (pagosEfectivoUsdResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
     )
 
-    // 3. Calcular movimientos manuales de esta sesion
-    const movsManualResult = await tx.execute(
-      `SELECT origen, COALESCE(SUM(CAST(monto AS REAL)), 0) as total
-       FROM movimientos_metodo_cobro
-       WHERE sesion_caja_id = ?
-         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
-       GROUP BY origen`,
+    // 2b. Pagos en EFECTIVO cobrados en VES (monto nativo = Bs)
+    const pagosEfectivoBsResult = await tx.execute(
+      `SELECT COALESCE(SUM(CAST(p.monto AS REAL)), 0) as total
+       FROM pagos p
+       JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+       JOIN monedas mo ON p.moneda_id = mo.id
+       WHERE p.sesion_caja_id = ?
+         AND mc.tipo = 'EFECTIVO'
+         AND mo.codigo_iso = 'VES'
+         AND p.is_reversed = 0`,
+      [id]
+    )
+    const pagosEfectivoBs = Number(
+      (pagosEfectivoBsResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
+    )
+
+    // 3a. Movimientos manuales en USD (INGRESO_MANUAL, EGRESO_MANUAL, AVANCE, PRESTAMO, VUELTO)
+    const movsManualUsdResult = await tx.execute(
+      `SELECT mmc.origen, COALESCE(SUM(CAST(mmc.monto AS REAL)), 0) as total
+       FROM movimientos_metodo_cobro mmc
+       JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+       JOIN monedas mo ON mc.moneda_id = mo.id
+       WHERE mmc.sesion_caja_id = ?
+         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND mo.codigo_iso = 'USD'
+       GROUP BY mmc.origen`,
       [id]
     )
 
-    let ingresosManual = 0
-    let egresosManual = 0
-    if (movsManualResult.rows) {
-      for (let i = 0; i < movsManualResult.rows.length; i++) {
-        const row = movsManualResult.rows.item(i) as { origen: string; total: number }
+    let ingresosManualUsd = 0
+    let egresosManualUsd  = 0
+    if (movsManualUsdResult.rows) {
+      for (let i = 0; i < movsManualUsdResult.rows.length; i++) {
+        const row = movsManualUsdResult.rows.item(i) as { origen: string; total: number }
         if (row.origen === 'INGRESO_MANUAL') {
-          ingresosManual += row.total
+          ingresosManualUsd += row.total
         } else {
-          // EGRESO_MANUAL, AVANCE y PRESTAMO son salidas de efectivo
-          egresosManual += row.total
+          // EGRESO_MANUAL, AVANCE, PRESTAMO y VUELTO son salidas de efectivo
+          egresosManualUsd += row.total
         }
       }
     }
 
-    // 4. monto_sistema_usd = apertura + pagos_efectivo + ingresos_manual - egresos_manual
-    const montoSistemaUsd = Number(
-      (montoApertura + pagosEfectivo + ingresosManual - egresosManual).toFixed(2)
+    // 3b. Movimientos manuales en VES
+    const movsManualBsResult = await tx.execute(
+      `SELECT mmc.origen, COALESCE(SUM(CAST(mmc.monto AS REAL)), 0) as total
+       FROM movimientos_metodo_cobro mmc
+       JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+       JOIN monedas mo ON mc.moneda_id = mo.id
+       WHERE mmc.sesion_caja_id = ?
+         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND mo.codigo_iso = 'VES'
+       GROUP BY mmc.origen`,
+      [id]
     )
-    const diferenciaUsd = Number((monto_fisico_usd - montoSistemaUsd).toFixed(2))
 
-    // 5. Actualizar la sesion a CERRADA
+    let ingresosManualBs = 0
+    let egresosManualBs  = 0
+    if (movsManualBsResult.rows) {
+      for (let i = 0; i < movsManualBsResult.rows.length; i++) {
+        const row = movsManualBsResult.rows.item(i) as { origen: string; total: number }
+        if (row.origen === 'INGRESO_MANUAL') {
+          ingresosManualBs += row.total
+        } else {
+          egresosManualBs += row.total
+        }
+      }
+    }
+
+    // 4. Calcular saldos esperados por divisa
+    //    Formula: Apertura + Pagos_Efectivo + Ingresos_Manual - Egresos_Manual - Vueltos
+    //    (Los vueltos ya estan en egresosManual porque su tipo es EGRESO)
+    const montoSistemaUsd = Number(
+      (aperturaUsd + pagosEfectivoUsd + ingresosManualUsd - egresosManualUsd).toFixed(2)
+    )
+    const montoSistemaBs = Number(
+      (aperturaBs + pagosEfectivoBs + ingresosManualBs - egresosManualBs).toFixed(2)
+    )
+
+    const diferenciaUsd = Number((monto_fisico_usd - montoSistemaUsd).toFixed(2))
+    const diferenciaBs  = Number((monto_fisico_bs  - montoSistemaBs).toFixed(2))
+
+    // 5. Actualizar la sesion a CERRADA con saldos por divisa
     await tx.execute(
       `UPDATE sesiones_caja SET
          status = 'CERRADA',
@@ -258,6 +333,9 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
          monto_sistema_usd = ?,
          monto_fisico_usd = ?,
          diferencia_usd = ?,
+         monto_sistema_bs = ?,
+         monto_fisico_bs = ?,
+         diferencia_bs = ?,
          observaciones_cierre = ?,
          updated_at = ?
        WHERE id = ?`,
@@ -267,6 +345,9 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         montoSistemaUsd.toFixed(2),
         monto_fisico_usd.toFixed(2),
         diferenciaUsd.toFixed(2),
+        montoSistemaBs.toFixed(2),
+        monto_fisico_bs.toFixed(2),
+        diferenciaBs.toFixed(2),
         observaciones_cierre ?? null,
         now,
         id,
@@ -286,14 +367,14 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       [id]
     )
 
-    // Obtener movimientos manuales agrupados por metodo de cobro
+    // Movimientos manuales (incluyendo VUELTO) agrupados por metodo de cobro
     const movsManualPorMetodoResult = await tx.execute(
       `SELECT metodo_cobro_id,
               SUM(CASE WHEN tipo = 'INGRESO' THEN CAST(monto AS REAL) ELSE 0 END) as total_ingreso,
               SUM(CASE WHEN tipo = 'EGRESO' THEN CAST(monto AS REAL) ELSE 0 END) as total_egreso
        FROM movimientos_metodo_cobro
        WHERE sesion_caja_id = ?
-         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
        GROUP BY metodo_cobro_id`,
       [id]
     )
@@ -333,9 +414,10 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         if (conteoFisicoPorMetodo && row.metodo_cobro_id in conteoFisicoPorMetodo) {
           totalFisicoNativo = conteoFisicoPorMetodo[row.metodo_cobro_id]
           // Convertir a USD para calcular diferencia homogenea
-          const fisicoUsd = row.moneda_id !== 'USD' && (tasaDelDia ?? 0) > 0
-            ? totalFisicoNativo / tasaDelDia!
-            : totalFisicoNativo
+          const fisicoUsd =
+            row.moneda_id !== 'USD' && (tasaDelDia ?? 0) > 0
+              ? totalFisicoNativo / tasaDelDia!
+              : totalFisicoNativo
           diferenciaValor = Number((fisicoUsd - totalSistema).toFixed(2))
         }
 

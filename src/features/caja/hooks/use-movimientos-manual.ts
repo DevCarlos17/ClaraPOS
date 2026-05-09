@@ -14,6 +14,12 @@ export interface MovimientoManualParams {
   sesion_caja_id: string
   empresa_id: string
   usuario_id: string
+  /** Obligatorio cuando origen = 'PRESTAMO' */
+  autorizado_por_id?: string
+  /** Obligatorio cuando origen = 'PRESTAMO' */
+  destinatario_id?: string
+  /** Obligatorio cuando origen = 'AVANCE' */
+  referencia_pago_digital_id?: string
 }
 
 export interface MovimientoManualMultiParams {
@@ -33,8 +39,10 @@ export interface MovimientoManualMultiParams {
  * El trigger de PostgreSQL recalculara el saldo exacto al sincronizar.
  */
 export async function createMovimientoManual(params: MovimientoManualParams): Promise<void> {
-  const { metodo_cobro_id, origen, monto, concepto, sesion_caja_id, empresa_id, usuario_id } =
-    params
+  const {
+    metodo_cobro_id, origen, monto, concepto, sesion_caja_id, empresa_id, usuario_id,
+    autorizado_por_id, destinatario_id, referencia_pago_digital_id,
+  } = params
 
   if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
   if (!concepto.trim()) throw new Error('El concepto es requerido')
@@ -76,8 +84,10 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
     await tx.execute(
       `INSERT INTO movimientos_metodo_cobro
          (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
+          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id,
+          autorizado_por_id, destinatario_id, referencia_pago_digital_id,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         movId,
         empresa_id,
@@ -89,6 +99,9 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
         saldoNuevo.toFixed(2),
         concepto.trim(),
         sesion_caja_id,
+        autorizado_por_id ?? null,
+        destinatario_id ?? null,
+        referencia_pago_digital_id ?? null,
         now,
         now,
         usuario_id,

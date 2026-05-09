@@ -684,6 +684,104 @@ export function useSesionApertura(filters: CuadreFilters | null) {
   }
 }
 
+// ─── Saldo Esperado Efectivo Bimonetario ───────────────────
+/**
+ * Calcula el saldo esperado en caja para CADA divisa de forma independiente.
+ * Formula por divisa: apertura + pagos_efectivo + ingresos_manuales - egresos_manuales
+ * Los egresos incluyen vueltos (origen='VUELTO') porque se guardan en movimientos_metodo_cobro.
+ * Solo aplica cuando hay exactamente sesionCajaIds definidos en filters.
+ */
+export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  // Montos de apertura por divisa
+  const { data: dataApertura } = useQuery(
+    hasSession
+      ? `SELECT COALESCE(SUM(CAST(monto_apertura_usd AS REAL)), 0) as usd,
+                COALESCE(SUM(CAST(monto_apertura_bs AS REAL)), 0) as bs
+         FROM sesiones_caja WHERE id IN (${placeholders})`
+      : '',
+    hasSession ? filters!.sesionCajaIds : []
+  )
+
+  // Pagos efectivo USD (monto_usd = valor en USD)
+  const { data: dataPagosUsd } = useQuery(
+    hasSession
+      ? `SELECT COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE p.sesion_caja_id IN (${placeholders})
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'`
+      : '',
+    hasSession ? filters!.sesionCajaIds : []
+  )
+
+  // Pagos efectivo VES (monto = valor nativo en Bs.)
+  const { data: dataPagosVes } = useQuery(
+    hasSession
+      ? `SELECT COALESCE(SUM(CAST(p.monto AS REAL)), 0) as total
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE p.sesion_caja_id IN (${placeholders})
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'`
+      : '',
+    hasSession ? filters!.sesionCajaIds : []
+  )
+
+  // Movimientos manuales efectivo USD (incluye VUELTO como EGRESO)
+  const { data: dataMovUsd } = useQuery(
+    hasSession
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_ing,
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_egr
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mmc.sesion_caja_id IN (${placeholders})
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'`
+      : '',
+    hasSession ? filters!.sesionCajaIds : []
+  )
+
+  // Movimientos manuales efectivo VES (incluye VUELTO como EGRESO)
+  const { data: dataMovVes } = useQuery(
+    hasSession
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_ing,
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_egr
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mmc.sesion_caja_id IN (${placeholders})
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'`
+      : '',
+    hasSession ? filters!.sesionCajaIds : []
+  )
+
+  const aperRow = (dataApertura?.[0] ?? {}) as { usd: number; bs: number }
+  const movUsdRow = (dataMovUsd?.[0] ?? {}) as { total_ing: number; total_egr: number }
+  const movVesRow = (dataMovVes?.[0] ?? {}) as { total_ing: number; total_egr: number }
+
+  const saldoEsperadoUsd = Number((
+    Number(aperRow.usd ?? 0)
+    + Number((dataPagosUsd?.[0] as { total: number } | undefined)?.total ?? 0)
+    + Number(movUsdRow.total_ing ?? 0)
+    - Number(movUsdRow.total_egr ?? 0)
+  ).toFixed(2))
+
+  const saldoEsperadoBs = Number((
+    Number(aperRow.bs ?? 0)
+    + Number((dataPagosVes?.[0] as { total: number } | undefined)?.total ?? 0)
+    + Number(movVesRow.total_ing ?? 0)
+    - Number(movVesRow.total_egr ?? 0)
+  ).toFixed(2))
+
+  return { saldoEsperadoUsd, saldoEsperadoBs }
+}
+
 // ─── Facturas por Metodo de Pago ───────────────────────────
 
 export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre: string | null) {

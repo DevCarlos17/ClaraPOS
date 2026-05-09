@@ -60,6 +60,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // Totals lifted from CuadreConteoFisico
   const [totalSistemaUsd, setTotalSistemaUsd] = useState(0)
   const [totalFisicoUsd, setTotalFisicoUsd] = useState(0)
+  const [totalFisicoBs, setTotalFisicoBs] = useState(0)
 
   // Conteo fisico por metodo (keyed por metodo_cobro_id, valor nativo) para cerrarSesionCaja
   const [conteoFisicoRecord, setConteoFisicoRecord] = useState<Record<string, number>>({})
@@ -114,9 +115,10 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     setVerifiedAmountsByMetodoId(amounts)
   }, [])
 
-  const handleTotalesChange = useCallback((sistema: number, fisico: number) => {
+  const handleTotalesChange = useCallback((sistema: number, fisico: number, fisicoBs: number) => {
     setTotalSistemaUsd(sistema)
     setTotalFisicoUsd(fisico)
+    setTotalFisicoBs(fisicoBs)
   }, [])
 
   const handleConteoFisicoChange = useCallback((conteo: Record<string, number>, totalMetodos: number) => {
@@ -237,6 +239,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
       await cerrarSesionCaja(sesionAbiertaId, {
         monto_fisico_usd: totalFisicoUsd,
+        monto_fisico_bs: totalFisicoBs > 0 ? totalFisicoBs : undefined,
         observaciones_cierre: observacionesCierre,
         usuario_cierre_id: user.id,
         conteoFisicoPorMetodo: conteoFisicoRecord,
@@ -576,6 +579,12 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 <span className="text-muted-foreground">Total fisico contado (USD)</span>
                 <span className="font-mono font-bold tabular-nums">{formatUsd(totalFisicoUsd)}</span>
               </div>
+              {totalFisicoBs > 0.001 && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Total fisico contado (Bs.)</span>
+                  <span className="font-mono tabular-nums">{formatBs(totalFisicoBs)}</span>
+                </div>
+              )}
               <div className="flex items-center justify-between border-t pt-2">
                 <span className="font-semibold">Diferencia</span>
                 <div className="flex items-center gap-2">

@@ -740,6 +740,10 @@ const sesiones_caja = new Table(
     monto_sistema_usd: column.text,
     monto_fisico_usd: column.text,
     diferencia_usd: column.text,
+    // 0041: saldos VES independientes del USD
+    monto_sistema_bs: column.text,
+    monto_fisico_bs: column.text,
+    diferencia_bs: column.text,
     observaciones_cierre: column.text,
     status: column.text,
     created_at: column.text,
@@ -776,6 +780,10 @@ const movimientos_metodo_cobro = new Table(
     doc_origen_ref: column.text,
     concepto: column.text,
     sesion_caja_id: column.text,
+    // 0041: trazabilidad para AVANCE y PRESTAMO
+    autorizado_por_id: column.text,
+    destinatario_id: column.text,
+    referencia_pago_digital_id: column.text,
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,

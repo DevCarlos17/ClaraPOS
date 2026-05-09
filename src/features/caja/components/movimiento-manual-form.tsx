@@ -35,6 +35,19 @@ const ORIGENES_SOLO_EFECTIVO: OrigenManual[] = ['AVANCE', 'PRESTAMO']
 
 // ─── Componente de formulario ─────────────────────────────────
 
+// ─── Tipos auxiliares para queries ───────────────────────────
+
+type PagoDigitalRow = {
+  id: string
+  metodo_nombre: string
+  monto_usd: number
+  referencia: string | null
+}
+
+type UsuarioRow = { id: string; nombre: string }
+
+// ─── Componente de formulario ─────────────────────────────────
+
 function FormMovimientoManual({
   onClose,
   sesionCajaId,
@@ -54,6 +67,18 @@ function FormMovimientoManual({
   const [concepto, setConcepto] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+
+  // Anti-fraude: campos adicionales por origen
+  const [supervisorId, setSupervisorId] = useState('')
+  const [destinatarioId, setDestinatarioId] = useState('')
+  const [pagoDigitalId, setPagoDigitalId] = useState('')
+
+  // Resetear campos de trazabilidad al cambiar origen
+  useEffect(() => {
+    setSupervisorId('')
+    setDestinatarioId('')
+    setPagoDigitalId('')
+  }, [origen])
 
   // Cuando cambia el origen, filtrar metodos segun aplique
   const soloEfectivo = ORIGENES_SOLO_EFECTIVO.includes(origen)
@@ -76,6 +101,40 @@ function FormMovimientoManual({
     ? parseFloat((saldoData[0] as { saldo_actual: string }).saldo_actual) || 0
     : 0
 
+  // AVANCE: pagos digitales (no efectivo) de la sesion activa para referenciar
+  const { data: pagosDigitalesData } = useQuery(
+    origen === 'AVANCE' && sesionCajaId
+      ? `SELECT p.id,
+                mp.nombre as metodo_nombre,
+                CAST(p.monto_usd AS REAL) as monto_usd,
+                p.referencia
+         FROM pagos p
+         JOIN metodos_cobro mp ON p.metodo_cobro_id = mp.id
+         WHERE p.sesion_caja_id = ? AND mp.tipo != 'EFECTIVO' AND p.is_reversed = 0
+         ORDER BY p.fecha DESC LIMIT 50`
+      : '',
+    origen === 'AVANCE' && sesionCajaId ? [sesionCajaId] : []
+  )
+  const pagosDigitales = (pagosDigitalesData ?? []) as PagoDigitalRow[]
+
+  // PRESTAMO: supervisores de la empresa (level <= 2)
+  const { data: supervisoresData } = useQuery(
+    origen === 'PRESTAMO' && user?.empresa_id
+      ? `SELECT id, nombre FROM usuarios WHERE empresa_id = ? AND level <= 2 AND activo = 1 ORDER BY nombre`
+      : '',
+    origen === 'PRESTAMO' && user?.empresa_id ? [user.empresa_id] : []
+  )
+  const supervisores = (supervisoresData ?? []) as UsuarioRow[]
+
+  // PRESTAMO: todos los empleados activos (posibles destinatarios)
+  const { data: empleadosData } = useQuery(
+    origen === 'PRESTAMO' && user?.empresa_id
+      ? `SELECT id, nombre FROM usuarios WHERE empresa_id = ? AND activo = 1 ORDER BY nombre`
+      : '',
+    origen === 'PRESTAMO' && user?.empresa_id ? [user.empresa_id] : []
+  )
+  const empleados = (empleadosData ?? []) as UsuarioRow[]
+
   useEffect(() => {
     // Si el metodo actual no esta en la lista filtrada, limpiar
     if (metodoCobroId && !metodosFiltrados.find((m) => m.id === metodoCobroId)) {
@@ -97,6 +156,9 @@ function FormMovimientoManual({
     setMonto('')
     setPorcentaje('')
     setConcepto('')
+    setSupervisorId('')
+    setDestinatarioId('')
+    setPagoDigitalId('')
     setErrors({})
   }
 
@@ -124,6 +186,31 @@ function FormMovimientoManual({
       return
     }
 
+    // Validaciones anti-fraude por origen
+    if (origen === 'AVANCE') {
+      if (!pagoDigitalId) {
+        setErrors({ pagoDigitalId: 'Seleccione el pago digital que origina este avance' })
+        return
+      }
+      const pagoRef = pagosDigitales.find((p) => p.id === pagoDigitalId)
+      if (pagoRef && pagoRef.monto_usd < parsed.data.monto) {
+        setErrors({
+          pagoDigitalId: `El pago digital ($${pagoRef.monto_usd.toFixed(2)}) no cubre el avance ($${parsed.data.monto.toFixed(2)})`,
+        })
+        return
+      }
+    }
+
+    if (origen === 'PRESTAMO') {
+      const newErrors: Record<string, string> = {}
+      if (!supervisorId) newErrors.supervisorId = 'Seleccione el supervisor que autoriza'
+      if (!destinatarioId) newErrors.destinatarioId = 'Seleccione el destinatario del prestamo'
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors)
+        return
+      }
+    }
+
     if (!user) {
       toast.error('No se pudo identificar el usuario')
       return
@@ -139,6 +226,9 @@ function FormMovimientoManual({
         sesion_caja_id: sesionCajaId,
         empresa_id: user.empresa_id!,
         usuario_id: user.id,
+        autorizado_por_id: supervisorId || undefined,
+        destinatario_id: destinatarioId || undefined,
+        referencia_pago_digital_id: pagoDigitalId || undefined,
       })
       toast.success(`${ORIGEN_LABELS[origen]} registrado exitosamente`)
       resetFields()
@@ -200,6 +290,83 @@ function FormMovimientoManual({
           <p className="text-red-500 text-xs mt-1">{errors.metodo_cobro_id}</p>
         )}
       </div>
+
+      {/* AVANCE: pago digital de referencia */}
+      {origen === 'AVANCE' && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Pago digital de referencia *
+          </label>
+          <p className="text-xs text-gray-500 mb-1.5">
+            Seleccione el Punto de Venta o Transferencia que origina este avance
+          </p>
+          {pagosDigitales.length === 0 ? (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+              No hay pagos digitales registrados en esta sesion
+            </p>
+          ) : (
+            <NativeSelect
+              value={pagoDigitalId}
+              onChange={(e) => setPagoDigitalId(e.target.value)}
+            >
+              <option value="">— Seleccionar pago —</option>
+              {pagosDigitales.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.metodo_nombre} — ${p.monto_usd.toFixed(2)} USD
+                  {p.referencia ? ` — Ref: ${p.referencia}` : ''}
+                </option>
+              ))}
+            </NativeSelect>
+          )}
+          {errors.pagoDigitalId && (
+            <p className="text-red-500 text-xs mt-1">{errors.pagoDigitalId}</p>
+          )}
+        </div>
+      )}
+
+      {/* PRESTAMO: supervisor que autoriza + destinatario */}
+      {origen === 'PRESTAMO' && (
+        <>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Supervisor que autoriza *
+            </label>
+            <NativeSelect
+              value={supervisorId}
+              onChange={(e) => setSupervisorId(e.target.value)}
+              disabled={supervisores.length === 0}
+            >
+              <option value="">
+                {supervisores.length === 0 ? 'Sin supervisores disponibles' : '— Seleccionar supervisor —'}
+              </option>
+              {supervisores.map((s) => (
+                <option key={s.id} value={s.id}>{s.nombre}</option>
+              ))}
+            </NativeSelect>
+            {errors.supervisorId && (
+              <p className="text-red-500 text-xs mt-1">{errors.supervisorId}</p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Destinatario del prestamo *
+            </label>
+            <NativeSelect
+              value={destinatarioId}
+              onChange={(e) => setDestinatarioId(e.target.value)}
+              disabled={empleados.length === 0}
+            >
+              <option value="">— Seleccionar destinatario —</option>
+              {empleados.map((u) => (
+                <option key={u.id} value={u.id}>{u.nombre}</option>
+              ))}
+            </NativeSelect>
+            {errors.destinatarioId && (
+              <p className="text-red-500 text-xs mt-1">{errors.destinatarioId}</p>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Porcentaje para avance (calcula el monto automaticamente) */}
       {origen === 'AVANCE' && metodoCobroId && (

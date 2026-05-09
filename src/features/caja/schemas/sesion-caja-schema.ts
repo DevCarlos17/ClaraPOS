@@ -20,8 +20,13 @@ export type SesionCajaAperturaValues = z.infer<typeof sesionCajaAperturaSchema>
 
 export const sesionCajaCierreSchema = z.object({
   monto_fisico_usd: z
-    .number({ message: 'El monto fisico es requerido' })
+    .number({ message: 'El monto fisico USD es requerido' })
     .min(0, 'El monto no puede ser negativo'),
+  monto_fisico_bs: z
+    .number()
+    .min(0, 'El monto no puede ser negativo')
+    .optional()
+    .default(0),
   observaciones_cierre: z.string().optional(),
 })
 

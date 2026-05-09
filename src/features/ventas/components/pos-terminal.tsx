@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@powersync/react'
-import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, CreditCard, ShoppingCart, Tag, X } from '@phosphor-icons/react'
+import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, ShoppingCart, Tag, X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
@@ -12,9 +12,9 @@ import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-paymen
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
-import { crearVenta, validarStockServidor, type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
+import { type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
-import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
+import type { LineaVentaForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import { ClienteSelector, type ClienteSelectorHandle } from './cliente-selector'
 import { ProductoBuscador, type ProductoBuscadorHandle } from './producto-buscador'
@@ -24,13 +24,13 @@ import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
 import { NuevoClienteRapidoModal } from './nuevo-cliente-rapido-modal'
 import { VentaExitosaModal, type VentaExitosaData } from './venta-exitosa-modal'
-import { NativeSelect } from '@/components/ui/native-select'
 import { AperturaSesionPosModal } from '@/features/caja/components/apertura-sesion-pos-modal'
 import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
 import { IngresoRetiroModal } from '@/features/caja/components/ingreso-retiro-modal'
 import { AvanceModal, type AvanceAplicado } from '@/features/caja/components/avance-modal'
 import { PrestamoModal, type PrestamoAplicado } from '@/features/caja/components/prestamo-modal'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
+import { CobroModal } from './cobro-modal'
 
 export function PosTerminal() {
   const { tasaValor, isLoading: tasaLoading } = useTasaActual()
@@ -67,14 +67,6 @@ export function PosTerminal() {
   const [lineas, setLineas] = useState<LineaVentaForm[]>([])
   const [cargosEspeciales, setCargosEspeciales] = useState<CargoEspecial[]>([])
 
-  // Pagos
-  const [pagos, setPagos] = useState<PagoEntryForm[]>([])
-  const [metodoId, setMetodoId] = useState('')
-  const [monto, setMonto] = useState('')
-  const [referencia, setReferencia] = useState('')
-
-  const [submitting, setSubmitting] = useState(false)
-
   // UI state
   const [showEsperaModal, setShowEsperaModal] = useState(false)
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false)
@@ -93,16 +85,15 @@ export function PosTerminal() {
   const [showPrestamoModal, setShowPrestamoModal] = useState(false)
   const [showCierrePosPin, setShowCierrePosPin] = useState(false)
   const [showCierrePos, setShowCierrePos] = useState(false)
+  const [showCobroModal, setShowCobroModal] = useState(false)
   const [ventaExitosa, setVentaExitosa] = useState<VentaExitosaData | null>(null)
 
   // Refs for navigation blocker (always captures latest state)
   const lineasRef = useRef(lineas)
-  const pagosRef = useRef(pagos)
   const clienteIdRef = useRef(clienteId)
   const clienteNombreRef = useRef(clienteNombre)
   const cargosEspecialesRef = useRef(cargosEspeciales)
   lineasRef.current = lineas
-  pagosRef.current = pagos
   clienteIdRef.current = clienteId
   clienteNombreRef.current = clienteNombre
   cargosEspecialesRef.current = cargosEspeciales
@@ -165,45 +156,10 @@ export function PosTerminal() {
     .filter((e) => efectivoBsMetodo != null && e.metodo_cobro_id === efectivoBsMetodo.id)
     .reduce((sum, e) => sum + e.monto, 0)
 
-  // Calculos de pago
-  const selectedMetodo = metodos.find((m) => m.id === metodoId)
-  const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
-
   // --- Descuento comercial / cortesia ---
   const [descuentoBs, setDescuentoBs] = useState(0)
   const [descuentoMotivo, setDescuentoMotivo] = useState('')
   const [showDescuento, setShowDescuento] = useState(false)
-
-  // Ancla en Bs: los pagos en Bs se mantienen exactos; los pagos en USD se convierten a Bs.
-  // Nunca al reves (Bs -> USD -> Bs acumula error de redondeo en cada conversion).
-  const totalAbonado_BsNativo = pagos
-    .filter((p) => p.moneda === 'BS')
-    .reduce((sum, p) => sum + p.monto, 0)
-  const totalAbonado_UsdNativo = pagos
-    .filter((p) => p.moneda === 'USD')
-    .reduce((sum, p) => sum + p.monto, 0)
-
-  // Referencia USD para mostrar en pantalla (no se usa como ancla de calculo)
-  const totalAbonadoUsd = Number(
-    (totalAbonado_UsdNativo + totalAbonado_BsNativo / tasaValor).toFixed(2)
-  )
-
-  // Pendiente real en Bs sin redondeo intermedio (4+ decimales de precision).
-  // El descuentoBs reduce el monto que el cliente debe pagar.
-  const pendienteBs4 = Math.max(
-    0,
-    totalUsd * tasaValor - descuentoBs - totalAbonado_BsNativo - totalAbonado_UsdNativo * tasaValor
-  )
-  const pendienteBs = Number(pendienteBs4.toFixed(2))
-  const pendienteUsd = Number((pendienteBs4 / tasaValor).toFixed(2))
-
-  // Umbral de diferencial cambiario: equivalente a $0.01 USD en Bs
-  const umbralDiferencialBs = tasaValor * 0.01
-  // Diferencial puro de redondeo de tasa: pendiente existe pero es menor al umbral
-  const esDiferencialRedondeo = pendienteBs4 > 0.001 && pendienteBs4 <= umbralDiferencialBs
-
-  // CONTADO si esta totalmente pagado O si el residuo es diferencial de redondeo
-  const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteBs4 <= umbralDiferencialBs ? 'CONTADO' : 'CREDITO'
 
   // --- Auto-focus en buscador cuando carga el POS ---
   useEffect(() => {
@@ -236,7 +192,6 @@ export function PosTerminal() {
       setClienteId(borrador.clienteId)
       setClienteNombre(borrador.clienteNombre === 'Sin cliente' ? '' : borrador.clienteNombre)
       setLineas(borrador.lineas)
-      setPagos(borrador.pagos)
       setCargosEspeciales(borrador.cargosEspeciales ?? [])
       toast.info('Se restauro tu factura en proceso')
     }
@@ -246,12 +201,12 @@ export function PosTerminal() {
   // --- Guardar borrador en cada cambio significativo ---
   useEffect(() => {
     if (!user?.empresa_id) return
-    if (lineas.length === 0 && pagos.length === 0 && cargosEspeciales.length === 0) return
+    if (lineas.length === 0 && cargosEspeciales.length === 0) return
     esperaStore.guardarBorrador({
       clienteId,
       clienteNombre: clienteNombre || 'Sin cliente',
       lineas: [...lineas],
-      pagos: [...pagos],
+      pagos: [],
       cargosEspeciales: [...cargosEspeciales],
       tasa: tasaValor,
       usuarioId: user.id,
@@ -259,13 +214,12 @@ export function PosTerminal() {
       ultimaActualizacion: localNow(),
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lineas, pagos, cargosEspeciales, clienteId, clienteNombre])
+  }, [lineas, cargosEspeciales, clienteId, clienteNombre])
 
   // --- Bloqueador de navegacion: auto-guarda en Facturas Guardadas antes de navegar ---
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   useBlocker(async (): Promise<any> => {
     const lineasActuales = lineasRef.current
-    const pagosActuales = pagosRef.current
     const cargosActuales = cargosEspecialesRef.current
     if ((lineasActuales.length > 0 || cargosActuales.length > 0) && user) {
       const totalLineasUsd = lineasActuales.reduce((s, l) => s + l.cantidad * l.precio_unitario_usd, 0)
@@ -276,7 +230,7 @@ export function PosTerminal() {
         clienteId: clienteIdRef.current,
         clienteNombre: clienteNombreRef.current || 'Sin cliente',
         lineas: [...lineasActuales],
-        pagos: [...pagosActuales],
+        pagos: [],
         cargosEspeciales: [...cargosActuales],
         tasa: tasaValor,
         totalUsd: totalUsdFactura,
@@ -291,7 +245,7 @@ export function PosTerminal() {
       toast.info('Factura guardada en "Facturas Guardadas". Puedes recuperarla luego.')
     }
     return false // Permitir la navegacion
-  }, lineas.length > 0 || pagos.length > 0 || cargosEspeciales.length > 0)
+  }, lineas.length > 0 || cargosEspeciales.length > 0)
 
   // --- Accion protegida ---
   const handleProtectedAction = (
@@ -377,53 +331,27 @@ export function PosTerminal() {
     )
   }
 
-  const handleAddPago = () => {
-    const montoNum = parseFloat(monto)
-    if (!metodoId || isNaN(montoNum) || montoNum <= 0 || !monedaMetodo) return
-    setPagos((prev) => [
-      ...prev,
-      {
-        metodo_cobro_id: metodoId,
-        metodo_nombre: selectedMetodo!.nombre,
-        moneda: monedaMetodo,
-        monto: montoNum,
-        referencia: referencia.trim() || undefined,
-      },
-    ])
-    setMetodoId('')
-    setMonto('')
-    setReferencia('')
-  }
-
-  const handleRemovePago = (index: number) => {
-    setPagos((prev) => prev.filter((_, i) => i !== index))
-  }
-
   const resetForm = () => {
     setClienteId(null)
     setClienteNombre('')
     setClienteData(null)
     setLineas([])
-    setPagos([])
     setCargosEspeciales([])
     setDescuentoBs(0)
     setDescuentoMotivo('')
     setShowDescuento(false)
-    setMetodoId('')
-    setMonto('')
-    setReferencia('')
     esperaStore.limpiarBorrador()
   }
 
   const handleCancelar = () => {
-    if (lineas.length === 0 && pagos.length === 0 && cargosEspeciales.length === 0) {
+    if (lineas.length === 0 && cargosEspeciales.length === 0) {
       resetForm()
       return
     }
     handleProtectedAction(
       resetForm,
       'Cancelar venta',
-      '¿Seguro que deseas cancelar esta venta? Se perderan todos los articulos y pagos registrados.'
+      '¿Seguro que deseas cancelar esta venta? Se perderan todos los articulos registrados.'
     )
   }
 
@@ -439,7 +367,7 @@ export function PosTerminal() {
       clienteId,
       clienteNombre: clienteNombre || 'Sin cliente',
       lineas: [...lineas],
-      pagos: [...pagos],
+      pagos: [],
       cargosEspeciales: [...cargosEspeciales],
       tasa: tasaValor,
       totalUsd,
@@ -456,7 +384,7 @@ export function PosTerminal() {
   }
 
   const handleRecuperarEspera = (factura: FacturaEnEspera) => {
-    if (lineas.length > 0 || pagos.length > 0) {
+    if (lineas.length > 0 || cargosEspeciales.length > 0) {
       toast.error('Hay una venta en curso. Cancela o guarda primero.')
       return
     }
@@ -467,12 +395,11 @@ export function PosTerminal() {
     setClienteId(recuperada.clienteId)
     setClienteNombre(recuperada.clienteNombre === 'Sin cliente' ? '' : recuperada.clienteNombre)
     setLineas(recuperada.lineas)
-    setPagos(recuperada.pagos)
     setCargosEspeciales(recuperada.cargosEspeciales ?? [])
     toast.success('Factura recuperada')
   }
 
-  const handleConfirmVenta = async () => {
+  const handleAbrirCobro = () => {
     if (!clienteId) {
       toast.error('Selecciona un cliente')
       return
@@ -486,35 +413,7 @@ export function PosTerminal() {
       return
     }
 
-    // Validacion de limite de credito
-    if (tipoDetectado === 'CREDITO' && clienteData) {
-      const limite = parseFloat(clienteData.limite_credito_usd)
-      const saldoActual = parseFloat(clienteData.saldo_actual)
-      if (limite <= 0) {
-        toast.error('Este cliente no tiene credito asignado. Registra un pago para facturar a contado.')
-        return
-      }
-      const creditoDisponible = Math.max(0, limite - saldoActual)
-      if (pendienteUsd > creditoDisponible + 0.01) {
-        toast.error(
-          `El monto a credito (${formatUsd(pendienteUsd)}) excede el credito disponible (${formatUsd(creditoDisponible)})`
-        )
-        return
-      }
-    }
-
-    // Validacion: avances no pueden quedar pendientes (no se aceptan a credito)
-    const totalAvancesUsd = cargosEspeciales
-      .filter((c) => c.tipo === 'AVANCE')
-      .reduce((sum, c) => sum + c.montoCargoUsd, 0)
-    if (totalAvancesUsd > 0.01 && totalAbonadoUsd < totalAvancesUsd - 0.01) {
-      toast.error(
-        `El avance de efectivo debe pagarse en su totalidad. Registra un pago de al menos ${formatUsd(totalAvancesUsd)}.`
-      )
-      return
-    }
-
-    // Validacion de stock negativo
+    // Validacion de stock negativo (sin permiso de override)
     const canOverrideStock = hasPermission(PERMISSIONS.SALES_OVERRIDE_STOCK)
     const productosConStockInsuficiente = lineas.filter(
       (l) => l.tipo === 'P' && l.cantidad > l.stock_actual
@@ -525,67 +424,7 @@ export function PosTerminal() {
       return
     }
 
-    if (!user) return
-
-    setSubmitting(true)
-    try {
-      // Validar stock contra el servidor (PostgreSQL) antes de escribir localmente.
-      // Esto previene que dos cajas descuenten el mismo stock simultaneamente.
-      // Si hay error de red (offline), la funcion no lanza excepcion y la venta
-      // continua — el trigger en PostgreSQL es la red de seguridad final.
-      await validarStockServidor(
-        lineas
-          .filter((l) => l.tipo === 'P')
-          .map((l) => ({
-            producto_id: l.producto_id,
-            cantidad: l.cantidad,
-            nombre: l.nombre,
-            tipo: l.tipo,
-          })),
-        user.empresa_id!,
-      )
-
-      const result = await crearVenta({
-        cliente_id: clienteId,
-        tipo: tipoDetectado,
-        tasa: tasaValor,
-        lineas: lineas.map((l) => ({
-          producto_id: l.producto_id,
-          cantidad: l.cantidad,
-          precio_unitario_usd: l.precio_unitario_usd,
-          tipo_impuesto: (l.tipo_impuesto as string | undefined) ?? 'Exento',
-          impuesto_pct: (l.impuesto_pct as number | undefined) ?? 0,
-        })),
-        pagos: pagos.map((p) => ({
-          metodo_cobro_id: p.metodo_cobro_id,
-          moneda: p.moneda,
-          monto: p.monto,
-          referencia: p.referencia,
-        })),
-        usuario_id: user.id,
-        empresa_id: user.empresa_id!,
-        sesion_caja_id: sesion?.id ?? null,
-        cargosEspeciales,
-        descuentoUsd: descuentoBs > 0 ? Number((descuentoBs / tasaValor).toFixed(4)) : 0,
-        descuentoMotivo: descuentoMotivo.trim() || undefined,
-      })
-
-      setVentaExitosa({
-        nroFactura: result.nroFactura,
-        clienteNombre: clienteNombre || 'Sin cliente',
-        totalUsd,
-        totalBs,
-        tipo: tipoDetectado,
-        pagos: [...pagos],
-        tasa: tasaValor,
-        cargosEspeciales: [...cargosEspeciales],
-      })
-      resetForm()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Error al crear la venta')
-    } finally {
-      setSubmitting(false)
-    }
+    setShowCobroModal(true)
   }
 
   // --- Caja desde POS ---
@@ -609,15 +448,10 @@ export function PosTerminal() {
     }
   }
 
-  // ---- Validaciones para el boton confirmar ----
+  // ---- Validaciones para el boton Cobrar ----
   const tieneLineasValidas = lineas.length > 0 && lineas.every((l) => l.cantidad > 0)
   const tieneContenido = tieneLineasValidas || cargosEspeciales.length > 0
-  const puedeConfirmar = !submitting && !!clienteId && tieneContenido
-  const textoConfirmar = submitting
-    ? 'Procesando...'
-    : tipoDetectado === 'CREDITO'
-    ? 'Factura Credito'
-    : 'Confirmar'
+  const puedeAbrir = !!clienteId && tieneContenido
 
   // ---- Handlers de cargos especiales ----
   const handleAvanceAplicado = (avance: AvanceAplicado) => {
@@ -661,7 +495,7 @@ export function PosTerminal() {
     const anyModalOpen =
       showConfirm || showSupervisorPin || showEsperaModal || showNuevoClienteModal ||
       showIngresoModal || showRetiroModal || showAvanceModal || showPrestamoModal ||
-      showCierrePosPin || showCierrePos || !!ventaExitosa
+      showCierrePosPin || showCierrePos || !!ventaExitosa || showCobroModal
     if (anyModalOpen) return
 
     const isInInput =
@@ -704,7 +538,7 @@ export function PosTerminal() {
         break
       case 'F12':
         e.preventDefault()
-        handleConfirmVenta()
+        handleAbrirCobro()
         break
       case 'Escape':
         if (!isInInput) {
@@ -713,10 +547,6 @@ export function PosTerminal() {
         }
         break
       default:
-        if (e.altKey && e.key.toLowerCase() === 'a') {
-          e.preventDefault()
-          handleAddPago()
-        }
         break
     }
   }
@@ -802,10 +632,7 @@ export function PosTerminal() {
             {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
               <div className="shrink-0 flex items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
                 <span>Credito:</span>
-                <span className={`font-semibold ${
-                  Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)) < pendienteUsd - 0.01
-                    ? 'text-destructive' : 'text-green-600'
-                }`}>
+                <span className="font-semibold text-green-600">
                   {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
                 </span>
                 <span>/ {formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
@@ -1017,110 +844,25 @@ export function PosTerminal() {
               </div>
             )}
 
-            {/* Status summary */}
-            {(pagos.length > 0 || lineas.length > 0 || cargosEspeciales.length > 0) && (
-              <div className="px-4 py-2.5 border-b space-y-1.5 shrink-0">
-                {pagos.length > 0 && (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Abonado</span>
-                    <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
+            {/* Indicador de accion pendiente */}
+            <div className="flex-1 flex flex-col items-center justify-center gap-3 p-4 text-center">
+              {tieneContenido && clienteId ? (
+                <>
+                  <div className="rounded-full bg-primary/10 p-3">
+                    <ShoppingCart size={20} className="text-primary" />
                   </div>
-                )}
-                {/* Pendiente normal (mayor al umbral de redondeo) */}
-                {!esDiferencialRedondeo && (
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Pendiente</span>
-                    <span className={`font-medium ${pendienteBs4 > umbralDiferencialBs ? 'text-orange-600' : 'text-green-600'}`}>
-                      {formatUsd(pendienteUsd)} / {formatBs(pendienteBs)}
-                    </span>
+                  <div>
+                    <p className="text-sm font-medium">{formatBs(totalBs)}</p>
+                    <p className="text-xs text-muted-foreground">{formatUsd(totalUsd)} · {totalItems} item{totalItems !== 1 ? 's' : ''}</p>
                   </div>
-                )}
-                {/* Diferencial cambiario por redondeo de tasa */}
-                {esDiferencialRedondeo && (
-                  <div className="flex items-center justify-between text-xs rounded bg-amber-50 border border-amber-200 px-2 py-1">
-                    <span className="text-amber-700 font-medium">Dif. cambiario</span>
-                    <span className="font-mono font-semibold text-amber-700">{formatBs(pendienteBs)}</span>
-                  </div>
-                )}
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-muted-foreground">Estado</span>
-                  <span className={`font-semibold ${tipoDetectado === 'CREDITO' ? 'text-orange-600' : 'text-green-600'}`}>
-                    {tipoDetectado}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {/* Payment form */}
-            <div className="p-3 space-y-2 shrink-0 border-b">
-              <div>
-                <label className="text-xs text-muted-foreground">Metodo</label>
-                <NativeSelect value={metodoId} onChange={(e) => setMetodoId(e.target.value)}>
-                  <option value="">Seleccionar...</option>
-                  {metodos.map((m) => (
-                    <option key={m.id} value={m.id}>{m.nombre} ({m.moneda})</option>
-                  ))}
-                </NativeSelect>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground">
-                  Monto{monedaMetodo ? ` (${monedaMetodo})` : ''}
-                </label>
-                <input
-                  type="number" min="0.01" step="0.01" value={monto}
-                  onChange={(e) => setMonto(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === '-') e.preventDefault() }}
-                  placeholder="0.00"
-                  className="w-full rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-              </div>
-              <div className="flex gap-2">
-                <input
-                  type="text" value={referencia} onChange={(e) => setReferencia(e.target.value)}
-                  placeholder="Referencia (opcional)" autoComplete="one-time-code"
-                  className="flex-1 rounded border bg-white px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                />
-                <Button type="button" variant="outline" size="sm"
-                  onClick={handleAddPago}
-                  disabled={!metodoId || !monto || parseFloat(monto) <= 0}>
-                  <Plus size={14} className="mr-1" />Agregar
-                  <kbd className="ml-1 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Alt+A</kbd>
-                </Button>
-              </div>
-            </div>
-
-            {/* Payment list (scrollable) */}
-            <div className="flex-1 overflow-y-auto min-h-0 divide-y">
-              {pagos.length > 0 ? (
-                pagos.map((p, i) => {
-                  const equiv = p.moneda === 'BS' ? Number((p.monto / tasaValor).toFixed(2)) : p.monto
-                  return (
-                    <div key={i} className="flex items-center justify-between px-3 py-2.5 hover:bg-muted/30">
-                      <div className="min-w-0">
-                        <span className="text-xs font-medium">{p.metodo_nombre}</span>
-                        {p.referencia && (
-                          <span className="ml-1.5 text-[10px] text-muted-foreground">Ref: {p.referencia}</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <span className="text-xs">
-                          {p.moneda === 'BS' ? formatBs(p.monto) : formatUsd(p.monto)}
-                          {p.moneda === 'BS' && (
-                            <span className="ml-1 text-[10px] text-muted-foreground">({formatUsd(equiv)})</span>
-                          )}
-                        </span>
-                        <button type="button" onClick={() => handleRemovePago(i)}
-                          className="rounded p-0.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
-                          <Trash size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })
+                  <p className="text-xs text-muted-foreground">
+                    Presiona <strong>Cobrar</strong> o <kbd className="rounded border bg-muted px-1 py-px font-mono leading-none">F12</kbd> para registrar el pago
+                  </p>
+                </>
               ) : (
-                <div className="flex items-center justify-center h-full text-xs text-muted-foreground p-4 text-center">
-                  Sin pagos registrados
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  Agrega productos y selecciona un cliente para cobrar
+                </p>
               )}
             </div>
           </div>
@@ -1130,7 +872,7 @@ export function PosTerminal() {
         <div className="shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex items-center gap-2">
           <Button variant="outline" size="sm"
             onClick={handleGuardarFactura}
-            disabled={submitting || (lineas.length === 0 && cargosEspeciales.length === 0)}>
+            disabled={lineas.length === 0 && cargosEspeciales.length === 0}>
             <FloppyDisk size={14} className="mr-1.5" />Guardar
             <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
           </Button>
@@ -1141,15 +883,12 @@ export function PosTerminal() {
             <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F10</kbd>
           </Button>
           <div className="flex-1" />
-          <Button variant="outline" size="sm" onClick={handleCancelar} disabled={submitting}>
+          <Button variant="outline" size="sm" onClick={handleCancelar}>
             Cancelar<kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
           </Button>
-          <Button size="sm" onClick={handleConfirmVenta} disabled={!puedeConfirmar}
-            className={`${tipoDetectado === 'CREDITO' && tieneContenido && clienteId ? 'bg-orange-600 hover:bg-orange-700' : ''}`}>
-            {tipoDetectado === 'CREDITO' && tieneContenido && clienteId
-              ? <CreditCard size={14} className="mr-1.5" />
-              : <ShoppingCart size={14} className="mr-1.5" />}
-            {textoConfirmar}
+          <Button size="sm" onClick={handleAbrirCobro} disabled={!puedeAbrir}>
+            <ShoppingCart size={14} className="mr-1.5" />
+            Cobrar
             <kbd className="ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F12</kbd>
           </Button>
         </div>
@@ -1204,6 +943,30 @@ export function PosTerminal() {
         isOpen={showNuevoClienteModal}
         onClose={() => setShowNuevoClienteModal(false)}
         onCreado={handleNuevoClienteCreado}
+      />
+
+      {/* Modal de cobro split-tender */}
+      <CobroModal
+        isOpen={showCobroModal}
+        onClose={() => setShowCobroModal(false)}
+        tasa={tasaValor}
+        totalBrutoUsd={totalUsd}
+        descuentoBs={descuentoBs}
+        descuentoMotivo={descuentoMotivo}
+        clienteId={clienteId ?? ''}
+        clienteNombre={clienteNombre || 'Sin cliente'}
+        clienteData={clienteData}
+        lineas={lineas}
+        cargosEspeciales={cargosEspeciales}
+        sesionCajaId={sesion?.id ?? null}
+        usuarioId={user?.id ?? ''}
+        empresaId={user?.empresa_id ?? ''}
+        metodos={metodos}
+        onSuccess={(data) => {
+          setVentaExitosa(data)
+          setShowCobroModal(false)
+          resetForm()
+        }}
       />
 
       {/* Modales de caja desde POS */}

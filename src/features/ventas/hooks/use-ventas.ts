@@ -73,6 +73,14 @@ export interface PagoEntry {
   referencia?: string
 }
 
+export interface VueltoParam {
+  metodo_cobro_id: string
+  moneda: 'USD' | 'BS'
+  /** Monto en la moneda nativa del metodo (no convertido a USD).
+   *  Esto permite que cerrarSesionCaja sume por divisa correctamente. */
+  monto: number
+}
+
 export interface CargoEspecial {
   tipo: 'AVANCE' | 'PRESTAMO'
   descripcion: string
@@ -99,6 +107,8 @@ export interface CrearVentaParams {
   descuentoUsd?: number
   /** Motivo del descuento (cortesia, ajuste, etc.) */
   descuentoMotivo?: string
+  /** Vuelto a entregar al cliente cuando el pago excede el total */
+  vuelto?: VueltoParam
 }
 
 export interface CrearVentaResult {
@@ -168,7 +178,7 @@ export async function buscarProductoPorCodigoBarras(
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0 } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0, vuelto } = params
 
   if (lineas.length === 0 && cargosEspeciales.length === 0) {
     throw new Error('Debe agregar al menos una linea o cargo especial a la venta')
@@ -608,6 +618,32 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       }
 
       totalAbonadoUsd += montoUsd
+    }
+
+    // 5b. VUELTO: registrar el cambio entregado al cliente como EGRESO inmutable.
+    //     monto se guarda en moneda nativa del metodo (no USD) para que el cuadre
+    //     por divisa en cerrarSesionCaja sume correctamente por codigo_iso.
+    if (vuelto && vuelto.monto > 0.005) {
+      const vueltoId = uuidv4()
+      await tx.execute(
+        `INSERT INTO movimientos_metodo_cobro
+           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'EGRESO', 'VUELTO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          vueltoId,
+          empresa_id,
+          vuelto.metodo_cobro_id,
+          vuelto.monto.toFixed(2),
+          ventaId,
+          `VEN-${nroFactura}`,
+          `Vuelto Venta ${nroFactura}`,
+          sesion_caja_id ?? null,
+          now,
+          now,
+          usuario_id,
+        ]
+      )
     }
 
     // 6. UPDATE venta saldo_pend_usd (ancla en Bs, consistente con el calculo del POS)
