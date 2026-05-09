@@ -6,6 +6,7 @@ import {
   usePagosPorMetodo,
   useMovimientosManualesDia,
   useSesionApertura,
+  useEfectivoConfigured,
   type CuadreFilters,
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
@@ -33,9 +34,13 @@ export function CuadreConteoFisico({
   onLimpiar,
   readOnly = false,
 }: ConteoFisicoProps) {
-  const { metodos, isLoading } = usePagosPorMetodo(filters)
+  const { metodos, isLoading: loadingPagos } = usePagosPorMetodo(filters)
   const { movimientos } = useMovimientosManualesDia(filters)
   const { aperturaUsd, aperturaBs } = useSesionApertura(filters)
+  const { efectivoMethods, isLoading: loadingEfectivo } = useEfectivoConfigured()
+
+  const isLoading = loadingPagos || loadingEfectivo
+
   // keyed por m.nombre
   const [fisico, setFisico] = useState<Record<string, string>>({})
   const [billetesModal, setBilletesModal] = useState<{
@@ -62,7 +67,7 @@ export function CuadreConteoFisico({
 
   // Modo lectura: pre-poblar desde sesiones_caja_detalle
   useEffect(() => {
-    if (!readOnly || !detalleData || metodos.length === 0) return
+    if (!readOnly || !detalleData) return
     const saved: Record<string, string> = {}
     for (const row of detalleData as { nombre: string; total_fisico: string | null }[]) {
       if (row.total_fisico !== null) {
@@ -72,7 +77,7 @@ export function CuadreConteoFisico({
     if (Object.keys(saved).length > 0) {
       setFisico(saved)
     }
-  }, [readOnly, detalleData, metodos])
+  }, [readOnly, detalleData])
 
   // Persistencia en localStorage (solo cuando no es readOnly)
   useEffect(() => {
@@ -108,42 +113,108 @@ export function CuadreConteoFisico({
     [billetesModal, setFisicoValue]
   )
 
+  // ─── EFECTIVO rows: apertura + cobros + movimientos manuales ─────────────
+  // Para cada metodo EFECTIVO configurado, calcula el saldo sistema completo.
+  const efectivoRows = useMemo(() => {
+    return efectivoMethods.map((m) => {
+      const pago = metodos.find((p) => p.metodo_cobro_id === m.metodo_cobro_id)
+      const movs = movimientos.filter((mov) => mov.metodo_cobro_id === m.metodo_cobro_id)
+      const movIngresos = movs
+        .filter((v) => v.mov_tipo === 'INGRESO')
+        .reduce((s, v) => s + v.total, 0)
+      const movEgresos = movs
+        .filter((v) => v.mov_tipo === 'EGRESO')
+        .reduce((s, v) => s + v.total, 0)
+
+      const aperturaNativo = m.moneda === 'BS' ? aperturaBs : aperturaUsd
+      const cobrosNativo = m.moneda === 'BS' ? (pago?.totalOriginal ?? 0) : (pago?.totalUsd ?? 0)
+      const saldoNativo = aperturaNativo + cobrosNativo + movIngresos - movEgresos
+
+      // Tasa efectiva: usar tasa del dia o derivar de pagos si no hay tasa registrada
+      const efectivaTasa =
+        tasaDelDia > 0
+          ? tasaDelDia
+          : pago && pago.totalOriginal > 0 && pago.totalUsd > 0
+          ? pago.totalOriginal / pago.totalUsd
+          : 0
+
+      const saldoUsd =
+        m.moneda === 'BS'
+          ? efectivaTasa > 0 ? saldoNativo / efectivaTasa : 0
+          : saldoNativo
+
+      return {
+        metodo_cobro_id: m.metodo_cobro_id,
+        nombre: m.nombre,
+        moneda: m.moneda,
+        aperturaNativo,
+        cobrosNativo,
+        movIngresos,
+        movEgresos,
+        saldoNativo,
+        saldoUsd,
+        efectivaTasa,
+      }
+    })
+  }, [efectivoMethods, metodos, movimientos, aperturaBs, aperturaUsd, tasaDelDia])
+
+  // Metodos no-EFECTIVO (transferencias, puntos, etc.) solo con pagos registrados
+  const otrosMetodos = useMemo(
+    () => metodos.filter((m) => m.tipo !== 'EFECTIVO'),
+    [metodos]
+  )
+
+  // Movimientos manuales para metodos no-EFECTIVO (vueltos de transferencias, etc.)
+  const movimientosNoEfectivo = useMemo(
+    () => movimientos.filter((m) => m.metodo_tipo !== 'EFECTIVO'),
+    [movimientos]
+  )
+
   // Totales en USD para el resumen y callback del padre
   const totals = useMemo(() => {
     let sistema = 0
     let fisicoTotal = 0
-    for (const m of metodos) {
+
+    // EFECTIVO: saldoUsd ya incluye apertura + cobros + ingresos - egresos
+    for (const m of efectivoRows) {
+      sistema += m.saldoUsd
+      const raw = parseFloat(fisico[m.nombre] ?? '') || 0
+      const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
+      if (has) {
+        fisicoTotal +=
+          m.moneda === 'BS'
+            ? m.efectivaTasa > 0 ? raw / m.efectivaTasa : 0
+            : raw
+      }
+    }
+
+    // No-EFECTIVO desde pagos
+    for (const m of otrosMetodos) {
       sistema += m.totalUsd
       const raw = parseFloat(fisico[m.nombre] ?? '') || 0
       const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
       if (has) {
-        if (m.moneda === 'BS') {
-          // Tasa efectiva: derivar de los pagos si tasaDelDia no esta disponible
-          const efectivaTasa = tasaDelDia > 0
+        const efTasa =
+          tasaDelDia > 0
             ? tasaDelDia
             : m.totalOriginal > 0 && m.totalUsd > 0
             ? m.totalOriginal / m.totalUsd
             : 0
-          fisicoTotal += efectivaTasa > 0 ? raw / efectivaTasa : 0
-        } else {
-          fisicoTotal += raw
-        }
+        fisicoTotal += m.moneda === 'BS' ? (efTasa > 0 ? raw / efTasa : 0) : raw
       }
     }
-    // Sumar fondo de apertura (siempre es efectivo; Bs se convierte a USD)
-    sistema += aperturaUsd
-    if (aperturaBs > 0.001 && tasaDelDia > 0) {
-      sistema += aperturaBs / tasaDelDia
-    }
-    // Sumar/restar movimientos manuales (INGRESO +, EGRESO -)
-    for (const mov of movimientos) {
-      const montoUsd = mov.metodo_moneda === 'BS'
-        ? (tasaDelDia > 0 ? mov.total / tasaDelDia : 0)
-        : mov.total
+
+    // Movimientos manuales para metodos no-EFECTIVO
+    for (const mov of movimientosNoEfectivo) {
+      const montoUsd =
+        mov.metodo_moneda === 'BS'
+          ? tasaDelDia > 0 ? mov.total / tasaDelDia : 0
+          : mov.total
       sistema += mov.mov_tipo === 'INGRESO' ? montoUsd : -montoUsd
     }
+
     return { totalSistema: Number(sistema.toFixed(2)), totalFisico: Number(fisicoTotal.toFixed(2)) }
-  }, [metodos, fisico, tasaDelDia, aperturaUsd, aperturaBs, movimientos])
+  }, [efectivoRows, otrosMetodos, movimientosNoEfectivo, fisico, tasaDelDia])
 
   useEffect(() => {
     onTotalesChange?.(totals.totalSistema, totals.totalFisico)
@@ -152,15 +223,20 @@ export function CuadreConteoFisico({
   // Conteo fisico keyed por metodo_cobro_id (valor nativo) para cerrarSesionCaja
   useEffect(() => {
     const conteo: Record<string, number> = {}
-    for (const m of metodos) {
+    for (const m of efectivoRows) {
       const raw = parseFloat(fisico[m.nombre] ?? '') || 0
-      const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
-      if (has) {
+      if (fisico[m.nombre] !== undefined && fisico[m.nombre] !== '') {
         conteo[m.metodo_cobro_id] = raw
       }
     }
-    onConteoFisicoChange?.(conteo, metodos.length)
-  }, [metodos, fisico, onConteoFisicoChange])
+    for (const m of otrosMetodos) {
+      const raw = parseFloat(fisico[m.nombre] ?? '') || 0
+      if (fisico[m.nombre] !== undefined && fisico[m.nombre] !== '') {
+        conteo[m.metodo_cobro_id] = raw
+      }
+    }
+    onConteoFisicoChange?.(conteo, efectivoRows.length + otrosMetodos.length)
+  }, [efectivoRows, otrosMetodos, fisico, onConteoFisicoChange])
 
   const handleLimpiar = useCallback(() => {
     setFisico({})
@@ -183,15 +259,6 @@ export function CuadreConteoFisico({
     )
   }
 
-  if (metodos.length === 0) {
-    return (
-      <div className="rounded-2xl bg-card shadow-lg p-5">
-        <h3 className="text-sm font-semibold mb-4">Conteo Fisico por Metodo</h3>
-        <p className="text-sm text-muted-foreground text-center py-6">Sin cobros registrados</p>
-      </div>
-    )
-  }
-
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold mb-1">Conteo Fisico por Metodo</h3>
@@ -202,25 +269,162 @@ export function CuadreConteoFisico({
       </p>
 
       <div className="space-y-3">
-        {metodos.map((m) => {
-          const esEfectivo = m.tipo === 'EFECTIVO'
+        {/* ── Metodos EFECTIVO: siempre visibles, incluyen apertura ── */}
+        {efectivoRows.map((m) => {
+          const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
+          const hasFisico = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
+          const fisicoUsd =
+            m.moneda === 'BS'
+              ? m.efectivaTasa > 0 ? fisicoRaw / m.efectivaTasa : 0
+              : fisicoRaw
+          const difUsd = fisicoUsd - m.saldoUsd
+          const difColor = !hasFisico
+            ? ''
+            : difUsd > 0.001
+            ? 'text-green-600'
+            : difUsd < -0.001
+            ? 'text-red-600'
+            : 'text-green-600'
+
+          return (
+            <div key={m.nombre} className="rounded-lg border bg-background p-3 space-y-2">
+              {/* Encabezado */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">{m.nombre}</span>
+                  <span className="ml-2 text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">
+                    EFECTIVO
+                  </span>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Saldo en caja</p>
+                  <p className="text-sm font-bold tabular-nums">
+                    {m.moneda === 'BS' ? formatBs(m.saldoNativo) : formatUsd(m.saldoNativo)}
+                  </p>
+                  {m.moneda === 'BS' && m.efectivaTasa > 0 && (
+                    <p className="text-[10px] text-muted-foreground tabular-nums">
+                      {formatUsd(m.saldoUsd)} equiv.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Desglose: apertura + cobros + movimientos */}
+              <div className="text-xs space-y-0.5 bg-muted/30 rounded p-2">
+                {m.aperturaNativo > 0.001 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Apertura</span>
+                    <span className="text-green-700 font-mono tabular-nums">
+                      +{m.moneda === 'BS' ? formatBs(m.aperturaNativo) : formatUsd(m.aperturaNativo)}
+                    </span>
+                  </div>
+                )}
+                {m.cobrosNativo > 0.001 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Cobros del dia</span>
+                    <span className="text-green-700 font-mono tabular-nums">
+                      +{m.moneda === 'BS' ? formatBs(m.cobrosNativo) : formatUsd(m.cobrosNativo)}
+                    </span>
+                  </div>
+                )}
+                {m.movIngresos > 0.001 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Ingresos manuales</span>
+                    <span className="text-green-700 font-mono tabular-nums">
+                      +{m.moneda === 'BS' ? formatBs(m.movIngresos) : formatUsd(m.movIngresos)}
+                    </span>
+                  </div>
+                )}
+                {m.movEgresos > 0.001 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Egresos / Vueltos</span>
+                    <span className="text-red-600 font-mono tabular-nums">
+                      -{m.moneda === 'BS' ? formatBs(m.movEgresos) : formatUsd(m.movEgresos)}
+                    </span>
+                  </div>
+                )}
+                {m.aperturaNativo <= 0.001 &&
+                  m.cobrosNativo <= 0.001 &&
+                  m.movIngresos <= 0.001 &&
+                  m.movEgresos <= 0.001 && (
+                    <p className="text-[10px] text-muted-foreground italic">
+                      Sin movimientos registrados
+                    </p>
+                  )}
+              </div>
+
+              {/* Input de conteo fisico */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <label className="text-xs text-muted-foreground mb-1 block">
+                    {m.moneda === 'BS' ? 'Conteo fisico (Bs.)' : 'Conteo fisico (USD)'}
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={fisico[m.nombre] ?? ''}
+                    onChange={(e) => !readOnly && setFisicoValue(m.nombre, e.target.value)}
+                    readOnly={readOnly}
+                    placeholder={readOnly ? '—' : '0.00'}
+                    className={`w-full rounded-md border border-input px-3 py-1.5 text-sm tabular-nums ${
+                      readOnly ? 'bg-muted/40 text-muted-foreground cursor-default' : 'bg-white'
+                    }`}
+                  />
+                </div>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    title="Contar billetes"
+                    onClick={() => setBilletesModal({ nombre: m.nombre, moneda: m.moneda })}
+                    className="mt-5 p-2 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                  >
+                    <Calculator size={16} />
+                  </button>
+                )}
+              </div>
+
+              {/* Diferencia */}
+              {hasFisico && (
+                <div className="flex items-center justify-between text-xs pt-1 border-t">
+                  {m.moneda === 'BS' && m.efectivaTasa > 0 ? (
+                    <span className="text-muted-foreground">{formatUsd(fisicoUsd)} equiv.</span>
+                  ) : m.moneda !== 'BS' && tasaDelDia > 0 ? (
+                    <span className="text-muted-foreground">
+                      {formatBs(fisicoRaw * tasaDelDia)} equiv.
+                    </span>
+                  ) : (
+                    <span />
+                  )}
+                  <span className={`font-semibold tabular-nums ${difColor}`}>
+                    {difUsd > 0.001 ? '+' : ''}
+                    {formatUsd(difUsd)} dif.
+                  </span>
+                </div>
+              )}
+            </div>
+          )
+        })}
+
+        {/* ── Metodos no-EFECTIVO: solo los que tienen pagos registrados ── */}
+        {otrosMetodos.map((m) => {
           const sistemaUsd = m.totalUsd
           const sistemaBs = m.totalOriginal
           const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
-          const efectivaTasa = tasaDelDia > 0
-            ? tasaDelDia
-            : m.totalOriginal > 0 && m.totalUsd > 0
-            ? m.totalOriginal / m.totalUsd
-            : 0
-          const fisicoUsd = m.moneda === 'BS'
-            ? (efectivaTasa > 0 ? fisicoRaw / efectivaTasa : 0)
-            : fisicoRaw
+          const efectivaTasa =
+            tasaDelDia > 0
+              ? tasaDelDia
+              : m.totalOriginal > 0 && m.totalUsd > 0
+              ? m.totalOriginal / m.totalUsd
+              : 0
+          const fisicoUsd =
+            m.moneda === 'BS' ? (efectivaTasa > 0 ? fisicoRaw / efectivaTasa : 0) : fisicoRaw
           const difUsd = fisicoUsd - sistemaUsd
           const tasaParaEquiv = tasaDelDia > 0 ? tasaDelDia : efectivaTasa
           const hasFisico = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
 
           const verifiedEntry = verifiedAmountsByMetodoId[m.metodo_cobro_id]
-          const hasVerified = !esEfectivo && verifiedEntry && verifiedEntry.native > 0.001
+          const hasVerified = verifiedEntry && verifiedEntry.native > 0.001
 
           const difColor = !hasFisico
             ? ''
@@ -236,11 +440,9 @@ export function CuadreConteoFisico({
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-sm font-medium">{m.nombre}</span>
-                  {!esEfectivo && (
-                    <span className="ml-2 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
-                      {m.tipo.replace('_', ' ')}
-                    </span>
-                  )}
+                  <span className="ml-2 text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">
+                    {m.tipo.replace('_', ' ')}
+                  </span>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Sistema</p>
@@ -248,7 +450,9 @@ export function CuadreConteoFisico({
                     {m.moneda === 'BS' ? formatBs(sistemaBs) : formatUsd(sistemaUsd)}
                   </p>
                   {m.moneda === 'BS' && (
-                    <p className="text-xs text-muted-foreground tabular-nums">{formatUsd(sistemaUsd)}</p>
+                    <p className="text-xs text-muted-foreground tabular-nums">
+                      {formatUsd(sistemaUsd)}
+                    </p>
                   )}
                 </div>
               </div>
@@ -273,20 +477,6 @@ export function CuadreConteoFisico({
                   />
                 </div>
 
-                {/* Bill counter — only for EFECTIVO, not readOnly */}
-                {esEfectivo && !readOnly && (
-                  <button
-                    type="button"
-                    title="Contar billetes"
-                    onClick={() =>
-                      setBilletesModal({ nombre: m.nombre, moneda: m.moneda === 'BS' ? 'BS' : 'USD' })
-                    }
-                    className="mt-5 p-2 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                  >
-                    <Calculator size={16} />
-                  </button>
-                )}
-
                 {/* Use verified amount — for non-EFECTIVO, not readOnly */}
                 {hasVerified && !readOnly && (
                   <button
@@ -295,7 +485,10 @@ export function CuadreConteoFisico({
                     className="mt-5 inline-flex items-center gap-1 rounded-md border border-green-300 bg-green-50 hover:bg-green-100 px-2 py-1.5 text-xs font-medium text-green-700 transition-colors whitespace-nowrap"
                   >
                     <CheckCircle size={13} weight="fill" />
-                    Usar {verifiedEntry.moneda === 'BS' ? formatBs(verifiedEntry.native) : formatUsd(verifiedEntry.native)}
+                    Usar{' '}
+                    {verifiedEntry.moneda === 'BS'
+                      ? formatBs(verifiedEntry.native)
+                      : formatUsd(verifiedEntry.native)}
                   </button>
                 )}
               </div>
@@ -314,7 +507,9 @@ export function CuadreConteoFisico({
                   {m.moneda === 'BS' && efectivaTasa > 0 ? (
                     <span className="text-muted-foreground">{formatUsd(fisicoUsd)} equiv.</span>
                   ) : m.moneda !== 'BS' && tasaParaEquiv > 0 ? (
-                    <span className="text-muted-foreground">{formatBs(fisicoRaw * tasaParaEquiv)} equiv.</span>
+                    <span className="text-muted-foreground">
+                      {formatBs(fisicoRaw * tasaParaEquiv)} equiv.
+                    </span>
                   ) : (
                     <span />
                   )}
@@ -328,50 +523,11 @@ export function CuadreConteoFisico({
           )
         })}
 
-        {/* Ajustes del periodo: apertura + movimientos manuales */}
-        {(aperturaUsd > 0.001 || aperturaBs > 0.001 || movimientos.length > 0) && (
-          <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-1.5 text-xs">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">
-              Ajustes del periodo
-            </p>
-            {(aperturaUsd > 0.001 || aperturaBs > 0.001) && (
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Fondo apertura</span>
-                <span className="font-mono font-semibold text-green-700">
-                  {aperturaUsd > 0.001 ? `+${formatUsd(aperturaUsd)}` : ''}
-                  {aperturaBs > 0.001 ? `  +${formatBs(aperturaBs)}` : ''}
-                </span>
-              </div>
-            )}
-            {movimientos.length > 0 ? (
-              (() => {
-                const ingresos = movimientos.filter((m) => m.mov_tipo === 'INGRESO')
-                const egresos = movimientos.filter((m) => m.mov_tipo === 'EGRESO')
-                const totalIngUsd = ingresos.reduce((s, m) => s + (m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total), 0)
-                const totalEgrUsd = egresos.reduce((s, m) => s + (m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total), 0)
-                return (
-                  <>
-                    {totalIngUsd > 0.001 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Ingresos manuales</span>
-                        <span className="font-mono text-green-700">+{formatUsd(totalIngUsd)}</span>
-                      </div>
-                    )}
-                    {totalEgrUsd > 0.001 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Egresos / Pagos</span>
-                        <span className="font-mono text-red-600">-{formatUsd(totalEgrUsd)}</span>
-                      </div>
-                    )}
-                  </>
-                )
-              })()
-            ) : (
-              <p className="text-[10px] text-muted-foreground italic">
-                Sin movimientos manuales. Los vueltos e ingresos/egresos de caja se registran desde el modulo Caja.
-              </p>
-            )}
-          </div>
+        {/* Mensaje cuando no hay metodos configurados ni pagos */}
+        {efectivoRows.length === 0 && otrosMetodos.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center py-6">
+            Sin metodos de pago configurados
+          </p>
         )}
 
         {/* Summary row */}
