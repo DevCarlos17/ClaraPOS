@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@powersync/react'
-import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle } from '@phosphor-icons/react'
+import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
@@ -76,10 +76,15 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     desgloseFiscal: true,
     detalleTransferencias: false,
     listaFacturas: false,
+    productosVendidos: false,
+    mostrarCostos: false,
   })
   const togglePrintOption = useCallback((key: keyof typeof printOptions) => {
     setPrintOptions((prev) => ({ ...prev, [key]: !prev[key] }))
   }, [])
+
+  // Modal de configuracion del informe
+  const [printSettingsOpen, setPrintSettingsOpen] = useState(false)
 
   // Finalizar cuadre modal state
   const [finalizarOpen, setFinalizarOpen] = useState(false)
@@ -363,9 +368,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               </button>
             )}
 
-            {/* Imprimir — visible cuando hay datos consultados */}
+            {/* Imprimir + Configurar — visible cuando hay datos consultados */}
             {consulted && activeFilters && (
-              <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => window.print()}
                   className="inline-flex items-center gap-2 rounded-md border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
@@ -373,24 +378,14 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   <Printer className="w-4 h-4" />
                   Imprimir
                 </button>
-                {/* Opciones de impresion */}
-                <div className="flex flex-wrap gap-x-3 gap-y-1 pl-1">
-                  {([
-                    ['desgloseFiscal', 'Fiscal'],
-                    ['detalleTransferencias', 'Transf.'],
-                    ['listaFacturas', 'Facturas'],
-                  ] as [keyof typeof printOptions, string][]).map(([key, label]) => (
-                    <label key={key} className="flex items-center gap-1 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={printOptions[key]}
-                        onChange={() => togglePrintOption(key)}
-                        className="h-3 w-3 rounded border-gray-300 text-primary"
-                      />
-                      <span className="text-[11px] text-muted-foreground">{label}</span>
-                    </label>
-                  ))}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setPrintSettingsOpen(true)}
+                  title="Configurar informe"
+                  className="inline-flex items-center justify-center rounded-md border p-2 text-muted-foreground hover:bg-muted transition-colors"
+                >
+                  <Gear size={15} />
+                </button>
               </div>
             )}
           </div>
@@ -682,6 +677,74 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
           sesionId={sesionCerradaId}
           onClose={() => setResumenOpen(false)}
         />
+      )}
+
+      {/* Modal: Configuracion del Informe */}
+      {printSettingsOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-card rounded-2xl shadow-xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold">Configuracion del Informe</h2>
+              <button type="button" onClick={() => setPrintSettingsOpen(false)} className="text-muted-foreground hover:text-foreground">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground">Seleccione las secciones que desea incluir en el informe impreso.</p>
+            <div className="space-y-3">
+              {([
+                ['desgloseFiscal', 'Desglose fiscal', 'Base imponible, IVA por alicuota, descuentos y NCR'],
+                ['detalleTransferencias', 'Detalle de transferencias', 'Listado de cada transferencia con referencia y monto'],
+                ['listaFacturas', 'Lista de facturas', 'Todas las facturas del periodo con cliente y totales'],
+                ['productosVendidos', 'Productos vendidos', 'Detalle por factura: producto, cantidad, base, IVA y total'],
+              ] as [keyof typeof printOptions, string, string][]).map(([key, label, desc]) => (
+                <label key={key} className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={printOptions[key]}
+                    onChange={() => togglePrintOption(key)}
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary cursor-pointer"
+                  />
+                  <div>
+                    <p className="text-sm font-medium leading-none">{label}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
+                  </div>
+                </label>
+              ))}
+              {/* Sub-opcion de costos — solo visible si productosVendidos esta activo */}
+              {printOptions.productosVendidos && (
+                <label className="flex items-start gap-3 cursor-pointer ml-7 border-l pl-3">
+                  <input
+                    type="checkbox"
+                    checked={printOptions.mostrarCostos}
+                    onChange={() => togglePrintOption('mostrarCostos')}
+                    className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary cursor-pointer"
+                  />
+                  <div>
+                    <p className="text-sm font-medium leading-none">Mostrar costos</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Incluye columna de costo total por linea</p>
+                  </div>
+                </label>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+              >
+                <Printer size={14} />
+                Imprimir ahora
+              </button>
+              <button
+                type="button"
+                onClick={() => setPrintSettingsOpen(false)}
+                className="rounded-md border px-4 py-2 text-sm hover:bg-muted transition-colors"
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
 

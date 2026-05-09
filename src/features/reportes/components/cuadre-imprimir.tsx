@@ -5,6 +5,7 @@ import {
   useIvaPorAlicuota,
   usePagosDetalleCompleto,
   useVentasAudit,
+  useProductosPorFactura,
   type CuadreFilters,
 } from '../hooks/use-cuadre'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -15,6 +16,8 @@ interface PrintOptions {
   desgloseFiscal: boolean
   detalleTransferencias: boolean
   listaFacturas: boolean
+  productosVendidos: boolean
+  mostrarCostos: boolean
 }
 
 interface CuadreImprimirProps {
@@ -46,7 +49,7 @@ export function CuadreImprimir({
   conteoFisicoRecord,
   cajeroNombre,
   supervisorNombre,
-  printOptions = { desgloseFiscal: true, detalleTransferencias: false, listaFacturas: false },
+  printOptions = { desgloseFiscal: true, detalleTransferencias: false, listaFacturas: false, productosVendidos: false, mostrarCostos: false },
 }: CuadreImprimirProps) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
@@ -57,6 +60,7 @@ export function CuadreImprimir({
   const { pagos: todosPagos } = usePagosDetalleCompleto(printOptions.detalleTransferencias ? filters : null)
   const pagosTransf = todosPagos.filter((p) => p.metodoTipo !== 'EFECTIVO')
   const { ventas } = useVentasAudit(printOptions.listaFacturas ? filters : null)
+  const { items: productosItems } = useProductosPorFactura(printOptions.productosVendidos ? filters : null)
 
   // Empresa
   const { data: empresaRaw } = useQuery(
@@ -499,6 +503,98 @@ export function CuadreImprimir({
               </tr>
             </tfoot>
           </table>
+        </div>
+      )}
+
+      {/* ── PRODUCTOS VENDIDOS (opcional) ────────────────────── */}
+      {printOptions.productosVendidos && productosItems.length > 0 && (
+        <div className="mb-4 break-before-page">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500 mb-2">
+            Productos Vendidos ({productosItems.length} líneas)
+          </p>
+          {(() => {
+            // Agrupar por factura
+            const byFactura = productosItems.reduce<Record<string, typeof productosItems>>((acc, item) => {
+              if (!acc[item.nro_factura]) acc[item.nro_factura] = []
+              acc[item.nro_factura].push(item)
+              return acc
+            }, {})
+            return Object.entries(byFactura).map(([nro, lineas]) => {
+              const totalBaseFactura = lineas.reduce((s, l) => s + l.subtotal_usd, 0)
+              const totalIvaFactura = lineas.reduce((s, l) => s + l.subtotal_usd * l.impuesto_pct / 100, 0)
+              const totalFactura = totalBaseFactura + totalIvaFactura
+              return (
+                <div key={nro} className="mb-3 border rounded overflow-hidden">
+                  <div className="bg-gray-50 px-2 py-1 flex justify-between text-[10px] text-gray-600 font-semibold border-b">
+                    <span>Factura #{nro} · {lineas[0].cliente_nombre}</span>
+                    <span className="font-mono">{formatUsd(totalFactura)}</span>
+                  </div>
+                  <table className="w-full text-[10px] border-collapse">
+                    <thead>
+                      <tr className="border-b bg-gray-50/50 text-gray-500">
+                        <th className="text-left py-0.5 px-1.5 font-medium">Producto</th>
+                        <th className="text-right py-0.5 px-1 font-medium">Cant.</th>
+                        <th className="text-right py-0.5 px-1 font-medium">P. Unit.</th>
+                        {printOptions.mostrarCostos && (
+                          <th className="text-right py-0.5 px-1 font-medium">Costo</th>
+                        )}
+                        <th className="text-right py-0.5 px-1 font-medium">Base Imp.</th>
+                        <th className="text-right py-0.5 px-1 font-medium">IVA%</th>
+                        <th className="text-right py-0.5 px-1 font-medium">IVA $</th>
+                        <th className="text-right py-0.5 px-1 font-medium">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lineas.map((l, i) => {
+                        const ivaUsd = l.subtotal_usd * l.impuesto_pct / 100
+                        const totalLinea = l.subtotal_usd + ivaUsd
+                        return (
+                          <tr key={i} className="border-b last:border-0">
+                            <td className="py-0.5 px-1.5">{l.producto_nombre}</td>
+                            <td className="py-0.5 px-1 text-right font-mono">{l.cantidad.toFixed(2)}</td>
+                            <td className="py-0.5 px-1 text-right font-mono">{formatUsd(l.precio_unitario_usd)}</td>
+                            {printOptions.mostrarCostos && (
+                              <td className="py-0.5 px-1 text-right font-mono text-gray-500">{formatUsd(l.costo_usd * l.cantidad)}</td>
+                            )}
+                            <td className="py-0.5 px-1 text-right font-mono">{formatUsd(l.subtotal_usd)}</td>
+                            <td className="py-0.5 px-1 text-right text-gray-500">
+                              {l.tipo_impuesto === 'EXENTO' ? 'Exento' : `${l.impuesto_pct}%`}
+                            </td>
+                            <td className="py-0.5 px-1 text-right font-mono">{formatUsd(ivaUsd)}</td>
+                            <td className="py-0.5 px-1 text-right font-mono font-semibold">{formatUsd(totalLinea)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t font-semibold bg-gray-50/50">
+                        <td colSpan={printOptions.mostrarCostos ? 4 : 3} className="py-0.5 px-1.5 text-gray-500">Subtotales factura</td>
+                        <td className="py-0.5 px-1 text-right font-mono">{formatUsd(totalBaseFactura)}</td>
+                        <td />
+                        <td className="py-0.5 px-1 text-right font-mono">{formatUsd(totalIvaFactura)}</td>
+                        <td className="py-0.5 px-1 text-right font-mono">{formatUsd(totalFactura)}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )
+            })
+          })()}
+          {/* Totales globales de la seccion */}
+          <div className="flex justify-end gap-8 text-xs font-bold border-t pt-2 mt-1">
+            <div className="text-right">
+              <span className="text-gray-500 mr-2">Total base:</span>
+              <span className="font-mono">{formatUsd(productosItems.reduce((s, l) => s + l.subtotal_usd, 0))}</span>
+            </div>
+            <div className="text-right">
+              <span className="text-gray-500 mr-2">Total IVA:</span>
+              <span className="font-mono">{formatUsd(productosItems.reduce((s, l) => s + l.subtotal_usd * l.impuesto_pct / 100, 0))}</span>
+            </div>
+            <div className="text-right">
+              <span className="text-gray-500 mr-2">Total:</span>
+              <span className="font-mono">{formatUsd(productosItems.reduce((s, l) => s + l.subtotal_usd + l.subtotal_usd * l.impuesto_pct / 100, 0))}</span>
+            </div>
+          </div>
         </div>
       )}
 

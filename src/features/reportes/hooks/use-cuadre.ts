@@ -557,6 +557,133 @@ export function useTopGanancias(filters: CuadreFilters | null, limit = 10) {
   return { productos: items, isLoading }
 }
 
+// ─── Productos por Factura (para informe impreso) ───────────
+
+export interface ProductoFacturaItem {
+  venta_id: string
+  nro_factura: string
+  cliente_nombre: string
+  producto_nombre: string
+  producto_codigo: string
+  cantidad: number
+  precio_unitario_usd: number
+  costo_usd: number
+  impuesto_pct: number
+  subtotal_usd: number
+  tipo_impuesto: string
+}
+
+export function useProductosPorFactura(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = filters
+    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
+    : ['1=0', []]
+
+  const { data, isLoading } = useQuery(
+    `SELECT
+       v.id as venta_id,
+       v.nro_factura,
+       c.nombre as cliente_nombre,
+       p.nombre as producto_nombre,
+       p.codigo as producto_codigo,
+       CAST(p.costo_usd AS REAL) as costo_usd,
+       CAST(dv.cantidad AS REAL) as cantidad,
+       CAST(dv.precio_unitario_usd AS REAL) as precio_unitario_usd,
+       CAST(dv.impuesto_pct AS REAL) as impuesto_pct,
+       CAST(dv.subtotal_usd AS REAL) as subtotal_usd,
+       COALESCE(dv.tipo_impuesto, '') as tipo_impuesto
+     FROM ventas_det dv
+     JOIN ventas v ON dv.venta_id = v.id
+     JOIN productos p ON dv.producto_id = p.id
+     JOIN clientes c ON v.cliente_id = c.id
+     WHERE ${where}
+     ORDER BY v.nro_factura, p.nombre`,
+    params
+  )
+
+  return { items: (data ?? []) as ProductoFacturaItem[], isLoading }
+}
+
+// ─── Movimientos Manuales por Sesion ───────────────────────
+
+export interface MovimientoManualItem {
+  metodo_cobro_id: string
+  metodo_nombre: string
+  metodo_tipo: string
+  metodo_moneda: string
+  mov_tipo: string
+  origen: string
+  total: number
+}
+
+export function useMovimientosManualesDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  const { data, isLoading } = useQuery(
+    hasSession
+      ? `SELECT
+           mmc.metodo_cobro_id,
+           mc.nombre as metodo_nombre,
+           mc.tipo as metodo_tipo,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS'
+                ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
+           mmc.tipo as mov_tipo,
+           mmc.origen,
+           COALESCE(SUM(CAST(mmc.monto AS REAL)), 0) as total
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         WHERE mmc.empresa_id = ?
+           AND mmc.sesion_caja_id IN (${placeholders})
+         GROUP BY mmc.metodo_cobro_id, mc.nombre, mc.tipo, metodo_moneda, mmc.tipo, mmc.origen
+         ORDER BY mc.nombre, mmc.tipo`
+      : '',
+    hasSession ? [empresaId, ...filters!.sesionCajaIds] : []
+  )
+
+  const items: MovimientoManualItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
+    metodo_nombre: String(row.metodo_nombre ?? ''),
+    metodo_tipo: String(row.metodo_tipo ?? ''),
+    metodo_moneda: String(row.metodo_moneda ?? 'USD'),
+    mov_tipo: String(row.mov_tipo ?? ''),
+    origen: String(row.origen ?? ''),
+    total: Number(Number(row.total ?? 0).toFixed(2)),
+  }))
+
+  return { movimientos: items, isLoading }
+}
+
+// ─── Apertura de Sesion para conteo fisico ─────────────────
+
+export function useSesionApertura(filters: CuadreFilters | null) {
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  const { data, isLoading } = useQuery(
+    hasSession
+      ? `SELECT
+           COALESCE(SUM(CAST(monto_apertura_usd AS REAL)), 0) as apertura_usd,
+           COALESCE(SUM(CAST(monto_apertura_bs AS REAL)), 0) as apertura_bs
+         FROM sesiones_caja
+         WHERE id IN (${placeholders})`
+      : '',
+    hasSession ? filters!.sesionCajaIds : []
+  )
+
+  const row = (data?.[0] ?? {}) as { apertura_usd: number; apertura_bs: number }
+  return {
+    aperturaUsd: Number(Number(row.apertura_usd ?? 0).toFixed(2)),
+    aperturaBs: Number(Number(row.apertura_bs ?? 0).toFixed(2)),
+    isLoading,
+  }
+}
+
 // ─── Facturas por Metodo de Pago ───────────────────────────
 
 export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre: string | null) {

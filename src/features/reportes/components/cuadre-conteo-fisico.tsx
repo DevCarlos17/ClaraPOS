@@ -2,7 +2,13 @@ import { useState, useCallback, useMemo, useEffect } from 'react'
 import { Calculator, ArrowsClockwise, CheckCircle } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, type CuadreFilters, type VerifiedEntry } from '../hooks/use-cuadre'
+import {
+  usePagosPorMetodo,
+  useMovimientosManualesDia,
+  useSesionApertura,
+  type CuadreFilters,
+  type VerifiedEntry,
+} from '../hooks/use-cuadre'
 import { CuadreBilletesModal } from './cuadre-billetes-modal'
 
 interface ConteoFisicoProps {
@@ -28,6 +34,8 @@ export function CuadreConteoFisico({
   readOnly = false,
 }: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
+  const { movimientos } = useMovimientosManualesDia(filters)
+  const { aperturaUsd, aperturaBs } = useSesionApertura(filters)
   // keyed por m.nombre
   const [fisico, setFisico] = useState<Record<string, string>>({})
   const [billetesModal, setBilletesModal] = useState<{
@@ -122,8 +130,20 @@ export function CuadreConteoFisico({
         }
       }
     }
+    // Sumar fondo de apertura (siempre es efectivo; Bs se convierte a USD)
+    sistema += aperturaUsd
+    if (aperturaBs > 0.001 && tasaDelDia > 0) {
+      sistema += aperturaBs / tasaDelDia
+    }
+    // Sumar/restar movimientos manuales (INGRESO +, EGRESO -)
+    for (const mov of movimientos) {
+      const montoUsd = mov.metodo_moneda === 'BS'
+        ? (tasaDelDia > 0 ? mov.total / tasaDelDia : 0)
+        : mov.total
+      sistema += mov.mov_tipo === 'INGRESO' ? montoUsd : -montoUsd
+    }
     return { totalSistema: Number(sistema.toFixed(2)), totalFisico: Number(fisicoTotal.toFixed(2)) }
-  }, [metodos, fisico, tasaDelDia])
+  }, [metodos, fisico, tasaDelDia, aperturaUsd, aperturaBs, movimientos])
 
   useEffect(() => {
     onTotalesChange?.(totals.totalSistema, totals.totalFisico)
@@ -307,6 +327,52 @@ export function CuadreConteoFisico({
             </div>
           )
         })}
+
+        {/* Ajustes del periodo: apertura + movimientos manuales */}
+        {(aperturaUsd > 0.001 || aperturaBs > 0.001 || movimientos.length > 0) && (
+          <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-1.5 text-xs">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">
+              Ajustes del periodo
+            </p>
+            {(aperturaUsd > 0.001 || aperturaBs > 0.001) && (
+              <div className="flex items-center justify-between">
+                <span className="text-muted-foreground">Fondo apertura</span>
+                <span className="font-mono font-semibold text-green-700">
+                  {aperturaUsd > 0.001 ? `+${formatUsd(aperturaUsd)}` : ''}
+                  {aperturaBs > 0.001 ? `  +${formatBs(aperturaBs)}` : ''}
+                </span>
+              </div>
+            )}
+            {movimientos.length > 0 ? (
+              (() => {
+                const ingresos = movimientos.filter((m) => m.mov_tipo === 'INGRESO')
+                const egresos = movimientos.filter((m) => m.mov_tipo === 'EGRESO')
+                const totalIngUsd = ingresos.reduce((s, m) => s + (m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total), 0)
+                const totalEgrUsd = egresos.reduce((s, m) => s + (m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total), 0)
+                return (
+                  <>
+                    {totalIngUsd > 0.001 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Ingresos manuales</span>
+                        <span className="font-mono text-green-700">+{formatUsd(totalIngUsd)}</span>
+                      </div>
+                    )}
+                    {totalEgrUsd > 0.001 && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-muted-foreground">Egresos / Pagos</span>
+                        <span className="font-mono text-red-600">-{formatUsd(totalEgrUsd)}</span>
+                      </div>
+                    )}
+                  </>
+                )
+              })()
+            ) : (
+              <p className="text-[10px] text-muted-foreground italic">
+                Sin movimientos manuales. Los vueltos e ingresos/egresos de caja se registran desde el modulo Caja.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Summary row */}
         <div className="rounded-lg border bg-muted/30 p-3">
