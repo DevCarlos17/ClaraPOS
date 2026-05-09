@@ -659,44 +659,6 @@ export function useMovimientosManualesDia(filters: CuadreFilters | null) {
   return { movimientos: items, isLoading }
 }
 
-// ─── Metodos EFECTIVO configurados ─────────────────────────
-
-export interface EfectivoConfigItem {
-  metodo_cobro_id: string
-  nombre: string
-  moneda: 'BS' | 'USD'
-}
-
-/**
- * Retorna todos los metodos de tipo EFECTIVO configurados para la empresa,
- * independientemente de si tienen pagos registrados.
- * Se usa para construir las tarjetas de efectivo en el cuadre incluyendo el fondo inicial.
- */
-export function useEfectivoConfigured() {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
-
-  const { data, isLoading } = useQuery(
-    empresaId
-      ? `SELECT mc.id as metodo_cobro_id, mc.nombre,
-               CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda
-         FROM metodos_cobro mc
-         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
-         WHERE mc.empresa_id = ? AND mc.tipo = 'EFECTIVO' AND mc.activo = 1
-         ORDER BY mc.nombre`
-      : '',
-    empresaId ? [empresaId] : []
-  )
-
-  const items: EfectivoConfigItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
-    metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
-    nombre: String(row.nombre ?? ''),
-    moneda: String(row.moneda ?? 'USD') === 'BS' ? 'BS' : 'USD',
-  }))
-
-  return { efectivoMethods: items, isLoading }
-}
-
 // ─── Apertura de Sesion para conteo fisico ─────────────────
 
 export function useSesionApertura(filters: CuadreFilters | null) {
