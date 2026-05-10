@@ -9,6 +9,7 @@ import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { registrarMovimiento } from '@/features/inventario/hooks/use-kardex'
+import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 
 interface ImportProductosModalProps {
   isOpen: boolean
@@ -28,6 +29,7 @@ interface ParsedRow {
   precio_mayor_usd: string
   stock_minimo: string
   stock_inicial: string
+  unidad: string
   tipo_impuesto: string
   errors: string[]
   isValid: boolean
@@ -53,6 +55,7 @@ export function ImportProductosModal({
   const dialogRef = useRef<HTMLDialogElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { user } = useCurrentUser()
+  const { unidades } = useUnidadesActivas()
 
   const [step, setStep] = useState<Step>('instrucciones')
   const [rows, setRows] = useState<ParsedRow[]>([])
@@ -138,6 +141,14 @@ export function ImportProductosModal({
       errors.push('stock_inicial solo aplica a productos tipo P')
     }
 
+    if (row.unidad.trim() !== '') {
+      if (row.tipo !== 'P') {
+        errors.push('unidad solo aplica a productos tipo P')
+      } else if (!unidades.some((u) => u.abreviatura === row.unidad)) {
+        errors.push(`unidad "${row.unidad}" no existe o no esta activa`)
+      }
+    }
+
     if (!['Gravable', 'Exento', 'Exonerado'].includes(row.tipo_impuesto)) {
       errors.push('tipo_impuesto debe ser Gravable, Exento o Exonerado')
     }
@@ -176,6 +187,7 @@ export function ImportProductosModal({
           precio_mayor_usd: String(r.precio_mayor_usd ?? '').trim(),
           stock_minimo: String(r.stock_minimo ?? '').trim(),
           stock_inicial: String(r.stock_inicial ?? '').trim(),
+          unidad: String(r.unidad ?? '').trim().toUpperCase(),
           tipo_impuesto: (() => {
             const raw = String(r.tipo_impuesto ?? 'Exento').trim().toLowerCase()
             if (raw === 'gravable') return 'Gravable'
@@ -291,7 +303,9 @@ export function ImportProductosModal({
         created_at: now,
         updated_at: now,
         ubicacion: null as string | null,
-        unidad_base_id: null as string | null,
+        unidad_base_id: (row.tipo === 'P' && row.unidad.trim() !== '')
+          ? (unidades.find((u) => u.abreviatura === row.unidad)?.id ?? null)
+          : null,
         presentacion: null as string | null,
         codigo_barras: null as string | null,
       }
@@ -398,14 +412,17 @@ export function ImportProductosModal({
     const wb = XLSX.utils.book_new()
 
     // Hoja 1: Inventario (misma estructura que la exportacion)
-    const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'stock_inicial', 'tipo_impuesto']]
+    const unidadesDisponibles = unidades.map((u) => u.abreviatura).join(', ') || 'UND, KG, LT...'
+    const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'stock_inicial', 'unidad', 'tipo_impuesto']]
     const ejemplos = [
-      ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '10.00', '15.00', '13.00', '5', '100', 'Exento'],
-      ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '5.00', '20.00', '', '0', '', 'Exento'],
-      ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '0.00', '35.00', '', '0', '', 'Exento'],
+      ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '10.00', '15.00', '13.00', '5', '100', unidades[0]?.abreviatura ?? 'UND', 'Exento'],
+      ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '5.00', '20.00', '', '0', '', '', 'Exento'],
+      ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '0.00', '35.00', '', '0', '', '', 'Exento'],
     ]
     const ws1 = XLSX.utils.aoa_to_sheet([...headers, ...ejemplos])
-    ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 12 }]
+    ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 10 }, { wch: 12 }]
+    // Nota informativa en celda A6
+    XLSX.utils.sheet_add_aoa(ws1, [[`Unidades activas: ${unidadesDisponibles}`]], { origin: 'A6' })
     XLSX.utils.book_append_sheet(wb, ws1, 'Inventario')
 
     // Hoja 2: Componentes Combos (misma estructura que la exportacion)
@@ -490,6 +507,7 @@ export function ImportProductosModal({
                             ['precio_mayor_usd', 'No', 'Menor o igual al precio de venta'],
                             ['stock_minimo', 'Solo tipo P', 'Numero (ej: 5)'],
                             ['stock_inicial', 'No', 'Solo tipo P. Crea entrada en Kardex con concepto "Inventario Inicial"'],
+                            ['unidad', 'No', 'Solo tipo P. Abreviatura de la unidad de medida (ej: UND, KG, LT)'],
                             ['tipo_impuesto', 'No', 'Gravable, Exento o Exonerado'],
                           ].map(([col, req, fmt]) => (
                             <tr key={col} className="border-b border-blue-100">
@@ -599,6 +617,7 @@ export function ImportProductosModal({
                         <th className="text-right px-2 py-2 font-medium">Costo</th>
                         <th className="text-right px-2 py-2 font-medium">Venta</th>
                         <th className="text-right px-2 py-2 font-medium">Stk. Ini.</th>
+                        <th className="text-left px-2 py-2 font-medium">Unidad</th>
                         <th className="text-left px-2 py-2 font-medium">Errores</th>
                       </tr>
                     </thead>
@@ -620,6 +639,7 @@ export function ImportProductosModal({
                           <td className="px-2 py-1.5 text-right tabular-nums text-blue-700">
                             {row.stock_inicial || '-'}
                           </td>
+                          <td className="px-2 py-1.5 font-mono text-gray-600">{row.unidad || '-'}</td>
                           <td className="px-2 py-1.5 text-red-600">{row.errors.join('; ')}</td>
                         </tr>
                       ))}
