@@ -2,12 +2,13 @@ import { useRef, useEffect, useState } from 'react'
 import { X, Upload, FileText, WarningCircle, CheckCircle } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import * as XLSX from 'xlsx'
-import { crearProducto } from '@/features/inventario/hooks/use-productos'
-import { agregarIngrediente } from '@/features/inventario/hooks/use-recetas'
-import { kysely } from '@/core/db/kysely/kysely'
+import { kysely, db } from '@/core/db/kysely/kysely'
+import { v4 as uuidv4 } from 'uuid'
+import { localNow } from '@/lib/dates'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { registrarMovimiento } from '@/features/inventario/hooks/use-kardex'
 
 interface ImportProductosModalProps {
   isOpen: boolean
@@ -26,6 +27,7 @@ interface ParsedRow {
   precio_venta_usd: string
   precio_mayor_usd: string
   stock_minimo: string
+  stock_inicial: string
   tipo_impuesto: string
   errors: string[]
   isValid: boolean
@@ -95,7 +97,7 @@ export function ImportProductosModal({
     if (!row.departamento) {
       errors.push('departamento vacio')
     } else {
-      const dep = departamentos.find((d) => d.codigo === row.departamento)
+      const dep = departamentos.find((d) => d.nombre === row.departamento)
       if (!dep) errors.push('departamento no encontrado')
       else if (dep.is_active !== 1) errors.push('departamento inactivo')
     }
@@ -126,6 +128,14 @@ export function ImportProductosModal({
       if (isNaN(stockMin) || stockMin < 0) {
         errors.push('stock_minimo invalido')
       }
+      if (row.stock_inicial.trim() !== '') {
+        const stockIni = parseFloat(row.stock_inicial)
+        if (isNaN(stockIni) || stockIni < 0) {
+          errors.push('stock_inicial invalido (debe ser numero >= 0)')
+        }
+      }
+    } else if (row.stock_inicial.trim() !== '' && parseFloat(row.stock_inicial) > 0) {
+      errors.push('stock_inicial solo aplica a productos tipo P')
     }
 
     if (!['Gravable', 'Exento', 'Exonerado'].includes(row.tipo_impuesto)) {
@@ -165,6 +175,7 @@ export function ImportProductosModal({
           precio_venta_usd: String(r.precio_venta_usd ?? '').trim(),
           precio_mayor_usd: String(r.precio_mayor_usd ?? '').trim(),
           stock_minimo: String(r.stock_minimo ?? '').trim(),
+          stock_inicial: String(r.stock_inicial ?? '').trim(),
           tipo_impuesto: (() => {
             const raw = String(r.tipo_impuesto ?? 'Exento').trim().toLowerCase()
             if (raw === 'gravable') return 'Gravable'
@@ -249,40 +260,95 @@ export function ImportProductosModal({
     }
 
     setStep('procesando')
-    let exitosos = 0
-    let fallidos = 0
+    const now = localNow()
 
-    // Mapa codigo → id para combos creados (para luego asignar componentes)
-    const codigoToId = new Map<string, string>()
-
-    // Paso 1: crear productos P, S, C
-    for (const row of validRows) {
-      try {
-        const dep = departamentos.find((d) => d.codigo === row.departamento)
-        if (!dep) { fallidos++; continue }
-
-        const id = await crearProducto({
-          codigo: row.codigo,
-          tipo: row.tipo,
-          nombre: row.nombre,
-          departamento_id: dep.id,
-          costo_usd: parseFloat(row.costo_usd),
-          precio_venta_usd: parseFloat(row.precio_venta_usd),
-          precio_mayor_usd: row.precio_mayor_usd.trim() === '' ? null : parseFloat(row.precio_mayor_usd),
-          stock_minimo: row.tipo === 'S' || row.tipo === 'C' ? 0 : parseFloat(row.stock_minimo),
-          empresa_id: user.empresa_id,
-        })
-        codigoToId.set(row.codigo, id)
-        exitosos++
-      } catch {
-        fallidos++
+    // Pre-calcular todos los datos antes de abrir transacciones
+    const productoInserts = validRows.map((row) => {
+      const isServicioOCombo = row.tipo === 'S' || row.tipo === 'C'
+      const dep = departamentos.find((d) => d.nombre === row.departamento)!
+      const costo = parseFloat(row.costo_usd)
+      const venta = parseFloat(row.precio_venta_usd)
+      const mayor = row.precio_mayor_usd.trim() !== '' ? parseFloat(row.precio_mayor_usd) : null
+      return {
+        id: uuidv4(),
+        codigo: row.codigo,
+        tipo: row.tipo,
+        nombre: row.nombre,
+        departamento_id: dep.id,
+        costo_usd: row.tipo === 'C' ? '0.00' : costo.toFixed(2),
+        precio_venta_usd: venta.toFixed(2),
+        precio_mayor_usd: mayor?.toFixed(2) ?? null,
+        precio_especial_usd: null as string | null,
+        stock: '0.000',
+        stock_minimo: isServicioOCombo ? '0.000' : parseFloat(row.stock_minimo).toFixed(3),
+        costo_promedio: '0.00',
+        costo_ultimo: row.tipo === 'C' ? '0.00' : costo.toFixed(2),
+        tipo_impuesto: row.tipo_impuesto,
+        impuesto_iva_id: null as string | null,
+        maneja_lotes: 0,
+        is_active: 1,
+        empresa_id: user.empresa_id,
+        created_at: now,
+        updated_at: now,
+        ubicacion: null as string | null,
+        unidad_base_id: null as string | null,
+        presentacion: null as string | null,
+        codigo_barras: null as string | null,
       }
+    })
+
+    // Mapa codigo → id para componentes de combos
+    const codigoToId = new Map<string, string>()
+    for (const p of productoInserts) codigoToId.set(p.codigo, p.id)
+
+    // Paso 1: un solo writeTransaction para todos los productos (un solo re-render)
+    try {
+      await db.writeTransaction(async (tx) => {
+        for (const p of productoInserts) {
+          await tx.execute(
+            `INSERT INTO productos (id, codigo, tipo, nombre, departamento_id, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, stock, stock_minimo, costo_promedio, costo_ultimo, tipo_impuesto, impuesto_iva_id, maneja_lotes, is_active, empresa_id, created_at, updated_at, ubicacion, unidad_base_id, presentacion, codigo_barras)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [p.id, p.codigo, p.tipo, p.nombre, p.departamento_id, p.costo_usd, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock, p.stock_minimo, p.costo_promedio, p.costo_ultimo, p.tipo_impuesto, p.impuesto_iva_id, p.maneja_lotes, p.is_active, p.empresa_id, p.created_at, p.updated_at, p.ubicacion, p.unidad_base_id, p.presentacion, p.codigo_barras]
+          )
+        }
+      })
+      toast.success(`${productoInserts.length} producto(s) importado(s) correctamente`)
+    } catch {
+      toast.error('Error al importar productos')
+      onClose()
+      return
     }
 
-    // Paso 2: crear componentes de combos desde hoja 2
+    // Paso 2: inventario inicial via kardex para productos tipo P con stock_inicial > 0
+    const productosConStockInicial = productoInserts
+      .map((p, i) => ({ p, row: validRows[i] }))
+      .filter(({ row }) => row.tipo === 'P' && parseFloat(row.stock_inicial) > 0)
+
+    if (productosConStockInicial.length > 0) {
+      let kardexExitosos = 0
+      let kardexFallidos = 0
+      for (const { p, row } of productosConStockInicial) {
+        try {
+          await registrarMovimiento({
+            producto_id: p.id,
+            tipo: 'E',
+            cantidad: parseFloat(row.stock_inicial),
+            motivo: 'INVENTARIO INICIAL',
+            usuario_id: user.id,
+            empresa_id: user.empresa_id,
+          })
+          kardexExitosos++
+        } catch {
+          kardexFallidos++
+        }
+      }
+      if (kardexExitosos > 0) toast.success(`${kardexExitosos} entrada(s) de inventario inicial registradas en Kardex`)
+      if (kardexFallidos > 0) toast.error(`${kardexFallidos} entrada(s) de inventario inicial fallaron (sin deposito?)`)
+    }
+
+    // Paso 3: componentes de combos (hoja 2), tambien en una sola transaccion
     const validComponentes = componentes.filter((c) => c.isValid)
     if (validComponentes.length > 0) {
-      // Construir mapa de todos los productos (existentes + recien creados) por codigo
       const allProductos = await kysely
         .selectFrom('productos')
         .select(['id', 'codigo'])
@@ -292,26 +358,39 @@ export function ImportProductosModal({
       const productoByCode = new Map<string, string>()
       for (const p of allProductos) productoByCode.set(p.codigo, p.id)
 
-      let compExitosos = 0
-      let compFallidos = 0
-      for (const comp of validComponentes) {
+      const componenteInserts = validComponentes.flatMap((comp) => {
         const comboId = codigoToId.get(comp.combo_codigo) ?? productoByCode.get(comp.combo_codigo)
         const componenteId = productoByCode.get(comp.componente_codigo)
+        if (!comboId || !componenteId) return []
+        return [{
+          id: uuidv4(),
+          servicio_id: comboId,
+          producto_id: componenteId,
+          cantidad: parseFloat(comp.cantidad).toFixed(3),
+          empresa_id: user.empresa_id,
+          created_at: now,
+        }]
+      })
 
-        if (!comboId || !componenteId) { compFallidos++; continue }
+      const compFallidos = validComponentes.length - componenteInserts.length
+      if (componenteInserts.length > 0) {
         try {
-          await agregarIngrediente(comboId, componenteId, parseFloat(comp.cantidad), user.empresa_id)
-          compExitosos++
+          await db.writeTransaction(async (tx) => {
+            for (const c of componenteInserts) {
+              await tx.execute(
+                `INSERT INTO recetas (id, servicio_id, producto_id, cantidad, empresa_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+                [c.id, c.servicio_id, c.producto_id, c.cantidad, c.empresa_id, c.created_at]
+              )
+            }
+          })
+          toast.success(`${componenteInserts.length} componente(s) de combos importados`)
         } catch {
-          compFallidos++
+          toast.error('Error al importar componentes de combos')
         }
       }
-      if (compExitosos > 0) toast.success(`${compExitosos} componente(s) de combos importados`)
       if (compFallidos > 0) toast.error(`${compFallidos} componente(s) no pudieron importarse`)
     }
 
-    if (exitosos > 0) toast.success(`${exitosos} producto(s) importado(s) correctamente`)
-    if (fallidos > 0) toast.error(`${fallidos} producto(s) fallaron al importar`)
     onClose()
   }
 
@@ -319,14 +398,14 @@ export function ImportProductosModal({
     const wb = XLSX.utils.book_new()
 
     // Hoja 1: Inventario (misma estructura que la exportacion)
-    const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'tipo_impuesto']]
+    const headers = [['codigo', 'tipo', 'nombre', 'departamento', 'costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'stock_minimo', 'stock_inicial', 'tipo_impuesto']]
     const ejemplos = [
-      ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.codigo ?? 'DEP-001', '10.00', '15.00', '13.00', '5', 'Exento'],
-      ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.codigo ?? 'DEP-001', '5.00', '20.00', '', '0', 'Exento'],
-      ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.codigo ?? 'DEP-001', '0.00', '35.00', '', '0', 'Exento'],
+      ['PROD-001', 'P', 'PRODUCTO FISICO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '10.00', '15.00', '13.00', '5', '100', 'Exento'],
+      ['SERV-001', 'S', 'SERVICIO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '5.00', '20.00', '', '0', '', 'Exento'],
+      ['COMBO-001', 'C', 'COMBO EJEMPLO', departamentos[0]?.nombre ?? 'DEPARTAMENTO EJEMPLO', '0.00', '35.00', '', '0', '', 'Exento'],
     ]
     const ws1 = XLSX.utils.aoa_to_sheet([...headers, ...ejemplos])
-    ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 12 }]
+    ws1['!cols'] = [{ wch: 14 }, { wch: 6 }, { wch: 28 }, { wch: 14 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 13 }, { wch: 12 }]
     XLSX.utils.book_append_sheet(wb, ws1, 'Inventario')
 
     // Hoja 2: Componentes Combos (misma estructura que la exportacion)
@@ -405,11 +484,12 @@ export function ImportProductosModal({
                             ['codigo', 'Si', 'Mayusculas, numeros y guiones'],
                             ['tipo', 'Si', 'P (producto), S (servicio) o C (combo)'],
                             ['nombre', 'Si', 'Minimo 3 caracteres'],
-                            ['departamento', 'Si', 'Codigo de departamento activo'],
+                            ['departamento', 'Si', 'Nombre de departamento activo'],
                             ['costo_usd', 'Si', 'Numero decimal (ej: 10.50)'],
                             ['precio_venta_usd', 'Si', 'Mayor o igual al costo'],
                             ['precio_mayor_usd', 'No', 'Menor o igual al precio de venta'],
                             ['stock_minimo', 'Solo tipo P', 'Numero (ej: 5)'],
+                            ['stock_inicial', 'No', 'Solo tipo P. Crea entrada en Kardex con concepto "Inventario Inicial"'],
                             ['tipo_impuesto', 'No', 'Gravable, Exento o Exonerado'],
                           ].map(([col, req, fmt]) => (
                             <tr key={col} className="border-b border-blue-100">
@@ -436,7 +516,8 @@ export function ImportProductosModal({
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">
                 <p className="font-semibold mb-1">Notas:</p>
                 <ul className="list-disc list-inside space-y-0.5">
-                  <li>Los productos importados comienzan con stock 0. Usa el Kardex para entradas posteriores.</li>
+                  <li>Usa <strong>stock_inicial</strong> (solo tipo P) para registrar el stock de apertura. Se creara una entrada en el Kardex con concepto "Inventario Inicial".</li>
+                  <li>Si dejas stock_inicial vacio, el producto se crea con stock 0. Podras agregar stock luego desde el Kardex.</li>
                   <li>Puedes exportar el inventario actual y re-importarlo: la estructura es identica.</li>
                   <li>El sistema detecta duplicados dentro del archivo y contra productos existentes.</li>
                 </ul>
@@ -517,6 +598,7 @@ export function ImportProductosModal({
                         <th className="text-left px-2 py-2 font-medium">Depto</th>
                         <th className="text-right px-2 py-2 font-medium">Costo</th>
                         <th className="text-right px-2 py-2 font-medium">Venta</th>
+                        <th className="text-right px-2 py-2 font-medium">Stk. Ini.</th>
                         <th className="text-left px-2 py-2 font-medium">Errores</th>
                       </tr>
                     </thead>
@@ -535,6 +617,9 @@ export function ImportProductosModal({
                           <td className="px-2 py-1.5">{row.departamento}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums">{row.costo_usd}</td>
                           <td className="px-2 py-1.5 text-right tabular-nums">{row.precio_venta_usd}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums text-blue-700">
+                            {row.stock_inicial || '-'}
+                          </td>
                           <td className="px-2 py-1.5 text-red-600">{row.errors.join('; ')}</td>
                         </tr>
                       ))}

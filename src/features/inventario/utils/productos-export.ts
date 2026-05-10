@@ -38,7 +38,7 @@ interface ComponenteRow {
 
 function buildRows(productos: Producto[], departamentos: Departamento[]): ExportRow[] {
   const depMap = new Map<string, string>()
-  for (const d of departamentos) depMap.set(d.id, d.codigo)
+  for (const d of departamentos) depMap.set(d.id, d.nombre)
 
   // Exportar P, S y C — todos incluidos en la hoja principal
   return productos.map((p) => ({
