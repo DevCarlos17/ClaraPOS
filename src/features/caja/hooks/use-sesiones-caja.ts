@@ -210,6 +210,239 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   return { saldoUsd, saldoBs, isLoading: l1 || l2 || l3 }
 }
 
+// ─── Interface: SesionActivaDashboard ────────────────────────
+
+export interface SesionActivaDashboard {
+  id: string
+  empresa_id: string
+  caja_id: string
+  caja_nombre: string | null
+  cajera_nombre: string | null
+  fecha_apertura: string
+  monto_apertura_usd: string
+  monto_apertura_bs: string
+  // Saldo actual calculado
+  saldoUsd: number
+  saldoBs: number
+  // Estadisticas de la sesion
+  totalFacturas: number
+  totalFacturadoUsd: number
+  totalArticulos: number
+  // Tiempo y KPIs
+  horasTranscurridas: number
+  factHora: number
+  itemsHora: number
+  atv: number   // Average Transaction Value (USD por factura)
+  upt: number   // Units Per Transaction (articulos por factura)
+  // Score comparativo dentro del turno (0-100)
+  score: number
+}
+
+// ─── Hook: useSesionesActivasDashboard ───────────────────────
+
+/**
+ * Hook de dashboard para sesiones activas.
+ * Ejecuta 5 queries multi-sesion para agregar en una sola pasada:
+ *   - Nombres de caja y cajera via JOIN
+ *   - Saldo actual por sesion (apertura + pagos + movimientos)
+ *   - Estadisticas de facturacion: total USD, conteo facturas, articulos
+ *   - KPIs calculados: fact/hora, ATV, UPT
+ *   - Score comparativo normalizado entre cajeras del turno
+ */
+export function useSesionesActivasDashboard() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  // Q1: Sesiones activas enriquecidas con nombre de caja y cajera
+  const { data: sesionesData, isLoading: l1 } = useQuery(
+    empresaId
+      ? `SELECT s.id, s.empresa_id, s.caja_id, s.fecha_apertura,
+                s.monto_apertura_usd, s.monto_apertura_bs,
+                c.nombre as caja_nombre,
+                u.nombre as cajera_nombre
+         FROM sesiones_caja s
+         LEFT JOIN cajas c ON c.id = s.caja_id
+         LEFT JOIN usuarios u ON u.id = s.usuario_apertura_id
+         WHERE s.empresa_id = ? AND s.status = 'ABIERTA'
+         ORDER BY s.fecha_apertura ASC`
+      : '',
+    empresaId ? [empresaId] : []
+  )
+
+  type SesionBaseRow = {
+    id: string; empresa_id: string; caja_id: string; fecha_apertura: string
+    monto_apertura_usd: string; monto_apertura_bs: string
+    caja_nombre: string | null; cajera_nombre: string | null
+  }
+
+  const sesionesBase = (sesionesData ?? []) as SesionBaseRow[]
+  const sesionIds = sesionesBase.map(s => s.id)
+  const inPh = sesionIds.map(() => '?').join(', ')
+  const hasIds = sesionIds.length > 0
+
+  // Q2: Estadisticas de ventas por sesion
+  const { data: ventasData, isLoading: l2 } = useQuery(
+    hasIds
+      ? `SELECT sesion_caja_id,
+               COUNT(*) as total_facturas,
+               COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_facturado_usd
+         FROM ventas
+         WHERE sesion_caja_id IN (${inPh}) AND status != 'ANULADA'
+         GROUP BY sesion_caja_id`
+      : '',
+    hasIds ? sesionIds : []
+  )
+
+  // Q3: Articulos por sesion
+  const { data: artsData, isLoading: l3 } = useQuery(
+    hasIds
+      ? `SELECT v.sesion_caja_id,
+               COALESCE(SUM(CAST(vd.cantidad AS REAL)), 0) as total_articulos
+         FROM ventas v
+         JOIN ventas_det vd ON vd.venta_id = v.id
+         WHERE v.sesion_caja_id IN (${inPh}) AND v.status != 'ANULADA'
+         GROUP BY v.sesion_caja_id`
+      : '',
+    hasIds ? sesionIds : []
+  )
+
+  // Q4: Pagos en efectivo por sesion (para saldo)
+  const { data: pagosData, isLoading: l4 } = useQuery(
+    hasIds
+      ? `SELECT p.sesion_caja_id,
+               COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) as ventas_usd,
+               COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(p.monto_bs AS REAL) ELSE 0 END), 0) as ventas_bs
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         WHERE p.sesion_caja_id IN (${inPh}) AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0
+         GROUP BY p.sesion_caja_id`
+      : '',
+    hasIds ? sesionIds : []
+  )
+
+  // Q5: Movimientos manuales por sesion (para saldo)
+  const { data: movsData, isLoading: l5 } = useQuery(
+    hasIds
+      ? `SELECT mmc.sesion_caja_id, mmc.origen,
+               COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_usd,
+               COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_bs
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         WHERE mmc.sesion_caja_id IN (${inPh})
+           AND mc.tipo = 'EFECTIVO'
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+         GROUP BY mmc.sesion_caja_id, mmc.origen`
+      : '',
+    hasIds ? sesionIds : []
+  )
+
+  // ─── Construir mapas de lookup ───────────────────────────────
+
+  type VentasRow = { sesion_caja_id: string; total_facturas: number; total_facturado_usd: number }
+  const ventasMap = new Map<string, { facturas: number; facturado: number }>()
+  for (const r of (ventasData ?? []) as VentasRow[]) {
+    ventasMap.set(r.sesion_caja_id, { facturas: r.total_facturas, facturado: r.total_facturado_usd })
+  }
+
+  type ArtsRow = { sesion_caja_id: string; total_articulos: number }
+  const artsMap = new Map<string, number>()
+  for (const r of (artsData ?? []) as ArtsRow[]) {
+    artsMap.set(r.sesion_caja_id, r.total_articulos)
+  }
+
+  type PagosRow = { sesion_caja_id: string; ventas_usd: number; ventas_bs: number }
+  const pagosMap = new Map<string, { usd: number; bs: number }>()
+  for (const r of (pagosData ?? []) as PagosRow[]) {
+    pagosMap.set(r.sesion_caja_id, { usd: r.ventas_usd, bs: r.ventas_bs })
+  }
+
+  type MovsRow = { sesion_caja_id: string; origen: string; total_usd: number; total_bs: number }
+  const movsMap = new Map<string, Map<string, { usd: number; bs: number }>>()
+  for (const r of (movsData ?? []) as MovsRow[]) {
+    if (!movsMap.has(r.sesion_caja_id)) movsMap.set(r.sesion_caja_id, new Map())
+    movsMap.get(r.sesion_caja_id)!.set(r.origen, { usd: r.total_usd, bs: r.total_bs })
+  }
+
+  // ─── Calcular KPIs por sesion ────────────────────────────────
+
+  const now = Date.now()
+
+  const sesionesConKpis = sesionesBase.map(s => {
+    const v       = ventasMap.get(s.id) ?? { facturas: 0, facturado: 0 }
+    const arts    = artsMap.get(s.id) ?? 0
+    const pagos   = pagosMap.get(s.id) ?? { usd: 0, bs: 0 }
+    const movs    = movsMap.get(s.id) ?? new Map<string, { usd: number; bs: number }>()
+
+    const aperturaUsd  = parseFloat(s.monto_apertura_usd ?? '0') || 0
+    const aperturaBs   = parseFloat(s.monto_apertura_bs  ?? '0') || 0
+
+    const ingManualUsd = movs.get('INGRESO_MANUAL')?.usd ?? 0
+    const ingManualBs  = movs.get('INGRESO_MANUAL')?.bs  ?? 0
+    const egrManualUsd = movs.get('EGRESO_MANUAL')?.usd  ?? 0
+    const egrManualBs  = movs.get('EGRESO_MANUAL')?.bs   ?? 0
+    const avancesUsd   = movs.get('AVANCE')?.usd ?? 0
+    const avancesBs    = movs.get('AVANCE')?.bs  ?? 0
+    const prestamosUsd = movs.get('PRESTAMO')?.usd ?? 0
+    const prestamosBs  = movs.get('PRESTAMO')?.bs  ?? 0
+
+    const saldoUsd = Math.max(0, Number((
+      aperturaUsd + pagos.usd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
+    ).toFixed(2)))
+
+    const saldoBs = Math.max(0, Number((
+      aperturaBs + pagos.bs + ingManualBs - egrManualBs - avancesBs - prestamosBs
+    ).toFixed(2)))
+
+    const horasTranscurridas = Math.max(0.1, (now - new Date(s.fecha_apertura).getTime()) / 3_600_000)
+    const totalArticulos = Math.round(arts)
+    const factHora = v.facturas / horasTranscurridas
+    const itemsHora = arts / horasTranscurridas
+    const atv = v.facturas > 0 ? v.facturado / v.facturas : 0
+    const upt = v.facturas > 0 ? arts / v.facturas : 0
+
+    return {
+      id: s.id,
+      empresa_id: s.empresa_id,
+      caja_id: s.caja_id,
+      caja_nombre: s.caja_nombre ?? null,
+      cajera_nombre: s.cajera_nombre ?? null,
+      fecha_apertura: s.fecha_apertura,
+      monto_apertura_usd: s.monto_apertura_usd,
+      monto_apertura_bs: s.monto_apertura_bs,
+      saldoUsd,
+      saldoBs,
+      totalFacturas: v.facturas,
+      totalFacturadoUsd: v.facturado,
+      totalArticulos,
+      horasTranscurridas,
+      factHora,
+      itemsHora,
+      atv,
+      upt,
+      score: 0,
+    }
+  })
+
+  // ─── Score comparativo normalizado ───────────────────────────
+
+  const soloUna = sesionesConKpis.length <= 1
+  const maxFactHora  = Math.max(...sesionesConKpis.map(s => s.factHora),  0.001)
+  const maxItemsHora = Math.max(...sesionesConKpis.map(s => s.itemsHora), 0.001)
+
+  const sesiones: SesionActivaDashboard[] = sesionesConKpis.map(s => ({
+    ...s,
+    score: soloUna
+      ? 100
+      : Math.round(((s.factHora / maxFactHora) * 0.5 + (s.itemsHora / maxItemsHora) * 0.5) * 100),
+  }))
+
+  return {
+    sesiones,
+    isLoading: l1 || l2 || l3 || l4 || l5,
+    soloUna,
+  }
+}
+
 // ─── Hook: useSesionEstadisticas ─────────────────────────────
 
 /**
