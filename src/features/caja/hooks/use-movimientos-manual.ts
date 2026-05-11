@@ -67,10 +67,56 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
     )
 
     // 2. Validar que no quede saldo negativo en egresos
-    if (tipo === 'EGRESO' && saldoActual < monto) {
-      throw new Error(
-        `Saldo insuficiente. Disponible: USD ${saldoActual.toFixed(2)}, Solicitado: USD ${monto.toFixed(2)}`
+    if (tipo === 'EGRESO') {
+      // Computar saldo real de la sesion (incluye apertura + pagos + movimientos)
+      const metodoMonedaResult = await tx.execute(
+        'SELECT moneda FROM metodos_cobro WHERE id = ?',
+        [metodo_cobro_id]
       )
+      const monedaMetodo = (metodoMonedaResult.rows?.item(0) as { moneda: string } | undefined)?.moneda ?? 'USD'
+
+      const sesionResult = await tx.execute(
+        'SELECT monto_apertura_usd, monto_apertura_bs FROM sesiones_caja WHERE id = ?',
+        [sesion_caja_id]
+      )
+      const sesionRow = sesionResult.rows?.item(0) as
+        | { monto_apertura_usd: string; monto_apertura_bs: string }
+        | undefined
+      const apertura = parseFloat(
+        monedaMetodo === 'USD' ? sesionRow?.monto_apertura_usd ?? '0' : sesionRow?.monto_apertura_bs ?? '0'
+      ) || 0
+
+      const movsResult = await tx.execute(
+        `SELECT
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS ingresos,
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO'  THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS egresos
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         WHERE mmc.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ?`,
+        [sesion_caja_id, monedaMetodo]
+      )
+      const movsRow = movsResult.rows?.item(0) as { ingresos: number; egresos: number } | undefined
+      const ingresosSesion = movsRow?.ingresos ?? 0
+      const egresosSesion  = movsRow?.egresos  ?? 0
+
+      const pagosResult = await tx.execute(
+        `SELECT COALESCE(SUM(
+           CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE CAST(p.monto_bs AS REAL) END
+         ), 0) AS total
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ? AND p.is_reversed = 0`,
+        [sesion_caja_id, monedaMetodo]
+      )
+      const pagosSesion = ((pagosResult.rows?.item(0) as { total: number } | undefined)?.total) ?? 0
+
+      const disponible = apertura + ingresosSesion - egresosSesion + pagosSesion
+      if (disponible < monto - 0.01) {
+        const currency = monedaMetodo === 'USD' ? 'USD' : 'Bs'
+        throw new Error(
+          `Saldo insuficiente en ${currency}. Disponible: ${disponible.toFixed(2)}, Solicitado: ${monto.toFixed(2)}`
+        )
+      }
     }
 
     // 3. Calcular nuevo saldo
@@ -149,10 +195,56 @@ export async function createMovimientoManualMulti(params: MovimientoManualMultiP
         (metodoResult.rows.item(0) as { saldo_actual: string }).saldo_actual
       )
 
-      if (tipo === 'EGRESO' && saldoActual < entrada.monto) {
-        throw new Error(
-          `Saldo insuficiente. Disponible: ${saldoActual.toFixed(2)}, Solicitado: ${entrada.monto.toFixed(2)}`
+      if (tipo === 'EGRESO') {
+        // Computar saldo real de la sesion (incluye apertura + pagos + movimientos)
+        const metodoMonedaResult = await tx.execute(
+          'SELECT moneda FROM metodos_cobro WHERE id = ?',
+          [entrada.metodo_cobro_id]
         )
+        const monedaMetodo = (metodoMonedaResult.rows?.item(0) as { moneda: string } | undefined)?.moneda ?? 'USD'
+
+        const sesionResult = await tx.execute(
+          'SELECT monto_apertura_usd, monto_apertura_bs FROM sesiones_caja WHERE id = ?',
+          [sesion_caja_id]
+        )
+        const sesionRow = sesionResult.rows?.item(0) as
+          | { monto_apertura_usd: string; monto_apertura_bs: string }
+          | undefined
+        const apertura = parseFloat(
+          monedaMetodo === 'USD' ? sesionRow?.monto_apertura_usd ?? '0' : sesionRow?.monto_apertura_bs ?? '0'
+        ) || 0
+
+        const movsResult = await tx.execute(
+          `SELECT
+             COALESCE(SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS ingresos,
+             COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO'  THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS egresos
+           FROM movimientos_metodo_cobro mmc
+           JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+           WHERE mmc.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ?`,
+          [sesion_caja_id, monedaMetodo]
+        )
+        const movsRow = movsResult.rows?.item(0) as { ingresos: number; egresos: number } | undefined
+        const ingresosSesion = movsRow?.ingresos ?? 0
+        const egresosSesion  = movsRow?.egresos  ?? 0
+
+        const pagosResult = await tx.execute(
+          `SELECT COALESCE(SUM(
+             CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE CAST(p.monto_bs AS REAL) END
+           ), 0) AS total
+           FROM pagos p
+           JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+           WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ? AND p.is_reversed = 0`,
+          [sesion_caja_id, monedaMetodo]
+        )
+        const pagosSesion = ((pagosResult.rows?.item(0) as { total: number } | undefined)?.total) ?? 0
+
+        const disponible = apertura + ingresosSesion - egresosSesion + pagosSesion
+        if (disponible < entrada.monto - 0.01) {
+          const currency = monedaMetodo === 'USD' ? 'USD' : 'Bs'
+          throw new Error(
+            `Saldo insuficiente en ${currency}. Disponible: ${disponible.toFixed(2)}, Solicitado: ${entrada.monto.toFixed(2)}`
+          )
+        }
       }
 
       const saldoNuevo =

@@ -126,6 +126,87 @@ export function useSesionActiva() {
   return { sesion, isLoading }
 }
 
+// ─── Hook: useSaldoSesionCaja ────────────────────────────────
+
+/**
+ * Calcula el saldo de efectivo disponible en la sesion activa.
+ * Formula: apertura + pagos_efectivo + ingresos_manual - egresos_manual - avances - prestamos
+ * Esto refleja el dinero fisico real en caja en tiempo real.
+ */
+export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
+  const id = sesionCajaId ?? ''
+
+  const { data: sesionData, isLoading: l1 } = useQuery(
+    id ? 'SELECT monto_apertura_usd, monto_apertura_bs FROM sesiones_caja WHERE id = ?' : '',
+    id ? [id] : []
+  )
+
+  const { data: pagosData, isLoading: l2 } = useQuery(
+    id
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) AS ventas_usd,
+           COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(p.monto_bs  AS REAL) ELSE 0 END), 0) AS ventas_bs
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0`
+      : '',
+    id ? [id] : []
+  )
+
+  const { data: movsData, isLoading: l3 } = useQuery(
+    id
+      ? `SELECT
+           mmc.origen,
+           COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_usd,
+           COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_bs
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         WHERE mmc.sesion_caja_id = ?
+           AND mc.tipo = 'EFECTIVO'
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+         GROUP BY mmc.origen`
+      : '',
+    id ? [id] : []
+  )
+
+  const sesion = (sesionData ?? [])[0] as
+    | { monto_apertura_usd: string; monto_apertura_bs: string }
+    | undefined
+  const aperturaUsd = parseFloat(sesion?.monto_apertura_usd ?? '0') || 0
+  const aperturaBs  = parseFloat(sesion?.monto_apertura_bs  ?? '0') || 0
+
+  const pagosRow = (pagosData ?? [])[0] as
+    | { ventas_usd: number; ventas_bs: number }
+    | undefined
+  const ventasUsd = pagosRow?.ventas_usd ?? 0
+  const ventasBs  = pagosRow?.ventas_bs  ?? 0
+
+  type MovRow = { origen: string; total_usd: number; total_bs: number }
+  const movsMap = new Map<string, { usd: number; bs: number }>()
+  for (const row of (movsData ?? []) as MovRow[]) {
+    movsMap.set(row.origen, { usd: row.total_usd, bs: row.total_bs })
+  }
+
+  const ingManualUsd = movsMap.get('INGRESO_MANUAL')?.usd ?? 0
+  const ingManualBs  = movsMap.get('INGRESO_MANUAL')?.bs  ?? 0
+  const egrManualUsd = movsMap.get('EGRESO_MANUAL')?.usd  ?? 0
+  const egrManualBs  = movsMap.get('EGRESO_MANUAL')?.bs   ?? 0
+  const avancesUsd   = movsMap.get('AVANCE')?.usd ?? 0
+  const avancesBs    = movsMap.get('AVANCE')?.bs  ?? 0
+  const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? 0
+  const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? 0
+
+  const saldoUsd = Math.max(0, Number((
+    aperturaUsd + ventasUsd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
+  ).toFixed(2)))
+
+  const saldoBs = Math.max(0, Number((
+    aperturaBs + ventasBs + ingManualBs - egrManualBs - avancesBs - prestamosBs
+  ).toFixed(2)))
+
+  return { saldoUsd, saldoBs, isLoading: l1 || l2 || l3 }
+}
+
 // ─── Funcion: abrirSesionCaja ────────────────────────────────
 
 /**

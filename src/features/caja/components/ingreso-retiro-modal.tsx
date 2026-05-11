@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { createMovimientoManualMulti } from '@/features/caja/hooks/use-movimientos-manual'
+import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { formatUsd, formatBs } from '@/lib/currency'
 
 // ─── Props ────────────────────────────────────────────────────
@@ -29,6 +30,7 @@ function FormIngresoRetiro({
 }) {
   const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { saldoUsd, saldoBs, isLoading: loadingSaldo } = useSaldoSesionCaja(sesionCajaId)
 
   const [montoUsd, setMontoUsd] = useState('')
   const [montoBs, setMontoBs] = useState('')
@@ -66,6 +68,16 @@ function FormIngresoRetiro({
     if (bs > 0 && !efectivoBs) {
       newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
         'No hay un metodo EFECTIVO en Bs configurado'
+    }
+    if (modo === 'RETIRO') {
+      if (usd > 0 && usd > saldoUsd + 0.01) {
+        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+          `Saldo insuficiente en USD. Disponible: ${formatUsd(saldoUsd)}`
+      }
+      if (bs > 0 && bs > saldoBs + 0.01) {
+        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+          `Saldo insuficiente en Bs. Disponible: ${formatBs(saldoBs)}`
+      }
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -110,8 +122,8 @@ function FormIngresoRetiro({
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-muted-foreground">Efectivo USD</span>
           {efectivoUsd ? (
-            <span className="text-xs text-muted-foreground">
-              Saldo: {formatUsd(parseFloat(efectivoUsd.saldo_actual || '0'))}
+            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${loadingSaldo ? 'text-muted-foreground' : 'bg-yellow-100 text-yellow-800'}`}>
+              Saldo: {loadingSaldo ? '...' : formatUsd(saldoUsd)}
             </span>
           ) : (
             !loadingMetodos && (
@@ -138,8 +150,8 @@ function FormIngresoRetiro({
         <div className="flex items-center justify-between">
           <span className="text-xs font-medium text-muted-foreground">Efectivo Bs</span>
           {efectivoBs ? (
-            <span className="text-xs text-muted-foreground">
-              Saldo: {formatBs(parseFloat(efectivoBs.saldo_actual || '0'))}
+            <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${loadingSaldo ? 'text-muted-foreground' : 'bg-yellow-100 text-yellow-800'}`}>
+              Saldo: {loadingSaldo ? '...' : formatBs(saldoBs)}
             </span>
           ) : (
             !loadingMetodos && (

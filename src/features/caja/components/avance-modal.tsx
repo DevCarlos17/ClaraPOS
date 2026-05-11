@@ -4,6 +4,7 @@ import { Wallet, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 
 // ─── Types ────────────────────────────────────────────────────
@@ -57,7 +58,7 @@ function calcularAvance(
 
 function FormAvance({
   onClose,
-  sesionCajaId: _sesionCajaId,
+  sesionCajaId,
   tasaActual,
   clienteNombre,
   onAplicado,
@@ -73,6 +74,7 @@ function FormAvance({
   pendingCajaBs?: number
 }) {
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { saldoUsd: sesionSaldoUsd, saldoBs: sesionSaldoBs } = useSaldoSesionCaja(sesionCajaId)
 
   // Origen de fondos
   const [origenFondos, setOrigenFondos] = useState<OrigenFondos>('CAJA')
@@ -92,9 +94,9 @@ function FormAvance({
   const efectivoUsd = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
   const efectivoBs = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
 
-  // Saldo disponible real = saldo_actual - egresos pendientes en esta factura
-  const dispUsd = Math.max(0, parseFloat(efectivoUsd?.saldo_actual || '0') - pendingCajaUsd)
-  const dispBs = Math.max(0, parseFloat(efectivoBs?.saldo_actual || '0') - pendingCajaBs)
+  // Saldo disponible real = balance de sesion - egresos pendientes en esta factura
+  const dispUsd = Math.max(0, sesionSaldoUsd - pendingCajaUsd)
+  const dispBs = Math.max(0, sesionSaldoBs - pendingCajaBs)
 
   const usd = parseFloat(montoUsd) || 0
   const bs = parseFloat(montoBs) || 0
