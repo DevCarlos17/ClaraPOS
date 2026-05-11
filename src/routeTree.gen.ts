@@ -61,6 +61,7 @@ import { Route as AppClientesReportesRouteImport } from './routes/_app/clientes/
 import { Route as AppClientesGestionRouteImport } from './routes/_app/clientes/gestion'
 import { Route as AppClientesCuentasPorCobrarRouteImport } from './routes/_app/clientes/cuentas-por-cobrar'
 import { Route as AppCajaSesionesRouteImport } from './routes/_app/caja/sesiones'
+import { Route as AppCajaRendimientoRouteImport } from './routes/_app/caja/rendimiento'
 import { Route as AppCajaMovimientosRouteImport } from './routes/_app/caja/movimientos'
 import { Route as AppBancosDiferencialCambiarioRouteImport } from './routes/_app/bancos/diferencial-cambiario'
 import { Route as AppBancosConciliacionRouteImport } from './routes/_app/bancos/conciliacion'
@@ -340,6 +341,11 @@ const AppCajaSesionesRoute = AppCajaSesionesRouteImport.update({
   path: '/caja/sesiones',
   getParentRoute: () => AppRouteRoute,
 } as any)
+const AppCajaRendimientoRoute = AppCajaRendimientoRouteImport.update({
+  id: '/caja/rendimiento',
+  path: '/caja/rendimiento',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppCajaMovimientosRoute = AppCajaMovimientosRouteImport.update({
   id: '/caja/movimientos',
   path: '/caja/movimientos',
@@ -387,6 +393,7 @@ export interface FileRoutesByFullPath {
   '/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/bancos/diferencial-cambiario': typeof AppBancosDiferencialCambiarioRoute
   '/caja/movimientos': typeof AppCajaMovimientosRoute
+  '/caja/rendimiento': typeof AppCajaRendimientoRoute
   '/caja/sesiones': typeof AppCajaSesionesRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
@@ -444,6 +451,7 @@ export interface FileRoutesByTo {
   '/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/bancos/diferencial-cambiario': typeof AppBancosDiferencialCambiarioRoute
   '/caja/movimientos': typeof AppCajaMovimientosRoute
+  '/caja/rendimiento': typeof AppCajaRendimientoRoute
   '/caja/sesiones': typeof AppCajaSesionesRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
@@ -504,6 +512,7 @@ export interface FileRoutesById {
   '/_app/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/_app/bancos/diferencial-cambiario': typeof AppBancosDiferencialCambiarioRoute
   '/_app/caja/movimientos': typeof AppCajaMovimientosRoute
+  '/_app/caja/rendimiento': typeof AppCajaRendimientoRoute
   '/_app/caja/sesiones': typeof AppCajaSesionesRoute
   '/_app/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/_app/clientes/gestion': typeof AppClientesGestionRoute
@@ -564,6 +573,7 @@ export interface FileRouteTypes {
     | '/bancos/conciliacion'
     | '/bancos/diferencial-cambiario'
     | '/caja/movimientos'
+    | '/caja/rendimiento'
     | '/caja/sesiones'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
@@ -621,6 +631,7 @@ export interface FileRouteTypes {
     | '/bancos/conciliacion'
     | '/bancos/diferencial-cambiario'
     | '/caja/movimientos'
+    | '/caja/rendimiento'
     | '/caja/sesiones'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
@@ -680,6 +691,7 @@ export interface FileRouteTypes {
     | '/_app/bancos/conciliacion'
     | '/_app/bancos/diferencial-cambiario'
     | '/_app/caja/movimientos'
+    | '/_app/caja/rendimiento'
     | '/_app/caja/sesiones'
     | '/_app/clientes/cuentas-por-cobrar'
     | '/_app/clientes/gestion'
@@ -1099,6 +1111,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCajaSesionesRouteImport
       parentRoute: typeof AppRouteRoute
     }
+    '/_app/caja/rendimiento': {
+      id: '/_app/caja/rendimiento'
+      path: '/caja/rendimiento'
+      fullPath: '/caja/rendimiento'
+      preLoaderRoute: typeof AppCajaRendimientoRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/caja/movimientos': {
       id: '/_app/caja/movimientos'
       path: '/caja/movimientos'
@@ -1204,6 +1223,7 @@ interface AppRouteRouteChildren {
   AppBancosConciliacionRoute: typeof AppBancosConciliacionRoute
   AppBancosDiferencialCambiarioRoute: typeof AppBancosDiferencialCambiarioRoute
   AppCajaMovimientosRoute: typeof AppCajaMovimientosRoute
+  AppCajaRendimientoRoute: typeof AppCajaRendimientoRoute
   AppCajaSesionesRoute: typeof AppCajaSesionesRoute
   AppComprasCxpRoute: typeof AppComprasCxpRoute
   AppComprasFacturasRoute: typeof AppComprasFacturasRoute
@@ -1253,6 +1273,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppBancosConciliacionRoute: AppBancosConciliacionRoute,
   AppBancosDiferencialCambiarioRoute: AppBancosDiferencialCambiarioRoute,
   AppCajaMovimientosRoute: AppCajaMovimientosRoute,
+  AppCajaRendimientoRoute: AppCajaRendimientoRoute,
   AppCajaSesionesRoute: AppCajaSesionesRoute,
   AppComprasCxpRoute: AppComprasCxpRoute,
   AppComprasFacturasRoute: AppComprasFacturasRoute,

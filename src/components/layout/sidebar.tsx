@@ -89,6 +89,7 @@ const menuItems: MenuItem[] = [
     children: [
       { title: 'Sesiones', url: '/caja/sesiones', icon: Monitor, requiredPermission: PERMISSIONS.CAJA_ACCESS },
       { title: 'Movimientos', url: '/caja/movimientos', icon: ArrowsDownUp, requiredPermission: PERMISSIONS.CAJA_ACCESS },
+      { title: 'Rendimiento', url: '/caja/rendimiento', icon: ChartBar, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Cajas', url: '/configuracion/cajas', icon: Monitor, requiredPermission: PERMISSIONS.CONFIG_RATES },
     ],
   },
