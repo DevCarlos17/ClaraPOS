@@ -1,33 +1,17 @@
 import { useState } from 'react'
-import { Plus, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, X, ArrowSquareOut, Eye } from '@phosphor-icons/react'
+import { Plus, X, Eye } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   useSesionesActivas,
   useSesionesCaja,
+  useSaldoSesionCaja,
+  useSesionEstadisticas,
   type SesionCajaConNombre,
 } from '@/features/caja/hooks/use-sesiones-caja'
 import { SesionCajaForm } from './sesion-caja-form'
-import { MovimientoManualForm } from './movimiento-manual-form'
 import { formatDateTime } from '@/lib/format'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
-import type { OrigenManual } from '@/features/caja/schemas/movimiento-manual-schema'
-
-// ─── Badge de status ──────────────────────────────────────────
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === 'ABIERTA') {
-    return (
-      <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
-        ABIERTA
-      </span>
-    )
-  }
-  return (
-    <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-medium text-gray-600 ring-1 ring-gray-500/20 ring-inset">
-      CERRADA
-    </span>
-  )
-}
+import { formatUsd, formatBs } from '@/lib/currency'
 
 // ─── Skeleton de carga ────────────────────────────────────────
 
@@ -37,14 +21,7 @@ function TablaSkeletonSesiones() {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-muted">
-            {[
-              'Fecha Apertura',
-              'Monto Apertura',
-              'Fecha Cierre',
-              'Monto Fisico',
-              'Diferencia',
-              'Status',
-            ].map((col) => (
+            {['Fecha Apertura', 'Monto Apertura', 'Fecha Cierre', 'Monto Fisico', 'Diferencia', ''].map((col) => (
               <th key={col} className="text-left px-4 py-3 font-medium text-muted-foreground">
                 {col}
               </th>
@@ -72,16 +49,15 @@ function TablaSkeletonSesiones() {
 function SesionActivaCard({
   sesion,
   onCerrar,
-  onMovimiento,
   canClose,
-  canMovManual,
 }: {
   sesion: SesionCajaConNombre
   onCerrar: (id: string) => void
-  onMovimiento: (id: string, origen: OrigenManual) => void
   canClose: boolean
-  canMovManual: boolean
 }) {
+  const { saldoUsd, saldoBs, isLoading: loadingSaldo } = useSaldoSesionCaja(sesion.id)
+  const { totalFacturas, totalFacturadoUsd, totalArticulos } = useSesionEstadisticas(sesion.id)
+
   return (
     <div className="rounded-2xl bg-card shadow-lg p-4 flex flex-col gap-3">
       {/* Header */}
@@ -117,39 +93,39 @@ function SesionActivaCard({
         )}
       </div>
 
-      {/* Botones de movimiento */}
-      {canMovManual && (
-        <div className="flex flex-wrap gap-1.5 pt-2 border-t border-border">
-          <button
-            onClick={() => onMovimiento(sesion.id, 'INGRESO_MANUAL')}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors cursor-pointer"
-          >
-            <ArrowCircleDown className="h-3.5 w-3.5" />
-            Ingreso
-          </button>
-          <button
-            onClick={() => onMovimiento(sesion.id, 'EGRESO_MANUAL')}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition-colors cursor-pointer"
-          >
-            <ArrowCircleUp className="h-3.5 w-3.5" />
-            Egreso
-          </button>
-          <button
-            onClick={() => onMovimiento(sesion.id, 'AVANCE')}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors cursor-pointer"
-          >
-            <Wallet className="h-3.5 w-3.5" />
-            Avance
-          </button>
-          <button
-            onClick={() => onMovimiento(sesion.id, 'PRESTAMO')}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-md border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors cursor-pointer"
-          >
-            <Handshake className="h-3.5 w-3.5" />
-            Prestamo
-          </button>
-        </div>
-      )}
+      {/* Saldo actual en caja */}
+      <div className="rounded-lg bg-muted/40 px-3 py-2">
+        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">
+          Saldo en caja
+        </p>
+        {loadingSaldo ? (
+          <div className="h-5 w-32 bg-muted rounded animate-pulse" />
+        ) : (
+          <p className="text-base font-semibold tabular-nums">
+            {formatUsd(saldoUsd)}
+            {saldoBs > 0 && (
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                / {formatBs(saldoBs)}
+              </span>
+            )}
+          </p>
+        )}
+      </div>
+
+      {/* Estadisticas de rendimiento */}
+      <div className="flex items-center gap-3 text-xs text-muted-foreground border-t border-border pt-2">
+        <span className="tabular-nums">
+          {totalFacturas} {totalFacturas === 1 ? 'factura' : 'facturas'}
+        </span>
+        <span className="text-border">·</span>
+        <span className="font-medium text-foreground tabular-nums">
+          {formatUsd(totalFacturadoUsd)}
+        </span>
+        <span className="text-border">·</span>
+        <span className="tabular-nums">
+          {totalArticulos} {totalArticulos === 1 ? 'item' : 'items'}
+        </span>
+      </div>
     </div>
   )
 }
@@ -159,7 +135,8 @@ function SesionActivaCard({
 export function SesionCajaList() {
   const navigate = useNavigate()
   const { sesiones: sesionesActivas, isLoading: loadingActivas } = useSesionesActivas()
-  const { sesiones, isLoading: loadingSesiones } = useSesionesCaja()
+  const [limiteHistorial, setLimiteHistorial] = useState(10)
+  const { sesiones, isLoading: loadingSesiones } = useSesionesCaja(limiteHistorial)
   const { hasPermission, isOwner } = usePermissions()
 
   function irAlCuadre(s: { id: string; caja_id: string; fecha_apertura: string }) {
@@ -174,24 +151,14 @@ export function SesionCajaList() {
   }
 
   const canClose = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
-  const canMovManual = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)
 
   const [aperturaOpen, setAperturaOpen] = useState(false)
   const [cierreOpen, setCierreOpen] = useState(false)
-  const [movManualOpen, setMovManualOpen] = useState(false)
   const [sesionIdACerrar, setSesionIdACerrar] = useState<string | null>(null)
-  const [sesionIdMovimiento, setSesionIdMovimiento] = useState<string | null>(null)
-  const [origenSeleccionado, setOrigenSeleccionado] = useState<OrigenManual>('INGRESO_MANUAL')
 
   function handleCerrar(sesionId: string) {
     setSesionIdACerrar(sesionId)
     setCierreOpen(true)
-  }
-
-  function handleMovimiento(sesionId: string, origen: OrigenManual) {
-    setSesionIdMovimiento(sesionId)
-    setOrigenSeleccionado(origen)
-    setMovManualOpen(true)
   }
 
   return (
@@ -220,7 +187,7 @@ export function SesionCajaList() {
       {loadingActivas ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="h-32 bg-muted rounded-2xl animate-pulse" />
+            <div key={i} className="h-40 bg-muted rounded-2xl animate-pulse" />
           ))}
         </div>
       ) : sesionesActivas.length === 0 ? (
@@ -235,109 +202,95 @@ export function SesionCajaList() {
               key={s.id}
               sesion={s}
               onCerrar={handleCerrar}
-              onMovimiento={handleMovimiento}
               canClose={canClose}
-              canMovManual={canMovManual}
             />
           ))}
         </div>
       )}
 
-      {/* Historial de sesiones */}
+      {/* Historial de sesiones cerradas */}
       <div className="rounded-2xl bg-card shadow-lg p-5">
-        <h2 className="text-lg font-semibold mb-3">
-          Historial de Sesiones
-          <span className="text-sm font-normal text-muted-foreground ml-2">
-            (ultimas {sesiones.length})
-          </span>
-        </h2>
+        <h2 className="text-lg font-semibold mb-3">Historial de Sesiones</h2>
 
         {loadingSesiones ? (
           <TablaSkeletonSesiones />
         ) : sesiones.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
-            <p className="text-base font-medium">No hay sesiones registradas</p>
-            <p className="text-sm mt-1">Abre la primera sesion de caja para comenzar</p>
+            <p className="text-base font-medium">No hay sesiones cerradas</p>
+            <p className="text-sm mt-1">Las sesiones cerradas apareceran aqui</p>
           </div>
         ) : (
-          <div className="overflow-x-auto border border-border rounded-lg">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted">
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                    Fecha Apertura
-                  </th>
-                  <th className="text-right px-4 py-3 font-medium text-muted-foreground">
-                    Monto Apertura
-                  </th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                    Fecha Cierre
-                  </th>
-                  <th className="text-right px-4 py-3 font-medium text-muted-foreground">
-                    Monto Fisico
-                  </th>
-                  <th className="text-right px-4 py-3 font-medium text-muted-foreground">
-                    Diferencia
-                  </th>
-                  <th className="text-center px-4 py-3 font-medium text-muted-foreground">
-                    Status
-                  </th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {sesiones.map((s) => {
-                  const diferencia = s.diferencia_usd !== null
-                    ? parseFloat(s.diferencia_usd)
-                    : null
+          <>
+            <div className="overflow-x-auto border border-border rounded-lg">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted">
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">
+                      Fecha Apertura
+                    </th>
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">
+                      Monto Apertura
+                    </th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">
+                      Fecha Cierre
+                    </th>
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">
+                      Monto Fisico
+                    </th>
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">
+                      Diferencia
+                    </th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sesiones.map((s) => {
+                    const diferencia = s.diferencia_usd !== null
+                      ? parseFloat(s.diferencia_usd)
+                      : null
+                    const aperturaBs = parseFloat(s.monto_apertura_bs ?? '0')
 
-                  return (
-                    <tr
-                      key={s.id}
-                      className="border-b border-border hover:bg-muted/50 transition-colors"
-                    >
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                        {formatDateTime(s.fecha_apertura)}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums">
-                        USD {parseFloat(s.monto_apertura_usd).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                        {s.fecha_cierre ? formatDateTime(s.fecha_cierre) : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        {s.monto_fisico_usd !== null
-                          ? `USD ${parseFloat(s.monto_fisico_usd).toFixed(2)}`
-                          : '-'}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        {diferencia !== null ? (
-                          <span
-                            className={
-                              diferencia >= 0 ? 'text-green-700 font-medium' : 'text-red-600 font-medium'
-                            }
-                          >
-                            {diferencia >= 0 ? '+' : ''}
-                            {diferencia.toFixed(2)}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <StatusBadge status={s.status} />
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {s.status === 'ABIERTA' ? (
-                          <button
-                            onClick={() => irAlCuadre(s)}
-                            title="Ir al cuadre"
-                            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                          >
-                            <ArrowSquareOut size={13} />
-                            Cuadre
-                          </button>
-                        ) : (
+                    return (
+                      <tr
+                        key={s.id}
+                        className="border-b border-border hover:bg-muted/50 transition-colors"
+                      >
+                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                          {formatDateTime(s.fecha_apertura)}
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium tabular-nums">
+                          <div>USD {parseFloat(s.monto_apertura_usd).toFixed(2)}</div>
+                          {aperturaBs > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              Bs {aperturaBs.toFixed(2)}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                          {s.fecha_cierre ? formatDateTime(s.fecha_cierre) : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {s.monto_fisico_usd !== null
+                            ? `USD ${parseFloat(s.monto_fisico_usd).toFixed(2)}`
+                            : '-'}
+                        </td>
+                        <td className="px-4 py-3 text-right tabular-nums">
+                          {diferencia !== null ? (
+                            <span
+                              className={
+                                diferencia >= 0
+                                  ? 'text-green-700 font-medium'
+                                  : 'text-red-600 font-medium'
+                              }
+                            >
+                              {diferencia >= 0 ? '+' : ''}
+                              {diferencia.toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right">
                           <button
                             onClick={() => irAlCuadre(s)}
                             title="Ver resumen"
@@ -346,14 +299,25 @@ export function SesionCajaList() {
                             <Eye size={13} />
                             Resumen
                           </button>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {sesiones.length >= limiteHistorial && (
+              <div className="flex justify-center mt-3">
+                <button
+                  onClick={() => setLimiteHistorial((prev) => prev + 10)}
+                  className="text-sm text-primary hover:underline cursor-pointer"
+                >
+                  Cargar mas sesiones
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -374,19 +338,6 @@ export function SesionCajaList() {
         }}
         sesionId={sesionIdACerrar ?? undefined}
       />
-
-      {/* Dialogo de movimiento manual */}
-      {sesionIdMovimiento && (
-        <MovimientoManualForm
-          isOpen={movManualOpen}
-          onClose={() => {
-            setMovManualOpen(false)
-            setSesionIdMovimiento(null)
-          }}
-          sesionCajaId={sesionIdMovimiento}
-          origenInicial={origenSeleccionado}
-        />
-      )}
     </div>
   )
 }

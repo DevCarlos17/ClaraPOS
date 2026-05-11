@@ -88,18 +88,21 @@ export function useSesionesActivas() {
 }
 
 /**
- * Retorna las 20 sesiones mas recientes de la empresa actual.
+ * Retorna las sesiones CERRADAS mas recientes de la empresa actual.
+ * Las sesiones activas se consultan por separado con useSesionesActivas.
  */
-export function useSesionesCaja() {
+export function useSesionesCaja(limite: number = 10) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT * FROM sesiones_caja
-     WHERE empresa_id = ?
-     ORDER BY fecha_apertura DESC
-     LIMIT 20`,
-    [empresaId]
+    empresaId
+      ? `SELECT * FROM sesiones_caja
+         WHERE empresa_id = ? AND status = 'CERRADA'
+         ORDER BY fecha_apertura DESC
+         LIMIT ?`
+      : '',
+    empresaId ? [empresaId, limite] : []
   )
 
   return { sesiones: (data ?? []) as SesionCaja[], isLoading }
@@ -205,6 +208,50 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   ).toFixed(2)))
 
   return { saldoUsd, saldoBs, isLoading: l1 || l2 || l3 }
+}
+
+// ─── Hook: useSesionEstadisticas ─────────────────────────────
+
+/**
+ * Estadisticas de rendimiento de una sesion en tiempo real.
+ * Cuenta facturas, total facturado en USD y total de articulos procesados.
+ * Solo incluye ventas no anuladas.
+ */
+export function useSesionEstadisticas(sesionCajaId: string | undefined) {
+  const id = sesionCajaId ?? ''
+
+  const { data: ventasData, isLoading: l1 } = useQuery(
+    id
+      ? `SELECT
+           COUNT(*) as total_facturas,
+           COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_facturado_usd
+         FROM ventas
+         WHERE sesion_caja_id = ? AND status != 'ANULADA'`
+      : '',
+    id ? [id] : []
+  )
+
+  const { data: artsData, isLoading: l2 } = useQuery(
+    id
+      ? `SELECT COALESCE(SUM(CAST(vd.cantidad AS REAL)), 0) as total_articulos
+         FROM ventas v
+         JOIN ventas_det vd ON vd.venta_id = v.id
+         WHERE v.sesion_caja_id = ? AND v.status != 'ANULADA'`
+      : '',
+    id ? [id] : []
+  )
+
+  const row = (ventasData ?? [])[0] as
+    | { total_facturas: number; total_facturado_usd: number }
+    | undefined
+  const artsRow = (artsData ?? [])[0] as { total_articulos: number } | undefined
+
+  return {
+    totalFacturas: row?.total_facturas ?? 0,
+    totalFacturadoUsd: row?.total_facturado_usd ?? 0,
+    totalArticulos: Math.round(artsRow?.total_articulos ?? 0),
+    isLoading: l1 || l2,
+  }
 }
 
 // ─── Funcion: abrirSesionCaja ────────────────────────────────
