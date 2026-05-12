@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import { Plus, X, Eye, ArrowSquareOut } from '@phosphor-icons/react'
+import { Plus, X, ArrowSquareOut } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import {
   useSesionesActivasDashboard,
-  useSesionesCaja,
+  useSesionesCajaHistorial,
 } from '@/features/caja/hooks/use-sesiones-caja'
 import { SesionCajaForm } from './sesion-caja-form'
 import { formatDateTime } from '@/lib/format'
@@ -202,6 +202,20 @@ function SesionActivaTabla({
   )
 }
 
+// ─── Helpers de duracion ─────────────────────────────────────
+
+function calcularDuracion(fechaApertura: string, fechaCierre: string | null): string {
+  const inicio = new Date(fechaApertura).getTime()
+  const fin = fechaCierre ? new Date(fechaCierre).getTime() : Date.now()
+  const diffMs = Math.max(0, fin - inicio)
+  const totalMin = Math.floor(diffMs / 60_000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  if (h === 0) return `${m}min`
+  if (m === 0) return `${h}h`
+  return `${h}h ${m}min`
+}
+
 // ─── Skeleton tabla historial ─────────────────────────────────
 
 function TablaSkeletonSesiones() {
@@ -210,8 +224,8 @@ function TablaSkeletonSesiones() {
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-muted">
-            {['Fecha Apertura', 'Monto Apertura', 'Fecha Cierre', 'Monto Fisico', 'Diferencia', ''].map((col) => (
-              <th key={col} className="text-left px-4 py-3 font-medium text-muted-foreground">
+            {['Fecha', 'Cajero', 'Duracion', 'Facturado USD', 'Diferencia USD', ''].map((col) => (
+              <th key={col} className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
                 {col}
               </th>
             ))}
@@ -222,7 +236,7 @@ function TablaSkeletonSesiones() {
             <tr key={i} className="border-b border-border">
               {Array.from({ length: 6 }).map((__, j) => (
                 <td key={j} className="px-4 py-3">
-                  <div className="h-4 bg-muted rounded animate-pulse" />
+                  <div className={`h-4 bg-muted rounded animate-pulse ${j === 0 ? 'w-32' : j === 1 ? 'w-24' : 'w-16'}`} />
                 </td>
               ))}
             </tr>
@@ -238,7 +252,7 @@ function TablaSkeletonSesiones() {
 export function SesionCajaList() {
   const navigate = useNavigate()
   const [limiteHistorial, setLimiteHistorial] = useState(10)
-  const { sesiones, isLoading: loadingSesiones } = useSesionesCaja(limiteHistorial)
+  const { sesiones, isLoading: loadingSesiones } = useSesionesCajaHistorial(limiteHistorial)
   const { hasPermission, isOwner } = usePermissions()
 
   function irAlCuadre(s: { id: string; caja_id: string; fecha_apertura: string }) {
@@ -301,21 +315,21 @@ export function SesionCajaList() {
             <div className="overflow-x-auto border border-border rounded-lg">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-border bg-muted">
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                      Fecha Apertura
+                  <tr className="border-b border-border bg-muted/60">
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                      Fecha
                     </th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">
-                      Monto Apertura
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                      Cajero
                     </th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                      Fecha Cierre
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                      Duracion
                     </th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">
-                      Monto Fisico
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                      Facturado USD
                     </th>
-                    <th className="text-right px-4 py-3 font-medium text-muted-foreground">
-                      Diferencia
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                      Diferencia USD
                     </th>
                     <th className="px-4 py-3" />
                   </tr>
@@ -325,32 +339,38 @@ export function SesionCajaList() {
                     const diferencia = s.diferencia_usd !== null
                       ? parseFloat(s.diferencia_usd)
                       : null
-                    const aperturaBs = parseFloat(s.monto_apertura_bs ?? '0')
 
                     return (
                       <tr
                         key={s.id}
                         className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors"
                       >
-                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                          {formatDateTime(s.fecha_apertura)}
-                        </td>
-                        <td className="px-4 py-3 text-right font-medium tabular-nums">
-                          <div>USD {parseFloat(s.monto_apertura_usd).toFixed(2)}</div>
-                          {aperturaBs > 0 && (
+                        {/* Fecha */}
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <div className="text-sm font-medium">{formatDateTime(s.fecha_apertura)}</div>
+                          {s.fecha_cierre && (
                             <div className="text-xs text-muted-foreground">
-                              Bs {aperturaBs.toFixed(2)}
+                              Cierre: {formatDateTime(s.fecha_cierre)}
                             </div>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                          {s.fecha_cierre ? formatDateTime(s.fecha_cierre) : '-'}
+
+                        {/* Cajero */}
+                        <td className="px-4 py-3">
+                          <span className="text-sm">{s.cajero_nombre ?? '-'}</span>
                         </td>
+
+                        {/* Duracion */}
+                        <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
+                          {calcularDuracion(s.fecha_apertura, s.fecha_cierre)}
+                        </td>
+
+                        {/* Facturado USD */}
                         <td className="px-4 py-3 text-right tabular-nums">
-                          {s.monto_fisico_usd !== null
-                            ? `USD ${parseFloat(s.monto_fisico_usd).toFixed(2)}`
-                            : '-'}
+                          <span className="font-semibold">{formatUsd(s.total_facturado_usd)}</span>
                         </td>
+
+                        {/* Diferencia USD */}
                         <td className="px-4 py-3 text-right tabular-nums">
                           {diferencia !== null ? (
                             <span
@@ -361,20 +381,22 @@ export function SesionCajaList() {
                               }
                             >
                               {diferencia >= 0 ? '+' : ''}
-                              {diferencia.toFixed(2)}
+                              {formatUsd(diferencia)}
                             </span>
                           ) : (
                             <span className="text-muted-foreground">-</span>
                           )}
                         </td>
+
+                        {/* Boton cuadre */}
                         <td className="px-4 py-3 text-right">
                           <button
                             onClick={() => irAlCuadre(s)}
-                            title="Ver resumen"
-                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                            title="Consultar cuadre de caja"
+                            className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-primary border border-primary/30 rounded-md hover:bg-primary/10 transition-colors cursor-pointer"
                           >
-                            <Eye size={13} />
-                            Resumen
+                            <ArrowSquareOut size={12} />
+                            Cuadre
                           </button>
                         </td>
                       </tr>

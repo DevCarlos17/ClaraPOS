@@ -108,20 +108,62 @@ export function useSesionesCaja(limite: number = 10) {
   return { sesiones: (data ?? []) as SesionCaja[], isLoading }
 }
 
+// ─── Interface: SesionCajaHistorial ──────────────────────────
+
+export interface SesionCajaHistorial extends SesionCaja {
+  cajero_nombre: string | null
+  total_facturado_usd: number
+}
+
 /**
- * Retorna la sesion de caja actualmente abierta (status = 'ABIERTA') de la empresa actual.
- * Retorna null si no hay sesion activa.
+ * Retorna el historial de sesiones CERRADAS enriquecido con:
+ *   - Nombre del cajero (JOIN usuarios)
+ *   - Total facturado en USD (subquery ventas)
+ * Usado en la tabla de historial de sesiones.
  */
-export function useSesionActiva() {
+export function useSesionesCajaHistorial(limite: number = 10) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT * FROM sesiones_caja
-     WHERE empresa_id = ? AND status = 'ABIERTA'
-     ORDER BY fecha_apertura DESC
-     LIMIT 1`,
-    [empresaId]
+    empresaId
+      ? `SELECT s.*,
+               u.nombre as cajero_nombre,
+               COALESCE((
+                 SELECT SUM(CAST(v.total_usd AS REAL))
+                 FROM ventas v
+                 WHERE v.sesion_caja_id = s.id AND v.status != 'ANULADA'
+               ), 0) as total_facturado_usd
+         FROM sesiones_caja s
+         LEFT JOIN usuarios u ON u.id = s.usuario_apertura_id
+         WHERE s.empresa_id = ? AND s.status = 'CERRADA'
+         ORDER BY s.fecha_apertura DESC
+         LIMIT ?`
+      : '',
+    empresaId ? [empresaId, limite] : []
+  )
+
+  return { sesiones: (data ?? []) as SesionCajaHistorial[], isLoading }
+}
+
+/**
+ * Retorna la sesion de caja actualmente abierta (status = 'ABIERTA') del usuario actual.
+ * Filtra por empresa_id Y usuario_apertura_id para que cada cajero vea solo su propia sesion.
+ * Retorna null si no hay sesion activa para este usuario.
+ */
+export function useSesionActiva() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const usuarioId = user?.id ?? ''
+
+  const { data, isLoading } = useQuery(
+    empresaId && usuarioId
+      ? `SELECT * FROM sesiones_caja
+         WHERE empresa_id = ? AND status = 'ABIERTA' AND usuario_apertura_id = ?
+         ORDER BY fecha_apertura DESC
+         LIMIT 1`
+      : '',
+    empresaId && usuarioId ? [empresaId, usuarioId] : []
   )
 
   const sesion = ((data ?? []) as SesionCaja[])[0] ?? null
