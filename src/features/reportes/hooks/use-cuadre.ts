@@ -1139,3 +1139,112 @@ export function useFacturasBusqueda(params: BusquedaParams | null) {
 
   return { facturas: items, isLoading }
 }
+
+// ─── Cobros efectivo individuales (para saldo de caja) ─────
+
+export interface CobrosEfectivoDetalle {
+  id: string
+  nro_factura: string
+  cliente_nombre: string
+  monto: string
+  moneda: string
+  metodo_nombre: string
+  fecha: string
+}
+
+export function useCobrosEfectivoCaja(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = filters
+    ? buildCuadreWhere(filters, empresaId, 'pg')
+    : ['1=0', []]
+
+  const { data, isLoading } = useQuery(
+    filters
+      ? `SELECT
+           pg.id, pg.monto, pg.fecha,
+           v.nro_factura,
+           c.nombre as cliente_nombre,
+           mp.nombre as metodo_nombre,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS'
+                ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda
+         FROM pagos pg
+         JOIN ventas v ON pg.venta_id = v.id
+         JOIN clientes c ON v.cliente_id = c.id
+         JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
+         LEFT JOIN monedas mon ON mp.moneda_id = mon.id
+         WHERE ${where}
+           AND mp.tipo = 'EFECTIVO'
+           AND pg.is_reversed = 0
+         ORDER BY pg.fecha DESC`
+      : '',
+    filters ? params : []
+  )
+
+  const items: CobrosEfectivoDetalle[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id ?? ''),
+    nro_factura: String(row.nro_factura ?? ''),
+    cliente_nombre: String(row.cliente_nombre ?? ''),
+    monto: String(row.monto ?? '0'),
+    moneda: String(row.moneda ?? 'USD'),
+    metodo_nombre: String(row.metodo_nombre ?? ''),
+    fecha: String(row.fecha ?? ''),
+  }))
+
+  return { cobros: items, isLoading }
+}
+
+// ─── Movimientos efectivo individuales (para saldo de caja) ─
+
+export interface MovimientoEfectivoDetalle {
+  id: string
+  origen: string
+  tipo: string
+  monto: string
+  metodo_nombre: string
+  metodo_moneda: string
+  concepto: string | null
+  fecha: string
+  destinatario: string | null
+}
+
+export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  const { data, isLoading } = useQuery(
+    hasSession
+      ? `SELECT
+           mmc.id, mmc.origen, mmc.tipo, mmc.monto, mmc.concepto, mmc.fecha,
+           mc.nombre as metodo_nombre,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS'
+                ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
+           ud.nombre as destinatario
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         LEFT JOIN usuarios ud ON mmc.destinatario_id = ud.id
+         WHERE mmc.empresa_id = ?
+           AND mmc.sesion_caja_id IN (${placeholders})
+           AND mc.tipo = 'EFECTIVO'
+         ORDER BY mmc.fecha DESC`
+      : '',
+    hasSession ? [empresaId, ...filters!.sesionCajaIds] : []
+  )
+
+  const items: MovimientoEfectivoDetalle[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id ?? ''),
+    origen: String(row.origen ?? ''),
+    tipo: String(row.tipo ?? ''),
+    monto: String(row.monto ?? '0'),
+    metodo_nombre: String(row.metodo_nombre ?? ''),
+    metodo_moneda: String(row.metodo_moneda ?? 'USD'),
+    concepto: row.concepto ? String(row.concepto) : null,
+    fecha: String(row.fecha ?? ''),
+    destinatario: row.destinatario ? String(row.destinatario) : null,
+  }))
+
+  return { movimientos: items, isLoading }
+}

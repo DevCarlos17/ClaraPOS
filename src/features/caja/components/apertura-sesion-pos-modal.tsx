@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Lock } from '@phosphor-icons/react'
 import { toast } from 'sonner'
-import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
+import { useCajasDisponibles } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { abrirSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -13,7 +13,7 @@ interface AperturaSesionPosModalProps {
 
 export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosModalProps) {
   const { user } = useCurrentUser()
-  const { cajas, isLoading: loadingCajas } = useCajasActivas()
+  const { cajas, isLoading: loadingCajas } = useCajasDisponibles()
 
   const [cajaId, setCajaId] = useState('')
   const [montoUsd, setMontoUsd] = useState('')

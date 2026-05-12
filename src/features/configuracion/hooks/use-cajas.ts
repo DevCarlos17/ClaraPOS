@@ -39,6 +39,28 @@ export function useCajasActivas() {
   return { cajas: (data ?? []) as Caja[], isLoading }
 }
 
+/**
+ * Retorna solo las cajas activas que NO tienen una sesion con status='ABIERTA'.
+ * Usar en formularios de apertura para cumplir la regla de exclusividad de sesion.
+ */
+export function useCajasDisponibles() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `SELECT c.* FROM cajas c
+     WHERE c.empresa_id = ? AND c.is_active = 1
+       AND NOT EXISTS (
+         SELECT 1 FROM sesiones_caja s
+         WHERE s.caja_id = c.id AND s.status = 'ABIERTA'
+       )
+     ORDER BY c.nombre ASC`,
+    [empresaId]
+  )
+  return { cajas: (data ?? []) as Caja[], isLoading }
+}
+
+
 export async function crearCaja(data: {
   nombre: string
   ubicacion?: string

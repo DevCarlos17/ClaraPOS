@@ -37,7 +37,7 @@ export function CuadreConteoFisico({
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { movimientos } = useMovimientosManualesDia(filters)
   const { aperturaUsd, aperturaBs } = useSesionApertura(filters)
-  const { saldoEsperadoBs } = useSaldoEfectivoBimonetario(filters)
+  const { saldoEsperadoUsd, saldoEsperadoBs } = useSaldoEfectivoBimonetario(filters)
   // keyed por m.nombre
   const [fisico, setFisico] = useState<Record<string, string>>({})
   const [billetesModal, setBilletesModal] = useState<{
@@ -211,8 +211,15 @@ export function CuadreConteoFisico({
       <div className="space-y-3">
         {metodos.map((m) => {
           const esEfectivo = m.tipo === 'EFECTIVO'
-          const sistemaUsd = m.totalUsd
-          const sistemaBs = m.totalOriginal
+          // Para efectivo mostramos el saldo completo (apertura + cobros + movimientos)
+          const sistemaUsd = esEfectivo
+            ? (m.moneda === 'BS'
+                ? (tasaDelDia > 0 ? saldoEsperadoBs / tasaDelDia : 0)
+                : saldoEsperadoUsd)
+            : m.totalUsd
+          const sistemaBs = esEfectivo && m.moneda === 'BS'
+            ? saldoEsperadoBs
+            : m.totalOriginal
           const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
           const efectivaTasa = tasaDelDia > 0
             ? tasaDelDia
@@ -335,74 +342,18 @@ export function CuadreConteoFisico({
           )
         })}
 
-        {/* Ajustes del periodo: apertura + movimientos manuales */}
-        {(aperturaUsd > 0.001 || aperturaBs > 0.001 || movimientos.length > 0) && (
-          <div className="rounded-lg border border-blue-100 bg-blue-50/40 p-3 space-y-1.5 text-xs">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">
-              Ajustes del periodo
-            </p>
-            {(aperturaUsd > 0.001 || aperturaBs > 0.001) && (
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Fondo apertura</span>
-                <span className="font-mono font-semibold text-green-700">
-                  {aperturaUsd > 0.001 ? `+${formatUsd(aperturaUsd)}` : ''}
-                  {aperturaBs > 0.001 ? `  +${formatBs(aperturaBs)}` : ''}
-                </span>
-              </div>
-            )}
-            {movimientos.length > 0 ? (
-              (() => {
-                const toUsd = (m: { metodo_moneda: string; total: number }) =>
-                  m.metodo_moneda === 'BS' ? (tasaDelDia > 0 ? m.total / tasaDelDia : 0) : m.total
-                const ingresos = movimientos.filter((m) => m.mov_tipo === 'INGRESO')
-                const vueltos = movimientos.filter((m) => m.origen === 'VUELTO')
-                const otrosEgresos = movimientos.filter((m) => m.mov_tipo === 'EGRESO' && m.origen !== 'VUELTO')
-                const totalIngUsd = ingresos.reduce((s, m) => s + toUsd(m), 0)
-                const totalVueltosUsd = vueltos.reduce((s, m) => s + toUsd(m), 0)
-                const totalVueltosBs = vueltos.filter((m) => m.metodo_moneda === 'BS').reduce((s, m) => s + m.total, 0)
-                const totalOtrosEgrUsd = otrosEgresos.reduce((s, m) => s + toUsd(m), 0)
-                return (
-                  <>
-                    {totalIngUsd > 0.001 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Ingresos manuales</span>
-                        <span className="font-mono text-green-700">+{formatUsd(totalIngUsd)}</span>
-                      </div>
-                    )}
-                    {totalVueltosUsd > 0.001 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Vueltos entregados</span>
-                        <span className="font-mono text-red-600">
-                          -{formatUsd(totalVueltosUsd)}
-                          {totalVueltosBs > 0.001 && (
-                            <span className="ml-1 text-[10px] text-red-400">/ {formatBs(totalVueltosBs)}</span>
-                          )}
-                        </span>
-                      </div>
-                    )}
-                    {totalOtrosEgrUsd > 0.001 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-muted-foreground">Egresos / Pagos</span>
-                        <span className="font-mono text-red-600">-{formatUsd(totalOtrosEgrUsd)}</span>
-                      </div>
-                    )}
-                  </>
-                )
-              })()
-            ) : (
-              <p className="text-[10px] text-muted-foreground italic">
-                Sin movimientos del periodo.
-              </p>
-            )}
-          </div>
-        )}
-
         {/* Summary row */}
         <div className="rounded-lg border bg-muted/30 p-3">
           <div className="flex items-center justify-between text-sm">
-            <span className="font-semibold">Total cobrado (sistema)</span>
+            <span className="font-semibold">Saldo de caja (sistema)</span>
             <span className="font-bold tabular-nums">{formatUsd(totals.totalSistema)}</span>
           </div>
+          {saldoEsperadoUsd > 0.001 && (
+            <div className="flex items-center justify-between text-xs mt-1">
+              <span className="text-muted-foreground">Efectivo USD esperado</span>
+              <span className="font-mono tabular-nums text-blue-600">{formatUsd(saldoEsperadoUsd)}</span>
+            </div>
+          )}
           {saldoEsperadoBs > 0.001 && (
             <div className="flex items-center justify-between text-xs mt-1">
               <span className="text-muted-foreground">Efectivo Bs. esperado</span>

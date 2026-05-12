@@ -18,6 +18,7 @@ import { CuadreConteoFisico } from './cuadre-conteo-fisico'
 import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
+import { CuadreSaldoCaja } from './cuadre-saldo-caja'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
@@ -510,6 +511,8 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
       ) : (
         <>
           <CuadreTotalesFiscales filters={activeFilters} />
+
+          <CuadreSaldoCaja filters={activeFilters} />
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <CuadreConteoFisico

@@ -549,16 +549,20 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
   const now = localNow()
 
   await db.writeTransaction(async (tx) => {
-    // Validar que no haya ya una sesion abierta para esta caja
+    // Validar que no haya ya una sesion abierta para esta caja (Plan B)
     const existente = await tx.execute(
-      `SELECT id FROM sesiones_caja
-       WHERE empresa_id = ? AND caja_id = ? AND status = 'ABIERTA'
+      `SELECT sc.id, u.nombre as usuario_nombre
+       FROM sesiones_caja sc
+       LEFT JOIN usuarios u ON u.id = sc.usuario_apertura_id
+       WHERE sc.empresa_id = ? AND sc.caja_id = ? AND sc.status = 'ABIERTA'
        LIMIT 1`,
       [empresa_id, caja_id]
     )
 
     if (existente.rows && existente.rows.length > 0) {
-      throw new Error('Ya existe una sesion abierta para esta caja')
+      const row = existente.rows[0] as { usuario_nombre: string | null }
+      const quien = row.usuario_nombre ? ` Responsable actual: ${row.usuario_nombre}.` : ''
+      throw new Error(`Esta caja ya tiene una sesion abierta.${quien} Solicita el cierre antes de continuar.`)
     }
 
     await tx.execute(

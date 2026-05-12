@@ -12,7 +12,7 @@ import {
   abrirSesionCaja,
   cerrarSesionCaja,
 } from '@/features/caja/hooks/use-sesiones-caja'
-import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
+import { useCajasDisponibles } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -30,7 +30,7 @@ interface SesionCajaFormProps {
 
 function FormApertura({ onClose }: { onClose: () => void }) {
   const { user } = useCurrentUser()
-  const { cajas, isLoading: loadingCajas } = useCajasActivas()
+  const { cajas, isLoading: loadingCajas } = useCajasDisponibles()
   const { tasaValor } = useTasaActual()
 
   const [cajaId, setCajaId] = useState('')
