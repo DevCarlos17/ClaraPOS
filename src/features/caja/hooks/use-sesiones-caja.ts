@@ -189,10 +189,11 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   const { data: pagosData, isLoading: l2 } = useQuery(
     id
       ? `SELECT
-           COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) AS ventas_usd,
-           COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(p.monto_bs  AS REAL) ELSE 0 END), 0) AS ventas_bs
+           COALESCE(SUM(CASE WHEN mo.codigo_iso = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) AS ventas_usd,
+           COALESCE(SUM(CASE WHEN mo.codigo_iso != 'USD' THEN CAST(p.monto AS REAL) ELSE 0 END), 0) AS ventas_bs
          FROM pagos p
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         JOIN monedas mo ON p.moneda_id = mo.id
          WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0`
       : '',
     id ? [id] : []
@@ -202,10 +203,11 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
     id
       ? `SELECT
            mmc.origen,
-           COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_usd,
-           COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_bs
+           COALESCE(SUM(CASE WHEN mo.codigo_iso = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_usd,
+           COALESCE(SUM(CASE WHEN mo.codigo_iso != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_bs
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id = ?
            AND mc.tipo = 'EFECTIVO'
            AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
@@ -352,10 +354,11 @@ export function useSesionesActivasDashboard() {
   const { data: pagosData, isLoading: l4 } = useQuery(
     hasIds
       ? `SELECT p.sesion_caja_id,
-               COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) as ventas_usd,
-               COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(p.monto_bs AS REAL) ELSE 0 END), 0) as ventas_bs
+               COALESCE(SUM(CASE WHEN mo.codigo_iso = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) as ventas_usd,
+               COALESCE(SUM(CASE WHEN mo.codigo_iso != 'USD' THEN CAST(p.monto AS REAL) ELSE 0 END), 0) as ventas_bs
          FROM pagos p
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         JOIN monedas mo ON p.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${inPh}) AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0
          GROUP BY p.sesion_caja_id`
       : '',
@@ -366,10 +369,11 @@ export function useSesionesActivasDashboard() {
   const { data: movsData, isLoading: l5 } = useQuery(
     hasIds
       ? `SELECT mmc.sesion_caja_id, mmc.origen,
-               COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_usd,
-               COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_bs
+               COALESCE(SUM(CASE WHEN mo.codigo_iso = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_usd,
+               COALESCE(SUM(CASE WHEN mo.codigo_iso != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_bs
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${inPh})
            AND mc.tipo = 'EFECTIVO'
            AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
