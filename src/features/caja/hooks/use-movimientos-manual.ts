@@ -70,10 +70,14 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
     if (tipo === 'EGRESO') {
       // Computar saldo real de la sesion (incluye apertura + pagos + movimientos)
       const metodoMonedaResult = await tx.execute(
-        'SELECT moneda FROM metodos_cobro WHERE id = ?',
+        `SELECT CASE WHEN mo.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mo.codigo_iso, 'USD') END AS moneda
+         FROM metodos_cobro mc
+         LEFT JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mc.id = ?`,
         [metodo_cobro_id]
       )
       const monedaMetodo = (metodoMonedaResult.rows?.item(0) as { moneda: string } | undefined)?.moneda ?? 'USD'
+      const monedaIso = monedaMetodo === 'USD' ? 'USD' : 'VES'
 
       const sesionResult = await tx.execute(
         'SELECT monto_apertura_usd, monto_apertura_bs FROM sesiones_caja WHERE id = ?',
@@ -92,8 +96,9 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
            COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO'  THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS egresos
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
-         WHERE mmc.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ?`,
-        [sesion_caja_id, monedaMetodo]
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mmc.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = ?`,
+        [sesion_caja_id, monedaIso]
       )
       const movsRow = movsResult.rows?.item(0) as { ingresos: number; egresos: number } | undefined
       const ingresosSesion = movsRow?.ingresos ?? 0
@@ -101,12 +106,13 @@ export async function createMovimientoManual(params: MovimientoManualParams): Pr
 
       const pagosResult = await tx.execute(
         `SELECT COALESCE(SUM(
-           CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE CAST(p.monto_bs AS REAL) END
+           CASE WHEN mo.codigo_iso = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE CAST(p.monto AS REAL) END
          ), 0) AS total
          FROM pagos p
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
-         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ? AND p.is_reversed = 0`,
-        [sesion_caja_id, monedaMetodo]
+         JOIN monedas mo ON p.moneda_id = mo.id
+         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = ? AND p.is_reversed = 0`,
+        [sesion_caja_id, monedaIso]
       )
       const pagosSesion = ((pagosResult.rows?.item(0) as { total: number } | undefined)?.total) ?? 0
 
@@ -198,10 +204,14 @@ export async function createMovimientoManualMulti(params: MovimientoManualMultiP
       if (tipo === 'EGRESO') {
         // Computar saldo real de la sesion (incluye apertura + pagos + movimientos)
         const metodoMonedaResult = await tx.execute(
-          'SELECT moneda FROM metodos_cobro WHERE id = ?',
+          `SELECT CASE WHEN mo.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mo.codigo_iso, 'USD') END AS moneda
+           FROM metodos_cobro mc
+           LEFT JOIN monedas mo ON mc.moneda_id = mo.id
+           WHERE mc.id = ?`,
           [entrada.metodo_cobro_id]
         )
         const monedaMetodo = (metodoMonedaResult.rows?.item(0) as { moneda: string } | undefined)?.moneda ?? 'USD'
+        const monedaIso = monedaMetodo === 'USD' ? 'USD' : 'VES'
 
         const sesionResult = await tx.execute(
           'SELECT monto_apertura_usd, monto_apertura_bs FROM sesiones_caja WHERE id = ?',
@@ -220,8 +230,9 @@ export async function createMovimientoManualMulti(params: MovimientoManualMultiP
              COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO'  THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS egresos
            FROM movimientos_metodo_cobro mmc
            JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
-           WHERE mmc.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ?`,
-          [sesion_caja_id, monedaMetodo]
+           JOIN monedas mo ON mc.moneda_id = mo.id
+           WHERE mmc.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = ?`,
+          [sesion_caja_id, monedaIso]
         )
         const movsRow = movsResult.rows?.item(0) as { ingresos: number; egresos: number } | undefined
         const ingresosSesion = movsRow?.ingresos ?? 0
@@ -229,12 +240,13 @@ export async function createMovimientoManualMulti(params: MovimientoManualMultiP
 
         const pagosResult = await tx.execute(
           `SELECT COALESCE(SUM(
-             CASE WHEN mc.moneda = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE CAST(p.monto_bs AS REAL) END
+             CASE WHEN mo.codigo_iso = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE CAST(p.monto AS REAL) END
            ), 0) AS total
            FROM pagos p
            JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
-           WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mc.moneda = ? AND p.is_reversed = 0`,
-          [sesion_caja_id, monedaMetodo]
+           JOIN monedas mo ON p.moneda_id = mo.id
+           WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = ? AND p.is_reversed = 0`,
+          [sesion_caja_id, monedaIso]
         )
         const pagosSesion = ((pagosResult.rows?.item(0) as { total: number } | undefined)?.total) ?? 0
 
