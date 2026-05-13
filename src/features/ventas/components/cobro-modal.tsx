@@ -121,11 +121,13 @@ export function CobroModal({
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
 
   // ── Estado del boton Procesar ─────────────────────────────────────────────
-  // Habilitado cuando: hay pagos + (esta pagado O hay vuelto con metodo elegido)
   const puedeProcesar =
-    pagos.length > 0 &&
-    (esPagado || estaOverpago) &&
-    (!estaOverpago || !!vueltoMetodoId)
+    // Contado/vuelto: pago completo con metodo de vuelto si aplica
+    (pagos.length > 0 && (esPagado || estaOverpago) && (!estaOverpago || !!vueltoMetodoId)) ||
+    // Credito parcial: hay al menos un pago pero queda saldo pendiente
+    (tipoDetectado === 'CREDITO' && pagos.length > 0) ||
+    // Credito total sin abono: el cliente asume la deuda completa
+    (tipoDetectado === 'CREDITO' && pagos.length === 0 && !!clienteId)
 
   const selectedMetodo = metodos.find((m) => m.id === metodoId)
   const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
@@ -470,19 +472,19 @@ export function CobroModal({
             onClick={() => void handleProcesar()}
             disabled={!puedeProcesar || submitting}
             className={
-              tipoDetectado === 'CREDITO' && pagos.length > 0
+              tipoDetectado === 'CREDITO'
                 ? 'bg-orange-600 hover:bg-orange-700'
                 : ''
             }
           >
-            {tipoDetectado === 'CREDITO' && pagos.length > 0 ? (
+            {tipoDetectado === 'CREDITO' ? (
               <CreditCard size={14} className="mr-1.5" />
             ) : (
               <ShoppingCart size={14} className="mr-1.5" />
             )}
             {submitting
               ? 'Procesando...'
-              : tipoDetectado === 'CREDITO' && pagos.length > 0
+              : tipoDetectado === 'CREDITO'
               ? 'Factura Credito'
               : 'Procesar'}
             {!submitting && (
