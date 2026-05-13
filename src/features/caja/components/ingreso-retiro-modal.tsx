@@ -15,6 +15,9 @@ interface IngresoRetiroModalProps {
   onClose: () => void
   sesionCajaId: string
   modo: 'INGRESO' | 'RETIRO'
+  /** Egresos de caja ya comprometidos en facturas pendientes (aun no debitados) */
+  pendingCajaUsd?: number
+  pendingCajaBs?: number
 }
 
 // ─── Form ─────────────────────────────────────────────────────
@@ -23,14 +26,22 @@ function FormIngresoRetiro({
   onClose,
   sesionCajaId,
   modo,
+  pendingCajaUsd = 0,
+  pendingCajaBs = 0,
 }: {
   onClose: () => void
   sesionCajaId: string
   modo: 'INGRESO' | 'RETIRO'
+  pendingCajaUsd?: number
+  pendingCajaBs?: number
 }) {
   const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
-  const { saldoUsd, saldoBs, isLoading: loadingSaldo } = useSaldoSesionCaja(sesionCajaId)
+  const { saldoUsd: saldoSesionUsd, saldoBs: saldoSesionBs, isLoading: loadingSaldo } = useSaldoSesionCaja(sesionCajaId)
+
+  // Para RETIRO, descontar los montos comprometidos en facturas pendientes
+  const saldoUsd = modo === 'RETIRO' ? Math.max(0, saldoSesionUsd - pendingCajaUsd) : saldoSesionUsd
+  const saldoBs  = modo === 'RETIRO' ? Math.max(0, saldoSesionBs  - pendingCajaBs)  : saldoSesionBs
 
   const [montoUsd, setMontoUsd] = useState('')
   const [montoBs, setMontoBs] = useState('')
@@ -228,6 +239,8 @@ export function IngresoRetiroModal({
   onClose,
   sesionCajaId,
   modo,
+  pendingCajaUsd,
+  pendingCajaBs,
 }: IngresoRetiroModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -288,6 +301,8 @@ export function IngresoRetiroModal({
           onClose={onClose}
           sesionCajaId={sesionCajaId}
           modo={modo}
+          pendingCajaUsd={pendingCajaUsd}
+          pendingCajaBs={pendingCajaBs}
         />
       </div>
     </dialog>

@@ -983,6 +983,8 @@ export function PosTerminal() {
             onClose={() => setShowRetiroModal(false)}
             sesionCajaId={sesion.id}
             modo="RETIRO"
+            pendingCajaUsd={pendingCajaUsd}
+            pendingCajaBs={pendingCajaBs}
           />
           <AvanceModal
             isOpen={showAvanceModal}
