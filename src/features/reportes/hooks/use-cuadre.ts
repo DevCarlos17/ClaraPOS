@@ -285,6 +285,38 @@ export function useVentasPorDepto(filters: CuadreFilters | null) {
   return { deptos: items, isLoading }
 }
 
+// ─── Helper: WHERE para movimientos_metodo_cobro ───────────
+
+/**
+ * Construye WHERE para movimientos_metodo_cobro usando los mismos filtros de cuadre.
+ * Se usa para detectar metodos EFECTIVO con saldo manual (sin pagos de venta).
+ */
+function buildMovsWhere(
+  filters: CuadreFilters,
+  empresaId: string,
+  alias = 'mmc'
+): [string, unknown[]] {
+  const p = alias ? `${alias}.` : ''
+  const clauses: string[] = [`${p}empresa_id = ?`]
+  const params: unknown[] = [empresaId]
+
+  if (filters.sesionCajaIds.length > 0) {
+    const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+    clauses.push(`${p}sesion_caja_id IN (${ph})`)
+    params.push(...filters.sesionCajaIds)
+  } else if (filters.cajaId) {
+    clauses.push(
+      `${p}sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?)`
+    )
+    params.push(filters.cajaId, empresaId)
+  } else {
+    clauses.push(`DATE(${p}fecha, 'localtime') = ?`)
+    params.push(filters.fecha)
+  }
+
+  return [clauses.join(' AND '), params]
+}
+
 // ─── Breakdown: Metodos de Pago ────────────────────────────
 
 export function usePagosPorMetodo(filters: CuadreFilters | null) {
@@ -294,6 +326,17 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     ? buildCuadreWhere(filters, empresaId, 'pg')
     : ['1=0', []]
 
+  // Para la subquery NOT IN necesitamos el mismo WHERE con alias distinto
+  const [whereNotIn, paramsNotIn] = filters
+    ? buildCuadreWhere(filters, empresaId, 'pg2')
+    : ['1=0', []]
+
+  // WHERE para movimientos_metodo_cobro (detectar metodos con saldo manual)
+  const [whereMmc, paramsMmc] = filters
+    ? buildMovsWhere(filters, empresaId, 'mmc')
+    : ['1=0', []]
+
+  // Query principal: metodos con pagos de ventas
   const { data, isLoading } = useQuery(
     `SELECT
        mp.id as metodo_cobro_id,
@@ -313,9 +356,35 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     params
   )
 
-  console.log('[usePagosPorMetodo]', { empresaId, filters, where, params, data, isLoading })
+  // Query secundaria: metodos EFECTIVO con movimientos manuales pero sin pagos de venta.
+  // Cubre el caso de caja con fondo inicial o ingresos manuales y sin ventas.
+  const { data: extraData, isLoading: extraLoading } = useQuery(
+    filters
+      ? `SELECT
+           mc.id as metodo_cobro_id,
+           mc.nombre,
+           mc.tipo,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
+           0 as total_usd,
+           0 as total_original,
+           0 as total_bs
+         FROM metodos_cobro mc
+         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         WHERE mc.tipo = 'EFECTIVO'
+           AND mc.empresa_id = ?
+           AND mc.id NOT IN (
+             SELECT DISTINCT pg2.metodo_cobro_id FROM pagos pg2 WHERE ${whereNotIn}
+           )
+           AND mc.id IN (
+             SELECT DISTINCT mmc.metodo_cobro_id
+             FROM movimientos_metodo_cobro mmc
+             WHERE ${whereMmc}
+           )`
+      : '',
+    filters ? [empresaId, ...paramsNotIn, ...paramsMmc] : []
+  )
 
-  const items: (MetodoPagoResumen & { metodo_cobro_id: string })[] = (data ?? []).map((row: Record<string, unknown>) => ({
+  const toItem = (row: Record<string, unknown>) => ({
     metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
     nombre: String(row.nombre ?? ''),
     tipo: String(row.tipo ?? ''),
@@ -323,9 +392,19 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     totalUsd: Number(Number(row.total_usd ?? 0).toFixed(2)),
     totalOriginal: Number(Number(row.total_original ?? 0).toFixed(2)),
     totalBs: Number(Number(row.total_bs ?? 0).toFixed(2)),
-  }))
+  })
 
-  return { metodos: items, isLoading }
+  const pagoItems = (data ?? []).map(toItem)
+  const extraItems = (extraData ?? []).map(toItem)
+
+  // Deduplicar: si un metodo ya aparece en pagos, no lo agregamos del extra
+  const idsEnPagos = new Set(pagoItems.map((m) => m.metodo_cobro_id))
+  const items: (MetodoPagoResumen & { metodo_cobro_id: string })[] = [
+    ...pagoItems,
+    ...extraItems.filter((m) => !idsEnPagos.has(m.metodo_cobro_id)),
+  ]
+
+  return { metodos: items, isLoading: isLoading || extraLoading }
 }
 
 // ─── Top Productos ─────────────────────────────────────────
