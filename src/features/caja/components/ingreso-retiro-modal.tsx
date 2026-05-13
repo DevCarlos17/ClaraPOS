@@ -39,9 +39,9 @@ function FormIngresoRetiro({
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
   const { saldoUsd: saldoSesionUsd, saldoBs: saldoSesionBs, isLoading: loadingSaldo } = useSaldoSesionCaja(sesionCajaId)
 
-  // Para RETIRO, descontar los montos comprometidos en facturas pendientes
-  const saldoUsd = modo === 'RETIRO' ? Math.max(0, saldoSesionUsd - pendingCajaUsd) : saldoSesionUsd
-  const saldoBs  = modo === 'RETIRO' ? Math.max(0, saldoSesionBs  - pendingCajaBs)  : saldoSesionBs
+  // Descontar montos comprometidos en facturas pendientes del saldo disponible
+  const saldoUsd = Math.max(0, saldoSesionUsd - pendingCajaUsd)
+  const saldoBs  = Math.max(0, saldoSesionBs  - pendingCajaBs)
 
   const [montoUsd, setMontoUsd] = useState('')
   const [montoBs, setMontoBs] = useState('')

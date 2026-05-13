@@ -977,6 +977,8 @@ export function PosTerminal() {
             onClose={() => setShowIngresoModal(false)}
             sesionCajaId={sesion.id}
             modo="INGRESO"
+            pendingCajaUsd={pendingCajaUsd}
+            pendingCajaBs={pendingCajaBs}
           />
           <IngresoRetiroModal
             isOpen={showRetiroModal}
