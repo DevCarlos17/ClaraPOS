@@ -14,8 +14,11 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
   const { totales, isLoading: loadingTotales } = useTotalesFiscales(filters)
 
-  const totalCobradoUsd = metodos.reduce((sum, m) => sum + m.totalUsd, 0)
-  const totalCobradoBs = metodos.reduce((sum, m) => {
+  // Excluir metodos EFECTIVO con saldo $0 (fondo inicial sin ventas en efectivo)
+  const metodosMostrar = metodos.filter((m) => m.totalUsd > 0.001 || m.totalOriginal > 0.001)
+
+  const totalCobradoUsd = metodosMostrar.reduce((sum, m) => sum + m.totalUsd, 0)
+  const totalCobradoBs = metodosMostrar.reduce((sum, m) => {
     return sum + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs)
   }, 0)
 
@@ -40,14 +43,14 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
             <div key={i} className="h-10 bg-muted rounded animate-pulse" />
           ))}
         </div>
-      ) : metodos.length === 0 && cxcTotalUsd <= 0 ? (
+      ) : metodosMostrar.length === 0 && cxcTotalUsd <= 0 ? (
         <div className="text-center py-8 text-muted-foreground">
           <p className="text-sm">Sin cobros en esta fecha</p>
         </div>
       ) : (
         <div className="space-y-2">
           {/* Payment method rows */}
-          {metodos.map((m) => {
+          {metodosMostrar.map((m) => {
             const clickable = !!onMetodoClick
             const bsAmount = m.moneda === 'BS' ? m.totalOriginal : m.totalBs
             const hasBs = bsAmount > 0

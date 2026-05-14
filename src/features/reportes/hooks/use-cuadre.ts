@@ -38,18 +38,23 @@ function buildCuadreWhere(
   dateColumn = 'fecha'
 ): [string, unknown[]] {
   const prefix = tableAlias ? `${tableAlias}.` : ''
-  const clauses: string[] = [`${prefix}empresa_id = ?`, `DATE(${prefix}${dateColumn}, 'localtime') = ?`]
-  const params: unknown[] = [empresaId, filters.fecha]
+  const clauses: string[] = [`${prefix}empresa_id = ?`]
+  const params: unknown[] = [empresaId]
 
   if (filters.sesionCajaIds.length > 0) {
+    // IDs de sesion ya acotan el rango — no se aplica filtro de fecha
     const placeholders = filters.sesionCajaIds.map(() => '?').join(', ')
     clauses.push(`${prefix}sesion_caja_id IN (${placeholders})`)
     params.push(...filters.sesionCajaIds)
   } else if (filters.cajaId) {
+    clauses.push(`DATE(${prefix}${dateColumn}, 'localtime') = ?`)
     clauses.push(
       `${prefix}sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?)`
     )
-    params.push(filters.cajaId, empresaId)
+    params.push(filters.fecha, filters.cajaId, empresaId)
+  } else {
+    clauses.push(`DATE(${prefix}${dateColumn}, 'localtime') = ?`)
+    params.push(filters.fecha)
   }
 
   return [clauses.join(' AND '), params]
@@ -65,21 +70,23 @@ function buildCuadreWhereViaVenta(
   ventaAlias: string,
   dateColumn = 'fecha'
 ): [string, unknown[]] {
-  const clauses: string[] = [
-    `${ventaAlias}.empresa_id = ?`,
-    `DATE(${ventaAlias}.${dateColumn}, 'localtime') = ?`,
-  ]
-  const params: unknown[] = [empresaId, filters.fecha]
+  const clauses: string[] = [`${ventaAlias}.empresa_id = ?`]
+  const params: unknown[] = [empresaId]
 
   if (filters.sesionCajaIds.length > 0) {
+    // IDs de sesion ya acotan el rango — no se aplica filtro de fecha
     const placeholders = filters.sesionCajaIds.map(() => '?').join(', ')
     clauses.push(`${ventaAlias}.sesion_caja_id IN (${placeholders})`)
     params.push(...filters.sesionCajaIds)
   } else if (filters.cajaId) {
+    clauses.push(`DATE(${ventaAlias}.${dateColumn}, 'localtime') = ?`)
     clauses.push(
       `${ventaAlias}.sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?)`
     )
-    params.push(filters.cajaId, empresaId)
+    params.push(filters.fecha, filters.cajaId, empresaId)
+  } else {
+    clauses.push(`DATE(${ventaAlias}.${dateColumn}, 'localtime') = ?`)
+    params.push(filters.fecha)
   }
 
   return [clauses.join(' AND '), params]
@@ -810,7 +817,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
     hasSession ? filters!.sesionCajaIds : []
   )
 
-  // Movimientos manuales efectivo USD (incluye VUELTO como EGRESO)
+  // Movimientos manuales efectivo USD (incluye VUELTO como EGRESO).
+  // Excluye origen='VENTA' porque esos pagos ya se cuentan en dataPagosUsd.
   const { data: dataMovUsd } = useQuery(
     hasSession
       ? `SELECT
@@ -820,12 +828,14 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+           AND mmc.origen != 'VENTA'`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
 
-  // Movimientos manuales efectivo VES (incluye VUELTO como EGRESO)
+  // Movimientos manuales efectivo VES (incluye VUELTO como EGRESO).
+  // Excluye origen='VENTA' porque esos pagos ya se cuentan en dataPagosVes.
   const { data: dataMovVes } = useQuery(
     hasSession
       ? `SELECT
@@ -835,7 +845,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+           AND mmc.origen != 'VENTA'`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
