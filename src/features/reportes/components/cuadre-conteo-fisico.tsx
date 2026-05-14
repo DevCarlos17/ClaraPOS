@@ -211,21 +211,24 @@ export function CuadreConteoFisico({
       <div className="space-y-3">
         {metodos.map((m) => {
           const esEfectivo = m.tipo === 'EFECTIVO'
-          // Para efectivo mostramos el saldo completo (apertura + cobros + movimientos)
-          const sistemaUsd = esEfectivo
-            ? (m.moneda === 'BS'
-                ? (tasaDelDia > 0 ? saldoEsperadoBs / tasaDelDia : 0)
-                : saldoEsperadoUsd)
-            : m.totalUsd
           const sistemaBs = esEfectivo && m.moneda === 'BS'
             ? saldoEsperadoBs
             : m.totalOriginal
           const fisicoRaw = parseFloat(fisico[m.nombre] ?? '') || 0
+          // efectivaTasa: tasa del dia si existe, si no se estima desde los datos de la transaccion
           const efectivaTasa = tasaDelDia > 0
             ? tasaDelDia
             : m.totalOriginal > 0 && m.totalUsd > 0
             ? m.totalOriginal / m.totalUsd
             : 0
+          // Para efectivo mostramos el saldo completo (apertura + cobros + movimientos).
+          // Usa efectivaTasa (no tasaDelDia directamente) para ser consistente con fisicoUsd
+          // cuando tasaDelDia = 0 y hay que usar la tasa de la transaccion como fallback.
+          const sistemaUsd = esEfectivo
+            ? (m.moneda === 'BS'
+                ? (efectivaTasa > 0 ? saldoEsperadoBs / efectivaTasa : 0)
+                : saldoEsperadoUsd)
+            : m.totalUsd
           const fisicoUsd = m.moneda === 'BS'
             ? (efectivaTasa > 0 ? fisicoRaw / efectivaTasa : 0)
             : fisicoRaw

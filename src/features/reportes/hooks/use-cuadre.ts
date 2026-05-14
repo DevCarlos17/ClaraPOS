@@ -364,7 +364,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
   )
 
   // Query secundaria: metodos EFECTIVO con movimientos manuales pero sin pagos de venta.
-  // Cubre el caso de caja con fondo inicial o ingresos manuales y sin ventas.
+  // Cubre el caso de caja con ingresos/egresos manuales y sin ventas en efectivo.
   const { data: extraData, isLoading: extraLoading } = useQuery(
     filters
       ? `SELECT
@@ -391,6 +391,52 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     filters ? [empresaId, ...paramsNotIn, ...paramsMmc] : []
   )
 
+  // Query terciaria: metodos EFECTIVO con solo fondo inicial (apertura) pero sin pagos ni movimientos.
+  // Cubre el caso de caja con fondo inicial registrado en sesiones_caja pero sin ventas ni movimientos manuales.
+  const hasSessionForApertura = filters !== null && filters.sesionCajaIds.length > 0
+  const aperturaPlaceholders = hasSessionForApertura
+    ? filters!.sesionCajaIds.map(() => '?').join(', ')
+    : ''
+  const { data: aperturaData, isLoading: aperturaLoading } = useQuery(
+    hasSessionForApertura
+      ? `SELECT
+           mc.id as metodo_cobro_id,
+           mc.nombre,
+           mc.tipo,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
+           0 as total_usd,
+           0 as total_original,
+           0 as total_bs
+         FROM metodos_cobro mc
+         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         WHERE mc.tipo = 'EFECTIVO'
+           AND mc.empresa_id = ?
+           AND mc.id NOT IN (
+             SELECT DISTINCT pg2.metodo_cobro_id FROM pagos pg2 WHERE ${whereNotIn}
+           )
+           AND mc.id NOT IN (
+             SELECT DISTINCT mmc.metodo_cobro_id
+             FROM movimientos_metodo_cobro mmc
+             WHERE ${whereMmc}
+           )
+           AND (
+             (COALESCE(mon.codigo_iso, 'USD') != 'VES' AND EXISTS (
+               SELECT 1 FROM sesiones_caja sc
+               WHERE sc.id IN (${aperturaPlaceholders})
+                 AND CAST(COALESCE(sc.monto_apertura_usd, '0') AS REAL) > 0.001
+             ))
+             OR (mon.codigo_iso = 'VES' AND EXISTS (
+               SELECT 1 FROM sesiones_caja sc
+               WHERE sc.id IN (${aperturaPlaceholders})
+                 AND CAST(COALESCE(sc.monto_apertura_bs, '0') AS REAL) > 0.001
+             ))
+           )`
+      : '',
+    hasSessionForApertura
+      ? [empresaId, ...paramsNotIn, ...paramsMmc, ...filters!.sesionCajaIds, ...filters!.sesionCajaIds]
+      : []
+  )
+
   const toItem = (row: Record<string, unknown>) => ({
     metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
     nombre: String(row.nombre ?? ''),
@@ -401,17 +447,19 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     totalBs: Number(Number(row.total_bs ?? 0).toFixed(2)),
   })
 
-  const pagoItems = (data ?? []).map(toItem)
-  const extraItems = (extraData ?? []).map(toItem)
-
-  // Deduplicar: si un metodo ya aparece en pagos, no lo agregamos del extra
-  const idsEnPagos = new Set(pagoItems.map((m) => m.metodo_cobro_id))
+  // Deduplicar los tres conjuntos: pagos > extra > apertura
+  const seen = new Set<string>()
   const items: (MetodoPagoResumen & { metodo_cobro_id: string })[] = [
-    ...pagoItems,
-    ...extraItems.filter((m) => !idsEnPagos.has(m.metodo_cobro_id)),
-  ]
+    ...(data ?? []).map(toItem),
+    ...(extraData ?? []).map(toItem),
+    ...(aperturaData ?? []).map(toItem),
+  ].filter((m) => {
+    if (seen.has(m.metodo_cobro_id)) return false
+    seen.add(m.metodo_cobro_id)
+    return true
+  })
 
-  return { metodos: items, isLoading: isLoading || extraLoading }
+  return { metodos: items, isLoading: isLoading || extraLoading || aperturaLoading }
 }
 
 // ─── Top Productos ─────────────────────────────────────────
