@@ -4,8 +4,6 @@ import { useQuery } from '@powersync/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import {
   usePagosPorMetodo,
-  useMovimientosManualesDia,
-  useSesionApertura,
   useSaldoEfectivoBimonetario,
   type CuadreFilters,
   type VerifiedEntry,
@@ -35,8 +33,6 @@ export function CuadreConteoFisico({
   readOnly = false,
 }: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
-  const { movimientos } = useMovimientosManualesDia(filters)
-  const { aperturaUsd, aperturaBs } = useSesionApertura(filters)
   const { saldoEsperadoUsd, saldoEsperadoBs } = useSaldoEfectivoBimonetario(filters)
   // keyed por m.nombre
   const [fisico, setFisico] = useState<Record<string, string>>({})
@@ -116,16 +112,26 @@ export function CuadreConteoFisico({
     let fisicoTotal = 0
     let fisicoBs = 0
     for (const m of metodos) {
-      sistema += m.totalUsd
+      const esEfectivo = m.tipo === 'EFECTIVO'
+      const efectivaTasa = tasaDelDia > 0
+        ? tasaDelDia
+        : m.totalOriginal > 0 && m.totalUsd > 0
+        ? m.totalOriginal / m.totalUsd
+        : 0
+      // Usa la misma logica que el display por metodo:
+      // EFECTIVO: saldoEsperado (apertura + ventas + movimientos manuales) / tasa
+      // Otros metodos: totalUsd de ventas unicamente
+      const sistemaUsd = esEfectivo
+        ? (m.moneda === 'BS'
+            ? (efectivaTasa > 0 ? saldoEsperadoBs / efectivaTasa : 0)
+            : saldoEsperadoUsd)
+        : m.totalUsd
+      sistema += sistemaUsd
+
       const raw = parseFloat(fisico[m.nombre] ?? '') || 0
       const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
       if (has) {
         if (m.moneda === 'BS') {
-          const efectivaTasa = tasaDelDia > 0
-            ? tasaDelDia
-            : m.totalOriginal > 0 && m.totalUsd > 0
-            ? m.totalOriginal / m.totalUsd
-            : 0
           fisicoTotal += efectivaTasa > 0 ? raw / efectivaTasa : 0
           fisicoBs += raw
         } else {
@@ -133,24 +139,12 @@ export function CuadreConteoFisico({
         }
       }
     }
-    // Sumar fondo de apertura (siempre es efectivo; Bs se convierte a USD)
-    sistema += aperturaUsd
-    if (aperturaBs > 0.001 && tasaDelDia > 0) {
-      sistema += aperturaBs / tasaDelDia
-    }
-    // Sumar/restar movimientos manuales (INGRESO +, EGRESO -)
-    for (const mov of movimientos) {
-      const montoUsd = mov.metodo_moneda === 'BS'
-        ? (tasaDelDia > 0 ? mov.total / tasaDelDia : 0)
-        : mov.total
-      sistema += mov.mov_tipo === 'INGRESO' ? montoUsd : -montoUsd
-    }
     return {
       totalSistema: Number(sistema.toFixed(2)),
       totalFisico: Number(fisicoTotal.toFixed(2)),
       totalFisicoBs: Number(fisicoBs.toFixed(2)),
     }
-  }, [metodos, fisico, tasaDelDia, aperturaUsd, aperturaBs, movimientos])
+  }, [metodos, fisico, tasaDelDia, saldoEsperadoUsd, saldoEsperadoBs])
 
   useEffect(() => {
     onTotalesChange?.(totals.totalSistema, totals.totalFisico, totals.totalFisicoBs)
