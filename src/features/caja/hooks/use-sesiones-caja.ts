@@ -646,7 +646,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
        WHERE p.sesion_caja_id = ?
          AND mc.tipo = 'EFECTIVO'
          AND mo.codigo_iso = 'USD'
-         AND p.is_reversed = 0`,
+         AND COALESCE(p.is_reversed, 0) = 0`,
       [id]
     )
     const pagosEfectivoUsd = Number(
@@ -662,7 +662,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
        WHERE p.sesion_caja_id = ?
          AND mc.tipo = 'EFECTIVO'
          AND mo.codigo_iso = 'VES'
-         AND p.is_reversed = 0`,
+         AND COALESCE(p.is_reversed, 0) = 0`,
       [id]
     )
     const pagosEfectivoBs = Number(
@@ -773,7 +773,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
               COUNT(*) as num_transacciones
        FROM pagos p
        JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
-       WHERE p.sesion_caja_id = ? AND p.is_reversed = 0
+       WHERE p.sesion_caja_id = ? AND COALESCE(p.is_reversed, 0) = 0
        GROUP BY p.metodo_cobro_id, mc.moneda_id`,
       [id]
     )
