@@ -963,6 +963,10 @@ export interface Gastos {
   moneda_id: string
   tasa: string
   monto_usd: string
+  tipo_impuesto: string
+  porcentaje_iva: string
+  base_imponible_usd: string
+  monto_iva_usd: string
   metodo_cobro_id: string | null
   banco_empresa_id: string | null
   referencia: string | null

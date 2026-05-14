@@ -1191,8 +1191,12 @@ const gastos = new Table(
     usa_tasa_paralela: column.integer, // 0/1
     tasa: column.text,                 // tasa interna (BCV/sistema) snapshot
     tasa_proveedor: column.text,       // tasa del proveedor (paralela)
-    monto_factura: column.text,        // importe original en moneda_factura
-    monto_usd: column.text,            // total contable USD (para reportes)
+    monto_factura: column.text,        // importe original en moneda_factura (= base antes de IVA)
+    monto_usd: column.text,            // total contable USD = base + IVA
+    tipo_impuesto: column.text,        // 'Gravable' | 'Exento' | 'Exonerado'
+    porcentaje_iva: column.text,       // porcentaje IVA (ej: 16.00)
+    base_imponible_usd: column.text,   // base imponible en USD (antes de IVA)
+    monto_iva_usd: column.text,        // monto IVA en USD
     saldo_pendiente_usd: column.text,  // pendiente por pagar
     metodo_cobro_id: column.text,
     banco_empresa_id: column.text,

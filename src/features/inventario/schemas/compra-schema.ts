@@ -4,6 +4,8 @@ export const lineaCompraSchema = z.object({
   producto_id: z.string().min(1, 'Selecciona un producto'),
   cantidad: z.number().positive('La cantidad debe ser mayor a 0'),
   costo_unitario_usd: z.number().min(0, 'El costo debe ser mayor o igual a 0'),
+  tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
+  impuesto_pct: z.number().min(0).max(100).default(0),
 })
 
 export const compraHeaderSchema = z.object({

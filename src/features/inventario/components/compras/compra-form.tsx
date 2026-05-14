@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { toast } from 'sonner'
 import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle } from '@phosphor-icons/react'
 import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
@@ -10,6 +10,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useConversiones } from '@/features/inventario/hooks/use-unidades-conversion'
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { todayStr } from '@/lib/dates'
 import { db } from '@/core/db/powersync/db'
@@ -39,6 +40,8 @@ interface LineaUI {
   factor: number
   cantidad_input: number
   costo_input: number
+  tipo_impuesto: 'Gravable' | 'Exento' | 'Exonerado'
+  impuesto_pct: number
   maneja_lotes: number
   lote_nro: string
   lote_fecha_fab: string
@@ -66,6 +69,13 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const { conversiones } = useConversiones()
   const { unidades } = useUnidadesActivas()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { impuestos } = useImpuestosActivos()
+
+  // Mapa impuesto_iva_id → porcentaje para resolución rápida al agregar producto
+  const impuestoMap = useMemo(
+    () => new Map(impuestos.map((imp) => [imp.id, parseFloat(imp.porcentaje) || 0])),
+    [impuestos]
+  )
 
   // Header fields
   const [fechaFactura, setFechaFactura] = useState(todayStr())
@@ -211,6 +221,30 @@ export function CompraForm({ onClose }: CompraFormProps) {
     : (tasaFacturaNum > 0 ? totalDisplay / tasaFacturaNum : 0)
   const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaFacturaNum
 
+  // Desglose fiscal en USD (para mostrar en resumen)
+  const { desgloseExentoUsd, desgloseBaseUsd, desgloseIvaUsd } = useMemo(() => {
+    let exento = 0
+    let base = 0
+    let iva = 0
+    for (const l of lineas) {
+      const subtotalUsd = moneda === 'USD'
+        ? getLineSubtotal(l)
+        : (tasaFacturaNum > 0 ? getLineSubtotal(l) / tasaFacturaNum : 0)
+      if (l.tipo_impuesto === 'Exento') {
+        exento += subtotalUsd
+      } else {
+        base += subtotalUsd
+        iva += subtotalUsd * (l.impuesto_pct / 100)
+      }
+    }
+    return {
+      desgloseExentoUsd: Number(exento.toFixed(2)),
+      desgloseBaseUsd: Number(base.toFixed(2)),
+      desgloseIvaUsd: Number(iva.toFixed(2)),
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lineas, moneda, tasaFacturaNum])
+
   // totalUsdSistema: a tasa interna (para inventario y contabilidad)
   const totalUsdSistema = usaTasaParalela && tasaInternaNum > 0
     ? (moneda === 'USD'
@@ -234,6 +268,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
     const costoBase = parseFloat(producto.costo_usd) || 0
     const costoDisplay = moneda === 'USD' ? costoBase : costoBase * tasaFacturaNum
 
+    // Resolver porcentaje IVA desde el catálogo de impuestos
+    const tipoImp = (producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento'
+    const pctIva = producto.impuesto_iva_id
+      ? (impuestoMap.get(producto.impuesto_iva_id) ?? 0)
+      : 0
+
     setLineas((prev) => [
       ...prev,
       {
@@ -246,6 +286,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
         factor: 1,
         cantidad_input: 1,
         costo_input: Number(costoDisplay.toFixed(2)),
+        tipo_impuesto: tipoImp,
+        impuesto_pct: pctIva,
         maneja_lotes: Number(producto.maneja_lotes) || 0,
         lote_nro: '',
         lote_fecha_fab: '',
@@ -419,6 +461,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
         producto_id: l.producto_id,
         cantidad: cantidadBase,
         costo_unitario_usd: Number(costoUnitarioUsd.toFixed(4)),
+        tipo_impuesto: l.tipo_impuesto,
+        impuesto_pct: l.impuesto_pct,
       })
 
       if (!parsed.success) {
@@ -432,6 +476,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
         cantidad: cantidadBase,
         costo_unitario_usd: Number(costoUnitarioUsd.toFixed(4)),
         costo_usd_sistema: Number(costoUsdSistema.toFixed(4)),
+        tipo_impuesto: l.tipo_impuesto,
+        impuesto_pct: l.impuesto_pct,
         lote_nro: l.lote_nro.trim() || undefined,
         lote_fecha_fab: l.lote_fecha_fab || undefined,
         lote_fecha_venc: l.lote_fecha_venc || undefined,
@@ -814,6 +860,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                         Costo Contab. ($)
                       </th>
                     )}
+                    <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground uppercase w-24">
+                      IVA
+                    </th>
                     <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase">
                       Subtotal ({monedaLabel})
                     </th>
@@ -868,6 +917,21 @@ export function CompraForm({ onClose }: CompraFormProps) {
                             {costoSistema !== null ? formatUsd(costoSistema) : '—'}
                           </td>
                         )}
+                        <td className="px-3 py-2 text-center">
+                          {linea.tipo_impuesto === 'Exento' ? (
+                            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                              Exento
+                            </span>
+                          ) : linea.tipo_impuesto === 'Exonerado' ? (
+                            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400">
+                              Exonerado
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400">
+                              {linea.impuesto_pct}%
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-2 text-sm text-right font-medium text-foreground">
                           {moneda === 'USD' ? formatUsd(subtotal) : formatBs(subtotal)}
                         </td>
@@ -883,7 +947,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                       </tr>
                       {linea.maneja_lotes === 1 && (
                         <tr key={`lote-${linea.producto_id}`} className="bg-amber-50/50 border-b border-amber-100">
-                          <td colSpan={mostrarColumnasSistema ? 8 : 7} className="px-3 py-2">
+                          <td colSpan={mostrarColumnasSistema ? 9 : 8} className="px-3 py-2">
                             <div className="flex flex-wrap items-center gap-3 text-xs">
                               <span className="text-amber-700 font-medium shrink-0">Lote:</span>
                               <div className="flex items-center gap-1.5">
@@ -1115,6 +1179,26 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 <div className="space-y-1">
                   <span className="text-xs text-muted-foreground">Total Bs</span>
                   <p className="text-xl font-bold text-foreground">{formatBs(totalBs)}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Desglose fiscal (solo si hay IVA) */}
+            {desgloseIvaUsd > 0.001 && (
+              <div className="mt-3 pt-3 border-t border-border space-y-1 text-xs text-muted-foreground">
+                {desgloseExentoUsd > 0.001 && (
+                  <div className="flex justify-between">
+                    <span>Base exenta:</span>
+                    <span className="tabular-nums">{formatUsd(desgloseExentoUsd)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>Base imponible:</span>
+                  <span className="tabular-nums">{formatUsd(desgloseBaseUsd)}</span>
+                </div>
+                <div className="flex justify-between font-medium text-amber-700 dark:text-amber-400">
+                  <span>IVA:</span>
+                  <span className="tabular-nums">+ {formatUsd(desgloseIvaUsd)}</span>
                 </div>
               </div>
             )}

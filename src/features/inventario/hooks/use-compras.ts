@@ -51,6 +51,8 @@ export interface LineaCompra {
   cantidad: number
   costo_unitario_usd: number    // original invoice cost in USD (for CxP / total factura)
   costo_usd_sistema?: number    // BCV-adjusted cost for inventory (equals costo_unitario_usd when not parallel)
+  tipo_impuesto?: 'Gravable' | 'Exento' | 'Exonerado'
+  impuesto_pct?: number         // IVA percentage (e.g. 16 for 16%)
   lote_nro?: string
   lote_fecha_fab?: string
   lote_fecha_venc?: string
@@ -422,12 +424,26 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     const now = localNow()
     compraId = uuidv4()
 
-    // 1. Calcular totales (lineas ya vienen en USD)
-    let totalUsd = 0
+    // 1. Calcular totales con desglose fiscal (lineas ya vienen en USD)
+    let totalExentoUsd = 0
+    let totalBaseUsd = 0
+    let totalIvaUsd = 0
     for (const linea of lineas) {
-      totalUsd += linea.cantidad * linea.costo_unitario_usd
+      const subtotal = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
+      const tipoImp = linea.tipo_impuesto ?? 'Exento'
+      if (tipoImp === 'Exento') {
+        totalExentoUsd += subtotal
+      } else {
+        // Gravable o Exonerado: contribuye a la base imponible
+        totalBaseUsd += subtotal
+        const pct = linea.impuesto_pct ?? 0
+        totalIvaUsd += Number((subtotal * (pct / 100)).toFixed(2))
+      }
     }
-    totalUsd = Number(totalUsd.toFixed(2))
+    totalExentoUsd = Number(totalExentoUsd.toFixed(2))
+    totalBaseUsd = Number(totalBaseUsd.toFixed(2))
+    totalIvaUsd = Number(totalIvaUsd.toFixed(2))
+    const totalUsd = Number((totalExentoUsd + totalBaseUsd + totalIvaUsd).toFixed(2))
     const totalBs = Number((totalUsd * tasa).toFixed(2))
 
     // 2. Calcular pagos inmediatos y saldo pendiente
@@ -456,9 +472,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         monedaId,
         tasa.toFixed(4),
         tasa_costo ? tasa_costo.toFixed(4) : null,
-        '0.00',
-        totalUsd.toFixed(2),
-        '0.00',
+        totalExentoUsd.toFixed(2),
+        totalBaseUsd.toFixed(2),
+        totalIvaUsd.toFixed(2),
         '0.00',
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
@@ -522,8 +538,8 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           linea.cantidad.toFixed(3),
           linea.costo_unitario_usd.toFixed(4),
           costoSistema.toFixed(4),
-          'Exento',
-          '0.00',
+          linea.tipo_impuesto ?? 'Exento',
+          (linea.impuesto_pct ?? 0).toFixed(2),
           subtotalUsd.toFixed(2),
           subtotalBs.toFixed(2),
           loteId,

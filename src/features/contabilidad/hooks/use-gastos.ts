@@ -23,8 +23,12 @@ export interface Gasto {
   usa_tasa_paralela: number       // 0 | 1
   tasa: string                    // tasa interna
   tasa_proveedor: string | null   // tasa del proveedor (paralela)
-  monto_factura: string           // importe original en moneda_factura
-  monto_usd: string               // total contable USD
+  monto_factura: string           // base imponible en moneda_factura (ANTES de IVA)
+  monto_usd: string               // total contable USD (base + IVA)
+  tipo_impuesto: string           // 'Gravable' | 'Exento' | 'Exonerado'
+  porcentaje_iva: string          // porcentaje IVA (ej: '16.00')
+  base_imponible_usd: string      // base imponible en USD
+  monto_iva_usd: string           // monto IVA en USD
   saldo_pendiente_usd: string
   metodo_cobro_id: string | null
   banco_empresa_id: string | null
@@ -125,8 +129,10 @@ export async function crearGasto(data: {
   usa_tasa_paralela: boolean
   tasa: number              // tasa interna
   tasa_proveedor?: number   // tasa del proveedor (solo cuando usa_tasa_paralela)
-  monto_factura: number     // importe original en moneda_factura
-  monto_usd: number         // total contable USD (calculado)
+  tipo_impuesto: 'Gravable' | 'Exento' | 'Exonerado'
+  porcentaje_iva: number    // porcentaje IVA (ej: 16 para 16%)
+  monto_factura: number     // base imponible en moneda_factura (ANTES de IVA)
+  monto_usd: number         // total contable USD (base + IVA, calculado por el form)
   pagos: GastoPago[]
   observaciones?: string
   empresa_id: string
@@ -147,16 +153,27 @@ export async function crearGasto(data: {
     const monedaId = (monedaResult.rows?.item(0) as { id: string } | undefined)?.id
     if (!monedaId) throw new Error(`Moneda no encontrada: ${data.moneda_id}`)
 
-    // Monto desde la perspectiva del proveedor en USD:
-    // - Factura USD: el valor nominal de la factura
-    // - Factura BS: BS / tasa_proveedor (o tasa_interna si no usa paralela)
-    const montoProveedorUsd = (() => {
+    // Calcular desglose IVA en USD
+    // monto_factura = BASE (antes de IVA) en moneda_factura
+    // base_imponible_usd = base convertida a USD
+    // monto_iva_usd = base_usd × (pct / 100)
+    // monto_usd (total) = base_usd + iva_usd
+    const baseFacturaEnUsd = (() => {
       if (data.moneda_factura === 'USD') return data.monto_factura
       const tasaRef = data.usa_tasa_paralela && data.tasa_proveedor
         ? data.tasa_proveedor
         : data.tasa
       return tasaRef > 0 ? Number((data.monto_factura / tasaRef).toFixed(2)) : data.monto_usd
     })()
+    const baseImponibleUsd = Number(baseFacturaEnUsd.toFixed(2))
+    const montoIvaUsd = data.tipo_impuesto === 'Gravable'
+      ? Number((baseImponibleUsd * (data.porcentaje_iva / 100)).toFixed(2))
+      : 0
+    // monto_usd recibido desde el form ya incluye IVA; si no coincide usamos el calculado
+    const totalUsd = Number((baseImponibleUsd + montoIvaUsd).toFixed(2))
+
+    // Perspectiva proveedor (para CxP): usa totalUsd (base + IVA)
+    const montoProveedorUsd = totalUsd
 
     // Saldo pendiente = perspectiva proveedor - sum de abonos al tipo proveedor
     const totalAbonadoProveedorUsd = data.pagos.reduce((s, p) => s + p.monto_usd, 0)
@@ -181,10 +198,11 @@ export async function crearGasto(data: {
       `INSERT INTO gastos (
          id, empresa_id, nro_gasto, nro_factura, nro_control, cuenta_id, proveedor_id, descripcion,
          fecha, moneda_id, moneda_factura, usa_tasa_paralela, tasa, tasa_proveedor,
-         monto_factura, monto_usd, saldo_pendiente_usd,
+         tipo_impuesto, porcentaje_iva, monto_factura, base_imponible_usd, monto_iva_usd,
+         monto_usd, saldo_pendiente_usd,
          metodo_cobro_id, banco_empresa_id, referencia, observaciones,
          status, created_at, updated_at, created_by
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADO', ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'REGISTRADO', ?, ?, ?)`,
       [
         gastoId,
         data.empresa_id,
@@ -200,8 +218,12 @@ export async function crearGasto(data: {
         data.usa_tasa_paralela ? 1 : 0,
         data.tasa.toFixed(4),
         data.tasa_proveedor ? data.tasa_proveedor.toFixed(4) : null,
+        data.tipo_impuesto,
+        data.porcentaje_iva.toFixed(2),
         data.monto_factura.toFixed(2),
-        data.monto_usd.toFixed(2),
+        baseImponibleUsd.toFixed(2),
+        montoIvaUsd.toFixed(2),
+        totalUsd.toFixed(2),
         saldoPendiente.toFixed(2),
         primerPago?.metodo_cobro_id ?? null,
         primerPago?.banco_empresa_id ?? null,
@@ -319,7 +341,7 @@ export async function crearGasto(data: {
         gastoId,
         nroGasto,
         cuentaGastoId: data.cuenta_id,
-        monto_usd: data.monto_usd,
+        monto_usd: totalUsd,
         pagos: data.pagos.map((p) => ({
           monto_usd: p.monto_usd,
           monto_usd_interno: p.monto_usd_interno,

@@ -37,8 +37,11 @@ export const gastoSchema = z.object({
     .number()
     .positive('Debe ser mayor a 0')
     .optional(),
+  // IVA: monto_factura es la BASE (antes de IVA). El total = base + IVA.
+  tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
+  porcentaje_iva: z.number().min(0).max(100).default(0),
   monto_factura: z
-    .number({ message: 'El monto es requerido' })
+    .number({ message: 'El monto base es requerido' })
     .positive('Debe ser mayor a 0'),
   monto_usd: z
     .number({ message: 'El total contable USD es requerido' })

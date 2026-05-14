@@ -6,6 +6,7 @@ import { crearGasto, type GastoPago } from '@/features/contabilidad/hooks/use-ga
 import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
@@ -83,6 +84,10 @@ interface ResumenConfirmProps {
   tasaInterna: number
   tasaProveedor: number | null
   montoFactura: number
+  totalFactura: number
+  ivaFactura: number
+  tipoImpuesto: string
+  porcentajeIva: number
   montoContableUsd: number
   montoProveedorUsd: number
   pagos: Array<{ metodoNombre: string; monto: string; moneda: string; referencia: string }>
@@ -105,6 +110,10 @@ function ResumenConfirm({
   tasaInterna,
   tasaProveedor,
   montoFactura,
+  totalFactura,
+  ivaFactura,
+  tipoImpuesto,
+  porcentajeIva,
   montoContableUsd,
   montoProveedorUsd,
   pagos,
@@ -169,6 +178,31 @@ function ResumenConfirm({
             <span className="font-mono">{tasaProveedor.toFixed(4)} Bs/USD</span>
           </div>
         )}
+        {/* Desglose IVA en el resumen */}
+        {tipoImpuesto === 'Gravable' && ivaFactura > 0 && (
+          <div className="border-t border-amber-200 dark:border-amber-800 pt-2 mt-1 space-y-1 text-xs">
+            <div className="flex justify-between text-muted-foreground">
+              <span>Base imponible:</span>
+              <span className="tabular-nums">{montoFactura.toFixed(2)} {monedaFactura}</span>
+            </div>
+            <div className="flex justify-between text-amber-700 dark:text-amber-400">
+              <span>IVA ({porcentajeIva}%):</span>
+              <span className="tabular-nums">+ {ivaFactura.toFixed(2)} {monedaFactura}</span>
+            </div>
+            <div className="flex justify-between font-medium text-foreground">
+              <span>Total con IVA:</span>
+              <span className="tabular-nums">{totalFactura.toFixed(2)} {monedaFactura}</span>
+            </div>
+          </div>
+        )}
+        {tipoImpuesto !== 'Gravable' && (
+          <div className="border-t border-border pt-1 mt-1">
+            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+              {tipoImpuesto} — sin IVA
+            </span>
+          </div>
+        )}
+
         <div className="border-t border-border pt-2 mt-1">
           {monedaFactura === 'USD' && usaTasaParalela && tasaProveedor && tasaProveedor > 0 ? (
             <>
@@ -298,6 +332,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
   const { cuentas, isLoading: loadingCuentas } = useCuentasDetallePorTipo('GASTO')
   const { proveedores, isLoading: loadingProveedores } = useProveedores()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { impuestos } = useImpuestosActivos()
   const { tasa: tasaActual } = useTasaActual()
 
   // ─── Campos básicos ────────────────────────────────────────
@@ -316,6 +351,10 @@ export function GastoForm({ onClose }: GastoFormProps) {
   const [tasaInternaManual, setTasaInternaManual] = useState(false)
   const [tasaProveedor, setTasaProveedor] = useState('')
   const [montoFactura, setMontoFactura] = useState('')
+
+  // ─── Campos IVA ────────────────────────────────────────────
+  const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
+  const [porcentajeIva, setPorcentajeIva] = useState('')
 
   // ─── Pagos/Abonos ──────────────────────────────────────────
   const [pagos, setPagos] = useState<PagoRow[]>([])
@@ -344,6 +383,8 @@ export function GastoForm({ onClose }: GastoFormProps) {
     setTasaInternaManual(false)
     setTasaProveedor('')
     setMontoFactura('')
+    setTipoImpuesto('Exento')
+    setPorcentajeIva('')
     setPagos([])
     setObservaciones('')
     setErrors({})
@@ -398,26 +439,34 @@ export function GastoForm({ onClose }: GastoFormProps) {
   const tasaInternaNum = parseFloat(tasaInterna) || 0
   const tasaProveedorNum = parseFloat(tasaProveedor) || 0
   const montoFacturaNum = parseFloat(montoFactura) || 0
+  const porcentajeIvaNum = parseFloat(porcentajeIva) || 0
+
+  // totalFactura = base + IVA (en moneda_factura)
+  // montoFactura es la BASE (antes de IVA)
+  const ivaFactura = tipoImpuesto === 'Gravable'
+    ? Number((montoFacturaNum * (porcentajeIvaNum / 100)).toFixed(2))
+    : 0
+  const totalFacturaNum = Number((montoFacturaNum + ivaFactura).toFixed(2))
 
   const montoContableUsd = (() => {
-    if (montoFacturaNum <= 0 || tasaInternaNum <= 0) return null
+    if (totalFacturaNum <= 0 || tasaInternaNum <= 0) return null
     if (monedaFactura === 'BS') {
-      return montoFacturaNum / tasaInternaNum
+      return totalFacturaNum / tasaInternaNum
     }
     if (usaTasaParalela && tasaProveedorNum > 0) {
-      return (montoFacturaNum * tasaProveedorNum) / tasaInternaNum
+      return (totalFacturaNum * tasaProveedorNum) / tasaInternaNum
     }
-    return montoFacturaNum
+    return totalFacturaNum
   })()
 
   // ─── Monto desde perspectiva proveedor ────────────────────
 
   const montoProveedorUsd = (() => {
-    if (montoFacturaNum <= 0) return null
-    if (monedaFactura === 'USD') return montoFacturaNum
+    if (totalFacturaNum <= 0) return null
+    if (monedaFactura === 'USD') return totalFacturaNum
     // BS: dividir por tasa proveedor si aplica, sino por interna
     const tasaRef = usaTasaParalela && tasaProveedorNum > 0 ? tasaProveedorNum : tasaInternaNum
-    return tasaRef > 0 ? montoFacturaNum / tasaRef : null
+    return tasaRef > 0 ? totalFacturaNum / tasaRef : null
   })()
 
   // ─── Auto-fill monto del primer pago ──────────────────────
@@ -601,6 +650,8 @@ export function GastoForm({ onClose }: GastoFormProps) {
       usa_tasa_paralela: usaTasaParalela,
       tasa: parseFloat(tasaInterna) || 0,
       tasa_proveedor: usaTasaParalela ? (parseFloat(tasaProveedor) || undefined) : undefined,
+      tipo_impuesto: tipoImpuesto,
+      porcentaje_iva: tipoImpuesto === 'Gravable' ? porcentajeIvaNum : 0,
       monto_factura: montoFacturaNum,
       monto_usd: montoContableUsd,
       pagos: pagosConMetodo,
@@ -645,8 +696,10 @@ export function GastoForm({ onClose }: GastoFormProps) {
         usa_tasa_paralela: payloadConfirmado.usa_tasa_paralela,
         tasa: payloadConfirmado.tasa,
         tasa_proveedor: payloadConfirmado.tasa_proveedor,
+        tipo_impuesto: payloadConfirmado.tipo_impuesto,
+        porcentaje_iva: payloadConfirmado.porcentaje_iva,
         monto_factura: payloadConfirmado.monto_factura,
-        monto_usd: payloadConfirmado.monto_usd,
+        monto_usd: payloadConfirmado.monto_usd ?? 0,
         pagos: payloadConfirmado.pagos as GastoPago[],
         observaciones: payloadConfirmado.observaciones || undefined,
         empresa_id: user.empresa_id!,
@@ -719,6 +772,10 @@ export function GastoForm({ onClose }: GastoFormProps) {
               tasaInterna={parseFloat(tasaInterna) || 0}
               tasaProveedor={usaTasaParalela ? (parseFloat(tasaProveedor) || null) : null}
               montoFactura={montoFacturaNum}
+              totalFactura={totalFacturaNum}
+              ivaFactura={ivaFactura}
+              tipoImpuesto={tipoImpuesto}
+              porcentajeIva={porcentajeIvaNum}
               montoContableUsd={montoContableUsd ?? 0}
               montoProveedorUsd={montoProveedorUsd ?? (montoContableUsd ?? 0)}
               pagos={pagosResumen}
@@ -991,25 +1048,118 @@ export function GastoForm({ onClose }: GastoFormProps) {
                   </div>
                 </div>
 
-                {/* ── SECCIÓN 3: Monto ── */}
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">
-                    Total de la Factura ({monedaFactura}) <span className="text-destructive">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    value={montoFactura}
-                    onChange={(e) => setMontoFactura(e.target.value)}
-                    onWheel={(e) => (e.target as HTMLInputElement).blur()}
-                    placeholder={monedaFactura === 'USD' ? '0.00 USD' : '0.00 Bs'}
-                    className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
-                      errors.monto_factura ? 'border-destructive' : 'border-input'
-                    }`}
-                  />
-                  {errors.monto_factura && (
-                    <p className="text-destructive text-xs mt-1">{errors.monto_factura}</p>
+                {/* ── SECCIÓN 3: Monto e IVA ── */}
+                <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Monto e IVA
+                  </p>
+
+                  {/* Tipo de impuesto */}
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Tipo de Impuesto <span className="text-destructive">*</span>
+                    </label>
+                    <div className="flex gap-2">
+                      {(['Exento', 'Exonerado', 'Gravable'] as const).map((tipo) => (
+                        <button
+                          key={tipo}
+                          type="button"
+                          onClick={() => {
+                            setTipoImpuesto(tipo)
+                            if (tipo !== 'Gravable') setPorcentajeIva('')
+                            else if (!porcentajeIva && impuestos.length > 0) {
+                              const ivaDefault = impuestos.find((i) => i.tipo_tributo === 'IVA')
+                              if (ivaDefault) setPorcentajeIva(ivaDefault.porcentaje)
+                            }
+                          }}
+                          className={`flex-1 rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
+                            tipoImpuesto === tipo
+                              ? tipo === 'Gravable'
+                                ? 'border-amber-500 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-700'
+                                : 'border-primary bg-primary/5 text-primary'
+                              : 'border-border text-muted-foreground hover:bg-muted/40'
+                          }`}
+                        >
+                          {tipo}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Porcentaje IVA — solo si Gravable */}
+                  {tipoImpuesto === 'Gravable' && (
+                    <div>
+                      <label className="block text-xs font-medium text-muted-foreground mb-1">
+                        Porcentaje IVA (%) <span className="text-destructive">*</span>
+                      </label>
+                      <div className="flex gap-2 items-center">
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          max="100"
+                          value={porcentajeIva}
+                          onChange={(e) => setPorcentajeIva(e.target.value)}
+                          onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                          placeholder="16.00"
+                          className={`w-28 rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} border-input`}
+                        />
+                        {/* Atajos desde el catálogo de impuestos */}
+                        {impuestos.filter((i) => i.tipo_tributo === 'IVA').map((imp) => (
+                          <button
+                            key={imp.id}
+                            type="button"
+                            onClick={() => setPorcentajeIva(imp.porcentaje)}
+                            className="rounded-lg border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
+                          >
+                            {imp.nombre} ({parseFloat(imp.porcentaje)}%)
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Base imponible (monto factura antes de IVA) */}
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      {tipoImpuesto === 'Gravable'
+                        ? `Base Imponible (${monedaFactura}) — antes de IVA`
+                        : `Monto de la Factura (${monedaFactura})`
+                      } <span className="text-destructive">*</span>
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={montoFactura}
+                      onChange={(e) => setMontoFactura(e.target.value)}
+                      onWheel={(e) => (e.target as HTMLInputElement).blur()}
+                      placeholder={monedaFactura === 'USD' ? '0.00 USD' : '0.00 Bs'}
+                      className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${noSpinner} ${
+                        errors.monto_factura ? 'border-destructive' : 'border-input'
+                      }`}
+                    />
+                    {errors.monto_factura && (
+                      <p className="text-destructive text-xs mt-1">{errors.monto_factura}</p>
+                    )}
+                  </div>
+
+                  {/* Desglose IVA calculado */}
+                  {tipoImpuesto === 'Gravable' && montoFacturaNum > 0 && porcentajeIvaNum > 0 && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/60 dark:bg-amber-950/20 dark:border-amber-800 px-3 py-2 space-y-1 text-xs">
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Base imponible:</span>
+                        <span className="tabular-nums font-mono">{montoFacturaNum.toFixed(2)} {monedaFactura}</span>
+                      </div>
+                      <div className="flex justify-between text-amber-700 dark:text-amber-400">
+                        <span>IVA ({porcentajeIvaNum}%):</span>
+                        <span className="tabular-nums font-mono">+ {ivaFactura.toFixed(2)} {monedaFactura}</span>
+                      </div>
+                      <div className="flex justify-between font-semibold text-foreground border-t border-amber-200 dark:border-amber-700 pt-1">
+                        <span>Total factura:</span>
+                        <span className="tabular-nums font-mono">{totalFacturaNum.toFixed(2)} {monedaFactura}</span>
+                      </div>
+                    </div>
                   )}
                 </div>
 
@@ -1019,12 +1169,12 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     {monedaFactura === 'USD' && usaTasaParalela && tasaProveedorNum > 0 ? (
                       <>
                         <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Total USD:</span>
-                          <span className="font-semibold tabular-nums">{formatUsd(montoFacturaNum)}</span>
+                          <span className="text-muted-foreground">Total USD (con IVA):</span>
+                          <span className="font-semibold tabular-nums">{formatUsd(totalFacturaNum)}</span>
                         </div>
                         <div className="flex justify-between text-xs text-muted-foreground/70">
                           <span>Equivalente Bs (tasa proveedor):</span>
-                          <span className="tabular-nums">{formatBs(montoFacturaNum * tasaProveedorNum)}</span>
+                          <span className="tabular-nums">{formatBs(totalFacturaNum * tasaProveedorNum)}</span>
                         </div>
                         <div className="flex justify-between text-xs text-muted-foreground/60">
                           <span>Total Contable USD:</span>
@@ -1034,12 +1184,12 @@ export function GastoForm({ onClose }: GastoFormProps) {
                     ) : monedaFactura === 'BS' && usaTasaParalela && tasaProveedorNum > 0 ? (
                       <>
                         <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Total Bs:</span>
-                          <span className="font-semibold tabular-nums">{formatBs(montoFacturaNum)}</span>
+                          <span className="text-muted-foreground">Total Bs (con IVA):</span>
+                          <span className="font-semibold tabular-nums">{formatBs(totalFacturaNum)}</span>
                         </div>
                         <div className="flex justify-between text-xs text-muted-foreground/70">
                           <span>Total USD (tasa proveedor):</span>
-                          <span className="tabular-nums">{formatUsd(montoFacturaNum / tasaProveedorNum)}</span>
+                          <span className="tabular-nums">{formatUsd(totalFacturaNum / tasaProveedorNum)}</span>
                         </div>
                         <div className="flex justify-between text-xs text-muted-foreground/60">
                           <span>Total USD (tasa interna):</span>
@@ -1060,7 +1210,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                         </div>
                         {monedaFactura === 'BS' && tasaInternaNum > 0 && (
                           <p className="text-[10px] text-muted-foreground/60 pt-0.5">
-                            Cálculo: {montoFacturaNum.toFixed(2)} Bs ÷ {tasaInternaNum.toFixed(4)}
+                            Cálculo: {totalFacturaNum.toFixed(2)} Bs ÷ {tasaInternaNum.toFixed(4)}
                           </p>
                         )}
                       </>
