@@ -41,6 +41,11 @@ export interface CerrarSesionParams {
   monto_fisico_usd: number
   /** Conteo fisico de efectivo en Bs declarado por el cajero */
   monto_fisico_bs?: number
+  /**
+   * Total sistema en USD calculado por el cuadre (suma de todos los metodos: efectivo + otros).
+   * Si se provee, se usa directamente en lugar de recalcular solo desde pagos efectivo.
+   */
+  monto_sistema_usd?: number
   observaciones_cierre?: string
   usuario_cierre_id: string
   /** Conteo fisico por metodo: keyed por metodo_cobro_id, valor en moneda nativa del metodo */
@@ -599,6 +604,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
   const {
     monto_fisico_usd,
     monto_fisico_bs = 0,
+    monto_sistema_usd: montoSistemaUsdParam,
     observaciones_cierre,
     usuario_cierre_id,
     conteoFisicoPorMetodo,
@@ -723,11 +729,17 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     }
 
     // 4. Calcular saldos esperados por divisa
-    //    Formula: Apertura + Pagos_Efectivo + Ingresos_Manual - Egresos_Manual - Vueltos
-    //    (Los vueltos ya estan en egresosManual porque su tipo es EGRESO)
-    const montoSistemaUsd = Number(
+    //    Para USD: si el caller provee monto_sistema_usd (calculado por el cuadre UI sumando
+    //    todos los metodos), se usa ese valor directamente para mantener consistencia con lo
+    //    mostrado al usuario. Si no, se calcula solo desde pagos efectivo (fallback).
+    //    Para Bs: siempre desde efectivo (los otros metodos son USD en este sistema).
+    const montoSistemaUsdFromDB = Number(
       (aperturaUsd + pagosEfectivoUsd + ingresosManualUsd - egresosManualUsd).toFixed(2)
     )
+    const montoSistemaUsd = montoSistemaUsdParam !== undefined
+      ? Number(montoSistemaUsdParam.toFixed(2))
+      : montoSistemaUsdFromDB
+
     const montoSistemaBs = Number(
       (aperturaBs + pagosEfectivoBs + ingresosManualBs - egresosManualBs).toFixed(2)
     )

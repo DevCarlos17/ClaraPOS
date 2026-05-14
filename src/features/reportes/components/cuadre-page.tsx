@@ -241,6 +241,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
       await cerrarSesionCaja(sesionAbiertaId, {
         monto_fisico_usd: totalFisicoUsd,
         monto_fisico_bs: totalFisicoBs > 0 ? totalFisicoBs : undefined,
+        monto_sistema_usd: totalSistemaUsd,
         observaciones_cierre: observacionesCierre,
         usuario_cierre_id: user.id,
         conteoFisicoPorMetodo: conteoFisicoRecord,
