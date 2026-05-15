@@ -14,6 +14,7 @@ interface ProductoBuscadorProps {
 
 export interface ProductoBuscadorHandle {
   focus: () => void
+  clear: () => void
 }
 
 export const ProductoBuscador = forwardRef<ProductoBuscadorHandle, ProductoBuscadorProps>(
@@ -32,6 +33,11 @@ function ProductoBuscador({ onSelect, tasa }, ref) {
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
+    clear: () => {
+      setQuery('')
+      setOpen(false)
+      setActiveIndex(-1)
+    },
   }))
 
   // Resetear índice activo cuando cambian los resultados
@@ -164,7 +170,7 @@ function ProductoBuscador({ onSelect, tasa }, ref) {
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
           placeholder="Buscar por nombre, codigo o codigo de barras..."
-          autoComplete="off"
+          autoComplete="new-password"
           role="combobox"
           aria-expanded={dropdownVisible}
           aria-activedescendant={activeIndex >= 0 ? `producto-option-${activeIndex}` : undefined}

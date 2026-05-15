@@ -87,11 +87,27 @@ export function CobroModal({
   const totalEfectivoBs = Math.max(0, totalBrutoUsd * tasaUsada - descuentoBs)
   const totalEfectivoUsd = Number((totalEfectivoBs / tasaUsada).toFixed(2))
 
+  // ── Calculo IGTF (antes del balance para que el pendiente lo incluya) ────
+  const { aplicaIgtf, tasaIgtf } = useIgtfConfig()
+  const totalPagosUsdNativo = pagos
+    .filter((p) => p.moneda !== 'BS')
+    .reduce((sum, p) => sum + p.monto, 0)
+  // Base: solo la porcion de la factura pagada en USD.
+  // Se capea en totalEfectivoUsd para evitar recursividad: el propio IGTF
+  // no genera un nuevo IGTF si el cliente lo paga en divisas.
+  const igtfBase = Math.min(totalPagosUsdNativo, totalEfectivoUsd)
+  const igtfUsd =
+    aplicaIgtf && igtfBase > 0
+      ? Number((igtfBase * tasaIgtf / 100).toFixed(2))
+      : 0
+  const igtfBs = Number((igtfUsd * tasaUsada).toFixed(2))
+
   // Ancla en Bs (sin doble conversion USD→Bs→USD)
   const totalPagadoBs = pagos.reduce((sum, p) => {
     return sum + (p.moneda === 'BS' ? p.monto : p.monto * tasaUsada)
   }, 0)
-  const pendienteBs4 = totalEfectivoBs - totalPagadoBs
+  // El pendiente incluye el IGTF: el cliente debe cubrir factura + IGTF generado
+  const pendienteBs4 = totalEfectivoBs + igtfBs - totalPagadoBs
   const umbralBs = tasaUsada * 0.01
   const esPagado = pendienteBs4 <= umbralBs
   const esDiferencialRedondeo = pendienteBs4 > 0.001 && pendienteBs4 <= umbralBs
@@ -120,17 +136,6 @@ export function CobroModal({
   }, [estaOverpago])
 
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
-
-  // ── Calculo IGTF ──────────────────────────────────────────────────────────
-  const { aplicaIgtf, tasaIgtf } = useIgtfConfig()
-  const totalPagosUsdNativo = pagos
-    .filter((p) => p.moneda !== 'BS')
-    .reduce((sum, p) => sum + p.monto, 0)
-  const igtfUsd =
-    aplicaIgtf && totalPagosUsdNativo > 0
-      ? Number((totalPagosUsdNativo * tasaIgtf / 100).toFixed(2))
-      : 0
-  const igtfBs = Number((igtfUsd * tasaUsada).toFixed(2))
 
   // ── Estado del boton Procesar ─────────────────────────────────────────────
   const puedeProcesar =

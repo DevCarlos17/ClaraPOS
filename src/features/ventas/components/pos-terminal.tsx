@@ -341,6 +341,7 @@ export function PosTerminal() {
     setDescuentoMotivo('')
     setShowDescuento(false)
     esperaStore.limpiarBorrador()
+    productoBuscadorRef.current?.clear()
   }
 
   const handleCancelar = () => {
