@@ -213,39 +213,67 @@ export function CompraForm({ onClose }: CompraFormProps) {
     return l.cantidad_input * cs
   }
 
+  // Subtotal sin IVA (en moneda de visualizacion)
   const totalDisplay = lineas.reduce((sum, l) => sum + getLineSubtotal(l), 0)
 
-  // totalUsd: siempre a tasa del proveedor (para CxP)
-  const totalUsd = moneda === 'USD'
-    ? totalDisplay
-    : (tasaFacturaNum > 0 ? totalDisplay / tasaFacturaNum : 0)
-  const totalBs = moneda === 'BS' ? totalDisplay : totalDisplay * tasaFacturaNum
-
-  // Desglose fiscal en USD (para mostrar en resumen)
-  const { desgloseExentoUsd, desgloseBaseUsd, desgloseIvaUsd } = useMemo(() => {
+  // Desglose fiscal en USD, agrupado por alicuota de IVA
+  const desgloseUsd = useMemo(() => {
     let exento = 0
-    let base = 0
-    let iva = 0
+    const gravableMap = new Map<number, { base: number; iva: number }>()
+
     for (const l of lineas) {
       const subtotalUsd = moneda === 'USD'
         ? getLineSubtotal(l)
         : (tasaFacturaNum > 0 ? getLineSubtotal(l) / tasaFacturaNum : 0)
-      if (l.tipo_impuesto === 'Exento') {
+
+      if (l.tipo_impuesto !== 'Gravable') {
         exento += subtotalUsd
       } else {
-        base += subtotalUsd
-        iva += subtotalUsd * (l.impuesto_pct / 100)
+        const existing = gravableMap.get(l.impuesto_pct) ?? { base: 0, iva: 0 }
+        const ivaAmount = subtotalUsd * (l.impuesto_pct / 100)
+        gravableMap.set(l.impuesto_pct, {
+          base: existing.base + subtotalUsd,
+          iva: existing.iva + ivaAmount,
+        })
       }
     }
+
+    const gravableGroups = Array.from(gravableMap.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([pct, { base, iva }]) => ({
+        pct,
+        base: Number(base.toFixed(2)),
+        iva: Number(iva.toFixed(2)),
+      }))
+
+    const totalIvaUsd = Number(gravableGroups.reduce((sum, g) => sum + g.iva, 0).toFixed(2))
+
     return {
-      desgloseExentoUsd: Number(exento.toFixed(2)),
-      desgloseBaseUsd: Number(base.toFixed(2)),
-      desgloseIvaUsd: Number(iva.toFixed(2)),
+      exentoUsd: Number(exento.toFixed(2)),
+      gravableGroups,
+      totalIvaUsd,
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineas, moneda, tasaFacturaNum])
 
-  // totalUsdSistema: a tasa interna (para inventario y contabilidad)
+  const { exentoUsd, gravableGroups, totalIvaUsd } = desgloseUsd
+
+  // IVA en moneda de visualizacion: cuando moneda=BS se calcula directo en Bs para evitar
+  // doble conversion (Bs->USD->redondeo->Bs) que genera perdida de precision
+  const totalIvaBs = lineas.reduce((sum, l) => {
+    if (l.tipo_impuesto !== 'Gravable') return sum
+    return sum + getLineSubtotal(l) * (l.impuesto_pct / 100)
+  }, 0)
+  const totalIvaDisplay = moneda === 'USD' ? totalIvaUsd : totalIvaBs
+  const totalConIvaDisplay = totalDisplay + totalIvaDisplay
+
+  // totalUsd: siempre a tasa del proveedor (para CxP), incluye IVA
+  const totalUsd = moneda === 'USD'
+    ? totalConIvaDisplay
+    : (tasaFacturaNum > 0 ? totalConIvaDisplay / tasaFacturaNum : 0)
+  const totalBs = moneda === 'BS' ? totalConIvaDisplay : totalConIvaDisplay * tasaFacturaNum
+
+  // totalUsdSistema: a tasa interna (para inventario y contabilidad, sin IVA)
   const totalUsdSistema = usaTasaParalela && tasaInternaNum > 0
     ? (moneda === 'USD'
         ? (tasaFacturaNum > 0 ? totalDisplay * tasaFacturaNum / tasaInternaNum : 0)
@@ -257,8 +285,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
     const mUsd = p.moneda === 'BS' ? (tasaFacturaNum > 0 ? p.monto / tasaFacturaNum : 0) : p.monto
     return sum + mUsd
   }, 0)
+  // totalAbonadoBs: suma directa en Bs sin pasar por USD para evitar perdida de precision
+  const totalAbonadoBs = pagos.reduce((sum, p) => {
+    const mBs = p.moneda === 'USD' ? p.monto * tasaFacturaNum : p.monto
+    return sum + mBs
+  }, 0)
   const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
-  const pendienteBs = pendienteUsd * tasaFacturaNum
+  // pendienteBs: calculado directo desde totalBs, no desde pendienteUsd * tasa
+  const pendienteBs = Math.max(0, Number((totalBs - totalAbonadoBs).toFixed(2)))
   const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
 
   const metodoSeleccionado = metodos.find((m) => m.id === pagoMetodoId)
@@ -384,7 +418,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   function handlePagoMax() {
     if (!metodoSeleccionado || totalUsd <= 0) return
     if (metodoSeleccionado.moneda === 'BS') {
-      setPagoMonto((pendienteUsd * tasaFacturaNum).toFixed(2))
+      setPagoMonto(pendienteBs.toFixed(2))
     } else {
       setPagoMonto(pendienteUsd.toFixed(2))
     }
@@ -1183,23 +1217,33 @@ export function CompraForm({ onClose }: CompraFormProps) {
               </div>
             )}
 
-            {/* Desglose fiscal (solo si hay IVA) */}
-            {desgloseIvaUsd > 0.001 && (
+            {/* Desglose fiscal por alicuota de IVA */}
+            {totalIvaUsd > 0.001 && (
               <div className="mt-3 pt-3 border-t border-border space-y-1 text-xs text-muted-foreground">
-                {desgloseExentoUsd > 0.001 && (
+                {exentoUsd > 0.001 && (
                   <div className="flex justify-between">
                     <span>Base exenta:</span>
-                    <span className="tabular-nums">{formatUsd(desgloseExentoUsd)}</span>
+                    <span className="tabular-nums">{formatUsd(exentoUsd)}</span>
                   </div>
                 )}
-                <div className="flex justify-between">
-                  <span>Base imponible:</span>
-                  <span className="tabular-nums">{formatUsd(desgloseBaseUsd)}</span>
-                </div>
-                <div className="flex justify-between font-medium text-amber-700 dark:text-amber-400">
-                  <span>IVA:</span>
-                  <span className="tabular-nums">+ {formatUsd(desgloseIvaUsd)}</span>
-                </div>
+                {gravableGroups.map((g) => (
+                  <React.Fragment key={g.pct}>
+                    <div className="flex justify-between">
+                      <span>Base imponible ({g.pct}%):</span>
+                      <span className="tabular-nums">{formatUsd(g.base)}</span>
+                    </div>
+                    <div className="flex justify-between font-medium text-amber-700 dark:text-amber-400">
+                      <span>IVA {g.pct}%:</span>
+                      <span className="tabular-nums">+ {formatUsd(g.iva)}</span>
+                    </div>
+                  </React.Fragment>
+                ))}
+                {gravableGroups.length > 1 && (
+                  <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400 border-t border-border pt-1 mt-1">
+                    <span>Total IVA:</span>
+                    <span className="tabular-nums">+ {formatUsd(totalIvaUsd)}</span>
+                  </div>
+                )}
               </div>
             )}
 
