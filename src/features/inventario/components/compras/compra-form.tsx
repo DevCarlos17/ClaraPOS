@@ -1189,12 +1189,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     <p className="text-xs text-muted-foreground">a tasa {tasaInternaNum > 0 ? tasaInternaNum.toFixed(2) : '?'}</p>
                   </div>
                   <div className="space-y-1">
-                    <span className="text-xs text-muted-foreground">
-                      {moneda === 'BS' ? 'Total Bs (factura)' : 'Total USD (factura)'}
-                    </span>
-                    <p className="text-xl font-bold text-foreground">
-                      {moneda === 'BS' ? formatBs(totalBs) : formatUsd(totalUsd)}
-                    </p>
+                    <span className="text-xs text-muted-foreground">Total factura</span>
+                    <p className="text-xl font-bold text-foreground">{formatUsd(totalUsd)}</p>
+                    <p className="text-sm font-medium text-muted-foreground">{formatBs(totalBs)}</p>
                   </div>
                 </div>
                 <div className="mt-2 pt-2 border-t border-amber-200 dark:border-amber-800">
@@ -1223,25 +1220,37 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 {exentoUsd > 0.001 && (
                   <div className="flex justify-between">
                     <span>Base exenta:</span>
-                    <span className="tabular-nums">{formatUsd(exentoUsd)}</span>
+                    <div className="text-right tabular-nums">
+                      <div>{formatUsd(exentoUsd)}</div>
+                      <div className="text-muted-foreground/60">{formatBs(exentoUsd * tasaFacturaNum)}</div>
+                    </div>
                   </div>
                 )}
                 {gravableGroups.map((g) => (
                   <React.Fragment key={g.pct}>
                     <div className="flex justify-between">
                       <span>Base imponible ({g.pct}%):</span>
-                      <span className="tabular-nums">{formatUsd(g.base)}</span>
+                      <div className="text-right tabular-nums">
+                        <div>{formatUsd(g.base)}</div>
+                        <div className="text-muted-foreground/60">{formatBs(g.base * tasaFacturaNum)}</div>
+                      </div>
                     </div>
                     <div className="flex justify-between font-medium text-amber-700 dark:text-amber-400">
                       <span>IVA {g.pct}%:</span>
-                      <span className="tabular-nums">+ {formatUsd(g.iva)}</span>
+                      <div className="text-right tabular-nums">
+                        <div>+ {formatUsd(g.iva)}</div>
+                        <div className="font-normal text-amber-600/70">+ {formatBs(g.iva * tasaFacturaNum)}</div>
+                      </div>
                     </div>
                   </React.Fragment>
                 ))}
                 {gravableGroups.length > 1 && (
                   <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400 border-t border-border pt-1 mt-1">
                     <span>Total IVA:</span>
-                    <span className="tabular-nums">+ {formatUsd(totalIvaUsd)}</span>
+                    <div className="text-right tabular-nums">
+                      <div>+ {formatUsd(totalIvaUsd)}</div>
+                      <div className="font-normal text-amber-600/70">+ {formatBs(totalIvaUsd * tasaFacturaNum)}</div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1251,7 +1260,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
               {pagos.length > 0 && (
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Abonado:</span>
-                  <span className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</span>
+                  <div className="text-right tabular-nums">
+                    <div className="font-medium text-green-600">{formatUsd(totalAbonadoUsd)}</div>
+                    <div className="text-xs text-green-600/70">{formatBs(totalAbonadoBs)}</div>
+                  </div>
                 </div>
               )}
               <div className="flex justify-between text-sm">
