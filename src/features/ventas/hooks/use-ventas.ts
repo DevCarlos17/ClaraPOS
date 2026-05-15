@@ -109,6 +109,8 @@ export interface CrearVentaParams {
   descuentoMotivo?: string
   /** Vuelto a entregar al cliente cuando el pago excede el total */
   vuelto?: VueltoParam
+  /** IGTF calculado sobre pagos en divisas (USD, EUR, etc.) */
+  totalIgtfUsd?: number
 }
 
 export interface CrearVentaResult {
@@ -178,7 +180,7 @@ export async function buscarProductoPorCodigoBarras(
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0, vuelto } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0, vuelto, totalIgtfUsd = 0 } = params
 
   if (lineas.length === 0 && cargosEspeciales.length === 0) {
     throw new Error('Debe agregar al menos una linea o cargo especial a la venta')
@@ -327,7 +329,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         totalExentoUsd.toFixed(2),
         totalBaseUsd.toFixed(2),
         totalIvaUsd.toFixed(2),
-        '0.00',
+        totalIgtfUsd.toFixed(2),
         totalUsd.toFixed(2),
         totalBs.toFixed(2),
         descuentoUsdFinal.toFixed(2),

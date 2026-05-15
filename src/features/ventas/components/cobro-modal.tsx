@@ -16,6 +16,7 @@ import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import type { VentaExitosaData } from './venta-exitosa-modal'
 import type { PaymentMethod } from '@/features/configuracion/hooks/use-payment-methods'
+import { useIgtfConfig } from '@/features/configuracion/hooks/use-igtf-config'
 
 interface CobroModalProps {
   isOpen: boolean
@@ -119,6 +120,17 @@ export function CobroModal({
   }, [estaOverpago])
 
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
+
+  // ── Calculo IGTF ──────────────────────────────────────────────────────────
+  const { aplicaIgtf, tasaIgtf } = useIgtfConfig()
+  const totalPagosUsdNativo = pagos
+    .filter((p) => p.moneda !== 'BS')
+    .reduce((sum, p) => sum + p.monto, 0)
+  const igtfUsd =
+    aplicaIgtf && totalPagosUsdNativo > 0
+      ? Number((totalPagosUsdNativo * tasaIgtf / 100).toFixed(2))
+      : 0
+  const igtfBs = Number((igtfUsd * tasaUsada).toFixed(2))
 
   // ── Estado del boton Procesar ─────────────────────────────────────────────
   const puedeProcesar =
@@ -253,6 +265,7 @@ export function CobroModal({
         cargosEspeciales,
         descuentoUsd: descuentoBs > 0 ? Number((descuentoBs / tasaUsada).toFixed(4)) : 0,
         descuentoMotivo: descuentoMotivo.trim() || undefined,
+        totalIgtfUsd: igtfUsd,
       })
 
       onSuccess({
@@ -264,6 +277,9 @@ export function CobroModal({
         pagos: [...pagos],
         tasa: tasaUsada,
         cargosEspeciales: [...cargosEspeciales],
+        igtfUsd,
+        igtfBs,
+        tasaIgtfPct: tasaIgtf,
       })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Error al procesar la venta')
@@ -302,6 +318,21 @@ export function CobroModal({
             </div>
           )}
         </div>
+
+        {/* IGTF informativo */}
+        {aplicaIgtf && igtfUsd > 0 && (
+          <div className="px-5 py-2 border-b shrink-0 bg-amber-50">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-amber-800 font-medium">
+                IGTF {tasaIgtf}% (sobre pagos en divisas)
+              </p>
+              <div className="text-right">
+                <p className="text-xs font-semibold text-amber-800">+{formatBs(igtfBs)}</p>
+                <p className="text-[10px] text-amber-600">{formatUsd(igtfUsd)}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Balance resumen */}
         {pagos.length > 0 && (

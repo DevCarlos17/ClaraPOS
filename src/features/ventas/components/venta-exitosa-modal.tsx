@@ -14,6 +14,9 @@ export interface VentaExitosaData {
   pagos: PagoEntryForm[]
   tasa: number
   cargosEspeciales?: CargoEspecial[]
+  igtfUsd?: number
+  igtfBs?: number
+  tasaIgtfPct?: number
 }
 
 interface VentaExitosaModalProps {
@@ -87,6 +90,19 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
                 </span>
               }
             />
+            {(data.igtfUsd ?? 0) > 0 && (
+              <Row
+                label={`IGTF ${data.tasaIgtfPct ?? 3}%`}
+                value={
+                  <span className="font-semibold text-amber-700">
+                    +{formatUsd(data.igtfUsd!)}
+                    <span className="ml-2 text-sm font-normal text-amber-600">
+                      +{formatBs(data.igtfBs!)}
+                    </span>
+                  </span>
+                }
+              />
+            )}
             <Row
               label="Estado"
               value={
