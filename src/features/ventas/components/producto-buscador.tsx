@@ -90,6 +90,12 @@ function ProductoBuscador({ onSelect, tasa }, ref) {
 
   // Calcular posicion fija del dropdown para escapar de parents con overflow-hidden
   const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
+  const [isReadOnly, setIsReadOnly] = useState(true)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsReadOnly(false), 100)
+    return () => clearTimeout(timer)
+  }, [])
   useLayoutEffect(() => {
     if (!dropdownVisible || !inputRef.current) return
     const updatePos = () => {
@@ -170,7 +176,8 @@ function ProductoBuscador({ onSelect, tasa }, ref) {
           onFocus={() => setOpen(true)}
           onKeyDown={handleKeyDown}
           placeholder="Buscar por nombre, codigo o codigo de barras..."
-          autoComplete="new-password"
+          autoComplete="off"
+          readOnly={isReadOnly}
           role="combobox"
           aria-expanded={dropdownVisible}
           aria-activedescendant={activeIndex >= 0 ? `producto-option-${activeIndex}` : undefined}
