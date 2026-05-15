@@ -307,11 +307,11 @@ export function CobroModal({
           </p>
         </DialogHeader>
 
-        {/* Total */}
+        {/* Total factura */}
         <div className="px-5 py-3 bg-primary/5 border-b shrink-0 flex items-center justify-between">
           <div>
             <p className="text-[10px] text-primary/60 uppercase tracking-widest font-semibold mb-0.5">
-              Total a cobrar
+              {igtfUsd > 0 ? 'Total factura' : 'Total a cobrar'}
             </p>
             <p className="text-2xl font-bold tabular-nums leading-tight">{formatBs(totalEfectivoBs)}</p>
             <p className="text-xs text-muted-foreground">{formatUsd(totalEfectivoUsd)}</p>
@@ -324,10 +324,10 @@ export function CobroModal({
           )}
         </div>
 
-        {/* IGTF informativo */}
+        {/* IGTF + Total general */}
         {aplicaIgtf && igtfUsd > 0 && (
-          <div className="px-5 py-2 border-b shrink-0 bg-amber-50">
-            <div className="flex items-center justify-between">
+          <>
+            <div className="px-5 py-2 border-b shrink-0 bg-amber-50 flex items-center justify-between">
               <p className="text-xs text-amber-800 font-medium">
                 IGTF {tasaIgtf}% (sobre pagos en divisas)
               </p>
@@ -336,7 +336,18 @@ export function CobroModal({
                 <p className="text-[10px] text-amber-600">{formatUsd(igtfUsd)}</p>
               </div>
             </div>
-          </div>
+            <div className="px-5 py-2.5 border-b shrink-0 bg-amber-100/70 flex items-center justify-between">
+              <p className="text-xs font-bold text-amber-900 uppercase tracking-wide">
+                Total + IGTF
+              </p>
+              <div className="text-right">
+                <p className="text-base font-bold tabular-nums text-amber-900">
+                  {formatBs(totalEfectivoBs + igtfBs)}
+                </p>
+                <p className="text-xs text-amber-700">{formatUsd(totalEfectivoUsd + igtfUsd)}</p>
+              </div>
+            </div>
+          </>
         )}
 
         {/* Balance resumen */}
