@@ -127,7 +127,31 @@ async function importarFilaCxc(
       }
     }
 
-    // 4. Generar nro_factura: SI-XXXXXX
+    // 4a. Resolver deposito principal
+    let depositoId: string | null = null
+    const depResult = await tx.execute(
+      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+      [empresaId]
+    )
+    if (depResult.rows && depResult.rows.length > 0) {
+      const row = depResult.rows.item(0) as { id: string | null } | null
+      depositoId = row?.id ?? null
+    }
+    if (!depositoId) {
+      const depFallback = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
+        [empresaId]
+      )
+      if (!depFallback.rows || depFallback.rows.length === 0) {
+        throw new Error('No hay depositos configurados. Cree un deposito primero.')
+      }
+      depositoId = (depFallback.rows.item(0) as { id: string | null } | null)?.id ?? null
+    }
+    if (!depositoId) {
+      throw new Error('No se pudo resolver el deposito. Verifique la sincronizacion.')
+    }
+
+    // 4b. Generar nro_factura: SI-XXXXXX
     const countResult = await tx.execute(
       `SELECT COUNT(*) as c FROM ventas WHERE empresa_id = ? AND nro_factura LIKE 'SI-%'`,
       [empresaId]
@@ -140,7 +164,7 @@ async function importarFilaCxc(
     const montoBs = Number((montoUsd * tasa).toFixed(2))
     const fechaDoc = `${fila.fecha}T00:00:00`
 
-    // 6. INSERT ventas (deposito_id = NULL para saldos iniciales)
+    // 6. INSERT ventas
     const ventaId = uuidv4()
     await tx.execute(
       `INSERT INTO ventas
@@ -150,7 +174,7 @@ async function importarFilaCxc(
           total_usd, total_bs, descuento_usd, descuento_bs,
           saldo_pend_usd, tipo, status,
           usuario_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?,
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?,
                ?, 0, 0, 0,
                ?, ?, 0, 0,
                ?, 'SALDO_INICIAL', 'ACTIVA',
@@ -161,6 +185,7 @@ async function importarFilaCxc(
         cliente.id,
         nroFactura,
         fila.nro_documento,    // num_control = numero original del sistema anterior
+        depositoId,
         tasa.toFixed(4),
         montoUsd.toFixed(2),   // total_exento_usd = monto total (todo exento)
         montoUsd.toFixed(2),   // total_usd
