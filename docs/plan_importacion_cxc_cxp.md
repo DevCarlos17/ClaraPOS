@@ -330,30 +330,48 @@ Mismo patrón con `ImportarCxpModal`.
 
 ---
 
-### 9. Migración SQL (condicional)
-**Complejidad: Baja** | **Estimado: ~15 líneas**
+### 9. Migración SQL (obligatoria)
+**Complejidad: Baja** | **Estimado: ~50 líneas**
 
-Solo necesaria si existe CHECK CONSTRAINT en Supabase:
+Verificado en las migraciones del repo: **los CHECK CONSTRAINTs existen** en 5 campos
+de 3 tablas. La migración afecta más campos de los previstos originalmente.
 
 ```sql
--- backend/migrations/0003_add_saldo_inicial_tipo.sql
--- Verificar si hay constraint antes de ejecutar:
--- SELECT conname, consrc FROM pg_constraint WHERE conrelid = 'ventas'::regclass;
+-- migrations/0043_saldo_inicial_import.sql
 
-ALTER TABLE ventas
-  DROP CONSTRAINT IF EXISTS ventas_tipo_check;
-
+-- 1. ventas.tipo
+ALTER TABLE ventas DROP CONSTRAINT IF EXISTS ventas_tipo_check;
 ALTER TABLE ventas
   ADD CONSTRAINT ventas_tipo_check
   CHECK (tipo IN ('CONTADO', 'CREDITO', 'SALDO_INICIAL'));
 
-ALTER TABLE facturas_compra
-  DROP CONSTRAINT IF EXISTS facturas_compra_tipo_check;
-
+-- 2. facturas_compra.tipo
+ALTER TABLE facturas_compra DROP CONSTRAINT IF EXISTS facturas_compra_tipo_check;
 ALTER TABLE facturas_compra
   ADD CONSTRAINT facturas_compra_tipo_check
   CHECK (tipo IN ('CONTADO', 'CREDITO', 'SALDO_INICIAL'));
+
+-- 3. movimientos_cuenta.tipo  (agrega 'SAL' = Saldo Inicial)
+ALTER TABLE movimientos_cuenta DROP CONSTRAINT IF EXISTS movimientos_cuenta_tipo_check;
+ALTER TABLE movimientos_cuenta
+  ADD CONSTRAINT movimientos_cuenta_tipo_check
+  CHECK (tipo IN ('FAC', 'PAG', 'NCR', 'NDB', 'SAL'));
+
+-- 4. movimientos_cuenta.doc_origen_tipo
+ALTER TABLE movimientos_cuenta DROP CONSTRAINT IF EXISTS movimientos_cuenta_doc_origen_tipo_check;
+ALTER TABLE movimientos_cuenta
+  ADD CONSTRAINT movimientos_cuenta_doc_origen_tipo_check
+  CHECK (doc_origen_tipo IN ('VENTA', 'PAGO', 'NOTA_CREDITO', 'NOTA_DEBITO', 'SALDO_INICIAL'));
+
+-- 5. movimientos_cuenta_proveedor.tipo  (agrega 'SAL')
+ALTER TABLE movimientos_cuenta_proveedor DROP CONSTRAINT IF EXISTS movimientos_cuenta_proveedor_tipo_check;
+ALTER TABLE movimientos_cuenta_proveedor
+  ADD CONSTRAINT movimientos_cuenta_proveedor_tipo_check
+  CHECK (tipo IN ('FAC', 'PAG', 'NC', 'ND', 'SAL'));
 ```
+
+> Esta migración debe aplicarse en Supabase **antes** de cualquier prueba de importación.
+> El número siguiente de migración es `0043` (la última existente es `0042_gastos_iva.sql`).
 
 ---
 
@@ -370,9 +388,12 @@ ALTER TABLE facturas_compra
 | 7 | Modal importar CXP | `compras/components/importar-cxp-modal.tsx` | **Media-Alta** | ~300 |
 | 8 | Integración ruta CXC | `routes/_app/clientes/cuentas-por-cobrar.tsx` | **Baja** | ~20 |
 | 9 | Integración ruta CXP | `routes/_app/compras/cxp.tsx` | **Baja** | ~20 |
-| 10 | Migración SQL (cond.) | `backend/migrations/0003_...sql` | **Baja** | ~15 |
+| 10 | Migración SQL | `migrations/0043_saldo_inicial_import.sql` | **Baja** | ~50 |
 
-**Total**: 10 archivos (7 nuevos + 3 modificados) · ~1195 líneas estimadas
+**Total**: 10 archivos (7 nuevos + 3 modificados) · ~1230 líneas estimadas
+
+> La migración afecta 5 CHECK CONSTRAINTs en 3 tablas. Es obligatoria, no condicional.
+> Debe ejecutarse antes que cualquier otro paso.
 
 ---
 
@@ -437,7 +458,24 @@ WHERE conrelid = 'ventas'::regclass
   implementar cualquier otra parte.
 - Si no existe → no se necesita ningún cambio en base de datos.
 
-**Respuesta:** _______________
+**Respuesta (verificado en migraciones del repo):**
+**SÍ existen. La migración SQL es obligatoria y más extensa de lo planeado originalmente.**
+
+Constraints encontrados en `migrations/0006_ventas.sql` y `migrations/0007_compras.sql`:
+
+| Tabla | Campo | Constraint actual | Cambio requerido |
+|---|---|---|---|
+| `ventas` | `tipo` | `CHECK (tipo IN ('CONTADO','CREDITO'))` | Agregar `'SALDO_INICIAL'` |
+| `facturas_compra` | `tipo` | `CHECK (tipo IN ('CONTADO','CREDITO'))` | Agregar `'SALDO_INICIAL'` |
+| `movimientos_cuenta` | `tipo` | `CHECK (tipo IN ('FAC','PAG','NCR','NDB'))` | Agregar `'SAL'` |
+| `movimientos_cuenta_proveedor` | `tipo` | `CHECK (tipo IN ('FAC','PAG','NC','ND'))` | Agregar `'SAL'` |
+| `movimientos_cuenta` | `doc_origen_tipo` | `CHECK (doc_origen_tipo IN ('VENTA','PAGO','NOTA_CREDITO','NOTA_DEBITO'))` | Agregar `'SALDO_INICIAL'` |
+
+Adicionalmente: `ventas` tiene `CONSTRAINT uq_ventas_empresa_nro UNIQUE(empresa_id, nro_factura)`.
+Esto significa que **el número original del sistema anterior NO puede usarse como `nro_factura`**
+(dos clientes podrían tener "FAC-001" en el sistema viejo). Solución: ClaraPOS genera
+un `nro_factura` propio con prefijo `SI-` (Saldo Inicial, ej: `SI-000001`) y el número
+original del CSV se guarda en el campo `num_control` (nullable, sin UNIQUE constraint).
 
 ---
 
@@ -458,7 +496,7 @@ saldo de apertura, lo que requiere configuración adicional y agrega ~60 líneas
 | **Sin asientos** (recomendada) | Solo crea el documento y el movimiento de cuenta. El contador hace el asiento de apertura manualmente. | Ninguna |
 | **Con asientos** | Genera asiento `DEBE: Cuentas por Cobrar / HABER: Apertura` automáticamente al importar. | Requiere definir cuenta contable de apertura en configuración |
 
-**Respuesta:** _______________
+**Respuesta:** Sin asientos. El hook no genera `asientos_contables`. El asiento de apertura lo hace el contador manualmente desde el módulo de contabilidad.
 
 ---
 
@@ -481,7 +519,7 @@ La primera opción es más simple. La segunda es relevante solo si el módulo de
 usa múltiples depósitos y el negocio quiere tener trazabilidad de qué depósito "tenía"
 ese saldo.
 
-**Respuesta:** _______________
+**Respuesta:** Depósito seleccionable en el modal. Se agrega un `<Select>` en el Paso 1 del modal (junto a las instrucciones) que lista los depósitos activos de la empresa. El depósito seleccionado aplica a **todos** los registros del lote de importación.
 
 ---
 
@@ -503,7 +541,7 @@ Si se deja `NULL`: ningún cambio extra.
 Si se asigna sesión: el modal necesita un selector de caja + verificar que la sesión
 esté abierta al momento de importar.
 
-**Respuesta:** _______________
+**Respuesta:** `NULL`. No se vincula a sesión de caja. El cuadre de caja ya filtra por `sesion_caja_id IS NOT NULL`, por lo que los saldos importados no aparecerán en ningún cuadre.
 
 ---
 
@@ -525,7 +563,7 @@ por registro. Por eso el acceso debe estar restringido.
 La recomendación es nivel 1 únicamente, pero si el negocio tiene supervisores que
 gestionan la migración, nivel 2 también.
 
-**Respuesta:** _______________
+**Respuesta:** Solo nivel 1 (Propietario). El botón "Importar Saldos" se renderiza condicionalmente con `user.level === 1`.
 
 ---
 
@@ -541,4 +579,6 @@ las facturas. La pregunta es cuál es el criterio de unicidad correcto:
 | `nro_documento + cliente_id + empresa_id` | El número solo debe ser único por cliente | Permite el escenario anterior, pero la verificación de duplicados es más compleja |
 | Solo advertir, no bloquear | Importar siempre y mostrar advertencia si hay posible duplicado | Máxima flexibilidad, mínima protección |
 
-**Respuesta:** _______________
+**Respuesta:** `nro_documento + cliente_id + empresa_id` para CXC. `nro_documento + proveedor_id + empresa_id` para CXP. El hook verifica en `ventas` (campo `num_control`) si ya existe ese par antes de insertar, reportando la fila como error de duplicado sin abortar el resto del lote.
+
+> **Consecuencia sobre `nro_factura`**: dado que `ventas` tiene `UNIQUE(empresa_id, nro_factura)`, el número original del CSV **no puede ir en `nro_factura`** (dos clientes distintos podrían tener la misma "FAC-001"). El `nro_factura` de ClaraPOS se genera con prefijo `SI-` (`SI-000001`, `SI-000002`…). El número original del viejo sistema se guarda en `num_control` (nullable, sin UNIQUE constraint), que es el campo que usa la verificación de duplicados.
