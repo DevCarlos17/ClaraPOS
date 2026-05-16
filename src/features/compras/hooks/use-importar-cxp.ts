@@ -5,7 +5,6 @@ import type { CxpImportRow, CxpImportRowResult, CxpImportSummary } from '../sche
 
 interface ImportarCxpParams {
   filas: CxpImportRow[]
-  depositoId: string
   empresaId: string
   usuarioId: string
   onProgress: (procesadas: number, total: number) => void
@@ -17,20 +16,19 @@ interface ImportarCxpParams {
  * Por cada fila:
  *  1. Busca el proveedor por rif
  *  2. Verifica que no exista ya un nro_documento importado (nro_control + proveedor_id)
- *  3. Obtiene la tasa de cambio (del CSV o la ultima registrada)
+ *  3. Obtiene la tasa de cambio (del CSV/Excel o la ultima registrada)
  *  4. Genera nro_factura con prefijo SIP- (SIP-000001, SIP-000002, ...)
  *  5. Inserta en facturas_compra (tipo='SALDO_INICIAL', saldo_pend_usd = monto_usd)
  *  6. Inserta en movimientos_cuenta_proveedor (tipo='SAL')
  *
  * NOTA: El saldo_actual del proveedor se calcula dinamicamente desde facturas_compra.saldo_pend_usd.
- * No se actualiza proveedores.saldo_actual (trigger PostgreSQL lo bloquea).
  *
  * Cada fila es una writeTransaction independiente.
  */
 export async function importarSaldosInicialesCxp(
   params: ImportarCxpParams
 ): Promise<CxpImportSummary> {
-  const { filas, depositoId, empresaId, usuarioId, onProgress } = params
+  const { filas, empresaId, usuarioId, onProgress } = params
 
   const fallidos: CxpImportRowResult[] = []
   let exitosos = 0
@@ -45,7 +43,7 @@ export async function importarSaldosInicialesCxp(
     }
 
     try {
-      const res = await importarFilaCxp(fila, depositoId, empresaId, usuarioId)
+      const res = await importarFilaCxp(fila, empresaId, usuarioId)
       exitosos++
 
       fallidos.push({
@@ -75,7 +73,6 @@ export async function importarSaldosInicialesCxp(
 
 async function importarFilaCxp(
   fila: CxpImportRow,
-  depositoId: string,
   empresaId: string,
   usuarioId: string
 ): Promise<{ nroFactura: string; proveedorNombre: string }> {
@@ -98,7 +95,6 @@ async function importarFilaCxp(
     const proveedor = provResult.rows.item(0) as { id: string; razon_social: string }
 
     // 2. Verificar duplicado: nro_documento + proveedor_id + empresa_id
-    //    El nro_documento original se guarda en nro_control de facturas_compra
     const dupResult = await tx.execute(
       `SELECT COUNT(*) as c FROM facturas_compra
        WHERE empresa_id = ? AND proveedor_id = ? AND nro_control = ? AND tipo = 'SALDO_INICIAL'`,
@@ -121,7 +117,7 @@ async function importarFilaCxp(
         [empresaId]
       )
       if (!tasaResult.rows?.length) {
-        throw new Error('No hay tasa de cambio registrada. Incluya la tasa en el archivo CSV.')
+        throw new Error('No hay tasa de cambio registrada. Incluya la tasa en el archivo.')
       }
       tasa = parseFloat((tasaResult.rows.item(0) as { valor: string }).valor)
       if (tasa <= 0) {
@@ -140,7 +136,7 @@ async function importarFilaCxp(
     // 5. Calcular totales
     const montoUsd = fila.monto_usd
     const montoBs = Number((montoUsd * tasa).toFixed(2))
-    const fechaDoc = fila.fecha  // DATE format para facturas_compra
+    const fechaDoc = fila.fecha
 
     // 6. Calcular saldo actual del proveedor antes de insertar (para movimiento_cuenta)
     const saldoProvResult = await tx.execute(
@@ -152,7 +148,7 @@ async function importarFilaCxp(
       parseFloat((saldoProvResult.rows?.item(0) as { saldo: string })?.saldo ?? '0') || 0
     const saldoProvNuevo = Number((saldoProvAnterior + montoUsd).toFixed(2))
 
-    // 7. INSERT facturas_compra
+    // 7. INSERT facturas_compra (deposito_id = NULL para saldos iniciales)
     const facturaId = uuidv4()
     await tx.execute(
       `INSERT INTO facturas_compra
@@ -163,7 +159,7 @@ async function importarFilaCxp(
           saldo_pend_usd, tipo, status,
           fecha_factura, fecha_recepcion,
           usuario_id, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?,
+       VALUES (?, ?, ?, ?, ?, NULL,
                NULL, ?, ?,
                ?, 0, 0, 0,
                ?, ?,
@@ -176,7 +172,6 @@ async function importarFilaCxp(
         proveedor.id,
         nroFactura,
         fila.nro_documento,   // nro_control = numero original del sistema anterior
-        depositoId,
         tasa.toFixed(4),
         tasa.toFixed(4),      // tasa_costo = tasa (sin diferencial en saldos iniciales)
         montoUsd.toFixed(2),  // total_exento_usd = monto total (todo exento)
@@ -218,9 +213,9 @@ async function importarFilaCxp(
         saldoProvNuevo.toFixed(2),
         observacion,
         facturaId,
-        montoUsd.toFixed(2),  // monto_moneda (en USD)
+        montoUsd.toFixed(2),
         tasa.toFixed(4),
-        montoUsd.toFixed(2),  // monto_usd_interno = monto_usd (sin diferencial)
+        montoUsd.toFixed(2),
         fechaDoc,
         now,
         usuarioId,
@@ -231,12 +226,4 @@ async function importarFilaCxp(
   })
 
   return resultado
-}
-
-/** Genera el contenido de la plantilla CSV para descarga */
-export function generarPlantillaCxpCsv(): string {
-  const headers = 'rif,nro_documento,fecha,monto_usd,tasa,descripcion'
-  const ejemplo1 = 'J-12345678-9,FAC-PROV-001,2024-01-15,500.00,36.50,Deuda proveedor'
-  const ejemplo2 = 'V-87654321-0,FACT-2024-100,2024-02-01,1200.00,,Saldo sistema anterior'
-  return [headers, ejemplo1, ejemplo2].join('\n')
 }

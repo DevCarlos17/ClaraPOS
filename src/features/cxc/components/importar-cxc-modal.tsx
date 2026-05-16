@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import * as XLSX from 'xlsx'
 import { toast } from 'sonner'
 import {
   Dialog,
@@ -7,20 +8,16 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { NativeSelect } from '@/components/ui/native-select'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
-import { parseCsv } from '@/lib/csv-parser'
+import { parseCsv, type CsvParseResult } from '@/lib/csv-parser'
+import { parseExcel } from '@/lib/excel-parser'
 import {
   cxcImportRowSchema,
   CXC_CSV_HEADER_MAP,
   type CxcImportRow,
   type CxcImportRowResult,
 } from '../schemas/cxc-import-schema'
-import {
-  importarSaldosInicialesCxc,
-  generarPlantillaCxcCsv,
-} from '../hooks/use-importar-cxc'
+import { importarSaldosInicialesCxc } from '../hooks/use-importar-cxc'
 import {
   UploadSimple,
   FileArrowDown,
@@ -29,6 +26,8 @@ import {
   Warning,
 } from '@phosphor-icons/react'
 import { formatUsd } from '@/lib/currency'
+
+const MAX_FILAS = 500
 
 // ─── Tipos internos ─────────────────────────────────────────────
 
@@ -49,10 +48,8 @@ interface Props {
 
 export function ImportarCxcModal({ isOpen, onClose }: Props) {
   const { user } = useCurrentUser()
-  const { depositos } = useDepositosActivos()
 
   const [step, setStep] = useState<Step>('instrucciones')
-  const [depositoId, setDepositoId] = useState('')
   const [filas, setFilas] = useState<FilaPreview[]>([])
   const [progreso, setProgreso] = useState({ procesadas: 0, total: 0 })
   const [resultados, setResultados] = useState<{
@@ -65,7 +62,6 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
   function handleClose() {
     if (step === 'importando') return
     setStep('instrucciones')
-    setDepositoId('')
     setFilas([])
     setProgreso({ procesadas: 0, total: 0 })
     setResultados(null)
@@ -73,38 +69,40 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
     onClose()
   }
 
-  // ─── Descargar plantilla ─────────────────────────────────────
+  // ─── Descargar plantilla Excel ────────────────────────────────
 
   function handleDescargarPlantilla() {
-    const csv = generarPlantillaCxcCsv()
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['identificacion', 'nro_documento', 'fecha', 'monto_usd', 'tasa', 'descripcion'],
+      ['V-12345678', 'FAC-001', '2024-01-15', '250.00', '36.50', 'Saldo sistema anterior'],
+      ['J-87654321-0', 'FAC-002', '2024-02-01', '1500.00', '', 'Saldo pendiente cobro'],
+    ])
+    XLSX.utils.book_append_sheet(wb, ws, 'Importacion')
+    const data = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
+    const blob = new Blob([data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = 'cxc_plantilla_importacion.csv'
+    a.download = 'cxc_plantilla_importacion.xlsx'
     a.click()
     URL.revokeObjectURL(url)
   }
 
-  // ─── Procesar archivo ─────────────────────────────────────────
+  // ─── Procesar filas (CSV o Excel) ────────────────────────────
 
-  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-
-    const reader = new FileReader()
-    reader.onload = (ev) => {
-      const raw = ev.target?.result as string
-      procesarCsv(raw)
-    }
-    reader.readAsText(file, 'utf-8')
-  }
-
-  function procesarCsv(raw: string) {
-    const { rows: rawRows, parseErrors } = parseCsv<Record<string, string>>(raw, CXC_CSV_HEADER_MAP)
-
+  function procesarFilas({ rows: rawRows, parseErrors }: CsvParseResult<Record<string, string>>) {
     if (parseErrors.length > 0 && rawRows.length === 0) {
       toast.error(parseErrors[0].message)
+      return
+    }
+
+    if (rawRows.length > MAX_FILAS) {
+      toast.error(
+        `El archivo supera el limite de ${MAX_FILAS} filas. Divida en lotes de maximo ${MAX_FILAS} registros.`
+      )
       return
     }
 
@@ -121,14 +119,34 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
     setStep('revision')
   }
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const ext = file.name.split('.').pop()?.toLowerCase()
+
+    if (ext === 'xlsx' || ext === 'xls') {
+      parseExcel<Record<string, string>>(file, CXC_CSV_HEADER_MAP)
+        .then(procesarFilas)
+        .catch(() => toast.error('Error al leer el archivo Excel'))
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const result = parseCsv<Record<string, string>>(
+        ev.target?.result as string,
+        CXC_CSV_HEADER_MAP
+      )
+      procesarFilas(result)
+    }
+    reader.readAsText(file, 'utf-8')
+  }
+
   // ─── Importar ─────────────────────────────────────────────────
 
   async function handleImportar() {
     if (!user?.empresa_id || !user.id) return
-    if (!depositoId) {
-      toast.error('Seleccione un deposito antes de importar')
-      return
-    }
 
     const filasValidas = filas
       .filter((f) => f.raw !== null)
@@ -145,7 +163,6 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
     try {
       const summary = await importarSaldosInicialesCxc({
         filas: filasValidas,
-        depositoId,
         empresaId: user.empresa_id,
         usuarioId: user.id,
         onProgress: (procesadas, total) => setProgreso({ procesadas, total }),
@@ -184,28 +201,9 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
           {/* ── PASO: instrucciones ── */}
           {step === 'instrucciones' && (
             <div className="space-y-5">
-              {/* Seleccionar deposito */}
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">Deposito *</label>
-                <NativeSelect
-                  value={depositoId}
-                  onChange={(e) => setDepositoId(e.target.value)}
-                >
-                  <option value="">Seleccionar deposito...</option>
-                  {depositos.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.nombre}{d.es_principal === 1 ? ' (Principal)' : ''}
-                    </option>
-                  ))}
-                </NativeSelect>
-                <p className="text-xs text-muted-foreground">
-                  Se aplicara a todos los registros del lote.
-                </p>
-              </div>
-
               {/* Instrucciones */}
               <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/30">
-                <p className="text-sm font-medium">Formato del archivo CSV</p>
+                <p className="text-sm font-medium">Formato del archivo (CSV o Excel)</p>
                 <div className="overflow-x-auto">
                   <table className="text-xs w-full border-collapse">
                     <thead>
@@ -234,37 +232,30 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
                   </table>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  El numero de documento original se guardara como referencia. ClaraPOS generara
-                  su propio numero de factura (SI-000001, SI-000002...).
+                  Maximo {MAX_FILAS} filas por lote. El numero de documento original se guardara como
+                  referencia. ClaraPOS generara su propio numero de factura (SI-000001, SI-000002...).
                 </p>
               </div>
 
               {/* Descargar plantilla */}
               <Button variant="outline" className="w-full" onClick={handleDescargarPlantilla}>
                 <FileArrowDown className="h-4 w-4 mr-2" />
-                Descargar Plantilla CSV
+                Descargar Plantilla Excel
               </Button>
 
               {/* Subir archivo */}
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Subir archivo CSV</label>
-                <label
-                  className={`flex flex-col items-center justify-center w-full h-24 border-2 border-dashed rounded-lg cursor-pointer transition-colors ${
-                    depositoId
-                      ? 'border-border hover:border-primary/50 hover:bg-muted/50'
-                      : 'border-border/40 bg-muted/20 cursor-not-allowed opacity-60'
-                  }`}
-                >
+                <label className="text-sm font-medium">Subir archivo (CSV o Excel)</label>
+                <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed rounded-lg cursor-pointer transition-colors border-border hover:border-primary/50 hover:bg-muted/50">
                   <UploadSimple className="h-6 w-6 text-muted-foreground mb-1" />
                   <span className="text-sm text-muted-foreground">
-                    {depositoId ? 'Click para seleccionar archivo .csv' : 'Seleccione un deposito primero'}
+                    Click para seleccionar archivo .csv o .xlsx
                   </span>
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".csv,.txt"
+                    accept=".csv,.txt,.xlsx,.xls"
                     className="hidden"
-                    disabled={!depositoId}
                     onChange={handleFileChange}
                   />
                 </label>

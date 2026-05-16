@@ -5,7 +5,6 @@ import type { CxcImportRow, CxcImportRowResult, CxcImportSummary } from '../sche
 
 interface ImportarCxcParams {
   filas: CxcImportRow[]
-  depositoId: string
   empresaId: string
   usuarioId: string
   onProgress: (procesadas: number, total: number) => void
@@ -29,7 +28,7 @@ interface ImportarCxcParams {
 export async function importarSaldosInicialesCxc(
   params: ImportarCxcParams
 ): Promise<CxcImportSummary> {
-  const { filas, depositoId, empresaId, usuarioId, onProgress } = params
+  const { filas, empresaId, usuarioId, onProgress } = params
 
   const fallidos: CxcImportRowResult[] = []
   let exitosos = 0
@@ -44,7 +43,7 @@ export async function importarSaldosInicialesCxc(
     }
 
     try {
-      const nroFactura = await importarFilaCxc(fila, depositoId, empresaId, usuarioId)
+      const nroFactura = await importarFilaCxc(fila, empresaId, usuarioId)
       exitosos++
 
       fallidos.push({
@@ -75,7 +74,6 @@ export async function importarSaldosInicialesCxc(
 
 async function importarFilaCxc(
   fila: CxcImportRow,
-  depositoId: string,
   empresaId: string,
   usuarioId: string
 ): Promise<{ nroFactura: string; clienteNombre: string }> {
@@ -99,7 +97,6 @@ async function importarFilaCxc(
     }
 
     // 2. Verificar duplicado: nro_documento + cliente_id + empresa_id
-    //    El nro_documento original se guarda en num_control de ventas
     const dupResult = await tx.execute(
       `SELECT COUNT(*) as c FROM ventas
        WHERE empresa_id = ? AND cliente_id = ? AND num_control = ? AND tipo = 'SALDO_INICIAL'`,
@@ -122,7 +119,7 @@ async function importarFilaCxc(
         [empresaId]
       )
       if (!tasaResult.rows?.length) {
-        throw new Error('No hay tasa de cambio registrada. Incluya la tasa en el archivo CSV.')
+        throw new Error('No hay tasa de cambio registrada. Incluya la tasa en el archivo.')
       }
       tasa = parseFloat((tasaResult.rows.item(0) as { valor: string }).valor)
       if (tasa <= 0) {
@@ -143,7 +140,7 @@ async function importarFilaCxc(
     const montoBs = Number((montoUsd * tasa).toFixed(2))
     const fechaDoc = `${fila.fecha}T00:00:00`
 
-    // 6. INSERT ventas
+    // 6. INSERT ventas (deposito_id = NULL para saldos iniciales)
     const ventaId = uuidv4()
     await tx.execute(
       `INSERT INTO ventas
@@ -153,7 +150,7 @@ async function importarFilaCxc(
           total_usd, total_bs, descuento_usd, descuento_bs,
           saldo_pend_usd, tipo, status,
           usuario_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?,
+       VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL, ?,
                ?, 0, 0, 0,
                ?, ?, 0, 0,
                ?, 'SALDO_INICIAL', 'ACTIVA',
@@ -164,7 +161,6 @@ async function importarFilaCxc(
         cliente.id,
         nroFactura,
         fila.nro_documento,    // num_control = numero original del sistema anterior
-        depositoId,
         tasa.toFixed(4),
         montoUsd.toFixed(2),   // total_exento_usd = monto total (todo exento)
         montoUsd.toFixed(2),   // total_usd
@@ -222,12 +218,4 @@ async function importarFilaCxc(
   })
 
   return resultado
-}
-
-/** Genera el contenido de la plantilla CSV para descarga */
-export function generarPlantillaCxcCsv(): string {
-  const headers = 'identificacion,nro_documento,fecha,monto_usd,tasa,descripcion'
-  const ejemplo1 = 'V-12345678,FAC-001,2024-01-15,250.00,36.50,Saldo sistema anterior'
-  const ejemplo2 = 'J-87654321-0,FAC-002,2024-02-01,1500.00,,Saldo pendiente cobro'
-  return [headers, ejemplo1, ejemplo2].join('\n')
 }

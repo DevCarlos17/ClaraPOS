@@ -4,10 +4,12 @@ export const cxpImportRowSchema = z.object({
   rif: z
     .string()
     .min(3, 'El RIF debe tener al menos 3 caracteres')
+    .refine((v) => !/[<>]/.test(v), 'El RIF no puede contener etiquetas HTML')
     .transform((v) => v.toUpperCase().trim()),
   nro_documento: z
     .string()
     .min(1, 'El numero de documento es requerido')
+    .refine((v) => !/[<>]/.test(v), 'El nro_documento no puede contener etiquetas HTML')
     .transform((v) => v.toUpperCase().trim()),
   fecha: z
     .string()
@@ -23,7 +25,8 @@ export const cxpImportRowSchema = z.object({
   descripcion: z
     .string()
     .optional()
-    .transform((v) => v?.trim() || ''),
+    .transform((v) => v?.trim() || '')
+    .refine((v) => !/[<>]/.test(v), 'La descripcion no puede contener etiquetas HTML'),
 })
 
 export type CxpImportRow = z.infer<typeof cxpImportRowSchema>
@@ -38,7 +41,7 @@ export interface CxpImportSummary {
   fallidos: Extract<CxpImportRowResult, { ok: false }>[]
 }
 
-/** Mapa de aliases para el CSV parser */
+/** Mapa de aliases para el CSV/Excel parser */
 export const CXP_CSV_HEADER_MAP: Record<string, keyof CxpImportRow> = {
   rif: 'rif',
   proveedor: 'rif',
