@@ -1,8 +1,13 @@
 import { z } from 'zod'
+import { sanitizeRif, isValidRif } from '@/lib/identity'
 
 export const proveedorSchema = z.object({
   razon_social: z.string().min(3, 'Minimo 3 caracteres'),
-  rif: z.string().regex(/^[VEJPG]-\d{8}-\d$/, 'Formato invalido. Ej: J-00000000-0'),
+  rif: z
+    .string()
+    .min(3, 'Minimo 3 caracteres')
+    .transform(sanitizeRif)
+    .refine(isValidRif, 'RIF invalido. Formato: J001234567 (10 caracteres). Verificar digito.'),
   nombre_comercial: z.string().optional().default(''),
   direccion_fiscal: z.string().optional().default(''),
   ciudad: z.string().optional().default(''),

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { proveedorSchema } from '@/features/proveedores/schemas/proveedor-schema'
+import { filterRifInput } from '@/lib/identity'
 import {
   crearProveedor,
   actualizarProveedor,
@@ -231,10 +232,10 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               id="prov-rif"
               type="text"
               value={rif}
-              onChange={(e) => setRif(e.target.value.toUpperCase())}
+              onChange={(e) => setRif(filterRifInput(e.target.value))}
               disabled={isEditing}
-              placeholder="J-00000000-0"
-              maxLength={12}
+              placeholder="J001234567"
+              maxLength={10}
               className={`${inputClass(!!errors.rif)} ${
                 isEditing ? 'bg-muted text-muted-foreground cursor-not-allowed' : 'bg-white'
               }`}

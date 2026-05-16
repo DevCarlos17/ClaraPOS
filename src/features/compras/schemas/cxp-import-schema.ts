@@ -1,14 +1,12 @@
 import { z } from 'zod'
+import { sanitizeRif, isValidRif } from '@/lib/identity'
 
 export const cxpImportRowSchema = z.object({
   rif: z
     .string()
     .min(3, 'El RIF debe tener al menos 3 caracteres')
-    .refine(
-      (v) => /^[A-Za-z0-9\-]+$/.test(v),
-      'El RIF solo puede contener letras (A-Z), numeros (0-9) y guiones'
-    )
-    .transform((v) => v.toUpperCase().trim()),
+    .transform(sanitizeRif)
+    .refine(isValidRif, 'RIF invalido. Formato: J001234567 (10 caracteres). Verificar digito.'),
   nro_documento: z
     .string()
     .min(1, 'El numero de documento es requerido')

@@ -1,14 +1,12 @@
 import { z } from 'zod'
+import { sanitizeCedula, isValidCedula } from '@/lib/identity'
 
 export const cxcImportRowSchema = z.object({
   identificacion: z
     .string()
     .min(3, 'La identificacion debe tener al menos 3 caracteres')
-    .refine(
-      (v) => /^[A-Za-z0-9\-]+$/.test(v),
-      'La identificacion solo puede contener letras (A-Z), numeros (0-9) y guiones'
-    )
-    .transform((v) => v.toUpperCase().trim()),
+    .transform(sanitizeCedula)
+    .refine(isValidCedula, 'Identificacion invalida. Ej: V22448021 o E12345678'),
   nro_documento: z
     .string()
     .min(1, 'El numero de documento es requerido')

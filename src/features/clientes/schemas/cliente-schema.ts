@@ -1,11 +1,12 @@
 import { z } from 'zod'
+import { sanitizeCedula, isValidCedula } from '@/lib/identity'
 
 export const clienteSchema = z.object({
   identificacion: z
     .string()
     .min(3, 'Minimo 3 caracteres')
-    .max(20, 'Maximo 20 caracteres')
-    .transform((v) => v.toUpperCase().trim()),
+    .transform(sanitizeCedula)
+    .refine(isValidCedula, 'Formato invalido. Ej: V22448021 o E12345678'),
   nombre: z
     .string()
     .min(3, 'Minimo 3 caracteres')

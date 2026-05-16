@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { clienteSchema } from '@/features/clientes/schemas/cliente-schema'
+import { filterCedulaInput } from '@/lib/identity'
 import {
   crearCliente,
   actualizarCliente,
@@ -135,9 +136,9 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
               id="cli-identificacion"
               type="text"
               value={identificacion}
-              onChange={(e) => setIdentificacion(e.target.value.toUpperCase())}
+              onChange={(e) => setIdentificacion(filterCedulaInput(e.target.value))}
               disabled={isEditing}
-              placeholder="Ej: V-12345678, J-98765432"
+              placeholder="Ej: V22448021, E12345678"
               className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 isEditing ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
               } ${errors.identificacion ? 'border-red-500' : 'border-gray-300'}`}
