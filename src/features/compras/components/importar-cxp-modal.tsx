@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { parseCsv, type CsvParseResult } from '@/lib/csv-parser'
 import { parseExcel } from '@/lib/excel-parser'
@@ -24,6 +25,7 @@ import {
   CheckCircle,
   XCircle,
   Warning,
+  Info,
 } from '@phosphor-icons/react'
 import { formatUsd } from '@/lib/currency'
 
@@ -42,6 +44,25 @@ interface FilaPreview {
 interface Props {
   isOpen: boolean
   onClose: () => void
+}
+
+// ─── Pre-validacion de existencia (fuera del componente) ─────────
+
+async function prevalidarProveedores(
+  rifs: string[],
+  empresaId: string
+): Promise<Set<string>> {
+  if (rifs.length === 0) return new Set()
+  const placeholders = rifs.map(() => '?').join(', ')
+  const result = await db.execute(
+    `SELECT rif FROM proveedores WHERE empresa_id = ? AND is_active = 1 AND rif IN (${placeholders})`,
+    [empresaId, ...rifs]
+  )
+  const encontrados = new Set<string>()
+  for (let i = 0; i < (result.rows?.length ?? 0); i++) {
+    encontrados.add((result.rows!.item(i) as { rif: string }).rif)
+  }
+  return encontrados
 }
 
 // ─── Componente ──────────────────────────────────────────────────
@@ -93,7 +114,10 @@ export function ImportarCxpModal({ isOpen, onClose }: Props) {
 
   // ─── Procesar filas (CSV o Excel) ────────────────────────────
 
-  function procesarFilas({ rows: rawRows, parseErrors }: CsvParseResult<Record<string, string>>) {
+  async function procesarFilas({
+    rows: rawRows,
+    parseErrors,
+  }: CsvParseResult<Record<string, string>>) {
     if (parseErrors.length > 0 && rawRows.length === 0) {
       toast.error(parseErrors[0].message)
       return
@@ -106,6 +130,7 @@ export function ImportarCxpModal({ isOpen, onClose }: Props) {
       return
     }
 
+    // Primera pasada: validacion Zod campo por campo
     const preview: FilaPreview[] = rawRows.map((row, i) => {
       const parsed = cxpImportRowSchema.safeParse(row)
       if (parsed.success) {
@@ -114,6 +139,28 @@ export function ImportarCxpModal({ isOpen, onClose }: Props) {
       const errores = parsed.error.issues.map((e) => e.message)
       return { numero: i + 1, raw: null, erroresValidacion: errores }
     })
+
+    // Segunda pasada: verificar existencia de proveedores en la BD local
+    const empresaId = user?.empresa_id
+    if (empresaId) {
+      const filasValidas = preview.filter((f) => f.raw !== null)
+      if (filasValidas.length > 0) {
+        const unicosRif = [...new Set(filasValidas.map((f) => f.raw!.rif))]
+        try {
+          const encontrados = await prevalidarProveedores(unicosRif, empresaId)
+          for (const fila of preview) {
+            if (fila.raw !== null && !encontrados.has(fila.raw.rif)) {
+              fila.erroresValidacion = [
+                `Proveedor no encontrado en el sistema: "${fila.raw.rif}"`,
+              ]
+              fila.raw = null
+            }
+          }
+        } catch {
+          // Si falla la consulta, continuar; los errores aparecen en el resultado final
+        }
+      }
+    }
 
     setFilas(preview)
     setStep('revision')
@@ -127,7 +174,7 @@ export function ImportarCxpModal({ isOpen, onClose }: Props) {
 
     if (ext === 'xlsx' || ext === 'xls') {
       parseExcel<Record<string, string>>(file, CXP_CSV_HEADER_MAP)
-        .then(procesarFilas)
+        .then((result) => procesarFilas(result))
         .catch(() => toast.error('Error al leer el archivo Excel'))
       return
     }
@@ -138,7 +185,7 @@ export function ImportarCxpModal({ isOpen, onClose }: Props) {
         ev.target?.result as string,
         CXP_CSV_HEADER_MAP
       )
-      procesarFilas(result)
+      void procesarFilas(result)
     }
     reader.readAsText(file, 'utf-8')
   }
@@ -200,8 +247,19 @@ export function ImportarCxpModal({ isOpen, onClose }: Props) {
 
           {/* ── PASO: instrucciones ── */}
           {step === 'instrucciones' && (
-            <div className="space-y-5">
-              {/* Instrucciones */}
+            <div className="space-y-4">
+
+              {/* Aviso decimal */}
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800">
+                <Info className="h-4 w-4 shrink-0" />
+                <span>
+                  <strong>Separador decimal: punto (.)</strong>
+                  {' '}— Correcto: <code className="font-mono">500.00</code>
+                  {' '}| Incorrecto: <code className="font-mono">500,00</code>
+                </span>
+              </div>
+
+              {/* Tabla de columnas */}
               <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/30">
                 <p className="text-sm font-medium">Formato del archivo (CSV o Excel)</p>
                 <div className="overflow-x-auto">
@@ -215,11 +273,11 @@ export function ImportarCxpModal({ isOpen, onClose }: Props) {
                     </thead>
                     <tbody>
                       {[
-                        ['rif', 'Si', 'RIF del proveedor (debe existir en el sistema)'],
-                        ['nro_documento', 'Si', 'Numero de factura del sistema anterior'],
-                        ['fecha', 'Si', 'Fecha en formato YYYY-MM-DD (ej: 2024-01-15)'],
-                        ['monto_usd', 'Si', 'Monto del saldo en USD (ej: 500.00)'],
-                        ['tasa', 'No', 'Tasa Bs/USD. Si se omite, usa la ultima tasa registrada'],
+                        ['rif', 'Si', 'RIF del proveedor — solo letras, numeros y guiones (ej: J-12345678-9)'],
+                        ['nro_documento', 'Si', 'Numero de factura del sistema anterior — solo letras, numeros, guiones, barras y puntos'],
+                        ['fecha', 'Si', 'Formato YYYY-MM-DD (ej: 2024-01-15) — no se permiten fechas futuras'],
+                        ['monto_usd', 'Si', 'Monto en USD con punto decimal (ej: 500.00)'],
+                        ['tasa', 'No', 'Tasa Bs/USD con punto decimal (ej: 36.50). Si se omite, usa la ultima registrada'],
                         ['descripcion', 'No', 'Observacion libre'],
                       ].map(([col, req, desc]) => (
                         <tr key={col}>

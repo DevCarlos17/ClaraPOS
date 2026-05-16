@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { parseCsv, type CsvParseResult } from '@/lib/csv-parser'
 import { parseExcel } from '@/lib/excel-parser'
@@ -24,6 +25,7 @@ import {
   CheckCircle,
   XCircle,
   Warning,
+  Info,
 } from '@phosphor-icons/react'
 import { formatUsd } from '@/lib/currency'
 
@@ -42,6 +44,25 @@ interface FilaPreview {
 interface Props {
   isOpen: boolean
   onClose: () => void
+}
+
+// ─── Pre-validacion de existencia (fuera del componente) ─────────
+
+async function prevalidarClientes(
+  identificaciones: string[],
+  empresaId: string
+): Promise<Set<string>> {
+  if (identificaciones.length === 0) return new Set()
+  const placeholders = identificaciones.map(() => '?').join(', ')
+  const result = await db.execute(
+    `SELECT identificacion FROM clientes WHERE empresa_id = ? AND is_active = 1 AND identificacion IN (${placeholders})`,
+    [empresaId, ...identificaciones]
+  )
+  const encontrados = new Set<string>()
+  for (let i = 0; i < (result.rows?.length ?? 0); i++) {
+    encontrados.add((result.rows!.item(i) as { identificacion: string }).identificacion)
+  }
+  return encontrados
 }
 
 // ─── Componente ──────────────────────────────────────────────────
@@ -93,7 +114,10 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
 
   // ─── Procesar filas (CSV o Excel) ────────────────────────────
 
-  function procesarFilas({ rows: rawRows, parseErrors }: CsvParseResult<Record<string, string>>) {
+  async function procesarFilas({
+    rows: rawRows,
+    parseErrors,
+  }: CsvParseResult<Record<string, string>>) {
     if (parseErrors.length > 0 && rawRows.length === 0) {
       toast.error(parseErrors[0].message)
       return
@@ -106,6 +130,7 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
       return
     }
 
+    // Primera pasada: validacion Zod campo por campo
     const preview: FilaPreview[] = rawRows.map((row, i) => {
       const parsed = cxcImportRowSchema.safeParse(row)
       if (parsed.success) {
@@ -114,6 +139,28 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
       const errores = parsed.error.issues.map((e) => e.message)
       return { numero: i + 1, raw: null, erroresValidacion: errores }
     })
+
+    // Segunda pasada: verificar existencia de clientes en la BD local
+    const empresaId = user?.empresa_id
+    if (empresaId) {
+      const filasValidas = preview.filter((f) => f.raw !== null)
+      if (filasValidas.length > 0) {
+        const unicasId = [...new Set(filasValidas.map((f) => f.raw!.identificacion))]
+        try {
+          const encontrados = await prevalidarClientes(unicasId, empresaId)
+          for (const fila of preview) {
+            if (fila.raw !== null && !encontrados.has(fila.raw.identificacion)) {
+              fila.erroresValidacion = [
+                `Cliente no encontrado en el sistema: "${fila.raw.identificacion}"`,
+              ]
+              fila.raw = null
+            }
+          }
+        } catch {
+          // Si falla la consulta, continuar; los errores aparecen en el resultado final
+        }
+      }
+    }
 
     setFilas(preview)
     setStep('revision')
@@ -127,7 +174,7 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
 
     if (ext === 'xlsx' || ext === 'xls') {
       parseExcel<Record<string, string>>(file, CXC_CSV_HEADER_MAP)
-        .then(procesarFilas)
+        .then((result) => procesarFilas(result))
         .catch(() => toast.error('Error al leer el archivo Excel'))
       return
     }
@@ -138,7 +185,7 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
         ev.target?.result as string,
         CXC_CSV_HEADER_MAP
       )
-      procesarFilas(result)
+      void procesarFilas(result)
     }
     reader.readAsText(file, 'utf-8')
   }
@@ -200,8 +247,19 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
 
           {/* ── PASO: instrucciones ── */}
           {step === 'instrucciones' && (
-            <div className="space-y-5">
-              {/* Instrucciones */}
+            <div className="space-y-4">
+
+              {/* Aviso decimal */}
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800">
+                <Info className="h-4 w-4 shrink-0" />
+                <span>
+                  <strong>Separador decimal: punto (.)</strong>
+                  {' '}— Correcto: <code className="font-mono">250.00</code>
+                  {' '}| Incorrecto: <code className="font-mono">250,00</code>
+                </span>
+              </div>
+
+              {/* Tabla de columnas */}
               <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/30">
                 <p className="text-sm font-medium">Formato del archivo (CSV o Excel)</p>
                 <div className="overflow-x-auto">
@@ -215,11 +273,11 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
                     </thead>
                     <tbody>
                       {[
-                        ['identificacion', 'Si', 'Cedula o RIF del cliente (debe existir en el sistema)'],
-                        ['nro_documento', 'Si', 'Numero de factura del sistema anterior'],
-                        ['fecha', 'Si', 'Fecha en formato YYYY-MM-DD (ej: 2024-01-15)'],
-                        ['monto_usd', 'Si', 'Monto del saldo en USD (ej: 250.00)'],
-                        ['tasa', 'No', 'Tasa Bs/USD. Si se omite, usa la ultima tasa registrada'],
+                        ['identificacion', 'Si', 'Cedula o RIF del cliente — solo letras, numeros y guiones (ej: V-12345678)'],
+                        ['nro_documento', 'Si', 'Numero de factura del sistema anterior — solo letras, numeros, guiones, barras y puntos'],
+                        ['fecha', 'Si', 'Formato YYYY-MM-DD (ej: 2024-01-15) — no se permiten fechas futuras'],
+                        ['monto_usd', 'Si', 'Monto en USD con punto decimal (ej: 250.00)'],
+                        ['tasa', 'No', 'Tasa Bs/USD con punto decimal (ej: 36.50). Si se omite, usa la ultima registrada'],
                         ['descripcion', 'No', 'Observacion libre'],
                       ].map(([col, req, desc]) => (
                         <tr key={col}>

@@ -4,21 +4,41 @@ export const cxcImportRowSchema = z.object({
   identificacion: z
     .string()
     .min(3, 'La identificacion debe tener al menos 3 caracteres')
-    .refine((v) => !/[<>]/.test(v), 'La identificacion no puede contener etiquetas HTML')
+    .refine(
+      (v) => /^[A-Za-z0-9\-]+$/.test(v),
+      'La identificacion solo puede contener letras (A-Z), numeros (0-9) y guiones'
+    )
     .transform((v) => v.toUpperCase().trim()),
   nro_documento: z
     .string()
     .min(1, 'El numero de documento es requerido')
-    .refine((v) => !/[<>]/.test(v), 'El nro_documento no puede contener etiquetas HTML')
+    .refine(
+      (v) => /^[A-Za-z0-9\-\/\.]+$/.test(v),
+      'El nro_documento solo puede contener letras (A-Z), numeros (0-9), guiones, barras y puntos'
+    )
     .transform((v) => v.toUpperCase().trim()),
   fecha: z
     .string()
-    .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha debe tener formato YYYY-MM-DD (ej: 2024-01-15)'),
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'La fecha debe tener formato YYYY-MM-DD (ej: 2024-01-15)')
+    .refine((v) => {
+      const [year, month, day] = v.split('-').map(Number)
+      const fecha = new Date(year, month - 1, day)
+      // Detectar rollover de fechas invalidas (ej: 2024-02-30 → 2024-03-01)
+      if (
+        fecha.getFullYear() !== year ||
+        fecha.getMonth() !== month - 1 ||
+        fecha.getDate() !== day
+      ) return false
+      // No permitir fechas futuras
+      const hoy = new Date()
+      hoy.setHours(23, 59, 59, 999)
+      return fecha <= hoy
+    }, 'La fecha no es valida o es posterior a la fecha actual'),
   monto_usd: z.coerce
-    .number({ error: 'El monto debe ser un numero' })
+    .number({ error: 'El monto debe ser un numero. Use punto como decimal (ej: 250.00)' })
     .positive('El monto debe ser mayor a 0'),
   tasa: z.coerce
-    .number({ error: 'La tasa debe ser un numero' })
+    .number({ error: 'La tasa debe ser un numero. Use punto como decimal (ej: 36.50)' })
     .positive('La tasa debe ser mayor a 0')
     .optional()
     .or(z.literal('').transform(() => undefined)),
