@@ -203,10 +203,12 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
       [empresa_id]
     )
-    let depositoId: string
+    let depositoId: string | null = null
     if (depResult.rows && depResult.rows.length > 0) {
-      depositoId = (depResult.rows.item(0) as { id: string }).id
-    } else {
+      const row = depResult.rows.item(0) as { id: string | null } | null
+      depositoId = row?.id ?? null
+    }
+    if (!depositoId) {
       const depFallback = await tx.execute(
         'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
         [empresa_id]
@@ -214,7 +216,11 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       if (!depFallback.rows || depFallback.rows.length === 0) {
         throw new Error('No hay depositos configurados. Cree un deposito primero.')
       }
-      depositoId = (depFallback.rows.item(0) as { id: string }).id
+      const rowFb = depFallback.rows.item(0) as { id: string | null } | null
+      depositoId = rowFb?.id ?? null
+    }
+    if (!depositoId) {
+      throw new Error('No se pudo resolver el deposito: el ID es nulo. Verifique la sincronizacion.')
     }
 
     // 0b. Obtener UUIDs de monedas
