@@ -247,6 +247,14 @@ export class SupabaseConnector
               return
             }
           }
+          if (op.table === 'ventas') {
+            const depositoId = op.opData?.deposito_id
+            if (!depositoId) {
+              console.error('[PowerSync upload] FATAL - deposito_id nulo en ventas, descartando:', op.id)
+              await transaction.complete()
+              return
+            }
+          }
         }
 
         const table = this.client.from(op.table)
