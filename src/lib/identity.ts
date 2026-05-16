@@ -142,3 +142,30 @@ export function formatRifDisplay(purified: string): string {
   const check = purified[9]
   return `${prefix}-${body}-${check}`
 }
+
+// ---------------------------------------------------------------------------
+// Normalizacion de decimales (separador venezolano: coma)
+// ---------------------------------------------------------------------------
+
+/**
+ * Normaliza el separador decimal de coma a punto para procesamiento interno.
+ * Acepta formato venezolano/europeo donde la coma es decimal y el punto es miles.
+ *
+ * Ejemplos:
+ *   "250,50"    → "250.50"
+ *   "1.250,50"  → "1250.50"
+ *   "36,5"      → "36.5"
+ *   "250.00"    → "250.00"  (ya correcto, pasa sin cambio)
+ *   "1250"      → "1250"    (entero, pasa sin cambio)
+ */
+export function normalizarDecimalComa(v: unknown): unknown {
+  if (typeof v !== 'string') return v
+  const s = v.trim()
+  // Patron: termina en ,d o ,dd (coma como separador decimal)
+  const m = s.match(/^([\d.]+),(\d{1,4})$/)
+  if (m) {
+    const intPart = m[1].replace(/\./g, '') // eliminar puntos de miles
+    return `${intPart}.${m[2]}`
+  }
+  return s
+}

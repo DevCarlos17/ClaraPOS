@@ -8,6 +8,7 @@ import {
 } from '@powersync/web'
 
 import { type Session, SupabaseClient, createClient } from '@supabase/supabase-js'
+import { isValidCedula, isValidRif } from '@/lib/identity'
 
 export type SupabaseConfig = {
   supabaseUrl: string
@@ -227,6 +228,27 @@ export class SupabaseConnector
       for (const op of transaction.crud) {
         lastOp = op
         console.log('⬆️ [PowerSync upload] Op:', op.op, op.table, op.id)
+
+        // Validacion de identidad fiscal (middle layer)
+        if (op.op === UpdateType.PUT) {
+          if (op.table === 'clientes') {
+            const identificacion = String(op.opData?.identificacion ?? '')
+            if (!isValidCedula(identificacion)) {
+              console.error('[PowerSync upload] FATAL - identificacion invalida en clientes:', identificacion)
+              await transaction.complete()
+              return
+            }
+          }
+          if (op.table === 'proveedores') {
+            const rif = String(op.opData?.rif ?? '')
+            if (!isValidRif(rif)) {
+              console.error('[PowerSync upload] FATAL - RIF invalido en proveedores:', rif)
+              await transaction.complete()
+              return
+            }
+          }
+        }
+
         const table = this.client.from(op.table)
         let result: { error: { message: string; code?: string; details?: string; hint?: string } | null }
 

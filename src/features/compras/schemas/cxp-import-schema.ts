@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { sanitizeRif, isValidRif } from '@/lib/identity'
+import { sanitizeRif, isValidRif, normalizarDecimalComa } from '@/lib/identity'
 
 export const cxpImportRowSchema = z.object({
   rif: z
@@ -32,14 +32,20 @@ export const cxpImportRowSchema = z.object({
       hoy.setHours(23, 59, 59, 999)
       return fecha <= hoy
     }, 'La fecha no es valida o es posterior a la fecha actual'),
-  monto_usd: z.coerce
-    .number({ error: 'El monto debe ser un numero. Use punto como decimal (ej: 500.00)' })
-    .positive('El monto debe ser mayor a 0'),
-  tasa: z.coerce
-    .number({ error: 'La tasa debe ser un numero. Use punto como decimal (ej: 36.50)' })
-    .positive('La tasa debe ser mayor a 0')
-    .optional()
-    .or(z.literal('').transform(() => undefined)),
+  monto_usd: z.preprocess(
+    normalizarDecimalComa,
+    z.coerce
+      .number({ error: 'El monto debe ser un numero. Use coma como decimal (ej: 500,00)' })
+      .positive('El monto debe ser mayor a 0')
+  ),
+  tasa: z.preprocess(
+    normalizarDecimalComa,
+    z.coerce
+      .number({ error: 'La tasa debe ser un numero. Use coma como decimal (ej: 36,50)' })
+      .positive('La tasa debe ser mayor a 0')
+      .optional()
+      .or(z.literal('').transform(() => undefined))
+  ),
   descripcion: z
     .string()
     .optional()

@@ -96,8 +96,8 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
     const wb = XLSX.utils.book_new()
     const ws = XLSX.utils.aoa_to_sheet([
       ['identificacion', 'nro_documento', 'fecha', 'monto_usd', 'tasa', 'descripcion'],
-      ['V-12345678', 'FAC-001', '2024-01-15', '250.00', '36.50', 'Saldo sistema anterior'],
-      ['J-87654321-0', 'FAC-002', '2024-02-01', '1500.00', '', 'Saldo pendiente cobro'],
+      ['V22448021', 'FAC-001', '2024-01-15', '250,50', '36,50', 'Saldo sistema anterior'],
+      ['J001234567', 'FAC-002', '2024-02-01', '1.500,00', '', 'Saldo pendiente cobro'],
     ])
     XLSX.utils.book_append_sheet(wb, ws, 'Importacion')
     const data = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
@@ -253,9 +253,9 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
               <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-xs text-blue-800">
                 <Info className="h-4 w-4 shrink-0" />
                 <span>
-                  <strong>Separador decimal: punto (.)</strong>
-                  {' '}— Correcto: <code className="font-mono">250.00</code>
-                  {' '}| Incorrecto: <code className="font-mono">250,00</code>
+                  <strong>Separador decimal: coma (,)</strong>
+                  {' '}— Correcto: <code className="font-mono">250,50</code>
+                  {' '}| Tambien aceptado: <code className="font-mono">250.50</code>
                 </span>
               </div>
 
@@ -273,11 +273,11 @@ export function ImportarCxcModal({ isOpen, onClose }: Props) {
                     </thead>
                     <tbody>
                       {[
-                        ['identificacion', 'Si', 'Cedula o RIF del cliente — solo letras, numeros y guiones (ej: V-12345678)'],
-                        ['nro_documento', 'Si', 'Numero de factura del sistema anterior — solo letras, numeros, guiones, barras y puntos'],
+                        ['identificacion', 'Si', 'Cedula (V22448021, E12345678) o RIF (J001234567) sin guiones ni espacios'],
+                        ['nro_documento', 'Si', 'Numero de factura del sistema anterior — letras, numeros, guiones, barras y puntos'],
                         ['fecha', 'Si', 'Formato YYYY-MM-DD (ej: 2024-01-15) — no se permiten fechas futuras'],
-                        ['monto_usd', 'Si', 'Monto en USD con punto decimal (ej: 250.00)'],
-                        ['tasa', 'No', 'Tasa Bs/USD con punto decimal (ej: 36.50). Si se omite, usa la ultima registrada'],
+                        ['monto_usd', 'Si', 'Monto en USD con coma decimal (ej: 250,50 o 1.500,00)'],
+                        ['tasa', 'No', 'Tasa Bs/USD con coma decimal (ej: 36,50). Si se omite, usa la ultima registrada'],
                         ['descripcion', 'No', 'Observacion libre'],
                       ].map(([col, req, desc]) => (
                         <tr key={col}>
