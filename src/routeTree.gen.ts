@@ -13,6 +13,7 @@ import { Route as AppRouteRouteImport } from './routes/_app/route'
 import { Route as authRouteRouteImport } from './routes/(auth)/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppReportesRouteImport } from './routes/_app/reportes'
+import { Route as AppPerfilRouteImport } from './routes/_app/perfil'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
 import { Route as AppCxcRouteImport } from './routes/_app/cxc'
 import { Route as AppClinicaRouteImport } from './routes/_app/clinica'
@@ -20,6 +21,7 @@ import { Route as AppClientesRouteImport } from './routes/_app/clientes'
 import { Route as authRegisterRouteImport } from './routes/(auth)/register'
 import { Route as authLoginRouteImport } from './routes/(auth)/login'
 import { Route as AppClientesIndexRouteImport } from './routes/_app/clientes/index'
+import { Route as AppCitasIndexRouteImport } from './routes/_app/citas/index'
 import { Route as AppVentasReportesRouteImport } from './routes/_app/ventas/reportes'
 import { Route as AppVentasPrestamosRouteImport } from './routes/_app/ventas/prestamos'
 import { Route as AppVentasNuevaRouteImport } from './routes/_app/ventas/nueva'
@@ -60,6 +62,10 @@ import { Route as AppComprasCxpRouteImport } from './routes/_app/compras/cxp'
 import { Route as AppClientesReportesRouteImport } from './routes/_app/clientes/reportes'
 import { Route as AppClientesGestionRouteImport } from './routes/_app/clientes/gestion'
 import { Route as AppClientesCuentasPorCobrarRouteImport } from './routes/_app/clientes/cuentas-por-cobrar'
+import { Route as AppCitasPanelRouteImport } from './routes/_app/citas/panel'
+import { Route as AppCitasNuevaRouteImport } from './routes/_app/citas/nueva'
+import { Route as AppCitasHorariosStaffRouteImport } from './routes/_app/citas/horarios-staff'
+import { Route as AppCitasCalendarioRouteImport } from './routes/_app/citas/calendario'
 import { Route as AppCajaSesionesRouteImport } from './routes/_app/caja/sesiones'
 import { Route as AppCajaRendimientoRouteImport } from './routes/_app/caja/rendimiento'
 import { Route as AppCajaMovimientosRouteImport } from './routes/_app/caja/movimientos'
@@ -85,6 +91,11 @@ const IndexRoute = IndexRouteImport.update({
 const AppReportesRoute = AppReportesRouteImport.update({
   id: '/reportes',
   path: '/reportes',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppPerfilRoute = AppPerfilRouteImport.update({
+  id: '/perfil',
+  path: '/perfil',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
@@ -121,6 +132,11 @@ const AppClientesIndexRoute = AppClientesIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppClientesRoute,
+} as any)
+const AppCitasIndexRoute = AppCitasIndexRouteImport.update({
+  id: '/citas/',
+  path: '/citas/',
+  getParentRoute: () => AppRouteRoute,
 } as any)
 const AppVentasReportesRoute = AppVentasReportesRouteImport.update({
   id: '/ventas/reportes',
@@ -336,6 +352,26 @@ const AppClientesCuentasPorCobrarRoute =
     path: '/cuentas-por-cobrar',
     getParentRoute: () => AppClientesRoute,
   } as any)
+const AppCitasPanelRoute = AppCitasPanelRouteImport.update({
+  id: '/citas/panel',
+  path: '/citas/panel',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppCitasNuevaRoute = AppCitasNuevaRouteImport.update({
+  id: '/citas/nueva',
+  path: '/citas/nueva',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppCitasHorariosStaffRoute = AppCitasHorariosStaffRouteImport.update({
+  id: '/citas/horarios-staff',
+  path: '/citas/horarios-staff',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppCitasCalendarioRoute = AppCitasCalendarioRouteImport.update({
+  id: '/citas/calendario',
+  path: '/citas/calendario',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppCajaSesionesRoute = AppCajaSesionesRouteImport.update({
   id: '/caja/sesiones',
   path: '/caja/sesiones',
@@ -389,12 +425,17 @@ export interface FileRoutesByFullPath {
   '/clinica': typeof AppClinicaRoute
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
+  '/perfil': typeof AppPerfilRoute
   '/reportes': typeof AppReportesRoute
   '/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/bancos/diferencial-cambiario': typeof AppBancosDiferencialCambiarioRoute
   '/caja/movimientos': typeof AppCajaMovimientosRoute
   '/caja/rendimiento': typeof AppCajaRendimientoRoute
   '/caja/sesiones': typeof AppCajaSesionesRoute
+  '/citas/calendario': typeof AppCitasCalendarioRoute
+  '/citas/horarios-staff': typeof AppCitasHorariosStaffRoute
+  '/citas/nueva': typeof AppCitasNuevaRoute
+  '/citas/panel': typeof AppCitasPanelRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
   '/clientes/reportes': typeof AppClientesReportesRoute
@@ -435,6 +476,7 @@ export interface FileRoutesByFullPath {
   '/ventas/nueva': typeof AppVentasNuevaRoute
   '/ventas/prestamos': typeof AppVentasPrestamosRoute
   '/ventas/reportes': typeof AppVentasReportesRoute
+  '/citas/': typeof AppCitasIndexRoute
   '/clientes/': typeof AppClientesIndexRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
   '/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
@@ -447,12 +489,17 @@ export interface FileRoutesByTo {
   '/clinica': typeof AppClinicaRoute
   '/cxc': typeof AppCxcRoute
   '/dashboard': typeof AppDashboardRoute
+  '/perfil': typeof AppPerfilRoute
   '/reportes': typeof AppReportesRoute
   '/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/bancos/diferencial-cambiario': typeof AppBancosDiferencialCambiarioRoute
   '/caja/movimientos': typeof AppCajaMovimientosRoute
   '/caja/rendimiento': typeof AppCajaRendimientoRoute
   '/caja/sesiones': typeof AppCajaSesionesRoute
+  '/citas/calendario': typeof AppCitasCalendarioRoute
+  '/citas/horarios-staff': typeof AppCitasHorariosStaffRoute
+  '/citas/nueva': typeof AppCitasNuevaRoute
+  '/citas/panel': typeof AppCitasPanelRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/clientes/gestion': typeof AppClientesGestionRoute
   '/clientes/reportes': typeof AppClientesReportesRoute
@@ -492,6 +539,7 @@ export interface FileRoutesByTo {
   '/ventas/nueva': typeof AppVentasNuevaRoute
   '/ventas/prestamos': typeof AppVentasPrestamosRoute
   '/ventas/reportes': typeof AppVentasReportesRoute
+  '/citas': typeof AppCitasIndexRoute
   '/clientes': typeof AppClientesIndexRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosIndexRoute
@@ -508,12 +556,17 @@ export interface FileRoutesById {
   '/_app/clinica': typeof AppClinicaRoute
   '/_app/cxc': typeof AppCxcRoute
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/perfil': typeof AppPerfilRoute
   '/_app/reportes': typeof AppReportesRoute
   '/_app/bancos/conciliacion': typeof AppBancosConciliacionRoute
   '/_app/bancos/diferencial-cambiario': typeof AppBancosDiferencialCambiarioRoute
   '/_app/caja/movimientos': typeof AppCajaMovimientosRoute
   '/_app/caja/rendimiento': typeof AppCajaRendimientoRoute
   '/_app/caja/sesiones': typeof AppCajaSesionesRoute
+  '/_app/citas/calendario': typeof AppCitasCalendarioRoute
+  '/_app/citas/horarios-staff': typeof AppCitasHorariosStaffRoute
+  '/_app/citas/nueva': typeof AppCitasNuevaRoute
+  '/_app/citas/panel': typeof AppCitasPanelRoute
   '/_app/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
   '/_app/clientes/gestion': typeof AppClientesGestionRoute
   '/_app/clientes/reportes': typeof AppClientesReportesRoute
@@ -554,6 +607,7 @@ export interface FileRoutesById {
   '/_app/ventas/nueva': typeof AppVentasNuevaRoute
   '/_app/ventas/prestamos': typeof AppVentasPrestamosRoute
   '/_app/ventas/reportes': typeof AppVentasReportesRoute
+  '/_app/citas/': typeof AppCitasIndexRoute
   '/_app/clientes/': typeof AppClientesIndexRoute
   '/_app/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
   '/_app/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
@@ -569,12 +623,17 @@ export interface FileRouteTypes {
     | '/clinica'
     | '/cxc'
     | '/dashboard'
+    | '/perfil'
     | '/reportes'
     | '/bancos/conciliacion'
     | '/bancos/diferencial-cambiario'
     | '/caja/movimientos'
     | '/caja/rendimiento'
     | '/caja/sesiones'
+    | '/citas/calendario'
+    | '/citas/horarios-staff'
+    | '/citas/nueva'
+    | '/citas/panel'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
     | '/clientes/reportes'
@@ -615,6 +674,7 @@ export interface FileRouteTypes {
     | '/ventas/nueva'
     | '/ventas/prestamos'
     | '/ventas/reportes'
+    | '/citas/'
     | '/clientes/'
     | '/configuracion/usuarios/nuevo'
     | '/configuracion/usuarios/'
@@ -627,12 +687,17 @@ export interface FileRouteTypes {
     | '/clinica'
     | '/cxc'
     | '/dashboard'
+    | '/perfil'
     | '/reportes'
     | '/bancos/conciliacion'
     | '/bancos/diferencial-cambiario'
     | '/caja/movimientos'
     | '/caja/rendimiento'
     | '/caja/sesiones'
+    | '/citas/calendario'
+    | '/citas/horarios-staff'
+    | '/citas/nueva'
+    | '/citas/panel'
     | '/clientes/cuentas-por-cobrar'
     | '/clientes/gestion'
     | '/clientes/reportes'
@@ -672,6 +737,7 @@ export interface FileRouteTypes {
     | '/ventas/nueva'
     | '/ventas/prestamos'
     | '/ventas/reportes'
+    | '/citas'
     | '/clientes'
     | '/configuracion/usuarios/nuevo'
     | '/configuracion/usuarios'
@@ -687,12 +753,17 @@ export interface FileRouteTypes {
     | '/_app/clinica'
     | '/_app/cxc'
     | '/_app/dashboard'
+    | '/_app/perfil'
     | '/_app/reportes'
     | '/_app/bancos/conciliacion'
     | '/_app/bancos/diferencial-cambiario'
     | '/_app/caja/movimientos'
     | '/_app/caja/rendimiento'
     | '/_app/caja/sesiones'
+    | '/_app/citas/calendario'
+    | '/_app/citas/horarios-staff'
+    | '/_app/citas/nueva'
+    | '/_app/citas/panel'
     | '/_app/clientes/cuentas-por-cobrar'
     | '/_app/clientes/gestion'
     | '/_app/clientes/reportes'
@@ -733,6 +804,7 @@ export interface FileRouteTypes {
     | '/_app/ventas/nueva'
     | '/_app/ventas/prestamos'
     | '/_app/ventas/reportes'
+    | '/_app/citas/'
     | '/_app/clientes/'
     | '/_app/configuracion/usuarios/nuevo'
     | '/_app/configuracion/usuarios/'
@@ -773,6 +845,13 @@ declare module '@tanstack/react-router' {
       path: '/reportes'
       fullPath: '/reportes'
       preLoaderRoute: typeof AppReportesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/perfil': {
+      id: '/_app/perfil'
+      path: '/perfil'
+      fullPath: '/perfil'
+      preLoaderRoute: typeof AppPerfilRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/dashboard': {
@@ -823,6 +902,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/clientes/'
       preLoaderRoute: typeof AppClientesIndexRouteImport
       parentRoute: typeof AppClientesRoute
+    }
+    '/_app/citas/': {
+      id: '/_app/citas/'
+      path: '/citas'
+      fullPath: '/citas/'
+      preLoaderRoute: typeof AppCitasIndexRouteImport
+      parentRoute: typeof AppRouteRoute
     }
     '/_app/ventas/reportes': {
       id: '/_app/ventas/reportes'
@@ -1104,6 +1190,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppClientesCuentasPorCobrarRouteImport
       parentRoute: typeof AppClientesRoute
     }
+    '/_app/citas/panel': {
+      id: '/_app/citas/panel'
+      path: '/citas/panel'
+      fullPath: '/citas/panel'
+      preLoaderRoute: typeof AppCitasPanelRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/citas/nueva': {
+      id: '/_app/citas/nueva'
+      path: '/citas/nueva'
+      fullPath: '/citas/nueva'
+      preLoaderRoute: typeof AppCitasNuevaRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/citas/horarios-staff': {
+      id: '/_app/citas/horarios-staff'
+      path: '/citas/horarios-staff'
+      fullPath: '/citas/horarios-staff'
+      preLoaderRoute: typeof AppCitasHorariosStaffRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/citas/calendario': {
+      id: '/_app/citas/calendario'
+      path: '/citas/calendario'
+      fullPath: '/citas/calendario'
+      preLoaderRoute: typeof AppCitasCalendarioRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/caja/sesiones': {
       id: '/_app/caja/sesiones'
       path: '/caja/sesiones'
@@ -1219,12 +1333,17 @@ interface AppRouteRouteChildren {
   AppClinicaRoute: typeof AppClinicaRoute
   AppCxcRoute: typeof AppCxcRoute
   AppDashboardRoute: typeof AppDashboardRoute
+  AppPerfilRoute: typeof AppPerfilRoute
   AppReportesRoute: typeof AppReportesRoute
   AppBancosConciliacionRoute: typeof AppBancosConciliacionRoute
   AppBancosDiferencialCambiarioRoute: typeof AppBancosDiferencialCambiarioRoute
   AppCajaMovimientosRoute: typeof AppCajaMovimientosRoute
   AppCajaRendimientoRoute: typeof AppCajaRendimientoRoute
   AppCajaSesionesRoute: typeof AppCajaSesionesRoute
+  AppCitasCalendarioRoute: typeof AppCitasCalendarioRoute
+  AppCitasHorariosStaffRoute: typeof AppCitasHorariosStaffRoute
+  AppCitasNuevaRoute: typeof AppCitasNuevaRoute
+  AppCitasPanelRoute: typeof AppCitasPanelRoute
   AppComprasCxpRoute: typeof AppComprasCxpRoute
   AppComprasFacturasRoute: typeof AppComprasFacturasRoute
   AppComprasGastosRoute: typeof AppComprasGastosRoute
@@ -1262,6 +1381,7 @@ interface AppRouteRouteChildren {
   AppVentasNuevaRoute: typeof AppVentasNuevaRoute
   AppVentasPrestamosRoute: typeof AppVentasPrestamosRoute
   AppVentasReportesRoute: typeof AppVentasReportesRoute
+  AppCitasIndexRoute: typeof AppCitasIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -1269,12 +1389,17 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppClinicaRoute: AppClinicaRoute,
   AppCxcRoute: AppCxcRoute,
   AppDashboardRoute: AppDashboardRoute,
+  AppPerfilRoute: AppPerfilRoute,
   AppReportesRoute: AppReportesRoute,
   AppBancosConciliacionRoute: AppBancosConciliacionRoute,
   AppBancosDiferencialCambiarioRoute: AppBancosDiferencialCambiarioRoute,
   AppCajaMovimientosRoute: AppCajaMovimientosRoute,
   AppCajaRendimientoRoute: AppCajaRendimientoRoute,
   AppCajaSesionesRoute: AppCajaSesionesRoute,
+  AppCitasCalendarioRoute: AppCitasCalendarioRoute,
+  AppCitasHorariosStaffRoute: AppCitasHorariosStaffRoute,
+  AppCitasNuevaRoute: AppCitasNuevaRoute,
+  AppCitasPanelRoute: AppCitasPanelRoute,
   AppComprasCxpRoute: AppComprasCxpRoute,
   AppComprasFacturasRoute: AppComprasFacturasRoute,
   AppComprasGastosRoute: AppComprasGastosRoute,
@@ -1313,6 +1438,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppVentasNuevaRoute: AppVentasNuevaRoute,
   AppVentasPrestamosRoute: AppVentasPrestamosRoute,
   AppVentasReportesRoute: AppVentasReportesRoute,
+  AppCitasIndexRoute: AppCitasIndexRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

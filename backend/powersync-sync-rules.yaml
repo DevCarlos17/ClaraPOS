@@ -106,3 +106,13 @@ bucket_definitions:
       - SELECT * FROM gasto_pagos WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM cuentas_config WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM libro_contable WHERE empresa_id = bucket.empresa_id
+
+      # --- AGENDA Y CITAS ---
+      - SELECT * FROM citas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM citas_servicios WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM horarios_staff WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM cita_trabajadores WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM cita_log WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM cita_items_extras WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM horarios_descansos WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM horarios_excepciones WHERE empresa_id = bucket.empresa_id

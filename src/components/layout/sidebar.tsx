@@ -39,6 +39,11 @@ import {
   TrendUp,
   Handshake,
   ListNumbers,
+  CalendarDots,
+  CalendarCheck,
+  Kanban,
+  Clock,
+  UserCircle,
 } from '@phosphor-icons/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -47,6 +52,7 @@ import { useAuth } from '@/core/auth/auth-provider'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS, type PermissionKey } from '@/core/hooks/use-permissions'
 import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { useAgendaConfig } from '@/features/citas/hooks/use-agenda-config'
 import { toast } from 'sonner'
 
 interface SidebarProps {
@@ -137,6 +143,16 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
+    title: 'Agenda y Citas',
+    icon: CalendarDots,
+    children: [
+      { title: 'Calendario', url: '/citas/calendario', icon: CalendarDots, requiredPermission: PERMISSIONS.CITAS_VIEW },
+      { title: 'Agendar Cita', url: '/citas/nueva', icon: CalendarCheck, requiredPermission: PERMISSIONS.CITAS_CREATE },
+      { title: 'Panel de Trabajo', url: '/citas/panel', icon: Kanban, requiredPermission: PERMISSIONS.CITAS_VIEW },
+      { title: 'Horarios de Staff', url: '/citas/horarios-staff', icon: Clock, requiredPermission: PERMISSIONS.CITAS_HORARIOS },
+    ],
+  },
+  {
     title: 'Configuracion',
     icon: Gear,
     children: [
@@ -158,6 +174,7 @@ const menuItems: MenuItem[] = [
     ],
   },
   { title: 'Clinica', url: '/clinica', icon: Heart, requiredPermission: PERMISSIONS.CLINIC_ACCESS },
+  { title: 'Mi Perfil', url: '/perfil', icon: UserCircle },
 ]
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
@@ -173,10 +190,12 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const { hasPermission } = usePermissions()
   const { sesiones: sesionesActivas } = useSesionesActivas()
   const haySesionAbierta = sesionesActivas.length > 0
+  const { mostrarAgenda } = useAgendaConfig()
 
-  // Funnel menu items based on permissions
+  // Funnel menu items based on permissions and feature flags
   const filteredMenuItems = menuItems
     .filter((item) => {
+      if (item.title === 'Agenda y Citas' && !mostrarAgenda) return false
       if (item.requiredPermission && !hasPermission(item.requiredPermission)) return false
       if (item.children) {
         return item.children.some((child) => !child.requiredPermission || hasPermission(child.requiredPermission))

@@ -1019,6 +1019,129 @@ export interface GastoPagos {
 }
 
 // =============================================
+// AGENDA Y CITAS
+// =============================================
+
+export interface Citas {
+  id: string
+  empresa_id: string
+  cliente_id: string
+  profesional_id: string
+  fecha_inicio: string
+  fecha_fin: string
+  duracion_min: number
+  // Status dual (reemplaza 'status' viejo)
+  cita_status: string
+  finance_status: string
+  checkout_tipo: string
+  total_usd: string
+  tasa: string
+  total_bs: string
+  venta_id: string | null
+  notas: string | null
+  observaciones: string | null
+  color: string | null
+  google_event_id: string | null
+  // Timestamps de ejecucion real
+  timestamp_inicio: string | null
+  timestamp_fin: string | null
+  duracion_real_min: number | null
+  desviacion_min: number | null
+  // Control de ejecucion
+  ejecucion_paralela: number
+  prioridad_filtro: string | null
+  // Snapshot serializado (JSONB en Postgres, text en SQLite)
+  snapshot_en_progreso: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export interface CitasServicios {
+  id: string
+  empresa_id: string
+  cita_id: string
+  producto_id: string
+  precio_usd: string
+  cantidad: string
+  duracion_min: number | null
+  trabajador_id: string | null
+  created_at: string
+}
+
+export interface HorariosStaff {
+  id: string
+  empresa_id: string
+  usuario_id: string
+  dia_semana: number
+  hora_inicio: string
+  hora_fin: string
+  is_active: number
+  tiempo_preparacion_min: number
+  cruza_medianoche: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CitaTrabajadores {
+  id: string
+  empresa_id: string
+  cita_id: string
+  cita_servicio_id: string | null
+  usuario_id: string
+  rol_en_cita: string
+  created_at: string
+}
+
+export interface CitaLog {
+  id: string
+  empresa_id: string
+  cita_id: string
+  usuario_id: string
+  accion: string
+  datos_anteriores: string | null
+  datos_nuevos: string | null
+  created_at: string
+}
+
+export interface CitaItemsExtras {
+  id: string
+  empresa_id: string
+  cita_id: string
+  producto_id: string
+  cantidad: string
+  precio_usd: string
+  status_cobro: string
+  venta_id: string | null
+  created_at: string
+  created_by: string
+}
+
+export interface HorariosDescansos {
+  id: string
+  empresa_id: string
+  horario_staff_id: string
+  hora_inicio: string
+  hora_fin: string
+  tipo: string
+  created_at: string
+}
+
+export interface HorariosExcepciones {
+  id: string
+  empresa_id: string
+  usuario_id: string
+  fecha: string
+  tipo: string
+  hora_inicio: string | null
+  hora_fin: string | null
+  motivo: string | null
+  created_at: string
+  created_by: string
+}
+
+// =============================================
 // DB INTERFACE (mapeo nombre_tabla -> Interface)
 // =============================================
 
@@ -1094,4 +1217,13 @@ export interface DB {
   gasto_pagos: GastoPagos
   cuentas_config: CuentasConfig
   libro_contable: LibroContable
+  // Agenda y Citas
+  citas: Citas
+  citas_servicios: CitasServicios
+  horarios_staff: HorariosStaff
+  cita_trabajadores: CitaTrabajadores
+  cita_log: CitaLog
+  cita_items_extras: CitaItemsExtras
+  horarios_descansos: HorariosDescansos
+  horarios_excepciones: HorariosExcepciones
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
-import { Buildings, FileText } from '@phosphor-icons/react'
+import { Buildings, FileText, CalendarDots } from '@phosphor-icons/react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
@@ -8,16 +8,18 @@ import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
 import { CompanyDataForm } from '@/features/configuracion/components/company-data-form'
 import { EmpresaFiscalForm } from '@/features/configuracion/components/empresa-fiscal-form'
+import { ConfigAgenda } from '@/features/citas/components/config/config-agenda'
 
 export const Route = createFileRoute('/_app/configuracion/datos-empresa')({
   component: DatosEmpresaPage,
 })
 
-type Section = 'general' | 'fiscal'
+type Section = 'general' | 'fiscal' | 'agenda'
 
 const NAV_ITEMS: { id: Section; label: string; description: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'general', label: 'Datos Generales', description: 'Razon social, RIF y contacto', icon: Buildings },
   { id: 'fiscal', label: 'Datos Fiscales', description: 'Contribuyente, retenciones y SENIAT', icon: FileText },
+  { id: 'agenda', label: 'Configuracion de Agenda', description: 'Visibilidad y opciones del modulo de citas', icon: CalendarDots },
 ]
 
 function DatosEmpresaPage() {
@@ -71,7 +73,13 @@ function DatosEmpresaPage() {
                   exit={{ opacity: 0, x: -12 }}
                   transition={{ duration: 0.15, ease: 'easeOut' }}
                 >
-                  {section === 'general' ? <CompanyDataForm /> : <EmpresaFiscalForm />}
+                  {section === 'general' ? (
+                    <CompanyDataForm />
+                  ) : section === 'fiscal' ? (
+                    <EmpresaFiscalForm />
+                  ) : (
+                    <ConfigAgenda />
+                  )}
                 </motion.div>
               </AnimatePresence>
             </div>

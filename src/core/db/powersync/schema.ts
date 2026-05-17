@@ -1258,6 +1258,145 @@ const gasto_pagos = new Table(
 )
 
 // =============================================
+// AGENDA Y CITAS
+// =============================================
+
+const citas = new Table(
+  {
+    empresa_id: column.text,
+    cliente_id: column.text,
+    profesional_id: column.text,
+    fecha_inicio: column.text,
+    fecha_fin: column.text,
+    duracion_min: column.integer,
+    // Status dual
+    cita_status: column.text,
+    finance_status: column.text,
+    checkout_tipo: column.text,
+    total_usd: column.text,
+    tasa: column.text,
+    total_bs: column.text,
+    venta_id: column.text,
+    notas: column.text,
+    observaciones: column.text,
+    color: column.text,
+    google_event_id: column.text,
+    // Timestamps de ejecucion real
+    timestamp_inicio: column.text,
+    timestamp_fin: column.text,
+    duracion_real_min: column.integer,
+    desviacion_min: column.integer,
+    // Control de ejecucion
+    ejecucion_paralela: column.integer,
+    prioridad_filtro: column.text,
+    // Snapshot para rehidratacion (JSONB serializado)
+    snapshot_en_progreso: column.text,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
+    updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const citas_servicios = new Table(
+  {
+    empresa_id: column.text,
+    cita_id: column.text,
+    producto_id: column.text,
+    precio_usd: column.text,
+    cantidad: column.text,
+    duracion_min: column.integer,
+    trabajador_id: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
+const horarios_staff = new Table(
+  {
+    empresa_id: column.text,
+    usuario_id: column.text,
+    dia_semana: column.integer,
+    hora_inicio: column.text,
+    hora_fin: column.text,
+    is_active: column.integer,
+    tiempo_preparacion_min: column.integer,
+    cruza_medianoche: column.integer,
+    created_at: column.text,
+    updated_at: column.text,
+  },
+  { indexes: {} }
+)
+
+const cita_trabajadores = new Table(
+  {
+    empresa_id: column.text,
+    cita_id: column.text,
+    cita_servicio_id: column.text,
+    usuario_id: column.text,
+    rol_en_cita: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
+const cita_log = new Table(
+  {
+    empresa_id: column.text,
+    cita_id: column.text,
+    usuario_id: column.text,
+    accion: column.text,
+    datos_anteriores: column.text,
+    datos_nuevos: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
+const cita_items_extras = new Table(
+  {
+    empresa_id: column.text,
+    cita_id: column.text,
+    producto_id: column.text,
+    cantidad: column.text,
+    precio_usd: column.text,
+    status_cobro: column.text,
+    venta_id: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const horarios_descansos = new Table(
+  {
+    empresa_id: column.text,
+    horario_staff_id: column.text,
+    hora_inicio: column.text,
+    hora_fin: column.text,
+    tipo: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
+const horarios_excepciones = new Table(
+  {
+    empresa_id: column.text,
+    usuario_id: column.text,
+    fecha: column.text,
+    tipo: column.text,
+    hora_inicio: column.text,
+    hora_fin: column.text,
+    motivo: column.text,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+// =============================================
 // SCHEMA EXPORT
 // =============================================
 
@@ -1336,6 +1475,15 @@ export const AppSchema = new Schema({
   gasto_pagos,
   cuentas_config,
   libro_contable,
+  // Agenda y Citas
+  citas,
+  citas_servicios,
+  horarios_staff,
+  cita_trabajadores,
+  cita_log,
+  cita_items_extras,
+  horarios_descansos,
+  horarios_excepciones,
 })
 
 export type Database = (typeof AppSchema)['types']

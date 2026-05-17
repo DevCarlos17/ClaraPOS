@@ -24,6 +24,10 @@ export const PERMISSIONS = {
   ACCOUNTING_VIEW: 'contabilidad.gastos',
   CXC_REVERSE: 'cxc.reversar_abono',
   CXP_REVERSE: 'cxp.reversar_abono',
+  CITAS_VIEW: 'citas.ver',
+  CITAS_CREATE: 'citas.crear',
+  CITAS_MANAGE: 'citas.gestionar',
+  CITAS_HORARIOS: 'citas.horarios',
 } as const
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS]

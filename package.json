@@ -14,6 +14,12 @@
     "preview": "yarn run build && wrangler dev"
   },
   "dependencies": {
+    "@fullcalendar/core": "^6.1.20",
+    "@fullcalendar/daygrid": "^6.1.20",
+    "@fullcalendar/interaction": "^6.1.20",
+    "@fullcalendar/list": "^6.1.20",
+    "@fullcalendar/react": "^6.1.20",
+    "@fullcalendar/timegrid": "^6.1.20",
     "@journeyapps/wa-sqlite": "^1.4.1",
     "@phosphor-icons/react": "^2.1.10",
     "@powersync/common": "^1.44.0",
