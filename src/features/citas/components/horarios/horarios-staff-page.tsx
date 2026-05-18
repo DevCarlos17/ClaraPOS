@@ -161,9 +161,9 @@ export function HorariosStaffPage() {
   }
 
   return (
-    <div className="flex gap-6 h-full">
+    <div className="flex gap-6 h-full min-h-0">
       {/* Panel lateral: lista de profesionales */}
-      <div className="w-52 shrink-0 space-y-1">
+      <div className="w-52 shrink-0 space-y-1 overflow-y-auto">
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
           <UserList size={14} />
           Profesionales
@@ -185,7 +185,7 @@ export function HorariosStaffPage() {
       </div>
 
       {/* Panel central */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {!profesionalId ? (
           <div className="flex-1 flex items-center justify-center border-2 border-dashed rounded-2xl text-muted-foreground text-sm">
             Selecciona un profesional para configurar sus horarios
@@ -243,7 +243,7 @@ export function HorariosStaffPage() {
             </div>
 
             {tab === 'plantilla' && (
-              <div className="flex-1 overflow-y-auto space-y-4">
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
                 {/* Acciones rapidas */}
                 <div className="flex items-center gap-3">
                   <Button
@@ -356,10 +356,26 @@ export function HorariosStaffPage() {
                       min={0}
                       max={60}
                       value={horariosDia[0]?.tiempoPreparacionMin ?? 0}
+                      onFocus={(e) => e.target.select()}
+                      onKeyDown={(e) => {
+                        if (['-', 'e', 'E', '+', '.'].includes(e.key)) {
+                          e.preventDefault()
+                        }
+                      }}
                       onChange={(e) => {
-                        const val = parseInt(e.target.value) || 0
+                        const raw = e.target.value
+                        if (raw === '') {
+                          setHorariosDia((prev) =>
+                            prev.map((d) => ({ ...d, tiempoPreparacionMin: 0 }))
+                          )
+                          setDirty(true)
+                          return
+                        }
+                        const val = parseInt(raw)
+                        if (isNaN(val)) return
+                        const clamped = Math.min(60, Math.max(0, val))
                         setHorariosDia((prev) =>
-                          prev.map((d) => ({ ...d, tiempoPreparacionMin: val }))
+                          prev.map((d) => ({ ...d, tiempoPreparacionMin: clamped }))
                         )
                         setDirty(true)
                       }}
@@ -372,7 +388,7 @@ export function HorariosStaffPage() {
             )}
 
             {tab === 'excepciones' && (
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 min-h-0 overflow-y-auto">
                 <ExcepcionesTab
                   profesionalId={profesionalId}
                   empresaId={empresaId}

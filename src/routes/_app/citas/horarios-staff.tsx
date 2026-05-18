@@ -11,12 +11,14 @@ export const Route = createFileRoute('/_app/citas/horarios-staff')({
 function HorariosStaffRoute() {
   return (
     <RequirePermission permission={PERMISSIONS.CITAS_HORARIOS} fallback={<AccessDeniedPage />}>
-      <div className="p-4 sm:p-6">
-        <div className="mb-6">
+      <div className="h-full flex flex-col">
+        <div className="mb-4 shrink-0">
           <h1 className="text-xl font-bold">Horarios de Staff</h1>
           <p className="text-sm text-muted-foreground">Configura la disponibilidad semanal de cada profesional</p>
         </div>
-        <HorariosStaffPage />
+        <div className="flex-1 min-h-0">
+          <HorariosStaffPage />
+        </div>
       </div>
     </RequirePermission>
   )

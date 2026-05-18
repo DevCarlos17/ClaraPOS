@@ -1139,27 +1139,42 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               {/* Duracion por defecto — solo Servicio */}
               {tipo === 'S' && (
                 <div>
-                  <label htmlFor="prod-duracion" className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
                     Duracion por defecto
                   </label>
-                  <select
-                    id="prod-duracion"
-                    value={duracionMin ?? ''}
-                    onChange={(e) => setDuracionMin(e.target.value ? parseInt(e.target.value) : null)}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">Sin duracion por defecto</option>
-                    <option value="15">15 min</option>
-                    <option value="30">30 min</option>
-                    <option value="45">45 min</option>
-                    <option value="60">1 hora</option>
-                    <option value="75">1h 15min</option>
-                    <option value="90">1h 30min</option>
-                    <option value="105">1h 45min</option>
-                    <option value="120">2 horas</option>
-                  </select>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={duracionMin !== null ? Math.floor(duracionMin / 60) : 0}
+                      onChange={(e) => {
+                        const horas = parseInt(e.target.value)
+                        const mins = duracionMin !== null ? duracionMin % 60 : 0
+                        const total = horas * 60 + mins
+                        setDuracionMin(total === 0 ? null : total)
+                      }}
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {Array.from({ length: 9 }, (_, i) => (
+                        <option key={i} value={i}>{i}h</option>
+                      ))}
+                    </select>
+                    <select
+                      value={duracionMin !== null ? duracionMin % 60 : 0}
+                      onChange={(e) => {
+                        const minutos = parseInt(e.target.value)
+                        const horas = duracionMin !== null ? Math.floor(duracionMin / 60) : 0
+                        const total = horas * 60 + minutos
+                        setDuracionMin(total === 0 ? null : total)
+                      }}
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value={0}>00 min</option>
+                      <option value={15}>15 min</option>
+                      <option value={30}>30 min</option>
+                      <option value={45}>45 min</option>
+                    </select>
+                  </div>
                   <p className="text-xs text-gray-400 mt-1">
-                    Tiempo estimado al agregar este servicio a una cita
+                    {duracionMin ? `Aprox. ${Math.floor(duracionMin / 60) > 0 ? `${Math.floor(duracionMin / 60)}h ` : ''}${duracionMin % 60 > 0 ? `${duracionMin % 60}min` : ''}` : 'Sin duracion por defecto (0h 00min)'}
                   </p>
                 </div>
               )}

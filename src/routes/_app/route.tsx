@@ -30,14 +30,14 @@ function AppLayout() {
 
   return (
     <GlobalContextMenu>
-      <div className="flex min-h-screen bg-background overflow-x-hidden font-sans antialiased text-foreground selection:bg-primary/10 print:block print:min-h-0 print:bg-white">
+      <div className="flex h-screen overflow-hidden bg-background overflow-x-hidden font-sans antialiased text-foreground selection:bg-primary/10 print:block print:h-auto print:overflow-visible print:bg-white">
         <div className="print:hidden">
           <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         </div>
 
         <div
           className={cn(
-            'flex-1 flex flex-col relative z-0 min-w-0 overflow-x-hidden transition-all duration-500 ease-in-out print:block print:ml-0',
+            'flex-1 flex flex-col relative z-0 min-w-0 min-h-0 overflow-x-hidden transition-all duration-500 ease-in-out print:block print:ml-0',
             !isMobile ? 'ml-[88px]' : ''
           )}
         >
@@ -45,7 +45,7 @@ function AppLayout() {
             <TopBar onMenuClick={toggle} />
           </div>
 
-          <main className="flex-1 relative z-0 min-w-0 max-w-full overflow-x-hidden pb-4 px-4 pt-4 sm:px-6 lg:px-8 print:p-6 print:max-w-none">
+          <main className="flex-1 min-h-0 relative z-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto pb-4 px-4 pt-4 sm:px-6 lg:px-8 print:p-6 print:max-w-none print:overflow-visible">
             <Outlet />
           </main>
         </div>

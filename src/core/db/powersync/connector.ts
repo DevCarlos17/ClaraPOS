@@ -23,6 +23,12 @@ const FATAL_RESPONSE_CODES = [
   new RegExp('^P0001$'),  // RAISE EXCEPTION de trigger/función PL/pgSQL (rechazo de lógica de negocio)
 ]
 
+// Tablas con clave natural única distinta al PK (empresa_id+usuario_id+dia_semana, etc.)
+// Para estas tablas el PUT usa onConflict para hacer upsert real en lugar de insertar y fallar
+const TABLE_NATURAL_KEYS: Record<string, string> = {
+  horarios_staff: 'empresa_id,usuario_id,dia_semana',
+}
+
 export type SupabaseConnectorListener = {
   initialized: () => void
   sessionStarted: (session: Session) => void
@@ -263,7 +269,10 @@ export class SupabaseConnector
         switch (op.op) {
           case UpdateType.PUT: {
             const record = { ...op.opData, id: op.id }
-            result = await table.upsert(record)
+            const naturalKey = TABLE_NATURAL_KEYS[op.table]
+            result = naturalKey
+              ? await table.upsert(record, { onConflict: naturalKey })
+              : await table.upsert(record)
             break
           }
           case UpdateType.PATCH:

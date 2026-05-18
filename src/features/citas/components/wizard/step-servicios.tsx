@@ -18,14 +18,6 @@ import {
   ArrowsLeftRight,
 } from '@phosphor-icons/react'
 
-const DURACION_OPTIONS = [15, 30, 45, 60, 75, 90, 105, 120]
-
-function formatDuracion(min: number): string {
-  if (min < 60) return `${min} min`
-  if (min === 60) return '1 hora'
-  if (min === 120) return '2 horas'
-  return `${Math.floor(min / 60)}h ${min % 60}min`
-}
 
 export function StepServicios() {
   const { user } = useCurrentUser()
@@ -202,16 +194,41 @@ export function StepServicios() {
                       <Clock size={12} className="text-muted-foreground shrink-0" />
                       <span className="text-xs text-muted-foreground">Duracion:</span>
                       <Select
-                        value={String(servicioActual.duracionMin)}
-                        onValueChange={(val) => actualizarDuracionServicio(p.id, parseInt(val))}
+                        value={String(Math.floor(servicioActual.duracionMin / 60))}
+                        onValueChange={(val) => {
+                          const horas = parseInt(val)
+                          const mins = servicioActual.duracionMin % 60
+                          const total = horas * 60 + mins
+                          actualizarDuracionServicio(p.id, total === 0 ? 15 : total)
+                        }}
                       >
-                        <SelectTrigger className="h-7 text-xs w-32">
+                        <SelectTrigger className="h-7 text-xs w-16">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-48 overflow-y-auto">
+                          {Array.from({ length: 9 }, (_, i) => (
+                            <SelectItem key={i} value={String(i)} className="text-xs">
+                              {i}h
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={String(servicioActual.duracionMin % 60)}
+                        onValueChange={(val) => {
+                          const minutos = parseInt(val)
+                          const horas = Math.floor(servicioActual.duracionMin / 60)
+                          const total = horas * 60 + minutos
+                          actualizarDuracionServicio(p.id, total === 0 ? 15 : total)
+                        }}
+                      >
+                        <SelectTrigger className="h-7 text-xs w-20">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {DURACION_OPTIONS.map((min) => (
-                            <SelectItem key={min} value={String(min)} className="text-xs">
-                              {formatDuracion(min)}
+                          {[0, 15, 30, 45].map((m) => (
+                            <SelectItem key={m} value={String(m)} className="text-xs">
+                              {String(m).padStart(2, '0')} min
                             </SelectItem>
                           ))}
                         </SelectContent>
