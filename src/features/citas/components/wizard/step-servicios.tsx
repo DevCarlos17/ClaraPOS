@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { formatUsd } from '@/lib/currency'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   MagnifyingGlass,
   User,
@@ -17,7 +18,14 @@ import {
   ArrowsLeftRight,
 } from '@phosphor-icons/react'
 
-const DURACION_OPTIONS = [15, 30, 45, 60, 90, 120]
+const DURACION_OPTIONS = [15, 30, 45, 60, 75, 90, 105, 120]
+
+function formatDuracion(min: number): string {
+  if (min < 60) return `${min} min`
+  if (min === 60) return '1 hora'
+  if (min === 120) return '2 horas'
+  return `${Math.floor(min / 60)}h ${min % 60}min`
+}
 
 export function StepServicios() {
   const { user } = useCurrentUser()
@@ -43,19 +51,19 @@ export function StepServicios() {
 
   const { data } = useQuery(
     empresaId
-      ? `SELECT id, nombre, precio_venta_usd FROM productos WHERE empresa_id = ? AND tipo = 'S' AND is_active = 1 ORDER BY nombre`
+      ? `SELECT id, nombre, precio_venta_usd, duracion_min FROM productos WHERE empresa_id = ? AND tipo = 'S' AND is_active = 1 ORDER BY nombre`
       : '',
     empresaId ? [empresaId] : []
   )
 
-  const productos = (data ?? []) as { id: string; nombre: string; precio_venta_usd: string }[]
+  const productos = (data ?? []) as { id: string; nombre: string; precio_venta_usd: string; duracion_min: number | null }[]
   const serviciosIds = new Set(servicios.map((s) => s.productoId))
 
   const productosFiltrados = filtroBusqueda
     ? productos.filter((p) => p.nombre.toLowerCase().includes(filtroBusqueda.toLowerCase()))
     : productos
 
-  const toggle = (p: { id: string; nombre: string; precio_venta_usd: string }) => {
+  const toggle = (p: { id: string; nombre: string; precio_venta_usd: string; duracion_min: number | null }) => {
     if (serviciosIds.has(p.id)) {
       quitarServicio(p.id)
     } else {
@@ -63,7 +71,7 @@ export function StepServicios() {
         productoId: p.id,
         nombre: p.nombre,
         precioUsd: parseFloat(p.precio_venta_usd),
-        duracionMin: 60,
+        duracionMin: p.duracion_min ?? 60,
       })
     }
   }
@@ -190,23 +198,24 @@ export function StepServicios() {
 
                   {/* Selector de duracion por servicio seleccionado */}
                   {sel && servicioActual && (
-                    <div className="ml-11 flex items-center gap-2 flex-wrap">
+                    <div className="ml-11 flex items-center gap-2">
                       <Clock size={12} className="text-muted-foreground shrink-0" />
                       <span className="text-xs text-muted-foreground">Duracion:</span>
-                      {DURACION_OPTIONS.map((min) => (
-                        <button
-                          key={min}
-                          onClick={() => actualizarDuracionServicio(p.id, min)}
-                          className={cn(
-                            'px-2 py-0.5 rounded text-xs border transition-all',
-                            servicioActual.duracionMin === min
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-border hover:border-primary/50'
-                          )}
-                        >
-                          {min < 60 ? `${min}m` : `${min / 60}h`}
-                        </button>
-                      ))}
+                      <Select
+                        value={String(servicioActual.duracionMin)}
+                        onValueChange={(val) => actualizarDuracionServicio(p.id, parseInt(val))}
+                      >
+                        <SelectTrigger className="h-7 text-xs w-32">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {DURACION_OPTIONS.map((min) => (
+                            <SelectItem key={min} value={String(min)} className="text-xs">
+                              {formatDuracion(min)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                   )}
                 </div>

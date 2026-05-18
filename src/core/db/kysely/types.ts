@@ -321,6 +321,7 @@ export interface Productos {
   ubicacion: string | null
   presentacion: string | null
   codigo_barras: string | null
+  duracion_min: number | null
 }
 
 export interface InventarioStock {

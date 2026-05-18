@@ -29,6 +29,7 @@ export interface Producto {
   ubicacion: string | null
   presentacion: string | null
   codigo_barras: string | null
+  duracion_min: number | null
 }
 
 export function useProductos() {
@@ -104,6 +105,7 @@ export async function crearProducto(data: {
   maneja_lotes?: boolean
   presentacion?: string
   codigo_barras?: string
+  duracion_min?: number | null
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -136,6 +138,7 @@ export async function crearProducto(data: {
       unidad_base_id: isServicioOCombo ? null : (data.unidad_base_id ?? null),
       presentacion: isServicioOCombo ? null : (data.presentacion?.toUpperCase() || null),
       codigo_barras: data.codigo_barras?.trim() || null,
+      duracion_min: data.tipo === 'S' ? (data.duracion_min ?? null) : null,
     })
     .execute()
 
@@ -161,6 +164,7 @@ export async function actualizarProducto(
     maneja_lotes?: boolean
     presentacion?: string | null
     codigo_barras?: string | null
+    duracion_min?: number | null
   }
 ) {
   const now = localNow()
@@ -183,6 +187,7 @@ export async function actualizarProducto(
   if (data.maneja_lotes !== undefined) updates.maneja_lotes = data.maneja_lotes ? 1 : 0
   if (data.presentacion !== undefined) updates.presentacion = data.presentacion ? data.presentacion.toUpperCase() : null
   if (data.codigo_barras !== undefined) updates.codigo_barras = data.codigo_barras?.trim() || null
+  if (data.duracion_min !== undefined) updates.duracion_min = data.duracion_min ?? null
 
   // Servicios y Combos no manejan stock ni presentacion fisica
   if (data.tipo === 'S' || data.tipo === 'C') {

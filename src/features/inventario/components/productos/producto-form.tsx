@@ -312,6 +312,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [impuestoIvaId, setImpuestoIvaId] = useState<string>('')
 
+  // === Duracion por defecto (solo Servicios) ===
+  const [duracionMin, setDuracionMin] = useState<number | null>(null)
+
   // === TAB C: Ubicacion e Inventario ===
   const [ubicacion, setUbicacion] = useState('')
   const [manejaLotes, setManejaLotes] = useState(false)
@@ -351,6 +354,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setStockMinimo(producto.stock_minimo)
         setCodigoBarras(producto.codigo_barras ?? '')
         setIsActive(producto.is_active === 1)
+        setDuracionMin(producto.duracion_min ?? null)
         setCostoUsd(producto.costo_usd)
         setPrecioVentaUsd(producto.precio_venta_usd)
         setPrecioMayorUsd(producto.precio_mayor_usd ?? '')
@@ -392,6 +396,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setStockMinimo('')
         setCodigoBarras('')
         setIsActive(true)
+        setDuracionMin(null)
         setCostoUsd('')
         setCostoBs('')
         setPrecioVentaUsd('')
@@ -806,6 +811,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           maneja_lotes: esServicioOCombo ? false : manejaLotes,
           presentacion: esServicioOCombo ? null : (parsed.data.presentacion || null),
           codigo_barras: parsed.data.codigo_barras?.trim() || null,
+          duracion_min: tipo === 'S' ? duracionMin : null,
         })
         toast.success('Producto actualizado correctamente')
       } else {
@@ -827,6 +833,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           maneja_lotes: esServicioOCombo ? false : manejaLotes,
           presentacion: esServicioOCombo ? undefined : (parsed.data.presentacion || undefined),
           codigo_barras: parsed.data.codigo_barras?.trim() || undefined,
+          duracion_min: tipo === 'S' ? duracionMin : undefined,
         })
 
         const stockInicialNum = parseNumOrZero(stockInicial)
@@ -1128,6 +1135,34 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   <p className="text-red-500 text-xs mt-1">{errors.departamento_id}</p>
                 )}
               </div>
+
+              {/* Duracion por defecto — solo Servicio */}
+              {tipo === 'S' && (
+                <div>
+                  <label htmlFor="prod-duracion" className="block text-sm font-medium text-gray-700 mb-1">
+                    Duracion por defecto
+                  </label>
+                  <select
+                    id="prod-duracion"
+                    value={duracionMin ?? ''}
+                    onChange={(e) => setDuracionMin(e.target.value ? parseInt(e.target.value) : null)}
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">Sin duracion por defecto</option>
+                    <option value="15">15 min</option>
+                    <option value="30">30 min</option>
+                    <option value="45">45 min</option>
+                    <option value="60">1 hora</option>
+                    <option value="75">1h 15min</option>
+                    <option value="90">1h 30min</option>
+                    <option value="105">1h 45min</option>
+                    <option value="120">2 horas</option>
+                  </select>
+                  <p className="text-xs text-gray-400 mt-1">
+                    Tiempo estimado al agregar este servicio a una cita
+                  </p>
+                </div>
+              )}
 
               {/* Unidad de Medida — solo Producto */}
               {!esServicioOComboLocal && (
