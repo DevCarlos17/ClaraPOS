@@ -9,6 +9,28 @@
 #
 # El user_id viene del JWT de Supabase (claim "sub")
 # =============================================
+#
+# PREREQUISITO: Publicacion PostgreSQL
+# =============================================
+# Cada vez que se agregan tablas nuevas a este archivo, tambien hay que
+# agregarlas a la publicacion de replicacion logica de Supabase.
+# Ejecutar en Supabase Dashboard > SQL Editor:
+#
+#   ALTER PUBLICATION powersync ADD TABLE "public"."nombre_tabla";
+#
+# Tablas del modulo de citas (ejecutar si no estan en la publicacion):
+#   ALTER PUBLICATION powersync ADD TABLE "public"."citas";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."citas_servicios";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."horarios_staff";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."cita_trabajadores";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."cita_log";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."cita_items_extras";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."horarios_descansos";
+#   ALTER PUBLICATION powersync ADD TABLE "public"."horarios_excepciones";
+#
+# Para verificar que tablas ya estan en la publicacion:
+#   SELECT tablename FROM pg_publication_tables WHERE pubname = 'powersync';
+# =============================================
 
 bucket_definitions:
   # ==========================================

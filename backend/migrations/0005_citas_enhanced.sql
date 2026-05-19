@@ -38,30 +38,39 @@ ALTER TABLE citas ADD COLUMN IF NOT EXISTS observaciones TEXT;
 
 -- =============================================
 -- PASO 2: Migrar datos de status viejo a dual
+-- (idempotente: solo corre si la columna status aun existe)
 -- =============================================
 
-UPDATE citas SET
-  cita_status = CASE status
-    WHEN 'PENDIENTE'   THEN 'RESERVADA'
-    WHEN 'CONFIRMADA'  THEN 'RESERVADA'
-    WHEN 'EN_PROGRESO' THEN 'EN_PROCESO'
-    WHEN 'COMPLETADA'  THEN 'REALIZADA'
-    WHEN 'CANCELADA'   THEN 'CANCELADA'
-    WHEN 'NO_SHOW'     THEN 'CANCELADA'
-    ELSE 'RESERVADA'
-  END,
-  finance_status = CASE status
-    WHEN 'COMPLETADA'  THEN 'PAGADO'
-    WHEN 'CANCELADA'   THEN 'NULO'
-    WHEN 'NO_SHOW'     THEN 'NULO'
-    WHEN 'EN_PROGRESO' THEN CASE checkout_tipo
-      WHEN 'POS'    THEN 'PAGADO'
-      WHEN 'CREDITO' THEN 'PENDIENTE'
-      ELSE 'PENDIENTE'
-    END
-    ELSE 'PENDIENTE'
-  END
-WHERE cita_status = 'RESERVADA' AND finance_status = 'PENDIENTE';
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'citas' AND column_name = 'status'
+  ) THEN
+    UPDATE citas SET
+      cita_status = CASE status
+        WHEN 'PENDIENTE'   THEN 'RESERVADA'
+        WHEN 'CONFIRMADA'  THEN 'RESERVADA'
+        WHEN 'EN_PROGRESO' THEN 'EN_PROCESO'
+        WHEN 'COMPLETADA'  THEN 'REALIZADA'
+        WHEN 'CANCELADA'   THEN 'CANCELADA'
+        WHEN 'NO_SHOW'     THEN 'CANCELADA'
+        ELSE 'RESERVADA'
+      END,
+      finance_status = CASE status
+        WHEN 'COMPLETADA'  THEN 'PAGADO'
+        WHEN 'CANCELADA'   THEN 'NULO'
+        WHEN 'NO_SHOW'     THEN 'NULO'
+        WHEN 'EN_PROGRESO' THEN CASE checkout_tipo
+          WHEN 'POS'     THEN 'PAGADO'
+          WHEN 'CREDITO' THEN 'PENDIENTE'
+          ELSE 'PENDIENTE'
+        END
+        ELSE 'PENDIENTE'
+      END
+    WHERE cita_status = 'RESERVADA' AND finance_status = 'PENDIENTE';
+  END IF;
+END $$;
 
 -- =============================================
 -- PASO 3: Eliminar columna status vieja
@@ -104,6 +113,9 @@ CREATE INDEX IF NOT EXISTS idx_cita_trabajadores_empresa ON cita_trabajadores(em
 CREATE INDEX IF NOT EXISTS idx_cita_trabajadores_usuario ON cita_trabajadores(empresa_id, usuario_id);
 
 ALTER TABLE cita_trabajadores ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "cita_trabajadores_select" ON cita_trabajadores;
+DROP POLICY IF EXISTS "cita_trabajadores_insert" ON cita_trabajadores;
+DROP POLICY IF EXISTS "cita_trabajadores_delete" ON cita_trabajadores;
 CREATE POLICY "cita_trabajadores_select" ON cita_trabajadores FOR SELECT TO authenticated USING (true);
 CREATE POLICY "cita_trabajadores_insert" ON cita_trabajadores FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "cita_trabajadores_delete" ON cita_trabajadores FOR DELETE TO authenticated USING (true);
@@ -126,6 +138,8 @@ CREATE INDEX IF NOT EXISTS idx_cita_log_cita ON cita_log(cita_id);
 CREATE INDEX IF NOT EXISTS idx_cita_log_empresa ON cita_log(empresa_id);
 
 ALTER TABLE cita_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "cita_log_select" ON cita_log;
+DROP POLICY IF EXISTS "cita_log_insert" ON cita_log;
 CREATE POLICY "cita_log_select" ON cita_log FOR SELECT TO authenticated USING (true);
 CREATE POLICY "cita_log_insert" ON cita_log FOR INSERT TO authenticated WITH CHECK (true);
 
@@ -150,6 +164,10 @@ CREATE INDEX IF NOT EXISTS idx_cita_items_extras_cita ON cita_items_extras(cita_
 CREATE INDEX IF NOT EXISTS idx_cita_items_extras_empresa ON cita_items_extras(empresa_id);
 
 ALTER TABLE cita_items_extras ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "cita_items_extras_select" ON cita_items_extras;
+DROP POLICY IF EXISTS "cita_items_extras_insert" ON cita_items_extras;
+DROP POLICY IF EXISTS "cita_items_extras_update" ON cita_items_extras;
+DROP POLICY IF EXISTS "cita_items_extras_delete" ON cita_items_extras;
 CREATE POLICY "cita_items_extras_select" ON cita_items_extras FOR SELECT TO authenticated USING (true);
 CREATE POLICY "cita_items_extras_insert" ON cita_items_extras FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "cita_items_extras_update" ON cita_items_extras FOR UPDATE TO authenticated USING (true);
@@ -173,6 +191,10 @@ CREATE INDEX IF NOT EXISTS idx_horarios_descansos_horario ON horarios_descansos(
 CREATE INDEX IF NOT EXISTS idx_horarios_descansos_empresa ON horarios_descansos(empresa_id);
 
 ALTER TABLE horarios_descansos ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "horarios_descansos_select" ON horarios_descansos;
+DROP POLICY IF EXISTS "horarios_descansos_insert" ON horarios_descansos;
+DROP POLICY IF EXISTS "horarios_descansos_update" ON horarios_descansos;
+DROP POLICY IF EXISTS "horarios_descansos_delete" ON horarios_descansos;
 CREATE POLICY "horarios_descansos_select" ON horarios_descansos FOR SELECT TO authenticated USING (true);
 CREATE POLICY "horarios_descansos_insert" ON horarios_descansos FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "horarios_descansos_update" ON horarios_descansos FOR UPDATE TO authenticated USING (true);
@@ -200,6 +222,10 @@ CREATE INDEX IF NOT EXISTS idx_horarios_excepciones_usuario ON horarios_excepcio
 CREATE INDEX IF NOT EXISTS idx_horarios_excepciones_fecha ON horarios_excepciones(empresa_id, fecha);
 
 ALTER TABLE horarios_excepciones ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "horarios_excepciones_select" ON horarios_excepciones;
+DROP POLICY IF EXISTS "horarios_excepciones_insert" ON horarios_excepciones;
+DROP POLICY IF EXISTS "horarios_excepciones_update" ON horarios_excepciones;
+DROP POLICY IF EXISTS "horarios_excepciones_delete" ON horarios_excepciones;
 CREATE POLICY "horarios_excepciones_select" ON horarios_excepciones FOR SELECT TO authenticated USING (true);
 CREATE POLICY "horarios_excepciones_insert" ON horarios_excepciones FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "horarios_excepciones_update" ON horarios_excepciones FOR UPDATE TO authenticated USING (true);
@@ -212,3 +238,16 @@ INSERT INTO permisos (id, modulo, slug, nombre, descripcion, is_active, created_
 VALUES
   (gen_random_uuid(), 'citas', 'citas.manage', 'Gestionar Citas Avanzado', 'Reprogramar, drag-and-drop, mini-POS', TRUE, NOW())
 ON CONFLICT DO NOTHING;
+
+-- =============================================
+-- PASO 12: Agregar tablas a la publicacion PowerSync
+-- Necesario para que PowerSync replique estas tablas a los clientes
+-- =============================================
+ALTER PUBLICATION powersync ADD TABLE "public"."citas";
+ALTER PUBLICATION powersync ADD TABLE "public"."citas_servicios";
+ALTER PUBLICATION powersync ADD TABLE "public"."horarios_staff";
+ALTER PUBLICATION powersync ADD TABLE "public"."cita_trabajadores";
+ALTER PUBLICATION powersync ADD TABLE "public"."cita_log";
+ALTER PUBLICATION powersync ADD TABLE "public"."cita_items_extras";
+ALTER PUBLICATION powersync ADD TABLE "public"."horarios_descansos";
+ALTER PUBLICATION powersync ADD TABLE "public"."horarios_excepciones";

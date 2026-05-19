@@ -9,6 +9,8 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useQuery } from '@powersync/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Checkbox } from '@/components/ui/checkbox'
 import { toast } from 'sonner'
 import { FloppyDisk, Clock, Warning, UserList } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
@@ -36,14 +38,20 @@ const DEFAULT_DIA: Omit<DiaConfig, 'diaSemana'> = {
 
 type Tab = 'plantilla' | 'excepciones'
 
+// PostgreSQL TIME devuelve "HH:MM:SS"; normalizar a "HH:MM" para inputs type="time"
+function normalizeTime(t: string): string {
+  if (!t) return t
+  return t.length === 8 && t[2] === ':' && t[5] === ':' ? t.slice(0, 5) : t
+}
+
 function buildInitialDias(horarios: HorarioStaff[]): DiaConfig[] {
   return DIAS_SEMANA.map((d) => {
     const h = horarios.find((x) => x.dia_semana === d)
     if (h) {
       return {
         diaSemana: d,
-        horaInicio: h.hora_inicio,
-        horaFin: h.hora_fin,
+        horaInicio: normalizeTime(h.hora_inicio),
+        horaFin: normalizeTime(h.hora_fin),
         isActive: h.is_active === 1,
         tiempoPreparacionMin: (h as any).tiempo_preparacion_min ?? 0,
       }
@@ -80,13 +88,113 @@ export function HorariosStaffPage() {
 
   // Referencia a la configuracion original para detectar cambios
   const baselineRef = useRef<DiaConfig[]>([])
+  // Rastrea el profesional anterior para detectar cambios de seleccion
+  const prevProfesionalIdRef = useRef<string>('')
+  // Previene reset transitorio: PowerSync limpia UUIDs locales antes de sincronizar
+  // los UUIDs de Supabase, generando una ventana donde horarios=[]. Sin este flag
+  // el formulario se resetea a defaults en esa ventana aunque el guardado fue exitoso.
+  const justSavedRef = useRef(false)
+  // Espejo del estado actual del formulario accesible dentro del useEffect sin
+  // agregarlo como dependencia (lo que causaria bucles infinitos).
+  const formStateRef = useRef<DiaConfig[]>(horariosDia)
+
+  // Mantener formStateRef sincronizado (fuera del useEffect para evitar dependencia)
+  formStateRef.current = horariosDia
 
   useEffect(() => {
     const nuevos = buildInitialDias(horarios)
-    setHorariosDia(nuevos)
-    baselineRef.current = nuevos
-    setDirty(false)
-  }, [horarios, profesionalId])
+    const isNewProfesional = prevProfesionalIdRef.current !== profesionalId
+    prevProfesionalIdRef.current = profesionalId
+
+    console.log('🔄 [useEffect horarios]', {
+      isNewProfesional,
+      dirty,
+      justSaved: justSavedRef.current,
+      cantidadHorarios: horarios.length,
+      horarios: horarios.map(h => `dia${h.dia_semana}:active=${h.is_active} ${h.hora_inicio}-${h.hora_fin}`),
+    })
+
+    if (isNewProfesional) {
+      // Cambio de profesional: resetear siempre y limpiar flag post-guardado
+      justSavedRef.current = false
+      setHorariosDia(nuevos)
+      baselineRef.current = nuevos
+      setDirty(false)
+      console.log('  → reset por nuevo profesional')
+      console.table(nuevos.map(n => ({
+        dia: n.diaSemana,
+        activo: n.isActive ? '✓' : '✗',
+        entrada: n.horaInicio,
+        salida: n.horaFin,
+        prep: n.tiempoPreparacionMin,
+      })))
+    } else if (!dirty) {
+      if (horarios.length === 0) {
+        // Array vacio mientras hay un profesional seleccionado = ventana transitoria
+        // de PowerSync: los UUIDs locales fueron eliminados (no existen en Supabase
+        // porque el PUT hizo UPDATE por clave natural conservando el UUID de Supabase)
+        // pero los UUIDs reales de Supabase aun no llegaron via sync-down.
+        // El caso genuino de professional sin horarios se maneja en isNewProfesional.
+        console.log('  → ignorado (horarios vacio, ventana transitoria de PowerSync)')
+      } else if (justSavedRef.current) {
+        // Primera notificacion post-guardado con datos: podria ser data local pre-sync
+        // que no refleja aun los valores de Supabase. No sobreescribir el formulario
+        // — el usuario ya ve los valores correctos que guardo. Solo limpiar el flag.
+        console.log('  → primera notificacion post-guardado, no sobreescribir (justSaved cleared)')
+        justSavedRef.current = false
+        baselineRef.current = nuevos
+      } else {
+        // ─── BRANCH D: sync desde DB ───────────────────────────────────────────
+        // Comparar nuevos datos con el estado actual del formulario y con el baseline
+        const formActual = formStateRef.current
+        const diffVsForm = nuevos.filter(n => {
+          const f = formActual.find(x => x.diaSemana === n.diaSemana)
+          return f && (
+            n.horaInicio !== f.horaInicio ||
+            n.horaFin !== f.horaFin ||
+            n.isActive !== f.isActive ||
+            n.tiempoPreparacionMin !== f.tiempoPreparacionMin
+          )
+        })
+        const diffVsBaseline = nuevos.filter(n => {
+          const b = baselineRef.current.find(x => x.diaSemana === n.diaSemana)
+          return b && (
+            n.horaInicio !== b.horaInicio ||
+            n.horaFin !== b.horaFin ||
+            n.isActive !== b.isActive ||
+            n.tiempoPreparacionMin !== b.tiempoPreparacionMin
+          )
+        })
+
+        if (diffVsForm.length > 0) {
+          console.warn('  ❌ [BRANCH D] BUG DETECTADO — DB sobreescribe el formulario con datos DISTINTOS:')
+          diffVsForm.forEach(n => {
+            const f = formActual.find(x => x.diaSemana === n.diaSemana)
+            console.warn(`    dia${n.diaSemana}: form=[${f?.horaInicio}-${f?.horaFin} activo=${f?.isActive} prep=${f?.tiempoPreparacionMin}] → DB=[${n.horaInicio}-${n.horaFin} activo=${n.isActive} prep=${n.tiempoPreparacionMin}]`)
+          })
+        } else {
+          console.log('  ✓ [BRANCH D] DB coincide con form actual (sin sobreescritura visible)')
+        }
+
+        if (diffVsBaseline.length > 0) {
+          console.warn('  ⚠️ [BRANCH D] DB difiere del ultimo baseline guardado (Supabase puede NO tener la actualizacion):')
+          diffVsBaseline.forEach(n => {
+            const b = baselineRef.current.find(x => x.diaSemana === n.diaSemana)
+            console.warn(`    dia${n.diaSemana}: baseline=[${b?.horaInicio}-${b?.horaFin} activo=${b?.isActive}] ≠ DB=[${n.horaInicio}-${n.horaFin} activo=${n.isActive}]`)
+          })
+          console.warn('  → Si ves esto DESPUES de guardar, el PATCH a Supabase fallo y sync-down esta revirtiendo el form.')
+          console.warn('  → Busca errores "[PowerSync upload]" o "[upload PATCH horarios_staff]" mas arriba en el log.')
+        } else {
+          console.log('  ✓ [BRANCH D] DB coincide con baseline guardado')
+        }
+
+        setHorariosDia(nuevos)
+        baselineRef.current = nuevos
+      }
+    } else {
+      console.log('  → ignorado (dirty=true, cambios pendientes del usuario)')
+    }
+  }, [horarios, profesionalId, dirty])
 
   const updateDia = (
     diaSemana: number,
@@ -119,9 +227,11 @@ export function HorariosStaffPage() {
     try {
       await guardarHorariosProfesional(profesionalId, empresaId, horariosDia)
       setDirty(false)
+      justSavedRef.current = true
       baselineRef.current = horariosDia
       toast.success(`Horarios de ${profesionalNombre} guardados`)
-    } catch {
+    } catch (err) {
+      console.error('[HorariosStaff] Error al guardar:', err)
       toast.error('Error al guardar horarios')
     } finally {
       setGuardando(false)
@@ -163,25 +273,27 @@ export function HorariosStaffPage() {
   return (
     <div className="flex gap-6 h-full min-h-0">
       {/* Panel lateral: lista de profesionales */}
-      <div className="w-52 shrink-0 space-y-1 overflow-y-auto">
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+      <div className="w-52 shrink-0 rounded-2xl bg-card border border-border shadow-sm p-3 flex flex-col overflow-hidden">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2 shrink-0">
           <UserList size={14} />
           Profesionales
         </p>
-        {profesionales.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => handleSeleccionarProfesional(p.id, p.nombre)}
-            className={cn(
-              'w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all',
-              profesionalId === p.id
-                ? 'bg-primary text-primary-foreground font-medium'
-                : 'hover:bg-muted text-muted-foreground'
-            )}
-          >
-            {p.nombre}
-          </button>
-        ))}
+        <div className="space-y-1 overflow-y-auto flex-1">
+          {profesionales.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => handleSeleccionarProfesional(p.id, p.nombre)}
+              className={cn(
+                'w-full text-left px-3 py-2.5 rounded-xl text-sm transition-all',
+                profesionalId === p.id
+                  ? 'bg-primary text-primary-foreground font-medium'
+                  : 'hover:bg-muted text-muted-foreground'
+              )}
+            >
+              {p.nombre}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Panel central */}
@@ -225,25 +337,14 @@ export function HorariosStaffPage() {
             </div>
 
             {/* Tabs */}
-            <div className="flex border-b mb-4">
-              {(['plantilla', 'excepciones'] as Tab[]).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={cn(
-                    'px-4 py-2 text-sm font-medium border-b-2 -mb-px capitalize transition-colors',
-                    tab === t
-                      ? 'border-primary text-primary'
-                      : 'border-transparent text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  {t === 'plantilla' ? 'Plantilla Rutinaria' : 'Excepciones'}
-                </button>
-              ))}
-            </div>
+            <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="flex-1 min-h-0 gap-0">
+              <TabsList variant="line" className="w-full justify-start border-b border-border rounded-none h-auto p-0 mb-4">
+                <TabsTrigger value="plantilla" className="rounded-none px-4 py-2 h-auto">Plantilla Rutinaria</TabsTrigger>
+                <TabsTrigger value="excepciones" className="rounded-none px-4 py-2 h-auto">Excepciones</TabsTrigger>
+              </TabsList>
 
-            {tab === 'plantilla' && (
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-4">
+              <TabsContent value="plantilla" className="flex-1 min-h-0 overflow-y-auto mt-0">
+              <div className="space-y-4">
                 {/* Acciones rapidas */}
                 <div className="flex items-center gap-3">
                   <Button
@@ -257,22 +358,23 @@ export function HorariosStaffPage() {
                 </div>
 
                 {/* Grid de dias */}
-                <div className="border rounded-2xl overflow-hidden">
-                  <div className="grid grid-cols-[140px_1fr_1fr_56px] text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted/50 px-4 py-2 border-b">
+                <div className="rounded-2xl bg-card border border-border shadow-sm overflow-hidden">
+                  <div className="grid grid-cols-[160px_160px_160px_1fr_64px] gap-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider bg-muted px-4 py-2.5 border-b border-border">
                     <span>Dia</span>
                     <span>Entrada</span>
                     <span>Salida</span>
+                    <span />
                     <span className="text-center">Activo</span>
                   </div>
 
                   {horariosDia.map((d) => {
                     const horarioDB = horarios.find((h) => h.dia_semana === d.diaSemana)
                     return (
-                      <div key={d.diaSemana} className="border-b last:border-b-0">
+                      <div key={d.diaSemana} className="border-b border-border last:border-b-0">
                         <div
                           className={cn(
-                            'grid grid-cols-[140px_1fr_1fr_56px] items-center px-4 py-2.5 gap-3 transition-colors',
-                            d.isActive ? 'bg-card' : 'bg-muted/20'
+                            'grid grid-cols-[160px_160px_160px_1fr_64px] items-center px-4 py-2.5 gap-3 transition-colors',
+                            d.isActive ? 'bg-card hover:bg-muted/30' : 'bg-muted/20'
                           )}
                         >
                           <div className="flex items-center gap-2">
@@ -306,14 +408,14 @@ export function HorariosStaffPage() {
                             className="h-8 text-sm"
                           />
 
+                          <div />
+
                           <div className="flex justify-center">
-                            <input
-                              type="checkbox"
+                            <Checkbox
                               checked={d.isActive}
-                              onChange={(e) =>
-                                updateDia(d.diaSemana, 'isActive', e.target.checked)
+                              onCheckedChange={(checked) =>
+                                updateDia(d.diaSemana, 'isActive', Boolean(checked))
                               }
-                              className="w-4 h-4 rounded accent-primary cursor-pointer"
                             />
                           </div>
                         </div>
@@ -343,7 +445,7 @@ export function HorariosStaffPage() {
                 </div>
 
                 {/* Tiempo de preparacion global */}
-                <div className="border rounded-xl p-4 space-y-2">
+                <div className="rounded-xl bg-card border border-border shadow-sm p-4 space-y-2">
                   <p className="text-sm font-medium">
                     Tiempo de preparacion para {profesionalNombre}
                   </p>
@@ -385,17 +487,16 @@ export function HorariosStaffPage() {
                   </div>
                 </div>
               </div>
-            )}
+              </TabsContent>
 
-            {tab === 'excepciones' && (
-              <div className="flex-1 min-h-0 overflow-y-auto">
+              <TabsContent value="excepciones" className="flex-1 min-h-0 overflow-y-auto mt-0">
                 <ExcepcionesTab
                   profesionalId={profesionalId}
                   empresaId={empresaId}
                   userId={user?.id ?? ''}
                 />
-              </div>
-            )}
+              </TabsContent>
+            </Tabs>
           </>
         )}
       </div>

@@ -8,6 +8,7 @@ import {
   type HorarioDescanso,
 } from '../../hooks/use-horarios-descansos'
 import { Plus, Trash } from '@phosphor-icons/react'
+import { NativeSelect } from '@/components/ui/native-select'
 import { toast } from 'sonner'
 
 interface BreaksEditorProps {
@@ -94,15 +95,15 @@ export function BreaksEditor({ horarioStaffId, empresaId }: BreaksEditorProps) {
 
       {agregando ? (
         <div className="flex items-center gap-2 pt-1">
-          <select
+          <NativeSelect
             value={tipo}
             onChange={(e) => setTipo(e.target.value)}
-            className="h-7 text-xs rounded border border-input bg-background px-1.5"
+            className="h-7 text-xs"
           >
             {TIPOS_DESCANSO.map((t) => (
               <option key={t} value={t}>{t}</option>
             ))}
-          </select>
+          </NativeSelect>
           <Input
             type="time"
             value={horaInicio}
@@ -125,7 +126,7 @@ export function BreaksEditor({ horarioStaffId, empresaId }: BreaksEditorProps) {
             className="h-7 text-xs px-2"
             onClick={() => setAgregando(false)}
           >
-            X
+            Cancelar
           </Button>
         </div>
       ) : (

@@ -29,6 +29,29 @@ const TABLE_NATURAL_KEYS: Record<string, string> = {
   horarios_staff: 'empresa_id,usuario_id,dia_semana',
 }
 
+// Columnas BOOLEAN en Supabase que SQLite almacena como 0/1
+// El connector convierte integers a booleans antes de enviar a Supabase
+const BOOLEAN_COLUMNS: Record<string, string[]> = {
+  horarios_staff: ['is_active', 'cruza_medianoche'],
+}
+
+// Columnas que NO se deben actualizar en un UPDATE (son inmutables o son el filtro del match)
+const IMMUTABLE_COLUMNS: Record<string, string[]> = {
+  horarios_staff: ['created_at', 'empresa_id', 'usuario_id', 'dia_semana'],
+}
+
+function convertBooleans(table: string, payload: Record<string, unknown>): Record<string, unknown> {
+  const boolCols = BOOLEAN_COLUMNS[table]
+  if (!boolCols) return payload
+  const result = { ...payload }
+  for (const col of boolCols) {
+    if (col in result) {
+      result[col] = result[col] === 1 || result[col] === true
+    }
+  }
+  return result
+}
+
 export type SupabaseConnectorListener = {
   initialized: () => void
   sessionStarted: (session: Session) => void
@@ -270,14 +293,110 @@ export class SupabaseConnector
           case UpdateType.PUT: {
             const record = { ...op.opData, id: op.id }
             const naturalKey = TABLE_NATURAL_KEYS[op.table]
-            result = naturalKey
-              ? await table.upsert(record, { onConflict: naturalKey })
-              : await table.upsert(record)
+
+            if (naturalKey) {
+              // Para tablas con clave natural: UPDATE primero, INSERT si no existe.
+              // El upsert estandar intenta actualizar el PK (id) en conflictos,
+              // lo que viola FKs en tablas hijas (ej. horarios_descansos).
+              const keyColumns = naturalKey.split(',').map((k) => k.trim())
+              const matchFilter: Record<string, unknown> = {}
+              for (const k of keyColumns) {
+                matchFilter[k] = record[k as keyof typeof record]
+              }
+              // Excluir 'id', columnas de match y columnas inmutables del payload de actualizacion
+              const immutable = new Set(['id', ...keyColumns, ...(IMMUTABLE_COLUMNS[op.table] ?? [])])
+              let updatePayload = { ...op.opData } as Record<string, unknown>
+              for (const col of immutable) {
+                delete updatePayload[col]
+              }
+              // Convertir enteros 0/1 a booleanos para columnas BOOLEAN en Supabase
+              updatePayload = convertBooleans(op.table, updatePayload)
+
+              if (op.table === 'horarios_staff') {
+                console.log('⬆️ [upload PUT horarios_staff] matchFilter:', matchFilter, '| payload:', updatePayload)
+              }
+
+              const { data: updatedRows, error: updateErr } = await table
+                .update(updatePayload)
+                .match(matchFilter)
+                .select('id')
+
+              if (updateErr) {
+                if (op.table === 'horarios_staff') console.error('⬆️ [upload PUT horarios_staff] UPDATE error:', updateErr)
+                result = { error: updateErr }
+              } else if (!updatedRows || updatedRows.length === 0) {
+                // No existe en Supabase → INSERT con el UUID del cliente
+                if (op.table === 'horarios_staff') console.log('⬆️ [upload PUT horarios_staff] 0 filas por clave natural → INSERT id:', op.id)
+                const insertRecord = convertBooleans(op.table, record as Record<string, unknown>)
+                const insertResult = await table.insert(insertRecord)
+                if (op.table === 'horarios_staff') {
+                  if (insertResult.error) console.error('⬆️ [upload PUT horarios_staff] INSERT error:', insertResult.error)
+                  else console.log('⬆️ [upload PUT horarios_staff] INSERT OK')
+                }
+                result = insertResult
+              } else {
+                if (op.table === 'horarios_staff') console.log('⬆️ [upload PUT horarios_staff] UPDATE OK, filas afectadas:', updatedRows.length, '| ids Supabase:', updatedRows.map((r: any) => r.id))
+                result = { error: null }
+              }
+            } else {
+              result = await table.upsert(record)
+            }
             break
           }
-          case UpdateType.PATCH:
-            result = await table.update(op.opData).eq('id', op.id)
+          case UpdateType.PATCH: {
+            const naturalKey = TABLE_NATURAL_KEYS[op.table]
+            const patchPayload = convertBooleans(op.table, op.opData as Record<string, unknown>)
+
+            if (naturalKey) {
+              // Para tablas con clave natural: intentar por UUID primero,
+              // luego caer en clave natural si no se encontro la fila.
+              // Ocurre cuando el UUID local no llego a Supabase (ciclo PUT previo
+              // actualizo por clave natural manteniendo el UUID de Supabase).
+              if (op.table === 'horarios_staff') {
+                console.log('⬆️ [upload PATCH horarios_staff] id:', op.id, '| payload:', patchPayload)
+              }
+
+              const { data: updatedRows, error: patchErr } = await table
+                .update(patchPayload)
+                .eq('id', op.id)
+                .select('id')
+
+              if (patchErr) {
+                if (op.table === 'horarios_staff') console.error('⬆️ [upload PATCH horarios_staff] error:', patchErr)
+                result = { error: patchErr }
+              } else if (!updatedRows || updatedRows.length === 0) {
+                if (op.table === 'horarios_staff') console.warn('⬆️ [upload PATCH horarios_staff] 0 filas por UUID → intentando fallback clave natural')
+                // 0 filas por UUID → buscar la fila local para obtener la clave natural
+                const localRow = await database.getOptional<Record<string, unknown>>(
+                  `SELECT * FROM ${op.table} WHERE id = ?`,
+                  [op.id]
+                )
+                if (localRow) {
+                  const keyColumns = naturalKey.split(',').map((k) => k.trim())
+                  const matchFilter: Record<string, unknown> = {}
+                  for (const k of keyColumns) {
+                    matchFilter[k] = localRow[k]
+                  }
+                  console.log('⬆️ [upload PATCH horarios_staff] fallback matchFilter:', matchFilter)
+                  const fallbackResult = await table.update(patchPayload).match(matchFilter)
+                  if (op.table === 'horarios_staff') {
+                    if (fallbackResult.error) console.error('⬆️ [upload PATCH horarios_staff] fallback error:', fallbackResult.error)
+                    else console.log('⬆️ [upload PATCH horarios_staff] fallback OK')
+                  }
+                  result = fallbackResult
+                } else {
+                  if (op.table === 'horarios_staff') console.error('⬆️ [upload PATCH horarios_staff] fila local no encontrada para id:', op.id)
+                  result = { error: null }
+                }
+              } else {
+                if (op.table === 'horarios_staff') console.log('⬆️ [upload PATCH horarios_staff] UPDATE por UUID OK')
+                result = { error: null }
+              }
+            } else {
+              result = await table.update(patchPayload).eq('id', op.id)
+            }
             break
+          }
           case UpdateType.DELETE:
             result = await table.delete().eq('id', op.id)
             break

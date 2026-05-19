@@ -1,5 +1,5 @@
 import { useQuery } from '@powersync/react'
-import { kysely } from '@/core/db/kysely/kysely'
+import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
@@ -133,63 +133,115 @@ export async function guardarHorariosProfesional(
 ) {
   const now = localNow()
 
-  await kysely.transaction().execute(async (trx) => {
-    for (const h of horarios) {
-      // Upsert: update si existe, insert si no (preserva el id y los descansos)
-      const existing = await trx
-        .selectFrom('horarios_staff')
-        .select('id')
-        .where('empresa_id', '=', empresaId)
-        .where('usuario_id', '=', profesionalId)
-        .where('dia_semana', '=', h.diaSemana)
-        .executeTakeFirst()
+  console.group('💾 [guardarHorarios] Iniciando guardado')
+  console.log('  profesionalId:', profesionalId)
+  console.log('  empresaId:', empresaId)
+  console.log('  dias a guardar:', horarios.map(h => `dia${h.diaSemana}:${h.isActive?'✓':'✗'} ${h.horaInicio}-${h.horaFin}`))
 
-      if (existing) {
-        await trx
-          .updateTable('horarios_staff')
-          .set({
-            hora_inicio: h.horaInicio,
-            hora_fin: h.horaFin,
-            is_active: h.isActive ? 1 : 0,
-            tiempo_preparacion_min: h.tiempoPreparacionMin ?? 0,
-            updated_at: now,
-          })
-          .where('id', '=', existing.id)
-          .execute()
+  // Leer registros existentes FUERA de la write transaction.
+  // Ordenar por created_at ASC: el mas antiguo es el de Supabase (UUID canonico);
+  // los mas nuevos son UUIDs locales huerfanos generados en ciclos previos.
+  const existingRows = await db.getAll<{ id: string; dia_semana: number }>(
+    'SELECT id, dia_semana FROM horarios_staff WHERE empresa_id = ? AND usuario_id = ? ORDER BY created_at ASC',
+    [empresaId, profesionalId]
+  )
+  console.log('  filas existentes en SQLite local:', existingRows.length, existingRows)
+
+  // Deduplicar: por cada dia_semana conservar solo el primero (mas antiguo = Supabase),
+  // marcar los duplicados para borrar en la misma transaccion.
+  const existingMap = new Map<number, string>()
+  const orphanIds: string[] = []
+  for (const row of existingRows) {
+    if (!existingMap.has(row.dia_semana)) {
+      existingMap.set(row.dia_semana, row.id)
+    } else {
+      orphanIds.push(row.id)
+    }
+  }
+  if (orphanIds.length > 0) {
+    console.warn('  ⚠️ UUIDs locales huerfanos a eliminar:', orphanIds)
+  }
+
+  // Escribir en writeTransaction para que PowerSync registre las operaciones CRUD
+  await db.writeTransaction(async (tx) => {
+    // Eliminar filas duplicadas (UUIDs locales que no existen en Supabase)
+    for (const id of orphanIds) {
+      console.log(`  DELETE huerfano id=${id}`)
+      await tx.execute('DELETE FROM horarios_staff WHERE id = ?', [id])
+    }
+
+    for (const h of horarios) {
+      const existingId = existingMap.get(h.diaSemana)
+
+      if (existingId) {
+        console.log(`  UPDATE dia_semana=${h.diaSemana} id=${existingId}`)
+        await tx.execute(
+          `UPDATE horarios_staff
+           SET hora_inicio = ?, hora_fin = ?, is_active = ?, tiempo_preparacion_min = ?, updated_at = ?
+           WHERE id = ?`,
+          [h.horaInicio, h.horaFin, h.isActive ? 1 : 0, h.tiempoPreparacionMin ?? 0, now, existingId]
+        )
       } else {
-        await trx
-          .insertInto('horarios_staff')
-          .values({
-            id: uuidv4(),
-            empresa_id: empresaId,
-            usuario_id: profesionalId,
-            dia_semana: h.diaSemana,
-            hora_inicio: h.horaInicio,
-            hora_fin: h.horaFin,
-            is_active: h.isActive ? 1 : 0,
-            tiempo_preparacion_min: h.tiempoPreparacionMin ?? 0,
-            cruza_medianoche: 0,
-            created_at: now,
-            updated_at: now,
-          })
-          .execute()
+        const newId = uuidv4()
+        console.log(`  INSERT dia_semana=${h.diaSemana} nuevo id=${newId}`)
+        await tx.execute(
+          `INSERT INTO horarios_staff
+             (id, empresa_id, usuario_id, dia_semana, hora_inicio, hora_fin, is_active, tiempo_preparacion_min, cruza_medianoche, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+          [newId, empresaId, profesionalId, h.diaSemana, h.horaInicio, h.horaFin, h.isActive ? 1 : 0, h.tiempoPreparacionMin ?? 0, now, now]
+        )
       }
     }
   })
+
+  console.log('  ✅ writeTransaction completada')
+
+  // VERIFICACION POST-ESCRITURA: confirma que el dato quedo en SQLite local
+  const verificacion = await db.getAll<{
+    id: string
+    dia_semana: number
+    hora_inicio: string
+    hora_fin: string
+    is_active: number
+    tiempo_preparacion_min: number
+  }>(
+    'SELECT id, dia_semana, hora_inicio, hora_fin, is_active, tiempo_preparacion_min FROM horarios_staff WHERE empresa_id = ? AND usuario_id = ? ORDER BY dia_semana',
+    [empresaId, profesionalId]
+  )
+  if (verificacion.length === 0) {
+    console.error('  ❌ [VERIFICACION] CRITICO: SQLite local NO tiene filas tras writeTransaction!')
+  } else {
+    console.log('  📖 [VERIFICACION] SQLite local post-escritura:')
+    console.table(verificacion.map(r => ({
+      dia: r.dia_semana,
+      activo: r.is_active === 1 ? '✓' : '✗',
+      entrada: r.hora_inicio,
+      salida: r.hora_fin,
+      prep_min: r.tiempo_preparacion_min,
+      uuid_corto: r.id.slice(0, 8) + '...',
+    })))
+  }
+
+  console.groupEnd()
 }
 
 export async function actualizarHorario(
   horarioId: string,
   data: { horaInicio?: string; horaFin?: string; isActive?: boolean }
 ) {
-  const updates: Record<string, unknown> = { updated_at: localNow() }
-  if (data.horaInicio !== undefined) updates.hora_inicio = data.horaInicio
-  if (data.horaFin !== undefined) updates.hora_fin = data.horaFin
-  if (data.isActive !== undefined) updates.is_active = data.isActive ? 1 : 0
+  const sets: string[] = ['updated_at = ?']
+  const params: unknown[] = [localNow()]
 
-  await kysely
-    .updateTable('horarios_staff')
-    .set(updates)
-    .where('id', '=', horarioId)
-    .execute()
+  if (data.horaInicio !== undefined) { sets.push('hora_inicio = ?'); params.push(data.horaInicio) }
+  if (data.horaFin !== undefined) { sets.push('hora_fin = ?'); params.push(data.horaFin) }
+  if (data.isActive !== undefined) { sets.push('is_active = ?'); params.push(data.isActive ? 1 : 0) }
+
+  params.push(horarioId)
+
+  await db.writeTransaction(async (tx) => {
+    await tx.execute(
+      `UPDATE horarios_staff SET ${sets.join(', ')} WHERE id = ?`,
+      params
+    )
+  })
 }

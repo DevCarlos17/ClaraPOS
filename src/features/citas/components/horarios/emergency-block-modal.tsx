@@ -8,6 +8,7 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { localNow } from '@/lib/dates'
 import { toast } from 'sonner'
 import { Warning, CalendarX } from '@phosphor-icons/react'
+import { NativeSelect } from '@/components/ui/native-select'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
 
@@ -199,12 +200,13 @@ export function EmergencyBlockModal({
                         {format(new Date(cita.fecha_fin), 'HH:mm', { locale: es })}
                       </p>
                     </div>
-                    <select
+                    <NativeSelect
                       value={reasignaciones[cita.id] ?? ''}
                       onChange={(e) =>
                         setReasignaciones((prev) => ({ ...prev, [cita.id]: e.target.value }))
                       }
-                      className="h-7 text-xs rounded border border-input bg-background px-1.5 shrink-0"
+                      className="h-7 text-xs w-32"
+                      wrapperClassName="shrink-0"
                     >
                       <option value="">Sin reasignar</option>
                       {profesionales.map((p) => (
@@ -212,7 +214,7 @@ export function EmergencyBlockModal({
                           {p.nombre}
                         </option>
                       ))}
-                    </select>
+                    </NativeSelect>
                   </div>
                 ))}
               </div>

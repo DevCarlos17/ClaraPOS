@@ -9,6 +9,7 @@ import {
   type TipoExcepcion,
 } from '../../hooks/use-horarios-excepciones'
 import { Trash, Plus, CalendarX, Clock, Warning } from '@phosphor-icons/react'
+import { NativeSelect } from '@/components/ui/native-select'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -156,15 +157,15 @@ export function ExcepcionesTab({ profesionalId, empresaId, userId }: Excepciones
 
             <div className="space-y-1">
               <label className="text-xs font-medium">Tipo</label>
-              <select
+              <NativeSelect
                 value={tipo}
                 onChange={(e) => setTipo(e.target.value as TipoExcepcion)}
-                className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm"
+                className="h-8 text-sm"
               >
                 <option value="DIA_LIBRE">Dia Libre</option>
                 <option value="HORARIO_MODIFICADO">Horario Modificado</option>
                 <option value="BLOQUEO_EMERGENCIA">Bloqueo Emergencia</option>
-              </select>
+              </NativeSelect>
             </div>
           </div>
 
@@ -220,7 +221,7 @@ export function ExcepcionesTab({ profesionalId, empresaId, userId }: Excepciones
       {isLoading ? (
         <p className="text-xs text-muted-foreground text-center py-4">Cargando...</p>
       ) : excepciones.length === 0 ? (
-        <div className="text-center py-8 border-2 border-dashed rounded-xl text-muted-foreground text-sm">
+        <div className="text-center py-8 border-2 border-dashed rounded-2xl text-muted-foreground text-sm">
           Sin excepciones configuradas
         </div>
       ) : (
