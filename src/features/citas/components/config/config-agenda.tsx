@@ -1,11 +1,26 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { CalendarDots } from '@phosphor-icons/react'
+import { CalendarDots, Warning } from '@phosphor-icons/react'
+import { useQuery } from '@powersync/react'
 import { useAgendaConfig, guardarAgendaConfig, type AgendaConfig } from '../../hooks/use-agenda-config'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 export function ConfigAgenda() {
   const { config, isLoading, empresaId } = useAgendaConfig()
+  const { user } = useCurrentUser()
+  const esPropietario = user?.level === 1
+
+  const { data: citasPendientesData } = useQuery(
+    empresaId
+      ? "SELECT COUNT(*) as total FROM citas WHERE empresa_id = ? AND cita_status IN ('RESERVADA', 'EN_PROCESO')"
+      : '',
+    empresaId ? [empresaId] : []
+  )
+  const citasPendientes =
+    ((citasPendientesData ?? [])[0] as { total: number } | undefined)?.total ?? 0
+
+  const [showPendingAlert, setShowPendingAlert] = useState(false)
 
   const [mostrarAgenda, setMostrarAgenda] = useState(true)
   const [limiteDias, setLimiteDias] = useState(30)
@@ -25,6 +40,19 @@ export function ConfigAgenda() {
       setSincronizado(true)
     }
   }, [isLoading, config, sincronizado])
+
+  const handleToggleMostrarAgenda = (checked: boolean) => {
+    if (!checked && citasPendientes > 0) {
+      setShowPendingAlert(true)
+      return
+    }
+    setMostrarAgenda(checked)
+  }
+
+  const handleConfirmarDesactivar = () => {
+    setMostrarAgenda(false)
+    setShowPendingAlert(false)
+  }
 
   const handleGuardar = async () => {
     if (!empresaId) return
@@ -59,15 +87,52 @@ export function ConfigAgenda() {
             Activa o desactiva la seccion "Agenda y Citas" en el menu lateral.
           </p>
         </div>
-        <label className="flex items-center gap-3 cursor-pointer">
+        <label className={`flex items-center gap-3 ${esPropietario ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
           <input
             type="checkbox"
             checked={mostrarAgenda}
-            onChange={(e) => setMostrarAgenda(e.target.checked)}
-            className="w-4 h-4 rounded accent-primary"
+            onChange={(e) => handleToggleMostrarAgenda(e.target.checked)}
+            disabled={!esPropietario}
+            className="w-4 h-4 rounded accent-primary disabled:cursor-not-allowed"
           />
           <span className="text-sm">Mostrar modulo de Agenda y Citas</span>
         </label>
+        {!esPropietario && (
+          <p className="text-xs text-muted-foreground">
+            Solo el Propietario puede activar o desactivar este modulo.
+          </p>
+        )}
+
+        {showPendingAlert && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+            <div className="flex items-start gap-2">
+              <Warning size={16} className="text-amber-600 mt-0.5 shrink-0" />
+              <p className="text-sm text-amber-800">
+                Hay <strong>{citasPendientes}</strong> cita{citasPendientes !== 1 ? 's' : ''} activa{citasPendientes !== 1 ? 's' : ''} (reservadas o en proceso).
+                Si desactivas el modulo no podras gestionarlas desde la agenda.
+                ¿Confirmas que deseas desactivarlo?
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 text-xs"
+                onClick={handleConfirmarDesactivar}
+              >
+                Desactivar de todas formas
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => setShowPendingAlert(false)}
+              >
+                Cancelar
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Limite de dias futuros */}

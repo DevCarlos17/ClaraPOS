@@ -1,6 +1,7 @@
 import { useQuery } from '@powersync/react'
-import { kysely } from '@/core/db/kysely/kysely'
+import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { localNow } from '@/lib/dates'
 
 export interface AgendaConfig {
   mostrar_agenda: boolean
@@ -52,15 +53,14 @@ export async function guardarAgendaConfig(
   empresaId: string,
   updates: Partial<AgendaConfig>
 ): Promise<void> {
-  const row = await kysely
-    .selectFrom('empresas')
-    .select('config')
-    .where('id', '=', empresaId)
-    .executeTakeFirst()
+  const rows = await db.getAll<{ config: string }>(
+    'SELECT config FROM empresas WHERE id = ?',
+    [empresaId]
+  )
 
   let parsed: Record<string, unknown> = {}
   try {
-    parsed = JSON.parse(row?.config ?? '{}')
+    parsed = JSON.parse(rows[0]?.config ?? '{}')
   } catch {
     // keep empty object
   }
@@ -68,9 +68,10 @@ export async function guardarAgendaConfig(
   const existingAgenda = (parsed.agenda as object | undefined) ?? {}
   parsed.agenda = { ...existingAgenda, ...updates }
 
-  await kysely
-    .updateTable('empresas')
-    .set({ config: JSON.stringify(parsed) })
-    .where('id', '=', empresaId)
-    .execute()
+  await db.writeTransaction(async (tx) => {
+    await tx.execute(
+      'UPDATE empresas SET config = ?, updated_at = ? WHERE id = ?',
+      [JSON.stringify(parsed), localNow(), empresaId]
+    )
+  })
 }

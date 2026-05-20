@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -23,6 +23,7 @@ import { CaretLeft, CaretRight, Plus } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
+import { useAgendaConfig } from '../../hooks/use-agenda-config'
 
 const STATUS_COLORS: Record<CitaOperStatus, string> = {
   RESERVADA:  '#F59E0B',
@@ -44,6 +45,12 @@ const PROFESIONAL_COLORS = [
   '#0891B2', '#DC2626', '#16A34A', '#9333EA', '#C2410C',
 ]
 
+const GRILLA_TO_VIEW: Record<string, CalendarView> = {
+  dia: 'timeGridDay',
+  semana: 'timeGridWeek',
+  mes: 'dayGridMonth',
+}
+
 export function CalendarioCitas() {
   const calendarRef = useRef<FullCalendar | null>(null)
   const navigate = useNavigate()
@@ -52,7 +59,10 @@ export function CalendarioCitas() {
   const { hasPermission } = usePermissions()
   const esSupervisor = hasPermission(PERMISSIONS.CITAS_MANAGE)
 
+  const { config, isLoading: configLoading } = useAgendaConfig()
+
   const [view, setView] = useState<CalendarView>('timeGridWeek')
+  const [viewInitialized, setViewInitialized] = useState(false)
   const [titulo, setTitulo] = useState('')
   const [rangoInicio, setRangoInicio] = useState('')
   const [rangoFin, setRangoFin] = useState('')
@@ -116,9 +126,12 @@ export function CalendarioCitas() {
   )
 
   const handleDatesSet = useCallback(
-    (info: { start: Date; end: Date; view: { title: string } }) => {
-      setRangoInicio(info.start.toISOString())
-      setRangoFin(info.end.toISOString())
+    (info: { start: Date; end: Date; view: { title: string; type: string } }) => {
+      const inicio = info.start.toISOString()
+      const fin = info.end.toISOString()
+      console.log('[Calendario] datesSet →', { vista: info.view.type, inicio, fin })
+      setRangoInicio(inicio)
+      setRangoFin(fin)
       setTitulo(info.view.title)
     },
     []
@@ -211,6 +224,35 @@ export function CalendarioCitas() {
   const profesionalNombre = citaSeleccionada
     ? (profesionalMap.get(citaSeleccionada.profesional_id)?.nombre ?? '')
     : ''
+
+  useEffect(() => {
+    if (!configLoading && !viewInitialized) {
+      const mapped = (GRILLA_TO_VIEW[config.rango_grilla_default] ?? 'timeGridWeek') as CalendarView
+      setView(mapped)
+      calendarRef.current?.getApi()?.changeView(mapped)
+      setViewInitialized(true)
+    }
+  }, [configLoading, config.rango_grilla_default, viewInitialized])
+
+  useEffect(() => {
+    console.log('[Calendario] citas en rango →', {
+      total: citas.length,
+      rangoInicio,
+      rangoFin,
+      ids: citas.map((c) => c.id.slice(0, 8)),
+    })
+  }, [citas, rangoInicio, rangoFin])
+
+  const slotDuration = `${String(Math.floor(config.duracion_slot_default / 60)).padStart(2, '0')}:${String(config.duracion_slot_default % 60).padStart(2, '0')}:00`
+
+  const validRange =
+    config.limite_futuro_dias > 0
+      ? {
+          end: new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
+            .toISOString()
+            .split('T')[0],
+        }
+      : undefined
 
   const VIEW_LABELS: Record<CalendarView, string> = {
     timeGridDay: 'Dia',
@@ -320,6 +362,8 @@ export function CalendarioCitas() {
             eventDrop={handleEventDrop}
             headerToolbar={false}
             height="100%"
+            slotDuration={slotDuration}
+            validRange={validRange}
             slotMinTime="07:00:00"
             slotMaxTime="21:00:00"
             slotLabelFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}

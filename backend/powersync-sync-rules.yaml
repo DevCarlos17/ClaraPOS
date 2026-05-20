@@ -138,3 +138,4 @@ bucket_definitions:
       - SELECT * FROM cita_items_extras WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM horarios_descansos WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM horarios_excepciones WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM horarios_plantillas WHERE empresa_id = bucket.empresa_id

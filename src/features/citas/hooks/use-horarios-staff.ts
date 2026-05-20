@@ -4,6 +4,9 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import type { Cita } from './use-citas'
+import { useExcepcionesPorUsuario } from './use-horarios-excepciones'
+import type { HorarioDescanso } from './use-horarios-descansos'
+import { useAgendaConfig } from './use-agenda-config'
 
 export interface HorarioStaff {
   id: string
@@ -57,15 +60,42 @@ export function useHorariosProfesional(usuarioId: string) {
   return { horarios: (data ?? []) as HorarioStaff[], isLoading }
 }
 
-// Calcula los slots disponibles para un profesional en una fecha dada
-// cruzando horarios_staff con citas existentes
+function timeToMin(time: string): number {
+  const [h, m] = time.split(':').map(Number)
+  return h * 60 + m
+}
+
+function minToTime(min: number): string {
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+}
+
+// Calcula los slots disponibles para un profesional en una fecha dada,
+// cruzando horarios_staff, citas existentes, excepciones de horario y descansos.
 export function useSlotsDisponibles(
   profesionalId: string,
   fecha: string,
   citasExistentes: Cita[],
   duracionSlotMin = 30
 ): SlotDisponible[] {
+  const { config } = useAgendaConfig()
   const { horarios } = useHorariosProfesional(profesionalId)
+
+  // Excepciones del profesional para el mes de la fecha
+  const mes = fecha ? fecha.substring(0, 7) : ''
+  const { excepciones } = useExcepcionesPorUsuario(profesionalId, mes || undefined)
+
+  // Descansos de todos los horarios del profesional (filtramos por dia despues)
+  const { data: descansosRaw } = useQuery(
+    profesionalId
+      ? `SELECT hd.* FROM horarios_descansos hd
+         INNER JOIN horarios_staff hs ON hd.horario_staff_id = hs.id
+         WHERE hs.usuario_id = ? ORDER BY hd.hora_inicio`
+      : '',
+    profesionalId ? [profesionalId] : []
+  )
+  const todosDescansos = (descansosRaw ?? []) as HorarioDescanso[]
 
   if (!fecha || !profesionalId) return []
 
@@ -76,12 +106,35 @@ export function useSlotsDisponibles(
 
   if (!horarioDia) return []
 
-  const slots: SlotDisponible[] = []
-  const [hIni, mIni] = horarioDia.hora_inicio.split(':').map(Number)
-  const [hFin, mFin] = horarioDia.hora_fin.split(':').map(Number)
+  // Verificar excepcion para esta fecha exacta
+  const excepcionDia = excepciones.find((e) => e.fecha === fecha)
 
-  let minutosActual = hIni * 60 + mIni
-  const minutosFin = hFin * 60 + mFin
+  // DIA_LIBRE o BLOQUEO_EMERGENCIA → sin slots disponibles
+  if (
+    excepcionDia &&
+    (excepcionDia.tipo === 'DIA_LIBRE' || excepcionDia.tipo === 'BLOQUEO_EMERGENCIA')
+  ) {
+    return []
+  }
+
+  // HORARIO_MODIFICADO → usar horas de la excepcion
+  let horaInicioEfectiva = horarioDia.hora_inicio
+  let horaFinEfectiva = horarioDia.hora_fin
+  if (
+    excepcionDia?.tipo === 'HORARIO_MODIFICADO' &&
+    excepcionDia.hora_inicio &&
+    excepcionDia.hora_fin
+  ) {
+    horaInicioEfectiva = excepcionDia.hora_inicio
+    horaFinEfectiva = excepcionDia.hora_fin
+  }
+
+  const descansosDelDia = todosDescansos.filter(
+    (d) => d.horario_staff_id === horarioDia.id
+  )
+
+  let minutosActual = timeToMin(horaInicioEfectiva)
+  const minutosFin = timeToMin(horaFinEfectiva)
 
   // Citas del profesional en la fecha
   const citasDelDia = citasExistentes.filter((c) => {
@@ -89,16 +142,12 @@ export function useSlotsDisponibles(
     return c.fecha_inicio.startsWith(fecha)
   })
 
+  const slots: SlotDisponible[] = []
+
   while (minutosActual + duracionSlotMin <= minutosFin) {
-    const hSlot = Math.floor(minutosActual / 60)
-    const mSlot = minutosActual % 60
-    const hSlotFin = Math.floor((minutosActual + duracionSlotMin) / 60)
-    const mSlotFin = (minutosActual + duracionSlotMin) % 60
+    const horaInicio = minToTime(minutosActual)
+    const horaFin = minToTime(minutosActual + duracionSlotMin)
 
-    const horaInicio = `${String(hSlot).padStart(2, '0')}:${String(mSlot).padStart(2, '0')}`
-    const horaFin = `${String(hSlotFin).padStart(2, '0')}:${String(mSlotFin).padStart(2, '0')}`
-
-    // Verificar si el slot esta ocupado
     const slotInicioMs = new Date(`${fecha}T${horaInicio}:00`).getTime()
     const slotFinMs = new Date(`${fecha}T${horaFin}:00`).getTime()
 
@@ -109,7 +158,15 @@ export function useSlotsDisponibles(
       return slotInicioMs < citaFin && slotFinMs > citaIni
     })
 
-    slots.push({ horaInicio, horaFin, disponible: !ocupado })
+    const enDescanso =
+      !config.permitir_solapamiento_descanso &&
+      descansosDelDia.some((d) => {
+        const dIni = timeToMin(d.hora_inicio)
+        const dFin = timeToMin(d.hora_fin)
+        return minutosActual < dFin && minutosActual + duracionSlotMin > dIni
+      })
+
+    slots.push({ horaInicio, horaFin, disponible: !ocupado && !enDescanso })
     minutosActual += duracionSlotMin
   }
 

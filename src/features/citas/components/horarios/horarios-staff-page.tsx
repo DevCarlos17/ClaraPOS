@@ -16,8 +16,10 @@ import { FloppyDisk, Clock, Warning, UserList } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 import { BreaksEditor } from './breaks-editor'
 import { ExcepcionesTab } from './excepciones-tab'
+import { PlantillasManager } from './plantillas-manager'
 import { UnsavedChangesDialog } from './unsaved-changes-dialog'
 import { EmergencyBlockModal } from './emergency-block-modal'
+import type { PlantillaData } from '../../hooks/use-horarios-plantillas'
 
 interface DiaConfig {
   diaSemana: number
@@ -36,7 +38,7 @@ const DEFAULT_DIA: Omit<DiaConfig, 'diaSemana'> = {
   tiempoPreparacionMin: 0,
 }
 
-type Tab = 'plantilla' | 'excepciones'
+type Tab = 'plantilla' | 'excepciones' | 'plantillas'
 
 // PostgreSQL TIME devuelve "HH:MM:SS"; normalizar a "HH:MM" para inputs type="time"
 function normalizeTime(t: string): string {
@@ -270,6 +272,17 @@ export function HorariosStaffPage() {
     setDirty(true)
   }
 
+  const handleAplicarPlantilla = (data: PlantillaData[]) => {
+    const mapped = DIAS_SEMANA.map((d) => {
+      const src = data.find((x) => x.diaSemana === d)
+      if (src) return { diaSemana: d, horaInicio: src.horaInicio, horaFin: src.horaFin, isActive: src.isActive, tiempoPreparacionMin: src.tiempoPreparacionMin }
+      return { diaSemana: d, ...DEFAULT_DIA }
+    })
+    setHorariosDia(mapped)
+    setDirty(true)
+    setTab('plantilla')
+  }
+
   return (
     <div className="flex gap-6 h-full min-h-0">
       {/* Panel lateral: lista de profesionales */}
@@ -341,6 +354,7 @@ export function HorariosStaffPage() {
               <TabsList variant="line" className="w-full justify-start border-b border-border rounded-none h-auto p-0 mb-4">
                 <TabsTrigger value="plantilla" className="rounded-none px-4 py-2 h-auto">Plantilla Rutinaria</TabsTrigger>
                 <TabsTrigger value="excepciones" className="rounded-none px-4 py-2 h-auto">Excepciones</TabsTrigger>
+                <TabsTrigger value="plantillas" className="rounded-none px-4 py-2 h-auto">Plantillas</TabsTrigger>
               </TabsList>
 
               <TabsContent value="plantilla" className="flex-1 min-h-0 overflow-y-auto mt-0">
@@ -494,6 +508,13 @@ export function HorariosStaffPage() {
                   profesionalId={profesionalId}
                   empresaId={empresaId}
                   userId={user?.id ?? ''}
+                />
+              </TabsContent>
+
+              <TabsContent value="plantillas" className="flex-1 min-h-0 overflow-y-auto mt-0">
+                <PlantillasManager
+                  horarioActual={horariosDia}
+                  onAplicar={handleAplicarPlantilla}
                 />
               </TabsContent>
             </Tabs>

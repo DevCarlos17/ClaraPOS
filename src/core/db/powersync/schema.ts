@@ -1397,6 +1397,17 @@ const horarios_excepciones = new Table(
   { indexes: {} }
 )
 
+const horarios_plantillas = new Table(
+  {
+    empresa_id: column.text,
+    nombre: column.text,
+    data: column.text,
+    created_at: column.text,
+    updated_at: column.text,
+  },
+  { indexes: {} }
+)
+
 // =============================================
 // SCHEMA EXPORT
 // =============================================
@@ -1485,6 +1496,7 @@ export const AppSchema = new Schema({
   cita_items_extras,
   horarios_descansos,
   horarios_excepciones,
+  horarios_plantillas,
 })
 
 export type Database = (typeof AppSchema)['types']

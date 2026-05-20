@@ -12,21 +12,29 @@ import { es } from 'date-fns/locale'
 import { useNavigate } from '@tanstack/react-router'
 import type { Cita, CitaOperStatus } from '../../hooks/use-citas'
 
-const COLUMNAS: { titulo: string; statuses: CitaOperStatus[]; color: string }[] = [
+const COLUMNAS: {
+  titulo: string
+  statuses: CitaOperStatus[]
+  accent: string
+  badge: string
+}[] = [
   {
     titulo: 'Por Atender',
     statuses: ['RESERVADA'],
-    color: 'border-yellow-200 bg-yellow-50/50 dark:border-yellow-900 dark:bg-yellow-950/20',
+    accent: 'bg-amber-400',
+    badge: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
   },
   {
     titulo: 'En Operacion',
     statuses: ['EN_PROCESO'],
-    color: 'border-purple-200 bg-purple-50/50 dark:border-purple-900 dark:bg-purple-950/20',
+    accent: 'bg-violet-500',
+    badge: 'bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300',
   },
   {
     titulo: 'Finalizados',
     statuses: ['REALIZADA', 'CANCELADA'],
-    color: 'border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-950/20',
+    accent: 'bg-emerald-500',
+    badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
   },
 ]
 
@@ -148,20 +156,21 @@ export function PanelTrabajo() {
             return (
               <div
                 key={col.titulo}
-                className={`flex flex-col rounded-2xl border-2 ${col.color} overflow-hidden`}
+                className="flex flex-col rounded-lg border border-border/60 bg-muted/25 overflow-hidden [box-shadow:inset_0_2px_6px_0_rgb(0_0_0_/_0.05)]"
               >
                 {/* Header columna */}
-                <div className="flex items-center justify-between px-4 py-3 border-b">
-                  <span className="font-semibold text-sm">{col.titulo}</span>
-                  <span className="text-xs font-bold bg-white/70 dark:bg-black/20 rounded-full px-2 py-0.5">
+                <div className="flex items-center gap-2.5 px-3 py-2.5 border-b border-border/50 bg-background/70">
+                  <div className={`w-1 h-4 rounded-full shrink-0 ${col.accent}`} />
+                  <span className="font-semibold text-sm flex-1">{col.titulo}</span>
+                  <span className={`text-xs font-bold rounded-full px-2 py-0.5 ${col.badge}`}>
                     {items.length}
                   </span>
                 </div>
 
                 {/* Tarjetas */}
-                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
                   {items.length === 0 ? (
-                    <div className="text-center py-6 text-xs text-muted-foreground">
+                    <div className="text-center py-8 text-xs text-muted-foreground">
                       Sin citas
                     </div>
                   ) : (
