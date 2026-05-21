@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -294,18 +294,25 @@ export function CalendarioCitas() {
   }
   const validRange = validRangeEnd ? { end: validRangeEnd } : undefined
 
+  // Ticker que se actualiza cada minuto para mantener las clases de pasado en sync
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const todayMidnight = useMemo(() => {
+    const d = new Date(now)
+    d.setHours(0, 0, 0, 0)
+    return d
+  }, [now])
+
   const selectAllow = useCallback(
     (selectInfo: { start: Date; allDay: boolean }) => {
-      const now = new Date()
-      const todayMidnight = new Date(now)
-      todayMidnight.setHours(0, 0, 0, 0)
-
-      // Bloquear días anteriores al día de hoy
+      // Bloquear días anteriores al día de hoy (aplica a todas las vistas)
       if (selectInfo.start < todayMidnight) return false
 
-      // Para slots con hora (no allDay): bloquear slots que ya pasaron en el día de hoy.
-      // Se usa el inicio del slot directamente — si el slot empieza antes de ahora, está bloqueado.
-      // No hay margen: el slot de las 14:00 se permite hasta que el reloj marque 14:00.
+      // Para slots con hora (timeGrid): bloquear el slot si ya empezó
       if (!selectInfo.allDay && selectInfo.start < now) return false
 
       if (config.limite_futuro_dias > 0) {
@@ -314,20 +321,20 @@ export function CalendarioCitas() {
       }
       return true
     },
-    [config.limite_futuro_dias]
+    [todayMidnight, now, config.limite_futuro_dias]
   )
 
+  // Clases para slots de hora pasada en timeGrid (se recalcula cada minuto)
   const slotLaneClassNames = useCallback(
-    (arg: { date?: Date }) => (arg.date && arg.date < new Date() ? ['fc-slot-past'] : []),
-    []
+    (arg: { date?: Date }) => (arg.date && arg.date < now ? ['fc-slot-past'] : []),
+    [now]
   )
 
-  // Marca las celdas y headers de días pasados para estilos via CSS
-  const pastDayClassNames = useCallback((arg: { date: Date }) => {
-    const todayMidnight = new Date()
-    todayMidnight.setHours(0, 0, 0, 0)
-    return arg.date < todayMidnight ? ['fc-day-past-custom'] : []
-  }, [])
+  // Clases para celdas de días pasados (timeGrid y dayGrid)
+  const pastDayClassNames = useCallback(
+    (arg: { date: Date }) => (arg.date < todayMidnight ? ['fc-day-past-custom'] : []),
+    [todayMidnight]
+  )
 
   const VIEW_LABELS: Record<CalendarView, string> = {
     timeGridDay: 'Dia',
@@ -443,7 +450,7 @@ export function CalendarioCitas() {
             events={eventos}
             selectable
             selectMirror
-            selectConstraint=""
+            selectConstraint={{ startTime: '00:00', endTime: '24:00' }}
             selectAllow={selectAllow}
             slotLaneClassNames={slotLaneClassNames}
             dayCellClassNames={pastDayClassNames}

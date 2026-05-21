@@ -315,50 +315,85 @@
   opacity: 0.7;
 }
 
-/* Número de día en vista mes */
+/* Número de día en vista mes — atenuado, no navegable */
 .fc .fc-day-past-custom .fc-daygrid-day-number {
   color: var(--color-muted-foreground) !important;
+  pointer-events: none;
 }
 
-/* Cursor de bloqueo solo en las celdas de día pasado, no en los eventos */
+/* Eventos en días pasados siguen siendo clickeables */
 .fc .fc-day-past-custom .fc-event {
   pointer-events: auto;
   cursor: pointer;
   opacity: 0.85;
 }
 
-/* ─── Cursor: lógica por zona del calendario ─────────────────────────────
-   FullCalendar pone fc-not-allowed en el root .fc cuando el mouse está sobre
-   un slot donde selectAllow devuelve false. Eso afecta cursor en todo el
-   árbol. Sobreescribimos solo donde el cursor SIEMPRE debe ser pointer:
-   - columnas de días futuros (nunca bloqueadas)
-   Días pasados siempre son not-allowed → no sobreescribir.
-   Día de hoy: fc-not-allowed hace el trabajo fino slot a slot → no sobreescribir.
-   ──────────────────────────────────────────────────────────────────────── */
+/* ─── Cursor: lógica por zona del calendario ──────────────────────────── */
 
-/* Columnas de días FUTUROS en vista timeGrid (no today, no pasados) */
-.fc .fc-timegrid-col:not(.fc-day-past-custom):not(.fc-day-today) {
+/* Slots futuros en timeGrid (días futuros + hoy después de la línea roja).
+   selectConstraint cubre el 00:00-24:00 así que fc-not-allowed no aparece
+   en slots válidos. Solo necesitamos asegurarnos de que los slots sin
+   fc-slot-past muestren pointer. */
+.fc .fc-timegrid-slot:not(.fc-slot-past),
+.fc .fc-timegrid-slot:not(.fc-slot-past) > td {
   cursor: pointer !important;
 }
 
-/* Celdas de días futuros en vista mes */
-.fc .fc-daygrid-day:not(.fc-day-disabled):not(.fc-day-past-custom):not(.fc-day-today) {
-  cursor: pointer !important;
-}
-
-/* Hoy en vista mes: pointer (no hay granularidad de hora en dayGrid) */
-.fc .fc-daygrid-day.fc-day-today {
-  cursor: pointer !important;
-}
-
-/* ─── FullCalendar: slots de horas pasadas (hoy) ───────────────── */
-.fc-slot-past {
-  background-color: rgb(0 0 0 / 0.028) !important;
+/* Días pasados en timeGrid — columna completa */
+.fc .fc-timegrid-col.fc-day-past-custom {
   cursor: not-allowed !important;
 }
 
-/* Los eventos en horas pasadas siguen siendo visibles y clickeables */
+/* Celdas de días futuros + hoy en vista mes */
+.fc .fc-daygrid-day:not(.fc-day-past-custom) {
+  cursor: pointer !important;
+}
+
+/* Días pasados en vista mes */
+.fc .fc-daygrid-day.fc-day-past-custom {
+  cursor: not-allowed !important;
+}
+
+/* ─── FullCalendar: color de fondo de hoy — desactivar amarillo global ─── */
+
+/* FullCalendar pinta toda la columna de hoy con --fc-today-bg-color.
+   La neutralizamos aquí y solo pintamos los slots pasados. */
+.fc {
+  --fc-today-bg-color: transparent;
+}
+
+/* ─── FullCalendar: slots de horas pasadas (hoy, vista timeGrid) ───────── */
+.fc-slot-past {
+  background-color: var(--color-muted) !important;
+  cursor: not-allowed !important;
+}
+
+/* Eventos en horas pasadas siguen siendo visibles y clickeables */
 .fc-slot-past .fc-event {
   pointer-events: auto;
   cursor: pointer;
+}
+
+/* ─── FullCalendar: nowIndicator — línea roja de hora actual ───────────── */
+
+/* Línea roja más visible en timeGrid (día y semana) */
+.fc .fc-timegrid-now-indicator-line {
+  border-color: #ef4444 !important;
+  border-width: 2px !important;
+}
+
+/* Punto rojo en el eje de horas */
+.fc .fc-timegrid-now-indicator-arrow {
+  border-top-color: #ef4444 !important;
+  border-bottom-color: #ef4444 !important;
+}
+
+/* ─── Vista mes: resaltar hoy de forma más clara ──────────────── */
+.fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-frame {
+  background-color: color-mix(in srgb, #ef4444 8%, transparent) !important;
+}
+
+.fc .fc-daygrid-day.fc-day-today .fc-daygrid-day-number {
+  color: #ef4444 !important;
+  font-weight: 700;
 }
