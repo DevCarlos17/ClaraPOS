@@ -22,7 +22,6 @@ import { CitaDetalleModal } from './cita-detalle-modal'
 import { DragConfirmPopover, type DragConfirmState } from './drag-confirm-popover'
 import { CaretLeft, CaretRight, Plus } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
-import { todayStr as getTodayStr } from '@/lib/dates'
 import { toast } from 'sonner'
 import { useAgendaConfig } from '../../hooks/use-agenda-config'
 import { useGridTimeRange } from '../../hooks/use-horarios-staff'
@@ -283,17 +282,17 @@ export function CalendarioCitas() {
 
   const slotDuration = `${String(Math.floor(config.duracion_slot_default / 60)).padStart(2, '0')}:${String(config.duracion_slot_default % 60).padStart(2, '0')}:00`
 
-  const todayLocalStr = getTodayStr()
-
+  // validRange solo se usa cuando hay límite de días futuros configurado.
+  // NO incluir `start` porque eso oculta los días pasados de la semana (FullCalendar
+  // aplica fc-day-disabled y borra las fechas del header). El bloqueo de pasado
+  // lo maneja selectAllow + CSS custom.
   let validRangeEnd: string | undefined
   if (config.limite_futuro_dias > 0) {
     const d = new Date()
     d.setDate(d.getDate() + config.limite_futuro_dias)
     validRangeEnd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   }
-  const validRange = validRangeEnd
-    ? { start: todayLocalStr, end: validRangeEnd }
-    : { start: todayLocalStr }
+  const validRange = validRangeEnd ? { end: validRangeEnd } : undefined
 
   const selectAllow = useCallback(
     (selectInfo: { start: Date; allDay: boolean }) => {
@@ -319,6 +318,13 @@ export function CalendarioCitas() {
     (arg: { date?: Date }) => (arg.date && arg.date < new Date() ? ['fc-slot-past'] : []),
     []
   )
+
+  // Marca las celdas y headers de días pasados para estilos via CSS
+  const pastDayClassNames = useCallback((arg: { date: Date }) => {
+    const todayMidnight = new Date()
+    todayMidnight.setHours(0, 0, 0, 0)
+    return arg.date < todayMidnight ? ['fc-day-past-custom'] : []
+  }, [])
 
   const VIEW_LABELS: Record<CalendarView, string> = {
     timeGridDay: 'Dia',
@@ -436,6 +442,8 @@ export function CalendarioCitas() {
             selectMirror
             selectAllow={selectAllow}
             slotLaneClassNames={slotLaneClassNames}
+            dayCellClassNames={pastDayClassNames}
+            dayHeaderClassNames={pastDayClassNames}
             editable={esSupervisor}
             select={handleDateSelect}
             eventClick={handleEventClick}
@@ -444,7 +452,7 @@ export function CalendarioCitas() {
             headerToolbar={false}
             height="100%"
             slotDuration={slotDuration}
-            validRange={validRange}
+            {...(validRange ? { validRange } : {})}
             slotMinTime={slotMinTime}
             slotMaxTime={slotMaxTime}
             slotLabelFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
