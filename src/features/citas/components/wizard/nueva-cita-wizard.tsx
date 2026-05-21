@@ -162,7 +162,8 @@ export function NuevaCitaWizard() {
       }
     } catch (err) {
       console.error(err)
-      toast.error('Error al agendar la cita')
+      const mensaje = err instanceof Error ? err.message : 'Error al agendar la cita'
+      toast.error(mensaje)
     } finally {
       setGuardando(false)
     }

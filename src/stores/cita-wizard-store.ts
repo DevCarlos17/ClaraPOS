@@ -69,7 +69,7 @@ interface CitaWizardState {
   profesionalNombre: () => string
   // Sheet lateral
   sheetOpen: boolean
-  openSheet: (prefillFecha?: string) => void
+  openSheet: (prefillFecha?: string, prefillHoraInicio?: string, prefillHoraFin?: string) => void
   closeSheet: () => void
   // Persistencia
   guardarDraft: () => void
@@ -98,14 +98,26 @@ export const useCitaWizardStore = create<CitaWizardState>()((set, get) => ({
   ...initialState,
   sheetOpen: false,
 
-  openSheet: (prefillFecha?: string) => {
-    set({ sheetOpen: true })
-    if (prefillFecha && !get().fecha) {
-      set({ fecha: prefillFecha })
+  openSheet: (prefillFecha?: string, prefillHoraInicio?: string, prefillHoraFin?: string) => {
+    // Siempre resetear fecha/hora al abrir desde el calendario — el prefill nuevo tiene prioridad
+    if (prefillFecha) {
+      set({
+        sheetOpen: true,
+        fecha: prefillFecha,
+        horaInicio: prefillHoraInicio ?? '',
+        horaFin: prefillHoraFin ?? '',
+      })
+    } else {
+      set({ sheetOpen: true })
     }
   },
 
-  closeSheet: () => set({ sheetOpen: false }),
+  closeSheet: () => {
+    set({ sheetOpen: false })
+    // Limpiar fecha/hora para que el próximo openSheet desde calendario
+    // siempre pre-cargue la nueva selección sin interferencia del draft anterior
+    set({ fecha: '', horaInicio: '', horaFin: '' })
+  },
 
   setStep: (step) => {
     set({ step })

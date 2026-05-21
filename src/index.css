@@ -347,11 +347,13 @@
   cursor: pointer !important;
 }
 
-/* Días pasados en timeGrid — columna completa + hijos */
+/* Días pasados en timeGrid — columna completa + todos los hijos */
 .fc .fc-timegrid-col.fc-day-past-custom,
 .fc .fc-timegrid-col.fc-day-past-custom > td,
 .fc .fc-timegrid-col.fc-day-past-custom .fc-timegrid-col-bg,
-.fc .fc-timegrid-col.fc-day-past-custom .fc-timegrid-col-events {
+.fc .fc-timegrid-col.fc-day-past-custom .fc-timegrid-col-events,
+.fc .fc-timegrid-col.fc-day-past-custom .fc-timegrid-slot,
+.fc .fc-timegrid-col.fc-day-past-custom .fc-timegrid-slot > td {
   cursor: not-allowed !important;
 }
 
@@ -374,6 +376,7 @@
 }
 
 /* ─── FullCalendar: slots de horas pasadas (hoy, vista timeGrid) ───────── */
+/* fc-slot-past se aplica directamente en el td via slotLaneDidMount */
 .fc-slot-past {
   background-color: var(--color-muted) !important;
   cursor: not-allowed !important;

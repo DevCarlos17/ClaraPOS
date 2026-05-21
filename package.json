@@ -4,7 +4,7 @@
   "packageManager": "yarn@1.22.22",
   "type": "module",
   "scripts": {
-    "dev": "vite --port 3000",
+    "dev": "vite --port 4000",
     "build": "vite build",
     "serve": "vite preview",
     "lint": "eslint",

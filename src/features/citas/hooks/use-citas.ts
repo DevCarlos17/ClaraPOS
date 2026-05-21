@@ -194,6 +194,41 @@ export async function crearCita(data: {
   const now = localNow()
   const totalBs = (data.totalUsd * parseFloat(data.tasa)).toFixed(2)
 
+  // --- Validación 1: solapamiento con citas existentes del profesional ---
+  const citasSolapadas = await db.getAll<{ id: string }>(
+    `SELECT id FROM citas
+     WHERE empresa_id = ?
+       AND profesional_id = ?
+       AND cita_status NOT IN ('CANCELADA', 'NO_SHOW')
+       AND fecha_inicio < ?
+       AND fecha_fin > ?`,
+    [data.empresaId, data.profesionalId, data.fechaFin, data.fechaInicio]
+  )
+  if (citasSolapadas.length > 0) {
+    throw new Error('El profesional ya tiene una cita en ese horario.')
+  }
+
+  // --- Validación 2: hora dentro del horario del profesional ---
+  const fechaDate = new Date(data.fechaInicio)
+  const diaSemana = fechaDate.getDay()
+  const horaInicio = data.fechaInicio.substring(11, 16) // HH:MM en UTC — consistente con cómo se guarda
+  const horaFin = data.fechaFin.substring(11, 16)
+
+  const horarioProfesional = await db.getAll<{ hora_inicio: string; hora_fin: string }>(
+    `SELECT hora_inicio, hora_fin FROM horarios_staff
+     WHERE empresa_id = ? AND usuario_id = ? AND dia_semana = ? AND is_active = 1
+     LIMIT 1`,
+    [data.empresaId, data.profesionalId, diaSemana]
+  )
+  if (horarioProfesional.length > 0) {
+    const { hora_inicio, hora_fin } = horarioProfesional[0]
+    if (horaInicio < hora_inicio || horaFin > hora_fin) {
+      throw new Error(
+        `La cita está fuera del horario del profesional (${hora_inicio} - ${hora_fin}).`
+      )
+    }
+  }
+
   // Determinar finance_status segun tipo de checkout
   const financeStatus: CitaFinanceStatus =
     data.checkoutTipo === 'POS' ? 'PAGADO' : 'PENDIENTE'

@@ -75,6 +75,7 @@ export default defineConfig({
     },
   },
   server: {
+    port: 4000,
     allowedHosts: true,
     proxy: {
       '/proxy/bcv': {

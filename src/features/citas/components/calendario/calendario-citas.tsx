@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
+import { useRef, useState, useCallback, useEffect } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -125,8 +125,19 @@ export function CalendarioCitas() {
 
   const handleDateSelect = useCallback(
     (arg: DateSelectArg) => {
-      const dateStr = arg.start.toISOString().split('T')[0]
-      openSheet(dateStr)
+      const start = arg.start
+      const end = arg.end
+      const dateStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
+
+      if (arg.allDay) {
+        // Vista mes — solo fecha, sin hora
+        openSheet(dateStr)
+      } else {
+        // Vista semana/día — fecha + hora en formato HH:MM
+        const horaInicio = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`
+        const horaFin = `${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`
+        openSheet(dateStr, horaInicio, horaFin)
+      }
     },
     [openSheet]
   )
@@ -294,48 +305,50 @@ export function CalendarioCitas() {
   }
   const validRange = validRangeEnd ? { end: validRangeEnd } : undefined
 
-  // Ticker que se actualiza cada minuto para mantener las clases de pasado en sync
-  const [now, setNow] = useState(() => new Date())
+  // Usar refs para now y todayMidnight — el ticker actualiza la ref sin causar re-renders
+  // del calendario (evita el flash de citas cada minuto)
+  const nowRef = useRef(new Date())
+  const todayMidnightRef = useRef(() => {
+    const d = new Date()
+    d.setHours(0, 0, 0, 0)
+    return d
+  })
+  const todayMidnight = todayMidnightRef.current()
+
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 60_000)
+    const id = setInterval(() => { nowRef.current = new Date() }, 60_000)
     return () => clearInterval(id)
   }, [])
 
-  const todayMidnight = useMemo(() => {
-    const d = new Date(now)
-    d.setHours(0, 0, 0, 0)
-    return d
-  }, [now])
-
   const selectAllow = useCallback(
     (selectInfo: { start: Date; allDay: boolean }) => {
-      // Bloquear días anteriores al día de hoy (aplica a todas las vistas)
-      if (selectInfo.start < todayMidnight) return false
-
-      // Para slots con hora (timeGrid): bloquear el slot si ya empezó
+      const now = nowRef.current
+      const midnight = new Date(now)
+      midnight.setHours(0, 0, 0, 0)
+      if (selectInfo.start < midnight) return false
       if (!selectInfo.allDay && selectInfo.start < now) return false
-
       if (config.limite_futuro_dias > 0) {
         const maxDate = new Date(now.getTime() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
         if (selectInfo.start >= maxDate) return false
       }
       return true
     },
-    [todayMidnight, now, config.limite_futuro_dias]
+    [config.limite_futuro_dias]
   )
 
-  // Clases para slots de hora pasada en timeGrid (se recalcula cada minuto)
-  // Solo aplica en el día de hoy — días futuros nunca tienen slots pasados
-  const slotLaneClassNames = useCallback(
-    (arg: { date?: Date }) => {
-      if (!arg.date) return []
+  // slotLaneDidMount — aplica fc-slot-past directamente en el td del slot.
+  const slotLaneDidMount = useCallback(
+    (arg: { date: Date; el: HTMLElement }) => {
+      const now = nowRef.current
       const slotDate = arg.date
       const slotMidnight = new Date(slotDate)
       slotMidnight.setHours(0, 0, 0, 0)
       const isToday = slotMidnight.getTime() === todayMidnight.getTime()
-      return isToday && slotDate < now ? ['fc-slot-past'] : []
+      if (isToday && slotDate < now) {
+        arg.el.classList.add('fc-slot-past')
+      }
     },
-    [now, todayMidnight]
+    [todayMidnight]
   )
 
   // Clases para celdas de días pasados (timeGrid y dayGrid)
@@ -449,7 +462,7 @@ export function CalendarioCitas() {
           </button>
         </div>
 
-        <div className="flex-1 [&_.fc]:font-sans [&_.fc-timegrid-slot]:h-8 [&_.fc-event]:cursor-pointer [&_.fc-event]:rounded-md [&_.fc-event]:shadow-sm">
+        <div className="flex-1 [&_.fc]:font-sans [&_.fc-timegrid-slot]:h-8 [&_.fc-event]:cursor-pointer [&_.fc-event]:rounded-md [&_.fc-event]:shadow-sm [&_.fc-event-main]:overflow-hidden">
           <FullCalendar
             ref={calendarRef}
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
@@ -457,11 +470,30 @@ export function CalendarioCitas() {
             locale="es"
             firstDay={1}
             events={eventos}
+            eventContent={(arg) => {
+              const isDayView = arg.view.type === 'timeGridDay'
+              const timeText = arg.timeText
+              const title = arg.event.title
+              if (isDayView) {
+                return (
+                  <div className="flex items-center gap-1.5 px-1.5 py-0.5 w-full overflow-hidden">
+                    <span className="text-[11px] font-semibold whitespace-nowrap opacity-90">{timeText}</span>
+                    <span className="text-[11px] font-bold truncate">{title}</span>
+                  </div>
+                )
+              }
+              return (
+                <div className="flex flex-col px-1 py-0.5 overflow-hidden">
+                  <span className="text-[10px] font-semibold opacity-90 leading-tight">{timeText}</span>
+                  <span className="text-[11px] font-bold truncate leading-tight">{title}</span>
+                </div>
+              )
+            }}
             selectable
             selectMirror
             selectConstraint={{ startTime: '00:00', endTime: '24:00' }}
             selectAllow={selectAllow}
-            slotLaneClassNames={slotLaneClassNames}
+            slotLaneDidMount={slotLaneDidMount}
             dayCellClassNames={pastDayClassNames}
             dayHeaderClassNames={pastDayClassNames}
             editable={esSupervisor}

@@ -185,17 +185,13 @@ export function useSlotsDisponibles(
 interface GridTimeRange {
   slotMinTime: string
   slotMaxTime: string
-  businessHours: {
-    daysOfWeek: number[]
-    startTime: string
-    endTime: string
-  }
+  businessHours: { daysOfWeek: number[]; startTime: string; endTime: string }[]
 }
 
 const GRID_FALLBACK: GridTimeRange = {
-  slotMinTime: '07:00:00',
-  slotMaxTime: '21:00:00',
-  businessHours: { daysOfWeek: [1, 2, 3, 4, 5, 6], startTime: '08:00', endTime: '20:00' },
+  slotMinTime: '08:00:00',
+  slotMaxTime: '20:00:00',
+  businessHours: [{ daysOfWeek: [1, 2, 3, 4, 5, 6], startTime: '08:00', endTime: '20:00' }],
 }
 
 export function useGridTimeRange(): GridTimeRange {
@@ -220,16 +216,14 @@ export function useGridTimeRange(): GridTimeRange {
   const gridMin = minInicioMin
   const gridMax = maxFinMin
 
-  const diasConHorario = [...new Set(horarios.map((h) => h.dia_semana))].sort()
-
   return {
     slotMinTime: `${minToTime(gridMin)}:00`,
     slotMaxTime: `${minToTime(gridMax)}:00`,
-    businessHours: {
-      daysOfWeek: diasConHorario,
-      startTime: minToTime(minInicioMin),
-      endTime: minToTime(maxFinMin),
-    },
+    businessHours: horarios.map((h) => ({
+      daysOfWeek: [h.dia_semana],
+      startTime: h.hora_inicio,
+      endTime: h.hora_fin,
+    })),
   }
 }
 

@@ -226,8 +226,6 @@ function SlotsHoraPrioridad({
 export function StepFechaStaff() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [semanaOffset, setSemanaOffset] = useState(0)
-
   const {
     prioridadFiltro,
     profesionalFavorito,
@@ -241,6 +239,19 @@ export function StepFechaStaff() {
     setAsignacion,
     duracionTotalMin,
   } = useCitaWizardStore()
+
+  // Sincronizar semanaOffset con la fecha pre-cargada desde el calendario
+  const calcularOffsetDesdeFecha = (fechaStr: string): number => {
+    if (!fechaStr) return 0
+    const hoy = new Date()
+    const inicioSemanaHoy = startOfWeek(hoy, { weekStartsOn: 1 })
+    const fechaDate = new Date(fechaStr + 'T12:00:00')
+    const inicioSemanaFecha = startOfWeek(fechaDate, { weekStartsOn: 1 })
+    const diffMs = inicioSemanaFecha.getTime() - inicioSemanaHoy.getTime()
+    return Math.round(diffMs / (7 * 24 * 60 * 60 * 1000))
+  }
+
+  const [semanaOffset, setSemanaOffset] = useState(() => calcularOffsetDesdeFecha(fecha))
 
   const duracion = duracionTotalMin()
 
