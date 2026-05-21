@@ -66,7 +66,8 @@ export function ConfigAgenda() {
         permitir_solapamiento_descanso: solapar,
       })
       toast.success('Configuracion de agenda guardada')
-    } catch {
+    } catch (e) {
+      console.error('[ConfigAgenda] Error al guardar:', e)
       toast.error('Error al guardar configuracion')
     } finally {
       setGuardando(false)

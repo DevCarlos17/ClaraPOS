@@ -21,7 +21,8 @@ const DEFAULTS: AgendaConfig = {
 
 function parseAgendaConfig(configStr: string): AgendaConfig {
   try {
-    const raw = JSON.parse(configStr)
+    let raw = JSON.parse(configStr)
+    if (typeof raw === 'string') raw = JSON.parse(raw)
     const agenda = (raw?.agenda ?? {}) as Partial<AgendaConfig>
     return { ...DEFAULTS, ...agenda }
   } catch {
@@ -60,7 +61,11 @@ export async function guardarAgendaConfig(
 
   let parsed: Record<string, unknown> = {}
   try {
-    parsed = JSON.parse(rows[0]?.config ?? '{}')
+    let rawParsed: unknown = JSON.parse(rows[0]?.config ?? '{}')
+    if (typeof rawParsed === 'string') rawParsed = JSON.parse(rawParsed)
+    if (typeof rawParsed === 'object' && rawParsed !== null) {
+      parsed = rawParsed as Record<string, unknown>
+    }
   } catch {
     // keep empty object
   }

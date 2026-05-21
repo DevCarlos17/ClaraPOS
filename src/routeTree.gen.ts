@@ -20,6 +20,7 @@ import { Route as AppClinicaRouteImport } from './routes/_app/clinica'
 import { Route as AppClientesRouteImport } from './routes/_app/clientes'
 import { Route as authRegisterRouteImport } from './routes/(auth)/register'
 import { Route as authLoginRouteImport } from './routes/(auth)/login'
+import { Route as AppCitasRouteRouteImport } from './routes/_app/citas/route'
 import { Route as AppClientesIndexRouteImport } from './routes/_app/clientes/index'
 import { Route as AppCitasIndexRouteImport } from './routes/_app/citas/index'
 import { Route as AppVentasReportesRouteImport } from './routes/_app/ventas/reportes'
@@ -128,15 +129,20 @@ const authLoginRoute = authLoginRouteImport.update({
   path: '/login',
   getParentRoute: () => authRouteRoute,
 } as any)
+const AppCitasRouteRoute = AppCitasRouteRouteImport.update({
+  id: '/citas',
+  path: '/citas',
+  getParentRoute: () => AppRouteRoute,
+} as any)
 const AppClientesIndexRoute = AppClientesIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppClientesRoute,
 } as any)
 const AppCitasIndexRoute = AppCitasIndexRouteImport.update({
-  id: '/citas/',
-  path: '/citas/',
-  getParentRoute: () => AppRouteRoute,
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppCitasRouteRoute,
 } as any)
 const AppVentasReportesRoute = AppVentasReportesRouteImport.update({
   id: '/ventas/reportes',
@@ -353,24 +359,24 @@ const AppClientesCuentasPorCobrarRoute =
     getParentRoute: () => AppClientesRoute,
   } as any)
 const AppCitasPanelRoute = AppCitasPanelRouteImport.update({
-  id: '/citas/panel',
-  path: '/citas/panel',
-  getParentRoute: () => AppRouteRoute,
+  id: '/panel',
+  path: '/panel',
+  getParentRoute: () => AppCitasRouteRoute,
 } as any)
 const AppCitasNuevaRoute = AppCitasNuevaRouteImport.update({
-  id: '/citas/nueva',
-  path: '/citas/nueva',
-  getParentRoute: () => AppRouteRoute,
+  id: '/nueva',
+  path: '/nueva',
+  getParentRoute: () => AppCitasRouteRoute,
 } as any)
 const AppCitasHorariosStaffRoute = AppCitasHorariosStaffRouteImport.update({
-  id: '/citas/horarios-staff',
-  path: '/citas/horarios-staff',
-  getParentRoute: () => AppRouteRoute,
+  id: '/horarios-staff',
+  path: '/horarios-staff',
+  getParentRoute: () => AppCitasRouteRoute,
 } as any)
 const AppCitasCalendarioRoute = AppCitasCalendarioRouteImport.update({
-  id: '/citas/calendario',
-  path: '/citas/calendario',
-  getParentRoute: () => AppRouteRoute,
+  id: '/calendario',
+  path: '/calendario',
+  getParentRoute: () => AppCitasRouteRoute,
 } as any)
 const AppCajaSesionesRoute = AppCajaSesionesRouteImport.update({
   id: '/caja/sesiones',
@@ -419,6 +425,7 @@ const AppConfiguracionUsuariosUsuarioIdEditarRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/citas': typeof AppCitasRouteRouteWithChildren
   '/login': typeof authLoginRoute
   '/register': typeof authRegisterRoute
   '/clientes': typeof AppClientesRouteWithChildren
@@ -550,6 +557,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/(auth)': typeof authRouteRouteWithChildren
   '/_app': typeof AppRouteRouteWithChildren
+  '/_app/citas': typeof AppCitasRouteRouteWithChildren
   '/(auth)/login': typeof authLoginRoute
   '/(auth)/register': typeof authRegisterRoute
   '/_app/clientes': typeof AppClientesRouteWithChildren
@@ -617,6 +625,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/citas'
     | '/login'
     | '/register'
     | '/clientes'
@@ -747,6 +756,7 @@ export interface FileRouteTypes {
     | '/'
     | '/(auth)'
     | '/_app'
+    | '/_app/citas'
     | '/(auth)/login'
     | '/(auth)/register'
     | '/_app/clientes'
@@ -896,6 +906,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof authLoginRouteImport
       parentRoute: typeof authRouteRoute
     }
+    '/_app/citas': {
+      id: '/_app/citas'
+      path: '/citas'
+      fullPath: '/citas'
+      preLoaderRoute: typeof AppCitasRouteRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
     '/_app/clientes/': {
       id: '/_app/clientes/'
       path: '/'
@@ -905,10 +922,10 @@ declare module '@tanstack/react-router' {
     }
     '/_app/citas/': {
       id: '/_app/citas/'
-      path: '/citas'
+      path: '/'
       fullPath: '/citas/'
       preLoaderRoute: typeof AppCitasIndexRouteImport
-      parentRoute: typeof AppRouteRoute
+      parentRoute: typeof AppCitasRouteRoute
     }
     '/_app/ventas/reportes': {
       id: '/_app/ventas/reportes'
@@ -1192,31 +1209,31 @@ declare module '@tanstack/react-router' {
     }
     '/_app/citas/panel': {
       id: '/_app/citas/panel'
-      path: '/citas/panel'
+      path: '/panel'
       fullPath: '/citas/panel'
       preLoaderRoute: typeof AppCitasPanelRouteImport
-      parentRoute: typeof AppRouteRoute
+      parentRoute: typeof AppCitasRouteRoute
     }
     '/_app/citas/nueva': {
       id: '/_app/citas/nueva'
-      path: '/citas/nueva'
+      path: '/nueva'
       fullPath: '/citas/nueva'
       preLoaderRoute: typeof AppCitasNuevaRouteImport
-      parentRoute: typeof AppRouteRoute
+      parentRoute: typeof AppCitasRouteRoute
     }
     '/_app/citas/horarios-staff': {
       id: '/_app/citas/horarios-staff'
-      path: '/citas/horarios-staff'
+      path: '/horarios-staff'
       fullPath: '/citas/horarios-staff'
       preLoaderRoute: typeof AppCitasHorariosStaffRouteImport
-      parentRoute: typeof AppRouteRoute
+      parentRoute: typeof AppCitasRouteRoute
     }
     '/_app/citas/calendario': {
       id: '/_app/citas/calendario'
-      path: '/citas/calendario'
+      path: '/calendario'
       fullPath: '/citas/calendario'
       preLoaderRoute: typeof AppCitasCalendarioRouteImport
-      parentRoute: typeof AppRouteRoute
+      parentRoute: typeof AppCitasRouteRoute
     }
     '/_app/caja/sesiones': {
       id: '/_app/caja/sesiones'
@@ -1291,6 +1308,26 @@ const authRouteRouteWithChildren = authRouteRoute._addFileChildren(
   authRouteRouteChildren,
 )
 
+interface AppCitasRouteRouteChildren {
+  AppCitasCalendarioRoute: typeof AppCitasCalendarioRoute
+  AppCitasHorariosStaffRoute: typeof AppCitasHorariosStaffRoute
+  AppCitasNuevaRoute: typeof AppCitasNuevaRoute
+  AppCitasPanelRoute: typeof AppCitasPanelRoute
+  AppCitasIndexRoute: typeof AppCitasIndexRoute
+}
+
+const AppCitasRouteRouteChildren: AppCitasRouteRouteChildren = {
+  AppCitasCalendarioRoute: AppCitasCalendarioRoute,
+  AppCitasHorariosStaffRoute: AppCitasHorariosStaffRoute,
+  AppCitasNuevaRoute: AppCitasNuevaRoute,
+  AppCitasPanelRoute: AppCitasPanelRoute,
+  AppCitasIndexRoute: AppCitasIndexRoute,
+}
+
+const AppCitasRouteRouteWithChildren = AppCitasRouteRoute._addFileChildren(
+  AppCitasRouteRouteChildren,
+)
+
 interface AppClientesRouteChildren {
   AppClientesCuentasPorCobrarRoute: typeof AppClientesCuentasPorCobrarRoute
   AppClientesGestionRoute: typeof AppClientesGestionRoute
@@ -1329,6 +1366,7 @@ const AppConfiguracionUsuariosRouteWithChildren =
   )
 
 interface AppRouteRouteChildren {
+  AppCitasRouteRoute: typeof AppCitasRouteRouteWithChildren
   AppClientesRoute: typeof AppClientesRouteWithChildren
   AppClinicaRoute: typeof AppClinicaRoute
   AppCxcRoute: typeof AppCxcRoute
@@ -1340,10 +1378,6 @@ interface AppRouteRouteChildren {
   AppCajaMovimientosRoute: typeof AppCajaMovimientosRoute
   AppCajaRendimientoRoute: typeof AppCajaRendimientoRoute
   AppCajaSesionesRoute: typeof AppCajaSesionesRoute
-  AppCitasCalendarioRoute: typeof AppCitasCalendarioRoute
-  AppCitasHorariosStaffRoute: typeof AppCitasHorariosStaffRoute
-  AppCitasNuevaRoute: typeof AppCitasNuevaRoute
-  AppCitasPanelRoute: typeof AppCitasPanelRoute
   AppComprasCxpRoute: typeof AppComprasCxpRoute
   AppComprasFacturasRoute: typeof AppComprasFacturasRoute
   AppComprasGastosRoute: typeof AppComprasGastosRoute
@@ -1381,10 +1415,10 @@ interface AppRouteRouteChildren {
   AppVentasNuevaRoute: typeof AppVentasNuevaRoute
   AppVentasPrestamosRoute: typeof AppVentasPrestamosRoute
   AppVentasReportesRoute: typeof AppVentasReportesRoute
-  AppCitasIndexRoute: typeof AppCitasIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
+  AppCitasRouteRoute: AppCitasRouteRouteWithChildren,
   AppClientesRoute: AppClientesRouteWithChildren,
   AppClinicaRoute: AppClinicaRoute,
   AppCxcRoute: AppCxcRoute,
@@ -1396,10 +1430,6 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppCajaMovimientosRoute: AppCajaMovimientosRoute,
   AppCajaRendimientoRoute: AppCajaRendimientoRoute,
   AppCajaSesionesRoute: AppCajaSesionesRoute,
-  AppCitasCalendarioRoute: AppCitasCalendarioRoute,
-  AppCitasHorariosStaffRoute: AppCitasHorariosStaffRoute,
-  AppCitasNuevaRoute: AppCitasNuevaRoute,
-  AppCitasPanelRoute: AppCitasPanelRoute,
   AppComprasCxpRoute: AppComprasCxpRoute,
   AppComprasFacturasRoute: AppComprasFacturasRoute,
   AppComprasGastosRoute: AppComprasGastosRoute,
@@ -1438,7 +1468,6 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppVentasNuevaRoute: AppVentasNuevaRoute,
   AppVentasPrestamosRoute: AppVentasPrestamosRoute,
   AppVentasReportesRoute: AppVentasReportesRoute,
-  AppCitasIndexRoute: AppCitasIndexRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
