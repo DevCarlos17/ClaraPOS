@@ -296,17 +296,20 @@ export function CalendarioCitas() {
 
   const selectAllow = useCallback(
     (selectInfo: { start: Date; allDay: boolean }) => {
-      const todayMidnight = new Date()
+      const now = new Date()
+      const todayMidnight = new Date(now)
       todayMidnight.setHours(0, 0, 0, 0)
 
-      // Block past days entirely
+      // Bloquear días anteriores al día de hoy
       if (selectInfo.start < todayMidnight) return false
 
-      // For time grid slots (not all-day): also block past hours within today
-      if (!selectInfo.allDay && selectInfo.start < new Date()) return false
+      // Para slots con hora (no allDay): bloquear slots que ya pasaron en el día de hoy.
+      // Se usa el inicio del slot directamente — si el slot empieza antes de ahora, está bloqueado.
+      // No hay margen: el slot de las 14:00 se permite hasta que el reloj marque 14:00.
+      if (!selectInfo.allDay && selectInfo.start < now) return false
 
       if (config.limite_futuro_dias > 0) {
-        const maxDate = new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
+        const maxDate = new Date(now.getTime() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
         if (selectInfo.start >= maxDate) return false
       }
       return true

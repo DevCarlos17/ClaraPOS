@@ -327,10 +327,28 @@
   opacity: 0.85;
 }
 
-/* Cursor normal en días presentes y futuros */
-.fc-daygrid-day:not(.fc-day-disabled):not(.fc-day-past-custom),
-.fc-timegrid-slot:not(.fc-slot-past) {
-  cursor: pointer;
+/* ─── Cursor: lógica por zona del calendario ─────────────────────────────
+   FullCalendar pone fc-not-allowed en el root .fc cuando el mouse está sobre
+   un slot donde selectAllow devuelve false. Eso afecta cursor en todo el
+   árbol. Sobreescribimos solo donde el cursor SIEMPRE debe ser pointer:
+   - columnas de días futuros (nunca bloqueadas)
+   Días pasados siempre son not-allowed → no sobreescribir.
+   Día de hoy: fc-not-allowed hace el trabajo fino slot a slot → no sobreescribir.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* Columnas de días FUTUROS en vista timeGrid (no today, no pasados) */
+.fc .fc-timegrid-col:not(.fc-day-past-custom):not(.fc-day-today) {
+  cursor: pointer !important;
+}
+
+/* Celdas de días futuros en vista mes */
+.fc .fc-daygrid-day:not(.fc-day-disabled):not(.fc-day-past-custom):not(.fc-day-today) {
+  cursor: pointer !important;
+}
+
+/* Hoy en vista mes: pointer (no hay granularidad de hora en dayGrid) */
+.fc .fc-daygrid-day.fc-day-today {
+  cursor: pointer !important;
 }
 
 /* ─── FullCalendar: slots de horas pasadas (hoy) ───────────────── */
