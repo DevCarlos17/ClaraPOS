@@ -33,6 +33,7 @@ const TABLE_NATURAL_KEYS: Record<string, string> = {
 // El connector convierte integers a booleans antes de enviar a Supabase
 const BOOLEAN_COLUMNS: Record<string, string[]> = {
   horarios_staff: ['is_active', 'cruza_medianoche'],
+  citas: ['ejecucion_paralela'],
 }
 
 // Columnas que NO se deben actualizar en un UPDATE (son inmutables o son el filtro del match)
@@ -339,7 +340,8 @@ export class SupabaseConnector
                 result = { error: null }
               }
             } else {
-              result = await table.upsert(record)
+              const convertedRecord = convertBooleans(op.table, record as Record<string, unknown>)
+              result = await table.upsert(convertedRecord)
             }
             break
           }

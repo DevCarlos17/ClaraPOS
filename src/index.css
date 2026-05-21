@@ -266,25 +266,39 @@
 
 /* ─── FullCalendar: días fuera del rango válido ───────────────── */
 
+/* Tint de fondo en lugar de opacity — los bordes y textos quedan visibles */
 .fc-day-disabled {
   cursor: not-allowed !important;
-  opacity: 0.55;
   position: relative;
+  background-color: var(--color-muted) !important;
 }
 
 .fc-day-disabled::after {
   content: '';
   position: absolute;
   inset: 0;
-  background-color: rgb(0 0 0 / 0.04);
+  background-color: rgb(0 0 0 / 0.02);
   pointer-events: none;
   z-index: 1;
 }
 
-/* Evitar que eventos existentes en días pasados hereden el cursor */
+/* Número de día en vista mes — visible pero atenuado */
+.fc-day-disabled .fc-daygrid-day-number {
+  color: var(--color-muted-foreground) !important;
+  pointer-events: none;
+}
+
+/* Header de columna en días deshabilitados (vista semana/día) — texto legible */
+.fc .fc-col-header-cell.fc-day-disabled .fc-col-header-cell-cushion {
+  color: var(--color-muted-foreground) !important;
+  opacity: 0.65;
+}
+
+/* Eventos en días pasados siguen siendo clickeables */
 .fc-day-disabled .fc-event {
   pointer-events: auto;
   cursor: pointer;
+  opacity: 1;
 }
 
 .fc-daygrid-day:not(.fc-day-disabled),

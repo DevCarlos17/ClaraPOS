@@ -155,6 +155,12 @@ export function CalendarioCitas() {
         return
       }
 
+      if (nuevaFechaInicio < new Date()) {
+        arg.revert()
+        toast.error('No se puede reprogramar una cita en el pasado')
+        return
+      }
+
       setPendingDrop({
         citaId: cita.id,
         clienteNombre: clienteMap.get(cita.cliente_id) ?? 'Cliente',
@@ -259,9 +265,7 @@ export function CalendarioCitas() {
 
   const selectAllow = useCallback(
     (selectInfo: { start: Date }) => {
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      if (selectInfo.start < today) return false
+      if (selectInfo.start < new Date()) return false
       if (config.limite_futuro_dias > 0) {
         const maxDate = new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
         if (selectInfo.start >= maxDate) return false

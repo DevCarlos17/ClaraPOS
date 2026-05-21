@@ -49,6 +49,15 @@ function SlotsProfesional({
     })
   }
 
+  const ahora = new Date()
+  const esPasado = (horaIni: string): boolean => {
+    if (fecha !== todayStr()) return false
+    const [h, m] = horaIni.split(':').map(Number)
+    const slotTime = new Date(ahora)
+    slotTime.setHours(h, m, 0, 0)
+    return slotTime < ahora
+  }
+
   if (!fecha) return null
 
   if (slots.length === 0) {
@@ -71,7 +80,7 @@ function SlotsProfesional({
         {slots.map((slot) => {
           const seleccionado = slot.horaInicio === horaInicio
           const bloqueadoGoogle = slot.disponible && isBlockedByGoogle(slot.horaInicio, slot.horaFin)
-          const disponible = slot.disponible && !bloqueadoGoogle
+          const disponible = slot.disponible && !bloqueadoGoogle && !esPasado(slot.horaInicio)
           return (
             <button
               key={slot.horaInicio}
