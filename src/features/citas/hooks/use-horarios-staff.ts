@@ -216,9 +216,9 @@ export function useGridTimeRange(): GridTimeRange {
   const minInicioMin = Math.min(...horarios.map((h) => timeToMin(h.hora_inicio)))
   const maxFinMin = Math.max(...horarios.map((h) => timeToMin(h.hora_fin)))
 
-  // 1h de padding a cada lado, clampeado a 00:00 y 24:00
-  const gridMin = Math.max(0, minInicioMin - 60)
-  const gridMax = Math.min(24 * 60, maxFinMin + 60)
+  // Sin padding — el grid empieza y termina exactamente en los horarios de los trabajadores
+  const gridMin = minInicioMin
+  const gridMax = maxFinMin
 
   const diasConHorario = [...new Set(horarios.map((h) => h.dia_semana))].sort()
 

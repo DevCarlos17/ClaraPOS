@@ -455,6 +455,7 @@ export function CalendarioCitas() {
             plugins={[dayGridPlugin, timeGridPlugin, interactionPlugin, listPlugin]}
             initialView={view}
             locale="es"
+            firstDay={1}
             events={eventos}
             selectable
             selectMirror
