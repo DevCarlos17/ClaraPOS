@@ -325,9 +325,17 @@ export function CalendarioCitas() {
   )
 
   // Clases para slots de hora pasada en timeGrid (se recalcula cada minuto)
+  // Solo aplica en el día de hoy — días futuros nunca tienen slots pasados
   const slotLaneClassNames = useCallback(
-    (arg: { date?: Date }) => (arg.date && arg.date < now ? ['fc-slot-past'] : []),
-    [now]
+    (arg: { date?: Date }) => {
+      if (!arg.date) return []
+      const slotDate = arg.date
+      const slotMidnight = new Date(slotDate)
+      slotMidnight.setHours(0, 0, 0, 0)
+      const isToday = slotMidnight.getTime() === todayMidnight.getTime()
+      return isToday && slotDate < now ? ['fc-slot-past'] : []
+    },
+    [now, todayMidnight]
   )
 
   // Clases para celdas de días pasados (timeGrid y dayGrid)

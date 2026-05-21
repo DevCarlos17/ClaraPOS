@@ -339,8 +339,19 @@
   cursor: pointer !important;
 }
 
-/* Días pasados en timeGrid — columna completa */
-.fc .fc-timegrid-col.fc-day-past-custom {
+/* Columnas de días futuros + hoy en timeGrid (col + inner td) */
+.fc .fc-timegrid-col:not(.fc-day-past-custom),
+.fc .fc-timegrid-col:not(.fc-day-past-custom) > td,
+.fc .fc-timegrid-col:not(.fc-day-past-custom) .fc-timegrid-col-bg,
+.fc .fc-timegrid-col:not(.fc-day-past-custom) .fc-timegrid-col-events {
+  cursor: pointer !important;
+}
+
+/* Días pasados en timeGrid — columna completa + hijos */
+.fc .fc-timegrid-col.fc-day-past-custom,
+.fc .fc-timegrid-col.fc-day-past-custom > td,
+.fc .fc-timegrid-col.fc-day-past-custom .fc-timegrid-col-bg,
+.fc .fc-timegrid-col.fc-day-past-custom .fc-timegrid-col-events {
   cursor: not-allowed !important;
 }
 
