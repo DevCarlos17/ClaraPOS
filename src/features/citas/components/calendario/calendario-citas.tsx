@@ -443,6 +443,7 @@ export function CalendarioCitas() {
             events={eventos}
             selectable
             selectMirror
+            selectConstraint=""
             selectAllow={selectAllow}
             slotLaneClassNames={slotLaneClassNames}
             dayCellClassNames={pastDayClassNames}
@@ -454,6 +455,7 @@ export function CalendarioCitas() {
             eventDrop={handleEventDrop}
             headerToolbar={false}
             height="100%"
+            expandRows
             slotDuration={slotDuration}
             {...(validRange ? { validRange } : {})}
             slotMinTime={slotMinTime}
