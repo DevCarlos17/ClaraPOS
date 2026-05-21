@@ -5,11 +5,12 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useQuery } from '@powersync/react'
 import { CitaCard } from './cita-card'
+import { NuevaCitaSheet } from '../wizard/nueva-cita-sheet'
 import { Button } from '@/components/ui/button'
 import { Plus, CaretLeft, CaretRight } from '@phosphor-icons/react'
 import { format, addDays } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { useNavigate } from '@tanstack/react-router'
+import { useCitaWizardStore } from '@/stores/cita-wizard-store'
 import type { Cita, CitaOperStatus } from '../../hooks/use-citas'
 
 const COLUMNAS: {
@@ -39,8 +40,8 @@ const COLUMNAS: {
 ]
 
 export function PanelTrabajo() {
-  const navigate = useNavigate()
   const { user } = useCurrentUser()
+  const { openSheet } = useCitaWizardStore()
   const empresaId = user?.empresa_id ?? ''
   const { hasPermission } = usePermissions()
 
@@ -84,6 +85,7 @@ export function PanelTrabajo() {
 
   return (
     <div className="flex flex-col h-full gap-4">
+      <NuevaCitaSheet />
       {/* Barra superior */}
       <div className="flex items-center gap-3 flex-wrap">
         {/* Navegacion de fecha */}
@@ -136,7 +138,7 @@ export function PanelTrabajo() {
           <Button
             size="sm"
             className="gap-2"
-            onClick={() => navigate({ to: '/citas/nueva' as any })}
+            onClick={() => openSheet()}
           >
             <Plus size={16} />
             Nueva Cita

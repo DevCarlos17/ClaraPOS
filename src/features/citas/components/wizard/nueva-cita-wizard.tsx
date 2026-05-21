@@ -54,6 +54,8 @@ export function NuevaCitaWizard() {
     profesionalId,
     restaurarDraft,
     reset,
+    sheetOpen,
+    closeSheet,
   } = useCitaWizardStore()
 
   // Detectar sesion huerfana al montar
@@ -91,6 +93,7 @@ export function NuevaCitaWizard() {
 
   const goBack = () => {
     if (step > 1) setStep((step - 1) as 1 | 2 | 3 | 4)
+    else if (sheetOpen) { reset(); closeSheet() }
     else navigate({ to: '/citas/calendario' as any })
   }
 
@@ -152,7 +155,11 @@ export function NuevaCitaWizard() {
       })
 
       reset()
-      navigate({ to: '/citas/calendario' as any })
+      if (sheetOpen) {
+        closeSheet()
+      } else {
+        navigate({ to: '/citas/calendario' as any })
+      }
     } catch (err) {
       console.error(err)
       toast.error('Error al agendar la cita')
@@ -260,15 +267,19 @@ export function NuevaCitaWizard() {
         <div className="flex-1">{STEP_COMPONENTS[step - 1]}</div>
 
         {/* Navegacion */}
-        <div className="flex gap-3 pt-4 border-t">
+        <div className="sticky bottom-0 bg-background pt-4 pb-2 border-t flex gap-3 mt-2">
           <Button variant="outline" onClick={goBack} className="gap-2">
             <ArrowLeft size={16} />
             {step === 1 ? 'Cancelar' : 'Atras'}
           </Button>
           <div className="flex-1" />
           {step < 4 ? (
-            <Button onClick={goNext} disabled={!canGoNext()} className="gap-2">
-              Siguiente
+            <Button
+              onClick={goNext}
+              disabled={!canGoNext()}
+              className="gap-2 bg-foreground text-background hover:bg-foreground/85"
+            >
+              Continuar
               <ArrowRight size={16} />
             </Button>
           ) : (
@@ -278,7 +289,7 @@ export function NuevaCitaWizard() {
               className="gap-2 bg-green-600 hover:bg-green-700"
             >
               <CheckCircle size={16} />
-              {guardando ? 'Guardando...' : 'Confirmar Cita'}
+              {guardando ? 'Guardando...' : 'Guardar Cita'}
             </Button>
           )}
         </div>

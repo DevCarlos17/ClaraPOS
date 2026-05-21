@@ -67,6 +67,10 @@ interface CitaWizardState {
   // Principal profesional (para compatibilidad con crearCita)
   profesionalId: () => string
   profesionalNombre: () => string
+  // Sheet lateral
+  sheetOpen: boolean
+  openSheet: (prefillFecha?: string) => void
+  closeSheet: () => void
   // Persistencia
   guardarDraft: () => void
   restaurarDraft: () => boolean
@@ -92,6 +96,16 @@ const initialState = {
 
 export const useCitaWizardStore = create<CitaWizardState>()((set, get) => ({
   ...initialState,
+  sheetOpen: false,
+
+  openSheet: (prefillFecha?: string) => {
+    set({ sheetOpen: true })
+    if (prefillFecha && !get().fecha) {
+      set({ fecha: prefillFecha })
+    }
+  },
+
+  closeSheet: () => set({ sheetOpen: false }),
 
   setStep: (step) => {
     set({ step })

@@ -40,7 +40,6 @@ import {
   Handshake,
   ListNumbers,
   CalendarDots,
-  CalendarCheck,
   Kanban,
   Clock,
   UserCircle,
@@ -147,7 +146,6 @@ const menuItems: MenuItem[] = [
     icon: CalendarDots,
     children: [
       { title: 'Calendario', url: '/citas/calendario', icon: CalendarDots, requiredPermission: PERMISSIONS.CITAS_VIEW },
-      { title: 'Agendar Cita', url: '/citas/nueva', icon: CalendarCheck, requiredPermission: PERMISSIONS.CITAS_CREATE },
       { title: 'Panel de Trabajo', url: '/citas/panel', icon: Kanban, requiredPermission: PERMISSIONS.CITAS_VIEW },
       { title: 'Horarios de Staff', url: '/citas/horarios-staff', icon: Clock, requiredPermission: PERMISSIONS.CITAS_HORARIOS },
     ],

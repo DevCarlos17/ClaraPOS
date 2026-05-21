@@ -5,6 +5,8 @@ import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import listPlugin from '@fullcalendar/list'
 import type { EventClickArg, DateSelectArg, EventInput, EventDropArg } from '@fullcalendar/core'
+import { useCitaWizardStore } from '@/stores/cita-wizard-store'
+import { NuevaCitaSheet } from '../wizard/nueva-cita-sheet'
 import {
   useCitasRango,
   reprogramarCita,
@@ -18,9 +20,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { CitaDetalleModal } from './cita-detalle-modal'
 import { DragConfirmPopover, type DragConfirmState } from './drag-confirm-popover'
-import { Button } from '@/components/ui/button'
 import { CaretLeft, CaretRight, Plus } from '@phosphor-icons/react'
-import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { useAgendaConfig } from '../../hooks/use-agenda-config'
@@ -53,8 +53,8 @@ const GRILLA_TO_VIEW: Record<string, CalendarView> = {
 
 export function CalendarioCitas() {
   const calendarRef = useRef<FullCalendar | null>(null)
-  const navigate = useNavigate()
   const { user } = useCurrentUser()
+  const { openSheet } = useCitaWizardStore()
   const empresaId = user?.empresa_id ?? ''
   const { hasPermission } = usePermissions()
   const esSupervisor = hasPermission(PERMISSIONS.CITAS_MANAGE)
@@ -119,10 +119,11 @@ export function CalendarioCitas() {
   }, [])
 
   const handleDateSelect = useCallback(
-    (_arg: DateSelectArg) => {
-      navigate({ to: '/citas/nueva' as any })
+    (arg: DateSelectArg) => {
+      const dateStr = arg.start.toISOString().split('T')[0]
+      openSheet(dateStr)
     },
-    [navigate]
+    [openSheet]
   )
 
   const handleDatesSet = useCallback(
@@ -245,14 +246,30 @@ export function CalendarioCitas() {
 
   const slotDuration = `${String(Math.floor(config.duracion_slot_default / 60)).padStart(2, '0')}:${String(config.duracion_slot_default % 60).padStart(2, '0')}:00`
 
-  const validRange =
-    config.limite_futuro_dias > 0
-      ? {
-          end: new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
-            .toISOString()
-            .split('T')[0],
-        }
-      : undefined
+  const todayStr = new Date().toISOString().split('T')[0]
+
+  const validRange = config.limite_futuro_dias > 0
+    ? {
+        start: todayStr,
+        end: new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
+          .toISOString()
+          .split('T')[0],
+      }
+    : { start: todayStr }
+
+  const selectAllow = useCallback(
+    (selectInfo: { start: Date }) => {
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      if (selectInfo.start < today) return false
+      if (config.limite_futuro_dias > 0) {
+        const maxDate = new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
+        if (selectInfo.start >= maxDate) return false
+      }
+      return true
+    },
+    [config.limite_futuro_dias]
+  )
 
   const VIEW_LABELS: Record<CalendarView, string> = {
     timeGridDay: 'Dia',
@@ -264,15 +281,14 @@ export function CalendarioCitas() {
   return (
     <div className="flex h-full gap-4">
       {/* Panel izquierdo */}
-      <div className="hidden lg:flex flex-col gap-4 w-52 shrink-0">
-        <Button
-          onClick={() => navigate({ to: '/citas/nueva' as any })}
-          className="w-full gap-2"
-          size="sm"
+      <div className="hidden lg:flex flex-col gap-4 w-48 shrink-0">
+        <button
+          onClick={() => openSheet()}
+          className="w-full flex items-center justify-center gap-1.5 h-9 rounded-lg bg-foreground text-background text-[11px] font-bold uppercase tracking-wide hover:bg-foreground/85 transition-colors"
         >
-          <Plus size={16} />
+          <Plus size={14} weight="bold" />
           Nueva Cita
-        </Button>
+        </button>
 
         {profesionales.length > 0 && (
           <div>
@@ -306,30 +322,18 @@ export function CalendarioCitas() {
 
       {/* Calendario principal */}
       <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center gap-2 mb-3 flex-wrap">
-          <Button variant="outline" size="sm" onClick={goToday}>
-            Hoy
-          </Button>
-          <div className="flex items-center">
-            <Button variant="ghost" size="icon" onClick={goPrev} className="h-8 w-8">
-              <CaretLeft size={16} />
-            </Button>
-            <Button variant="ghost" size="icon" onClick={goNext} className="h-8 w-8">
-              <CaretRight size={16} />
-            </Button>
-          </div>
-          <h2 className="text-base font-semibold flex-1 capitalize">{titulo}</h2>
-
-          <div className="flex items-center border rounded-lg overflow-hidden">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          {/* Toggle de vista — pill style */}
+          <div className="flex items-center rounded-lg border border-border overflow-hidden divide-x divide-border text-[11px]">
             {(Object.keys(VIEW_LABELS) as CalendarView[]).map((v) => (
               <button
                 key={v}
                 onClick={() => changeView(v)}
                 className={cn(
-                  'px-3 py-1.5 text-sm transition-colors',
+                  'px-3 py-2 font-semibold uppercase tracking-wide transition-colors',
                   view === v
-                    ? 'bg-primary text-primary-foreground'
-                    : 'hover:bg-muted text-muted-foreground'
+                    ? 'bg-foreground text-background'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
                 {VIEW_LABELS[v]}
@@ -337,13 +341,39 @@ export function CalendarioCitas() {
             ))}
           </div>
 
-          <Button
-            size="sm"
-            className="gap-2 lg:hidden"
-            onClick={() => navigate({ to: '/citas/nueva' as any })}
+          {/* Navegacion */}
+          <div className="flex items-center gap-1">
+            <button
+              onClick={goPrev}
+              className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <CaretLeft size={15} />
+            </button>
+            <button
+              onClick={goToday}
+              className="px-3 h-8 text-xs font-semibold uppercase tracking-wide rounded-lg border border-border hover:bg-muted transition-colors"
+            >
+              Hoy
+            </button>
+            <button
+              onClick={goNext}
+              className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <CaretRight size={15} />
+            </button>
+          </div>
+
+          {/* Titulo de periodo */}
+          <span className="text-sm font-medium flex-1 capitalize text-muted-foreground">{titulo}</span>
+
+          {/* CTA Nueva Cita — estilo imagen */}
+          <button
+            onClick={() => openSheet()}
+            className="flex items-center gap-1.5 h-9 px-4 rounded-lg bg-foreground text-background text-[11px] font-bold uppercase tracking-wide hover:bg-foreground/85 transition-colors"
           >
-            <Plus size={16} />
-          </Button>
+            <Plus size={14} weight="bold" />
+            <span className="hidden sm:inline">Nueva Cita</span>
+          </button>
         </div>
 
         <div className="flex-1 [&_.fc]:font-sans [&_.fc-timegrid-slot]:h-8 [&_.fc-event]:cursor-pointer [&_.fc-event]:rounded-md [&_.fc-event]:shadow-sm">
@@ -355,6 +385,7 @@ export function CalendarioCitas() {
             events={eventos}
             selectable
             selectMirror
+            selectAllow={selectAllow}
             editable={esSupervisor}
             select={handleDateSelect}
             eventClick={handleEventClick}
@@ -394,6 +425,8 @@ export function CalendarioCitas() {
         open={modalOpen}
         onClose={() => setModalOpen(false)}
       />
+
+      <NuevaCitaSheet />
 
       {pendingDrop && (
         <DragConfirmPopover

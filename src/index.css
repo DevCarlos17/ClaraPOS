@@ -218,3 +218,76 @@
   --color-sidebar-active-bg: rgb(255 255 255 / 0.12);
   --color-sidebar-accent: #93c5fd;
 }
+
+/* ─── FullCalendar: bordes de grilla ─────────────────────────── */
+
+/* Contenedor principal con borde y radio */
+.fc .fc-scrollgrid {
+  border: 1px solid var(--color-border) !important;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* Bordes verticales entre columnas */
+.fc .fc-timegrid-col,
+.fc .fc-col-header-cell,
+.fc .fc-daygrid-day {
+  border-right: 1px solid var(--color-border) !important;
+}
+
+/* Cabecera de días con fondo sutil y separador inferior fuerte */
+.fc .fc-col-header-cell {
+  background-color: var(--color-muted) !important;
+  border-bottom: 2px solid var(--color-border) !important;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Hora a la izquierda */
+.fc .fc-timegrid-axis {
+  border-right: 1px solid var(--color-border) !important;
+  font-size: 0.7rem;
+  color: var(--color-muted-foreground);
+}
+
+/* Líneas horizontales de hora más suaves */
+.fc .fc-timegrid-slot {
+  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent) !important;
+}
+
+/* Sin borde doble en el último col de cada fila */
+.fc .fc-timegrid-col:last-child,
+.fc .fc-col-header-cell:last-child,
+.fc .fc-daygrid-day:last-child {
+  border-right: none !important;
+}
+
+/* ─── FullCalendar: días fuera del rango válido ───────────────── */
+
+.fc-day-disabled {
+  cursor: not-allowed !important;
+  opacity: 0.55;
+  position: relative;
+}
+
+.fc-day-disabled::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-color: rgb(0 0 0 / 0.04);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Evitar que eventos existentes en días pasados hereden el cursor */
+.fc-day-disabled .fc-event {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.fc-daygrid-day:not(.fc-day-disabled),
+.fc-timegrid-slot:not(.fc-day-disabled) {
+  cursor: pointer;
+}
