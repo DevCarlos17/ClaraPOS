@@ -305,3 +305,15 @@
 .fc-timegrid-slot:not(.fc-day-disabled) {
   cursor: pointer;
 }
+
+/* ─── FullCalendar: slots de horas pasadas (hoy) ───────────────── */
+.fc-slot-past {
+  background-color: rgb(0 0 0 / 0.028) !important;
+  cursor: not-allowed !important;
+}
+
+/* Los eventos en horas pasadas siguen siendo visibles y clickeables */
+.fc-slot-past .fc-event {
+  pointer-events: auto;
+  cursor: pointer;
+}

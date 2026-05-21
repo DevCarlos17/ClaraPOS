@@ -22,6 +22,7 @@ import { CitaDetalleModal } from './cita-detalle-modal'
 import { DragConfirmPopover, type DragConfirmState } from './drag-confirm-popover'
 import { CaretLeft, CaretRight, Plus } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
+import { todayStr as getTodayStr } from '@/lib/dates'
 import { toast } from 'sonner'
 import { useAgendaConfig } from '../../hooks/use-agenda-config'
 
@@ -252,20 +253,29 @@ export function CalendarioCitas() {
 
   const slotDuration = `${String(Math.floor(config.duracion_slot_default / 60)).padStart(2, '0')}:${String(config.duracion_slot_default % 60).padStart(2, '0')}:00`
 
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayLocalStr = getTodayStr()
 
-  const validRange = config.limite_futuro_dias > 0
-    ? {
-        start: todayStr,
-        end: new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
-          .toISOString()
-          .split('T')[0],
-      }
-    : { start: todayStr }
+  let validRangeEnd: string | undefined
+  if (config.limite_futuro_dias > 0) {
+    const d = new Date()
+    d.setDate(d.getDate() + config.limite_futuro_dias)
+    validRangeEnd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  const validRange = validRangeEnd
+    ? { start: todayLocalStr, end: validRangeEnd }
+    : { start: todayLocalStr }
 
   const selectAllow = useCallback(
-    (selectInfo: { start: Date }) => {
-      if (selectInfo.start < new Date()) return false
+    (selectInfo: { start: Date; allDay: boolean }) => {
+      const todayMidnight = new Date()
+      todayMidnight.setHours(0, 0, 0, 0)
+
+      // Block past days entirely
+      if (selectInfo.start < todayMidnight) return false
+
+      // For time grid slots (not all-day): also block past hours within today
+      if (!selectInfo.allDay && selectInfo.start < new Date()) return false
+
       if (config.limite_futuro_dias > 0) {
         const maxDate = new Date(Date.now() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
         if (selectInfo.start >= maxDate) return false
@@ -273,6 +283,11 @@ export function CalendarioCitas() {
       return true
     },
     [config.limite_futuro_dias]
+  )
+
+  const slotLaneClassNames = useCallback(
+    (arg: { date: Date }) => (arg.date < new Date() ? ['fc-slot-past'] : []),
+    []
   )
 
   const VIEW_LABELS: Record<CalendarView, string> = {
@@ -390,6 +405,7 @@ export function CalendarioCitas() {
             selectable
             selectMirror
             selectAllow={selectAllow}
+            slotLaneClassNames={slotLaneClassNames}
             editable={esSupervisor}
             select={handleDateSelect}
             eventClick={handleEventClick}
