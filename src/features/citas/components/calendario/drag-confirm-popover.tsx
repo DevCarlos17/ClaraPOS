@@ -10,6 +10,7 @@ export interface DragConfirmState {
   nuevaFechaInicio: Date
   nuevaFechaFin: Date
   revert: () => void
+  tieneOverlap?: boolean
 }
 
 interface DragConfirmPopoverProps {

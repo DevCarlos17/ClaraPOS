@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useCitasDelDia } from '../../hooks/use-citas'
+import { useNoshowDetector } from '../../hooks/use-noshow-detector'
 import { useClientes } from '@/features/clientes/hooks/use-clientes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
@@ -37,9 +38,17 @@ const COLUMNAS: {
     accent: 'bg-emerald-500',
     badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300',
   },
+  {
+    titulo: 'No Asistieron',
+    statuses: ['NO_SHOW'],
+    accent: 'bg-orange-400',
+    badge: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300',
+  },
 ]
 
 export function PanelTrabajo() {
+  useNoshowDetector()
+
   const { user } = useCurrentUser()
   const { openSheet } = useCitaWizardStore()
   const empresaId = user?.empresa_id ?? ''
@@ -152,7 +161,7 @@ export function PanelTrabajo() {
           Cargando citas...
         </div>
       ) : (
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-3 gap-4 overflow-hidden">
+        <div className="flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 overflow-hidden">
           {COLUMNAS.map((col) => {
             const items = citasPorColumna(col.statuses)
             return (

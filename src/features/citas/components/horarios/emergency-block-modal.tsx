@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useQuery } from '@powersync/react'
 import { crearExcepcion } from '../../hooks/use-horarios-excepciones'
+import { registrarCitaLog } from '../../hooks/use-cita-log'
 import { kysely } from '@/core/db/kysely/kysely'
+import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
 import { toast } from 'sonner'
 import { Warning, CalendarX } from '@phosphor-icons/react'
@@ -55,7 +57,10 @@ export function EmergencyBlockModal({
   )
   const profesionales = (profesionalesData ?? []) as { id: string; nombre: string }[]
 
-  const handleBuscar = async () => {
+  // Auto-deteccion con debounce — se dispara cuando cambian fecha/horaInicio/horaFin
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const buscarCitasAfectadas = useCallback(async () => {
     if (!fecha || !horaInicio || !horaFin) return
     setBuscando(true)
     try {
@@ -76,21 +81,60 @@ export function EmergencyBlockModal({
         .where('citas.profesional_id', '=', profesionalId)
         .where('citas.fecha_inicio', '<', fin)
         .where('citas.fecha_fin', '>', inicio)
-        .where('citas.cita_status', 'not in', ['CANCELADA', 'REALIZADA'])
+        .where('citas.cita_status', 'not in', ['CANCELADA', 'REALIZADA', 'NO_SHOW'])
         .execute()
 
       setCitasAfectadas(rows as CitaAfectada[])
     } catch {
-      toast.error('Error al buscar citas afectadas')
+      // Silent fail on auto-search — only show error on manual confirm
     } finally {
       setBuscando(false)
     }
+  }, [fecha, horaInicio, horaFin, empresaId, profesionalId])
+
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      void buscarCitasAfectadas()
+    }, 500)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+    }
+  }, [buscarCitasAfectadas])
+
+  // Validar disponibilidad del profesional de reasignacion antes de seleccionar
+  const handleReasignacion = async (citaId: string, nuevoProfesionalId: string) => {
+    if (!nuevoProfesionalId) {
+      setReasignaciones((prev) => ({ ...prev, [citaId]: '' }))
+      return
+    }
+
+    // Verificar que el nuevo profesional no tenga cita en ese horario
+    const cita = citasAfectadas.find((c) => c.id === citaId)
+    if (cita) {
+      const conflicto = await db.getAll<{ id: string }>(
+        `SELECT id FROM citas
+         WHERE empresa_id = ?
+           AND profesional_id = ?
+           AND id != ?
+           AND cita_status NOT IN ('CANCELADA', 'REALIZADA', 'NO_SHOW')
+           AND fecha_inicio < ?
+           AND fecha_fin > ?`,
+        [empresaId, nuevoProfesionalId, citaId, cita.fecha_fin, cita.fecha_inicio]
+      )
+      if (conflicto.length > 0) {
+        toast.warning('El profesional seleccionado ya tiene una cita en ese horario')
+        return
+      }
+    }
+
+    setReasignaciones((prev) => ({ ...prev, [citaId]: nuevoProfesionalId }))
   }
 
   const handleConfirmar = async () => {
     setGuardando(true)
     try {
-      // Crear excepcion
+      // Crear excepcion de bloqueo
       await crearExcepcion({
         usuarioId: profesionalId,
         empresaId,
@@ -102,6 +146,27 @@ export function EmergencyBlockModal({
         creadoPor: userId,
       })
 
+      // Registro de audit log para el bloqueo
+      // No hay una cita especifica aqui, usamos un log generico
+      // (buscar primera cita afectada como ancla, o ninguna)
+      const primeraAfectada = citasAfectadas[0]
+      if (primeraAfectada) {
+        void registrarCitaLog({
+          empresaId,
+          citaId: primeraAfectada.id,
+          usuarioId: userId,
+          accion: 'BLOQUEO_ADMIN',
+          datosNuevos: {
+            profesional_id: profesionalId,
+            fecha,
+            hora_inicio: horaInicio,
+            hora_fin: horaFin,
+            motivo,
+            citas_afectadas: citasAfectadas.length,
+          },
+        })
+      }
+
       // Reasignar o cancelar citas afectadas
       for (const cita of citasAfectadas) {
         const nuevoProfesional = reasignaciones[cita.id]
@@ -111,6 +176,18 @@ export function EmergencyBlockModal({
             .set({ profesional_id: nuevoProfesional, updated_at: localNow(), updated_by: userId })
             .where('id', '=', cita.id)
             .execute()
+
+          void registrarCitaLog({
+            empresaId,
+            citaId: cita.id,
+            usuarioId: userId,
+            accion: 'REUBICACION_POR_BLOQUEO',
+            datosAnteriores: { profesional_id: profesionalId },
+            datosNuevos: {
+              profesional_id: nuevoProfesional,
+              motivo_bloqueo: motivo,
+            },
+          })
         }
       }
 
@@ -174,17 +251,14 @@ export function EmergencyBlockModal({
             />
           </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleBuscar}
-            disabled={buscando}
-            className="w-full"
-          >
-            {buscando ? 'Buscando...' : 'Verificar citas afectadas'}
-          </Button>
+          {/* Auto-detected conflicts */}
+          {buscando && (
+            <p className="text-xs text-muted-foreground text-center animate-pulse">
+              Buscando citas afectadas...
+            </p>
+          )}
 
-          {citasAfectadas.length > 0 && (
+          {!buscando && citasAfectadas.length > 0 && (
             <div className="space-y-2">
               <p className="text-sm font-medium text-destructive">
                 {citasAfectadas.length} cita(s) afectada(s):
@@ -202,9 +276,7 @@ export function EmergencyBlockModal({
                     </div>
                     <NativeSelect
                       value={reasignaciones[cita.id] ?? ''}
-                      onChange={(e) =>
-                        setReasignaciones((prev) => ({ ...prev, [cita.id]: e.target.value }))
-                      }
+                      onChange={(e) => void handleReasignacion(cita.id, e.target.value)}
                       className="h-7 text-xs w-32"
                       wrapperClassName="shrink-0"
                     >
@@ -219,6 +291,12 @@ export function EmergencyBlockModal({
                 ))}
               </div>
             </div>
+          )}
+
+          {!buscando && citasAfectadas.length === 0 && fecha && horaInicio && horaFin && (
+            <p className="text-xs text-muted-foreground text-center py-1">
+              Sin citas afectadas en este horario
+            </p>
           )}
 
           <div className="flex gap-2">

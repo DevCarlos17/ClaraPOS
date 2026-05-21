@@ -13,7 +13,7 @@ import type {
 } from '@/stores/cita-wizard-store'
 import { crearVenta, type LineaVenta, type PagoEntry } from '@/features/ventas/hooks/use-ventas'
 
-export type CitaOperStatus = 'RESERVADA' | 'EN_PROCESO' | 'REALIZADA' | 'CANCELADA'
+export type CitaOperStatus = 'RESERVADA' | 'EN_PROCESO' | 'REALIZADA' | 'CANCELADA' | 'NO_SHOW'
 export type CitaFinanceStatus = 'PENDIENTE' | 'ABONADO' | 'PAGADO' | 'NULO'
 
 export interface Cita {
@@ -356,6 +356,18 @@ export async function cancelarCita(citaId: string, userId: string) {
     .set({
       cita_status: 'CANCELADA',
       finance_status: 'NULO',
+      updated_at: localNow(),
+      updated_by: userId,
+    })
+    .where('id', '=', citaId)
+    .execute()
+}
+
+export async function marcarNoShow(citaId: string, userId: string) {
+  await kysely
+    .updateTable('citas')
+    .set({
+      cita_status: 'NO_SHOW',
       updated_at: localNow(),
       updated_by: userId,
     })

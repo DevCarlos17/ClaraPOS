@@ -16,6 +16,7 @@ export interface HorarioStaff {
   hora_inicio: string
   hora_fin: string
   is_active: number
+  tiempo_preparacion_min: number
   created_at: string
   updated_at: string
 }
@@ -24,6 +25,7 @@ export interface SlotDisponible {
   horaInicio: string
   horaFin: string
   disponible: boolean
+  enDescanso: boolean
 }
 
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado']
@@ -142,6 +144,10 @@ export function useSlotsDisponibles(
     return c.fecha_inicio.startsWith(fecha)
   })
 
+  // Buffer de preparacion: extiende el bloqueo despues de cada cita existente
+  const bufferMs = (horarioDia.tiempo_preparacion_min ?? 0) * 60 * 1000
+  const jornadaFinMs = new Date(`${fecha}T${horaFinEfectiva}:00`).getTime()
+
   const slots: SlotDisponible[] = []
 
   while (minutosActual + duracionSlotMin <= minutosFin) {
@@ -154,23 +160,77 @@ export function useSlotsDisponibles(
     const ocupado = citasDelDia.some((c) => {
       if (c.cita_status === 'CANCELADA') return false
       const citaIni = new Date(c.fecha_inicio).getTime()
-      const citaFin = new Date(c.fecha_fin).getTime()
-      return slotInicioMs < citaFin && slotFinMs > citaIni
+      const citaFinBase = new Date(c.fecha_fin).getTime()
+      // Extender fin de cita por el buffer de preparacion, pero nunca mas alla del fin de jornada
+      const citaFinEfectivo = Math.min(citaFinBase + bufferMs, jornadaFinMs)
+      return slotInicioMs < citaFinEfectivo && slotFinMs > citaIni
     })
 
-    const enDescanso =
-      !config.permitir_solapamiento_descanso &&
-      descansosDelDia.some((d) => {
-        const dIni = timeToMin(d.hora_inicio)
-        const dFin = timeToMin(d.hora_fin)
-        return minutosActual < dFin && minutosActual + duracionSlotMin > dIni
-      })
+    const esEnDescanso = descansosDelDia.some((d) => {
+      const dIni = timeToMin(d.hora_inicio)
+      const dFin = timeToMin(d.hora_fin)
+      return minutosActual < dFin && minutosActual + duracionSlotMin > dIni
+    })
 
-    slots.push({ horaInicio, horaFin, disponible: !ocupado && !enDescanso })
+    // Si solapamiento esta deshabilitado, los slots en descanso son no disponibles
+    const enDescansoBloqueado = !config.permitir_solapamiento_descanso && esEnDescanso
+
+    slots.push({ horaInicio, horaFin, disponible: !ocupado && !enDescansoBloqueado, enDescanso: esEnDescanso })
     minutosActual += duracionSlotMin
   }
 
   return slots
+}
+
+interface GridTimeRange {
+  slotMinTime: string
+  slotMaxTime: string
+  businessHours: {
+    daysOfWeek: number[]
+    startTime: string
+    endTime: string
+  }
+}
+
+const GRID_FALLBACK: GridTimeRange = {
+  slotMinTime: '07:00:00',
+  slotMaxTime: '21:00:00',
+  businessHours: { daysOfWeek: [1, 2, 3, 4, 5, 6], startTime: '08:00', endTime: '20:00' },
+}
+
+export function useGridTimeRange(): GridTimeRange {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data } = useQuery(
+    empresaId
+      ? 'SELECT hora_inicio, hora_fin, dia_semana FROM horarios_staff WHERE empresa_id = ? AND is_active = 1'
+      : '',
+    empresaId ? [empresaId] : []
+  )
+
+  const horarios = (data ?? []) as { hora_inicio: string; hora_fin: string; dia_semana: number }[]
+
+  if (horarios.length === 0) return GRID_FALLBACK
+
+  const minInicioMin = Math.min(...horarios.map((h) => timeToMin(h.hora_inicio)))
+  const maxFinMin = Math.max(...horarios.map((h) => timeToMin(h.hora_fin)))
+
+  // 1h de padding a cada lado, clampeado a 00:00 y 24:00
+  const gridMin = Math.max(0, minInicioMin - 60)
+  const gridMax = Math.min(24 * 60, maxFinMin + 60)
+
+  const diasConHorario = [...new Set(horarios.map((h) => h.dia_semana))].sort()
+
+  return {
+    slotMinTime: `${minToTime(gridMin)}:00`,
+    slotMaxTime: `${minToTime(gridMax)}:00`,
+    businessHours: {
+      daysOfWeek: diasConHorario,
+      startTime: minToTime(minInicioMin),
+      endTime: minToTime(maxFinMin),
+    },
+  }
 }
 
 // ============================================================

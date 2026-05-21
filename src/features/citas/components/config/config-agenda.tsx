@@ -1,10 +1,26 @@
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
-import { CalendarDots, Warning } from '@phosphor-icons/react'
+import { CalendarDots, Warning, Info } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from '@/components/ui/tooltip'
 import { useAgendaConfig, guardarAgendaConfig, type AgendaConfig } from '../../hooks/use-agenda-config'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+
+function FieldTooltip({ texto }: { texto: string }) {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Info size={13} className="text-muted-foreground cursor-help inline-block ml-1" />
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="max-w-xs">{texto}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
 
 export function ConfigAgenda() {
   const { config, isLoading, empresaId } = useAgendaConfig()
@@ -27,6 +43,9 @@ export function ConfigAgenda() {
   const [rangoGrilla, setRangoGrilla] = useState<AgendaConfig['rango_grilla_default']>('semana')
   const [duracionSlot, setDuracionSlot] = useState(30)
   const [solapar, setSolapar] = useState(false)
+  const [toleranciaNoshow, setToleranciaNoshow] = useState(30)
+  const [manejoDescanso, setManejoDescanso] = useState<AgendaConfig['manejo_descanso_invadido']>('DESPLAZAR')
+  const [inicioSemana, setInicioSemana] = useState<AgendaConfig['inicio_semana']>('lunes')
   const [sincronizado, setSincronizado] = useState(false)
   const [guardando, setGuardando] = useState(false)
 
@@ -37,6 +56,9 @@ export function ConfigAgenda() {
       setRangoGrilla(config.rango_grilla_default)
       setDuracionSlot(config.duracion_slot_default)
       setSolapar(config.permitir_solapamiento_descanso)
+      setToleranciaNoshow(config.tolerancia_noshow_min)
+      setManejoDescanso(config.manejo_descanso_invadido)
+      setInicioSemana(config.inicio_semana)
       setSincronizado(true)
     }
   }, [isLoading, config, sincronizado])
@@ -64,6 +86,9 @@ export function ConfigAgenda() {
         rango_grilla_default: rangoGrilla,
         duracion_slot_default: duracionSlot,
         permitir_solapamiento_descanso: solapar,
+        tolerancia_noshow_min: toleranciaNoshow,
+        manejo_descanso_invadido: manejoDescanso,
+        inicio_semana: inicioSemana,
       })
       toast.success('Configuracion de agenda guardada')
     } catch (e) {
@@ -83,7 +108,10 @@ export function ConfigAgenda() {
       {/* Visibilidad del modulo */}
       <div className="space-y-3">
         <div>
-          <p className="text-sm font-medium">Visibilidad del modulo</p>
+          <p className="text-sm font-medium">
+            Visibilidad del modulo
+            <FieldTooltip texto="Activa o desactiva la seccion Agenda y Citas en el menu lateral. Solo el Propietario puede cambiar este ajuste." />
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             Activa o desactiva la seccion "Agenda y Citas" en el menu lateral.
           </p>
@@ -138,7 +166,10 @@ export function ConfigAgenda() {
 
       {/* Limite de dias futuros */}
       <div className="space-y-2">
-        <p className="text-sm font-medium">Limite de programacion futura</p>
+        <p className="text-sm font-medium">
+          Limite de programacion futura
+          <FieldTooltip texto="Cuantos dias hacia el futuro se permiten agendar citas. 0 = sin limite." />
+        </p>
         <p className="text-xs text-muted-foreground">
           Cuantos dias hacia el futuro se pueden agendar citas (0 = sin limite).
         </p>
@@ -157,7 +188,10 @@ export function ConfigAgenda() {
 
       {/* Vista por defecto del calendario */}
       <div className="space-y-2">
-        <p className="text-sm font-medium">Vista por defecto del calendario</p>
+        <p className="text-sm font-medium">
+          Vista por defecto del calendario
+          <FieldTooltip texto="Vista que se muestra al abrir el calendario por primera vez en cada sesion." />
+        </p>
         <p className="text-xs text-muted-foreground">
           Vista que se muestra al abrir el calendario.
         </p>
@@ -174,7 +208,10 @@ export function ConfigAgenda() {
 
       {/* Duracion del slot */}
       <div className="space-y-2">
-        <p className="text-sm font-medium">Duracion minima del slot</p>
+        <p className="text-sm font-medium">
+          Duracion minima del slot
+          <FieldTooltip texto="Intervalo de tiempo en la grilla del calendario. Afecta la precision de la vista y los slots del wizard de nueva cita." />
+        </p>
         <p className="text-xs text-muted-foreground">
           Intervalo de tiempo en la grilla del calendario.
         </p>
@@ -190,10 +227,29 @@ export function ConfigAgenda() {
         </select>
       </div>
 
+      {/* Inicio de semana */}
+      <div className="space-y-2">
+        <p className="text-sm font-medium">
+          Inicio de semana
+          <FieldTooltip texto="Primer dia de la semana que se muestra en las vistas semanales del calendario." />
+        </p>
+        <select
+          value={inicioSemana}
+          onChange={(e) => setInicioSemana(e.target.value as AgendaConfig['inicio_semana'])}
+          className="h-9 w-52 rounded-md border border-input bg-background px-2 text-sm"
+        >
+          <option value="lunes">Lunes</option>
+          <option value="domingo">Domingo</option>
+        </select>
+      </div>
+
       {/* Solapamiento con descansos */}
       <div className="space-y-3">
         <div>
-          <p className="text-sm font-medium">Citas durante descansos</p>
+          <p className="text-sm font-medium">
+            Citas durante descansos
+            <FieldTooltip texto="Si esta activo, se puede agendar una cita en el horario de descanso del profesional. Se mostrara una advertencia y se requerira PIN de supervisor." />
+          </p>
           <p className="text-xs text-muted-foreground mt-0.5">
             Permitir agendar citas en el horario de descanso del staff.
           </p>
@@ -207,6 +263,46 @@ export function ConfigAgenda() {
           />
           <span className="text-sm">Permitir solapamiento con descansos</span>
         </label>
+      </div>
+
+      {/* Manejo de invasion de descanso */}
+      {solapar && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">
+            Politica al invadir descanso
+            <FieldTooltip texto="DESPLAZAR: el descanso se desplaza para terminar antes de la cita. TIEMPO_EXTRA: el profesional recupera el tiempo perdido al final de la jornada." />
+          </p>
+          <select
+            value={manejoDescanso}
+            onChange={(e) => setManejoDescanso(e.target.value as AgendaConfig['manejo_descanso_invadido'])}
+            className="h-9 w-52 rounded-md border border-input bg-background px-2 text-sm"
+          >
+            <option value="DESPLAZAR">Desplazar descanso</option>
+            <option value="TIEMPO_EXTRA">Agregar tiempo extra</option>
+          </select>
+        </div>
+      )}
+
+      {/* Tolerancia no-show */}
+      <div className="space-y-2">
+        <p className="text-sm font-medium">
+          Tolerancia de inasistencia (No Show)
+          <FieldTooltip texto="Minutos despues de la hora de inicio de una cita RESERVADA para marcarla automaticamente como No Show. 0 = desactivado." />
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Minutos de espera antes de marcar una cita como 'No Asistio' (0 = desactivado).
+        </p>
+        <select
+          value={toleranciaNoshow}
+          onChange={(e) => setToleranciaNoshow(parseInt(e.target.value))}
+          className="h-9 w-52 rounded-md border border-input bg-background px-2 text-sm"
+        >
+          <option value={0}>Desactivado</option>
+          <option value={15}>15 minutos</option>
+          <option value={30}>30 minutos</option>
+          <option value={45}>45 minutos</option>
+          <option value={60}>60 minutos</option>
+        </select>
       </div>
 
       <Button onClick={handleGuardar} disabled={guardando} size="sm" className="gap-2">

@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 export interface CitaLogEntry {
   id: string
@@ -20,13 +21,22 @@ export type CitaLogAccion =
   | 'MINI_POS_ADD'
   | 'FINANCE_STATUS_CHANGE'
   | 'CANCELAR'
+  | 'NO_SHOW'
+  | 'SOBRETURNO_AUTORIZADO'
+  | 'BLOQUEO_ADMIN'
+  | 'INVASION_DESCANSO'
+  | 'REUBICACION_POR_BLOQUEO'
+  | 'PIN_FAILED'
 
 export function useCitaLog(citaId: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
   const { data, isLoading } = useQuery(
-    citaId
-      ? 'SELECT * FROM cita_log WHERE cita_id = ? ORDER BY created_at DESC'
+    citaId && empresaId
+      ? 'SELECT * FROM cita_log WHERE cita_id = ? AND empresa_id = ? ORDER BY created_at DESC'
       : '',
-    citaId ? [citaId] : []
+    citaId && empresaId ? [citaId, empresaId] : []
   )
   return { log: (data ?? []) as CitaLogEntry[], isLoading }
 }

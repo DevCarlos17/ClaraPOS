@@ -4,7 +4,10 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCitaWizardStore, type AsignacionPersonal } from '@/stores/cita-wizard-store'
 import { useCitasPorProfesional } from '../../hooks/use-citas'
 import { useSlotsDisponibles } from '../../hooks/use-horarios-staff'
+import { useAgendaConfig } from '../../hooks/use-agenda-config'
+import { registrarCitaLog } from '../../hooks/use-cita-log'
 import { obtenerBusyTimesGoogle } from '../../hooks/use-google-calendar'
+import { BreakInvasionModal } from './break-invasion-modal'
 import { cn } from '@/lib/utils'
 import { format, addDays, startOfWeek } from 'date-fns'
 import { es } from 'date-fns/locale'
@@ -12,6 +15,7 @@ import { CaretLeft, CaretRight, GoogleLogo, Users } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { todayStr } from '@/lib/dates'
+import type { AgendaConfig } from '../../hooks/use-agenda-config'
 
 // Componente de slots para un profesional especifico
 function SlotsProfesional({
@@ -20,15 +24,21 @@ function SlotsProfesional({
   duracionMin,
   horaInicio,
   onSeleccionar,
+  empresaId,
+  userId,
 }: {
   profesionalId: string
   fecha: string
   duracionMin: number
   horaInicio: string
   onSeleccionar: (inicio: string, fin: string) => void
+  empresaId: string
+  userId: string
 }) {
   const { citas } = useCitasPorProfesional(profesionalId)
+  const { config } = useAgendaConfig()
   const [googleBusy, setGoogleBusy] = useState<{ start: string; end: string }[]>([])
+  const [breakInvasionSlot, setBreakInvasionSlot] = useState<{ inicio: string; fin: string } | null>(null)
   const slots = useSlotsDisponibles(profesionalId, fecha, citas, duracionMin)
 
   useEffect(() => {
@@ -58,6 +68,39 @@ function SlotsProfesional({
     return slotTime < ahora
   }
 
+  const handleClickSlot = (horaIni: string, horaFin: string, esDescanso: boolean) => {
+    if (esDescanso && config.permitir_solapamiento_descanso) {
+      setBreakInvasionSlot({ inicio: horaIni, fin: horaFin })
+    } else {
+      onSeleccionar(horaIni, horaFin)
+    }
+  }
+
+  const handleBreakConfirmado = async (
+    politica: AgendaConfig['manejo_descanso_invadido'],
+    supervisorId: string
+  ) => {
+    if (!breakInvasionSlot) return
+    const citasDelDia = citas.filter((c) => c.fecha_inicio.startsWith(fecha) && c.profesional_id === profesionalId)
+    const citaIdRef = citasDelDia[0]?.id ?? ''
+    if (citaIdRef) {
+      void registrarCitaLog({
+        empresaId,
+        citaId: citaIdRef,
+        usuarioId: userId,
+        accion: 'INVASION_DESCANSO',
+        datosNuevos: {
+          hora_inicio: breakInvasionSlot.inicio,
+          hora_fin: breakInvasionSlot.fin,
+          politica,
+          autorizado_por: supervisorId,
+        },
+      })
+    }
+    onSeleccionar(breakInvasionSlot.inicio, breakInvasionSlot.fin)
+    setBreakInvasionSlot(null)
+  }
+
   if (!fecha) return null
 
   if (slots.length === 0) {
@@ -80,17 +123,26 @@ function SlotsProfesional({
         {slots.map((slot) => {
           const seleccionado = slot.horaInicio === horaInicio
           const bloqueadoGoogle = slot.disponible && isBlockedByGoogle(slot.horaInicio, slot.horaFin)
+          const esDescansoInvadible = slot.enDescanso && slot.disponible && config.permitir_solapamiento_descanso
           const disponible = slot.disponible && !bloqueadoGoogle && !esPasado(slot.horaInicio)
           return (
             <button
               key={slot.horaInicio}
-              onClick={() => disponible && onSeleccionar(slot.horaInicio, slot.horaFin)}
+              onClick={() => disponible && handleClickSlot(slot.horaInicio, slot.horaFin, slot.enDescanso)}
               disabled={!disponible}
-              title={bloqueadoGoogle ? 'Ocupado en Google Calendar' : undefined}
+              title={
+                bloqueadoGoogle
+                  ? 'Ocupado en Google Calendar'
+                  : esDescansoInvadible
+                  ? 'Horario de descanso — requiere autorizacion'
+                  : undefined
+              }
               className={cn(
                 'px-2 py-2 rounded-lg border text-xs font-medium transition-all text-center',
                 seleccionado
                   ? 'bg-primary text-primary-foreground border-primary'
+                  : esDescansoInvadible
+                  ? 'border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-300 hover:border-amber-400 [background-image:repeating-linear-gradient(45deg,transparent,transparent_3px,rgba(251,191,36,0.15)_3px,rgba(251,191,36,0.15)_6px)]'
                   : disponible
                   ? 'border-border hover:border-primary/60 hover:bg-primary/5'
                   : 'border-border bg-muted text-muted-foreground/50 cursor-not-allowed line-through'
@@ -101,6 +153,17 @@ function SlotsProfesional({
           )
         })}
       </div>
+
+      {breakInvasionSlot && (
+        <BreakInvasionModal
+          isOpen
+          horaInicio={breakInvasionSlot.inicio}
+          horaFin={breakInvasionSlot.fin}
+          manejoConfig={config.manejo_descanso_invadido}
+          onConfirmed={handleBreakConfirmado}
+          onCancel={() => setBreakInvasionSlot(null)}
+        />
+      )}
     </>
   )
 }
@@ -112,12 +175,16 @@ function SlotsHoraPrioridad({
   horaInicio,
   onSeleccionar,
   profesionales,
+  empresaId,
+  userId,
 }: {
   fecha: string
   duracionMin: number
   horaInicio: string
   onSeleccionar: (inicio: string, fin: string, profesionalId: string, profesionalNombre: string) => void
   profesionales: { id: string; nombre: string }[]
+  empresaId: string
+  userId: string
 }) {
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState(profesionales[0]?.id ?? '')
   const prof = profesionales.find((p) => p.id === profesionalSeleccionado)
@@ -148,6 +215,8 @@ function SlotsHoraPrioridad({
           onSeleccionar={(inicio, fin) =>
             onSeleccionar(inicio, fin, profesionalSeleccionado, prof?.nombre ?? '')
           }
+          empresaId={empresaId}
+          userId={userId}
         />
       )}
     </div>
@@ -310,6 +379,8 @@ export function StepFechaStaff() {
               duracionMin={duracion}
               horaInicio={horaInicio}
               onSeleccionar={seleccionarSlot}
+              empresaId={empresaId}
+              userId={user?.id ?? ''}
             />
           ) : prioridadFiltro === 'HORA' ? (
             <SlotsHoraPrioridad
@@ -318,6 +389,8 @@ export function StepFechaStaff() {
               horaInicio={horaInicio}
               onSeleccionar={seleccionarSlotConProfesional}
               profesionales={profesionales}
+              empresaId={empresaId}
+              userId={user?.id ?? ''}
             />
           ) : null}
         </div>

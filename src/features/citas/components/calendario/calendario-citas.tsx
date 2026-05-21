@@ -25,12 +25,15 @@ import { cn } from '@/lib/utils'
 import { todayStr as getTodayStr } from '@/lib/dates'
 import { toast } from 'sonner'
 import { useAgendaConfig } from '../../hooks/use-agenda-config'
+import { useGridTimeRange } from '../../hooks/use-horarios-staff'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 
 const STATUS_COLORS: Record<CitaOperStatus, string> = {
   RESERVADA:  '#F59E0B',
   EN_PROCESO: '#8B5CF6',
   REALIZADA:  '#10B981',
   CANCELADA:  '#EF4444',
+  NO_SHOW:    '#F97316',
 }
 
 type CalendarView = 'timeGridDay' | 'timeGridWeek' | 'dayGridMonth' | 'listWeek'
@@ -61,6 +64,7 @@ export function CalendarioCitas() {
   const esSupervisor = hasPermission(PERMISSIONS.CITAS_MANAGE)
 
   const { config, isLoading: configLoading } = useAgendaConfig()
+  const { slotMinTime, slotMaxTime, businessHours: businessHoursDynamic } = useGridTimeRange()
 
   const [view, setView] = useState<CalendarView>('timeGridWeek')
   const [viewInitialized, setViewInitialized] = useState(false)
@@ -71,6 +75,7 @@ export function CalendarioCitas() {
   const [citaSeleccionada, setCitaSeleccionada] = useState<Cita | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [pendingDrop, setPendingDrop] = useState<DragConfirmState | null>(null)
+  const [showPinSobreturno, setShowPinSobreturno] = useState(false)
 
   const { citas } = useCitasRango(rangoInicio, rangoFin)
   const { clientes } = useClientes()
@@ -144,7 +149,7 @@ export function CalendarioCitas() {
       const cita = arg.event.extendedProps.cita as Cita
       const citaStatus = cita.cita_status as CitaOperStatus
 
-      if (citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA') {
+      if (citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA' || citaStatus === 'NO_SHOW') {
         arg.revert()
         return
       }
@@ -162,18 +167,36 @@ export function CalendarioCitas() {
         return
       }
 
-      setPendingDrop({
+      // Detectar solapamiento con citas existentes del mismo profesional en el destino
+      const nuevaIniMs = nuevaFechaInicio.getTime()
+      const nuevaFinMs = nuevaFechaFin.getTime()
+      const tieneOverlap = citas.some((c) => {
+        if (c.id === cita.id) return false
+        if (c.profesional_id !== cita.profesional_id) return false
+        if (c.cita_status === 'CANCELADA' || c.cita_status === 'NO_SHOW') return false
+        const citaIni = new Date(c.fecha_inicio).getTime()
+        const citaFin = new Date(c.fecha_fin).getTime()
+        return nuevaIniMs < citaFin && nuevaFinMs > citaIni
+      })
+
+      const dropState: DragConfirmState = {
         citaId: cita.id,
         clienteNombre: clienteMap.get(cita.cliente_id) ?? 'Cliente',
         nuevaFechaInicio,
         nuevaFechaFin,
         revert: arg.revert,
-      })
+        tieneOverlap,
+      }
+
+      setPendingDrop(dropState)
+      if (tieneOverlap) {
+        setShowPinSobreturno(true)
+      }
     },
-    [clienteMap]
+    [clienteMap, citas]
   )
 
-  const handleConfirmDrop = useCallback(async () => {
+  const handleConfirmDrop = useCallback(async (supervisorId?: string) => {
     if (!pendingDrop) return
     try {
       await reprogramarCita(
@@ -186,10 +209,11 @@ export function CalendarioCitas() {
         empresaId,
         citaId: pendingDrop.citaId,
         usuarioId: user?.id ?? '',
-        accion: 'DRAG_AND_DROP',
+        accion: pendingDrop.tieneOverlap ? 'SOBRETURNO_AUTORIZADO' : 'DRAG_AND_DROP',
         datosNuevos: {
           fecha_inicio: pendingDrop.nuevaFechaInicio.toISOString(),
           fecha_fin: pendingDrop.nuevaFechaFin.toISOString(),
+          ...(supervisorId && { autorizado_por: supervisorId }),
         },
       })
       toast.success('Cita reprogramada')
@@ -201,11 +225,17 @@ export function CalendarioCitas() {
     }
   }, [pendingDrop, user, empresaId])
 
+  const handleSobreturnoAutorizado = useCallback(async (supervisorId: string) => {
+    setShowPinSobreturno(false)
+    await handleConfirmDrop(supervisorId)
+  }, [handleConfirmDrop])
+
   const handleCancelDrop = useCallback(() => {
     if (pendingDrop) {
       pendingDrop.revert()
       setPendingDrop(null)
     }
+    setShowPinSobreturno(false)
   }, [pendingDrop])
 
   const changeView = (v: CalendarView) => {
@@ -286,7 +316,7 @@ export function CalendarioCitas() {
   )
 
   const slotLaneClassNames = useCallback(
-    (arg: { date: Date }) => (arg.date < new Date() ? ['fc-slot-past'] : []),
+    (arg: { date?: Date }) => (arg.date && arg.date < new Date() ? ['fc-slot-past'] : []),
     []
   )
 
@@ -415,17 +445,13 @@ export function CalendarioCitas() {
             height="100%"
             slotDuration={slotDuration}
             validRange={validRange}
-            slotMinTime="07:00:00"
-            slotMaxTime="21:00:00"
+            slotMinTime={slotMinTime}
+            slotMaxTime={slotMaxTime}
             slotLabelFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
             eventTimeFormat={{ hour: '2-digit', minute: '2-digit', hour12: false }}
             allDaySlot={false}
             nowIndicator
-            businessHours={{
-              daysOfWeek: [1, 2, 3, 4, 5, 6],
-              startTime: '08:00',
-              endTime: '20:00',
-            }}
+            businessHours={businessHoursDynamic}
             dayHeaderFormat={{ weekday: 'short', day: 'numeric' }}
             buttonText={{
               today: 'Hoy',
@@ -448,13 +474,22 @@ export function CalendarioCitas() {
 
       <NuevaCitaSheet />
 
-      {pendingDrop && (
+      {pendingDrop && !pendingDrop.tieneOverlap && (
         <DragConfirmPopover
           state={pendingDrop}
           onConfirm={handleConfirmDrop}
           onCancel={handleCancelDrop}
         />
       )}
+
+      <SupervisorPinDialog
+        isOpen={showPinSobreturno}
+        onClose={handleCancelDrop}
+        onAuthorized={handleSobreturnoAutorizado}
+        titulo="Sobreturno"
+        mensaje="El horario destino ya tiene una cita. Se requiere autorización de supervisor para continuar."
+        requiredPermission="citas.gestionar"
+      />
     </div>
   )
 }

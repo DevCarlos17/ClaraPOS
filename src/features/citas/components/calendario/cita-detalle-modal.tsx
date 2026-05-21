@@ -25,6 +25,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { toast } from 'sonner'
 import { formatUsd } from '@/lib/currency'
 import { ReprogramarModal } from './reprogramar-modal'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 
 interface CitaDetalleModalProps {
   cita: Cita | null
@@ -35,10 +36,11 @@ interface CitaDetalleModalProps {
 }
 
 const STATUS_CONFIG: Record<CitaOperStatus, { label: string; color: string }> = {
-  RESERVADA:  { label: 'Reservada',  color: 'bg-yellow-100 text-yellow-800' },
-  EN_PROCESO: { label: 'En Proceso', color: 'bg-purple-100 text-purple-800' },
-  REALIZADA:  { label: 'Realizada',  color: 'bg-green-100 text-green-800' },
-  CANCELADA:  { label: 'Cancelada',  color: 'bg-red-100 text-red-800' },
+  RESERVADA:  { label: 'Reservada',   color: 'bg-yellow-100 text-yellow-800' },
+  EN_PROCESO: { label: 'En Proceso',  color: 'bg-purple-100 text-purple-800' },
+  REALIZADA:  { label: 'Realizada',   color: 'bg-green-100 text-green-800' },
+  CANCELADA:  { label: 'Cancelada',   color: 'bg-red-100 text-red-800' },
+  NO_SHOW:    { label: 'No Asistio',  color: 'bg-orange-100 text-orange-800' },
 }
 
 type ModalTab = 'detalle' | 'historial'
@@ -54,6 +56,7 @@ export function CitaDetalleModal({
   const [tab, setTab] = useState<ModalTab>('detalle')
   const [cargando, setCargando] = useState(false)
   const [reprogramarOpen, setReprogramarOpen] = useState(false)
+  const [showPinCancelar, setShowPinCancelar] = useState(false)
 
   const { log, isLoading: logLoading } = useCitaLog(cita?.id ?? '')
 
@@ -61,7 +64,7 @@ export function CitaDetalleModal({
 
   const citaStatus = (cita.cita_status as CitaOperStatus) ?? 'RESERVADA'
   const statusCfg = STATUS_CONFIG[citaStatus] ?? STATUS_CONFIG.RESERVADA
-  const esTerminal = citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA'
+  const esTerminal = citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA' || citaStatus === 'NO_SHOW'
 
   const handleIniciar = async () => {
     setCargando(true)
@@ -121,7 +124,11 @@ export function CitaDetalleModal({
     }
   }
 
-  const handleCancelar = async () => {
+  const handleCancelar = () => {
+    setShowPinCancelar(true)
+  }
+
+  const handleCancelarAutorizado = async (supervisorId: string) => {
     setCargando(true)
     try {
       await cancelarCita(cita.id, user?.id ?? '')
@@ -131,7 +138,7 @@ export function CitaDetalleModal({
         usuarioId: user?.id ?? '',
         accion: 'CANCELAR',
         datosAnteriores: { cita_status: citaStatus },
-        datosNuevos: { cita_status: 'CANCELADA' },
+        datosNuevos: { cita_status: 'CANCELADA', autorizado_por: supervisorId },
       })
       void sincronizarCitaGoogle({
         action: 'delete',
@@ -349,6 +356,15 @@ export function CitaDetalleModal({
           }}
         />
       )}
+
+      <SupervisorPinDialog
+        isOpen={showPinCancelar}
+        onClose={() => setShowPinCancelar(false)}
+        onAuthorized={handleCancelarAutorizado}
+        titulo="Cancelar Cita"
+        mensaje="Se requiere autorización de supervisor para cancelar esta cita."
+        requiredPermission="citas.gestionar"
+      />
     </>
   )
 }

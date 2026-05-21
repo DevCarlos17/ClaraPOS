@@ -9,6 +9,9 @@ export interface AgendaConfig {
   rango_grilla_default: 'dia' | 'semana' | 'mes'
   duracion_slot_default: number // 15 | 30 | 45 | 60 min
   permitir_solapamiento_descanso: boolean
+  tolerancia_noshow_min: number // minutos despues de fecha_inicio para marcar NO_SHOW (0 = desactivado)
+  manejo_descanso_invadido: 'DESPLAZAR' | 'TIEMPO_EXTRA'
+  inicio_semana: 'lunes' | 'domingo'
 }
 
 const DEFAULTS: AgendaConfig = {
@@ -17,6 +20,9 @@ const DEFAULTS: AgendaConfig = {
   rango_grilla_default: 'semana',
   duracion_slot_default: 30,
   permitir_solapamiento_descanso: false,
+  tolerancia_noshow_min: 30,
+  manejo_descanso_invadido: 'DESPLAZAR',
+  inicio_semana: 'lunes',
 }
 
 function parseAgendaConfig(configStr: string): AgendaConfig {

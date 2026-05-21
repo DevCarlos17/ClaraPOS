@@ -25,6 +25,7 @@ import {
   WarningCircle,
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { DelayIndicator } from './delay-indicator'
 import { MiniPosModal } from './mini-pos-modal'
 
@@ -45,10 +46,11 @@ const FINANCE_BADGE: Record<CitaFinanceStatus, { label: string; cls: string }> =
 }
 
 const CITA_STATUS_BADGE: Record<CitaOperStatus, { label: string; cls: string }> = {
-  RESERVADA:  { label: 'Reservada',   cls: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300' },
-  EN_PROCESO: { label: 'En Proceso',  cls: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300' },
-  REALIZADA:  { label: 'Realizada',   cls: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' },
-  CANCELADA:  { label: 'Cancelada',   cls: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' },
+  RESERVADA:  { label: 'Reservada',    cls: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300' },
+  EN_PROCESO: { label: 'En Proceso',   cls: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300' },
+  REALIZADA:  { label: 'Realizada',    cls: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300' },
+  CANCELADA:  { label: 'Cancelada',    cls: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300' },
+  NO_SHOW:    { label: 'No Asistio',   cls: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300' },
 }
 
 export function CitaCard({
@@ -62,6 +64,7 @@ export function CitaCard({
   const { user } = useCurrentUser()
   const [cargando, setCargando] = useState(false)
   const [mostrarMiniPos, setMostrarMiniPos] = useState(false)
+  const [showPinCancelar, setShowPinCancelar] = useState(false)
 
   const citaStatus = (cita.cita_status as CitaOperStatus) ?? 'RESERVADA'
   const financeStatus = (cita.finance_status as CitaFinanceStatus) ?? 'PENDIENTE'
@@ -72,7 +75,7 @@ export function CitaCard({
   const horaInicio = format(new Date(cita.fecha_inicio), 'HH:mm')
   const horaFin = format(new Date(cita.fecha_fin), 'HH:mm')
 
-  const esTerminal = citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA'
+  const esTerminal = citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA' || citaStatus === 'NO_SHOW'
 
   // Indicador de retraso: cita RESERVADA cuya hora ya paso
   const ahora = Date.now()
@@ -124,7 +127,11 @@ export function CitaCard({
     }
   }
 
-  const handleCancelar = async () => {
+  const handleCancelar = () => {
+    setShowPinCancelar(true)
+  }
+
+  const handleCancelarAutorizado = async (supervisorId: string) => {
     setCargando(true)
     try {
       await cancelarCita(cita.id, user?.id ?? '')
@@ -134,7 +141,7 @@ export function CitaCard({
         usuarioId: user?.id ?? '',
         accion: 'CANCELAR',
         datosAnteriores: { cita_status: citaStatus },
-        datosNuevos: { cita_status: 'CANCELADA' },
+        datosNuevos: { cita_status: 'CANCELADA', autorizado_por: supervisorId },
       })
       toast.success('Cita cancelada')
     } catch {
@@ -284,6 +291,15 @@ export function CitaCard({
           onClose={() => setMostrarMiniPos(false)}
         />
       )}
+
+      <SupervisorPinDialog
+        isOpen={showPinCancelar}
+        onClose={() => setShowPinCancelar(false)}
+        onAuthorized={handleCancelarAutorizado}
+        titulo="Cancelar Cita"
+        mensaje="Se requiere autorización de supervisor para cancelar esta cita."
+        requiredPermission="citas.gestionar"
+      />
     </div>
   )
 }

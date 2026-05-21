@@ -5,6 +5,7 @@ interface CurrentUser {
   id: string
   email: string
   nombre: string
+  level: number | null
   rol_id: string | null
   rol_nombre: string | null
   empresa_id: string | null
@@ -16,7 +17,7 @@ export function useCurrentUser(): { user: CurrentUser | null; loading: boolean }
   // Query usuarios y roles por separado para que PowerSync
   // reaccione independientemente a cambios en cada tabla
   const { data: userData, isLoading: userLoading } = useQuery(
-    `SELECT id, email, nombre, rol_id, empresa_id FROM usuarios WHERE id = ?`,
+    `SELECT id, email, nombre, level, rol_id, empresa_id FROM usuarios WHERE id = ?`,
     [authUser?.id ?? ''],
     { runQueryOnce: false }
   )
@@ -46,6 +47,7 @@ export function useCurrentUser(): { user: CurrentUser | null; loading: boolean }
         id: userRow.id as string,
         email: userRow.email as string,
         nombre: userRow.nombre as string,
+        level: (userRow.level as number) ?? null,
         rol_id: rolId,
         rol_nombre: rolNombre,
         empresa_id: (userRow.empresa_id as string) ?? null,
@@ -60,11 +62,14 @@ export function useCurrentUser(): { user: CurrentUser | null; loading: boolean }
   const empresaId = typeof meta?.empresa_id === 'string' ? meta.empresa_id : null
   const metaRolId = typeof meta?.rol_id === 'string' ? meta.rol_id : null
 
+  const metaLevel = typeof meta?.level === 'number' ? meta.level : null
+
   return {
     user: {
       id: authUser.id,
       email: authUser.email ?? '',
       nombre,
+      level: metaLevel,
       rol_id: metaRolId,
       rol_nombre: rolNombre,
       empresa_id: empresaId,
