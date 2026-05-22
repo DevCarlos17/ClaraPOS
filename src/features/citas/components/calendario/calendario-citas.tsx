@@ -357,6 +357,26 @@ export function CalendarioCitas() {
     [todayMidnight]
   )
 
+  const renderEventContent = useCallback((arg: { timeText: string; event: { title: string }; view: { type: string } }) => {
+    const isDayView = arg.view.type === 'timeGridDay'
+    const timeText = arg.timeText
+    const title = arg.event.title
+    if (isDayView) {
+      return (
+        <div className="flex items-center gap-1.5 px-1.5 py-0.5 w-full overflow-hidden">
+          <span className="text-[11px] font-semibold whitespace-nowrap opacity-90">{timeText}</span>
+          <span className="text-[11px] font-bold truncate">{title}</span>
+        </div>
+      )
+    }
+    return (
+      <div className="flex flex-col px-1 py-0.5 overflow-hidden">
+        <span className="text-[10px] font-semibold opacity-90 leading-tight">{timeText}</span>
+        <span className="text-[11px] font-bold truncate leading-tight">{title}</span>
+      </div>
+    )
+  }, [])
+
   const VIEW_LABELS: Record<CalendarView, string> = {
     timeGridDay: 'Dia',
     timeGridWeek: 'Semana',
@@ -470,25 +490,7 @@ export function CalendarioCitas() {
             locale="es"
             firstDay={1}
             events={eventos}
-            eventContent={(arg) => {
-              const isDayView = arg.view.type === 'timeGridDay'
-              const timeText = arg.timeText
-              const title = arg.event.title
-              if (isDayView) {
-                return (
-                  <div className="flex items-center gap-1.5 px-1.5 py-0.5 w-full overflow-hidden">
-                    <span className="text-[11px] font-semibold whitespace-nowrap opacity-90">{timeText}</span>
-                    <span className="text-[11px] font-bold truncate">{title}</span>
-                  </div>
-                )
-              }
-              return (
-                <div className="flex flex-col px-1 py-0.5 overflow-hidden">
-                  <span className="text-[10px] font-semibold opacity-90 leading-tight">{timeText}</span>
-                  <span className="text-[11px] font-bold truncate leading-tight">{title}</span>
-                </div>
-              )
-            }}
+            eventContent={renderEventContent}
             selectable
             selectMirror
             selectConstraint={{ startTime: '00:00', endTime: '24:00' }}

@@ -104,10 +104,14 @@ export function useCitasRango(inicio: string, fin: string) {
 
   const { data, isLoading } = useQuery(
     enabled
-      ? 'SELECT * FROM citas WHERE empresa_id = ? AND fecha_inicio >= ? AND fecha_inicio <= ? ORDER BY fecha_inicio ASC'
+      ? `SELECT * FROM citas WHERE empresa_id = ?
+         AND REPLACE(fecha_inicio, ' ', 'T') >= ?
+         AND REPLACE(fecha_inicio, ' ', 'T') <= ?
+         ORDER BY fecha_inicio ASC`
       : '',
     enabled ? [empresaId, inicio, fin] : []
   )
+
   return { citas: (data ?? []) as Cita[], isLoading }
 }
 
