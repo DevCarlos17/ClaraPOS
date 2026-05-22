@@ -18,7 +18,7 @@ import { todayStr } from '@/lib/dates'
 import type { AgendaConfig } from '../../hooks/use-agenda-config'
 
 // Componente de slots para un profesional especifico
-function SlotsProfesional({
+export function SlotsProfesional({
   profesionalId,
   fecha,
   duracionMin,

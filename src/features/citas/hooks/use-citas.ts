@@ -491,3 +491,23 @@ export async function reprogramarCita(
     .where('id', '=', citaId)
     .execute()
 }
+
+export async function reprogramarCitaConProfesional(
+  citaId: string,
+  fechaInicio: string,
+  fechaFin: string,
+  profesionalId: string,
+  userId: string
+) {
+  await kysely
+    .updateTable('citas')
+    .set({
+      fecha_inicio: fechaInicio,
+      fecha_fin: fechaFin,
+      profesional_id: profesionalId,
+      updated_at: localNow(),
+      updated_by: userId,
+    })
+    .where('id', '=', citaId)
+    .execute()
+}
