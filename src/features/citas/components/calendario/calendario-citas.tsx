@@ -146,7 +146,6 @@ export function CalendarioCitas() {
     (info: { start: Date; end: Date; view: { title: string; type: string } }) => {
       const inicio = info.start.toISOString()
       const fin = info.end.toISOString()
-      console.log('[Calendario] datesSet →', { vista: info.view.type, inicio, fin })
       setRangoInicio(inicio)
       setRangoFin(fin)
       setTitulo(info.view.title)
@@ -282,14 +281,7 @@ export function CalendarioCitas() {
     }
   }, [configLoading, config.rango_grilla_default, viewInitialized])
 
-  useEffect(() => {
-    console.log('[Calendario] citas en rango →', {
-      total: citas.length,
-      rangoInicio,
-      rangoFin,
-      ids: citas.map((c) => c.id.slice(0, 8)),
-    })
-  }, [citas, rangoInicio, rangoFin])
+
 
   const slotDuration = `${String(Math.floor(config.duracion_slot_default / 60)).padStart(2, '0')}:${String(config.duracion_slot_default % 60).padStart(2, '0')}:00`
 
