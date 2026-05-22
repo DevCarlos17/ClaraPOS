@@ -42,6 +42,7 @@ export interface Cita {
   ejecucion_paralela: number
   prioridad_filtro: string | null
   snapshot_en_progreso: string | null
+  reprogramaciones_count: number
   created_at: string
   updated_at: string
   created_by: string | null
@@ -483,13 +484,36 @@ export async function reprogramarCita(
   citaId: string,
   fechaInicio: string,
   fechaFin: string,
-  userId: string
+  userId: string,
+  options?: { skipOverlapCheck?: boolean }
 ) {
-  await kysely
-    .updateTable('citas')
-    .set({ fecha_inicio: fechaInicio, fecha_fin: fechaFin, updated_at: localNow(), updated_by: userId })
-    .where('id', '=', citaId)
-    .execute()
+  if (!options?.skipOverlapCheck) {
+    const [citaActual] = await db.getAll<{ empresa_id: string; profesional_id: string }>(
+      'SELECT empresa_id, profesional_id FROM citas WHERE id = ?',
+      [citaId]
+    )
+    if (citaActual) {
+      const solapadas = await db.getAll<{ id: string }>(
+        `SELECT id FROM citas
+         WHERE empresa_id = ? AND profesional_id = ? AND id != ?
+           AND cita_status NOT IN ('CANCELADA', 'NO_SHOW')
+           AND fecha_inicio < ? AND fecha_fin > ?`,
+        [citaActual.empresa_id, citaActual.profesional_id, citaId, fechaFin, fechaInicio]
+      )
+      if (solapadas.length > 0) {
+        throw new Error('El profesional ya tiene una cita en ese horario.')
+      }
+    }
+  }
+
+  await db.execute(
+    `UPDATE citas
+     SET fecha_inicio = ?, fecha_fin = ?,
+         reprogramaciones_count = COALESCE(reprogramaciones_count, 0) + 1,
+         updated_at = ?, updated_by = ?
+     WHERE id = ?`,
+    [fechaInicio, fechaFin, localNow(), userId, citaId]
+  )
 }
 
 export async function reprogramarCitaConProfesional(
@@ -497,17 +521,34 @@ export async function reprogramarCitaConProfesional(
   fechaInicio: string,
   fechaFin: string,
   profesionalId: string,
-  userId: string
+  userId: string,
+  options?: { skipOverlapCheck?: boolean }
 ) {
-  await kysely
-    .updateTable('citas')
-    .set({
-      fecha_inicio: fechaInicio,
-      fecha_fin: fechaFin,
-      profesional_id: profesionalId,
-      updated_at: localNow(),
-      updated_by: userId,
-    })
-    .where('id', '=', citaId)
-    .execute()
+  if (!options?.skipOverlapCheck) {
+    const [citaActual] = await db.getAll<{ empresa_id: string }>(
+      'SELECT empresa_id FROM citas WHERE id = ?',
+      [citaId]
+    )
+    if (citaActual) {
+      const solapadas = await db.getAll<{ id: string }>(
+        `SELECT id FROM citas
+         WHERE empresa_id = ? AND profesional_id = ? AND id != ?
+           AND cita_status NOT IN ('CANCELADA', 'NO_SHOW')
+           AND fecha_inicio < ? AND fecha_fin > ?`,
+        [citaActual.empresa_id, profesionalId, citaId, fechaFin, fechaInicio]
+      )
+      if (solapadas.length > 0) {
+        throw new Error('El profesional ya tiene una cita en ese horario.')
+      }
+    }
+  }
+
+  await db.execute(
+    `UPDATE citas
+     SET fecha_inicio = ?, fecha_fin = ?, profesional_id = ?,
+         reprogramaciones_count = COALESCE(reprogramaciones_count, 0) + 1,
+         updated_at = ?, updated_by = ?
+     WHERE id = ?`,
+    [fechaInicio, fechaFin, profesionalId, localNow(), userId, citaId]
+  )
 }

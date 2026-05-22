@@ -146,8 +146,8 @@ export function ReprogramarModal({
           : 'Cita reprogramada'
       )
       onReprogramado()
-    } catch {
-      toast.error('Error al reprogramar cita')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error al reprogramar cita')
     } finally {
       setGuardando(false)
     }

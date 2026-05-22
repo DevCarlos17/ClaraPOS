@@ -213,7 +213,9 @@ export function CalendarioCitas() {
         pendingDrop.citaId,
         pendingDrop.nuevaFechaInicio.toISOString(),
         pendingDrop.nuevaFechaFin.toISOString(),
-        user?.id ?? ''
+        user?.id ?? '',
+        // Si es sobreturno, el supervisor ya autorizó el solapamiento explícitamente
+        { skipOverlapCheck: pendingDrop.tieneOverlap }
       )
       await registrarCitaLog({
         empresaId,
@@ -350,7 +352,13 @@ export function CalendarioCitas() {
     [todayMidnight]
   )
 
-  const renderEventContent = useCallback((arg: { timeText: string; event: { title: string }; view: { type: string } }) => {
+  const renderEventContent = useCallback((arg: {
+    timeText: string
+    event: { title: string; extendedProps: { cita: Cita; profesionalNombre: string } }
+    view: { type: string }
+  }) => {
+    const cita = arg.event.extendedProps.cita as Cita
+    const esReprogramada = (cita?.reprogramaciones_count ?? 0) > 0
     const isDayView = arg.view.type === 'timeGridDay'
     const timeText = arg.timeText
     const title = arg.event.title
@@ -359,13 +367,21 @@ export function CalendarioCitas() {
         <div className="flex items-center gap-1.5 px-1.5 py-0.5 w-full overflow-hidden">
           <span className="text-[11px] font-semibold whitespace-nowrap opacity-90">{timeText}</span>
           <span className="text-[11px] font-bold truncate">{title}</span>
+          {esReprogramada && (
+            <span className="text-[9px] font-bold bg-white/25 rounded px-1 shrink-0 leading-tight">↺</span>
+          )}
         </div>
       )
     }
     return (
       <div className="flex flex-col px-1 py-0.5 overflow-hidden">
         <span className="text-[10px] font-semibold opacity-90 leading-tight">{timeText}</span>
-        <span className="text-[11px] font-bold truncate leading-tight">{title}</span>
+        <div className="flex items-center gap-1 min-w-0">
+          <span className="text-[11px] font-bold truncate leading-tight">{title}</span>
+          {esReprogramada && (
+            <span className="text-[9px] font-bold bg-white/25 rounded px-1 shrink-0 leading-tight">↺</span>
+          )}
+        </div>
       </div>
     )
   }, [])
