@@ -63,13 +63,14 @@ export function CalendarioCitas() {
   const esSupervisor = hasPermission(PERMISSIONS.CITAS_MANAGE)
 
   const { config, isLoading: configLoading } = useAgendaConfig()
-  const { slotMinTime, slotMaxTime, businessHours: businessHoursDynamic } = useGridTimeRange()
 
   const [view, setView] = useState<CalendarView>('timeGridWeek')
   const [viewInitialized, setViewInitialized] = useState(false)
   const [titulo, setTitulo] = useState('')
   const [rangoInicio, setRangoInicio] = useState('')
   const [rangoFin, setRangoFin] = useState('')
+
+  const { slotMinTime, slotMaxTime, businessHours: businessHoursDynamic } = useGridTimeRange(rangoInicio, rangoFin)
   const [profesionalesFiltro, setProfesionalesFiltro] = useState<Set<string>>(new Set())
   const [citaSeleccionada, setCitaSeleccionada] = useState<Cita | null>(null)
   const [modalOpen, setModalOpen] = useState(false)

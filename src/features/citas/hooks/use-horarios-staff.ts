@@ -194,7 +194,23 @@ const GRID_FALLBACK: GridTimeRange = {
   businessHours: [{ daysOfWeek: [1, 2, 3, 4, 5, 6], startTime: '08:00', endTime: '20:00' }],
 }
 
-export function useGridTimeRange(): GridTimeRange {
+// Dado un rango de fechas ISO, devuelve el Set de días de la semana (0=Dom…6=Sáb) presentes.
+function diasEnRango(desde: string, hasta: string): Set<number> {
+  const dias = new Set<number>()
+  try {
+    const cursor = new Date(desde)
+    const end = new Date(hasta)
+    while (cursor < end && dias.size < 7) {
+      dias.add(cursor.getDay())
+      cursor.setDate(cursor.getDate() + 1)
+    }
+  } catch {
+    // fechas inválidas → set vacío → se usará el fallback
+  }
+  return dias
+}
+
+export function useGridTimeRange(rangoInicio?: string, rangoFin?: string): GridTimeRange {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
@@ -205,10 +221,17 @@ export function useGridTimeRange(): GridTimeRange {
     empresaId ? [empresaId] : []
   )
 
-  // Citas activas del mes en curso + semana anterior/siguiente para cubrir navegación
+  // Citas dentro del período visible. Si aún no hay rango (primer render) usamos
+  // el mes en curso para no dejar la query vacía.
   const hoy = new Date()
-  const rangoDesde = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString()
-  const rangoHasta = new Date(hoy.getFullYear(), hoy.getMonth() + 2, 0).toISOString()
+  const desdeEfectivo =
+    rangoInicio && rangoInicio !== ''
+      ? rangoInicio
+      : new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString()
+  const hastaEfectivo =
+    rangoFin && rangoFin !== ''
+      ? rangoFin
+      : new Date(hoy.getFullYear(), hoy.getMonth() + 2, 0).toISOString()
 
   const { data: citasData } = useQuery(
     empresaId
@@ -219,7 +242,7 @@ export function useGridTimeRange(): GridTimeRange {
            AND REPLACE(fecha_inicio, ' ', 'T') >= ?
            AND REPLACE(fecha_inicio, ' ', 'T') <= ?`
       : '',
-    empresaId ? [empresaId, rangoDesde, rangoHasta] : []
+    empresaId ? [empresaId, desdeEfectivo, hastaEfectivo] : []
   )
 
   const horarios = (data ?? []) as { hora_inicio: string; hora_fin: string; dia_semana: number }[]
@@ -227,11 +250,25 @@ export function useGridTimeRange(): GridTimeRange {
 
   if (horarios.length === 0) return GRID_FALLBACK
 
-  const minInicioMin = Math.min(...horarios.map((h) => timeToMin(h.hora_inicio)))
-  const maxFinMin = Math.max(...horarios.map((h) => timeToMin(h.hora_fin)))
+  // Reducir al subconjunto de días visibles en el período actual.
+  // Si el rango es válido, filtrar; si no (p.ej. primer render), usar todos.
+  const diasVisibles =
+    rangoInicio && rangoFin && rangoInicio !== '' && rangoFin !== ''
+      ? diasEnRango(rangoInicio, rangoFin)
+      : null
 
-  // Expandir el rango si hay citas fuera del horario de los trabajadores
-  // (p.ej. citas antiguas programadas antes de que se redujera el horario)
+  const horariosVisibles =
+    diasVisibles && diasVisibles.size > 0
+      ? horarios.filter((h) => diasVisibles.has(h.dia_semana))
+      : horarios
+
+  // Si no hay horario para los días visibles, usar fallback
+  if (horariosVisibles.length === 0) return GRID_FALLBACK
+
+  const minInicioMin = Math.min(...horariosVisibles.map((h) => timeToMin(h.hora_inicio)))
+  const maxFinMin = Math.max(...horariosVisibles.map((h) => timeToMin(h.hora_fin)))
+
+  // Expandir el rango si hay citas fuera del horario (p.ej. citas históricas)
   let gridMin = minInicioMin
   let gridMax = maxFinMin
 
@@ -239,7 +276,6 @@ export function useGridTimeRange(): GridTimeRange {
     try {
       const inicioDate = new Date(cita.fi)
       const finDate = new Date(cita.ff)
-      // Extraer hora local (Venezuela UTC-4 o donde corra el cliente)
       const horaInicioMin = inicioDate.getHours() * 60 + inicioDate.getMinutes()
       const horaFinMin = finDate.getHours() * 60 + finDate.getMinutes()
       if (horaInicioMin < gridMin) gridMin = horaInicioMin
@@ -252,6 +288,8 @@ export function useGridTimeRange(): GridTimeRange {
   return {
     slotMinTime: `${minToTime(gridMin)}:00`,
     slotMaxTime: `${minToTime(gridMax)}:00`,
+    // businessHours usa TODOS los horarios para que el sombreado visual
+    // sea correcto en todos los días de la vista semana/día.
     businessHours: horarios.map((h) => ({
       daysOfWeek: [h.dia_semana],
       startTime: h.hora_inicio,
