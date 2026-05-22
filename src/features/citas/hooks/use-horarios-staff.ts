@@ -205,16 +205,49 @@ export function useGridTimeRange(): GridTimeRange {
     empresaId ? [empresaId] : []
   )
 
+  // Citas activas del mes en curso + semana anterior/siguiente para cubrir navegación
+  const hoy = new Date()
+  const rangoDesde = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1).toISOString()
+  const rangoHasta = new Date(hoy.getFullYear(), hoy.getMonth() + 2, 0).toISOString()
+
+  const { data: citasData } = useQuery(
+    empresaId
+      ? `SELECT REPLACE(fecha_inicio, ' ', 'T') as fi, REPLACE(fecha_fin, ' ', 'T') as ff
+         FROM citas
+         WHERE empresa_id = ?
+           AND cita_status NOT IN ('CANCELADA', 'NO_SHOW')
+           AND REPLACE(fecha_inicio, ' ', 'T') >= ?
+           AND REPLACE(fecha_inicio, ' ', 'T') <= ?`
+      : '',
+    empresaId ? [empresaId, rangoDesde, rangoHasta] : []
+  )
+
   const horarios = (data ?? []) as { hora_inicio: string; hora_fin: string; dia_semana: number }[]
+  const citas = (citasData ?? []) as { fi: string; ff: string }[]
 
   if (horarios.length === 0) return GRID_FALLBACK
 
   const minInicioMin = Math.min(...horarios.map((h) => timeToMin(h.hora_inicio)))
   const maxFinMin = Math.max(...horarios.map((h) => timeToMin(h.hora_fin)))
 
-  // Sin padding — el grid empieza y termina exactamente en los horarios de los trabajadores
-  const gridMin = minInicioMin
-  const gridMax = maxFinMin
+  // Expandir el rango si hay citas fuera del horario de los trabajadores
+  // (p.ej. citas antiguas programadas antes de que se redujera el horario)
+  let gridMin = minInicioMin
+  let gridMax = maxFinMin
+
+  for (const cita of citas) {
+    try {
+      const inicioDate = new Date(cita.fi)
+      const finDate = new Date(cita.ff)
+      // Extraer hora local (Venezuela UTC-4 o donde corra el cliente)
+      const horaInicioMin = inicioDate.getHours() * 60 + inicioDate.getMinutes()
+      const horaFinMin = finDate.getHours() * 60 + finDate.getMinutes()
+      if (horaInicioMin < gridMin) gridMin = horaInicioMin
+      if (horaFinMin > gridMax) gridMax = horaFinMin
+    } catch {
+      // ignorar fechas malformadas
+    }
+  }
 
   return {
     slotMinTime: `${minToTime(gridMin)}:00`,
