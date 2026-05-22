@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -20,6 +20,8 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { CitaDetalleModal } from './cita-detalle-modal'
 import { DragConfirmPopover, type DragConfirmState } from './drag-confirm-popover'
+import { ReprogramarModal } from './reprogramar-modal'
+import { format } from 'date-fns'
 import { CaretLeft, CaretRight, Plus } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -77,8 +79,27 @@ export function CalendarioCitas() {
   const [pendingDrop, setPendingDrop] = useState<DragConfirmState | null>(null)
   const [showPinSobreturno, setShowPinSobreturno] = useState(false)
 
+  type DragRescheduleState = {
+    cita: Cita
+    clienteNombre: string
+    profesionalNombre: string
+    fechaInicial: string
+  }
+  const [dragReschedule, setDragReschedule] = useState<DragRescheduleState | null>(null)
+
   const { citas } = useCitasRango(rangoInicio, rangoFin)
   const { clientes } = useClientes()
+
+  const { data: reprogramadasData } = useQuery(
+    empresaId
+      ? 'SELECT DISTINCT cita_id FROM cita_log WHERE accion = ? AND empresa_id = ?'
+      : '',
+    empresaId ? ['REPROGRAMADA', empresaId] : []
+  )
+  const reprogramadasSet = useMemo(
+    () => new Set((reprogramadasData ?? []).map((r: { cita_id: string }) => r.cita_id)),
+    [reprogramadasData]
+  )
 
   const { data: usuariosData } = useQuery(
     empresaId
@@ -171,6 +192,31 @@ export function CalendarioCitas() {
         return
       }
 
+      // Vista mes: revertir el drag visualmente y abrir el ReprogramarModal con la
+      // fecha destino pre-cargada, para que el usuario elija hora y profesional.
+      const currentViewType = calendarRef.current?.getApi().view.type
+      if (currentViewType === 'dayGridMonth') {
+        const targetMidnight = new Date(nuevaFechaInicio)
+        targetMidnight.setHours(0, 0, 0, 0)
+        const todayMid = new Date()
+        todayMid.setHours(0, 0, 0, 0)
+        if (targetMidnight < todayMid) {
+          arg.revert()
+          toast.error('No se puede reprogramar una cita en el pasado')
+          return
+        }
+        // Revertir posicion visual — el modal hara la reprogramacion real
+        arg.revert()
+        setDragReschedule({
+          cita,
+          clienteNombre: clienteMap.get(cita.cliente_id) ?? 'Cliente',
+          profesionalNombre: profesionalMap.get(cita.profesional_id)?.nombre ?? '',
+          fechaInicial: format(nuevaFechaInicio, 'yyyy-MM-dd'),
+        })
+        return
+      }
+
+      // Vista semana / dia: validar que el nuevo horario no sea pasado
       if (nuevaFechaInicio < new Date()) {
         arg.revert()
         toast.error('No se puede reprogramar una cita en el pasado')
@@ -203,7 +249,7 @@ export function CalendarioCitas() {
         setShowPinSobreturno(true)
       }
     },
-    [clienteMap, citas]
+    [clienteMap, profesionalMap, citas]
   )
 
   const handleConfirmDrop = useCallback(async (supervisorId?: string) => {
@@ -221,10 +267,11 @@ export function CalendarioCitas() {
         empresaId,
         citaId: pendingDrop.citaId,
         usuarioId: user?.id ?? '',
-        accion: pendingDrop.tieneOverlap ? 'SOBRETURNO_AUTORIZADO' : 'DRAG_AND_DROP',
+        accion: pendingDrop.tieneOverlap ? 'SOBRETURNO_AUTORIZADO' : 'REPROGRAMADA',
         datosNuevos: {
           fecha_inicio: pendingDrop.nuevaFechaInicio.toISOString(),
           fecha_fin: pendingDrop.nuevaFechaFin.toISOString(),
+          metodo: 'arrastrar',
           ...(supervisorId && { autorizado_por: supervisorId }),
         },
       })
@@ -358,7 +405,7 @@ export function CalendarioCitas() {
     view: { type: string }
   }) => {
     const cita = arg.event.extendedProps.cita as Cita
-    const esReprogramada = (cita?.reprogramaciones_count ?? 0) > 0
+    const esReprogramada = reprogramadasSet.has(cita.id)
     const isDayView = arg.view.type === 'timeGridDay'
     const timeText = arg.timeText
     const title = arg.event.title
@@ -384,7 +431,7 @@ export function CalendarioCitas() {
         </div>
       </div>
     )
-  }, [])
+  }, [reprogramadasSet])
 
   const VIEW_LABELS: Record<CalendarView, string> = {
     timeGridDay: 'Dia',
@@ -551,6 +598,18 @@ export function CalendarioCitas() {
           state={pendingDrop}
           onConfirm={handleConfirmDrop}
           onCancel={handleCancelDrop}
+        />
+      )}
+
+      {dragReschedule && (
+        <ReprogramarModal
+          cita={dragReschedule.cita}
+          clienteNombre={dragReschedule.clienteNombre}
+          profesionalNombre={dragReschedule.profesionalNombre}
+          open
+          fechaInicial={dragReschedule.fechaInicial}
+          onClose={() => setDragReschedule(null)}
+          onReprogramado={() => setDragReschedule(null)}
         />
       )}
 

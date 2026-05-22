@@ -139,7 +139,7 @@ export function CitaCard({
         empresaId: cita.empresa_id,
         citaId: cita.id,
         usuarioId: user?.id ?? '',
-        accion: 'CANCELAR',
+        accion: 'CANCELADA',
         datosAnteriores: { cita_status: citaStatus },
         datosNuevos: { cita_status: 'CANCELADA', autorizado_por: supervisorId },
       })

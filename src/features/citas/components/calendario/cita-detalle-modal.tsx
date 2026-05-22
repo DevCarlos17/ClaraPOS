@@ -13,13 +13,19 @@ import {
   ArrowRight,
   ArrowsClockwise,
   ClockCounterClockwise,
+  Play,
+  CheckCircle,
+  UserMinus,
+  ShoppingCart,
+  Warning,
+  Lock,
+  CalendarPlus,
 } from '@phosphor-icons/react'
-import { format } from 'date-fns'
+import { format, parseISO } from 'date-fns'
 import { es } from 'date-fns/locale'
 import type { Cita, CitaOperStatus } from '../../hooks/use-citas'
 import { iniciarAtencion, finalizarCita, cancelarCita } from '../../hooks/use-citas'
-import { useCitaLog } from '../../hooks/use-cita-log'
-import { registrarCitaLog } from '../../hooks/use-cita-log'
+import { useCitaLog, registrarCitaLog, type CitaLogEntry } from '../../hooks/use-cita-log'
 import { sincronizarCitaGoogle } from '../../hooks/use-google-calendar'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { toast } from 'sonner'
@@ -33,6 +39,141 @@ interface CitaDetalleModalProps {
   profesionalNombre: string
   open: boolean
   onClose: () => void
+}
+
+function parseDatos(raw: string | null): Record<string, unknown> {
+  if (!raw) return {}
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function formatFechaLog(iso: unknown): string {
+  if (typeof iso !== 'string' || !iso) return ''
+  try {
+    return format(parseISO(iso), "d MMM yyyy, HH:mm", { locale: es })
+  } catch {
+    return iso
+  }
+}
+
+interface AuditEntryConfig {
+  icon: React.ReactNode
+  title: string
+  detail?: string
+  colorClass?: string
+}
+
+function buildAuditConfig(entry: CitaLogEntry): AuditEntryConfig {
+  const nuevos = parseDatos(entry.datos_nuevos)
+  const anteriores = parseDatos(entry.datos_anteriores)
+
+  switch (entry.accion) {
+    case 'AGENDADA':
+      return {
+        icon: <CalendarPlus size={14} className="text-primary" />,
+        title: 'Cita agendada',
+        detail: nuevos.fecha_inicio
+          ? `${formatFechaLog(nuevos.fecha_inicio)}`
+          : undefined,
+      }
+
+    case 'REPROGRAMADA': {
+      const metodo = nuevos.metodo === 'arrastrar' ? 'arrastrar y soltar' : 'modal'
+      const fechaAnterior = anteriores.fecha_inicio ? formatFechaLog(anteriores.fecha_inicio) : null
+      const fechaNueva = nuevos.fecha_inicio ? formatFechaLog(nuevos.fecha_inicio) : null
+      const motivo = typeof nuevos.motivo === 'string' ? nuevos.motivo : null
+      const lines: string[] = []
+      if (fechaAnterior && fechaNueva) lines.push(`${fechaAnterior} → ${fechaNueva}`)
+      if (motivo) lines.push(`Motivo: ${motivo}`)
+      lines.push(`Via: ${metodo}`)
+      if (nuevos.profesional_nombre) lines.push(`Nuevo profesional: ${nuevos.profesional_nombre}`)
+      return {
+        icon: <ArrowsClockwise size={14} className="text-blue-500" />,
+        title: 'Reprogramada',
+        detail: lines.join(' · '),
+      }
+    }
+
+    case 'STATUS_CHANGE': {
+      const nuevoStatus = nuevos.cita_status as string | undefined
+      if (nuevoStatus === 'EN_PROCESO') {
+        return {
+          icon: <Play size={14} className="text-purple-500" />,
+          title: 'Iniciada',
+        }
+      }
+      if (nuevoStatus === 'REALIZADA') {
+        return {
+          icon: <CheckCircle size={14} className="text-green-600" />,
+          title: 'Finalizada',
+        }
+      }
+      return {
+        icon: <ClockCounterClockwise size={14} className="text-muted-foreground" />,
+        title: `Estado: ${nuevoStatus ?? ''}`,
+      }
+    }
+
+    case 'CANCELADA':
+      return {
+        icon: <XCircle size={14} className="text-red-500" />,
+        title: 'Cancelada',
+        detail: nuevos.autorizado_por ? 'Autorizado por supervisor' : undefined,
+        colorClass: 'text-red-600',
+      }
+
+    case 'PAGADA':
+      return {
+        icon: <CurrencyDollar size={14} className="text-green-600" />,
+        title: 'Pago registrado',
+        detail: typeof nuevos.checkout_tipo === 'string' ? nuevos.checkout_tipo : undefined,
+        colorClass: 'text-green-700',
+      }
+
+    case 'NO_SHOW':
+      return {
+        icon: <UserMinus size={14} className="text-orange-500" />,
+        title: 'No se presentó',
+        detail: nuevos.detectado_automaticamente === true ? 'Detectado automáticamente' : undefined,
+      }
+
+    case 'MINI_POS_ADD':
+      return {
+        icon: <ShoppingCart size={14} className="text-blue-500" />,
+        title: 'Producto agregado',
+        detail: typeof nuevos.nombre === 'string' ? nuevos.nombre : undefined,
+      }
+
+    case 'SOBRETURNO_AUTORIZADO':
+      return {
+        icon: <Warning size={14} className="text-yellow-500" />,
+        title: 'Sobreturno autorizado',
+      }
+
+    case 'BLOQUEO_ADMIN':
+      return {
+        icon: <Lock size={14} className="text-muted-foreground" />,
+        title: 'Afectada por bloqueo de agenda',
+      }
+
+    case 'REUBICACION_POR_BLOQUEO':
+      return {
+        icon: <ArrowRight size={14} className="text-muted-foreground" />,
+        title: 'Reasignada por bloqueo',
+        detail: typeof nuevos.profesional_nombre === 'string'
+          ? `Nuevo profesional: ${nuevos.profesional_nombre}`
+          : undefined,
+      }
+
+    default:
+      return {
+        icon: <ClockCounterClockwise size={14} className="text-muted-foreground" />,
+        title: entry.accion.replace(/_/g, ' '),
+      }
+  }
 }
 
 const STATUS_CONFIG: Record<CitaOperStatus, { label: string; color: string }> = {
@@ -136,7 +277,7 @@ export function CitaDetalleModal({
         empresaId: cita.empresa_id,
         citaId: cita.id,
         usuarioId: user?.id ?? '',
-        accion: 'CANCELAR',
+        accion: 'CANCELADA',
         datosAnteriores: { cita_status: citaStatus },
         datosNuevos: { cita_status: 'CANCELADA', autorizado_por: supervisorId },
       })
@@ -160,6 +301,7 @@ export function CitaDetalleModal({
 
   const fechaInicio = new Date(cita.fecha_inicio)
   const fechaFin = new Date(cita.fecha_fin)
+  const esFechaPasada = fechaInicio < new Date(new Date().setHours(0, 0, 0, 0))
 
   return (
     <>
@@ -285,7 +427,7 @@ export function CitaDetalleModal({
                     )}
 
                     <div className="flex gap-2">
-                      {citaStatus === 'RESERVADA' && (
+                      {citaStatus === 'RESERVADA' && !esFechaPasada && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -315,28 +457,33 @@ export function CitaDetalleModal({
           )}
 
           {tab === 'historial' && (
-            <div className="space-y-2 max-h-80 overflow-y-auto">
+            <div className="space-y-1 max-h-80 overflow-y-auto">
               {logLoading ? (
                 <p className="text-xs text-muted-foreground text-center py-4">Cargando...</p>
               ) : log.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-4">Sin historial</p>
               ) : (
-                log.map((entry) => (
-                  <div key={entry.id} className="flex gap-3 py-2 border-b last:border-b-0">
-                    <ClockCounterClockwise size={14} className="text-muted-foreground shrink-0 mt-0.5" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium">{entry.accion.replace(/_/g, ' ')}</p>
-                      {entry.datos_nuevos && (
-                        <p className="text-xs text-muted-foreground truncate">
-                          {entry.datos_nuevos}
+                log.map((entry) => {
+                  const audit = buildAuditConfig(entry)
+                  return (
+                    <div key={entry.id} className="flex gap-3 py-2.5 border-b last:border-b-0">
+                      <div className="shrink-0 mt-0.5">{audit.icon}</div>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-semibold ${audit.colorClass ?? ''}`}>
+                          {audit.title}
                         </p>
-                      )}
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {format(new Date(entry.created_at), "d MMM, HH:mm", { locale: es })}
-                      </p>
+                        {audit.detail && (
+                          <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                            {audit.detail}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground/70 mt-0.5">
+                          {format(new Date(entry.created_at), "d MMM, HH:mm", { locale: es })}
+                        </p>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  )
+                })
               )}
             </div>
           )}

@@ -1292,8 +1292,6 @@ const citas = new Table(
     prioridad_filtro: column.text,
     // Snapshot para rehidratacion (JSONB serializado)
     snapshot_en_progreso: column.text,
-    // Seguimiento de reprogramaciones
-    reprogramaciones_count: column.integer,
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,

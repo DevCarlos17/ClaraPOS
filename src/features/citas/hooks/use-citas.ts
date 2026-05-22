@@ -12,6 +12,7 @@ import type {
   AsignacionPersonal,
 } from '@/stores/cita-wizard-store'
 import { crearVenta, type LineaVenta, type PagoEntry } from '@/features/ventas/hooks/use-ventas'
+import { registrarCitaLog } from './use-cita-log'
 
 export type CitaOperStatus = 'RESERVADA' | 'EN_PROCESO' | 'REALIZADA' | 'CANCELADA' | 'NO_SHOW'
 export type CitaFinanceStatus = 'PENDIENTE' | 'ABONADO' | 'PAGADO' | 'NULO'
@@ -42,7 +43,6 @@ export interface Cita {
   ejecucion_paralela: number
   prioridad_filtro: string | null
   snapshot_en_progreso: string | null
-  reprogramaciones_count: number
   created_at: string
   updated_at: string
   created_by: string | null
@@ -349,6 +349,21 @@ export async function crearCita(data: {
     }
   })
 
+  void registrarCitaLog({
+    empresaId: data.empresaId,
+    citaId,
+    usuarioId: data.userId,
+    accion: 'AGENDADA',
+    datosNuevos: {
+      fecha_inicio: data.fechaInicio,
+      fecha_fin: data.fechaFin,
+      profesional_id: data.profesionalId,
+      cliente_id: data.clienteId,
+      checkout_tipo: data.checkoutTipo,
+      finance_status: financeStatus,
+    },
+  })
+
   return citaId
 }
 
@@ -458,7 +473,12 @@ export async function actualizarGoogleEventId(citaId: string, googleEventId: str
     .execute()
 }
 
-export async function vincularVentaCita(citaId: string, ventaId: string, userId: string) {
+export async function vincularVentaCita(
+  citaId: string,
+  ventaId: string,
+  userId: string,
+  empresaId: string
+) {
   await kysely
     .updateTable('citas')
     .set({
@@ -470,6 +490,18 @@ export async function vincularVentaCita(citaId: string, ventaId: string, userId:
     })
     .where('id', '=', citaId)
     .execute()
+
+  void registrarCitaLog({
+    empresaId,
+    citaId,
+    usuarioId: userId,
+    accion: 'PAGADA',
+    datosNuevos: {
+      venta_id: ventaId,
+      finance_status: 'PAGADO',
+      checkout_tipo: 'POS',
+    },
+  })
 }
 
 export async function guardarSnapshot(citaId: string, snapshot: Record<string, unknown>) {
@@ -509,7 +541,6 @@ export async function reprogramarCita(
   await db.execute(
     `UPDATE citas
      SET fecha_inicio = ?, fecha_fin = ?,
-         reprogramaciones_count = COALESCE(reprogramaciones_count, 0) + 1,
          updated_at = ?, updated_by = ?
      WHERE id = ?`,
     [fechaInicio, fechaFin, localNow(), userId, citaId]
@@ -546,7 +577,6 @@ export async function reprogramarCitaConProfesional(
   await db.execute(
     `UPDATE citas
      SET fecha_inicio = ?, fecha_fin = ?, profesional_id = ?,
-         reprogramaciones_count = COALESCE(reprogramaciones_count, 0) + 1,
          updated_at = ?, updated_by = ?
      WHERE id = ?`,
     [fechaInicio, fechaFin, profesionalId, localNow(), userId, citaId]

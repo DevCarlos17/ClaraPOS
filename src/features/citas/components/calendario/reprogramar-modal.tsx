@@ -7,11 +7,13 @@ import { registrarCitaLog } from '../../hooks/use-cita-log'
 import { sincronizarCitaGoogle } from '../../hooks/use-google-calendar'
 import { SlotsProfesional } from '../wizard/step-fecha-staff'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useAgendaConfig } from '../../hooks/use-agenda-config'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { format, addDays, startOfWeek } from 'date-fns'
 import { es } from 'date-fns/locale'
 import { ArrowsClockwise, CaretLeft, CaretRight } from '@phosphor-icons/react'
+import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { todayStr } from '@/lib/dates'
 
@@ -24,6 +26,18 @@ interface ReprogramarModalProps {
   open: boolean
   onClose: () => void
   onReprogramado: () => void
+  /** Fecha pre-cargada en formato yyyy-MM-dd (ej. desde drag en vista mes) */
+  fechaInicial?: string
+}
+
+function calcOffsetDesdeFecha(fechaStr: string): number {
+  if (!fechaStr) return 0
+  const hoy = new Date()
+  const inicioHoy = startOfWeek(hoy, { weekStartsOn: 1 })
+  const fechaDate = new Date(fechaStr + 'T12:00:00')
+  const inicioFecha = startOfWeek(fechaDate, { weekStartsOn: 1 })
+  const diffMs = inicioFecha.getTime() - inicioHoy.getTime()
+  return Math.round(diffMs / (7 * 24 * 60 * 60 * 1000))
 }
 
 export function ReprogramarModal({
@@ -33,17 +47,20 @@ export function ReprogramarModal({
   open,
   onClose,
   onReprogramado,
+  fechaInicial,
 }: ReprogramarModalProps) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
+  const { config } = useAgendaConfig()
 
   const [guardando, setGuardando] = useState(false)
   const [modo, setModo] = useState<Modo>('mismo')
-  const [semanaOffset, setSemanaOffset] = useState(0)
-  const [fecha, setFecha] = useState('')
+  const [semanaOffset, setSemanaOffset] = useState(() => calcOffsetDesdeFecha(fechaInicial ?? ''))
+  const [fecha, setFecha] = useState(fechaInicial ?? '')
   const [horaInicio, setHoraInicio] = useState('')
   const [horaFin, setHoraFin] = useState('')
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState('')
+  const [motivo, setMotivo] = useState('')
 
   // Otros profesionales con horario activo (excluye al profesional actual)
   const { data: profesionalesData } = useQuery(
@@ -61,6 +78,11 @@ export function ReprogramarModal({
   const hoy = new Date()
   const inicioSemana = startOfWeek(addDays(hoy, semanaOffset * 7), { weekStartsOn: 1 })
   const dias = Array.from({ length: 7 }, (_, i) => addDays(inicioSemana, i))
+
+  const maxFutureDate =
+    config.limite_futuro_dias > 0
+      ? new Date(hoy.getTime() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
+      : null
 
   const profesionalActivo = modo === 'mismo' ? cita.profesional_id : profesionalSeleccionado
 
@@ -115,7 +137,7 @@ export function ReprogramarModal({
         empresaId: cita.empresa_id,
         citaId: cita.id,
         usuarioId: user?.id ?? '',
-        accion: 'MODAL_REPROGRAMAR',
+        accion: 'REPROGRAMADA',
         datosAnteriores: {
           fecha_inicio: cita.fecha_inicio,
           fecha_fin: cita.fecha_fin,
@@ -124,7 +146,10 @@ export function ReprogramarModal({
         datosNuevos: {
           fecha_inicio: nuevaFechaInicio,
           fecha_fin: nuevaFechaFin,
+          metodo: 'modal',
           ...(modo === 'otro' && { profesional_id: profesionalSeleccionado }),
+          ...(modo === 'otro' && profesionalFinalNombre && { profesional_nombre: profesionalFinalNombre }),
+          ...(motivo.trim() && { motivo: motivo.trim() }),
         },
       })
 
@@ -269,18 +294,20 @@ export function ReprogramarModal({
                     const esHoy = dStr === todayStr()
                     const seleccionado = dStr === fecha
                     const esPasado = d < new Date(new Date().setHours(0, 0, 0, 0))
+                    const esFuturoLimitado = maxFutureDate !== null && d >= maxFutureDate
+                    const bloqueado = esPasado || esFuturoLimitado
                     return (
                       <button
                         key={dStr}
-                        onClick={() => !esPasado && handleSeleccionarFecha(d)}
-                        disabled={esPasado}
+                        onClick={() => !bloqueado && handleSeleccionarFecha(d)}
+                        disabled={bloqueado}
                         className={cn(
                           'flex flex-col items-center py-2 rounded-xl text-sm transition-all',
                           seleccionado
                             ? 'bg-primary text-primary-foreground'
                             : esHoy
                             ? 'border border-primary text-primary'
-                            : esPasado
+                            : bloqueado
                             ? 'opacity-30 cursor-not-allowed'
                             : 'hover:bg-muted'
                         )}
@@ -328,6 +355,20 @@ export function ReprogramarModal({
               )}
             </div>
           )}
+
+          {/* Motivo de la reprogramación (opcional) */}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium text-muted-foreground">
+              Motivo <span className="font-normal">(opcional)</span>
+            </label>
+            <Textarea
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+              placeholder="Motivo de la reprogramación (opcional)"
+              rows={2}
+              className="resize-none text-sm"
+            />
+          </div>
 
           <div className="flex gap-2 pt-1">
             <Button variant="outline" size="sm" onClick={onClose} className="flex-1">

@@ -15,18 +15,17 @@ export interface CitaLogEntry {
 }
 
 export type CitaLogAccion =
+  | 'AGENDADA'
+  | 'REPROGRAMADA'
   | 'STATUS_CHANGE'
-  | 'DRAG_AND_DROP'
-  | 'MODAL_REPROGRAMAR'
-  | 'MINI_POS_ADD'
-  | 'FINANCE_STATUS_CHANGE'
-  | 'CANCELAR'
+  | 'CANCELADA'
+  | 'PAGADA'
   | 'NO_SHOW'
+  | 'MINI_POS_ADD'
   | 'SOBRETURNO_AUTORIZADO'
   | 'BLOQUEO_ADMIN'
   | 'INVASION_DESCANSO'
   | 'REUBICACION_POR_BLOQUEO'
-  | 'PIN_FAILED'
 
 export function useCitaLog(citaId: string) {
   const { user } = useCurrentUser()
