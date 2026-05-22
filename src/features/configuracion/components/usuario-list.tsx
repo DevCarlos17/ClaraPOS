@@ -134,7 +134,7 @@ export function UsuarioList() {
                       {new Date(usr.created_at).toLocaleDateString('es-VE')}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      {!isOwnerRow(usr) && !isSelf(usr) && (
+                      {(!isOwnerRow(usr) || isSelf(usr)) && (
                         <button
                           onClick={() =>
                             navigate({
