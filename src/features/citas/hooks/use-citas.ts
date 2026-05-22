@@ -538,9 +538,10 @@ export async function reprogramarCita(
     }
   }
 
+  // Al reprogramar siempre se reactiva a RESERVADA (cubre el caso NO_SHOW → reschedule)
   await db.execute(
     `UPDATE citas
-     SET fecha_inicio = ?, fecha_fin = ?,
+     SET fecha_inicio = ?, fecha_fin = ?, cita_status = 'RESERVADA',
          updated_at = ?, updated_by = ?
      WHERE id = ?`,
     [fechaInicio, fechaFin, localNow(), userId, citaId]
@@ -574,9 +575,10 @@ export async function reprogramarCitaConProfesional(
     }
   }
 
+  // Al reprogramar siempre se reactiva a RESERVADA (cubre el caso NO_SHOW → reschedule)
   await db.execute(
     `UPDATE citas
-     SET fecha_inicio = ?, fecha_fin = ?, profesional_id = ?,
+     SET fecha_inicio = ?, fecha_fin = ?, profesional_id = ?, cita_status = 'RESERVADA',
          updated_at = ?, updated_by = ?
      WHERE id = ?`,
     [fechaInicio, fechaFin, profesionalId, localNow(), userId, citaId]

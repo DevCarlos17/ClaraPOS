@@ -24,11 +24,17 @@ export function useNoshowDetector() {
       const toleranciaMs = config.tolerancia_noshow_min * 60 * 1000
       const limiteStr = new Date(Date.now() - toleranciaMs).toISOString()
 
+      // NOT EXISTS evita loguear NO_SHOW duplicados si PowerSync revierte
+      // el UPDATE local antes de que Supabase confirme el cambio de status.
       const citas = await db.getAll<{ id: string }>(
-        `SELECT id FROM citas
-         WHERE empresa_id = ?
-           AND cita_status = 'RESERVADA'
-           AND fecha_inicio < ?`,
+        `SELECT c.id FROM citas c
+         WHERE c.empresa_id = ?
+           AND c.cita_status = 'RESERVADA'
+           AND c.fecha_inicio < ?
+           AND NOT EXISTS (
+             SELECT 1 FROM cita_log l
+             WHERE l.cita_id = c.id AND l.accion = 'NO_SHOW'
+           )`,
         [empresaId, limiteStr]
       )
 

@@ -6,18 +6,19 @@ import { reprogramarCita, reprogramarCitaConProfesional, type Cita } from '../..
 import { registrarCitaLog } from '../../hooks/use-cita-log'
 import { sincronizarCitaGoogle } from '../../hooks/use-google-calendar'
 import { SlotsProfesional } from '../wizard/step-fecha-staff'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useAgendaConfig } from '../../hooks/use-agenda-config'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { format, addDays, startOfWeek } from 'date-fns'
 import { es } from 'date-fns/locale'
-import { ArrowsClockwise, CaretLeft, CaretRight } from '@phosphor-icons/react'
+import { ArrowsClockwise, CaretLeft, CaretRight, ClockClockwise } from '@phosphor-icons/react'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
 import { todayStr } from '@/lib/dates'
 
-type Modo = 'mismo' | 'otro'
+type Modo = 'mismo' | 'otro' | 'fuera_horario'
 
 interface ReprogramarModalProps {
   cita: Cita
@@ -61,6 +62,8 @@ export function ReprogramarModal({
   const [horaFin, setHoraFin] = useState('')
   const [profesionalSeleccionado, setProfesionalSeleccionado] = useState('')
   const [motivo, setMotivo] = useState('')
+  const [showPinFueraHorario, setShowPinFueraHorario] = useState(false)
+  const [supervisorIdFueraHorario, setSupervisorIdFueraHorario] = useState('')
 
   // Otros profesionales con horario activo (excluye al profesional actual)
   const { data: profesionalesData } = useQuery(
@@ -75,6 +78,15 @@ export function ReprogramarModal({
   )
   const otrosProfesionales = (profesionalesData ?? []) as { id: string; nombre: string }[]
 
+  // Para modo fuera de horario: TODOS los profesionales activos (sin filtro de horario)
+  const { data: todosProfsData } = useQuery(
+    empresaId
+      ? 'SELECT id, nombre FROM usuarios WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre'
+      : '',
+    empresaId ? [empresaId] : []
+  )
+  const todosProfesionales = (todosProfsData ?? []) as { id: string; nombre: string }[]
+
   const hoy = new Date()
   const inicioSemana = startOfWeek(addDays(hoy, semanaOffset * 7), { weekStartsOn: 1 })
   const dias = Array.from({ length: 7 }, (_, i) => addDays(inicioSemana, i))
@@ -84,7 +96,24 @@ export function ReprogramarModal({
       ? new Date(hoy.getTime() + config.limite_futuro_dias * 24 * 60 * 60 * 1000)
       : null
 
-  const profesionalActivo = modo === 'mismo' ? cita.profesional_id : profesionalSeleccionado
+  const profesionalActivo =
+    modo === 'mismo'
+      ? cita.profesional_id
+      : profesionalSeleccionado
+
+  const calcularHoraFin = (inicio: string, durMin: number): string => {
+    const [h, m] = inicio.split(':').map(Number)
+    const totalMin = h * 60 + m + durMin
+    const fh = Math.floor(totalMin / 60) % 24
+    const fm = totalMin % 60
+    return `${String(fh).padStart(2, '0')}:${String(fm).padStart(2, '0')}`
+  }
+
+  const handleHoraInicioFueraHorario = (v: string) => {
+    setHoraInicio(v)
+    if (v) setHoraFin(calcularHoraFin(v, cita.duracion_min))
+    else setHoraFin('')
+  }
 
   const resetSlot = () => {
     setFecha('')
@@ -93,7 +122,21 @@ export function ReprogramarModal({
   }
 
   const handleModoChange = (m: Modo) => {
+    if (m === 'fuera_horario') {
+      // Requiere PIN de supervisor antes de activar el modo
+      setShowPinFueraHorario(true)
+      return
+    }
     setModo(m)
+    setProfesionalSeleccionado('')
+    setSupervisorIdFueraHorario('')
+    resetSlot()
+  }
+
+  const handlePinFueraHorarioAutorizado = (supervisorId: string) => {
+    setShowPinFueraHorario(false)
+    setSupervisorIdFueraHorario(supervisorId)
+    setModo('fuera_horario')
     setProfesionalSeleccionado('')
     resetSlot()
   }
@@ -115,23 +158,31 @@ export function ReprogramarModal({
     try {
       const nuevaFechaInicio = new Date(`${fecha}T${horaInicio}:00`).toISOString()
       const nuevaFechaFin = new Date(`${fecha}T${horaFin}:00`).toISOString()
+      const esFueraHorario = modo === 'fuera_horario'
+      const profesionalDestino = modo === 'mismo' ? cita.profesional_id : profesionalSeleccionado
 
       if (modo === 'mismo') {
-        await reprogramarCita(cita.id, nuevaFechaInicio, nuevaFechaFin, user?.id ?? '')
+        await reprogramarCita(cita.id, nuevaFechaInicio, nuevaFechaFin, user?.id ?? '', {
+          skipOverlapCheck: false,
+        })
       } else {
+        // 'otro' y 'fuera_horario' cambian profesional; fuera_horario salta validacion de slots
         await reprogramarCitaConProfesional(
           cita.id,
           nuevaFechaInicio,
           nuevaFechaFin,
           profesionalSeleccionado,
-          user?.id ?? ''
+          user?.id ?? '',
+          // fuera de horario: saltamos el check de solapamiento (lo autorizó el supervisor)
+          { skipOverlapCheck: esFueraHorario }
         )
       }
 
+      const allProfs = [...otrosProfesionales, ...todosProfesionales]
       const profesionalFinalNombre =
         modo === 'mismo'
           ? profesionalNombre
-          : (otrosProfesionales.find((p) => p.id === profesionalSeleccionado)?.nombre ?? '')
+          : (allProfs.find((p) => p.id === profesionalSeleccionado)?.nombre ?? '')
 
       await registrarCitaLog({
         empresaId: cita.empresa_id,
@@ -146,16 +197,17 @@ export function ReprogramarModal({
         datosNuevos: {
           fecha_inicio: nuevaFechaInicio,
           fecha_fin: nuevaFechaFin,
-          metodo: 'modal',
-          ...(modo === 'otro' && { profesional_id: profesionalSeleccionado }),
-          ...(modo === 'otro' && profesionalFinalNombre && { profesional_nombre: profesionalFinalNombre }),
+          metodo: esFueraHorario ? 'fuera_horario' : 'modal',
+          ...(modo !== 'mismo' && { profesional_id: profesionalDestino }),
+          ...(modo !== 'mismo' && profesionalFinalNombre && { profesional_nombre: profesionalFinalNombre }),
+          ...(esFueraHorario && supervisorIdFueraHorario && { autorizado_por: supervisorIdFueraHorario }),
           ...(motivo.trim() && { motivo: motivo.trim() }),
         },
       })
 
       void sincronizarCitaGoogle({
         action: 'update',
-        profesional_id: modo === 'mismo' ? cita.profesional_id : profesionalSeleccionado,
+        profesional_id: profesionalDestino,
         cita: {
           fecha_inicio: nuevaFechaInicio,
           fecha_fin: nuevaFechaFin,
@@ -166,7 +218,7 @@ export function ReprogramarModal({
       })
 
       toast.success(
-        modo === 'otro'
+        modo === 'otro' || modo === 'fuera_horario'
           ? `Cita reprogramada con ${profesionalFinalNombre}`
           : 'Cita reprogramada'
       )
@@ -185,6 +237,7 @@ export function ReprogramarModal({
     (modo === 'mismo' || profesionalSeleccionado !== '')
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -211,18 +264,27 @@ export function ReprogramarModal({
 
           {/* Toggle de modo */}
           <div className="flex rounded-lg border border-border overflow-hidden divide-x divide-border text-[11px]">
-            {(['mismo', 'otro'] as Modo[]).map((m) => (
+            {(['mismo', 'otro', 'fuera_horario'] as Modo[]).map((m) => (
               <button
                 key={m}
                 onClick={() => handleModoChange(m)}
                 className={cn(
-                  'flex-1 px-3 py-2 font-semibold uppercase tracking-wide transition-colors',
+                  'flex-1 px-2 py-2 font-semibold uppercase tracking-wide transition-colors flex items-center justify-center gap-1',
                   modo === m
-                    ? 'bg-foreground text-background'
+                    ? m === 'fuera_horario'
+                      ? 'bg-amber-500 text-white'
+                      : 'bg-foreground text-background'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                 )}
               >
-                {m === 'mismo' ? 'Mismo profesional' : 'Otro profesional'}
+                {m === 'mismo' && 'Mismo prof.'}
+                {m === 'otro' && 'Otro prof.'}
+                {m === 'fuera_horario' && (
+                  <>
+                    <ClockClockwise size={11} />
+                    Fuera horario
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -248,6 +310,41 @@ export function ReprogramarModal({
                   </SelectTrigger>
                   <SelectContent>
                     {otrosProfesionales.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.nombre}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          )}
+
+          {/* Selector de profesional para modo "fuera de horario" */}
+          {modo === 'fuera_horario' && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400 font-medium">
+                <ClockClockwise size={13} />
+                Modo fuera de horario — autorizado por supervisor
+              </div>
+              <label className="text-sm font-medium">Profesional</label>
+              {todosProfesionales.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-3 border rounded-lg">
+                  No hay profesionales activos
+                </p>
+              ) : (
+                <Select
+                  value={profesionalSeleccionado}
+                  onValueChange={(v) => {
+                    setProfesionalSeleccionado(v)
+                    resetSlot()
+                  }}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Seleccionar profesional..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {todosProfesionales.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
                         {p.nombre}
                       </SelectItem>
@@ -323,7 +420,7 @@ export function ReprogramarModal({
               </div>
 
               {/* Slots del profesional para el día seleccionado */}
-              {fecha && profesionalActivo && (
+              {fecha && profesionalActivo && modo !== 'fuera_horario' && (
                 <div className="space-y-2">
                   <label className="text-sm font-medium">
                     Horario disponible ({cita.duracion_min} min)
@@ -337,6 +434,26 @@ export function ReprogramarModal({
                     empresaId={empresaId}
                     userId={user?.id ?? ''}
                   />
+                </div>
+              )}
+
+              {/* Selector de hora manual para modo fuera de horario */}
+              {fecha && modo === 'fuera_horario' && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">
+                    Hora de inicio ({cita.duracion_min} min)
+                  </label>
+                  <input
+                    type="time"
+                    value={horaInicio}
+                    onChange={(e) => handleHoraInicioFueraHorario(e.target.value)}
+                    className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  />
+                  {horaInicio && horaFin && (
+                    <p className="text-xs text-muted-foreground">
+                      Fin estimado: <span className="font-medium">{horaFin}</span>
+                    </p>
+                  )}
                 </div>
               )}
             </>
@@ -386,5 +503,15 @@ export function ReprogramarModal({
         </div>
       </DialogContent>
     </Dialog>
+
+    <SupervisorPinDialog
+      isOpen={showPinFueraHorario}
+      onClose={() => setShowPinFueraHorario(false)}
+      onAuthorized={handlePinFueraHorarioAutorizado}
+      titulo="Agendar fuera de horario"
+      mensaje="Se requiere autorización de supervisor para programar una cita fuera del horario establecido."
+      requiredPermission="citas.gestionar"
+    />
+    </>
   )
 }

@@ -205,7 +205,12 @@ export function CitaDetalleModal({
 
   const citaStatus = (cita.cita_status as CitaOperStatus) ?? 'RESERVADA'
   const statusCfg = STATUS_CONFIG[citaStatus] ?? STATUS_CONFIG.RESERVADA
-  const esTerminal = citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA' || citaStatus === 'NO_SHOW'
+  const esFechaPasada =
+    new Date(cita.fecha_inicio) < new Date(new Date().setHours(0, 0, 0, 0))
+  // NO_SHOW no es terminal: permite cancelar o reprogramar
+  const esTerminal = citaStatus === 'REALIZADA' || citaStatus === 'CANCELADA'
+  const puedeReprogramar =
+    (citaStatus === 'RESERVADA' && !esFechaPasada) || citaStatus === 'NO_SHOW'
 
   const handleIniciar = async () => {
     setCargando(true)
@@ -301,7 +306,6 @@ export function CitaDetalleModal({
 
   const fechaInicio = new Date(cita.fecha_inicio)
   const fechaFin = new Date(cita.fecha_fin)
-  const esFechaPasada = fechaInicio < new Date(new Date().setHours(0, 0, 0, 0))
 
   return (
     <>
@@ -398,11 +402,26 @@ export function CitaDetalleModal({
                 </>
               )}
 
+              {/* Banner distintivo para NO_SHOW */}
+              {citaStatus === 'NO_SHOW' && (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-orange-50 border border-orange-200 dark:bg-orange-900/20 dark:border-orange-800">
+                  <UserMinus size={16} className="text-orange-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-semibold text-orange-700 dark:text-orange-400">
+                      No se presentó
+                    </p>
+                    <p className="text-xs text-orange-600 dark:text-orange-500">
+                      Podés reprogramar o cancelar esta cita
+                    </p>
+                  </div>
+                </div>
+              )}
+
               {!esTerminal && (
                 <>
                   <Separator />
                   <div className="flex flex-col gap-2">
-                    {citaStatus === 'RESERVADA' && (
+                    {citaStatus === 'RESERVADA' && !esFechaPasada && (
                       <Button
                         size="sm"
                         onClick={handleIniciar}
@@ -427,7 +446,7 @@ export function CitaDetalleModal({
                     )}
 
                     <div className="flex gap-2">
-                      {citaStatus === 'RESERVADA' && !esFechaPasada && (
+                      {puedeReprogramar && (
                         <Button
                           size="sm"
                           variant="outline"
