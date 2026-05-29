@@ -608,7 +608,7 @@ export function PosTerminal() {
             {/* Divider */}
             <div className="h-4 w-px bg-border shrink-0" />
             {/* Cliente label + selector + new button */}
-            <label className="text-xs text-muted-foreground flex items-center gap-1 shrink-0">
+            <label className="hidden sm:flex text-xs text-muted-foreground items-center gap-1 shrink-0">
               <User size={12} />
               <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F2</kbd>
             </label>
@@ -629,9 +629,9 @@ export function PosTerminal() {
                 <Plus size={12} />Nuevo
               </button>
             )}
-            {/* Credit info shown inline when client selected */}
+            {/* Credit info shown inline when client selected — hidden on mobile to save space */}
             {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
-              <div className="shrink-0 flex items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+              <div className="hidden sm:flex shrink-0 items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
                 <span>Credito:</span>
                 <span className="font-semibold text-green-600">
                   {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
@@ -644,7 +644,7 @@ export function PosTerminal() {
           {/* Row 2: Product search */}
           <div className="px-4 py-2.5 border-b">
             <div className="flex items-center gap-2">
-              <label className="text-xs text-muted-foreground shrink-0 flex items-center gap-1">
+              <label className="hidden sm:flex text-xs text-muted-foreground shrink-0 items-center gap-1">
                 <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F1</kbd>
               </label>
               <div className="flex-1 max-w-2xl">
@@ -661,22 +661,22 @@ export function PosTerminal() {
                   <button type="button" onClick={() => setShowIngresoModal(true)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors">
                     <ArrowCircleDown size={12} />Ingreso
-                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
+                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
                   </button>
                   <button type="button" onClick={() => setShowRetiroModal(true)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors">
                     <ArrowCircleUp size={12} />Retiro
-                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
+                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
                   </button>
                   <button type="button" onClick={() => setShowAvanceModal(true)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors">
                     <Wallet size={12} />Avance
-                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F7</kbd>
+                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F7</kbd>
                   </button>
                   <button type="button" onClick={() => setShowPrestamoModal(true)}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors">
                     <Handshake size={12} />Prestamo
-                    <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
+                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
                   </button>
                 </>
               )}
@@ -691,7 +691,7 @@ export function PosTerminal() {
         </div>
 
         {/* ── 2-COLUMN BODY ── */}
-        <div className="flex-1 min-h-0 grid grid-cols-[1fr_320px] gap-3 overflow-hidden">
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[1fr_320px] gap-3 overflow-hidden">
 
           {/* COL LEFT: Items table + cargos (scrollable) */}
           <div className="flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-hidden">
@@ -743,8 +743,8 @@ export function PosTerminal() {
             </div>
           </div>
 
-          {/* COL RIGHT: Total + payments (sticky panel) */}
-          <div className="flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-hidden">
+          {/* COL RIGHT: Total + payments (sticky panel) — hidden on mobile, replaced by cart bar */}
+          <div className="hidden md:flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-hidden">
 
             {/* Total */}
             <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
@@ -869,28 +869,52 @@ export function PosTerminal() {
           </div>
         </div>
 
+        {/* ── MOBILE: Barra de totales (sustituye al panel derecho en pantallas pequeñas) ── */}
+        <div className="md:hidden shrink-0 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 shadow-lg px-4 py-3 flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            {tieneContenido ? (
+              <>
+                <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Total</p>
+                <p className="text-2xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {formatUsd(totalUsd)} · {totalItems} item{totalItems !== 1 ? 's' : ''}
+                  {descuentoBs > 0 && (
+                    <span className="text-orange-600 ml-2">· Desc. −{formatBs(descuentoBs)}</span>
+                  )}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Total</p>
+                <p className="text-2xl font-bold leading-tight tabular-nums text-muted-foreground">Bs. 0,00</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Agrega productos para iniciar</p>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* ── FOOTER ── */}
         <div className="shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex items-center gap-2">
           <Button variant="outline" size="sm"
             onClick={handleGuardarFactura}
             disabled={lineas.length === 0 && cargosEspeciales.length === 0}>
             <FloppyDisk size={14} className="mr-1.5" />Guardar
-            <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
+            <kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
           </Button>
           <Button variant={esperaCount > 0 ? 'secondary' : 'outline'} size="sm"
             onClick={() => setShowEsperaModal(true)}>
             <ListBullets size={14} className="mr-1.5" />
             {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
-            <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F10</kbd>
+            <kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F10</kbd>
           </Button>
           <div className="flex-1" />
           <Button variant="outline" size="sm" onClick={handleCancelar}>
-            Cancelar<kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
+            Cancelar<kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
           </Button>
           <Button size="sm" onClick={handleAbrirCobro} disabled={!puedeAbrir}>
             <ShoppingCart size={14} className="mr-1.5" />
             Cobrar
-            <kbd className="ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F12</kbd>
+            <kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F12</kbd>
           </Button>
         </div>
       </div>
