@@ -894,7 +894,7 @@ export function PosTerminal() {
         </div>
 
         {/* ── FOOTER ── */}
-        <div className="shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex items-center gap-2">
+        <div className="shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm"
             onClick={handleGuardarFactura}
             disabled={lineas.length === 0 && cargosEspeciales.length === 0}>
@@ -911,7 +911,7 @@ export function PosTerminal() {
           <Button variant="outline" size="sm" onClick={handleCancelar}>
             Cancelar<kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
           </Button>
-          <Button size="sm" onClick={handleAbrirCobro} disabled={!puedeAbrir}>
+          <Button size="sm" onClick={handleAbrirCobro} disabled={!puedeAbrir} className="w-full sm:w-auto">
             <ShoppingCart size={14} className="mr-1.5" />
             Cobrar
             <kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F12</kbd>
