@@ -598,47 +598,50 @@ export function PosTerminal() {
         <div className="shrink-0 rounded-2xl bg-card shadow-lg overflow-hidden">
 
           {/* Row 1: Session info + Cliente selector */}
-          <div className="px-4 py-2.5 flex items-center gap-3 border-b">
+          <div className="px-4 py-2.5 flex flex-col sm:flex-row sm:items-center sm:gap-3 gap-2 border-b">
             {/* Session status */}
             <div className="flex items-center gap-2 shrink-0">
               <span className="h-2 w-2 rounded-full bg-green-500" />
               {user?.nombre && <span className="text-sm font-medium">{user.nombre}</span>}
               {cajaNombre && <span className="text-sm text-muted-foreground">· {cajaNombre}</span>}
             </div>
-            {/* Divider */}
-            <div className="h-4 w-px bg-border shrink-0" />
-            {/* Cliente label + selector + new button */}
-            <label className="hidden sm:flex text-xs text-muted-foreground items-center gap-1 shrink-0">
-              <User size={12} />
-              <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F2</kbd>
-            </label>
-            <div className="flex-1 min-w-0 max-w-sm">
-              <ClienteSelector
-                ref={clienteSelectorRef}
-                clienteId={clienteId}
-                onSelect={handleSelectCliente}
-                onClear={handleClearCliente}
-              />
-            </div>
-            {!clienteId && (
-              <button
-                type="button"
-                onClick={() => setShowNuevoClienteModal(true)}
-                className="shrink-0 flex items-center gap-1 rounded border border-primary/40 bg-primary/5 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/15 transition-colors"
-              >
-                <Plus size={12} />Nuevo
-              </button>
-            )}
-            {/* Credit info shown inline when client selected — hidden on mobile to save space */}
-            {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
-              <div className="hidden sm:flex shrink-0 items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
-                <span>Credito:</span>
-                <span className="font-semibold text-green-600">
-                  {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
-                </span>
-                <span>/ {formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
+            {/* Divider — desktop only */}
+            <div className="hidden sm:block h-4 w-px bg-border shrink-0" />
+            {/* Cliente row: label + selector + Nuevo + credit info */}
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              {/* F2 label — desktop only */}
+              <label className="hidden sm:flex text-xs text-muted-foreground items-center gap-1 shrink-0">
+                <User size={12} />
+                <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F2</kbd>
+              </label>
+              <div className="flex-1 min-w-0 max-w-2xl sm:max-w-sm">
+                <ClienteSelector
+                  ref={clienteSelectorRef}
+                  clienteId={clienteId}
+                  onSelect={handleSelectCliente}
+                  onClear={handleClearCliente}
+                />
               </div>
-            )}
+              {!clienteId && (
+                <button
+                  type="button"
+                  onClick={() => setShowNuevoClienteModal(true)}
+                  className="shrink-0 flex items-center gap-1 rounded border border-primary/40 bg-primary/5 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/15 transition-colors"
+                >
+                  <Plus size={12} />Nuevo
+                </button>
+              )}
+              {/* Credit info — desktop only */}
+              {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
+                <div className="hidden sm:flex shrink-0 items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
+                  <span>Credito:</span>
+                  <span className="font-semibold text-green-600">
+                    {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
+                  </span>
+                  <span>/ {formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Row 2: Product search */}
@@ -893,28 +896,54 @@ export function PosTerminal() {
           </div>
         </div>
 
-        {/* ── FOOTER ── */}
-        <div className="shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex flex-wrap items-center gap-2">
+        {/* ── FOOTER MOBILE (sm:hidden) — 2 filas ── */}
+        <div className="sm:hidden shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex flex-col gap-2">
+          {/* Fila 1: acciones secundarias */}
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm"
+              onClick={handleGuardarFactura}
+              disabled={lineas.length === 0 && cargosEspeciales.length === 0}>
+              <FloppyDisk size={14} className="mr-1.5" />Guardar
+            </Button>
+            <Button variant={esperaCount > 0 ? 'secondary' : 'outline'} size="sm"
+              onClick={() => setShowEsperaModal(true)}>
+              <ListBullets size={14} className="mr-1.5" />
+              {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
+            </Button>
+            <div className="flex-1" />
+            <Button variant="outline" size="sm" onClick={handleCancelar}>
+              Cancelar
+            </Button>
+          </div>
+          {/* Fila 2: accion principal */}
+          <Button size="sm" className="w-full" onClick={handleAbrirCobro} disabled={!puedeAbrir}>
+            <ShoppingCart size={14} className="mr-1.5" />
+            Cobrar
+          </Button>
+        </div>
+
+        {/* ── FOOTER DESKTOP (hidden sm:flex) — 1 fila con kbds ── */}
+        <div className="hidden sm:flex shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 items-center gap-2">
           <Button variant="outline" size="sm"
             onClick={handleGuardarFactura}
             disabled={lineas.length === 0 && cargosEspeciales.length === 0}>
             <FloppyDisk size={14} className="mr-1.5" />Guardar
-            <kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
+            <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F9</kbd>
           </Button>
           <Button variant={esperaCount > 0 ? 'secondary' : 'outline'} size="sm"
             onClick={() => setShowEsperaModal(true)}>
             <ListBullets size={14} className="mr-1.5" />
             {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
-            <kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F10</kbd>
+            <kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F10</kbd>
           </Button>
           <div className="flex-1" />
           <Button variant="outline" size="sm" onClick={handleCancelar}>
-            Cancelar<kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
+            Cancelar<kbd className="ml-1.5 rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">Esc</kbd>
           </Button>
-          <Button size="sm" onClick={handleAbrirCobro} disabled={!puedeAbrir} className="w-full sm:w-auto">
+          <Button size="sm" onClick={handleAbrirCobro} disabled={!puedeAbrir}>
             <ShoppingCart size={14} className="mr-1.5" />
             Cobrar
-            <kbd className="hidden sm:inline-block ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F12</kbd>
+            <kbd className="ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">F12</kbd>
           </Button>
         </div>
       </div>
