@@ -658,7 +658,7 @@ export function PosTerminal() {
 
           {/* Row 3: Caja operation buttons (only when sesion active and has permissions) */}
           {sesion && (canMovManualPos || canCloseCajaPos) && (
-            <div className="px-4 py-2 flex items-center gap-1.5 flex-wrap">
+            <div className="px-4 py-2 flex items-center gap-1.5 flex-wrap justify-center">
               {canMovManualPos && (
                 <>
                   <button type="button" onClick={() => setShowIngresoModal(true)}
@@ -898,7 +898,7 @@ export function PosTerminal() {
 
         {/* ── FOOTER MOBILE (sm:hidden) — 2 filas ── */}
         <div className="sm:hidden shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex flex-col gap-2">
-          {/* Fila 1: acciones secundarias */}
+          {/* Fila 1: acciones secundarias (izquierda, sin spacer para evitar overflow) */}
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm"
               onClick={handleGuardarFactura}
@@ -910,7 +910,6 @@ export function PosTerminal() {
               <ListBullets size={14} className="mr-1.5" />
               {esperaCount > 0 ? `Guardadas (${esperaCount})` : 'Guardadas'}
             </Button>
-            <div className="flex-1" />
             <Button variant="outline" size="sm" onClick={handleCancelar}>
               Cancelar
             </Button>
