@@ -13,25 +13,6 @@ export interface ClienteSelectorHandle {
   focus: () => void
 }
 
-function CreditoBadge({ cliente }: { cliente: Cliente }) {
-  const limite = parseFloat(cliente.limite_credito_usd)
-  const saldo = parseFloat(cliente.saldo_actual)
-
-  if (limite <= 0) {
-    return (
-      <span className="text-xs text-muted-foreground">Sin credito asignado</span>
-    )
-  }
-
-  const disponible = Math.max(0, limite - saldo)
-  const excedido = saldo > limite
-
-  return (
-    <span className={`text-xs ${excedido ? 'text-destructive' : disponible < limite * 0.2 ? 'text-orange-600' : 'text-green-700'}`}>
-      Limite: {formatUsd(limite)} | Disponible: {excedido ? <span className="text-destructive font-medium">Excedido</span> : formatUsd(disponible)}
-    </span>
-  )
-}
 
 export const ClienteSelector = forwardRef<ClienteSelectorHandle, ClienteSelectorProps>(
 function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
@@ -104,25 +85,45 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
   }
 
   if (clienteId && selectedNombre) {
+    const limite = selectedCliente ? parseFloat(selectedCliente.limite_credito_usd) : 0
+    const saldo = selectedCliente ? parseFloat(selectedCliente.saldo_actual) : 0
+    const disponible = Math.max(0, limite - saldo)
+    const excedido = saldo > limite
+
     return (
-      <div className="flex items-center gap-2 rounded-lg border bg-muted/50 px-3 py-2">
+      <div className="flex items-start gap-2 rounded-lg border bg-muted/50 px-3 py-2">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{selectedNombre}</p>
+          {/* Fila 1: nombre (trunca) + cédula (siempre visible) */}
+          <div className="flex items-baseline gap-1.5 min-w-0">
+            <p className="text-sm font-semibold truncate">{selectedNombre}</p>
+            {selectedCliente && (
+              <span className="text-xs text-muted-foreground shrink-0">
+                {selectedCliente.identificacion}
+              </span>
+            )}
+          </div>
+          {/* Fila 2: Saldo + Disponible (sin Limite) */}
           {selectedCliente && (
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-xs text-muted-foreground">
-                {selectedCliente.identificacion} | Saldo: {formatUsd(selectedCliente.saldo_actual)}
-              </p>
-              <CreditoBadge cliente={selectedCliente} />
-            </div>
+            <p className="text-xs mt-0.5">
+              <span className="text-muted-foreground">Saldo: {formatUsd(selectedCliente.saldo_actual)}</span>
+              {limite > 0 && (
+                <>
+                  <span className="text-muted-foreground mx-1">|</span>
+                  <span className={excedido ? 'text-destructive font-medium' : disponible < limite * 0.2 ? 'text-orange-600' : 'text-green-700'}>
+                    Disponible: {excedido ? 'Excedido' : formatUsd(disponible)}
+                  </span>
+                </>
+              )}
+            </p>
           )}
         </div>
+        {/* Botón X clásico con borde */}
         <button
           type="button"
           onClick={handleClear}
-          className="shrink-0 rounded-md p-1 hover:bg-muted transition-colors"
+          className="shrink-0 rounded-md border border-border bg-background px-2 py-1 text-muted-foreground hover:border-destructive/60 hover:text-destructive hover:bg-destructive/5 transition-colors"
         >
-          <X size={16} className="text-muted-foreground" />
+          <X size={14} />
         </button>
       </div>
     )
