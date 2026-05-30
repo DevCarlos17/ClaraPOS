@@ -93,14 +93,14 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
     return (
       <div className="flex items-start gap-2 rounded-lg border bg-muted/50 px-3 py-2">
         <div className="flex-1 min-w-0">
-          {/* Fila 1: nombre (trunca) + cédula (siempre visible) */}
+          {/* Fila 1: cédula primero (siempre visible) + nombre (trunca si es largo) */}
           <div className="flex items-baseline gap-1.5 min-w-0">
-            <p className="text-sm font-semibold truncate">{selectedNombre}</p>
             {selectedCliente && (
-              <span className="text-xs text-muted-foreground shrink-0">
+              <span className="text-xs font-mono text-muted-foreground shrink-0">
                 {selectedCliente.identificacion}
               </span>
             )}
+            <p className="text-sm font-semibold truncate">{selectedNombre}</p>
           </div>
           {/* Fila 2: Saldo + Disponible (sin Limite) */}
           {selectedCliente && (

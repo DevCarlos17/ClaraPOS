@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@powersync/react'
-import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, ShoppingCart, Tag, X } from '@phosphor-icons/react'
+import { Plus, Trash, FloppyDisk, ListBullets, ArrowCircleDown, ArrowCircleUp, Wallet, Handshake, XCircle, User, ShoppingCart, Tag, X, CaretDown } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
 import { useBlocker, useNavigate } from '@tanstack/react-router'
@@ -70,6 +70,7 @@ export function PosTerminal() {
 
   // UI state
   const [showCarritoSheet, setShowCarritoSheet] = useState(false)
+  const [showCajaSheet, setShowCajaSheet] = useState(false)
   const [showEsperaModal, setShowEsperaModal] = useState(false)
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false)
   const [showSupervisorPin, setShowSupervisorPin] = useState(false)
@@ -601,11 +602,28 @@ export function PosTerminal() {
 
           {/* Row 1: Session info + Cliente selector */}
           <div className="px-3 py-2 sm:px-4 sm:py-2.5 flex flex-col sm:flex-row sm:items-center sm:gap-3 gap-2 border-b">
-            {/* Session status */}
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="h-2 w-2 rounded-full bg-green-500" />
-              {user?.nombre && <span className="text-sm font-medium">{user.nombre}</span>}
-              {cajaNombre && <span className="text-sm text-muted-foreground">· {cajaNombre}</span>}
+            {/* Session status + botón Caja (mobile only, a la derecha) */}
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
+              {/* Nombre + caja: flex-1 para que el nombre trunce si es largo */}
+              <div className="flex items-center gap-1 min-w-0 flex-1">
+                {user?.nombre && (
+                  <span className="text-xs sm:text-sm font-medium truncate">{user.nombre}</span>
+                )}
+                {cajaNombre && (
+                  <span className="text-xs sm:text-sm text-muted-foreground shrink-0">· {cajaNombre}</span>
+                )}
+              </div>
+              {/* Botón Caja — mobile only, siempre visible */}
+              {sesion && (canMovManualPos || canCloseCajaPos) && (
+                <button
+                  type="button"
+                  onClick={() => setShowCajaSheet(true)}
+                  className="sm:hidden shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border text-muted-foreground bg-muted/40 hover:bg-muted transition-colors"
+                >
+                  <Wallet size={12} />Caja<CaretDown size={10} />
+                </button>
+              )}
             </div>
             {/* Divider — desktop only */}
             <div className="hidden sm:block h-4 w-px bg-border shrink-0" />
@@ -658,40 +676,43 @@ export function PosTerminal() {
             </div>
           </div>
 
-          {/* Row 3: Caja operation buttons (only when sesion active and has permissions) */}
+          {/* Row 3: Caja operation buttons — desktop only (mobile usa el botón en Row 1) */}
           {sesion && (canMovManualPos || canCloseCajaPos) && (
-            <div className="px-3 py-1.5 sm:px-4 sm:py-2 flex items-center gap-1.5 flex-wrap justify-center">
-              {canMovManualPos && (
-                <>
-                  <button type="button" onClick={() => setShowIngresoModal(true)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors">
-                    <ArrowCircleDown size={12} />Ingreso
-                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
+            <>
+              {/* Desktop: botones individuales */}
+              <div className="hidden sm:flex px-4 py-2 items-center gap-1.5 flex-wrap justify-center">
+                {canMovManualPos && (
+                  <>
+                    <button type="button" onClick={() => setShowIngresoModal(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-green-700 hover:bg-green-50 hover:border-green-200 transition-colors">
+                      <ArrowCircleDown size={12} />Ingreso
+                      <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F5</kbd>
+                    </button>
+                    <button type="button" onClick={() => setShowRetiroModal(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors">
+                      <ArrowCircleUp size={12} />Retiro
+                      <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
+                    </button>
+                    <button type="button" onClick={() => setShowAvanceModal(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors">
+                      <Wallet size={12} />Avance
+                      <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F7</kbd>
+                    </button>
+                    <button type="button" onClick={() => setShowPrestamoModal(true)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors">
+                      <Handshake size={12} />Prestamo
+                      <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
+                    </button>
+                  </>
+                )}
+                {canCloseCajaPos && (
+                  <button type="button" onClick={handleCerrarCajaPos}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
+                    <XCircle size={12} />Cerrar Caja
                   </button>
-                  <button type="button" onClick={() => setShowRetiroModal(true)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors">
-                    <ArrowCircleUp size={12} />Retiro
-                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F6</kbd>
-                  </button>
-                  <button type="button" onClick={() => setShowAvanceModal(true)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-amber-700 hover:bg-amber-50 hover:border-amber-200 transition-colors">
-                    <Wallet size={12} />Avance
-                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F7</kbd>
-                  </button>
-                  <button type="button" onClick={() => setShowPrestamoModal(true)}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-purple-700 hover:bg-purple-50 hover:border-purple-200 transition-colors">
-                    <Handshake size={12} />Prestamo
-                    <kbd className="hidden sm:inline-block rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F8</kbd>
-                  </button>
-                </>
-              )}
-              {canCloseCajaPos && (
-                <button type="button" onClick={handleCerrarCajaPos}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
-                  <XCircle size={12} />Cerrar Caja
-                </button>
-              )}
-            </div>
+                )}
+              </div>
+            </>
           )}
         </div>
 
@@ -958,6 +979,51 @@ export function PosTerminal() {
       </div>
 
       {/* ── DIALOGS ── */}
+
+      {/* Sheet de operaciones de caja — mobile only */}
+      <Sheet open={showCajaSheet} onOpenChange={setShowCajaSheet}>
+        <SheetContent side="bottom" className="rounded-t-2xl px-0 pb-6">
+          <SheetHeader className="px-4 py-3 border-b">
+            <SheetTitle className="flex items-center gap-2 text-base">
+              <Wallet size={16} />
+              Operaciones de Caja
+            </SheetTitle>
+          </SheetHeader>
+          <div className="p-4 flex flex-col gap-3">
+            {canMovManualPos && (
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button"
+                  onClick={() => { setShowCajaSheet(false); setShowIngresoModal(true) }}
+                  className="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-muted transition-colors">
+                  <ArrowCircleDown size={20} className="shrink-0 text-green-600" />Ingreso
+                </button>
+                <button type="button"
+                  onClick={() => { setShowCajaSheet(false); setShowRetiroModal(true) }}
+                  className="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-muted transition-colors">
+                  <ArrowCircleUp size={20} className="shrink-0 text-red-500" />Retiro
+                </button>
+                <button type="button"
+                  onClick={() => { setShowCajaSheet(false); setShowAvanceModal(true) }}
+                  className="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-muted transition-colors">
+                  <Wallet size={20} className="shrink-0 text-amber-500" />Avance
+                </button>
+                <button type="button"
+                  onClick={() => { setShowCajaSheet(false); setShowPrestamoModal(true) }}
+                  className="flex items-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm font-medium text-foreground hover:bg-muted transition-colors">
+                  <Handshake size={20} className="shrink-0 text-muted-foreground" />Prestamo
+                </button>
+              </div>
+            )}
+            {canCloseCajaPos && (
+              <button type="button"
+                onClick={() => { setShowCajaSheet(false); handleCerrarCajaPos() }}
+                className="w-full flex items-center justify-center gap-2 rounded-xl border bg-card px-4 py-3 text-sm font-medium text-destructive hover:bg-muted transition-colors">
+                <XCircle size={20} className="shrink-0" />Cerrar Caja
+              </button>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Sheet de carrito — vista limpia de items para mobile */}
       <Sheet open={showCarritoSheet} onOpenChange={setShowCarritoSheet}>
