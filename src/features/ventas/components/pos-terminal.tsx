@@ -31,6 +31,7 @@ import { AvanceModal, type AvanceAplicado } from '@/features/caja/components/ava
 import { PrestamoModal, type PrestamoAplicado } from '@/features/caja/components/prestamo-modal'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
 import { CobroModal } from './cobro-modal'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 
 export function PosTerminal() {
   const { tasaValor, isLoading: tasaLoading } = useTasaActual()
@@ -68,6 +69,7 @@ export function PosTerminal() {
   const [cargosEspeciales, setCargosEspeciales] = useState<CargoEspecial[]>([])
 
   // UI state
+  const [showCarritoSheet, setShowCarritoSheet] = useState(false)
   const [showEsperaModal, setShowEsperaModal] = useState(false)
   const [showNuevoClienteModal, setShowNuevoClienteModal] = useState(false)
   const [showSupervisorPin, setShowSupervisorPin] = useState(false)
@@ -592,13 +594,13 @@ export function PosTerminal() {
       )}
 
       {/* MAIN POS CONTAINER */}
-      <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-muted/30 p-3 gap-3">
+      <div className="flex flex-col h-[calc(100vh-4rem)] overflow-hidden bg-muted/30 p-2 gap-2 sm:p-3 sm:gap-3">
 
         {/* ── HEADER BAR (3 rows) ── */}
         <div className="shrink-0 rounded-2xl bg-card shadow-lg overflow-hidden">
 
           {/* Row 1: Session info + Cliente selector */}
-          <div className="px-4 py-2.5 flex flex-col sm:flex-row sm:items-center sm:gap-3 gap-2 border-b">
+          <div className="px-3 py-2 sm:px-4 sm:py-2.5 flex flex-col sm:flex-row sm:items-center sm:gap-3 gap-2 border-b">
             {/* Session status */}
             <div className="flex items-center gap-2 shrink-0">
               <span className="h-2 w-2 rounded-full bg-green-500" />
@@ -645,7 +647,7 @@ export function PosTerminal() {
           </div>
 
           {/* Row 2: Product search */}
-          <div className="px-4 py-2.5 border-b">
+          <div className="px-3 py-2 sm:px-4 sm:py-2.5 border-b">
             <div className="flex items-center gap-2">
               <label className="hidden sm:flex text-xs text-muted-foreground shrink-0 items-center gap-1">
                 <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F1</kbd>
@@ -658,7 +660,7 @@ export function PosTerminal() {
 
           {/* Row 3: Caja operation buttons (only when sesion active and has permissions) */}
           {sesion && (canMovManualPos || canCloseCajaPos) && (
-            <div className="px-4 py-2 flex items-center gap-1.5 flex-wrap justify-center">
+            <div className="px-3 py-1.5 sm:px-4 sm:py-2 flex items-center gap-1.5 flex-wrap justify-center">
               {canMovManualPos && (
                 <>
                   <button type="button" onClick={() => setShowIngresoModal(true)}
@@ -873,7 +875,12 @@ export function PosTerminal() {
         </div>
 
         {/* ── MOBILE: Barra de totales (sustituye al panel derecho en pantallas pequeñas) ── */}
-        <div className="md:hidden shrink-0 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 shadow-lg px-4 py-3 flex items-center gap-3">
+        <button
+          type="button"
+          disabled={!tieneContenido}
+          onClick={() => tieneContenido && setShowCarritoSheet(true)}
+          className="md:hidden shrink-0 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 shadow-lg px-4 py-3 flex items-start gap-3 w-full text-left transition-colors disabled:cursor-default active:from-primary/20 active:to-primary/10"
+        >
           <div className="flex-1 min-w-0">
             {tieneContenido ? (
               <>
@@ -894,7 +901,10 @@ export function PosTerminal() {
               </>
             )}
           </div>
-        </div>
+          {tieneContenido && (
+            <ListBullets size={16} className="shrink-0 text-primary/50 mt-0.5" />
+          )}
+        </button>
 
         {/* ── FOOTER MOBILE (sm:hidden) — 2 filas ── */}
         <div className="sm:hidden shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex flex-col gap-2">
@@ -948,6 +958,68 @@ export function PosTerminal() {
       </div>
 
       {/* ── DIALOGS ── */}
+
+      {/* Sheet de carrito — vista limpia de items para mobile */}
+      <Sheet open={showCarritoSheet} onOpenChange={setShowCarritoSheet}>
+        <SheetContent side="bottom" className="h-[75vh] flex flex-col rounded-t-2xl px-0 pb-0">
+          <SheetHeader className="px-4 py-3 border-b shrink-0">
+            <SheetTitle className="flex items-center gap-2 text-base">
+              <ShoppingCart size={16} />
+              Carrito · {totalItems} item{totalItems !== 1 ? 's' : ''}
+            </SheetTitle>
+          </SheetHeader>
+
+          {/* Lista de items */}
+          <div className="flex-1 overflow-y-auto">
+            {lineas.map((linea, i) => (
+              <div key={linea.producto_id} className="flex items-start gap-3 px-4 py-3 border-b last:border-0">
+                <span className="text-xs text-muted-foreground w-5 shrink-0 pt-0.5">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium leading-tight">{linea.nombre}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{linea.codigo}</p>
+                </div>
+                <div className="shrink-0 text-right">
+                  <p className="text-sm font-semibold tabular-nums">{formatUsd(linea.cantidad * linea.precio_unitario_usd)}</p>
+                  <p className="text-xs text-muted-foreground tabular-nums">{linea.cantidad} × {formatUsd(linea.precio_unitario_usd)}</p>
+                </div>
+              </div>
+            ))}
+            {cargosEspeciales.length > 0 && (
+              <>
+                <div className="px-4 py-2 bg-amber-50 border-b">
+                  <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Cargos especiales</p>
+                </div>
+                {cargosEspeciales.map((cargo, i) => (
+                  <div key={i} className="flex items-center justify-between px-4 py-3 border-b last:border-0">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium truncate">{cargo.descripcion}</p>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">{cargo.tipo}</span>
+                    </div>
+                    <p className="text-sm font-semibold shrink-0 ml-3 tabular-nums">{formatUsd(cargo.montoCargoUsd)}</p>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* Footer con total */}
+          <div className="shrink-0 border-t px-4 py-3 bg-gradient-to-r from-primary/10 to-primary/5">
+            {descuentoBs > 0 && (
+              <div className="flex justify-between text-xs text-orange-600 mb-1.5">
+                <span>Descuento</span>
+                <span className="tabular-nums">−{formatBs(descuentoBs)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">Total</p>
+              <div className="text-right">
+                <p className="text-xl font-bold tabular-nums">{formatBs(totalBs)}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">{formatUsd(totalUsd)}</p>
+              </div>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <VentaExitosaModal
         isOpen={!!ventaExitosa}
