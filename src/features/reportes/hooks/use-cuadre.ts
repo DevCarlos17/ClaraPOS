@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
@@ -180,9 +181,10 @@ export interface ProductoDeptoItem {
 export function useVentasDelDia(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhere(filters, empresaId)
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId) : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -193,8 +195,6 @@ export function useVentasDelDia(filters: CuadreFilters | null) {
      WHERE ${where}`,
     params
   )
-
-  console.log('[useVentasDelDia]', { empresaId, filters, where, params, data, isLoading })
 
   const row = (data?.[0] ?? {}) as { cnt: number; sum_usd: number; sum_bs: number }
   const count = Number(row.cnt ?? 0)
@@ -213,9 +213,10 @@ export function useVentasDelDia(filters: CuadreFilters | null) {
 export function useGananciaEstimada(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhereViaVenta(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -236,9 +237,10 @@ export function useGananciaEstimada(filters: CuadreFilters | null) {
 export function useCxcDelDia(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhere(filters, empresaId)
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId) : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -250,8 +252,6 @@ export function useCxcDelDia(filters: CuadreFilters | null) {
        AND CAST(saldo_pend_usd AS REAL) > 0.01`,
     params
   )
-
-  console.log('[useCxcDelDia]', { empresaId, filters, where, params, data, isLoading })
 
   const row = (data?.[0] ?? {}) as { cxc_usd: number; cxc_bs: number }
   return {
@@ -266,9 +266,10 @@ export function useCxcDelDia(filters: CuadreFilters | null) {
 export function useVentasPorDepto(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhereViaVenta(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -329,19 +330,18 @@ function buildMovsWhere(
 export function usePagosPorMetodo(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhere(filters, empresaId, 'pg')
-    : ['1=0', []]
-
-  // Para la subquery NOT IN necesitamos el mismo WHERE con alias distinto
-  const [whereNotIn, paramsNotIn] = filters
-    ? buildCuadreWhere(filters, empresaId, 'pg2')
-    : ['1=0', []]
-
-  // WHERE para movimientos_metodo_cobro (detectar metodos con saldo manual)
-  const [whereMmc, paramsMmc] = filters
-    ? buildMovsWhere(filters, empresaId, 'mmc')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'pg') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+  const [whereNotIn, paramsNotIn] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'pg2') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+  const [whereMmc, paramsMmc] = useMemo(
+    () => filters ? buildMovsWhere(filters, empresaId, 'mmc') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   // Query principal: metodos con pagos de ventas
   const { data, isLoading } = useQuery(
@@ -447,19 +447,21 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     totalBs: Number(Number(row.total_bs ?? 0).toFixed(2)),
   })
 
-  // Deduplicar los tres conjuntos: pagos > extra > apertura
-  const seen = new Set<string>()
-  const items: (MetodoPagoResumen & { metodo_cobro_id: string })[] = [
-    ...(data ?? []).map(toItem),
-    ...(extraData ?? []).map(toItem),
-    ...(aperturaData ?? []).map(toItem),
-  ].filter((m) => {
-    if (seen.has(m.metodo_cobro_id)) return false
-    seen.add(m.metodo_cobro_id)
-    return true
-  })
+  // Deduplicar los tres conjuntos: pagos > extra > apertura — memoizado para referencia estable
+  const metodos = useMemo(() => {
+    const seen = new Set<string>()
+    return [
+      ...(data ?? []).map(toItem),
+      ...(extraData ?? []).map(toItem),
+      ...(aperturaData ?? []).map(toItem),
+    ].filter((m) => {
+      if (seen.has(m.metodo_cobro_id)) return false
+      seen.add(m.metodo_cobro_id)
+      return true
+    })
+  }, [data, extraData, aperturaData])
 
-  return { metodos: items, isLoading: isLoading || extraLoading || aperturaLoading }
+  return { metodos, isLoading: isLoading || extraLoading || aperturaLoading }
 }
 
 // ─── Top Productos ─────────────────────────────────────────
@@ -467,9 +469,10 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
 export function useTopProductos(filters: CuadreFilters | null, limit = 15) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhereViaVenta(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -502,9 +505,10 @@ export function useTopProductos(filters: CuadreFilters | null, limit = 15) {
 export function useVentasAudit(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhere(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -580,9 +584,10 @@ export function useDetalleVenta(ventaId: string | null) {
 export function useDetalleCxcDia(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhere(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -658,9 +663,10 @@ export function useTasaDelDia(fecha: string | null) {
 export function useTopGanancias(filters: CuadreFilters | null, limit = 10) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhereViaVenta(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -710,9 +716,10 @@ export interface ProductoFacturaItem {
 export function useProductosPorFactura(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhereViaVenta(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -925,9 +932,10 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
 export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre: string | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters && metodoNombre
-    ? buildCuadreWhere(filters, empresaId, 'pg')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters && metodoNombre ? buildCuadreWhere(filters, empresaId, 'pg') : ['1=0', [] as unknown[]],
+    [filters, empresaId, metodoNombre]
+  )
 
   const { data, isLoading } = useQuery(
     filters && metodoNombre
@@ -959,9 +967,10 @@ export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre
 export function useProductosPorDepto(filters: CuadreFilters | null, deptoNombre: string | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters && deptoNombre
-    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters && deptoNombre ? buildCuadreWhereViaVenta(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId, deptoNombre]
+  )
 
   const { data, isLoading } = useQuery(
     filters && deptoNombre
@@ -1013,9 +1022,10 @@ export interface TotalesFiscales {
 export function useTotalesFiscales(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [whereV, paramsV] = filters
-    ? buildCuadreWhere(filters, empresaId)
-    : ['1=0', []]
+  const [whereV, paramsV] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId) : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data: dataVentas, isLoading: loadingVentas } = useQuery(
     `SELECT
@@ -1035,8 +1045,6 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
      WHERE ${whereV}`,
     paramsV
   )
-
-  console.log('[useTotalesFiscales]', { empresaId, filters, whereV, paramsV, dataVentas, loadingVentas })
 
   const row = (dataVentas?.[0] ?? {}) as {
     base_imponible: number
@@ -1101,9 +1109,10 @@ export interface IvaAlicuota {
 export function useIvaPorAlicuota(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhereViaVenta(filters, empresaId, 'v')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhereViaVenta(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -1153,9 +1162,10 @@ export interface PagoDetalleCompleto {
 export function usePagosDetalleCompleto(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhere(filters, empresaId, 'pg')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'pg') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -1293,9 +1303,10 @@ export interface CobrosEfectivoDetalle {
 export function useCobrosEfectivoCaja(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [where, params] = filters
-    ? buildCuadreWhere(filters, empresaId, 'pg')
-    : ['1=0', []]
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'pg') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
 
   const { data, isLoading } = useQuery(
     filters

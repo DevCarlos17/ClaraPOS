@@ -148,7 +148,7 @@ export function CuadreConteoFisico({
 
   useEffect(() => {
     onTotalesChange?.(totals.totalSistema, totals.totalFisico, totals.totalFisicoBs)
-  }, [totals, onTotalesChange])
+  }, [totals.totalSistema, totals.totalFisico, totals.totalFisicoBs, onTotalesChange])
 
   // Conteo fisico keyed por metodo_cobro_id (valor nativo) para cerrarSesionCaja
   useEffect(() => {
