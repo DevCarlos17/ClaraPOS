@@ -17,7 +17,8 @@ export interface AvanceAplicado {
   montoAvanceUsd: number
   montoAvanceBs: number
   cargoUsd: number        // fee en USD
-  totalCargoUsd: number   // avance convertido a USD + cargo
+  totalCargoUsd: number   // avance convertido a USD + cargo (para el total en USD de la factura)
+  totalCargoBs: number    // monto exacto en Bs a cobrar (evita reconversión USD→Bs con tasa distinta)
   movimientoIds: string[] // siempre [] - egresos se crean al confirmar la factura
   descripcion: string
   origenFondosTipo: OrigenFondos
@@ -180,6 +181,7 @@ function FormAvance({
       montoAvanceBs: bs,
       cargoUsd,
       totalCargoUsd,
+      totalCargoBs,
       movimientoIds: [],
       descripcion: conceptoFinal,
       origenFondosTipo: origenFondos,

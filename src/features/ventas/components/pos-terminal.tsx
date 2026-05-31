@@ -138,7 +138,11 @@ export function PosTerminal() {
     .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') === 'Exonerado')
     .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
   const mostrarDesgloseFiscal = ivaEntries.length > 0 || baseExentoUsd > 0.001 || baseExoneradoUsd > 0.001
-  const totalBs = usdToBs(totalUsd, tasaValor)
+  // Calcular totalBs usando el monto nativo de cada cargo especial (si existe)
+  // para evitar diferencias cuando la tasa cambia entre el momento del avance y el display.
+  const totalCargosEspBs = cargosEspeciales.reduce((s, c) =>
+    s + (c.totalCargoBs ?? usdToBs(c.montoCargoUsd, tasaValor)), 0)
+  const totalBs = Number((usdToBs(totalUsd - totalCargosEspUsd, tasaValor) + totalCargosEspBs).toFixed(2))
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
   // Egresos de caja pendientes: factura actual + todas las facturas en espera (aun no debitados de DB)
@@ -465,6 +469,7 @@ export function PosTerminal() {
         tipo: 'AVANCE',
         descripcion: avance.descripcion,
         montoCargoUsd: avance.totalCargoUsd,
+        totalCargoBs: avance.totalCargoBs,
         movimientoIds: [],
         origenFondosTipo: avance.origenFondosTipo,
         egresosCaja: avance.egresosCaja,

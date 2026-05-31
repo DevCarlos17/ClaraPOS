@@ -84,7 +84,11 @@ export interface VueltoParam {
 export interface CargoEspecial {
   tipo: 'AVANCE' | 'PRESTAMO'
   descripcion: string
-  montoCargoUsd: number   // lo que el cliente adeuda (avance+fee o prestamo+interes)
+  montoCargoUsd: number   // lo que el cliente adeuda en USD (avance+fee o prestamo+interes)
+  /** Monto exacto en Bs a cobrar. Presente cuando el cargo fue creado en moneda Bs.
+   *  Si existe, se usa directamente para el total_bs de la factura evitando una
+   *  reconversion USD->Bs que introduciria diferencias al cambiar la tasa. */
+  totalCargoBs?: number
   movimientoIds: string[] // IDs de movimientos_metodo_cobro ya creados (legado)
   diasPlazo?: number      // solo PRESTAMO: plazo en dias para vencimiento_cobrar
   clienteId?: string      // para crear vencimiento_cobrar
@@ -269,7 +273,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     const descuentoUsdFinal = Math.min(Number(descuentoUsd.toFixed(2)), totalUsd)
     const descuentoBsFinal = Number((descuentoUsdFinal * tasa).toFixed(2))
     totalUsd = Number((totalUsd - descuentoUsdFinal).toFixed(2))
-    const totalBs = Number((totalUsd * tasa).toFixed(2))
+
+    // total_bs: los cargos especiales con totalCargoBs se suman en su moneda nativa
+    // para evitar diferencias por tasa entre el momento del avance y el de la factura.
+    const totalCargosUsd = cargosEspeciales.reduce((s, c) => s + c.montoCargoUsd, 0)
+    const totalCargosNativosBs = cargosEspeciales.reduce((s, c) =>
+      s + (c.totalCargoBs ?? Number((c.montoCargoUsd * tasa).toFixed(2))), 0)
+    const totalProductosNetUsd = Number((totalUsd - totalCargosUsd).toFixed(2))
+    const totalBs = Number((totalProductosNetUsd * tasa + totalCargosNativosBs).toFixed(2))
 
     // 2. Generar nro_factura con prefijo por caja (C01-000001).
     //    Cada caja tiene su propio contador acumulado a traves de todas sus sesiones.

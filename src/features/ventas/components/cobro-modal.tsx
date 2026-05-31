@@ -84,7 +84,13 @@ export function CobroModal({
   const tasaUsada = tasaFrozen.current || tasa || 1
 
   // ── Calculo de totales (con tasa congelada) ───────────────────────────────
-  const totalEfectivoBs = Math.max(0, totalBrutoUsd * tasaUsada - descuentoBs)
+  // Los cargos especiales con totalCargoBs se suman en su moneda nativa para
+  // preservar el monto exacto aunque la tasa haya cambiado desde el modal de avance.
+  const totalCargosEnUsd = cargosEspeciales.reduce((s, c) => s + c.montoCargoUsd, 0)
+  const totalCargosNativosBs = cargosEspeciales.reduce((s, c) =>
+    s + (c.totalCargoBs ?? c.montoCargoUsd * tasaUsada), 0)
+  const totalProductosBs = (totalBrutoUsd - totalCargosEnUsd) * tasaUsada
+  const totalEfectivoBs = Math.max(0, totalProductosBs + totalCargosNativosBs - descuentoBs)
   const totalEfectivoUsd = Number((totalEfectivoBs / tasaUsada).toFixed(2))
 
   // ── Calculo IGTF (antes del balance para que el pendiente lo incluya) ────
