@@ -138,6 +138,16 @@ async function importarFilaCxp(
     const montoBs = Number((montoUsd * tasa).toFixed(2))
     const fechaDoc = fila.fecha
 
+    // 5b. Resolver moneda USD (NOT NULL en PostgreSQL — sin esto el upload falla con 23502)
+    const monedaResult = await tx.execute(
+      "SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1",
+      []
+    )
+    if (!monedaResult.rows?.length) {
+      throw new Error('No se encontro la moneda USD en el catalogo. Verifique la sincronizacion.')
+    }
+    const monedaUsdId = (monedaResult.rows.item(0) as { id: string }).id
+
     // 6. Calcular saldo actual del proveedor antes de insertar (para movimiento_cuenta)
     const saldoProvResult = await tx.execute(
       `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
@@ -160,18 +170,19 @@ async function importarFilaCxp(
           fecha_factura, fecha_recepcion,
           usuario_id, created_at, updated_at, created_by)
        VALUES (?, ?, ?, ?, ?, NULL,
-               NULL, ?, ?,
-               ?, 0, 0, 0,
-               ?, ?,
-               ?, 'SALDO_INICIAL', 'PROCESADA',
-               ?, NULL,
-               ?, ?, ?, ?)`,
+                ?, ?, ?,
+                ?, 0, 0, 0,
+                ?, ?,
+                ?, 'SALDO_INICIAL', 'PROCESADA',
+                ?, NULL,
+                ?, ?, ?, ?)`,
       [
         facturaId,
         empresaId,
         proveedor.id,
         nroFactura,
         fila.nro_documento,   // nro_control = numero original del sistema anterior
+        monedaUsdId,          // moneda_id: NOT NULL en PostgreSQL, siempre USD para CxP
         tasa.toFixed(4),
         tasa.toFixed(4),      // tasa_costo = tasa (sin diferencial en saldos iniciales)
         montoUsd.toFixed(2),  // total_exento_usd = monto total (todo exento)
