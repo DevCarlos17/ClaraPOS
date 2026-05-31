@@ -10,6 +10,7 @@ const SCANNER_THRESHOLD_MS = 50
 interface ProductoBuscadorProps {
   onSelect: (producto: ProductoVenta) => void
   tasa: number
+  modoMayor?: boolean
 }
 
 export interface ProductoBuscadorHandle {
@@ -18,7 +19,7 @@ export interface ProductoBuscadorHandle {
 }
 
 export const ProductoBuscador = forwardRef<ProductoBuscadorHandle, ProductoBuscadorProps>(
-function ProductoBuscador({ onSelect, tasa }, ref) {
+function ProductoBuscador({ onSelect, tasa, modoMayor = false }, ref) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -226,12 +227,29 @@ function ProductoBuscador({ onSelect, tasa }, ref) {
                     </p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-sm font-medium">{formatUsd(p.precio_venta_usd)}</p>
-                    {tasa > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {formatBs(usdToBs(parseFloat(p.precio_venta_usd), tasa))}
-                      </p>
-                    )}
+                    {/* Mostrar precio Mayor si está activo y existe; si no, precio Detal */}
+                    {(() => {
+                      const precioMayor = parseFloat(p.precio_mayor_usd ?? '0') || 0
+                      const precioActivo = modoMayor && precioMayor > 0 ? p.precio_mayor_usd : p.precio_venta_usd
+                      return (
+                        <>
+                          <p className={`text-sm font-medium ${modoMayor && precioMayor > 0 ? 'text-amber-600' : ''}`}>
+                            {formatUsd(precioActivo)}
+                          </p>
+                          {tasa > 0 && (
+                            <p className="text-xs text-muted-foreground">
+                              {formatBs(usdToBs(parseFloat(precioActivo), tasa))}
+                            </p>
+                          )}
+                          {/* Mostrar precio detal como referencia cuando está en modo Mayor */}
+                          {modoMayor && precioMayor > 0 && (
+                            <p className="text-[10px] text-muted-foreground line-through">
+                              {formatUsd(p.precio_venta_usd)}
+                            </p>
+                          )}
+                        </>
+                      )
+                    })()}
                   </div>
                 </div>
               </button>

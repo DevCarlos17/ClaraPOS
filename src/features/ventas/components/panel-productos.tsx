@@ -9,7 +9,7 @@ import { formatUsd } from '@/lib/currency'
 const SCANNER_THRESHOLD_MS = 50
 
 const ALL_PRODUCTS_QUERY = `
-  SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
+  SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.stock,
          p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal
   FROM productos p
   LEFT JOIN unidades u ON p.unidad_base_id = u.id

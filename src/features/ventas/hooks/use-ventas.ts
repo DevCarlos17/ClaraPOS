@@ -131,7 +131,7 @@ export function useBuscarProductosVenta(query: string) {
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
+      ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.stock,
                 p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
                 p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
          FROM productos p
@@ -154,6 +154,7 @@ export interface ProductoVenta {
   tipo: string
   nombre: string
   precio_venta_usd: string
+  precio_mayor_usd: string
   stock: string
   es_decimal: number
   codigo_barras?: string | null
@@ -166,7 +167,7 @@ export async function buscarProductoPorCodigoBarras(
   empresaId: string
 ): Promise<ProductoVenta | null> {
   const result = await db.execute(
-    `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.stock,
+    `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.stock,
             p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
             p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
      FROM productos p

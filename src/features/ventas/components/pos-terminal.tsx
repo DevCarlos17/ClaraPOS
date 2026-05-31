@@ -163,6 +163,9 @@ export function PosTerminal() {
     .filter((e) => efectivoBsMetodo != null && e.metodo_cobro_id === efectivoBsMetodo.id)
     .reduce((sum, e) => sum + e.monto, 0)
 
+  // --- Modo de precio: Detal (default) vs Mayor ---
+  const [modoMayor, setModoMayor] = useState(false)
+
   // --- Descuento comercial / cortesia ---
   const [descuentoBs, setDescuentoBs] = useState(0)
   const [descuentoMotivo, setDescuentoMotivo] = useState('')
@@ -309,6 +312,9 @@ export function PosTerminal() {
       return
     }
     pendingFocusIndexRef.current = lineas.length
+    const precioDetalUsd  = parseFloat(producto.precio_venta_usd)
+    const precioMayorUsd  = parseFloat(producto.precio_mayor_usd ?? '0') || 0
+    const precioActivoUsd = modoMayor && precioMayorUsd > 0 ? precioMayorUsd : precioDetalUsd
     setLineas((prev) => [
       ...prev,
       {
@@ -317,7 +323,9 @@ export function PosTerminal() {
         nombre: producto.nombre,
         tipo: producto.tipo,
         cantidad: 1,
-        precio_unitario_usd: parseFloat(producto.precio_venta_usd),
+        precio_unitario_usd: precioActivoUsd,
+        precio_detal_usd: precioDetalUsd,
+        precio_mayor_usd: precioMayorUsd > 0 ? precioMayorUsd : undefined,
         stock_actual: parseFloat(producto.stock),
         es_decimal: producto.es_decimal === 1,
         tipo_impuesto: (producto.tipo_impuesto ?? 'Exento') as 'Gravable' | 'Exento' | 'Exonerado',
@@ -498,8 +506,33 @@ export function PosTerminal() {
     setCargosEspeciales((prev) => prev.filter((_, i) => i !== index))
   }
 
+  // Alterna entre modo Detal y Mayor.
+  // Si hay artículos en la factura ofrece actualizar sus precios al nuevo modo.
+  function handleToggleModo() {
+    const newMode = !modoMayor
+    if (lineas.length > 0) {
+      handleProtectedAction(
+        () => {
+          setLineas((prev) =>
+            prev.map((l) => {
+              const target = newMode
+                ? (l.precio_mayor_usd != null && l.precio_mayor_usd > 0 ? l.precio_mayor_usd : l.precio_detal_usd ?? l.precio_unitario_usd)
+                : (l.precio_detal_usd ?? l.precio_unitario_usd)
+              return { ...l, precio_unitario_usd: target }
+            })
+          )
+          setModoMayor(newMode)
+        },
+        `Cambiar a precio ${newMode ? 'Mayor' : 'Detal'}`,
+        `Hay ${lineas.length} artículo${lineas.length > 1 ? 's' : ''} en la factura. ¿Actualizar sus precios al precio ${newMode ? 'Mayor' : 'Detal'}?`
+      )
+    } else {
+      setModoMayor(newMode)
+    }
+  }
+
   // --- Atajos de teclado (Option B) ---
-  // F5=Ingreso  F6=Retiro  F7=Avance  F8=Prestamo
+  // F3=Toggle Detal/Mayor  F5=Ingreso  F6=Retiro  F7=Avance  F8=Prestamo
   // F9=GuardarFactura  F10=FacturasGuardadas  F12=ConfirmarVenta  Esc=Cancelar  Alt+A=AgregarPago
   keyboardHandlerRef.current = (e: KeyboardEvent) => {
     const anyModalOpen =
@@ -521,6 +554,10 @@ export function PosTerminal() {
       case 'F2':
         e.preventDefault()
         clienteSelectorRef.current?.focus()
+        break
+      case 'F3':
+        e.preventDefault()
+        handleToggleModo()
         break
       case 'F5':
         e.preventDefault()
@@ -670,15 +707,30 @@ export function PosTerminal() {
             </div>
           </div>
 
-          {/* Row 2: Product search */}
+          {/* Row 2: Product search + toggle Detal/Mayor */}
           <div className="px-3 py-2 sm:px-4 sm:py-2.5 border-b">
             <div className="flex items-center gap-2">
               <label className="hidden sm:flex text-xs text-muted-foreground shrink-0 items-center gap-1">
                 <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F1</kbd>
               </label>
               <div className="flex-1 max-w-2xl">
-                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} tasa={tasaValor} />
+                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} tasa={tasaValor} modoMayor={modoMayor} />
               </div>
+              {/* Toggle Detal / Mayor */}
+              <button
+                type="button"
+                onClick={handleToggleModo}
+                title={modoMayor ? 'Precio Mayor activo — F3 para cambiar a Detal' : 'Precio Detal activo — F3 para cambiar a Mayor'}
+                className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                  modoMayor
+                    ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                    : 'bg-muted/40 text-muted-foreground border-border hover:bg-muted'
+                }`}
+              >
+                <Tag size={12} weight={modoMayor ? 'fill' : 'regular'} />
+                <span>{modoMayor ? 'Mayor' : 'Detal'}</span>
+                <kbd className={`hidden sm:inline rounded border px-1 py-px text-[10px] font-mono leading-none ${modoMayor ? 'border-amber-300/60 bg-amber-400/30' : 'border-border bg-muted'}`}>F3</kbd>
+              </button>
             </div>
           </div>
 
