@@ -4,13 +4,14 @@ import { toast } from 'sonner'
 import { useBuscarProductosVenta, buscarProductoPorCodigoBarras, type ProductoVenta } from '../hooks/use-ventas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import type { NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 
 const SCANNER_THRESHOLD_MS = 50
 
 interface ProductoBuscadorProps {
   onSelect: (producto: ProductoVenta) => void
   tasa: number
-  modoMayor?: boolean
+  nivelActivo?: NivelPrecio | null
 }
 
 export interface ProductoBuscadorHandle {
@@ -19,7 +20,7 @@ export interface ProductoBuscadorHandle {
 }
 
 export const ProductoBuscador = forwardRef<ProductoBuscadorHandle, ProductoBuscadorProps>(
-function ProductoBuscador({ onSelect, tasa, modoMayor = false }, ref) {
+function ProductoBuscador({ onSelect, tasa, nivelActivo = null }, ref) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
@@ -227,24 +228,29 @@ function ProductoBuscador({ onSelect, tasa, modoMayor = false }, ref) {
                     </p>
                   </div>
                   <div className="text-right shrink-0">
-                    {/* Mostrar precio Mayor si está activo y existe; si no, precio Detal */}
                     {(() => {
-                      const precioMayor = parseFloat(p.precio_mayor_usd ?? '0') || 0
-                      const precioActivo = modoMayor && precioMayor > 0 ? p.precio_mayor_usd : p.precio_venta_usd
+                      const orden = nivelActivo?.orden ?? 1
+                      const p1 = parseFloat(p.precio_venta_usd)  || 0
+                      const p2 = parseFloat(p.precio_mayor_usd   ?? '0') || 0
+                      const p3 = parseFloat(p.precio_especial_usd ?? '0') || 0
+                      const precio = orden === 2 && p2 > 0 ? p2
+                                   : orden === 3 && p3 > 0 ? p3
+                                   : p1
+                      const esDistinto = orden !== 1 && precio !== p1
                       return (
                         <>
-                          <p className={`text-sm font-medium ${modoMayor && precioMayor > 0 ? 'text-amber-600' : ''}`}>
-                            {formatUsd(precioActivo)}
+                          <p className={`text-sm font-medium ${esDistinto ? 'text-amber-600' : ''}`}>
+                            {formatUsd(precio)}
                           </p>
                           {tasa > 0 && (
                             <p className="text-xs text-muted-foreground">
-                              {formatBs(usdToBs(parseFloat(precioActivo), tasa))}
+                              {formatBs(usdToBs(precio, tasa))}
                             </p>
                           )}
-                          {/* Mostrar precio detal como referencia cuando está en modo Mayor */}
-                          {modoMayor && precioMayor > 0 && (
+                          {/* Precio nivel 1 como referencia cuando se usa otro nivel */}
+                          {esDistinto && (
                             <p className="text-[10px] text-muted-foreground line-through">
-                              {formatUsd(p.precio_venta_usd)}
+                              {formatUsd(p1)}
                             </p>
                           )}
                         </>

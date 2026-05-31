@@ -14,6 +14,7 @@ import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
+import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import type { LineaVentaForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import { ClienteSelector, type ClienteSelectorHandle } from './cliente-selector'
@@ -163,8 +164,10 @@ export function PosTerminal() {
     .filter((e) => efectivoBsMetodo != null && e.metodo_cobro_id === efectivoBsMetodo.id)
     .reduce((sum, e) => sum + e.monto, 0)
 
-  // --- Modo de precio: Detal (default) vs Mayor ---
-  const [modoMayor, setModoMayor] = useState(false)
+  // --- Nivel de precio activo (ciclo por los niveles activos de la empresa) ---
+  const { niveles: nivelesPrecio } = useNivelesPrecioActivos()
+  const [nivelIdx, setNivelIdx] = useState(0)
+  const nivelActivo: NivelPrecio | null = nivelesPrecio[nivelIdx] ?? null
 
   // --- Descuento comercial / cortesia ---
   const [descuentoBs, setDescuentoBs] = useState(0)
@@ -312,9 +315,15 @@ export function PosTerminal() {
       return
     }
     pendingFocusIndexRef.current = lineas.length
-    const precioDetalUsd  = parseFloat(producto.precio_venta_usd)
-    const precioMayorUsd  = parseFloat(producto.precio_mayor_usd ?? '0') || 0
-    const precioActivoUsd = modoMayor && precioMayorUsd > 0 ? precioMayorUsd : precioDetalUsd
+    const p1 = parseFloat(producto.precio_venta_usd)    || 0
+    const p2 = parseFloat(producto.precio_mayor_usd ?? '0') || 0
+    const p3 = parseFloat(producto.precio_especial_usd ?? '0') || 0
+    const orden = nivelActivo?.orden ?? 1
+    const precioActivoUsd = (() => {
+      if (orden === 2) return p2 > 0 ? p2 : p1
+      if (orden === 3) return p3 > 0 ? p3 : p1
+      return p1
+    })()
     setLineas((prev) => [
       ...prev,
       {
@@ -324,8 +333,9 @@ export function PosTerminal() {
         tipo: producto.tipo,
         cantidad: 1,
         precio_unitario_usd: precioActivoUsd,
-        precio_detal_usd: precioDetalUsd,
-        precio_mayor_usd: precioMayorUsd > 0 ? precioMayorUsd : undefined,
+        precio_nivel1_usd: p1,
+        precio_nivel2_usd: p2 > 0 ? p2 : undefined,
+        precio_nivel3_usd: p3 > 0 ? p3 : undefined,
         stock_actual: parseFloat(producto.stock),
         es_decimal: producto.es_decimal === 1,
         tipo_impuesto: (producto.tipo_impuesto ?? 'Exento') as 'Gravable' | 'Exento' | 'Exonerado',
@@ -506,28 +516,38 @@ export function PosTerminal() {
     setCargosEspeciales((prev) => prev.filter((_, i) => i !== index))
   }
 
-  // Alterna entre modo Detal y Mayor.
-  // Si hay artículos en la factura ofrece actualizar sus precios al nuevo modo.
+  /** Devuelve el precio del producto para un nivel dado (por orden 1/2/3). */
+  function precioParaNivel(l: { precio_nivel1_usd?: number; precio_nivel2_usd?: number; precio_nivel3_usd?: number; precio_unitario_usd: number }, orden: number): number {
+    switch (orden) {
+      case 1: return l.precio_nivel1_usd ?? l.precio_unitario_usd
+      case 2: return (l.precio_nivel2_usd != null && l.precio_nivel2_usd > 0) ? l.precio_nivel2_usd : (l.precio_nivel1_usd ?? l.precio_unitario_usd)
+      case 3: return (l.precio_nivel3_usd != null && l.precio_nivel3_usd > 0) ? l.precio_nivel3_usd : (l.precio_nivel1_usd ?? l.precio_unitario_usd)
+      default: return l.precio_nivel1_usd ?? l.precio_unitario_usd
+    }
+  }
+
+  /** Cicla al siguiente nivel activo.
+   *  Si hay artículos en la factura ofrece actualizar sus precios. */
   function handleToggleModo() {
-    const newMode = !modoMayor
+    if (nivelesPrecio.length <= 1) return
+    const newIdx  = (nivelIdx + 1) % nivelesPrecio.length
+    const newNivel = nivelesPrecio[newIdx]
     if (lineas.length > 0) {
       handleProtectedAction(
         () => {
           setLineas((prev) =>
-            prev.map((l) => {
-              const target = newMode
-                ? (l.precio_mayor_usd != null && l.precio_mayor_usd > 0 ? l.precio_mayor_usd : l.precio_detal_usd ?? l.precio_unitario_usd)
-                : (l.precio_detal_usd ?? l.precio_unitario_usd)
-              return { ...l, precio_unitario_usd: target }
-            })
+            prev.map((l) => ({
+              ...l,
+              precio_unitario_usd: precioParaNivel(l, newNivel.orden),
+            }))
           )
-          setModoMayor(newMode)
+          setNivelIdx(newIdx)
         },
-        `Cambiar a precio ${newMode ? 'Mayor' : 'Detal'}`,
-        `Hay ${lineas.length} artículo${lineas.length > 1 ? 's' : ''} en la factura. ¿Actualizar sus precios al precio ${newMode ? 'Mayor' : 'Detal'}?`
+        `Cambiar a nivel ${newNivel.nombre}`,
+        `Hay ${lineas.length} artículo${lineas.length > 1 ? 's' : ''} en la factura. ¿Actualizar sus precios al nivel "${newNivel.nombre}"?`
       )
     } else {
-      setModoMayor(newMode)
+      setNivelIdx(newIdx)
     }
   }
 
@@ -714,23 +734,29 @@ export function PosTerminal() {
                 <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F1</kbd>
               </label>
               <div className="flex-1 max-w-2xl">
-                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} tasa={tasaValor} modoMayor={modoMayor} />
+                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} tasa={tasaValor} nivelActivo={nivelActivo} />
               </div>
-              {/* Toggle Detal / Mayor */}
-              <button
-                type="button"
-                onClick={handleToggleModo}
-                title={modoMayor ? 'Precio Mayor activo — F3 para cambiar a Detal' : 'Precio Detal activo — F3 para cambiar a Mayor'}
-                className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                  modoMayor
-                    ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
-                    : 'bg-muted/40 text-muted-foreground border-border hover:bg-muted'
-                }`}
-              >
-                <Tag size={12} weight={modoMayor ? 'fill' : 'regular'} />
-                <span>{modoMayor ? 'Mayor' : 'Detal'}</span>
-                <kbd className={`hidden sm:inline rounded border px-1 py-px text-[10px] font-mono leading-none ${modoMayor ? 'border-amber-300/60 bg-amber-400/30' : 'border-border bg-muted'}`}>F3</kbd>
-              </button>
+              {/* Toggle nivel de precio — visible solo si hay más de 1 nivel activo */}
+              {nivelesPrecio.length > 1 && (
+                <button
+                  type="button"
+                  onClick={handleToggleModo}
+                  title={`Nivel activo: ${nivelActivo?.nombre ?? '—'} — F3 para ciclar`}
+                  className={`shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
+                    nivelIdx === 0
+                      ? 'bg-muted/40 text-muted-foreground border-border hover:bg-muted'
+                      : nivelIdx === 1
+                        ? 'bg-amber-500 text-white border-amber-500 shadow-sm'
+                        : 'bg-blue-500 text-white border-blue-500 shadow-sm'
+                  }`}
+                >
+                  <Tag size={12} weight={nivelIdx === 0 ? 'regular' : 'fill'} />
+                  <span className="max-w-[5rem] truncate">{nivelActivo?.nombre ?? '—'}</span>
+                  <kbd className={`hidden sm:inline rounded border px-1 py-px text-[10px] font-mono leading-none ${
+                    nivelIdx === 0 ? 'border-border bg-muted' : 'border-white/30 bg-white/20'
+                  }`}>F3</kbd>
+                </button>
+              )}
             </div>
           </div>
 

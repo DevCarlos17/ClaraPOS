@@ -11,10 +11,10 @@ export const lineaVentaSchema = z.object({
   es_decimal: z.boolean().default(true),
   tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
   impuesto_pct: z.number().min(0).default(0),
-  /** Precio de venta al detal memorizado — para restaurar al cambiar de modo */
-  precio_detal_usd: z.number().min(0).optional(),
-  /** Precio de venta al mayor memorizado — para aplicar al cambiar de modo */
-  precio_mayor_usd: z.number().min(0).optional(),
+  /** Precios memorizados por nivel (orden 1/2/3) para poder cambiar de nivel sin re-buscar */
+  precio_nivel1_usd: z.number().min(0).optional(),  // precio_venta_usd
+  precio_nivel2_usd: z.number().min(0).optional(),  // precio_mayor_usd
+  precio_nivel3_usd: z.number().min(0).optional(),  // precio_especial_usd
 })
 
 export type LineaVentaForm = z.infer<typeof lineaVentaSchema>
