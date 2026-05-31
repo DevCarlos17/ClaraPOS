@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
-import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -46,12 +46,22 @@ function calcularAvance(
   montoBs: number,
   tasa: number,
   porcentajeFee: number
-): { avanceTotalUsd: number; cargoUsd: number; totalCargoUsd: number } {
-  const avanceBsEnUsd = tasa > 0 ? Number((montoBs / tasa).toFixed(2)) : 0
+): { avanceTotalUsd: number; cargoUsd: number; totalCargoUsd: number; totalCargoBs: number } {
+  const multiplier = 1 + porcentajeFee / 100
+
+  // Calcular cargo en moneda nativa de cada campo para evitar errores de redondeo.
+  // Si se convirtiera Bs→USD→%→Bs, los toFixed(2) intermedios introducen desvíos.
+  const totalCargoUsdNativo = Number((montoUsd * multiplier).toFixed(2))
+  const totalCargoBs        = Number((montoBs  * multiplier).toFixed(2))
+  const totalCargoUsdFromBs = tasa > 0 ? Number((totalCargoBs / tasa).toFixed(2)) : 0
+  const totalCargoUsd       = Number((totalCargoUsdNativo + totalCargoUsdFromBs).toFixed(2))
+
+  // Desglose para el resumen (solo display)
+  const avanceBsEnUsd  = tasa > 0 ? Number((montoBs / tasa).toFixed(2)) : 0
   const avanceTotalUsd = Number((montoUsd + avanceBsEnUsd).toFixed(2))
-  const cargoUsd = Number((avanceTotalUsd * porcentajeFee / 100).toFixed(2))
-  const totalCargoUsd = Number((avanceTotalUsd + cargoUsd).toFixed(2))
-  return { avanceTotalUsd, cargoUsd, totalCargoUsd }
+  const cargoUsd       = Number((totalCargoUsd - avanceTotalUsd).toFixed(2))
+
+  return { avanceTotalUsd, cargoUsd, totalCargoUsd, totalCargoBs }
 }
 
 // ─── Form ─────────────────────────────────────────────────────
@@ -102,8 +112,7 @@ function FormAvance({
   const bs = parseFloat(montoBs) || 0
   const fee = parseFloat(porcentajeFee) || 0
 
-  const { avanceTotalUsd, cargoUsd, totalCargoUsd } = calcularAvance(usd, bs, tasaActual, fee)
-  const totalCargoBs = usdToBs(totalCargoUsd, tasaActual)
+  const { avanceTotalUsd, cargoUsd, totalCargoUsd, totalCargoBs } = calcularAvance(usd, bs, tasaActual, fee)
 
   function reset() {
     setOrigenFondos('CAJA')

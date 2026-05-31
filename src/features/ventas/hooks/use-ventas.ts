@@ -714,22 +714,87 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           for (const entrada of cargo.egresosCaja) {
             if (entrada.monto <= 0) continue
 
+            // Leer saldo_actual y moneda del metodo
             const metodoResult = await tx.execute(
-              'SELECT saldo_actual FROM metodos_cobro WHERE id = ? AND empresa_id = ?',
+              `SELECT mc.saldo_actual,
+                      CASE WHEN mo.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mo.codigo_iso, 'USD') END AS moneda,
+                      mo.codigo_iso AS moneda_iso
+               FROM metodos_cobro mc
+               LEFT JOIN monedas mo ON mc.moneda_id = mo.id
+               WHERE mc.id = ? AND mc.empresa_id = ?`,
               [entrada.metodo_cobro_id, empresa_id]
             )
             if (!metodoResult.rows?.length) throw new Error('Metodo de cobro no encontrado')
 
-            const saldoActual = parseFloat(
-              (metodoResult.rows.item(0) as { saldo_actual: string }).saldo_actual
-            )
-            if (saldoActual < entrada.monto) {
+            const metodoRow = metodoResult.rows.item(0) as {
+              saldo_actual: string
+              moneda: string
+              moneda_iso: string
+            }
+            const monedaMetodo = metodoRow.moneda       // 'BS' | 'USD'
+            const monedaIso    = metodoRow.moneda_iso   // 'VES' | 'USD'
+
+            // Calcular saldo real de la sesion: apertura + pagos + movimientos manuales.
+            // saldo_actual en metodos_cobro no incluye apertura ni ventas regulares,
+            // por lo que no es fiable como fuente de verdad para este check.
+            let disponible = 0
+            if (sesion_caja_id) {
+              const sesionBalResult = await tx.execute(
+                'SELECT monto_apertura_usd, monto_apertura_bs FROM sesiones_caja WHERE id = ?',
+                [sesion_caja_id]
+              )
+              const sesionBalRow = sesionBalResult.rows?.item(0) as
+                | { monto_apertura_usd: string; monto_apertura_bs: string }
+                | undefined
+              const apertura = parseFloat(
+                monedaMetodo === 'BS'
+                  ? sesionBalRow?.monto_apertura_bs  ?? '0'
+                  : sesionBalRow?.monto_apertura_usd ?? '0'
+              ) || 0
+
+              const movsBalResult = await tx.execute(
+                `SELECT
+                   COALESCE(SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS ingresos,
+                   COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO'  THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS egresos
+                 FROM movimientos_metodo_cobro mmc
+                 JOIN metodos_cobro mc2 ON mmc.metodo_cobro_id = mc2.id
+                 JOIN monedas mo2 ON mc2.moneda_id = mo2.id
+                 WHERE mmc.sesion_caja_id = ? AND mc2.tipo = 'EFECTIVO' AND mo2.codigo_iso = ?`,
+                [sesion_caja_id, monedaIso]
+              )
+              const movsBalRow = movsBalResult.rows?.item(0) as { ingresos: number; egresos: number } | undefined
+              const ingresosSesion = movsBalRow?.ingresos ?? 0
+              const egresosSesion  = movsBalRow?.egresos  ?? 0
+
+              const pagosBalResult = await tx.execute(
+                `SELECT COALESCE(SUM(
+                   CASE WHEN mo2.codigo_iso = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE CAST(p.monto AS REAL) END
+                 ), 0) AS total
+                 FROM pagos p
+                 JOIN metodos_cobro mc2 ON p.metodo_cobro_id = mc2.id
+                 JOIN monedas mo2 ON p.moneda_id = mo2.id
+                 WHERE p.sesion_caja_id = ? AND mc2.tipo = 'EFECTIVO' AND mo2.codigo_iso = ?
+                   AND COALESCE(p.is_reversed, 0) = 0`,
+                [sesion_caja_id, monedaIso]
+              )
+              const pagosSesion = ((pagosBalResult.rows?.item(0) as { total: number } | undefined)?.total) ?? 0
+
+              disponible = apertura + ingresosSesion - egresosSesion + pagosSesion
+            } else {
+              // Sin sesion activa: usar saldo_actual como fallback
+              disponible = parseFloat(metodoRow.saldo_actual ?? '0') || 0
+            }
+
+            if (disponible < entrada.monto - 0.01) {
+              const currency = monedaMetodo === 'BS' ? 'Bs' : 'USD'
               throw new Error(
-                `Saldo insuficiente en caja para ${cargo.tipo === 'AVANCE' ? 'avance' : 'prestamo'}. ` +
-                `Disponible: ${saldoActual.toFixed(2)}, Solicitado: ${entrada.monto.toFixed(2)}`
+                `Saldo insuficiente en ${currency} para ${cargo.tipo === 'AVANCE' ? 'avance' : 'prestamo'}. ` +
+                `Disponible: ${disponible.toFixed(2)}, Solicitado: ${entrada.monto.toFixed(2)}`
               )
             }
-            const saldoNuevo = Number((saldoActual - entrada.monto).toFixed(2))
+
+            const saldoActual = parseFloat(metodoRow.saldo_actual ?? '0') || 0
+            const saldoNuevo  = Number((saldoActual - entrada.monto).toFixed(2))
             const movId = uuidv4()
             await tx.execute(
               `INSERT INTO movimientos_metodo_cobro
@@ -739,7 +804,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               [
                 movId, empresa_id, entrada.metodo_cobro_id,
                 cargo.tipo,
-                entrada.monto.toFixed(2), saldoActual.toFixed(2), saldoNuevo.toFixed(2),
+                entrada.monto.toFixed(2), disponible.toFixed(2), (disponible - entrada.monto).toFixed(2),
                 ventaId, `VEN-${nroFactura}`,
                 cargo.descripcion,
                 sesion_caja_id ?? null, now, now, usuario_id,
