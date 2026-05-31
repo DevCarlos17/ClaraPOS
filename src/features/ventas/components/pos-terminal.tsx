@@ -516,39 +516,12 @@ export function PosTerminal() {
     setCargosEspeciales((prev) => prev.filter((_, i) => i !== index))
   }
 
-  /** Devuelve el precio del producto para un nivel dado (por orden 1/2/3). */
-  function precioParaNivel(l: { precio_nivel1_usd?: number; precio_nivel2_usd?: number; precio_nivel3_usd?: number; precio_unitario_usd: number }, orden: number): number {
-    switch (orden) {
-      case 1: return l.precio_nivel1_usd ?? l.precio_unitario_usd
-      case 2: return (l.precio_nivel2_usd != null && l.precio_nivel2_usd > 0) ? l.precio_nivel2_usd : (l.precio_nivel1_usd ?? l.precio_unitario_usd)
-      case 3: return (l.precio_nivel3_usd != null && l.precio_nivel3_usd > 0) ? l.precio_nivel3_usd : (l.precio_nivel1_usd ?? l.precio_unitario_usd)
-      default: return l.precio_nivel1_usd ?? l.precio_unitario_usd
-    }
-  }
-
   /** Cicla al siguiente nivel activo.
-   *  Si hay artículos en la factura ofrece actualizar sus precios. */
+   *  Solo afecta productos agregados a partir de este momento;
+   *  los ya existentes en la factura conservan sus precios. */
   function handleToggleModo() {
     if (nivelesPrecio.length <= 1) return
-    const newIdx  = (nivelIdx + 1) % nivelesPrecio.length
-    const newNivel = nivelesPrecio[newIdx]
-    if (lineas.length > 0) {
-      handleProtectedAction(
-        () => {
-          setLineas((prev) =>
-            prev.map((l) => ({
-              ...l,
-              precio_unitario_usd: precioParaNivel(l, newNivel.orden),
-            }))
-          )
-          setNivelIdx(newIdx)
-        },
-        `Cambiar a nivel ${newNivel.nombre}`,
-        `Hay ${lineas.length} artículo${lineas.length > 1 ? 's' : ''} en la factura. ¿Actualizar sus precios al nivel "${newNivel.nombre}"?`
-      )
-    } else {
-      setNivelIdx(newIdx)
-    }
+    setNivelIdx((prev) => (prev + 1) % nivelesPrecio.length)
   }
 
   // --- Atajos de teclado (Option B) ---
