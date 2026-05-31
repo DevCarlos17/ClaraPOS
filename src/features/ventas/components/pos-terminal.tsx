@@ -484,6 +484,7 @@ export function PosTerminal() {
         tipo: 'PRESTAMO',
         descripcion: prestamo.descripcion,
         montoCargoUsd: prestamo.totalDeudaUsd,
+        totalCargoBs: prestamo.totalDeudaBs,
         movimientoIds: [],
         diasPlazo: prestamo.diasPlazo,
         clienteId: clienteId ?? undefined,

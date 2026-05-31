@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
-import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -19,6 +19,7 @@ export interface PrestamoAplicado {
   montoPrestamoBs: number
   interesUsd: number
   totalDeudaUsd: number
+  totalDeudaBs: number   // monto exacto en Bs a cobrar (evita reconversion USD→Bs con tasa distinta)
   diasPlazo: number
   movimientoIds: string[] // siempre [] - egresos se crean al confirmar la factura
   descripcion: string
@@ -100,12 +101,25 @@ function FormPrestamo({
   const interesPct = parseFloat(porcentajeInteres) || 0
   const dias = parseInt(diasPlazo) || DEFAULT_DIAS_PLAZO
 
-  // Calculos
-  const bsEnUsd = tasaActual > 0 ? Number((bs / tasaActual).toFixed(2)) : 0
+  // Calculos — cada moneda se procesa en su dominio nativo para evitar errores de redondeo.
+  // Si se convirtiera Bs→USD→%→Bs, los toFixed(2) intermedios acumulan desvíos.
+  const multiplier = 1 + interesPct / 100
+
+  // Porcion Bs: cargo directo en Bs
+  const totalDeudaBsFromBs   = Number((bs  * multiplier).toFixed(2))
+  const totalDeudaUsdFromBs  = tasaActual > 0 ? Number((totalDeudaBsFromBs  / tasaActual).toFixed(2)) : 0
+
+  // Porcion USD: cargo directo en USD
+  const totalDeudaUsdFromUsd = Number((usd * multiplier).toFixed(2))
+  const totalDeudaBsFromUsd  = Number((usd * multiplier * tasaActual).toFixed(2))
+
+  const totalDeudaUsd = Number((totalDeudaUsdFromUsd + totalDeudaUsdFromBs).toFixed(2))
+  const totalDeudaBs  = Number((totalDeudaBsFromBs   + totalDeudaBsFromUsd).toFixed(2))
+
+  // Desglose para el resumen visual
+  const bsEnUsd         = tasaActual > 0 ? Number((bs / tasaActual).toFixed(2)) : 0
   const prestamoTotalUsd = Number((usd + bsEnUsd).toFixed(2))
-  const interesUsd = Number((prestamoTotalUsd * interesPct / 100).toFixed(2))
-  const totalDeudaUsd = Number((prestamoTotalUsd + interesUsd).toFixed(2))
-  const totalDeudaBs = usdToBs(totalDeudaUsd, tasaActual)
+  const interesUsd      = Number((totalDeudaUsd - prestamoTotalUsd).toFixed(2))
 
   function reset() {
     setOrigenFondos('CAJA')
@@ -177,6 +191,7 @@ function FormPrestamo({
       montoPrestamoBs: bs,
       interesUsd,
       totalDeudaUsd,
+      totalDeudaBs,
       diasPlazo: dias,
       movimientoIds: [],
       descripcion: conceptoFinal,
