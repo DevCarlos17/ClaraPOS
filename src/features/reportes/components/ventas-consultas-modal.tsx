@@ -531,7 +531,7 @@ function FacturaDetalle({
       doc.setTextColor(150)
       const pageHeight = doc.internal.pageSize.getHeight()
       doc.text(
-        `Reimpresion generada el ${new Date().toLocaleString('es-VE')}`,
+        `Reimpresion generada el ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}`,
         pageWidth / 2,
         pageHeight - 8,
         { align: 'center' }

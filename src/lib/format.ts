@@ -46,6 +46,26 @@ export function formatDateTime(dateStr: string): string {
   }
 }
 
+/**
+ * Extrae solo la hora (HH:mm) de un string ISO en zona horaria Venezuela.
+ */
+export function formatHora(dateStr: string): string {
+  try {
+    const date = new Date(dateStr)
+    if (isNaN(date.getTime())) return ''
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: VE_TZ,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(date)
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? ''
+    return `${get('hour')}:${get('minute')}`
+  } catch {
+    return ''
+  }
+}
+
 export function formatNumber(val: number | string, decimals = 2): string {
   const num = typeof val === 'string' ? parseFloat(val) : val
   if (isNaN(num)) return '0'

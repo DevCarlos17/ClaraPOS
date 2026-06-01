@@ -10,7 +10,7 @@ import {
 } from '../hooks/use-cuadre'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
-import { formatDateTime } from '@/lib/format'
+import { formatDateTime, formatHora } from '@/lib/format'
 
 interface PrintOptions {
   desgloseFiscal: boolean
@@ -423,15 +423,9 @@ export function CuadreImprimir({
             </thead>
             <tbody>
               {pagosTransf.map((p) => {
-                const hora = (() => {
-                  try {
-                    const parts = p.fecha.split(' ')
-                    return parts.length >= 2 ? parts[1].substring(0, 5) : ''
-                  } catch { return '' }
-                })()
                 return (
                   <tr key={p.id} className="border-b">
-                    <td className="py-0.5 px-1.5 text-gray-500">{hora}</td>
+                    <td className="py-0.5 px-1.5 text-gray-500">{formatHora(p.fecha)}</td>
                     <td className="py-0.5 px-1.5 font-mono">{p.nroFactura ? `#${p.nroFactura}` : '—'}</td>
                     <td className="py-0.5 px-1.5">{p.clienteNombre ?? '—'}</td>
                     <td className="py-0.5 px-1.5">{p.metodoNombre}</td>
@@ -615,7 +609,7 @@ export function CuadreImprimir({
       </div>
 
       <p className="text-center text-[9px] text-gray-400 mt-4">
-        Generado: {new Date().toLocaleString('es-VE')} · ClaraPOS
+        Generado: {new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })} · ClaraPOS
       </p>
     </div>
   )
