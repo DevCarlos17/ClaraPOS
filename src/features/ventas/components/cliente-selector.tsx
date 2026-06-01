@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from 'react'
 import { MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { formatUsd } from '@/lib/currency'
@@ -25,6 +25,8 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
+  const dropdownVisible = open && query.trim().length >= 2
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -51,6 +53,23 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
       itemRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' })
     }
   }, [activeIndex])
+
+  // Calcular posicion fija del dropdown para escapar de parents con overflow-hidden
+  useLayoutEffect(() => {
+    if (!dropdownVisible || !inputRef.current) return
+    const updatePos = () => {
+      if (!inputRef.current) return
+      const rect = inputRef.current.getBoundingClientRect()
+      setDropdownStyle({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+    }
+    updatePos()
+    window.addEventListener('scroll', updatePos, true)
+    window.addEventListener('resize', updatePos)
+    return () => {
+      window.removeEventListener('scroll', updatePos, true)
+      window.removeEventListener('resize', updatePos)
+    }
+  }, [dropdownVisible])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!open || clientes.length === 0) return
@@ -149,8 +168,8 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
         />
       </div>
 
-      {open && query.trim().length >= 2 && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border bg-white shadow-md max-h-60 overflow-y-auto">
+      {dropdownVisible && (
+        <div style={dropdownStyle} className="fixed z-[9999] rounded-lg border bg-white shadow-md max-h-60 overflow-y-auto">
           {isLoading ? (
             <div className="p-3 text-sm text-muted-foreground text-center">Buscando...</div>
           ) : clientes.length === 0 ? (

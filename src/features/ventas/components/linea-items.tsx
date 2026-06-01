@@ -1,5 +1,5 @@
 import { useRef, forwardRef, useImperativeHandle } from 'react'
-import { Trash } from '@phosphor-icons/react'
+import { Trash, Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { LineaVentaForm } from '../schemas/venta-schema'
 
@@ -82,33 +82,60 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                     )}
                   </td>
                   <td className="px-1.5 py-1.5">
-                    <input
-                      ref={(el) => { inputRefs.current[index] = el }}
-                      type="number"
-                      min="0"
-                      step={linea.es_decimal ? 'any' : '1'}
-                      value={linea.cantidad === 0 ? '' : linea.cantidad}
-                      onChange={(e) => {
-                        const raw = e.target.value
-                        if (raw === '') {
-                          onUpdateCantidad(index, 0)
-                          return
-                        }
-                        const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
-                        if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === '-') e.preventDefault()
-                        if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          onCantidadEnter?.()
-                        }
-                      }}
-                      className={`w-full text-center rounded border bg-white px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring ${
-                        cantidadInvalida || stockExcedido ? 'border-destructive text-destructive' : ''
-                      }`}
-                    />
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const step = linea.es_decimal ? 0.001 : 1
+                          const minCantidad = linea.es_decimal ? 0.001 : 1
+                          onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step))
+                        }}
+                        disabled={linea.cantidad <= (linea.es_decimal ? 0.001 : 1)}
+                        className="shrink-0 flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Minus size={10} />
+                      </button>
+                      <input
+                        ref={(el) => { inputRefs.current[index] = el }}
+                        type="number"
+                        min="0"
+                        step={linea.es_decimal ? 'any' : '1'}
+                        value={linea.cantidad === 0 ? '' : linea.cantidad}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          if (raw === '') {
+                            onUpdateCantidad(index, 0)
+                            return
+                          }
+                          const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
+                          if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
+                        }}
+                        onKeyDown={(e) => {
+                          const step = linea.es_decimal ? 0.001 : 1
+                          const minCantidad = linea.es_decimal ? 0.001 : 1
+                          if (e.key === '+') { e.preventDefault(); onUpdateCantidad(index, linea.cantidad + step); return }
+                          if (e.key === '-') { e.preventDefault(); onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step)); return }
+                          if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            onCantidadEnter?.()
+                          }
+                        }}
+                        className={`min-w-0 w-full text-center rounded border bg-white px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring ${
+                          cantidadInvalida || stockExcedido ? 'border-destructive text-destructive' : ''
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const step = linea.es_decimal ? 0.001 : 1
+                          onUpdateCantidad(index, linea.cantidad + step)
+                        }}
+                        className="shrink-0 flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted transition-colors"
+                      >
+                        <Plus size={10} />
+                      </button>
+                    </div>
                   </td>
                   <td className="px-2 py-1.5 text-center">
                     {esServicio ? (
@@ -198,33 +225,60 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       )}
                     </td>
                     <td className="px-3 py-2">
-                      <input
-                        ref={(el) => { inputRefs.current[index] = el }}
-                        type="number"
-                        min="0"
-                        step={linea.es_decimal ? 'any' : '1'}
-                        value={linea.cantidad === 0 ? '' : linea.cantidad}
-                        onChange={(e) => {
-                          const raw = e.target.value
-                          if (raw === '') {
-                            onUpdateCantidad(index, 0)
-                            return
-                          }
-                          const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
-                          if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === '-') e.preventDefault()
-                          if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            onCantidadEnter?.()
-                          }
-                        }}
-                        className={`w-full text-center rounded border bg-white px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
-                          cantidadInvalida || stockExcedido ? 'border-destructive text-destructive' : ''
-                        }`}
-                      />
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const step = linea.es_decimal ? 0.001 : 1
+                            const minCantidad = linea.es_decimal ? 0.001 : 1
+                            onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step))
+                          }}
+                          disabled={linea.cantidad <= (linea.es_decimal ? 0.001 : 1)}
+                          className="shrink-0 flex items-center justify-center h-6 w-6 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                          <Minus size={12} />
+                        </button>
+                        <input
+                          ref={(el) => { inputRefs.current[index] = el }}
+                          type="number"
+                          min="0"
+                          step={linea.es_decimal ? 'any' : '1'}
+                          value={linea.cantidad === 0 ? '' : linea.cantidad}
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            if (raw === '') {
+                              onUpdateCantidad(index, 0)
+                              return
+                            }
+                            const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
+                            if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
+                          }}
+                          onKeyDown={(e) => {
+                            const step = linea.es_decimal ? 0.001 : 1
+                            const minCantidad = linea.es_decimal ? 0.001 : 1
+                            if (e.key === '+') { e.preventDefault(); onUpdateCantidad(index, linea.cantidad + step); return }
+                            if (e.key === '-') { e.preventDefault(); onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step)); return }
+                            if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              onCantidadEnter?.()
+                            }
+                          }}
+                          className={`min-w-0 w-full text-center rounded border bg-white px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
+                            cantidadInvalida || stockExcedido ? 'border-destructive text-destructive' : ''
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const step = linea.es_decimal ? 0.001 : 1
+                            onUpdateCantidad(index, linea.cantidad + step)
+                          }}
+                          className="shrink-0 flex items-center justify-center h-6 w-6 rounded border text-muted-foreground hover:bg-muted transition-colors"
+                        >
+                          <Plus size={12} />
+                        </button>
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-center">
                       {esServicio ? (

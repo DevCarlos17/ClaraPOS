@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { Plus, Trash, ShoppingCart, CreditCard } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -10,6 +10,7 @@ import {
   crearVenta,
   validarStockServidor,
   type VueltoParam,
+  type DiscrepancyOptions,
 } from '../hooks/use-ventas'
 import type { CargoEspecial } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
@@ -17,6 +18,20 @@ import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import type { VentaExitosaData } from './venta-exitosa-modal'
 import type { PaymentMethod } from '@/features/configuracion/hooks/use-payment-methods'
 import { useIgtfConfig } from '@/features/configuracion/hooks/use-igtf-config'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
+import { PERMISSIONS } from '@/core/hooks/use-permissions'
+
+// ── Tipos para resolución de discrepancias ────────────────────────────────────
+type DiscrepancyMode =
+  | 'VUELTO' | 'SAF' | 'PROPINA' | 'DIFERENCIAL_SOBRANTE'
+  | 'CREDITO' | 'ABSORBER' | 'DIFERENCIAL_FALTANTE'
+  | null
+
+interface SplitEntry {
+  metodoCobro_id: string
+  metodoNombre: string
+  montoBs: number
+}
 
 interface CobroModalProps {
   isOpen: boolean
@@ -67,6 +82,13 @@ export function CobroModal({
   const [vueltoMetodoId, setVueltoMetodoId] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  // ── Estado de resolución de discrepancias ─────────────────────────────────
+  const [discrepancyMode, setDiscrepancyMode] = useState<DiscrepancyMode>(null)
+  const [splitVuelto, setSplitVuelto] = useState<SplitEntry[]>([])
+  const [supervisorAuthorized, setSupervisorAuthorized] = useState(false)
+  const [supervisorId, setSupervisorId] = useState<string | null>(null)
+  const [showAbsorberPinDialog, setShowAbsorberPinDialog] = useState(false)
+
   // Congelar tasa al abrir el modal; resetear formulario de cobro
   useEffect(() => {
     if (!isOpen) return
@@ -77,6 +99,10 @@ export function CobroModal({
     setReferencia('')
     setVueltoMetodoId('')
     setSubmitting(false)
+    setDiscrepancyMode(null)
+    setSplitVuelto([])
+    setSupervisorAuthorized(false)
+    setSupervisorId(null)
   // La tasa se congela solo al abrir (se excluye tasa de deps intencionalmente)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
@@ -92,6 +118,14 @@ export function CobroModal({
   const totalProductosBs = (totalBrutoUsd - totalCargosEnUsd) * tasaUsada
   const totalEfectivoBs = Math.max(0, totalProductosBs + totalCargosNativosBs - descuentoBs)
   const totalEfectivoUsd = Number((totalEfectivoBs / tasaUsada).toFixed(2))
+
+  // ── Umbral de diferencial cambiario ──────────────────────────────────────
+  const umbralDiferencialUsd = useMemo(() => {
+    const porcentaje = totalEfectivoUsd * 0.01
+    return Math.min(0.50, porcentaje)
+  }, [totalEfectivoUsd])
+
+  const absorberMaxUsd = 2.00
 
   // ── Calculo IGTF (antes del balance para que el pendiente lo incluya) ────
   const { aplicaIgtf, tasaIgtf } = useIgtfConfig()
@@ -123,14 +157,13 @@ export function CobroModal({
   // ── Vuelto (cliente pago de mas) ──────────────────────────────────────────
   const estaOverpago = pendienteBs4 < -0.01
   const vueltoMontoBs = estaOverpago ? Math.abs(pendienteBs4) : 0
-  const selectedVueltoMetodo = metodos.find((m) => m.id === vueltoMetodoId)
-  const vueltoMontoNativo = selectedVueltoMetodo
-    ? selectedVueltoMetodo.moneda === 'BS'
-      ? Number(vueltoMontoBs.toFixed(2))
-      : Number((vueltoMontoBs / tasaUsada).toFixed(2))
-    : 0
+  // ── Discrepancia en USD (negativo = overpago, positivo = faltante) ────────
+  const montoDiscrepanciaUsd = useMemo(() => {
+    if (!tasaUsada || tasaUsada <= 0) return 0
+    return pendienteBs4 / tasaUsada
+  }, [pendienteBs4, tasaUsada])
 
-  // Auto-seleccionar primer metodo efectivo cuando hay vuelto
+  // Auto-seleccionar primer metodo efectivo cuando hay vuelto (legado)
   useEffect(() => {
     if (estaOverpago && !vueltoMetodoId) {
       const efectivos = metodos.filter((m) => m.tipo === 'EFECTIVO')
@@ -141,16 +174,77 @@ export function CobroModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [estaOverpago])
 
+  // ── Auto-selección de modo de discrepancia ────────────────────────────────
+  useEffect(() => {
+    const absUsd = Math.abs(montoDiscrepanciaUsd)
+    if (Math.abs(pendienteBs4) <= 0.01) {
+      setDiscrepancyMode(null)
+      return
+    }
+    if (pendienteBs4 < -0.01) {
+      // Overpago
+      if (absUsd <= umbralDiferencialUsd) {
+        setDiscrepancyMode('DIFERENCIAL_SOBRANTE')
+      } else if (
+        discrepancyMode === null ||
+        discrepancyMode === 'DIFERENCIAL_FALTANTE' ||
+        discrepancyMode === 'CREDITO' ||
+        discrepancyMode === 'ABSORBER'
+      ) {
+        setDiscrepancyMode('VUELTO')
+      }
+    } else if (pendienteBs4 > 0.01) {
+      // Faltante
+      if (absUsd <= umbralDiferencialUsd) {
+        setDiscrepancyMode('DIFERENCIAL_FALTANTE')
+      } else if (
+        discrepancyMode === null ||
+        discrepancyMode === 'VUELTO' ||
+        discrepancyMode === 'SAF' ||
+        discrepancyMode === 'PROPINA' ||
+        discrepancyMode === 'DIFERENCIAL_SOBRANTE'
+      ) {
+        setDiscrepancyMode('CREDITO')
+      }
+    } else {
+      setDiscrepancyMode(null)
+    }
+  // discrepancyMode intencionalmente excluido: evita sobrescribir elección del usuario
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendienteBs4, umbralDiferencialUsd, montoDiscrepanciaUsd])
+
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
 
-  // ── Estado del boton Procesar ─────────────────────────────────────────────
-  const puedeProcesar =
-    // Contado/vuelto: pago completo con metodo de vuelto si aplica
-    (pagos.length > 0 && (esPagado || estaOverpago) && (!estaOverpago || !!vueltoMetodoId)) ||
-    // Credito parcial: hay al menos un pago pero queda saldo pendiente
-    (tipoDetectado === 'CREDITO' && pagos.length > 0) ||
-    // Credito total sin abono: el cliente asume la deuda completa
-    (tipoDetectado === 'CREDITO' && pagos.length === 0 && !!clienteId)
+  // ── Validación de split vuelto ────────────────────────────────────────────
+  const splitVueltoSumBs = splitVuelto.reduce((s, e) => s + e.montoBs, 0)
+  const splitVueltoValid =
+    splitVuelto.length === 0 ||
+    Math.abs(splitVueltoSumBs - vueltoMontoBs) <= 0.01
+
+  // ── Estado del botón Procesar (modo-aware) ────────────────────────────────
+  const puedeProcesar = (() => {
+    if (Math.abs(pendienteBs4) <= 0.01) {
+      return (
+        (pagos.length > 0 && esPagado) ||
+        (tipoDetectado === 'CREDITO' && pagos.length > 0) ||
+        (tipoDetectado === 'CREDITO' && pagos.length === 0 && !!clienteId)
+      )
+    }
+    if (estaOverpago) {
+      if (discrepancyMode === 'VUELTO') return pagos.length > 0 && splitVueltoValid
+      if (discrepancyMode === 'SAF') return pagos.length > 0 && !!clienteId
+      if (discrepancyMode === 'PROPINA') return pagos.length > 0
+      if (discrepancyMode === 'DIFERENCIAL_SOBRANTE') return pagos.length > 0
+      return false
+    }
+    // Faltante
+    if (discrepancyMode === 'CREDITO') {
+      return pagos.length > 0 || (pagos.length === 0 && !!clienteId)
+    }
+    if (discrepancyMode === 'ABSORBER') return supervisorAuthorized
+    if (discrepancyMode === 'DIFERENCIAL_FALTANTE') return pagos.length > 0
+    return false
+  })()
 
   const selectedMetodo = metodos.find((m) => m.id === metodoId)
   const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
@@ -222,20 +316,71 @@ export function CobroModal({
       return
     }
 
-    // Vuelto requiere metodo seleccionado
-    if (estaOverpago && !vueltoMetodoId) {
-      toast.error('Selecciona el metodo en que entregaras el vuelto al cliente')
+    // Validar resolución de discrepancia
+    if (estaOverpago && discrepancyMode === null) {
+      toast.error('Selecciona cómo manejar el excedente de pago')
+      return
+    }
+    if (!estaOverpago && pendienteBs4 > umbralBs && discrepancyMode === null) {
+      toast.error('Selecciona cómo manejar el pago incompleto')
+      return
+    }
+    // ABSORBER requiere supervisor autorizado + ID capturado
+    if (discrepancyMode === 'ABSORBER' && (!supervisorAuthorized || !supervisorId)) {
+      toast.error('Se requiere autorización de supervisor para absorber la diferencia')
+      return
+    }
+    if (discrepancyMode === 'VUELTO' && splitVuelto.length > 0 && !splitVueltoValid) {
+      toast.error('La suma del vuelto asignado no coincide con el total de vuelto')
       return
     }
 
-    const vueltoParam: VueltoParam | undefined =
-      estaOverpago && vueltoMetodoId && vueltoMontoNativo > 0.005
-        ? {
-            metodo_cobro_id: vueltoMetodoId,
-            moneda: selectedVueltoMetodo?.moneda === 'BS' ? 'BS' : 'USD',
-            monto: vueltoMontoNativo,
-          }
-        : undefined
+    // Construir vueltoParam para crearVenta (TASK-006: ampliar a VueltoParam[])
+    const vueltoParam: VueltoParam | undefined = (() => {
+      if (discrepancyMode !== 'VUELTO') return undefined
+      if (splitVuelto.length > 0) {
+        const first = splitVuelto[0]
+        const metodo = metodos.find((m) => m.id === first.metodoCobro_id)
+        if (!metodo) return undefined
+        const monto =
+          metodo.moneda === 'BS'
+            ? Number(first.montoBs.toFixed(2))
+            : Number((first.montoBs / tasaUsada).toFixed(2))
+        return {
+          metodo_cobro_id: first.metodoCobro_id,
+          moneda: metodo.moneda as 'BS' | 'USD',
+          monto,
+        }
+      }
+      // Fallback: usar primer metodo efectivo disponible
+      const efectivo = metodosEfectivo[0]
+      if (!efectivo) return undefined
+      const monto =
+        efectivo.moneda === 'BS'
+          ? Number(vueltoMontoBs.toFixed(2))
+          : Number((vueltoMontoBs / tasaUsada).toFixed(2))
+      return {
+        metodo_cobro_id: efectivo.id,
+        moneda: efectivo.moneda as 'BS' | 'USD',
+        monto,
+      }
+    })()
+
+    // Build discrepancy param for the data layer
+    const discrepancy: DiscrepancyOptions | undefined = discrepancyMode
+      ? {
+          mode: discrepancyMode,
+          montoUsd: Math.abs(montoDiscrepanciaUsd),
+          montoBs: Math.abs(pendienteBs4),
+          clienteId: clienteId || undefined,
+          cajeroId: usuarioId,
+          supervisorId: supervisorId ?? undefined,
+          vueltoEntries:
+            discrepancyMode === 'VUELTO' && splitVuelto.length > 0
+              ? splitVuelto.map((e) => ({ metodoCobro_id: e.metodoCobro_id, montoBs: e.montoBs }))
+              : undefined,
+        }
+      : undefined
 
     setSubmitting(true)
     try {
@@ -277,6 +422,7 @@ export function CobroModal({
         descuentoUsd: descuentoBs > 0 ? Number((descuentoBs / tasaUsada).toFixed(4)) : 0,
         descuentoMotivo: descuentoMotivo.trim() || undefined,
         totalIgtfUsd: igtfUsd,
+        discrepancy,
       })
 
       onSuccess({
@@ -298,6 +444,30 @@ export function CobroModal({
       setSubmitting(false)
     }
   }
+
+  // ── Referencia estable para handleProcesar (evita stale closure en keydown) ─
+  const handleProcesarRef = useRef<() => Promise<void>>(async () => {})
+  useEffect(() => { handleProcesarRef.current = handleProcesar })
+
+  // ── Atajos de teclado: F12 / Enter (sin foco en input) ───────────────────
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (showAbsorberPinDialog) return
+      const tag = (document.activeElement as HTMLElement)?.tagName?.toLowerCase()
+      const isInput = tag === 'input' || tag === 'textarea' || tag === 'select'
+      if (e.key === 'F12') {
+        e.preventDefault()
+        if (puedeProcesar) void handleProcesarRef.current()
+      }
+      if (e.key === 'Enter' && !isInput) {
+        e.preventDefault()
+        if (puedeProcesar) void handleProcesarRef.current()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, showAbsorberPinDialog, puedeProcesar])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -480,38 +650,174 @@ export function CobroModal({
           </div>
         </div>
 
-        {/* Seccion de vuelto */}
-        {estaOverpago && (
-          <div className="px-5 py-3 border-b shrink-0 bg-amber-50">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-amber-800">
-                Vuelto: {formatBs(vueltoMontoBs)}
-                {selectedVueltoMetodo?.moneda === 'USD' && (
-                  <span className="ml-1.5 text-amber-600 font-normal">
-                    ({formatUsd(vueltoMontoNativo)})
-                  </span>
+        {/* Panel de resolución de discrepancias */}
+        {Math.abs(pendienteBs4) > 0.01 && (
+          <div className="px-5 py-3 border-b shrink-0">
+
+            {/* Auto-resuelto: diferencial cambiario */}
+            {(discrepancyMode === 'DIFERENCIAL_SOBRANTE' || discrepancyMode === 'DIFERENCIAL_FALTANTE') && (
+              <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm">
+                <p className="font-medium text-amber-800">
+                  {discrepancyMode === 'DIFERENCIAL_SOBRANTE'
+                    ? 'Diferencial cambiario (sobrante)'
+                    : 'Diferencial cambiario (faltante)'}
+                </p>
+                <p className="text-amber-700 text-xs mt-0.5">
+                  {formatBs(Math.abs(pendienteBs4))} — se registrará como{' '}
+                  {discrepancyMode === 'DIFERENCIAL_SOBRANTE'
+                    ? 'ingreso de diferencial'
+                    : 'gasto de diferencial'}
+                </p>
+              </div>
+            )}
+
+            {/* Overpago manual: VUELTO / SAF / PROPINA */}
+            {estaOverpago && discrepancyMode !== 'DIFERENCIAL_SOBRANTE' && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">El cliente pagó de más. ¿Cómo proceder?</p>
+                <p className="text-xs text-muted-foreground">
+                  Excedente: {formatBs(vueltoMontoBs)} / {formatUsd(Math.abs(montoDiscrepanciaUsd))}
+                </p>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="discrepancy"
+                    checked={discrepancyMode === 'VUELTO'}
+                    onChange={() => setDiscrepancyMode('VUELTO')}
+                  />
+                  <span className="text-sm">Dar vuelto</span>
+                </label>
+
+                {!!clienteId && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="discrepancy"
+                      checked={discrepancyMode === 'SAF'}
+                      onChange={() => setDiscrepancyMode('SAF')}
+                    />
+                    <span className="text-sm">Acreditar en cuenta del cliente</span>
+                  </label>
                 )}
-              </p>
-            </div>
-            <div>
-              <label className="text-[10px] text-amber-700 mb-1 block">Dar cambio en</label>
-              {metodosEfectivo.length === 0 ? (
-                <p className="text-xs text-destructive">No hay metodos de efectivo configurados</p>
-              ) : (
-                <NativeSelect
-                  value={vueltoMetodoId}
-                  onChange={(e) => setVueltoMetodoId(e.target.value)}
-                  className="border-amber-200"
-                >
-                  <option value="">Seleccionar...</option>
-                  {metodosEfectivo.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.nombre} ({m.moneda})
-                    </option>
-                  ))}
-                </NativeSelect>
-              )}
-            </div>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="discrepancy"
+                    checked={discrepancyMode === 'PROPINA'}
+                    onChange={() => setDiscrepancyMode('PROPINA')}
+                  />
+                  <span className="text-sm">Propina (el cliente dejó el cambio)</span>
+                </label>
+
+                {/* Split vuelto: solo cuando VUELTO seleccionado */}
+                {discrepancyMode === 'VUELTO' && (
+                  <div className="mt-2 space-y-1.5 pl-4">
+                    <p className="text-xs text-muted-foreground">
+                      Distribuir vuelto por método (opcional):
+                    </p>
+                    {metodosEfectivo.map((m) => {
+                      const entry = splitVuelto.find((e) => e.metodoCobro_id === m.id)
+                      return (
+                        <div key={m.id} className="flex items-center gap-2">
+                          <label className="text-xs flex-1 truncate">{m.nombre}</label>
+                          <Input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={entry ? entry.montoBs : ''}
+                            onChange={(ev) => {
+                              const val = parseFloat(ev.target.value) || 0
+                              setSplitVuelto((prev) => {
+                                const rest = prev.filter((x) => x.metodoCobro_id !== m.id)
+                                if (val <= 0) return rest
+                                return [
+                                  ...rest,
+                                  { metodoCobro_id: m.id, metodoNombre: m.nombre, montoBs: val },
+                                ]
+                              })
+                            }}
+                            placeholder="0.00"
+                            className="h-7 text-xs w-24"
+                          />
+                          <span className="text-[10px] text-muted-foreground w-4">Bs</span>
+                        </div>
+                      )
+                    })}
+                    {splitVuelto.length > 0 && (
+                      <div className="flex justify-between text-xs pt-1 border-t">
+                        <span className="text-muted-foreground">
+                          Asignado: {formatBs(splitVueltoSumBs)}
+                        </span>
+                        <span
+                          className={
+                            splitVueltoValid
+                              ? 'text-green-600 font-medium'
+                              : 'text-orange-600 font-medium'
+                          }
+                        >
+                          {splitVueltoValid
+                            ? '✓ Correcto'
+                            : `Faltan: ${formatBs(Math.abs(vueltoMontoBs - splitVueltoSumBs))}`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Faltante manual: CREDITO / ABSORBER */}
+            {!estaOverpago &&
+              pendienteBs4 > 0.01 &&
+              discrepancyMode !== 'DIFERENCIAL_FALTANTE' && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Pago incompleto. ¿Cómo proceder?</p>
+                <p className="text-xs text-muted-foreground">
+                  Faltante: {formatBs(pendienteBs4)} / {formatUsd(montoDiscrepanciaUsd)}
+                </p>
+
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="discrepancy"
+                    checked={discrepancyMode === 'CREDITO'}
+                    onChange={() => {
+                      setDiscrepancyMode('CREDITO')
+                      setSupervisorAuthorized(false)
+                      setSupervisorId(null)
+                    }}
+                  />
+                  <span className="text-sm">Dejar a crédito</span>
+                </label>
+
+                {montoDiscrepanciaUsd <= absorberMaxUsd && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="discrepancy"
+                      checked={discrepancyMode === 'ABSORBER'}
+                      onChange={() => setDiscrepancyMode('ABSORBER')}
+                    />
+                    <span className="text-sm">El negocio asume la diferencia</span>
+                  </label>
+                )}
+
+                {discrepancyMode === 'ABSORBER' && !supervisorAuthorized && (
+                  <button
+                    type="button"
+                    className="ml-6 text-sm underline text-primary"
+                    onClick={() => setShowAbsorberPinDialog(true)}
+                  >
+                    Autorizar con PIN de supervisor
+                  </button>
+                )}
+                {discrepancyMode === 'ABSORBER' && supervisorAuthorized && (
+                  <p className="ml-6 text-sm text-green-600">✓ Autorizado por supervisor</p>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -547,6 +853,20 @@ export function CobroModal({
             )}
           </Button>
         </div>
+
+        {/* Dialogo de autorización de supervisor para ABSORBER */}
+        <SupervisorPinDialog
+          isOpen={showAbsorberPinDialog}
+          onClose={() => setShowAbsorberPinDialog(false)}
+          onAuthorized={(supervisorUserId) => {
+            setSupervisorAuthorized(true)
+            setSupervisorId(supervisorUserId)
+            setShowAbsorberPinDialog(false)
+          }}
+          titulo="Autorizar absorción de diferencia"
+          mensaje="Ingresa el PIN de supervisor para autorizar que el negocio asuma la diferencia."
+          requiredPermission={PERMISSIONS.SALES_ABSORB_DIFFERENTIAL}
+        />
       </DialogContent>
     </Dialog>
   )

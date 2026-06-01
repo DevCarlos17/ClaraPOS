@@ -81,6 +81,29 @@ export interface VueltoParam {
   monto: number
 }
 
+export interface VueltoEntry {
+  metodoCobro_id: string
+  /** Amount in Bs (native currency of the cash method). */
+  montoBs: number
+}
+
+export interface DiscrepancyOptions {
+  mode: 'VUELTO' | 'SAF' | 'PROPINA' | 'DIFERENCIAL_SOBRANTE'
+       | 'CREDITO' | 'ABSORBER' | 'DIFERENCIAL_FALTANTE' | null
+  /** Absolute discrepancy value in USD (always positive). */
+  montoUsd: number
+  /** Absolute discrepancy value in Bs (always positive). */
+  montoBs: number
+  /** SAF: client ID to receive the credit. */
+  clienteId?: string
+  /** Cashier user ID. */
+  cajeroId?: string
+  /** ABSORBER: supervisor who authorized the absorption. */
+  supervisorId?: string
+  /** VUELTO split: per-method change breakdown. */
+  vueltoEntries?: VueltoEntry[]
+}
+
 export interface CargoEspecial {
   tipo: 'AVANCE' | 'PRESTAMO'
   descripcion: string
@@ -115,6 +138,8 @@ export interface CrearVentaParams {
   vuelto?: VueltoParam
   /** IGTF calculado sobre pagos en divisas (USD, EUR, etc.) */
   totalIgtfUsd?: number
+  /** Discrepancy resolution mode and amounts. */
+  discrepancy?: DiscrepancyOptions
 }
 
 export interface CrearVentaResult {
@@ -186,7 +211,7 @@ export async function buscarProductoPorCodigoBarras(
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0, vuelto, totalIgtfUsd = 0 } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0, vuelto, totalIgtfUsd = 0, discrepancy } = params
 
   if (lineas.length === 0 && cargosEspeciales.length === 0) {
     throw new Error('Debe agregar al menos una linea o cargo especial a la venta')
@@ -644,7 +669,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     // 5b. VUELTO: registrar el cambio entregado al cliente como EGRESO inmutable.
     //     monto se guarda en moneda nativa del metodo (no USD) para que el cuadre
     //     por divisa en cerrarSesionCaja sume correctamente por codigo_iso.
-    if (vuelto && vuelto.monto > 0.005) {
+    if (vuelto && vuelto.monto > 0.005 && discrepancy?.mode !== 'VUELTO') {
       const vueltoId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_metodo_cobro
@@ -679,7 +704,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     ])
 
     // 7. Si CREDITO y deuda > 0.01: crear movimiento de cuenta
-    if (tipo === 'CREDITO' && saldoPend > 0.01) {
+    //    Excluir modos de absorcion: el gasto absorbe el faltante, no queda deuda en CxC.
+    if (tipo === 'CREDITO' && saldoPend > 0.01
+        && discrepancy?.mode !== 'ABSORBER'
+        && discrepancy?.mode !== 'DIFERENCIAL_FALTANTE') {
       const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
         cliente_id,
       ])
@@ -717,6 +745,281 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         now,
         cliente_id,
       ])
+    }
+
+    // 7c. Discrepancy resolution records
+    //     Runs after steps 6+7 so saldo_pend_usd and tipo are already set.
+    //     ABSORBER / DIFERENCIAL_FALTANTE also override saldo_pend_usd to 0.
+    if (discrepancy && discrepancy.mode && discrepancy.montoUsd > 0.001) {
+      switch (discrepancy.mode) {
+
+        case 'SAF': {
+          // Credit overpayment to client's CxC balance
+          if (discrepancy.clienteId) {
+            const clienteSafResult = await tx.execute(
+              'SELECT saldo_actual FROM clientes WHERE id = ?',
+              [discrepancy.clienteId]
+            )
+            const saldoAnteriorSaf = parseFloat(
+              (clienteSafResult.rows?.item(0) as { saldo_actual: string } | undefined)?.saldo_actual ?? '0'
+            ) || 0
+            // Reduce what the client owes (negative = credit in favour of client)
+            const saldoNuevoSaf = Number((saldoAnteriorSaf - discrepancy.montoUsd).toFixed(2))
+            await tx.execute(
+              `INSERT INTO movimientos_cuenta
+                 (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+                  observacion, venta_id, fecha, created_at, created_by, tasa_pago)
+               VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                uuidv4(),
+                empresa_id,
+                discrepancy.clienteId,
+                `SAF-VEN-${nroFactura}`,
+                discrepancy.montoUsd.toFixed(2),
+                saldoAnteriorSaf.toFixed(2),
+                saldoNuevoSaf.toFixed(2),
+                `Saldo a favor — excedente de pago en venta ${nroFactura}`,
+                ventaId,
+                now,
+                now,
+                usuario_id,
+                tasa.toFixed(4),
+              ]
+            )
+            await tx.execute(
+              'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+              [saldoNuevoSaf.toFixed(2), now, discrepancy.clienteId]
+            )
+          }
+          break
+        }
+
+        case 'ABSORBER': {
+          // Business absorbs shortfall — record as expense, force saldo = 0
+          try {
+            const nroGastoAbsRes = await tx.execute(
+              'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
+              [empresa_id]
+            )
+            const nroGastoAbsNum = Number(
+              (nroGastoAbsRes.rows?.item(0) as { cnt: number })?.cnt ?? 0
+            ) + 1
+            const nroGastoAbs = `POS-ABSORB-${String(nroGastoAbsNum).padStart(5, '0')}`
+            const cuentaAbsRes = await tx.execute(
+              `SELECT cuenta_contable_id FROM cuentas_config
+               WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
+              [empresa_id]
+            )
+            const cuentaAbsId = (
+              cuentaAbsRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+            )?.cuenta_contable_id ?? ''
+            await tx.execute(
+              `INSERT INTO gastos
+                 (id, empresa_id, nro_gasto, cuenta_id, descripcion, fecha,
+                  moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+                  tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+                  saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
+               VALUES (?, ?, ?, ?, 'ABSORCION_DIFERENCIAL_POS', ?,
+                       ?, 'USD', 0, ?, ?, ?,
+                       'Exento', '0.00', ?, '0.00',
+                       '0.00', ?, 'PAGADO', ?, ?, ?)`,
+              [
+                uuidv4(),
+                empresa_id,
+                nroGastoAbs,
+                cuentaAbsId,
+                now,
+                monedaUsdId,
+                tasa.toFixed(4),
+                discrepancy.montoUsd.toFixed(2),
+                discrepancy.montoUsd.toFixed(2),
+                discrepancy.montoUsd.toFixed(2),
+                `Diferencial asumido por negocio. Cajero: ${discrepancy.cajeroId ?? usuario_id}. Supervisor: ${discrepancy.supervisorId ?? ''}. Venta: ${ventaId}`,
+                now,
+                now,
+                usuario_id,
+              ]
+            )
+            await tx.execute(
+              'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+              ['0.00', ventaId]
+            )
+          } catch {
+            console.warn('⚠️ ABSORBER: fallo al registrar gasto de absorcion para venta', ventaId)
+          }
+          break
+        }
+
+        case 'DIFERENCIAL_FALTANTE': {
+          // Auto-absorbed small denomination shortfall — record as expense, force saldo = 0
+          try {
+            const nroGastoDiffRes = await tx.execute(
+              'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
+              [empresa_id]
+            )
+            const nroGastoDiffNum = Number(
+              (nroGastoDiffRes.rows?.item(0) as { cnt: number })?.cnt ?? 0
+            ) + 1
+            const nroGastoDiff = `POS-DIFF-${String(nroGastoDiffNum).padStart(5, '0')}`
+            const cuentaDiffRes = await tx.execute(
+              `SELECT cuenta_contable_id FROM cuentas_config
+               WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
+              [empresa_id]
+            )
+            const cuentaDiffId = (
+              cuentaDiffRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+            )?.cuenta_contable_id ?? ''
+            await tx.execute(
+              `INSERT INTO gastos
+                 (id, empresa_id, nro_gasto, cuenta_id, descripcion, fecha,
+                  moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+                  tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+                  saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
+               VALUES (?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_FALTANTE', ?,
+                       ?, 'USD', 0, ?, ?, ?,
+                       'Exento', '0.00', ?, '0.00',
+                       '0.00', ?, 'PAGADO', ?, ?, ?)`,
+              [
+                uuidv4(),
+                empresa_id,
+                nroGastoDiff,
+                cuentaDiffId,
+                now,
+                monedaUsdId,
+                tasa.toFixed(4),
+                discrepancy.montoUsd.toFixed(2),
+                discrepancy.montoUsd.toFixed(2),
+                discrepancy.montoUsd.toFixed(2),
+                `Diferencial cambiario faltante — denominacion. Cajero: ${discrepancy.cajeroId ?? usuario_id}. Venta: ${ventaId}`,
+                now,
+                now,
+                usuario_id,
+              ]
+            )
+            await tx.execute(
+              'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+              ['0.00', ventaId]
+            )
+          } catch {
+            console.warn('⚠️ DIFERENCIAL_FALTANTE: fallo al registrar gasto diferencial para venta', ventaId)
+          }
+          break
+        }
+
+        case 'PROPINA': {
+          // Client voluntarily left surplus — record as cash income
+          const metodoPropinaId =
+            discrepancy.vueltoEntries?.[0]?.metodoCobro_id ??
+            pagos.find((p) => p.moneda === 'BS')?.metodo_cobro_id ??
+            null
+          if (metodoPropinaId) {
+            await tx.execute(
+              `INSERT INTO movimientos_metodo_cobro
+                 (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                  doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+               VALUES (?, ?, ?, 'INGRESO', 'PROPINA', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                uuidv4(),
+                empresa_id,
+                metodoPropinaId,
+                discrepancy.montoBs.toFixed(2),
+                ventaId,
+                `VEN-${nroFactura}`,
+                `Propina — Venta ${nroFactura}`,
+                sesion_caja_id ?? null,
+                now,
+                now,
+                usuario_id,
+              ]
+            )
+          }
+          break
+        }
+
+        case 'DIFERENCIAL_SOBRANTE': {
+          // Small denomination surplus — record as cash income
+          const metodoDiffSobrId =
+            discrepancy.vueltoEntries?.[0]?.metodoCobro_id ??
+            pagos.find((p) => p.moneda === 'BS')?.metodo_cobro_id ??
+            null
+          if (metodoDiffSobrId) {
+            await tx.execute(
+              `INSERT INTO movimientos_metodo_cobro
+                 (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                  doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+               VALUES (?, ?, ?, 'INGRESO', 'DIFERENCIAL_CAMBIARIO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                uuidv4(),
+                empresa_id,
+                metodoDiffSobrId,
+                discrepancy.montoBs.toFixed(2),
+                ventaId,
+                `VEN-${nroFactura}`,
+                `Diferencial cambiario sobrante — Venta ${nroFactura}`,
+                sesion_caja_id ?? null,
+                now,
+                now,
+                usuario_id,
+              ]
+            )
+          }
+          break
+        }
+
+        case 'VUELTO': {
+          // Split change across methods (or fall back to single vuelto param)
+          if (discrepancy.vueltoEntries && discrepancy.vueltoEntries.length > 0) {
+            for (const entry of discrepancy.vueltoEntries) {
+              await tx.execute(
+                `INSERT INTO movimientos_metodo_cobro
+                   (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                    doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+                 VALUES (?, ?, ?, 'EGRESO', 'VUELTO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  uuidv4(),
+                  empresa_id,
+                  entry.metodoCobro_id,
+                  entry.montoBs.toFixed(2),
+                  ventaId,
+                  `VEN-${nroFactura}`,
+                  `Vuelto — Venta ${nroFactura}`,
+                  sesion_caja_id ?? null,
+                  now,
+                  now,
+                  usuario_id,
+                ]
+              )
+            }
+          } else if (vuelto && vuelto.monto > 0.005) {
+            // Fallback: no split entries provided — use single vuelto param
+            await tx.execute(
+              `INSERT INTO movimientos_metodo_cobro
+                 (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                  doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+               VALUES (?, ?, ?, 'EGRESO', 'VUELTO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                uuidv4(),
+                empresa_id,
+                vuelto.metodo_cobro_id,
+                vuelto.monto.toFixed(2),
+                ventaId,
+                `VEN-${nroFactura}`,
+                `Vuelto Venta ${nroFactura}`,
+                sesion_caja_id ?? null,
+                now,
+                now,
+                usuario_id,
+              ]
+            )
+          }
+          break
+        }
+
+        case 'CREDITO':
+        default:
+          // Credit: saldo_pend_usd and movimientos_cuenta FAC already handled in steps 6+7
+          break
+      }
     }
 
     // 7b. Crear egresos de caja para cargos especiales + vencimientos prestamo
