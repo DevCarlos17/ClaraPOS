@@ -1,21 +1,12 @@
 import { useState, useCallback } from 'react'
 import { CaretRight, CaretDown, MagnifyingGlass, ArrowsOutSimple, ArrowsInSimple } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
 import {
   useVentasAudit,
   useDetalleVenta,
   type CuadreFilters,
 } from '../hooks/use-cuadre'
-
-function formatHora(fechaStr: string): string {
-  try {
-    const parts = fechaStr.split(' ')
-    if (parts.length >= 2) return parts[1].substring(0, 5)
-    return ''
-  } catch {
-    return ''
-  }
-}
 
 function FacturaRow({ venta, expanded, onToggle }: {
   venta: {
@@ -50,7 +41,7 @@ function FacturaRow({ venta, expanded, onToggle }: {
             <CaretRight size={12} className="text-muted-foreground" />
           )}
         </td>
-        <td className="px-2 py-2 text-xs text-muted-foreground">{formatHora(venta.fecha)}</td>
+        <td className="px-2 py-2 text-xs text-muted-foreground">{formatDateTime(venta.fecha)}</td>
         <td className="px-2 py-2">
           <div className="flex items-center gap-1">
             <span className="font-mono text-xs">#{venta.nro_factura}</span>

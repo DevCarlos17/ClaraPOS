@@ -1,7 +1,7 @@
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { localNow } from '@/lib/dates'
+import { localNow, timestampToVE } from '@/lib/dates'
 import { v4 as uuidv4 } from 'uuid'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
@@ -841,9 +841,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         // Para PRESTAMO: crear vencimiento_cobrar
         if (cargo.tipo === 'PRESTAMO' && cargo.diasPlazo && cargo.diasPlazo > 0) {
           const vencId = uuidv4()
-          const fechaVenc = new Date()
-          fechaVenc.setDate(fechaVenc.getDate() + cargo.diasPlazo)
-          const fechaVencStr = fechaVenc.toISOString().split('T')[0]
+          const fechaVencStr = timestampToVE(Date.now() + cargo.diasPlazo * 86_400_000).slice(0, 10)
           await tx.execute(
             `INSERT INTO vencimientos_cobrar
                (id, empresa_id, venta_id, cliente_id, nro_cuota, fecha_vencimiento,

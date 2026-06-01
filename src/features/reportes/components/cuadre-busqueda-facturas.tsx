@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { MagnifyingGlass, CaretRight, CaretDown } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
 import { todayStr } from '@/lib/dates'
 import {
   useFacturasBusqueda,
@@ -9,15 +10,6 @@ import {
 } from '../hooks/use-cuadre'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 
-function formatDateTime(fechaStr: string): string {
-  try {
-    const parts = fechaStr.split(' ')
-    if (parts.length >= 2) return `${parts[0]} ${parts[1].substring(0, 5)}`
-    return fechaStr.substring(0, 16)
-  } catch {
-    return fechaStr
-  }
-}
 
 function ResultRow({ factura }: {
   factura: {
