@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { localNow, timestampToVE } from '@/lib/dates'
 import { registrarCitaLog } from './use-cita-log'
 import { useAgendaConfig } from './use-agenda-config'
 
@@ -22,7 +23,7 @@ export function useNoshowDetector() {
 
     const detectar = async () => {
       const toleranciaMs = config.tolerancia_noshow_min * 60 * 1000
-      const limiteStr = new Date(Date.now() - toleranciaMs).toISOString()
+      const limiteStr = timestampToVE(Date.now() - toleranciaMs)
 
       // NOT EXISTS evita loguear NO_SHOW duplicados si PowerSync revierte
       // el UPDATE local antes de que Supabase confirme el cambio de status.
@@ -43,7 +44,7 @@ export function useNoshowDetector() {
           await db.writeTransaction(async (tx) => {
             await tx.execute(
               `UPDATE citas SET cita_status = 'NO_SHOW', updated_at = ?, updated_by = ? WHERE id = ?`,
-              [new Date().toISOString(), userId, cita.id]
+              [localNow(), userId, cita.id]
             )
           })
           await registrarCitaLog({

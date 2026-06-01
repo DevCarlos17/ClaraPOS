@@ -11,7 +11,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { todayStr } from '@/lib/dates'
+import { todayStr, localNow } from '@/lib/dates'
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
 import { useGastoBorradorStore } from '@/features/contabilidad/stores/gasto-borrador-store'
@@ -430,8 +430,9 @@ export function GastoForm({ onClose }: GastoFormProps) {
   const fechaWarning = (() => {
     if (!fecha || fechaEsFutura) return false
     const [anio, mes] = fecha.split('-').map(Number)
-    const now = new Date()
-    return anio !== now.getFullYear() || mes !== (now.getMonth() + 1)
+    const hoy = todayStr()
+    const [hoyAnio, hoyMes] = hoy.split('-').map(Number)
+    return anio !== hoyAnio || mes !== hoyMes
   })()
 
   // ─── Cálculo del monto contable USD ───────────────────────
@@ -561,7 +562,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
         pagos: pagos.map((p) => ({ ...p })),
         observaciones,
         empresaId: user.empresa_id!,
-        ultimaActualizacion: new Date().toISOString(),
+        ultimaActualizacion: localNow(),
       })
     }, 1000)
 

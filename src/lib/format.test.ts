@@ -1,8 +1,19 @@
 import { formatDate, formatDateTime, formatNumber } from '@/lib/format'
 
 describe('formatDate', () => {
-  it('formats a valid ISO date to dd/MM/yyyy', () => {
-    expect(formatDate('2024-01-15')).toBe('15/01/2024')
+  it('formats a valid ISO date with VE offset to dd/MM/yyyy', () => {
+    // Usar offset explícito para evitar ambigüedad por timezone del entorno
+    expect(formatDate('2024-01-15T12:00:00.000-04:00')).toBe('15/01/2024')
+  })
+
+  it('formats a UTC ISO date converting to Venezuela timezone', () => {
+    // UTC 15:00 del 15 ene = 11:00 VE del 15 ene — misma fecha
+    expect(formatDate('2024-01-15T15:00:00.000Z')).toBe('15/01/2024')
+  })
+
+  it('UTC midnight cruza al dia anterior en Venezuela', () => {
+    // UTC 00:00 del 15 ene = 20:00 del 14 ene VE — fecha VE es el 14
+    expect(formatDate('2024-01-15T00:00:00.000Z')).toBe('14/01/2024')
   })
 
   it('returns the original string for an invalid date', () => {
@@ -15,8 +26,13 @@ describe('formatDate', () => {
 })
 
 describe('formatDateTime', () => {
-  it('formats a valid ISO datetime to dd/MM/yyyy HH:mm', () => {
-    expect(formatDateTime('2024-01-15T10:30:00')).toBe('15/01/2024 10:30')
+  it('formats a VE-offset datetime to dd/MM/yyyy HH:mm', () => {
+    expect(formatDateTime('2024-01-15T10:30:00.000-04:00')).toBe('15/01/2024 10:30')
+  })
+
+  it('formats a UTC datetime converting to Venezuela timezone', () => {
+    // UTC 14:30 = VE 10:30
+    expect(formatDateTime('2024-01-15T14:30:00.000Z')).toBe('15/01/2024 10:30')
   })
 
   it('returns the original string for an invalid datetime', () => {

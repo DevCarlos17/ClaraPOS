@@ -50,10 +50,21 @@ describe('startOfMonth', () => {
 })
 
 describe('localNow', () => {
-  it('retorna un string en formato ISO 8601', () => {
+  it('retorna un string en formato ISO 8601 con offset venezolano -04:00', () => {
+    // UTC 15:30 → Venezuela 11:30 (UTC-4)
     vi.setSystemTime(new Date('2026-05-21T15:30:00.000Z'))
     const result = localNow()
-    expect(result).toBe('2026-05-21T15:30:00.000Z')
+    expect(result).toBe('2026-05-21T11:30:00.000-04:00')
+    vi.useRealTimers()
+  })
+
+  it('el texto empieza con la fecha venezolana (no UTC)', () => {
+    // UTC 03:00 del 1 de junio = 23:00 del 31 de mayo en Venezuela
+    vi.setSystemTime(new Date('2026-06-01T03:00:00.000Z'))
+    const result = localNow()
+    // Debe empezar con 2026-05-31, no con 2026-06-01
+    expect(result.startsWith('2026-05-31')).toBe(true)
+    expect(result.endsWith('-04:00')).toBe(true)
     vi.useRealTimers()
   })
 })

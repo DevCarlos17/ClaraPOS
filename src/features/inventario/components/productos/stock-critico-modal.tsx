@@ -3,6 +3,7 @@ import { X, Printer, FileArrowDown } from '@phosphor-icons/react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { formatDateTime } from '@/lib/format'
+import { todayStr } from '@/lib/dates'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
@@ -123,8 +124,7 @@ export function StockCriticoModal({
       theme: 'striped',
     })
 
-    const fecha = new Date().toISOString().slice(0, 10)
-    doc.save(`stock_critico_${fecha}.pdf`)
+    doc.save(`stock_critico_${todayStr()}.pdf`)
   }
 
   return (

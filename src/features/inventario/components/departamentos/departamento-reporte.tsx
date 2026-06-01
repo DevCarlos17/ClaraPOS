@@ -3,6 +3,7 @@ import { X, Printer, FileArrowDown } from '@phosphor-icons/react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { formatDateTime } from '@/lib/format'
+import { todayStr } from '@/lib/dates'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import type { DepartamentoConConteo } from '@/features/inventario/hooks/use-departamentos'
 
@@ -128,8 +129,7 @@ export function DepartamentoReporte({
 
   function handleDescargarPdf() {
     const doc = generarPdf()
-    const fecha = new Date().toISOString().slice(0, 10)
-    doc.save(`departamentos_${fecha}.pdf`)
+    doc.save(`departamentos_${todayStr()}.pdf`)
   }
 
   function handlePrint() {

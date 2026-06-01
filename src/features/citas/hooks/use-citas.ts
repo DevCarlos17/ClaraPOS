@@ -3,7 +3,7 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
-import { localNow } from '@/lib/dates'
+import { localNow, todayStr, VE_OFFSET } from '@/lib/dates'
 import type {
   ServicioWizardEnhanced,
   PagoWizard,
@@ -145,9 +145,9 @@ export function useCitasPorCitaStatus(status: CitaOperStatus | CitaOperStatus[])
 export function useCitasHoy() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const hoy = new Date()
-  const diaInicio = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}T00:00:00.000Z`
-  const diaFin = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}T23:59:59.999Z`
+  const hoy = todayStr()
+  const diaInicio = `${hoy}T00:00:00.000${VE_OFFSET}`
+  const diaFin = `${hoy}T23:59:59.999${VE_OFFSET}`
 
   const { data, isLoading } = useQuery(
     'SELECT * FROM citas WHERE empresa_id = ? AND fecha_inicio >= ? AND fecha_inicio <= ? ORDER BY fecha_inicio ASC',

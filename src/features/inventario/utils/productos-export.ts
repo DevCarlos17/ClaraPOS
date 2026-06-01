@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx'
+import { todayStr } from '@/lib/dates'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
 import type { Departamento } from '@/features/inventario/hooks/use-departamentos'
 import type { Receta } from '@/features/inventario/hooks/use-recetas'
@@ -130,8 +131,7 @@ export function exportarProductosCsv(
 
   const csv = '\uFEFF' + csvLines.join('\n')
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-  const fecha = new Date().toISOString().slice(0, 10)
-  triggerDownload(blob, `inventario_${fecha}.csv`)
+  triggerDownload(blob, `inventario_${todayStr()}.csv`)
 }
 
 export function exportarProductosExcel(
@@ -179,6 +179,5 @@ export function exportarProductosExcel(
   const blob = new Blob([excelBuffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   })
-  const fecha = new Date().toISOString().slice(0, 10)
-  triggerDownload(blob, `inventario_${fecha}.xlsx`)
+  triggerDownload(blob, `inventario_${todayStr()}.xlsx`)
 }
