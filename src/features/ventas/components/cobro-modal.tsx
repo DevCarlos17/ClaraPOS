@@ -399,7 +399,7 @@ export function CobroModal({
 
       const result = await crearVenta({
         cliente_id: clienteId,
-        tipo: tipoDetectado,
+        tipo: discrepancyMode === 'ABSORBER' ? 'CONTADO' : tipoDetectado,
         tasa: tasaUsada,
         lineas: lineas.map((l) => ({
           producto_id: l.producto_id,

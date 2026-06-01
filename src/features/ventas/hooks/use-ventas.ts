@@ -795,7 +795,12 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         }
 
         case 'ABSORBER': {
-          // Business absorbs shortfall — record as expense, force saldo = 0
+          // Business absorbs shortfall — always zero out balance first, then record expense
+          // saldo_pend_usd = 0 is unconditional: supervisor already authorized
+          await tx.execute(
+            'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+            ['0.00', ventaId]
+          )
           try {
             const nroGastoAbsRes = await tx.execute(
               'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
@@ -840,18 +845,19 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 usuario_id,
               ]
             )
-            await tx.execute(
-              'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-              ['0.00', ventaId]
-            )
           } catch {
+            // gastos insert optional — doesn't block the sale
             console.warn('⚠️ ABSORBER: fallo al registrar gasto de absorcion para venta', ventaId)
           }
           break
         }
 
         case 'DIFERENCIAL_FALTANTE': {
-          // Auto-absorbed small denomination shortfall — record as expense, force saldo = 0
+          // Auto-absorbed small denomination shortfall — always zero out balance first, then record expense
+          await tx.execute(
+            'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+            ['0.00', ventaId]
+          )
           try {
             const nroGastoDiffRes = await tx.execute(
               'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
@@ -896,11 +902,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 usuario_id,
               ]
             )
-            await tx.execute(
-              'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-              ['0.00', ventaId]
-            )
           } catch {
+            // gastos insert optional — doesn't block the sale
             console.warn('⚠️ DIFERENCIAL_FALTANTE: fallo al registrar gasto diferencial para venta', ventaId)
           }
           break
@@ -911,6 +914,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           const metodoPropinaId =
             discrepancy.vueltoEntries?.[0]?.metodoCobro_id ??
             pagos.find((p) => p.moneda === 'BS')?.metodo_cobro_id ??
+            pagos[0]?.metodo_cobro_id ??
             null
           if (metodoPropinaId) {
             await tx.execute(
@@ -941,6 +945,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           const metodoDiffSobrId =
             discrepancy.vueltoEntries?.[0]?.metodoCobro_id ??
             pagos.find((p) => p.moneda === 'BS')?.metodo_cobro_id ??
+            pagos[0]?.metodo_cobro_id ??
             null
           if (metodoDiffSobrId) {
             await tx.execute(
@@ -1218,16 +1223,6 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       // Fallo en contabilidad no bloquea la venta
     }
   })
-
-  // Debug: verificar que la venta se guardo en SQLite local
-  try {
-    const check = await db.execute('SELECT id, fecha, total_usd, empresa_id FROM ventas WHERE id = ?', [ventaId])
-    console.log('🛒 CREAR VENTA - verificacion post-write:', check.rows?._array ?? check.rows)
-    const countCheck = await db.execute('SELECT COUNT(*) as cnt FROM ventas')
-    console.log('🛒 CREAR VENTA - total ventas en SQLite:', (countCheck.rows?.item(0) as Record<string, unknown>)?.cnt)
-  } catch (e) {
-    console.error('🛒 CREAR VENTA - error en verificacion:', e)
-  }
 
   return { ventaId, nroFactura }
 }
