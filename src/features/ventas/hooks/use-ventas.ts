@@ -150,7 +150,9 @@ export interface CrearVentaResult {
 export function useBuscarProductosVenta(query: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const searchTerm = query.trim()
+  // Normalizar a minúsculas + NFC para que ñ/Ñ y acentos sean case-insensitive
+  // (SQLite LIKE es case-insensitive solo para ASCII; toLowerCase() de JS sí maneja Ñ→ñ)
+  const searchTerm = query.trim().toLowerCase().normalize('NFC')
   const shouldSearch = searchTerm.length >= 2
   const pattern = `%${searchTerm}%`
 
@@ -163,7 +165,11 @@ export function useBuscarProductosVenta(query: string) {
          LEFT JOIN unidades u ON p.unidad_base_id = u.id
          LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
          WHERE p.empresa_id = ? AND p.is_active = 1
-         AND (p.nombre LIKE ? OR p.codigo LIKE ? OR p.codigo_barras LIKE ?)
+         AND (
+           LOWER(REPLACE(REPLACE(p.nombre, 'Ñ', 'n'), 'ñ', 'n')) LIKE REPLACE(LOWER(?), 'ñ', 'n')
+           OR p.codigo LIKE ?
+           OR p.codigo_barras LIKE ?
+         )
          AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
          ORDER BY p.nombre ASC LIMIT 10`
       : '',

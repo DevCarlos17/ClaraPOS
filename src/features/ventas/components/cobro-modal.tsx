@@ -184,37 +184,22 @@ export function CobroModal({
         setDiscrepancyMode('VUELTO')
       }
     } else if (pendienteBs4 > 0.01) {
-      // Faltante
-      if (pagos.length === 0) {
-        // Sin abonos: crédito automático, sin panel de opciones
-        if (
-          discrepancyMode === null ||
-          discrepancyMode === 'VUELTO' ||
-          discrepancyMode === 'SAF' ||
-          discrepancyMode === 'PROPINA' ||
-          discrepancyMode === 'DIFERENCIAL_SOBRANTE'
-        ) {
-          setDiscrepancyMode('CREDITO')
-        }
-      } else {
-        // Con abonos: el cajero debe elegir explícitamente
-        if (
-          discrepancyMode === null ||
-          discrepancyMode === 'CREDITO' ||
-          discrepancyMode === 'VUELTO' ||
-          discrepancyMode === 'SAF' ||
-          discrepancyMode === 'PROPINA' ||
-          discrepancyMode === 'DIFERENCIAL_SOBRANTE'
-        ) {
-          setDiscrepancyMode(null)
-        }
+      // Faltante: CREDITO por defecto, sin sobreescribir elección activa del cajero
+      if (
+        discrepancyMode === null ||
+        discrepancyMode === 'VUELTO' ||
+        discrepancyMode === 'SAF' ||
+        discrepancyMode === 'PROPINA' ||
+        discrepancyMode === 'DIFERENCIAL_SOBRANTE'
+      ) {
+        setDiscrepancyMode('CREDITO')
       }
     } else {
       setDiscrepancyMode(null)
     }
   // discrepancyMode intencionalmente excluido: evita sobrescribir elección del usuario
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendienteBs4, pagos.length])
+  }, [pendienteBs4])
 
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
 
@@ -240,13 +225,10 @@ export function CobroModal({
       if (discrepancyMode === 'DIFERENCIAL_SOBRANTE') return pagos.length > 0
       return false
     }
-    // Faltante
-    if (discrepancyMode === 'CREDITO') {
-      // Solo válido cuando no hay abonos (compra a crédito puro)
-      return pagos.length === 0 && !!clienteId
-    }
+    // Faltante: los 3 modos siempre disponibles
+    if (discrepancyMode === 'CREDITO') return !!clienteId
     if (discrepancyMode === 'ABSORBER') return supervisorAuthorized
-    if (discrepancyMode === 'DIFERENCIAL_FALTANTE') return pagos.length > 0
+    if (discrepancyMode === 'DIFERENCIAL_FALTANTE') return true
     return false
   })()
 
@@ -772,67 +754,60 @@ export function CobroModal({
               </div>
             )}
 
-            {/* Faltante manual: ABSORBER / FALTANTE_CAJA — solo si hay abonos */}
-            {!estaOverpago && pendienteBs4 > 0.01 && pagos.length > 0 && (
-              discrepancyMode === 'DIFERENCIAL_FALTANTE' ? (
-                <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm">
-                  <p className="font-medium text-amber-800">Faltante de caja</p>
-                  <p className="text-amber-700 text-xs mt-0.5">
-                    {formatBs(Math.abs(pendienteBs4))} — se registrará como faltante de caja
-                  </p>
+            {/* Faltante: 3 botones siempre disponibles */}
+            {!estaOverpago && pendienteBs4 > 0.01 && (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Pendiente: {formatBs(pendienteBs4)} / {formatUsd(montoDiscrepanciaUsd)}
+                </p>
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
-                    className="mt-1.5 text-xs underline text-amber-600 hover:text-amber-800"
-                    onClick={() => setDiscrepancyMode(null)}
+                    onClick={() => { setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }}
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors ${
+                      discrepancyMode === 'CREDITO'
+                        ? 'bg-orange-600 text-white border-orange-600'
+                        : 'bg-white text-foreground border-border hover:bg-muted'
+                    }`}
                   >
-                    Cambiar opción
+                    Factura a crédito
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null) }}
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors ${
+                      discrepancyMode === 'DIFERENCIAL_FALTANTE'
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'bg-white text-foreground border-border hover:bg-muted'
+                    }`}
+                  >
+                    Faltante de caja
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiscrepancyMode('ABSORBER')}
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors ${
+                      discrepancyMode === 'ABSORBER'
+                        ? 'bg-red-600 text-white border-red-600'
+                        : 'bg-white text-foreground border-border hover:bg-muted'
+                    }`}
+                  >
+                    Negocio asume
                   </button>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Pago incompleto. ¿Cómo proceder?</p>
-                  <p className="text-xs text-muted-foreground">
-                    Faltante: {formatBs(pendienteBs4)} / {formatUsd(montoDiscrepanciaUsd)}
-                  </p>
-
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="discrepancy"
-                      checked={discrepancyMode === 'ABSORBER'}
-                      onChange={() => setDiscrepancyMode('ABSORBER')}
-                    />
-                    <span className="text-sm">El negocio asume</span>
-                  </label>
-
-                  {discrepancyMode === 'ABSORBER' && !supervisorAuthorized && (
-                    <button
-                      type="button"
-                      className="ml-6 text-sm underline text-primary"
-                      onClick={() => setShowAbsorberPinDialog(true)}
-                    >
-                      Autorizar con PIN de supervisor
-                    </button>
-                  )}
-                  {discrepancyMode === 'ABSORBER' && supervisorAuthorized && (
-                    <p className="ml-6 text-sm text-green-600">✓ Autorizado por supervisor</p>
-                  )}
-
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="discrepancy"
-                      checked={false}
-                      onChange={() => {
-                        setDiscrepancyMode('DIFERENCIAL_FALTANTE')
-                        setSupervisorAuthorized(false)
-                        setSupervisorId(null)
-                      }}
-                    />
-                    <span className="text-sm">Faltante de caja</span>
-                  </label>
-                </div>
-              )
+                {discrepancyMode === 'ABSORBER' && !supervisorAuthorized && (
+                  <button
+                    type="button"
+                    className="text-xs underline text-primary"
+                    onClick={() => setShowAbsorberPinDialog(true)}
+                  >
+                    Autorizar con PIN de supervisor
+                  </button>
+                )}
+                {discrepancyMode === 'ABSORBER' && supervisorAuthorized && (
+                  <p className="text-xs text-green-600">✓ Supervisor autorizado</p>
+                )}
+              </div>
             )}
           </div>
         )}
