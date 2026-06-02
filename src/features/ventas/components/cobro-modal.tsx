@@ -239,9 +239,15 @@ export function CobroModal({
 
   // ── Validación de split vuelto ────────────────────────────────────────────
   const splitVueltoSumBs = splitVuelto.reduce((s, e) => s + e.montoBs, 0)
+  // Diferencia: positivo = se asigna MÁS que el vuelto (diferencial cambiario por
+  // redondeo de denominaciones físicas en USD); negativo = se asigna MENOS (el
+  // sobrante queda en caja como diferencial implícito).
+  const splitVueltoExceso = splitVueltoSumBs - vueltoMontoBs
   const splitVueltoValid =
     splitVuelto.length === 0 ||
-    Math.abs(splitVueltoSumBs - vueltoMontoBs) <= 0.01
+    // Bajo-distribución: siempre válido — el monto no asignado queda en caja
+    // Sobre-distribución: válido si el exceso ≤ umbralBs (e.g. redondeo USD→Bs)
+    splitVueltoExceso <= umbralBs + 0.01
 
   // ── Estado del botón Procesar (modo-aware) ────────────────────────────────
   const puedeProcesar = (() => {
@@ -875,14 +881,20 @@ export function CobroModal({
                         </span>
                         <span
                           className={
-                            splitVueltoValid
+                            Math.abs(splitVueltoExceso) <= 0.01
                               ? 'text-green-600 font-medium'
+                              : splitVueltoValid
+                              ? 'text-amber-600 font-medium'
                               : 'text-orange-600 font-medium'
                           }
                         >
-                          {splitVueltoValid
+                          {Math.abs(splitVueltoExceso) <= 0.01
                             ? '✓ Correcto'
-                            : `Faltan: ${formatBs(Math.abs(vueltoMontoBs - splitVueltoSumBs))}`}
+                            : splitVueltoExceso < -0.01
+                            ? `Sin asignar: ${formatBs(-splitVueltoExceso)}`
+                            : splitVueltoValid
+                            ? `Dif. cambio: +${formatBs(splitVueltoExceso)}`
+                            : `Excede: +${formatBs(splitVueltoExceso)}`}
                         </span>
                       </div>
                     )}
