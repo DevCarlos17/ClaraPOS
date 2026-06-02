@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { Plus, Trash, ShoppingCart, CreditCard } from '@phosphor-icons/react'
+import { Plus, Trash, ShoppingCart } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -435,7 +435,25 @@ export function CobroModal({
   const handleProcesarRef = useRef<() => Promise<void>>(async () => {})
   useEffect(() => { handleProcesarRef.current = handleProcesar })
 
-  // ── Atajos de teclado: F12 / Enter (sin foco en input) ───────────────────
+  // ── Referencia estable para selección de modo (F5/F6/F7) ─────────────────
+  const selectModeRef = useRef<(key: string) => void>(() => {})
+  useEffect(() => {
+    selectModeRef.current = (key: string) => {
+      if (!estaOverpago && pendienteBs4 > 0.01) {
+        // Faltante: F5=Crédito  F6=Faltante caja  F7=Negocio asume
+        if (key === 'F5') { setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }
+        if (key === 'F6') { setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null) }
+        if (key === 'F7') setDiscrepancyMode('ABSORBER')
+      } else if (estaOverpago && discrepancyMode !== 'DIFERENCIAL_SOBRANTE') {
+        // Overpago: F5=Dar vuelto  F6=Saldo a favor  F7=Propina
+        if (key === 'F5') setDiscrepancyMode('VUELTO')
+        if (key === 'F6' && clienteId) setDiscrepancyMode('SAF')
+        if (key === 'F7') setDiscrepancyMode('PROPINA')
+      }
+    }
+  })
+
+  // ── Atajos de teclado: F5/F6/F7 (modo)  F12/Enter (procesar) ─────────────
   useEffect(() => {
     if (!isOpen) return
     const onKeyDown = (e: KeyboardEvent) => {
@@ -449,6 +467,10 @@ export function CobroModal({
       if (e.key === 'Enter' && !isInput) {
         e.preventDefault()
         if (puedeProcesar) void handleProcesarRef.current()
+      }
+      if (e.key === 'F5' || e.key === 'F6' || e.key === 'F7') {
+        e.preventDefault()
+        selectModeRef.current(e.key)
       }
     }
     document.addEventListener('keydown', onKeyDown)
@@ -653,42 +675,48 @@ export function CobroModal({
             {/* Overpago manual: VUELTO / SAF / PROPINA */}
             {estaOverpago && discrepancyMode !== 'DIFERENCIAL_SOBRANTE' && (
               <div className="space-y-2">
-                <p className="text-sm font-medium">El cliente pagó de más. ¿Cómo proceder?</p>
                 <p className="text-xs text-muted-foreground">
                   Excedente: {formatBs(vueltoMontoBs)} / {formatUsd(Math.abs(montoDiscrepanciaUsd))}
                 </p>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="discrepancy"
-                    checked={discrepancyMode === 'VUELTO'}
-                    onChange={() => setDiscrepancyMode('VUELTO')}
-                  />
-                  <span className="text-sm">Dar vuelto</span>
-                </label>
-
-                {!!clienteId && (
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="discrepancy"
-                      checked={discrepancyMode === 'SAF'}
-                      onChange={() => setDiscrepancyMode('SAF')}
-                    />
-                    <span className="text-sm">Acreditar en cuenta del cliente</span>
-                  </label>
-                )}
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="discrepancy"
-                    checked={discrepancyMode === 'PROPINA'}
-                    onChange={() => setDiscrepancyMode('PROPINA')}
-                  />
-                  <span className="text-sm">Propina (el cliente dejó el cambio)</span>
-                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDiscrepancyMode('VUELTO')}
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
+                      discrepancyMode === 'VUELTO'
+                        ? 'bg-blue-600 text-white border-blue-600'
+                        : 'bg-white text-foreground border-border hover:bg-muted'
+                    }`}
+                  >
+                    <span>Dar vuelto</span>
+                    <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'VUELTO' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F5</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!clienteId}
+                    onClick={() => setDiscrepancyMode('SAF')}
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-0.5 ${
+                      discrepancyMode === 'SAF'
+                        ? 'bg-green-600 text-white border-green-600'
+                        : 'bg-white text-foreground border-border hover:bg-muted'
+                    }`}
+                  >
+                    <span>Saldo a favor</span>
+                    <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'SAF' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F6</kbd>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDiscrepancyMode('PROPINA')}
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
+                      discrepancyMode === 'PROPINA'
+                        ? 'bg-purple-600 text-white border-purple-600'
+                        : 'bg-white text-foreground border-border hover:bg-muted'
+                    }`}
+                  >
+                    <span>Propina</span>
+                    <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'PROPINA' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F7</kbd>
+                  </button>
+                </div>
 
                 {/* Split vuelto: solo cuando VUELTO seleccionado */}
                 {discrepancyMode === 'VUELTO' && (
@@ -764,35 +792,38 @@ export function CobroModal({
                   <button
                     type="button"
                     onClick={() => { setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }}
-                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors ${
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'CREDITO'
                         ? 'bg-orange-600 text-white border-orange-600'
                         : 'bg-white text-foreground border-border hover:bg-muted'
                     }`}
                   >
-                    Factura a crédito
+                    <span>Factura a crédito</span>
+                    <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'CREDITO' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F5</kbd>
                   </button>
                   <button
                     type="button"
                     onClick={() => { setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null) }}
-                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors ${
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'DIFERENCIAL_FALTANTE'
                         ? 'bg-amber-600 text-white border-amber-600'
                         : 'bg-white text-foreground border-border hover:bg-muted'
                     }`}
                   >
-                    Faltante de caja
+                    <span>Faltante de caja</span>
+                    <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'DIFERENCIAL_FALTANTE' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F6</kbd>
                   </button>
                   <button
                     type="button"
                     onClick={() => setDiscrepancyMode('ABSORBER')}
-                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors ${
+                    className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'ABSORBER'
                         ? 'bg-red-600 text-white border-red-600'
                         : 'bg-white text-foreground border-border hover:bg-muted'
                     }`}
                   >
-                    Negocio asume
+                    <span>Negocio asume</span>
+                    <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'ABSORBER' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F7</kbd>
                   </button>
                 </div>
                 {discrepancyMode === 'ABSORBER' && !supervisorAuthorized && (
@@ -821,22 +852,9 @@ export function CobroModal({
             size="sm"
             onClick={() => void handleProcesar()}
             disabled={!puedeProcesar || submitting}
-            className={
-              tipoDetectado === 'CREDITO'
-                ? 'bg-orange-600 hover:bg-orange-700'
-                : ''
-            }
           >
-            {tipoDetectado === 'CREDITO' ? (
-              <CreditCard size={14} className="mr-1.5" />
-            ) : (
-              <ShoppingCart size={14} className="mr-1.5" />
-            )}
-            {submitting
-              ? 'Procesando...'
-              : tipoDetectado === 'CREDITO'
-              ? 'Factura Credito'
-              : 'Procesar'}
+            <ShoppingCart size={14} className="mr-1.5" />
+            {submitting ? 'Procesando...' : 'Procesar'}
             {!submitting && (
               <kbd className="ml-1.5 rounded border bg-muted/40 px-1 py-px text-[10px] font-mono leading-none opacity-70">
                 F12
