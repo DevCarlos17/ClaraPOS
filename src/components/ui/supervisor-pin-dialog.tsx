@@ -56,8 +56,8 @@ export function SupervisorPinDialog({
     try {
       const hash = await hashPin(pin, user.empresa_id)
 
-      const result = await db.getAll<{ id: string; rol_id: string }>(
-        `SELECT id, rol_id FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
+      const result = await db.getAll<{ id: string; rol_id: string; level: number }>(
+        `SELECT id, rol_id, level FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
         [user.empresa_id, hash]
       )
 
@@ -69,6 +69,13 @@ export function SupervisorPinDialog({
       }
 
       const supervisor = result[0]
+
+      // Propietario (level 1) siempre puede autorizar cualquier acción
+      if (Number(supervisor.level) === 1) {
+        onAuthorized(supervisor.id)
+        onClose()
+        return
+      }
 
       const rolResult = await db.getAll<{ is_system: number }>(
         `SELECT is_system FROM roles WHERE id = ?`,
