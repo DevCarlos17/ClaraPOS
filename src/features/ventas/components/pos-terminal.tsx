@@ -1125,6 +1125,70 @@ export function PosTerminal() {
             )}
           </div>
 
+          {/* Descuento comercial — mobile */}
+          <div className="shrink-0 border-t">
+            {!showDescuento ? (
+              <button
+                type="button"
+                onClick={() => setShowDescuento(true)}
+                className="w-full flex items-center gap-1.5 px-4 py-2.5 text-xs text-muted-foreground hover:text-orange-600 transition-colors"
+              >
+                <Tag size={12} />
+                Agregar descuento comercial
+              </button>
+            ) : (
+              <div className="px-4 py-3 bg-orange-50/60">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-orange-700 flex items-center gap-1">
+                    <Tag size={12} />
+                    Descuento comercial
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => { setShowDescuento(false); setDescuentoBs(0); setDescuentoMotivo('') }}
+                    className="text-muted-foreground hover:text-destructive transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="flex gap-2 items-end">
+                  <div className="w-28">
+                    <p className="text-[10px] text-muted-foreground mb-0.5">Monto Bs.</p>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={totalBs}
+                      step={1}
+                      value={descuentoBs || ''}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value) || 0
+                        setDescuentoBs(Math.min(Math.max(0, v), totalBs))
+                      }}
+                      className="h-7 text-sm"
+                      placeholder="0"
+                    />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-[10px] text-muted-foreground mb-0.5">Motivo</p>
+                    <Input
+                      type="text"
+                      value={descuentoMotivo}
+                      onChange={(e) => setDescuentoMotivo(e.target.value)}
+                      className="h-7 text-sm"
+                      placeholder="Cortesia, ajuste..."
+                      maxLength={100}
+                    />
+                  </div>
+                </div>
+                {descuentoBs > 0 && (
+                  <p className="text-xs font-medium text-orange-600 mt-1.5 text-right">
+                    −{formatBs(descuentoBs)} ({formatUsd(Number((descuentoBs / tasaValor).toFixed(2)))})
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Footer con total */}
           <div className="shrink-0 border-t px-4 py-3 bg-gradient-to-r from-primary/10 to-primary/5">
             {descuentoBs > 0 && (

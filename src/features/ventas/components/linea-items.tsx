@@ -50,7 +50,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
               <th className="text-left px-2 py-1.5 font-medium w-6">#</th>
               <th className="text-left px-2 py-1.5 font-medium w-20">Codigo</th>
               <th className="text-left px-2 py-1.5 font-medium">Producto</th>
-              <th className="text-center px-2 py-1.5 font-medium w-16">Cant.</th>
+              <th className="text-center px-2 py-1.5 font-medium w-28">Cant.</th>
               <th className="text-center px-2 py-1.5 font-medium w-16">Stock</th>
               <th className="text-right px-2 py-1.5 font-medium w-22">P.Unit $</th>
               <th className="text-right px-2 py-1.5 font-medium w-24">P.Unit Bs</th>

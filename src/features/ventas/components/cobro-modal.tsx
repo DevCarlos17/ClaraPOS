@@ -119,14 +119,6 @@ export function CobroModal({
   const totalEfectivoBs = Math.max(0, totalProductosBs + totalCargosNativosBs - descuentoBs)
   const totalEfectivoUsd = Number((totalEfectivoBs / tasaUsada).toFixed(2))
 
-  // ── Umbral de diferencial cambiario ──────────────────────────────────────
-  const umbralDiferencialUsd = useMemo(() => {
-    const porcentaje = totalEfectivoUsd * 0.01
-    return Math.min(0.50, porcentaje)
-  }, [totalEfectivoUsd])
-
-  const absorberMaxUsd = 2.00
-
   // ── Calculo IGTF (antes del balance para que el pendiente lo incluya) ────
   const { aplicaIgtf, tasaIgtf } = useIgtfConfig()
   const totalPagosUsdNativo = pagos
@@ -176,17 +168,15 @@ export function CobroModal({
 
   // ── Auto-selección de modo de discrepancia ────────────────────────────────
   useEffect(() => {
-    const absUsd = Math.abs(montoDiscrepanciaUsd)
     if (Math.abs(pendienteBs4) <= 0.01) {
       setDiscrepancyMode(null)
       return
     }
     if (pendienteBs4 < -0.01) {
-      // Overpago
-      if (absUsd <= umbralDiferencialUsd) {
-        setDiscrepancyMode('DIFERENCIAL_SOBRANTE')
-      } else if (
+      // Overpago: siempre mostrar formulario completo, sin auto-resolver por diferencial
+      if (
         discrepancyMode === null ||
+        discrepancyMode === 'DIFERENCIAL_SOBRANTE' ||
         discrepancyMode === 'DIFERENCIAL_FALTANTE' ||
         discrepancyMode === 'CREDITO' ||
         discrepancyMode === 'ABSORBER'
@@ -195,23 +185,36 @@ export function CobroModal({
       }
     } else if (pendienteBs4 > 0.01) {
       // Faltante
-      if (absUsd <= umbralDiferencialUsd) {
-        setDiscrepancyMode('DIFERENCIAL_FALTANTE')
-      } else if (
-        discrepancyMode === null ||
-        discrepancyMode === 'VUELTO' ||
-        discrepancyMode === 'SAF' ||
-        discrepancyMode === 'PROPINA' ||
-        discrepancyMode === 'DIFERENCIAL_SOBRANTE'
-      ) {
-        setDiscrepancyMode('CREDITO')
+      if (pagos.length === 0) {
+        // Sin abonos: crédito automático, sin panel de opciones
+        if (
+          discrepancyMode === null ||
+          discrepancyMode === 'VUELTO' ||
+          discrepancyMode === 'SAF' ||
+          discrepancyMode === 'PROPINA' ||
+          discrepancyMode === 'DIFERENCIAL_SOBRANTE'
+        ) {
+          setDiscrepancyMode('CREDITO')
+        }
+      } else {
+        // Con abonos: el cajero debe elegir explícitamente
+        if (
+          discrepancyMode === null ||
+          discrepancyMode === 'CREDITO' ||
+          discrepancyMode === 'VUELTO' ||
+          discrepancyMode === 'SAF' ||
+          discrepancyMode === 'PROPINA' ||
+          discrepancyMode === 'DIFERENCIAL_SOBRANTE'
+        ) {
+          setDiscrepancyMode(null)
+        }
       }
     } else {
       setDiscrepancyMode(null)
     }
   // discrepancyMode intencionalmente excluido: evita sobrescribir elección del usuario
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendienteBs4, umbralDiferencialUsd, montoDiscrepanciaUsd])
+  }, [pendienteBs4, pagos.length])
 
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
 
@@ -239,7 +242,8 @@ export function CobroModal({
     }
     // Faltante
     if (discrepancyMode === 'CREDITO') {
-      return pagos.length > 0 || (pagos.length === 0 && !!clienteId)
+      // Solo válido cuando no hay abonos (compra a crédito puro)
+      return pagos.length === 0 && !!clienteId
     }
     if (discrepancyMode === 'ABSORBER') return supervisorAuthorized
     if (discrepancyMode === 'DIFERENCIAL_FALTANTE') return pagos.length > 0
@@ -654,19 +658,12 @@ export function CobroModal({
         {Math.abs(pendienteBs4) > 0.01 && (
           <div className="px-5 py-3 border-b shrink-0">
 
-            {/* Auto-resuelto: diferencial cambiario */}
-            {(discrepancyMode === 'DIFERENCIAL_SOBRANTE' || discrepancyMode === 'DIFERENCIAL_FALTANTE') && (
+            {/* Auto-resuelto: diferencial cambiario sobrante */}
+            {discrepancyMode === 'DIFERENCIAL_SOBRANTE' && (
               <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm">
-                <p className="font-medium text-amber-800">
-                  {discrepancyMode === 'DIFERENCIAL_SOBRANTE'
-                    ? 'Diferencial cambiario (sobrante)'
-                    : 'Diferencial cambiario (faltante)'}
-                </p>
+                <p className="font-medium text-amber-800">Diferencial cambiario (sobrante)</p>
                 <p className="text-amber-700 text-xs mt-0.5">
-                  {formatBs(Math.abs(pendienteBs4))} — se registrará como{' '}
-                  {discrepancyMode === 'DIFERENCIAL_SOBRANTE'
-                    ? 'ingreso de diferencial'
-                    : 'gasto de diferencial'}
+                  {formatBs(Math.abs(pendienteBs4))} — se registrará como ingreso de diferencial
                 </p>
               </div>
             )}
@@ -719,6 +716,12 @@ export function CobroModal({
                     </p>
                     {metodosEfectivo.map((m) => {
                       const entry = splitVuelto.find((e) => e.metodoCobro_id === m.id)
+                      const isUsd = m.moneda === 'USD'
+                      const displayValue = entry
+                        ? isUsd
+                          ? Number((entry.montoBs / tasaUsada).toFixed(2))
+                          : entry.montoBs
+                        : ''
                       return (
                         <div key={m.id} className="flex items-center gap-2">
                           <label className="text-xs flex-1 truncate">{m.nombre}</label>
@@ -726,22 +729,23 @@ export function CobroModal({
                             type="number"
                             min="0"
                             step="0.01"
-                            value={entry ? entry.montoBs : ''}
+                            value={displayValue}
                             onChange={(ev) => {
-                              const val = parseFloat(ev.target.value) || 0
+                              const raw = parseFloat(ev.target.value) || 0
+                              const montoBsVal = isUsd ? raw * tasaUsada : raw
                               setSplitVuelto((prev) => {
                                 const rest = prev.filter((x) => x.metodoCobro_id !== m.id)
-                                if (val <= 0) return rest
+                                if (raw <= 0) return rest
                                 return [
                                   ...rest,
-                                  { metodoCobro_id: m.id, metodoNombre: m.nombre, montoBs: val },
+                                  { metodoCobro_id: m.id, metodoNombre: m.nombre, montoBs: montoBsVal },
                                 ]
                               })
                             }}
                             placeholder="0.00"
                             className="h-7 text-xs w-24"
                           />
-                          <span className="text-[10px] text-muted-foreground w-4">Bs</span>
+                          <span className="text-[10px] text-muted-foreground w-4">{isUsd ? '$' : 'Bs'}</span>
                         </div>
                       )
                     })}
@@ -768,31 +772,29 @@ export function CobroModal({
               </div>
             )}
 
-            {/* Faltante manual: CREDITO / ABSORBER */}
-            {!estaOverpago &&
-              pendienteBs4 > 0.01 &&
-              discrepancyMode !== 'DIFERENCIAL_FALTANTE' && (
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Pago incompleto. ¿Cómo proceder?</p>
-                <p className="text-xs text-muted-foreground">
-                  Faltante: {formatBs(pendienteBs4)} / {formatUsd(montoDiscrepanciaUsd)}
-                </p>
+            {/* Faltante manual: ABSORBER / FALTANTE_CAJA — solo si hay abonos */}
+            {!estaOverpago && pendienteBs4 > 0.01 && pagos.length > 0 && (
+              discrepancyMode === 'DIFERENCIAL_FALTANTE' ? (
+                <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm">
+                  <p className="font-medium text-amber-800">Faltante de caja</p>
+                  <p className="text-amber-700 text-xs mt-0.5">
+                    {formatBs(Math.abs(pendienteBs4))} — se registrará como faltante de caja
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-1.5 text-xs underline text-amber-600 hover:text-amber-800"
+                    onClick={() => setDiscrepancyMode(null)}
+                  >
+                    Cambiar opción
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Pago incompleto. ¿Cómo proceder?</p>
+                  <p className="text-xs text-muted-foreground">
+                    Faltante: {formatBs(pendienteBs4)} / {formatUsd(montoDiscrepanciaUsd)}
+                  </p>
 
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="discrepancy"
-                    checked={discrepancyMode === 'CREDITO'}
-                    onChange={() => {
-                      setDiscrepancyMode('CREDITO')
-                      setSupervisorAuthorized(false)
-                      setSupervisorId(null)
-                    }}
-                  />
-                  <span className="text-sm">Dejar a crédito</span>
-                </label>
-
-                {montoDiscrepanciaUsd <= absorberMaxUsd && (
                   <label className="flex items-center gap-2 cursor-pointer">
                     <input
                       type="radio"
@@ -800,23 +802,37 @@ export function CobroModal({
                       checked={discrepancyMode === 'ABSORBER'}
                       onChange={() => setDiscrepancyMode('ABSORBER')}
                     />
-                    <span className="text-sm">El negocio asume la diferencia</span>
+                    <span className="text-sm">El negocio asume</span>
                   </label>
-                )}
 
-                {discrepancyMode === 'ABSORBER' && !supervisorAuthorized && (
-                  <button
-                    type="button"
-                    className="ml-6 text-sm underline text-primary"
-                    onClick={() => setShowAbsorberPinDialog(true)}
-                  >
-                    Autorizar con PIN de supervisor
-                  </button>
-                )}
-                {discrepancyMode === 'ABSORBER' && supervisorAuthorized && (
-                  <p className="ml-6 text-sm text-green-600">✓ Autorizado por supervisor</p>
-                )}
-              </div>
+                  {discrepancyMode === 'ABSORBER' && !supervisorAuthorized && (
+                    <button
+                      type="button"
+                      className="ml-6 text-sm underline text-primary"
+                      onClick={() => setShowAbsorberPinDialog(true)}
+                    >
+                      Autorizar con PIN de supervisor
+                    </button>
+                  )}
+                  {discrepancyMode === 'ABSORBER' && supervisorAuthorized && (
+                    <p className="ml-6 text-sm text-green-600">✓ Autorizado por supervisor</p>
+                  )}
+
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="discrepancy"
+                      checked={false}
+                      onChange={() => {
+                        setDiscrepancyMode('DIFERENCIAL_FALTANTE')
+                        setSupervisorAuthorized(false)
+                        setSupervisorId(null)
+                      }}
+                    />
+                    <span className="text-sm">Faltante de caja</span>
+                  </label>
+                </div>
+              )
             )}
           </div>
         )}
