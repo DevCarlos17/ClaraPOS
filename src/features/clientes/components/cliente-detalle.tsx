@@ -21,11 +21,12 @@ interface ClienteDetalleProps {
 }
 
 const TIPO_LABELS: Record<string, { label: string; color: string }> = {
-  FAC: { label: 'Factura', color: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
-  PAG: { label: 'Pago', color: 'bg-green-50 text-green-700 ring-green-600/20' },
-  NCR: { label: 'Nota Credito', color: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
-  NDB: { label: 'Nota Debito', color: 'bg-red-50 text-red-700 ring-red-600/20' },
-  REV: { label: 'Reverso', color: 'bg-rose-50 text-rose-700 ring-rose-600/20' },
+  FAC: { label: 'Factura',        color: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
+  PAG: { label: 'Pago',           color: 'bg-green-50 text-green-700 ring-green-600/20' },
+  NCR: { label: 'Nota Credito',   color: 'bg-amber-50 text-amber-700 ring-amber-600/20' },
+  NDB: { label: 'Nota Debito',    color: 'bg-red-50 text-red-700 ring-red-600/20' },
+  REV: { label: 'Reverso',        color: 'bg-rose-50 text-rose-700 ring-rose-600/20' },
+  SAF: { label: 'Saldo a Favor',  color: 'bg-green-50 text-green-700 ring-green-600/20' },
 }
 
 function formatFecha(fecha: string): string {

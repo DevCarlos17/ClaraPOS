@@ -67,7 +67,7 @@ export function useClientesConDeuda() {
     `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
        (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
      FROM clientes c
-     WHERE c.empresa_id = ? AND CAST(c.saldo_actual AS REAL) > 0.01 AND c.is_active = 1
+     WHERE c.empresa_id = ? AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001 AND c.is_active = 1
      ORDER BY CAST(c.saldo_actual AS REAL) DESC`,
     [empresaId]
   )
@@ -89,7 +89,7 @@ export function useBuscarClientesDeuda(query: string) {
       ? `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
            (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
          FROM clientes c
-         WHERE c.empresa_id = ? AND c.is_active = 1 AND CAST(c.saldo_actual AS REAL) > 0.01
+         WHERE c.empresa_id = ? AND c.is_active = 1 AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001
            AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
          ORDER BY c.nombre ASC LIMIT 20`
       : '',
@@ -995,6 +995,122 @@ export async function registrarReversoAbono(params: {
     } catch {
       // Fallo en contabilidad no bloquea el reverso
     }
+  })
+}
+
+// ─── Aplicar Saldo a Favor (SAF) ──────────────────────────────
+
+export interface AplicarSaldoFavorParams {
+  clienteId: string
+  empresaId: string
+  cajeroId: string
+  tasa: number
+  facturas: Array<{ ventaId: string; nroFactura: string; montoAplicarUsd: number }>
+  totalAplicadoUsd: number
+}
+
+/**
+ * Aplica el saldo a favor de un cliente (saldo_actual negativo) a sus facturas pendientes.
+ * Crea un movimiento_cuenta tipo 'SAF' por cada factura afectada.
+ * Reduce ventas.saldo_pend_usd y actualiza clientes.saldo_actual.
+ * Todo en una sola transacción atómica.
+ */
+export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promise<void> {
+  const { clienteId, empresaId, cajeroId, tasa, facturas, totalAplicadoUsd } = params
+
+  if (totalAplicadoUsd <= 0) throw new Error('El monto a aplicar debe ser mayor a 0')
+  if (facturas.length === 0) throw new Error('Debe seleccionar al menos una factura')
+  if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // 1. Validar que el cliente tenga crédito SAF disponible
+    const clienteResult = await tx.execute(
+      'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+      [clienteId, empresaId]
+    )
+    if (!clienteResult.rows?.length) {
+      throw new Error('Cliente no encontrado')
+    }
+    const saldoActualRaw = (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+    const saldoActualInit = parseFloat(saldoActualRaw)
+
+    if (saldoActualInit >= -0.001) {
+      throw new Error('El cliente no tiene saldo a favor disponible')
+    }
+
+    const creditoDisponible = Math.abs(saldoActualInit)
+
+    // 2. Validar que el total a aplicar no exceda el crédito disponible
+    if (totalAplicadoUsd > creditoDisponible + 0.01) {
+      throw new Error(
+        `El monto a aplicar ($${totalAplicadoUsd.toFixed(2)}) excede el crédito disponible ($${creditoDisponible.toFixed(2)})`
+      )
+    }
+
+    // 3. Procesar cada factura
+    let saldoActual = saldoActualInit
+
+    for (const factura of facturas) {
+      if (factura.montoAplicarUsd <= 0) continue
+
+      // a. Leer saldo pendiente actual de la factura
+      const ventaResult = await tx.execute(
+        'SELECT saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?',
+        [factura.ventaId, empresaId]
+      )
+      if (!ventaResult.rows?.length) {
+        throw new Error(`Factura #${factura.nroFactura} no encontrada`)
+      }
+      const saldoPendUsd = parseFloat(
+        (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
+      )
+
+      // b. Calcular nuevo pendiente
+      const nuevoPendiente = Math.max(0, Number((saldoPendUsd - factura.montoAplicarUsd).toFixed(2)))
+
+      // c. Reducir saldo pendiente de la factura
+      await tx.execute(
+        'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+        [nuevoPendiente.toFixed(2), factura.ventaId]
+      )
+
+      // d. Insertar movimiento_cuenta tipo SAF
+      const saldoAntes = saldoActual
+      const saldoDespues = Number((saldoActual + factura.montoAplicarUsd).toFixed(2))
+
+      const movId = uuidv4()
+      await tx.execute(
+        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+         VALUES (?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          movId,
+          clienteId,
+          `SAF-CXC-${factura.nroFactura}`,
+          factura.montoAplicarUsd.toFixed(2),
+          saldoAntes.toFixed(2),
+          saldoDespues.toFixed(2),
+          `Saldo a favor aplicado a factura ${factura.nroFactura}`,
+          factura.ventaId,
+          now,
+          empresaId,
+          now,
+          cajeroId,
+          'USD',
+          factura.montoAplicarUsd.toFixed(2),
+          tasa.toFixed(4),
+        ]
+      )
+
+      saldoActual = saldoDespues
+    }
+
+    // 4. Actualizar saldo del cliente
+    await tx.execute(
+      'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+      [saldoActual.toFixed(2), now, clienteId]
+    )
   })
 }
 

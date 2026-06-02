@@ -52,9 +52,12 @@ export function CxcList() {
   const clientes = isSearching ? searchResults : allClientes
   const clientesLoading = isSearching ? loadingSearch : isLoading
 
-  const totalDeuda = allClientes.reduce((sum, c) => sum + parseFloat(c.saldo_actual), 0)
-  const totalClientes = allClientes.length
-  const totalFacturas = allClientes.reduce((sum, c) => sum + Number(c.facturas_pendientes), 0)
+  const clientesDeuda = allClientes.filter((c) => parseFloat(c.saldo_actual) > 0.001)
+  const clientesSAF = allClientes.filter((c) => parseFloat(c.saldo_actual) < -0.001)
+  const totalDeuda = clientesDeuda.reduce((sum, c) => sum + parseFloat(c.saldo_actual), 0)
+  const totalSAF = clientesSAF.reduce((sum, c) => sum + Math.abs(parseFloat(c.saldo_actual)), 0)
+  const totalClientes = clientesDeuda.length
+  const totalFacturas = clientesDeuda.reduce((sum, c) => sum + Number(c.facturas_pendientes), 0)
 
   const clienteActual = clienteSeleccionado
     ? (allClientes.find((c) => c.id === clienteSeleccionado.id) ?? clienteSeleccionado)
@@ -89,22 +92,27 @@ export function CxcList() {
     <div className="space-y-4">
 
       {/* KPIs globales */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <KpiCard
           label="Deuda Total"
           value={formatUsd(totalDeuda)}
-          sub={tasaValor > 0 ? formatBs(usdToBs(totalDeuda, tasaValor)) : 'Suma de todos los clientes'}
+          sub={tasaValor > 0 ? formatBs(usdToBs(totalDeuda, tasaValor)) : undefined}
           accent
+        />
+        <KpiCard
+          label="Saldo a Favor"
+          value={totalSAF > 0 ? `+${formatUsd(totalSAF)}` : formatUsd(0)}
+          sub={clientesSAF.length > 0 ? `${clientesSAF.length} cliente${clientesSAF.length !== 1 ? 's' : ''}` : 'Sin saldos a favor'}
         />
         <KpiCard
           label="Clientes con Deuda"
           value={String(totalClientes)}
-          sub={totalClientes === 1 ? '1 cliente pendiente' : `${totalClientes} clientes pendientes`}
+          sub={totalClientes === 1 ? '1 pendiente' : `${totalClientes} pendientes`}
         />
         <KpiCard
           label="Facturas Pendientes"
           value={String(totalFacturas)}
-          sub="Total documentos por cobrar"
+          sub="Docs. por cobrar"
         />
       </div>
 
@@ -113,9 +121,9 @@ export function CxcList() {
 
         {/* Panel izquierdo: clientes */}
         <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
-          <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
+            <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Clientes con Deuda
+              Cuentas por Cobrar
             </span>
             <CxcReportesGeneral clientes={clientes} />
           </div>
@@ -154,7 +162,8 @@ export function CxcList() {
             <div className="divide-y divide-border">
               {clientes.map((cliente) => {
                 const isSelected = clienteSeleccionado?.id === cliente.id
-                const deuda = parseFloat(cliente.saldo_actual)
+                const saldo = parseFloat(cliente.saldo_actual)
+                const isSAF = saldo < -0.001
                 return (
                   <button
                     key={cliente.id}
@@ -167,16 +176,24 @@ export function CxcList() {
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <p className={`text-sm font-medium truncate ${isSelected ? 'text-primary' : 'text-foreground'}`}>
-                        {cliente.nombre}
-                      </p>
+                      <div className="flex items-center gap-1.5">
+                        <p className={`text-sm font-medium truncate ${isSelected ? 'text-primary' : 'text-foreground'}`}>
+                          {cliente.nombre}
+                        </p>
+                        {isSAF && (
+                          <span className="shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-100 text-green-700">
+                            SAF
+                          </span>
+                        )}
+                      </div>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
-                        {cliente.identificacion} · {cliente.facturas_pendientes} factura{Number(cliente.facturas_pendientes) !== 1 ? 's' : ''} pendiente{Number(cliente.facturas_pendientes) !== 1 ? 's' : ''}
+                        {cliente.identificacion}
+                        {!isSAF && ` · ${cliente.facturas_pendientes} factura${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''} pendiente${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''}`}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={`text-sm font-bold tabular-nums ${deuda > 0 ? 'text-destructive' : 'text-muted-foreground'}`}>
-                        {formatUsd(deuda)}
+                      <span className={`text-sm font-bold tabular-nums ${isSAF ? 'text-green-600' : 'text-destructive'}`}>
+                        {isSAF ? `+${formatUsd(Math.abs(saldo))}` : formatUsd(saldo)}
                       </span>
                       <CaretRight size={13} className={isSelected ? 'text-primary' : 'text-muted-foreground/40'} />
                     </div>
@@ -187,9 +204,24 @@ export function CxcList() {
           )}
 
           {/* Total al pie */}
-          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total</span>
-            <span className="text-sm font-bold text-destructive tabular-nums">{formatUsd(totalDeuda)}</span>
+          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div>
+                <p className="text-[10px] text-muted-foreground uppercase">Deuda</p>
+                <p className="text-xs font-bold text-destructive tabular-nums">{formatUsd(totalDeuda)}</p>
+              </div>
+              {totalSAF > 0 && (
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase">A Favor</p>
+                  <p className="text-xs font-bold text-green-600 tabular-nums">+{formatUsd(totalSAF)}</p>
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground tabular-nums">
+              Neto: <span className={`font-semibold ${totalDeuda - totalSAF > 0 ? 'text-destructive' : 'text-green-600'}`}>
+                {formatUsd(Math.abs(totalDeuda - totalSAF))}
+              </span>
+            </p>
           </div>
         </div>
 

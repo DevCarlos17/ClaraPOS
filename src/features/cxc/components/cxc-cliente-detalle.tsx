@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { X, CurrencyDollar, CaretUp, CaretDown } from '@phosphor-icons/react'
+import { X, CurrencyDollar, CaretUp, CaretDown, ArrowDown } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { useFacturasPendientes, type ClienteConDeuda, type VentaPendiente } from '../hooks/use-cxc'
 import { PagoFacturaModal } from './pago-factura-modal'
 import { AbonoGlobalModal } from './abono-global-modal'
+import { AplicarSafModal } from './aplicar-saf-modal'
 import { FacturaDetalleCxc } from './factura-detalle-cxc'
 import { CxcClienteReporte } from './cxc-cliente-reporte'
 
@@ -38,6 +39,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
   const [pagoFacturaOpen, setPagoFacturaOpen] = useState(false)
   const [abonoGlobalOpen, setAbonoGlobalOpen] = useState(false)
+  const [aplicarSafOpen, setAplicarSafOpen] = useState(false)
   const [detalleOpen, setDetalleOpen] = useState(false)
   const [sortField, setSortField] = useState<SortField>('fecha')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -73,16 +75,29 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <div className="text-right">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Deuda total</p>
-                <p className="text-sm font-bold text-destructive tabular-nums">
-                  {formatUsd(saldo)}
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                  {saldo < -0.001 ? 'Saldo a Favor' : 'Deuda total'}
+                </p>
+                <p className={`text-sm font-bold tabular-nums ${saldo < -0.001 ? 'text-green-600' : 'text-destructive'}`}>
+                  {saldo < -0.001 ? `+${formatUsd(Math.abs(saldo))}` : formatUsd(saldo)}
                 </p>
                 {tasaValor > 0 && (
                   <p className="text-[10px] text-muted-foreground/70">
-                    {formatBs(usdToBs(saldo, tasaValor))}
+                    {formatBs(usdToBs(Math.abs(saldo), tasaValor))}
                   </p>
                 )}
               </div>
+              {saldo < -0.001 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="border-green-600 text-green-700 hover:bg-green-50"
+                  onClick={() => setAplicarSafOpen(true)}
+                >
+                  <ArrowDown size={14} className="mr-1" />
+                  Aplicar SAF
+                </Button>
+              )}
               <Button
                 size="sm"
                 onClick={() => setAbonoGlobalOpen(true)}
@@ -253,6 +268,13 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
         isOpen={detalleOpen}
         onClose={() => setDetalleOpen(false)}
         factura={facturaSeleccionada}
+      />
+
+      <AplicarSafModal
+        isOpen={aplicarSafOpen}
+        onClose={() => setAplicarSafOpen(false)}
+        cliente={cliente}
+        onSuccess={() => setAplicarSafOpen(false)}
       />
     </>
   )
