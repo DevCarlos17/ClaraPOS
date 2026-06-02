@@ -50,12 +50,21 @@ export async function validarStockServidor(
     return
   }
 
-  const data = await res.json() as { ok?: boolean; error?: string }
-
-  if (!res.ok && res.status !== 200) {
-    // 409 = stock insuficiente en servidor
-    throw new Error(data.error ?? 'Error al validar stock en servidor')
+  // Intentar parsear JSON — puede fallar si la respuesta es HTML (e.g. 5xx de Cloudflare)
+  let data: { ok?: boolean; error?: string } = {}
+  try {
+    data = await res.json() as { ok?: boolean; error?: string }
+  } catch {
+    // Body no es JSON válido (error de infraestructura): no bloquear la venta.
+    return
   }
+
+  if (res.status === 409) {
+    // 409 = stock insuficiente confirmado por el servidor → bloquear
+    throw new Error(data.error ?? 'Stock insuficiente en servidor')
+  }
+  // Cualquier otro código no-2xx (5xx, 401, 503…): ignorar silenciosamente.
+  // El trigger de PostgreSQL es la red de seguridad final para stock.
 }
 
 export interface LineaVenta {
