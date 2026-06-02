@@ -102,6 +102,13 @@ export interface DiscrepancyOptions {
   supervisorId?: string
   /** VUELTO split: per-method change breakdown. */
   vueltoEntries?: VueltoEntry[]
+  /**
+   * SAF con "Aplicar a facturas": lista de facturas pendientes a las que se
+   * aplica el excedente (FIFO). Si hay sobrante después de aplicar, queda
+   * como SAF en la cuenta del cliente. Si está vacío o ausente, el monto
+   * íntegro va al SAF directo.
+   */
+  invoiceAssignments?: Array<{ ventaId: string; nroFactura: string; montoUsd: number }>
 }
 
 export interface CargoEspecial {
@@ -769,32 +776,71 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const saldoAnteriorSaf = parseFloat(
               (clienteSafResult.rows?.item(0) as { saldo_actual: string } | undefined)?.saldo_actual ?? '0'
             ) || 0
-            // Reduce what the client owes (negative = credit in favour of client)
-            const saldoNuevoSaf = Number((saldoAnteriorSaf - discrepancy.montoUsd).toFixed(2))
+
+            // Paso 1: acreditar el total del excedente como SAF en la cuenta del cliente
+            const saldoTrasCreditoSaf = Number((saldoAnteriorSaf - discrepancy.montoUsd).toFixed(2))
             await tx.execute(
               `INSERT INTO movimientos_cuenta
                  (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
                   observacion, venta_id, fecha, created_at, created_by, tasa_pago)
                VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
               [
-                uuidv4(),
-                empresa_id,
-                discrepancy.clienteId,
+                uuidv4(), empresa_id, discrepancy.clienteId,
                 `SAF-VEN-${nroFactura}`,
                 discrepancy.montoUsd.toFixed(2),
                 saldoAnteriorSaf.toFixed(2),
-                saldoNuevoSaf.toFixed(2),
+                saldoTrasCreditoSaf.toFixed(2),
                 `Saldo a favor — excedente de pago en venta ${nroFactura}`,
-                ventaId,
-                now,
-                now,
-                usuario_id,
-                tasa.toFixed(4),
+                ventaId, now, now, usuario_id, tasa.toFixed(4),
               ]
             )
+
+            // Paso 2: si hay facturas asignadas (modo "Aplicar a facturas"), consumir el SAF
+            let saldoActualSaf = saldoTrasCreditoSaf
+            if (discrepancy.invoiceAssignments?.length) {
+              for (const inv of discrepancy.invoiceAssignments) {
+                if (inv.montoUsd <= 0.001) continue
+                // Leer saldo pendiente actual de la factura
+                const vRes = await tx.execute(
+                  'SELECT saldo_pend_usd FROM ventas WHERE id = ?',
+                  [inv.ventaId]
+                )
+                if (!vRes.rows?.length) continue
+                const saldoPend = parseFloat((vRes.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd)
+                const montoAplicar = Math.min(saldoPend, inv.montoUsd)
+                if (montoAplicar <= 0.001) continue
+
+                // Reducir saldo pendiente de la factura
+                await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
+                  Math.max(0, Number((saldoPend - montoAplicar).toFixed(2))).toFixed(2),
+                  inv.ventaId,
+                ])
+
+                // Movimiento_cuenta: SAF aplicado a factura (consume SAF, saldo sube hacia 0)
+                const saldoTrasApl = Number((saldoActualSaf + montoAplicar).toFixed(2))
+                await tx.execute(
+                  `INSERT INTO movimientos_cuenta
+                     (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+                      observacion, venta_id, fecha, created_at, created_by, tasa_pago)
+                   VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  [
+                    uuidv4(), empresa_id, discrepancy.clienteId,
+                    `SAF-APL-${inv.nroFactura}`,
+                    montoAplicar.toFixed(2),
+                    saldoActualSaf.toFixed(2),
+                    saldoTrasApl.toFixed(2),
+                    `Saldo a favor aplicado a factura ${inv.nroFactura}`,
+                    inv.ventaId, now, now, usuario_id, tasa.toFixed(4),
+                  ]
+                )
+                saldoActualSaf = saldoTrasApl
+              }
+            }
+
+            // Paso 3: actualizar saldo_actual del cliente al valor final
             await tx.execute(
               'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-              [saldoNuevoSaf.toFixed(2), now, discrepancy.clienteId]
+              [saldoActualSaf.toFixed(2), now, discrepancy.clienteId]
             )
           }
           break

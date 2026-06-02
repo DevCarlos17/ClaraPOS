@@ -12,6 +12,7 @@ import {
   type VueltoParam,
   type DiscrepancyOptions,
 } from '../hooks/use-ventas'
+import { useFacturasPendientes } from '@/features/cxc/hooks/use-cxc'
 import type { CargoEspecial } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -26,6 +27,8 @@ type DiscrepancyMode =
   | 'VUELTO' | 'SAF' | 'PROPINA' | 'DIFERENCIAL_SOBRANTE'
   | 'CREDITO' | 'ABSORBER' | 'DIFERENCIAL_FALTANTE'
   | null
+
+type SafSubMode = 'FACTURAS' | 'DIRECTO' | null
 
 interface SplitEntry {
   metodoCobro_id: string
@@ -84,6 +87,7 @@ export function CobroModal({
 
   // ── Estado de resolución de discrepancias ─────────────────────────────────
   const [discrepancyMode, setDiscrepancyMode] = useState<DiscrepancyMode>(null)
+  const [safSubMode, setSafSubMode] = useState<SafSubMode>(null)
   const [splitVuelto, setSplitVuelto] = useState<SplitEntry[]>([])
   const [supervisorAuthorized, setSupervisorAuthorized] = useState(false)
   const [supervisorId, setSupervisorId] = useState<string | null>(null)
@@ -100,6 +104,7 @@ export function CobroModal({
     setVueltoMetodoId('')
     setSubmitting(false)
     setDiscrepancyMode(null)
+    setSafSubMode(null)
     setSplitVuelto([])
     setSupervisorAuthorized(false)
     setSupervisorId(null)
@@ -201,6 +206,35 @@ export function CobroModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendienteBs4])
 
+  // ── Facturas pendientes del cliente para modo SAF "Aplicar a facturas" ───
+  const { facturas: facturasPendientesSAF } = useFacturasPendientes(
+    discrepancyMode === 'SAF' && clienteId ? clienteId : null
+  )
+  const tieneFaturasPendientesSAF = facturasPendientesSAF.length > 0
+
+  // Distribución FIFO: cómo se aplica el excedente a las facturas pendientes
+  const fifoPreview = useMemo(() => {
+    if (safSubMode !== 'FACTURAS' || !facturasPendientesSAF.length) return []
+    const montoDisp = Math.abs(montoDiscrepanciaUsd)
+    let remaining = montoDisp
+    const result: Array<{ ventaId: string; nroFactura: string; aplicar: number }> = []
+    for (const f of facturasPendientesSAF) {
+      if (remaining <= 0.001) break
+      const saldo = parseFloat(f.saldo_pend_usd)
+      const aplicar = Number(Math.min(saldo, remaining).toFixed(2))
+      if (aplicar > 0.001) {
+        result.push({ ventaId: f.id, nroFactura: f.nro_factura, aplicar })
+        remaining = Number((remaining - aplicar).toFixed(2))
+      }
+    }
+    return result
+  }, [safSubMode, facturasPendientesSAF, montoDiscrepanciaUsd])
+
+  const fifoSobrante = useMemo(() => {
+    const totalAplicado = fifoPreview.reduce((s, x) => s + x.aplicar, 0)
+    return Math.max(0, Number((Math.abs(montoDiscrepanciaUsd) - totalAplicado).toFixed(2)))
+  }, [fifoPreview, montoDiscrepanciaUsd])
+
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
 
   // ── Validación de split vuelto ────────────────────────────────────────────
@@ -220,7 +254,10 @@ export function CobroModal({
     }
     if (estaOverpago) {
       if (discrepancyMode === 'VUELTO') return pagos.length > 0 && splitVueltoValid
-      if (discrepancyMode === 'SAF') return pagos.length > 0 && !!clienteId
+      if (discrepancyMode === 'SAF') {
+        if (!safSubMode) return false
+        return pagos.length > 0 && !!clienteId
+      }
       if (discrepancyMode === 'PROPINA') return pagos.length > 0
       if (discrepancyMode === 'DIFERENCIAL_SOBRANTE') return pagos.length > 0
       return false
@@ -353,6 +390,12 @@ export function CobroModal({
       }
     })()
 
+    // Asignaciones FIFO para modo SAF "Aplicar a facturas"
+    const invoiceAssignments =
+      discrepancyMode === 'SAF' && safSubMode === 'FACTURAS' && fifoPreview.length > 0
+        ? fifoPreview.map((f) => ({ ventaId: f.ventaId, nroFactura: f.nroFactura, montoUsd: f.aplicar }))
+        : undefined
+
     // Build discrepancy param for the data layer
     const discrepancy: DiscrepancyOptions | undefined = discrepancyMode
       ? {
@@ -366,6 +409,7 @@ export function CobroModal({
             discrepancyMode === 'VUELTO' && splitVuelto.length > 0
               ? splitVuelto.map((e) => ({ metodoCobro_id: e.metodoCobro_id, montoBs: e.montoBs }))
               : undefined,
+          invoiceAssignments,
         }
       : undefined
 
@@ -431,6 +475,11 @@ export function CobroModal({
       setSubmitting(false)
     }
   }
+
+  // ── Reset safSubMode cuando el modo deja de ser SAF ─────────────────────
+  useEffect(() => {
+    if (discrepancyMode !== 'SAF') setSafSubMode(null)
+  }, [discrepancyMode])
 
   // ── Referencia estable para handleProcesar (evita stale closure en keydown) ─
   const handleProcesarRef = useRef<() => Promise<void>>(async () => {})
@@ -718,6 +767,65 @@ export function CobroModal({
                     <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'PROPINA' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F7</kbd>
                   </button>
                 </div>
+
+                {/* SAF sub-opciones: cuando SAF está seleccionado */}
+                {discrepancyMode === 'SAF' && (
+                  <div className="mt-2 space-y-2 border-t border-green-200 pt-2">
+                    <p className="text-xs text-muted-foreground">¿Cómo aplicar el excedente?</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        disabled={!tieneFaturasPendientesSAF}
+                        onClick={() => setSafSubMode('FACTURAS')}
+                        className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-0.5 ${
+                          safSubMode === 'FACTURAS'
+                            ? 'bg-green-600 text-white border-green-600'
+                            : 'bg-white text-foreground border-border hover:bg-muted'
+                        }`}
+                      >
+                        <span>Aplicar a facturas</span>
+                        <span className={`text-[10px] ${safSubMode === 'FACTURAS' ? 'text-white/70' : 'text-muted-foreground'}`}>
+                          {tieneFaturasPendientesSAF
+                            ? `${facturasPendientesSAF.length} pendiente${facturasPendientesSAF.length !== 1 ? 's' : ''}`
+                            : 'Sin facturas'}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSafSubMode('DIRECTO')}
+                        className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
+                          safSubMode === 'DIRECTO'
+                            ? 'bg-green-600 text-white border-green-600'
+                            : 'bg-white text-foreground border-border hover:bg-muted'
+                        }`}
+                      >
+                        <span>Saldo a Favor</span>
+                        <span className={`text-[10px] ${safSubMode === 'DIRECTO' ? 'text-white/70' : 'text-muted-foreground'}`}>
+                          Acreditar cuenta
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Previsualización FIFO */}
+                    {safSubMode === 'FACTURAS' && fifoPreview.length > 0 && (
+                      <div className="rounded border border-green-200 bg-green-50/50 p-2 text-xs space-y-1">
+                        <p className="font-medium text-green-800">Distribución FIFO:</p>
+                        {fifoPreview.map((f) => (
+                          <div key={f.ventaId} className="flex justify-between text-green-700">
+                            <span>Fac. #{f.nroFactura}</span>
+                            <span className="font-semibold">{formatUsd(f.aplicar)}</span>
+                          </div>
+                        ))}
+                        {fifoSobrante > 0.001 && (
+                          <div className="flex justify-between border-t border-green-200 pt-1">
+                            <span className="text-green-600">Saldo restante (SAF)</span>
+                            <span className="font-semibold text-green-600">{formatUsd(fifoSobrante)}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Split vuelto: solo cuando VUELTO seleccionado */}
                 {discrepancyMode === 'VUELTO' && (
