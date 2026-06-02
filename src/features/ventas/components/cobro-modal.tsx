@@ -271,8 +271,9 @@ export function CobroModal({
   }
 
   const handleProcesar = async () => {
-    // Validar limite de credito si queda saldo
-    if (tipoDetectado === 'CREDITO' && clienteData) {
+    // Validar limite de credito — solo aplica cuando el cajero eligió factura a crédito,
+    // NO cuando el modo es faltante de caja (DIFERENCIAL_FALTANTE) o absorción (ABSORBER)
+    if (discrepancyMode === 'CREDITO' && clienteData) {
       const limite = parseFloat(clienteData.limite_credito_usd)
       const saldoActual = parseFloat(clienteData.saldo_actual)
       if (limite <= 0) {

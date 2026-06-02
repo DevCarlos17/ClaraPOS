@@ -91,7 +91,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                           onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step))
                         }}
                         disabled={linea.cantidad <= (linea.es_decimal ? 0.001 : 1)}
-                        className="shrink-0 flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        className="shrink-0 hidden md:flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <Minus size={10} />
                       </button>
@@ -131,7 +131,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                           const step = linea.es_decimal ? 0.001 : 1
                           onUpdateCantidad(index, linea.cantidad + step)
                         }}
-                        className="shrink-0 flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted transition-colors"
+                        className="shrink-0 hidden md:flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted transition-colors"
                       >
                         <Plus size={10} />
                       </button>
@@ -234,7 +234,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                             onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step))
                           }}
                           disabled={linea.cantidad <= (linea.es_decimal ? 0.001 : 1)}
-                          className="shrink-0 flex items-center justify-center h-6 w-6 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                          className="shrink-0 hidden md:flex items-center justify-center h-6 w-6 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
                           <Minus size={12} />
                         </button>
@@ -274,7 +274,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                             const step = linea.es_decimal ? 0.001 : 1
                             onUpdateCantidad(index, linea.cantidad + step)
                           }}
-                          className="shrink-0 flex items-center justify-center h-6 w-6 rounded border text-muted-foreground hover:bg-muted transition-colors"
+                          className="shrink-0 hidden md:flex items-center justify-center h-6 w-6 rounded border text-muted-foreground hover:bg-muted transition-colors"
                         >
                           <Plus size={12} />
                         </button>
