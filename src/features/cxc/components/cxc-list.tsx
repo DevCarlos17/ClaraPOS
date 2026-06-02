@@ -22,19 +22,42 @@ function KpiCard({
   value,
   sub,
   accent,
+  active,
+  onClick,
 }: {
   label: string
   value: string
   sub?: string
   accent?: boolean
+  active?: boolean
+  onClick?: () => void
 }) {
+  const isClickable = !!onClick
   return (
-    <div className="rounded-2xl bg-card shadow-lg p-4 border border-border">
+    <div
+      role={isClickable ? 'button' : undefined}
+      tabIndex={isClickable ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={isClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.() } : undefined}
+      className={`rounded-2xl bg-card shadow-lg p-4 border transition-colors ${
+        active
+          ? 'border-green-500 bg-green-50 ring-1 ring-green-500/30'
+          : isClickable
+          ? 'border-border hover:border-green-400 hover:bg-green-50/50 cursor-pointer'
+          : 'border-border'
+      }`}
+    >
       <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={`text-xl font-bold mt-1 tabular-nums ${accent ? 'text-destructive' : 'text-foreground'}`}>
+      <p className={`text-xl font-bold mt-1 tabular-nums ${accent ? 'text-destructive' : active ? 'text-green-700' : 'text-foreground'}`}>
         {value}
       </p>
-      {sub && <p className="text-xs text-muted-foreground/70 mt-0.5">{sub}</p>}
+      {sub && <p className={`text-xs mt-0.5 ${active ? 'text-green-600' : 'text-muted-foreground/70'}`}>{sub}</p>}
+      {isClickable && !active && (
+        <p className="text-[10px] text-green-600 mt-1 font-medium">Clic para ver →</p>
+      )}
+      {active && (
+        <p className="text-[10px] text-green-600 mt-1 font-medium">Filtrando SAF ✓</p>
+      )}
     </div>
   )
 }
@@ -47,10 +70,24 @@ export function CxcList() {
   const { clientes: searchResults, isLoading: loadingSearch } = useBuscarClientesDeuda(searchQuery)
   const { tasaValor } = useTasaActual()
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteConDeuda | null>(null)
+  const [filtroSAF, setFiltroSAF] = useState(false)
 
   const isSearching = searchQuery.trim().length >= 2
-  const clientes = isSearching ? searchResults : allClientes
+  const clientesBase = isSearching ? searchResults : allClientes
+  const clientes = filtroSAF ? clientesBase.filter((c) => parseFloat(c.saldo_actual) < -0.001) : clientesBase
   const clientesLoading = isSearching ? loadingSearch : isLoading
+
+  function toggleFiltroSAF() {
+    setFiltroSAF((prev) => {
+      const next = !prev
+      // Si se activa el filtro SAF, deseleccionar cliente actual si no es SAF
+      if (next && clienteSeleccionado) {
+        const isSafCliente = parseFloat(clienteSeleccionado.saldo_actual) < -0.001
+        if (!isSafCliente) setClienteSeleccionado(null)
+      }
+      return next
+    })
+  }
 
   const clientesDeuda = allClientes.filter((c) => parseFloat(c.saldo_actual) > 0.001)
   const clientesSAF = allClientes.filter((c) => parseFloat(c.saldo_actual) < -0.001)
@@ -103,6 +140,8 @@ export function CxcList() {
           label="Saldo a Favor"
           value={totalSAF > 0 ? `+${formatUsd(totalSAF)}` : formatUsd(0)}
           sub={clientesSAF.length > 0 ? `${clientesSAF.length} cliente${clientesSAF.length !== 1 ? 's' : ''}` : 'Sin saldos a favor'}
+          active={filtroSAF}
+          onClick={clientesSAF.length > 0 ? toggleFiltroSAF : undefined}
         />
         <KpiCard
           label="Clientes con Deuda"
@@ -121,11 +160,22 @@ export function CxcList() {
 
         {/* Panel izquierdo: clientes */}
         <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
-            <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-              Cuentas por Cobrar
+          <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
+            <span className={`text-xs font-semibold uppercase tracking-wide ${filtroSAF ? 'text-green-700' : 'text-muted-foreground'}`}>
+              {filtroSAF ? 'Saldo a Favor' : 'Cuentas por Cobrar'}
             </span>
-            <CxcReportesGeneral clientes={clientes} />
+            <div className="flex items-center gap-2">
+              {filtroSAF && (
+                <button
+                  type="button"
+                  onClick={() => { setFiltroSAF(false); setClienteSeleccionado(null) }}
+                  className="text-[10px] text-green-700 hover:text-green-900 underline"
+                >
+                  Ver todos
+                </button>
+              )}
+              <CxcReportesGeneral clientes={clientes} />
+            </div>
           </div>
 
           {/* Buscador */}
@@ -138,7 +188,7 @@ export function CxcList() {
               <input
                 type="text"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => { setSearchQuery(e.target.value); if (filtroSAF) setFiltroSAF(false) }}
                 placeholder="Buscar por nombre o cedula..."
                 className="w-full rounded-md border border-input bg-transparent pl-8 pr-3 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               />
@@ -155,7 +205,7 @@ export function CxcList() {
           ) : clientes.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               <p className="text-sm">
-                {isSearching ? 'Sin resultados' : 'Sin clientes con deuda'}
+                {isSearching ? 'Sin resultados' : filtroSAF ? 'Sin clientes con saldo a favor' : 'Sin clientes con deuda'}
               </p>
             </div>
           ) : (
@@ -227,17 +277,22 @@ export function CxcList() {
 
         {/* Panel derecho: detalle del cliente */}
         <div className="md:col-span-2">
-          {!clienteSeleccionado || !clienteActual ? (
-            <div className="rounded-2xl bg-card shadow-lg flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
-              <CurrencyDollar size={40} className="opacity-20" />
-              <p className="text-sm font-medium">Seleccione un cliente</p>
-              <p className="text-xs">Haga clic en un cliente de la lista para ver sus facturas pendientes</p>
-            </div>
-          ) : (
+          {clienteActual ? (
             <CxcClienteDetalle
+              key={clienteActual.id}
               cliente={clienteActual}
               onClose={() => setClienteSeleccionado(null)}
             />
+          ) : (
+            <div className="rounded-2xl bg-card shadow-lg flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
+              <CurrencyDollar size={40} className="opacity-20" />
+              <p className="text-sm font-medium">Seleccione un cliente</p>
+              <p className="text-xs">
+                {filtroSAF
+                  ? 'Haga clic en un cliente con saldo a favor para ver su detalle'
+                  : 'Haga clic en un cliente de la lista para ver sus facturas pendientes'}
+              </p>
+            </div>
           )}
         </div>
       </div>
