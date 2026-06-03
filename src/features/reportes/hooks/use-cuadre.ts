@@ -1397,3 +1397,68 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
 
   return { movimientos: items, isLoading }
 }
+
+// ─── Cobros CxC vía POS (SAF-APL) ──────────────────────────
+
+export interface CobroViaPOS {
+  metodo_cobro_id: string
+  nombre: string
+  moneda: string
+  cobrosUsd: number
+  cobrosNativo: number
+}
+
+/**
+ * Retorna totales de cobros de CxC realizados desde el POS vía SAF (saldo a favor).
+ * Estos se registran en movimientos_metodo_cobro con origen='COBRO'.
+ * El monto se guarda en moneda nativa del método (BS o USD).
+ */
+export function useCobrosViaPOS(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [whereMmc, paramsMmc] = useMemo(
+    () => filters ? buildMovsWhere(filters, empresaId, 'mmc') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    filters
+      ? `SELECT
+           mmc.metodo_cobro_id,
+           mc.nombre,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
+           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
+             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
+           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') != 'VES'
+             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_usd
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         WHERE mmc.origen = 'COBRO' AND ${whereMmc}
+         GROUP BY mmc.metodo_cobro_id, mc.nombre, moneda
+         ORDER BY cobros_bs DESC, cobros_usd DESC`
+      : '',
+    filters ? paramsMmc : []
+  )
+
+  const porMetodo: CobroViaPOS[] = (data ?? []).map((row: Record<string, unknown>) => {
+    const moneda = String(row.moneda ?? 'USD')
+    const cobrosNativo = moneda === 'BS'
+      ? Number(Number(row.cobros_bs ?? 0).toFixed(2))
+      : Number(Number(row.cobros_usd ?? 0).toFixed(2))
+    return {
+      metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
+      nombre: String(row.nombre ?? ''),
+      moneda,
+      cobrosUsd: Number(Number(row.cobros_usd ?? 0).toFixed(2)),
+      cobrosNativo,
+    }
+  })
+
+  const totalCobrosUsd = porMetodo.reduce((s, m) => s + m.cobrosUsd, 0)
+  const totalCobrosBs  = porMetodo
+    .filter(m => m.moneda === 'BS')
+    .reduce((s, m) => s + m.cobrosNativo, 0)
+
+  return { porMetodo, totalCobrosUsd, totalCobrosBs, isLoading }
+}

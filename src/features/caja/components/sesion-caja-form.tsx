@@ -287,6 +287,21 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
     sesionId ? [sesionId] : []
   )
 
+  // Cobros CxC vía POS (SAF) en métodos EFECTIVO de esta sesión
+  const { data: cobrosEfectivoData } = useQuery(
+    sesionId
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mc.moneda = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_usd,
+           COALESCE(SUM(CASE WHEN mc.moneda != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         WHERE mmc.sesion_caja_id = ?
+           AND mc.tipo = 'EFECTIVO'
+           AND mmc.origen = 'COBRO'`
+      : '',
+    sesionId ? [sesionId] : []
+  )
+
   const sesion = (sesionData ?? [])[0] as
     | { monto_apertura_usd: string; monto_apertura_bs: string }
     | undefined
@@ -317,11 +332,18 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
   const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? 0
   const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? 0
 
+  const cobrosRow = (cobrosEfectivoData ?? [])[0] as
+    | { cobros_usd: number; cobros_bs: number }
+    | undefined
+  const cobrosEfUsd = cobrosRow?.cobros_usd ?? 0
+  const cobrosEfBs  = cobrosRow?.cobros_bs  ?? 0
+  const hayCobrosEf = cobrosEfUsd > 0.005 || cobrosEfBs > 0.005
+
   const totalUsd = Number((
-    aperturaUsd + ventasUsd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
+    aperturaUsd + ventasUsd + cobrosEfUsd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
   ).toFixed(2))
   const totalBs = Number((
-    aperturaBs + ventasBs + ingManualBs - egrManualBs - avancesBs - prestamosBs
+    aperturaBs + ventasBs + cobrosEfBs + ingManualBs - egrManualBs - avancesBs - prestamosBs
   ).toFixed(2))
 
   const hayEgresos =
@@ -348,6 +370,11 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
 
       {/* Ingresos por venta */}
       <CuadreRow sign="+" label="Ingresos por venta" usd={ventasUsd} bs={ventasBs} showZero />
+
+      {/* Cobros CxC vía POS (SAF) en efectivo */}
+      {hayCobrosEf && (
+        <CuadreRow sign="+" label="Cobros CxC via POS" usd={cobrosEfUsd} bs={cobrosEfBs} />
+      )}
 
       {/* Ingresos manuales de caja */}
       {(ingManualUsd > 0 || ingManualBs > 0) && (

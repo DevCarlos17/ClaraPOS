@@ -661,8 +661,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         ]
       )
 
-      // Crear movimiento_metodo_cobro por cada pago
-      if (montoUsd > 0) {
+      // Crear movimiento_metodo_cobro por cada pago.
+      // En modo SAF el pago cubre venta + cobranza: solo registrar la porción de la
+      // venta aquí (cap en totalUsd). La parte de cobranza se registra en el SAF-APL
+      // loop con origen='COBRO' para evitar double-counting en el cuadre de caja.
+      const montoMovVenta = discrepancy?.mode === 'SAF'
+        ? Math.min(montoUsd, Math.max(0, totalUsd - totalAbonadoUsd))
+        : montoUsd
+      if (montoMovVenta > 0) {
         const movMetodoId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_metodo_cobro
@@ -673,7 +679,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             movMetodoId,
             empresa_id,
             pago.metodo_cobro_id,
-            montoUsd.toFixed(2),
+            montoMovVenta.toFixed(2),
             ventaId,
             `VEN-${nroFactura}`,
             `Venta ${nroFactura}`,
@@ -776,57 +782,50 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       switch (discrepancy.mode) {
 
         case 'SAF': {
-          // Credit overpayment to client's CxC balance
+          // Credit overpayment to client's CxC balance.
+          // Design: apply SAF directly as payments (like PAG) — each application
+          // REDUCES saldo_running. If SAF exceeds applied invoices, the remainder
+          // stays as a pure credit (saldo_actual goes negative = client has credit).
           if (discrepancy.clienteId) {
             const clienteSafResult = await tx.execute(
               'SELECT saldo_actual FROM clientes WHERE id = ?',
               [discrepancy.clienteId]
             )
-            const saldoAnteriorSaf = parseFloat(
+            let saldoRunning = parseFloat(
               (clienteSafResult.rows?.item(0) as { saldo_actual: string } | undefined)?.saldo_actual ?? '0'
             ) || 0
 
-            // Paso 1: acreditar el total del excedente como SAF en la cuenta del cliente
-            const saldoTrasCreditoSaf = Number((saldoAnteriorSaf - discrepancy.montoUsd).toFixed(2))
-            await tx.execute(
-              `INSERT INTO movimientos_cuenta
-                 (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
-                  observacion, venta_id, fecha, created_at, created_by, tasa_pago)
-               VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                uuidv4(), empresa_id, discrepancy.clienteId,
-                `SAF-VEN-${nroFactura}`,
-                discrepancy.montoUsd.toFixed(2),
-                saldoAnteriorSaf.toFixed(2),
-                saldoTrasCreditoSaf.toFixed(2),
-                `Saldo a favor — excedente de pago en venta ${nroFactura}`,
-                ventaId, now, now, usuario_id, tasa.toFixed(4),
-              ]
-            )
+            // Payment method for COBRO movements (prefer BS method, fall back to first)
+            const pagoSaf = pagos.find(p => p.moneda === 'BS') ?? pagos[0]
+            const metodoIdSaf = pagoSaf?.metodo_cobro_id
+            const monedaSaf = pagoSaf?.moneda ?? 'USD'
 
-            // Paso 2: si hay facturas asignadas (modo "Aplicar a facturas"), consumir el SAF
-            let saldoActualSaf = saldoTrasCreditoSaf
+            let actualAppliedUsd = 0
+
+            // Paso A: Apply SAF to existing invoice assignments (FIFO mode)
             if (discrepancy.invoiceAssignments?.length) {
               for (const inv of discrepancy.invoiceAssignments) {
                 if (inv.montoUsd <= 0.001) continue
-                // Leer saldo pendiente actual de la factura
+
                 const vRes = await tx.execute(
                   'SELECT saldo_pend_usd FROM ventas WHERE id = ?',
                   [inv.ventaId]
                 )
                 if (!vRes.rows?.length) continue
-                const saldoPend = parseFloat((vRes.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd)
-                const montoAplicar = Math.min(saldoPend, inv.montoUsd)
+                const saldoPendInv = parseFloat(
+                  (vRes.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
+                )
+                const montoAplicar = Math.min(saldoPendInv, inv.montoUsd)
                 if (montoAplicar <= 0.001) continue
 
-                // Reducir saldo pendiente de la factura
+                // Reduce invoice saldo_pend_usd
                 await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-                  Math.max(0, Number((saldoPend - montoAplicar).toFixed(2))).toFixed(2),
+                  Math.max(0, Number((saldoPendInv - montoAplicar).toFixed(2))).toFixed(2),
                   inv.ventaId,
                 ])
 
-                // Movimiento_cuenta: SAF aplicado a factura (consume SAF, saldo sube hacia 0)
-                const saldoTrasApl = Number((saldoActualSaf + montoAplicar).toFixed(2))
+                // movimientos_cuenta: each SAF-APL directly reduces client saldo (like PAG)
+                const saldoNuevoApl = Number((saldoRunning - montoAplicar).toFixed(2))
                 await tx.execute(
                   `INSERT INTO movimientos_cuenta
                      (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
@@ -836,20 +835,71 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                     uuidv4(), empresa_id, discrepancy.clienteId,
                     `SAF-APL-${inv.nroFactura}`,
                     montoAplicar.toFixed(2),
-                    saldoActualSaf.toFixed(2),
-                    saldoTrasApl.toFixed(2),
-                    `Saldo a favor aplicado a factura ${inv.nroFactura}`,
+                    saldoRunning.toFixed(2),
+                    saldoNuevoApl.toFixed(2),
+                    `Pago por saldo a favor — factura ${inv.nroFactura}`,
                     inv.ventaId, now, now, usuario_id, tasa.toFixed(4),
                   ]
                 )
-                saldoActualSaf = saldoTrasApl
+                saldoRunning = saldoNuevoApl
+                actualAppliedUsd += montoAplicar
+
+                // movimientos_metodo_cobro: COBRO origin for cuadre de caja split.
+                // Store native currency (BS for BS methods, USD for USD) so cuadre
+                // queries can sum by method moneda correctly.
+                if (metodoIdSaf) {
+                  const montoMovCobro = monedaSaf === 'BS'
+                    ? Number((montoAplicar * tasa).toFixed(2))
+                    : montoAplicar
+                  await tx.execute(
+                    `INSERT INTO movimientos_metodo_cobro
+                       (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                        doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+                     VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                      uuidv4(), empresa_id, metodoIdSaf,
+                      montoMovCobro.toFixed(2),
+                      inv.ventaId,
+                      `COB-${inv.nroFactura}`,
+                      `Cobro SAF — factura ${inv.nroFactura}`,
+                      sesion_caja_id ?? null,
+                      now, now, usuario_id,
+                    ]
+                  )
+                }
               }
             }
 
-            // Paso 3: actualizar saldo_actual del cliente al valor final
+            // Paso B: Remaining SAF credit (DIRECTO mode or FIFO surplus)
+            // Creates a pure credit entry — saldo goes negative (client has credit)
+            const remainingSaf = Math.max(
+              0,
+              Number((discrepancy.montoUsd - actualAppliedUsd).toFixed(2))
+            )
+            if (remainingSaf > 0.001) {
+              const saldoNuevoSaf = Number((saldoRunning - remainingSaf).toFixed(2))
+              await tx.execute(
+                `INSERT INTO movimientos_cuenta
+                   (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+                    observacion, venta_id, fecha, created_at, created_by, tasa_pago)
+                 VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                  uuidv4(), empresa_id, discrepancy.clienteId,
+                  `SAF-VEN-${nroFactura}`,
+                  remainingSaf.toFixed(2),
+                  saldoRunning.toFixed(2),
+                  saldoNuevoSaf.toFixed(2),
+                  `Saldo a favor — excedente de pago en venta ${nroFactura}`,
+                  ventaId, now, now, usuario_id, tasa.toFixed(4),
+                ]
+              )
+              saldoRunning = saldoNuevoSaf
+            }
+
+            // Paso C: Update client's final saldo_actual
             await tx.execute(
               'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-              [saldoActualSaf.toFixed(2), now, discrepancy.clienteId]
+              [saldoRunning.toFixed(2), now, discrepancy.clienteId]
             )
           }
           break

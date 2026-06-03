@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
 import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
-import { formatDateTime } from '@/lib/format'
+import { formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { cerrarSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { PagosResumen } from './pagos-resumen'
@@ -218,7 +218,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   }, [sesiones])
 
   function getSesionLabel(s: { status: string; fecha_apertura: string; usuario_nombre: string | null }) {
-    const hora = s.fecha_apertura.substring(11, 16)
+    // formatHora convierte a hora Venezuela correctamente, incluso cuando Supabase
+    // devuelve el timestamp como UTC (sin el offset -04:00 original de localNow())
+    const hora = formatHora(s.fecha_apertura)
     const estado = s.status === 'ABIERTA' ? 'Abierta' : 'Cerrada'
     const nombre = s.usuario_nombre ? ` · ${s.usuario_nombre}` : ''
     return `${hora}${nombre} (${estado})`
@@ -576,7 +578,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
             <div className="space-y-2 text-sm">
               <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Total sistema (USD)</span>
+                <span className="text-muted-foreground">Total cobros del sistema (USD)</span>
                 <span className="font-mono font-bold tabular-nums">{formatUsd(totalSistemaUsd)}</span>
               </div>
               <div className="flex items-center justify-between">
@@ -894,7 +896,7 @@ function ResumenSesionCerradaModal({
             {/* Totales globales */}
             <div className="space-y-2 text-sm border rounded-lg p-3">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Total sistema</span>
+                <span className="text-muted-foreground">Total cobros del sistema</span>
                 <span className="font-mono font-bold">{formatUsd(parseFloat(sesion.monto_sistema_usd ?? '0'))}</span>
               </div>
               <div className="flex justify-between">
