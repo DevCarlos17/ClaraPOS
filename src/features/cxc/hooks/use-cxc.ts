@@ -1,4 +1,5 @@
 import { useQuery } from '@powersync/react'
+import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
@@ -264,152 +265,139 @@ export function usePagosFactura(ventaId: string | null) {
   return { pagos: (data ?? []) as PagoFacturaCxc[], isLoading }
 }
 
+export interface AplicarPagoEnTxParams extends Omit<PagoFacturaParams, 'procesado_por_nombre'> {
+  /** Nombre del cajero/usuario — opcional cuando se llama desde crearVenta */
+  procesado_por_nombre?: string | null
+  /**
+   * true cuando se llama desde crearVenta (modo SAF desde POS).
+   * El efectivo ya ingresó como parte de la venta original, no se genera
+   * un movimiento bancario adicional para evitar doble conteo.
+   * Default: false (comportamiento normal de CxC standalone).
+   */
+  skipBankAndAccounting?: boolean
+}
+
 /**
- * Pago a factura especifica.
- * Valida: monto <= saldo_pend_usd de la factura.
- * Crea pago, reduce saldo factura, crea movimiento_cuenta (tipo PAG), actualiza saldo cliente.
+ * Aplica un pago a una factura específica DENTRO de una transacción existente.
+ * Extrae la lógica core de registrarPagoFactura para permitir su uso desde
+ * otros contextos (ej: POS/crearVenta) sin romper la atomicidad.
+ *
+ * El llamador es responsable de proveer `tx` y `now`.
+ * No inicia su propia writeTransaction.
  */
-export async function registrarPagoFactura(params: PagoFacturaParams): Promise<void> {
-  const { venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto, fechaPago, referencia, empresa_id, procesado_por, procesado_por_nombre, sesion_caja_id } = params
+export async function aplicarPagoFacturaEnTx(
+  tx: Transaction,
+  params: AplicarPagoEnTxParams,
+  now: string
+): Promise<void> {
+  const {
+    venta_id, cliente_id, metodo_cobro_id, moneda, tasa, monto,
+    fechaPago, referencia, empresa_id, procesado_por,
+    procesado_por_nombre = null, sesion_caja_id,
+    skipBankAndAccounting = false,
+  } = params
 
-  if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
-  if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
+  const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
 
-  await db.writeTransaction(async (tx) => {
-    const now = localNow()
-    // Fecha del pago: si se proporciona usa esa fecha (historial), sino la actual
-    const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
+  // 0. Obtener UUID de moneda
+  const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
+  const monedaResult = await tx.execute(
+    'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+    [monedaCode]
+  )
+  if (!monedaResult.rows?.length) {
+    throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
+  }
+  const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
-    // 0. Obtener UUID de moneda
-    const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
-    const monedaResult = await tx.execute(
-      'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
-      [monedaCode]
+  // 1. Leer factura
+  const ventaResult = await tx.execute(
+    'SELECT nro_factura, saldo_pend_usd, tasa FROM ventas WHERE id = ?',
+    [venta_id]
+  )
+  if (!ventaResult.rows || ventaResult.rows.length === 0) {
+    throw new Error('Factura no encontrada')
+  }
+  const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; tasa: string }
+  const saldoFactura = parseFloat(venta.saldo_pend_usd)
+  const tasaVenta = parseFloat(venta.tasa)
+
+  // 2. Calcular monto en USD
+  const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+
+  // 3. Validar que no exceda saldo pendiente
+  if (montoUsd > saldoFactura + 0.01) {
+    throw new Error(
+      `El pago ($${montoUsd.toFixed(2)}) excede el saldo pendiente ($${saldoFactura.toFixed(2)}) de la factura ${venta.nro_factura}`
     )
-    if (!monedaResult.rows?.length) {
-      throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
-    }
-    const monedaId = (monedaResult.rows.item(0) as { id: string }).id
+  }
 
-    // 1. Leer factura
-    const ventaResult = await tx.execute(
-      'SELECT nro_factura, saldo_pend_usd, tasa FROM ventas WHERE id = ?',
-      [venta_id]
-    )
-    if (!ventaResult.rows || ventaResult.rows.length === 0) {
-      throw new Error('Factura no encontrada')
-    }
-    const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; tasa: string }
-    const saldoFactura = parseFloat(venta.saldo_pend_usd)
-    const tasaVenta = parseFloat(venta.tasa)
+  // 4. INSERT pago
+  const pagoId = uuidv4()
+  await tx.execute(
+    `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      pagoId, venta_id, cliente_id, metodo_cobro_id, monedaId,
+      tasa.toFixed(4), monto.toFixed(2), montoUsd.toFixed(2),
+      referencia ?? null, sesion_caja_id ?? null, fechaDoc,
+      empresa_id, now, procesado_por, procesado_por_nombre ?? null,
+    ]
+  )
 
-    // 2. Calcular monto en USD
-    const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
-
-    // 3. Validar que no exceda saldo pendiente
-    if (montoUsd > saldoFactura + 0.01) {
-      throw new Error(
-        `El pago ($${montoUsd.toFixed(2)}) excede el saldo pendiente ($${saldoFactura.toFixed(2)}) de la factura ${venta.nro_factura}`
-      )
-    }
-
-    // 4. INSERT pago
-    const pagoId = uuidv4()
+  // Crear movimiento_metodo_cobro (origen PAGO_CXC: registra el ingreso en cuadre de caja)
+  if (montoUsd > 0) {
     await tx.execute(
-      `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO movimientos_metodo_cobro
+         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        pagoId,
-        venta_id,
-        cliente_id,
-        metodo_cobro_id,
-        monedaId,
-        tasa.toFixed(4),
-        monto.toFixed(2),
-        montoUsd.toFixed(2),
-        referencia ?? null,
-        sesion_caja_id ?? null,
-        fechaDoc,
-        empresa_id,
-        now,
-        procesado_por,
-        procesado_por_nombre,
+        uuidv4(), empresa_id, metodo_cobro_id,
+        montoUsd.toFixed(2), venta_id,
+        `PAG-${venta.nro_factura}`, `Pago CxC fac. ${venta.nro_factura}`,
+        sesion_caja_id ?? null, fechaDoc, now, procesado_por,
       ]
     )
+  }
 
-    // Crear movimiento_metodo_cobro
-    if (montoUsd > 0) {
-      const movMetodoCxCId = uuidv4()
-      await tx.execute(
-        `INSERT INTO movimientos_metodo_cobro
-           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-         VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          movMetodoCxCId,
-          empresa_id,
-          metodo_cobro_id,
-          montoUsd.toFixed(2),
-          venta_id,
-          `PAG-${venta.nro_factura}`,
-          `Pago CxC fac. ${venta.nro_factura}`,
-          sesion_caja_id ?? null,
-          fechaDoc,
-          now,
-          procesado_por,
-        ]
-      )
-    }
+  // 5. Reducir saldo pendiente de factura
+  const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
+  await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
+    nuevoSaldoFactura.toFixed(2), venta_id,
+  ])
 
-    // 5. Reducir saldo pendiente de factura
-    const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
-    await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-      nuevoSaldoFactura.toFixed(2),
-      venta_id,
-    ])
+  // 6. Movimiento de cuenta (tipo PAG) + actualizar saldo cliente
+  const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [cliente_id])
+  if (!clienteResult.rows || clienteResult.rows.length === 0) {
+    throw new Error('Cliente no encontrado')
+  }
+  const saldoActual = parseFloat((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual)
+  const saldoNuevo = Math.max(0, Number((saldoActual - montoUsd).toFixed(2)))
 
-    // 6. Crear movimiento de cuenta (tipo PAG) y actualizar saldo cliente
-    const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
-      cliente_id,
-    ])
-    if (!clienteResult.rows || clienteResult.rows.length === 0) {
-      throw new Error('Cliente no encontrado')
-    }
-    const saldoActual = parseFloat(
-      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
-    )
-    const saldoNuevo = Math.max(0, Number((saldoActual - montoUsd).toFixed(2)))
+  const movId = uuidv4()
+  await tx.execute(
+    `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+     VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      movId, cliente_id, `PAG-${venta.nro_factura}`,
+      montoUsd.toFixed(2), saldoActual.toFixed(2), saldoNuevo.toFixed(2),
+      `Pago factura ${venta.nro_factura}`,
+      venta_id, fechaDoc, empresa_id, now, procesado_por,
+      moneda, monto.toFixed(2), tasa.toFixed(4),
+    ]
+  )
 
-    const movId = uuidv4()
-    await tx.execute(
-      `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
-       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        movId,
-        cliente_id,
-        `PAG-${venta.nro_factura}`,
-        montoUsd.toFixed(2),
-        saldoActual.toFixed(2),
-        saldoNuevo.toFixed(2),
-        `Pago factura ${venta.nro_factura}`,
-        venta_id,
-        fechaDoc,
-        empresa_id,
-        now,
-        procesado_por,
-        moneda,
-        monto.toFixed(2),
-        tasa.toFixed(4),
-      ]
-    )
+  // UPDATE directo para reflejar el cambio en SQLite local inmediatamente.
+  // En Supabase el trigger actualizar_saldo_cliente lo gestiona automáticamente
+  // via el INSERT de movimientos_cuenta; este UPDATE llega como no-op (mismo valor).
+  await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+    saldoNuevo.toFixed(2), now, cliente_id,
+  ])
 
-    await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-      saldoNuevo.toFixed(2),
-      now,
-      cliente_id,
-    ])
-
-    // 7. Resolver banco + movimiento bancario + asientos contables
+  // 7. Banco + contabilidad (solo para pagos CxC standalone; el POS los omite
+  //    porque el efectivo ya ingresó con la venta original)
+  if (!skipBankAndAccounting) {
     try {
       const metodoCxCResult = await tx.execute(
         'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
@@ -420,19 +408,15 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
           ?.banco_empresa_id ?? null
 
       if (bancoCxCId && montoUsd > 0) {
-        const movBancoCxCId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
            VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
           [
-            movBancoCxCId, empresa_id, bancoCxCId,
-            montoUsd.toFixed(2),
-            venta_id,
-            referencia ?? null,
-            `Cobro CxC fac.${venta.nro_factura}`,
-            now, now, procesado_por,
+            uuidv4(), empresa_id, bancoCxCId,
+            montoUsd.toFixed(2), venta_id, referencia ?? null,
+            `Cobro CxC fac.${venta.nro_factura}`, now, now, procesado_por,
           ]
         )
       }
@@ -456,6 +440,21 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
     } catch {
       // Fallo en contabilidad/bancos no bloquea el pago
     }
+  }
+}
+
+/**
+ * Pago a factura especifica.
+ * Valida: monto <= saldo_pend_usd de la factura.
+ * Crea pago, reduce saldo factura, crea movimiento_cuenta (tipo PAG), actualiza saldo cliente.
+ */
+export async function registrarPagoFactura(params: PagoFacturaParams): Promise<void> {
+  if (params.tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+  if (params.monto <= 0) throw new Error('El monto debe ser mayor a 0')
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+    await aplicarPagoFacturaEnTx(tx, params, now)
   })
 }
 

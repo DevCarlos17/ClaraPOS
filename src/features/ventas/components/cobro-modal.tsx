@@ -819,7 +819,12 @@ export function CobroModal({
                         {fifoPreview.map((f) => (
                           <div key={f.ventaId} className="flex justify-between text-green-700">
                             <span>Fac. #{f.nroFactura}</span>
-                            <span className="font-semibold">{formatUsd(f.aplicar)}</span>
+                            <span className="font-semibold">
+                              {formatBs(f.aplicar * tasaUsada)}
+                              <span className="ml-1 text-[10px] font-normal opacity-70">
+                                ({formatUsd(f.aplicar)})
+                              </span>
+                            </span>
                           </div>
                         ))}
                         {fifoSobrante > 0.001 && (
