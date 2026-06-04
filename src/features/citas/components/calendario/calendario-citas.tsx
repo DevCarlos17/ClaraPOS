@@ -23,7 +23,9 @@ import { DragConfirmPopover, type DragConfirmState } from './drag-confirm-popove
 import { ReprogramarModal } from './reprogramar-modal'
 import { format } from 'date-fns'
 import { CaretLeft, CaretRight, Plus } from '@phosphor-icons/react'
+import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
+import { MiniCalendarioCitas } from './mini-calendario-citas'
 import { toast } from 'sonner'
 import { useAgendaConfig } from '../../hooks/use-agenda-config'
 import { useGridTimeRange } from '../../hooks/use-horarios-staff'
@@ -68,6 +70,7 @@ export function CalendarioCitas() {
 
   const [view, setView] = useState<CalendarView>('timeGridWeek')
   const [viewInitialized, setViewInitialized] = useState(false)
+  const [miniCalDate, setMiniCalDate] = useState<Date>(new Date())
   const [titulo, setTitulo] = useState('')
   const [rangoInicio, setRangoInicio] = useState('')
   const [rangoFin, setRangoFin] = useState('')
@@ -171,6 +174,9 @@ export function CalendarioCitas() {
       setRangoInicio(inicio)
       setRangoFin(fin)
       setTitulo(info.view.title)
+      setMiniCalDate(prev =>
+      prev.toDateString() === info.start.toDateString() ? prev : info.start
+    )
     },
     []
   )
@@ -300,6 +306,11 @@ export function CalendarioCitas() {
   const changeView = (v: CalendarView) => {
     setView(v)
     calendarRef.current?.getApi().changeView(v)
+  }
+
+  function handleMiniCalSelect(date: Date) {
+    setMiniCalDate(date)
+    calendarRef.current?.getApi().gotoDate(date)
   }
 
   const goToday = () => calendarRef.current?.getApi().today()
@@ -433,30 +444,29 @@ export function CalendarioCitas() {
     )
   }, [reprogramadasSet])
 
-  const VIEW_LABELS: Record<CalendarView, string> = {
-    timeGridDay: 'Dia',
-    timeGridWeek: 'Semana',
-    dayGridMonth: 'Mes',
-    listWeek: 'Lista',
-  }
-
   return (
     <div className="flex h-full gap-4">
       {/* Panel izquierdo */}
-      <div className="hidden lg:flex flex-col gap-4 w-48 shrink-0">
-        <button
-          onClick={() => openSheet()}
-          className="w-full flex items-center justify-center gap-1.5 h-9 rounded-lg bg-foreground text-background text-[11px] font-bold uppercase tracking-wide hover:bg-foreground/85 transition-colors"
-        >
-          <Plus size={14} weight="bold" />
-          Nueva Cita
-        </button>
+      <div className="hidden lg:flex flex-col gap-4 w-[260px] shrink-0">
+        {/* Mini calendario */}
+        <MiniCalendarioCitas
+          selectedDate={miniCalDate}
+          onSelect={handleMiniCalSelect}
+        />
 
-        {profesionales.length > 0 && (
-          <div>
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-              Profesionales
-            </p>
+        {/* Profesionales */}
+        <div className="bg-white border border-slate-200/60 rounded-2xl p-3 shadow-sm">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
+            Profesionales
+          </p>
+          <button
+            onClick={() => openSheet()}
+            className="w-full flex items-center justify-center gap-1.5 h-9 rounded-lg bg-foreground text-background text-[11px] font-bold uppercase tracking-wide hover:bg-foreground/85 transition-colors mb-3"
+          >
+            <Plus size={14} weight="bold" />
+            Nueva Cita
+          </button>
+          {profesionales.length > 0 && (
             <div className="space-y-1.5">
               {profesionales.map((p) => {
                 const activo = profesionalesFiltro.size === 0 || profesionalesFiltro.has(p.id)
@@ -478,30 +488,46 @@ export function CalendarioCitas() {
                 )
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Calendario principal */}
-      <div className="flex-1 flex flex-col min-w-0">
-        <div className="flex items-center gap-2 mb-4 flex-wrap">
-          {/* Toggle de vista — pill style */}
-          <div className="flex items-center rounded-lg border border-border overflow-hidden divide-x divide-border text-[11px]">
-            {(Object.keys(VIEW_LABELS) as CalendarView[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => changeView(v)}
-                className={cn(
-                  'px-3 py-2 font-semibold uppercase tracking-wide transition-colors',
-                  view === v
-                    ? 'bg-foreground text-background'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                )}
-              >
-                {VIEW_LABELS[v]}
-              </button>
-            ))}
-          </div>
+      <div className="flex-1 flex flex-col min-w-0 bg-white border border-slate-200/60 rounded-2xl overflow-hidden shadow-sm">
+        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-white shrink-0 flex-wrap gap-2">
+          {/* View switcher pill animado */}
+          {(() => {
+            const views = [
+              { key: 'timeGridDay' as CalendarView, label: 'Día' },
+              { key: 'timeGridWeek' as CalendarView, label: 'Semana' },
+              { key: 'dayGridMonth' as CalendarView, label: 'Mes' },
+              { key: 'listWeek' as CalendarView, label: 'Lista' },
+            ]
+            const viewIndex = views.findIndex((v) => v.key === view)
+            return (
+              <div className="relative flex items-center bg-slate-100 p-1 rounded-xl shrink-0">
+                <motion.div
+                  initial={false}
+                  animate={{ x: viewIndex >= 0 ? `${viewIndex * 100}%` : '0%' }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 35 }}
+                  className="absolute top-1 bottom-1 bg-white shadow-sm rounded-lg border border-slate-200/50 z-0"
+                  style={{ left: '4px', width: 'calc(25% - 2px)' }}
+                />
+                {views.map((v) => (
+                  <button
+                    key={v.key}
+                    onClick={() => changeView(v.key)}
+                    className={cn(
+                      'relative flex-1 h-8 min-w-[56px] rounded-lg text-[10px] uppercase font-bold tracking-widest transition-colors cursor-pointer z-10',
+                      view === v.key ? 'text-primary' : 'text-slate-400 hover:text-slate-600'
+                    )}
+                  >
+                    {v.label}
+                  </button>
+                ))}
+              </div>
+            )
+          })()}
 
           {/* Navegacion */}
           <div className="flex items-center gap-1">
