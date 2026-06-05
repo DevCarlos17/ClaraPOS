@@ -116,7 +116,7 @@ export function DepositoList() {
   <p>
     Total: ${depositos.length} depositos &nbsp;|&nbsp;
     Articulos totales: ${totalArticulos} &nbsp;|&nbsp;
-    Generado: ${new Date().toLocaleString('es-VE')}
+    Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}
   </p>
   <table>
     <thead>

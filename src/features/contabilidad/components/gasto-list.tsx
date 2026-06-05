@@ -12,6 +12,7 @@ import { FacturaProveedorModal } from '@/features/compras/components/factura-pro
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { formatDate } from '@/lib/format'
 import { formatUsd } from '@/lib/currency'
+import { todayStr, startOfMonth } from '@/lib/dates'
 
 // ─── Tipos ───────────────────────────────────────────────────
 
@@ -35,12 +36,12 @@ function SortIcon({ field, current, dir }: { field: GastoSortKey; current: Gasto
 const MAX_RANGE_DAYS = 93 // ~3 meses
 
 function getDefaultDates() {
-  const now = new Date()
-  const inicio = new Date(now.getFullYear(), now.getMonth(), 1)
-  const fin = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+  const today = todayStr()
+  const [year, month] = today.split('-').map(Number)
+  const lastDay = new Date(year, month, 0).getDate()
   return {
-    desde: inicio.toISOString().slice(0, 10),
-    hasta: fin.toISOString().slice(0, 10),
+    desde: startOfMonth(),
+    hasta: `${year}-${String(month).padStart(2, '0')}-${lastDay}`,
   }
 }
 

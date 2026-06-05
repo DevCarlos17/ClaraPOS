@@ -1161,9 +1161,9 @@ export async function crearPrestamoStandalone(
     const totalDeudaUsd = Number((principalUsd + interesUsd).toFixed(2))
 
     // Fecha de vencimiento
-    const hoy = new Date()
+    const hoy = new Date(localNow().slice(0, 10) + 'T00:00:00')
     hoy.setDate(hoy.getDate() + diasPlazo)
-    const fechaVencimiento = hoy.toISOString().slice(0, 10)
+    const fechaVencimiento = hoy.toISOString().split('T')[0]
 
     // Egreso de caja (solo si origen = CAJA)
     if (origenFondos === 'CAJA') {

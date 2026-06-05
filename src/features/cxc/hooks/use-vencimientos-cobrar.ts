@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { todayStr } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -57,9 +58,9 @@ export function useVencimientosProximos(dias: number) {
 
   // Calcular la fecha limite (hoy + N dias) como string ISO YYYY-MM-DD
   const fechaLimite = (() => {
-    const d = new Date()
+    const d = new Date(todayStr() + 'T00:00:00')
     d.setDate(d.getDate() + dias)
-    return d.toISOString().slice(0, 10)
+    return d.toISOString().split('T')[0]
   })()
 
   const { data, isLoading } = useQuery(

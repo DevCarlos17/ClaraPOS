@@ -3,6 +3,7 @@ import { Plus, Eye, MagnifyingGlass, CalendarDots, ArrowCounterClockwise } from 
 import { useComprasPorFecha } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
+import { todayStr, startOfMonth } from '@/lib/dates'
 import { CompraForm } from './compra-form'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import { CompraReportes } from './compra-reportes'
@@ -16,11 +17,9 @@ function getDaysDiff(from: string, to: string): number {
 }
 
 function getDefaultDates() {
-  const hoy = new Date()
-  const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), 1)
   return {
-    desde: inicio.toISOString().slice(0, 10),
-    hasta: hoy.toISOString().slice(0, 10),
+    desde: startOfMonth(),
+    hasta: todayStr(),
   }
 }
 

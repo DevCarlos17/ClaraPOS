@@ -70,6 +70,14 @@ export function daysAgo(n: number): string {
   return `${p.year}-${p.month}-${p.day}`
 }
 
+/** Retorna YYYY-MM-DD para N días adelante en zona horaria Venezuela */
+export function daysFromNow(n: number): string {
+  const d = new Date()
+  d.setDate(d.getDate() + n)
+  const p = veTimeParts(d)
+  return `${p.year}-${p.month}-${p.day}`
+}
+
 /** Retorna YYYY-MM-DD para el 1ro del mes actual en zona horaria Venezuela */
 export function startOfMonth(): string {
   const p = veTimeParts(new Date())

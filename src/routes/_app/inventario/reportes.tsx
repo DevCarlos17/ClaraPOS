@@ -112,7 +112,7 @@ function InventarioReportesPage() {
     <div class="header-reporte">
       <h2>Reporte de Inventario</h2>
       <p>Periodo: ${fechaDesde} al ${fechaHasta}</p>
-      <p>Generado: ${new Date().toLocaleString('es-VE')}</p>
+      <p>Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
       <p>Usuario: ${user?.nombre ?? ''}</p>
     </div>
   </div>

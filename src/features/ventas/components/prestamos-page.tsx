@@ -4,6 +4,7 @@ import { useQuery } from "@powersync/react";
 import { Warning, Clock, CheckCircle, Plus } from "@phosphor-icons/react";
 import { useCurrentUser } from "@/core/hooks/use-current-user";
 import { formatUsd } from "@/lib/currency";
+import { todayStr } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { SegmentedTabs, tabContentVariants } from "@/components/shared/segmented-tabs";
 import { type VencimientoPrestamo } from "@/features/cxc/hooks/use-cxc";
@@ -30,8 +31,7 @@ function formatFecha(fecha: string): string {
 }
 
 function getDiasRestantes(fechaVenc: string): number {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const today = new Date(todayStr() + "T00:00:00");
   const venc = new Date(fechaVenc + "T00:00:00");
   return Math.floor((venc.getTime() - today.getTime()) / 86400000);
 }

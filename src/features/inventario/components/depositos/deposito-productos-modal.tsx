@@ -90,7 +90,7 @@ export function DepositoProductosModal({ deposito, onClose }: DepositoProductosM
   ${deposito.direccion ? `<h2>${deposito.direccion}</h2>` : ''}
   <p>
     Total articulos con stock: ${productos.length}
-    &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}
+    &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}
   </p>
   <table>
     <thead>

@@ -173,7 +173,7 @@ function generarReporteEstadoCuenta(
   </table>
 
   <div class="footer">
-    Generado el ${new Date().toLocaleString('es-VE')} · ClaraPOS
+    Generado el ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })} · ClaraPOS
   </div>
 
   <script>window.onload = () => window.print()</script>

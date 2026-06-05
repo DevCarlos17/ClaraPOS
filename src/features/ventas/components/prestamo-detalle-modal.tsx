@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { formatUsd } from '@/lib/currency'
+import { todayStr } from '@/lib/dates'
 import {
   useHistorialPrestamo,
   type VencimientoPrestamo,
@@ -17,8 +18,7 @@ import { PagoFacturaModal } from '@/features/cxc/components/pago-factura-modal'
 // ─── Helpers ──────────────────────────────────────────────────
 
 function getDiasRestantes(fechaVenc: string): number {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const today = new Date(todayStr() + 'T00:00:00')
   const venc = new Date(fechaVenc + 'T00:00:00')
   return Math.floor((venc.getTime() - today.getTime()) / 86400000)
 }

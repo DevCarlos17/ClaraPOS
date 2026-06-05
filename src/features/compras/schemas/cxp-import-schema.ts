@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { sanitizeRif, isValidRif, normalizarDecimalComa } from '@/lib/identity'
+import { todayStr } from '@/lib/dates'
 
 export const cxpImportRowSchema = z.object({
   rif: z
@@ -27,9 +28,9 @@ export const cxpImportRowSchema = z.object({
         fecha.getMonth() !== month - 1 ||
         fecha.getDate() !== day
       ) return false
-      // No permitir fechas futuras
-      const hoy = new Date()
-      hoy.setHours(23, 59, 59, 999)
+      // No permitir fechas futuras (comparar contra fecha VET)
+      const [hy, hm, hd] = todayStr().split('-').map(Number)
+      const hoy = new Date(hy, hm - 1, hd)
       return fecha <= hoy
     }, 'La fecha no es valida o es posterior a la fecha actual'),
   monto_usd: z.preprocess(

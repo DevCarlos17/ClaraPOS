@@ -118,7 +118,7 @@ function printReporteProveedor(
       </tr>
     </tbody>
   </table>
-  <p class="footer">Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p class="footer">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
 </body>
 </html>`
 

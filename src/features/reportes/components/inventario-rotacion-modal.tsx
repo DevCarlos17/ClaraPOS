@@ -66,7 +66,7 @@ export function InventarioRotacionModal({ isOpen, onClose, tipo }: InventarioRot
 </head>
 <body>
   <h1>${titulo}</h1>
-  <p>${subtitulo} &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p>${subtitulo} &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   <table>
     <thead>
       <tr>

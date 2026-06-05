@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
+import { todayStr } from '@/lib/dates'
 import { GastosKpis } from './gastos-kpis'
 import {
   BarChart,
@@ -35,9 +36,9 @@ function padMes(n: number) {
 // ─── Componente ──────────────────────────────────────────────
 
 export function GastosDashboard() {
-  const now = new Date()
-  const [mes, setMes] = useState(now.getMonth() + 1)
-  const [anio, setAnio] = useState(now.getFullYear())
+  const [yearStr, monthStr] = todayStr().split('-')
+  const [mes, setMes] = useState(Number(monthStr))
+  const [anio, setAnio] = useState(Number(yearStr))
 
   const fechaDesde = `${anio}-${padMes(mes)}-01`
   const ultimoDia = new Date(anio, mes, 0).getDate()

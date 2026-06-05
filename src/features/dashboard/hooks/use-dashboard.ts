@@ -1,5 +1,6 @@
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { todayStr, daysAgo, daysFromNow } from '@/lib/dates'
 
 export interface InventarioDepto {
   departamento: string
@@ -119,16 +120,14 @@ export function useVentasRango(fechaInicio: string, fechaFin: string) {
   const empresaId = user?.empresa_id ?? ''
   const { data, isLoading } = useQuery(
     `SELECT
-       DATE(fecha, 'localtime') as dia,
+       SUBSTR(fecha, 1, 10) as dia,
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_usd
      FROM ventas
-     WHERE empresa_id = ? AND DATE(fecha, 'localtime') >= ? AND DATE(fecha, 'localtime') <= ?
-     GROUP BY DATE(fecha, 'localtime')
+     WHERE empresa_id = ? AND SUBSTR(fecha, 1, 10) >= ? AND SUBSTR(fecha, 1, 10) <= ?
+     GROUP BY SUBSTR(fecha, 1, 10)
      ORDER BY dia ASC`,
     [empresaId, fechaInicio, fechaFin]
   )
-
-  console.log('📊 useVentasRango:', { empresaId, fechaInicio, fechaFin, rawData: data, isLoading })
 
   const items: VentaDiaria[] = (data ?? []).map((row: Record<string, unknown>) => ({
     dia: String(row.dia ?? ''),
@@ -157,9 +156,8 @@ export function usePrestamosProximos(diasAdelanto = 7) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
-  const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
-  const limitStr = new Date(today.getTime() + diasAdelanto * 86400000).toISOString().split('T')[0]
+  const today = todayStr()
+  const limitStr = daysFromNow(diasAdelanto)
 
   const { data, isLoading } = useQuery(
     empresaId
@@ -181,7 +179,7 @@ export function usePrestamosProximos(diasAdelanto = 7) {
   const items: VencimientoPrestamo[] = (data ?? []).map((row: Record<string, unknown>) => {
     const fechaVenc = String(row.fecha_vencimiento ?? '')
     const diff = Math.floor(
-      (new Date(fechaVenc).getTime() - new Date(todayStr).getTime()) / 86400000
+      (new Date(fechaVenc).getTime() - new Date(today + 'T00:00:00').getTime()) / 86400000
     )
     return {
       id: String(row.id ?? ''),
@@ -205,11 +203,8 @@ export function useTopProductosRango(
 ) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const now = new Date()
-  const start = new Date(now)
-  start.setDate(start.getDate() - dias)
-  const startStr = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`
-  const endStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+  const endStr = todayStr()
+  const startStr = daysAgo(dias)
 
   const { data, isLoading } = useQuery(
     `SELECT
@@ -220,7 +215,7 @@ export function useTopProductosRango(
      FROM ventas_det dv
      JOIN ventas v ON dv.venta_id = v.id
      JOIN productos p ON dv.producto_id = p.id
-     WHERE v.empresa_id = ? AND DATE(v.fecha, 'localtime') >= ? AND DATE(v.fecha, 'localtime') <= ?
+     WHERE v.empresa_id = ? AND SUBSTR(v.fecha, 1, 10) >= ? AND SUBSTR(v.fecha, 1, 10) <= ?
      GROUP BY p.id, p.nombre, p.codigo
      ORDER BY cantidad ${order}
      LIMIT ${limit}`,

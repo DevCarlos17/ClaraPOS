@@ -100,7 +100,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
 </head>
 <body>
   <h1>Historial de Ajustes de Inventario</h1>
-  <p>Total: ${ajustes.length} ajustes &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p>Total: ${ajustes.length} ajustes &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   <table>
     <thead>
       <tr>

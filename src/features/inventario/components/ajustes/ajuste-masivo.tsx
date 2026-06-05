@@ -326,7 +326,7 @@ th{background:#f3f4f6;border:1px solid #e5e7eb;padding:6px 8px;text-align:left;f
 td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9fafb}
 @media print{body{margin:0}}</style></head>
 <body><h1>Conteo Fisico de Inventario</h1>
-<p>Deposito: ${depNombre} &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}</p>
+<p>Deposito: ${depNombre} &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
 <table><thead><tr>
   <th>Codigo</th><th>Departamento</th><th>Nombre</th>
   <th style="text-align:right">Stock Actual</th><th style="text-align:right">Nuevo Stock</th>

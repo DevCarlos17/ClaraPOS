@@ -96,7 +96,7 @@ export function UnidadList() {
 </head>
 <body>
   <h1>Reporte de Unidades de Medida</h1>
-  <p>Total: ${unidades.length} unidades &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p>Total: ${unidades.length} unidades &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   <table>
     <thead>
       <tr>

@@ -103,7 +103,7 @@ function TrazabilidadDetalleTable({
   </p>
   ${lote.fecha_fabricacion ? `<p>Fabricacion: ${formatDate(lote.fecha_fabricacion)}</p>` : ''}
   ${lote.fecha_vencimiento ? `<p>Vencimiento: ${formatDate(lote.fecha_vencimiento)}</p>` : ''}
-  <p style="margin-top:4px">Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p style="margin-top:4px">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
 
   <div class="resumen">
     <div class="kpi">

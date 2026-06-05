@@ -78,7 +78,7 @@ export function ServicioList() {
 </head>
 <body>
   <h1>Reporte de Servicios y Recetas</h1>
-  <p>Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p>Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   <table>
     <thead>
       <tr>
@@ -178,7 +178,7 @@ export function ServicioList() {
 </head>
 <body>
   <h1>Reporte Detallado de Servicios y Recetas</h1>
-  <p class="fecha">Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p class="fecha">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   ${bloques}
 </body>
 </html>`)

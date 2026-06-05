@@ -87,7 +87,7 @@ export function InventarioValorModal({ isOpen, onClose }: InventarioValorModalPr
       </tr>
     </tfoot>
   </table>
-  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
 </body>
 </html>`)
     w.document.close()

@@ -318,7 +318,7 @@ export function VentasReportesPdfButton({ fechaDesde, fechaHasta }: VentasReport
         doc.setTextColor(150)
         const pageHeight = doc.internal.pageSize.getHeight()
         doc.text(
-          `Generado el ${new Date().toLocaleString('es-VE')} - Pagina ${i} de ${totalPages}`,
+          `Generado el ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })} - Pagina ${i} de ${totalPages}`,
           pageWidth / 2,
           pageHeight - 8,
           { align: 'center' }

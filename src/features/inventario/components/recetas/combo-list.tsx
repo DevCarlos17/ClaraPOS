@@ -94,7 +94,7 @@ export function ComboList() {
 </head>
 <body>
   <h1>Reporte de Combos / Recetas</h1>
-  <p>Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p>Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   <table>
     <thead>
       <tr>
@@ -194,7 +194,7 @@ export function ComboList() {
 </head>
 <body>
   <h1>Reporte Detallado de Combos / Recetas</h1>
-  <p class="fecha">Generado: ${new Date().toLocaleString('es-VE')}</p>
+  <p class="fecha">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   ${bloques}
 </body>
 </html>`)

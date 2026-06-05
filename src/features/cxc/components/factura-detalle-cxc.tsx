@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
+import { todayStr } from '@/lib/dates'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import {
@@ -113,8 +114,7 @@ function ReversarAbonoDialog({
 // ─── Helpers ──────────────────────────────────────────────────
 
 function getDiasRestantes(fechaVenc: string): number {
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
+  const today = new Date(todayStr() + 'T00:00:00')
   const venc = new Date(fechaVenc + 'T00:00:00')
   return Math.floor((venc.getTime() - today.getTime()) / 86400000)
 }
