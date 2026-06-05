@@ -297,6 +297,9 @@ export async function aplicarPagoFacturaEnTx(
     skipBankAndAccounting = false,
   } = params
 
+  if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+  if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto debe ser mayor a 0')
+
   const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
 
   // 0. Obtener UUID de moneda
@@ -395,6 +398,56 @@ export async function aplicarPagoFacturaEnTx(
     saldoNuevo.toFixed(2), now, cliente_id,
   ])
 
+  // 6b. Si la factura tiene préstamos vinculados, sincronizar vencimientos_cobrar (FIFO)
+  // Esto garantiza que el módulo de Préstamos refleje el abono en tiempo real.
+  const vencPrestResult = await tx.execute(
+    `SELECT id, saldo_pendiente_usd, monto_pagado_usd
+     FROM vencimientos_cobrar
+     WHERE venta_id = ? AND empresa_id = ? AND status = 'PENDIENTE'
+     ORDER BY fecha_vencimiento ASC`,
+    [venta_id, empresa_id]
+  )
+  let montoRestante = montoUsd
+  for (let i = 0; i < (vencPrestResult.rows?.length ?? 0) && montoRestante > 0.005; i++) {
+    const vc = vencPrestResult.rows!.item(i) as {
+      id: string; saldo_pendiente_usd: string; monto_pagado_usd: string
+    }
+    const saldoVc = parseFloat(vc.saldo_pendiente_usd)
+    const pagadoVc = parseFloat(vc.monto_pagado_usd)
+    const abonar = Math.min(montoRestante, saldoVc)
+    const nuevoSaldoVc = Math.max(0, Number((saldoVc - abonar).toFixed(2)))
+    const nuevoPagadoVc = Number((pagadoVc + abonar).toFixed(2))
+    const nuevoStatusVc = nuevoSaldoVc <= 0.005 ? 'PAGADO' : 'PENDIENTE'
+
+    await tx.execute(
+      `UPDATE vencimientos_cobrar
+       SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?, updated_at = ?
+       WHERE id = ?`,
+      [nuevoPagadoVc.toFixed(2), nuevoSaldoVc.toFixed(2), nuevoStatusVc, now, vc.id]
+    )
+
+    // Registrar en historial de préstamos (origen COBRO_PRESTAMO para que useHistorialPrestamo lo detecte)
+    await tx.execute(
+      `INSERT INTO movimientos_metodo_cobro
+         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'INGRESO', 'COBRO_PRESTAMO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresa_id, metodo_cobro_id,
+        abonar.toFixed(2),
+        saldoVc.toFixed(2),
+        nuevoSaldoVc.toFixed(2),
+        vc.id,
+        `PREST-${vc.id.slice(0, 8).toUpperCase()}`,
+        `Abono préstamo vía CxC${referencia ? ` - ${referencia}` : ''}`,
+        sesion_caja_id ?? null,
+        fechaDoc, now, procesado_por,
+      ]
+    )
+
+    montoRestante = Number((montoRestante - abonar).toFixed(2))
+  }
+
   // 7. Banco + contabilidad (solo para pagos CxC standalone; el POS los omite
   //    porque el efectivo ya ingresó con la venta original)
   if (!skipBankAndAccounting) {
@@ -449,8 +502,8 @@ export async function aplicarPagoFacturaEnTx(
  * Crea pago, reduce saldo factura, crea movimiento_cuenta (tipo PAG), actualiza saldo cliente.
  */
 export async function registrarPagoFactura(params: PagoFacturaParams): Promise<void> {
-  if (params.tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
-  if (params.monto <= 0) throw new Error('El monto debe ser mayor a 0')
+  if (!Number.isFinite(params.tasa) || params.tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+  if (!Number.isFinite(params.monto) || params.monto <= 0) throw new Error('El monto debe ser mayor a 0')
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
@@ -470,8 +523,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 }> {
   const { cliente_id, metodo_cobro_id, moneda, tasa, monto, referencia, empresa_id, procesado_por, procesado_por_nombre, sesion_caja_id } = params
 
-  if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
-  if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
+  if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+  if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto debe ser mayor a 0')
 
   let facturasAfectadas = 0
   let montoAplicado = 0
@@ -720,8 +773,8 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
     fechaPago, referencia, empresa_id, procesado_por, sesion_caja_id,
   } = params
 
-  if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
-  if (monto <= 0) throw new Error('El monto debe ser mayor a 0')
+  if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+  if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto debe ser mayor a 0')
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
@@ -799,9 +852,10 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
         [monedaCode]
       )
-      const monedaId = monedaResult.rows?.length
-        ? (monedaResult.rows.item(0) as { id: string }).id
-        : null
+      if (!monedaResult.rows?.length) {
+        throw new Error(`No se encontró la moneda ${monedaCode} en el catálogo`)
+      }
+      const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
       // 7b. Leer saldo actual de la factura
       const ventaResult = await tx.execute(
@@ -846,22 +900,24 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
           const saldoClienteActual = parseFloat(
             (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
           )
-          const nuevoSaldoCliente = Number((saldoClienteActual - montoUsd).toFixed(2))
+          const nuevoSaldoCliente = Math.max(0, Number((saldoClienteActual - montoUsd).toFixed(2)))
 
           // 7f. Registrar movimiento de cuenta (historial contable del cliente)
           await tx.execute(
             `INSERT INTO movimientos_cuenta
-               (id, empresa_id, cliente_id, tipo, monto_usd, saldo_anterior_usd, saldo_nuevo_usd,
-                descripcion, doc_origen_id, fecha, created_at, created_by)
-             VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?)`,
+               (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+                observacion, venta_id, fecha, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+             VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               uuidv4(), empresa_id, venc.cliente_id,
+              `PAG-PREST-${vencimiento_id.slice(0, 8).toUpperCase()}`,
               montoUsd.toFixed(2),
               saldoClienteActual.toFixed(2),
               nuevoSaldoCliente.toFixed(2),
               `Pago préstamo${referencia ? ` - ${referencia}` : ''}`,
               venc.venta_id,
               fechaDoc, now, procesado_por,
+              moneda, monto.toFixed(2), tasa.toFixed(4),
             ]
           )
 
@@ -1103,9 +1159,9 @@ export interface AplicarSaldoFavorParams {
 export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promise<void> {
   const { clienteId, empresaId, cajeroId, tasa, facturas, totalAplicadoUsd } = params
 
-  if (totalAplicadoUsd <= 0) throw new Error('El monto a aplicar debe ser mayor a 0')
+  if (!Number.isFinite(totalAplicadoUsd) || totalAplicadoUsd <= 0) throw new Error('El monto a aplicar debe ser mayor a 0')
   if (facturas.length === 0) throw new Error('Debe seleccionar al menos una factura')
-  if (tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
+  if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()

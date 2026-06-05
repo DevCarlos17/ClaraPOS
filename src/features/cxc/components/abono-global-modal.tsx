@@ -338,12 +338,22 @@ export function AbonoGlobalModal({
             <input
               type="number"
               step="0.01"
-              min="0"
+              min="0.01"
               value={montoStr}
               onChange={(e) => setMontoStr(e.target.value)}
               placeholder="0.00"
               className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             />
+            {montoStr !== '' && monto === 0 && (
+              <p className="text-xs text-destructive mt-1">
+                Ingresá un monto válido mayor a 0
+              </p>
+            )}
+            {montoUsd > saldoActual + 0.01 && saldoActual > 0 && (
+              <p className="text-xs text-amber-600 mt-1">
+                El monto supera la deuda total. El excedente se registrará como anticipo.
+              </p>
+            )}
             {monto > 0 && (
               <p className="text-xs text-muted-foreground mt-1">
                 {moneda === 'USD'
@@ -448,12 +458,17 @@ export function AbonoGlobalModal({
                     <input
                       type="number"
                       step="0.01"
-                      min="0"
+                      min="0.01"
                       value={montoPrestamoStr}
                       onChange={(e) => setMontoPrestamoStr(e.target.value)}
                       placeholder="0.00"
                       className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                     />
+                    {montoPrestamoStr !== '' && montoPrestamo === 0 && (
+                      <p className="text-xs text-destructive mt-1">
+                        Ingresá un monto válido mayor a 0
+                      </p>
+                    )}
                     {montoPrestamo > 0 && tasaEfectiva > 0 && (
                       <p className="text-xs text-muted-foreground mt-1">
                         {moneda === 'USD'

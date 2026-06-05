@@ -385,7 +385,7 @@ export function PagoFacturaModal({
             />
             {sinTasa && (
               <p className="text-xs text-destructive">
-                Se requiere la tasa de cambio para registrar el pago
+                {tasaNum < 0 ? 'La tasa debe ser mayor a 0' : 'Se requiere la tasa de cambio para registrar el pago'}
               </p>
             )}
           </div>
@@ -440,6 +440,11 @@ export function PagoFacturaModal({
             {montoNum > 0 && moneda === 'BS' && tasaNum > 0 && (
               <p className="text-xs text-muted-foreground">
                 Equivale a {formatUsd(montoUsd)} a tasa {tasaNum.toFixed(2)}
+              </p>
+            )}
+            {montoStr !== '' && montoNum === 0 && (
+              <p className="text-xs text-destructive">
+                Ingresá un monto válido mayor a 0
               </p>
             )}
             {excedeSaldo && (
