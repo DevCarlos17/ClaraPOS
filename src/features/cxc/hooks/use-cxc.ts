@@ -797,6 +797,7 @@ export interface VencimientoPrestamo {
   id: string
   venta_id: string | null
   cliente_nombre: string
+  cliente_id: string
   nro_factura: string | null
   nro_cuota: number
   fecha_vencimiento: string

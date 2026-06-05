@@ -18,6 +18,7 @@ import {
   registrarAbonoPrestamo,
   type VentaPendiente,
   type VencimientoVenta,
+  type VencimientoPrestamo,
 } from '../hooks/use-cxc'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
@@ -31,6 +32,8 @@ interface PagoFacturaModalProps {
   onSuccess: () => void
   /** Préstamos activos de esta venta (de useVencimientosVenta) */
   vencimientos?: VencimientoVenta[]
+  defaultDestino?: 'FACTURA' | 'PRESTAMO'
+  vencimientoInicial?: VencimientoPrestamo
 }
 
 export function PagoFacturaModal({
@@ -41,6 +44,8 @@ export function PagoFacturaModal({
   clienteNombre,
   onSuccess,
   vencimientos = [],
+  defaultDestino = 'FACTURA',
+  vencimientoInicial,
 }: PagoFacturaModalProps) {
   const { user } = useCurrentUser()
   const { metodos } = useMetodosPagoActivos()
@@ -59,8 +64,11 @@ export function PagoFacturaModal({
   const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
 
-  // Préstamos con saldo pendiente
-  const prestamosActivos = vencimientos.filter(
+  // Préstamos con saldo pendiente — incluye vencimientoInicial si no está en vencimientos
+  const effectiveVencimientos: VencimientoVenta[] = vencimientoInicial && !vencimientos.some((v) => v.id === vencimientoInicial.id)
+    ? [...vencimientos, vencimientoInicial]
+    : vencimientos
+  const prestamosActivos = effectiveVencimientos.filter(
     (v) => v.status !== 'PAGADO' && parseFloat(v.saldo_pendiente_usd) > 0.01
   )
   const tienePrestamoActivo = prestamosActivos.length > 0
@@ -86,8 +94,8 @@ export function PagoFacturaModal({
   // Resetear form al abrir
   useEffect(() => {
     if (isOpen) {
-      setDestino('FACTURA')
-      setVencimientoId(prestamosActivos.length === 1 ? prestamosActivos[0].id : '')
+      setDestino(defaultDestino ?? 'FACTURA')
+      setVencimientoId(vencimientoInicial?.id ?? (prestamosActivos.length === 1 ? prestamosActivos[0].id : ''))
       setFechaPago(today)
       setMetodoCobro('')
       setMontoStr('')
@@ -116,10 +124,10 @@ export function PagoFacturaModal({
     onClose()
   }
 
-  if (!factura) return null
+  if (!factura && defaultDestino !== 'PRESTAMO') return null
 
-  const saldoPend = parseFloat(factura.saldo_pend_usd)
-  const totalFactura = parseFloat(factura.total_usd)
+  const saldoPend = factura ? parseFloat(factura.saldo_pend_usd) : 0
+  const totalFactura = factura ? parseFloat(factura.total_usd) : 0
 
   // Préstamo seleccionado
   const vencSeleccionado = prestamosActivos.find((v) => v.id === vencimientoId) ?? null
@@ -172,8 +180,9 @@ export function PagoFacturaModal({
         })
         toast.success(`Abono de ${formatUsd(montoUsd)} registrado al préstamo`)
       } else {
+        if (!factura) return
         await registrarPagoFactura({
-          venta_id: factura!.id,
+          venta_id: factura.id,
           cliente_id: clienteId,
           metodo_cobro_id: metodoCobro,
           moneda,
@@ -185,7 +194,7 @@ export function PagoFacturaModal({
           procesado_por: user.id,
           procesado_por_nombre: user.nombre,
         })
-        toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura!.nro_factura}`)
+        toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura.nro_factura}`)
       }
       onSuccess()
       handleClose()
@@ -203,8 +212,8 @@ export function PagoFacturaModal({
           <DialogTitle>Registrar Pago CxC</DialogTitle>
         </DialogHeader>
 
-        {/* Selector de destino (solo si hay préstamos activos) */}
-        {tienePrestamoActivo && (
+        {/* Selector de destino (solo cuando hay factura Y préstamos activos) */}
+        {factura && tienePrestamoActivo && (
           <div className="flex rounded-lg border border-border overflow-hidden text-sm">
             <button
               type="button"
@@ -232,7 +241,7 @@ export function PagoFacturaModal({
         )}
 
         {/* Resumen dinámico según destino */}
-        {destino === 'FACTURA' ? (
+        {destino === 'FACTURA' && factura ? (
           <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
             {clienteNombre && <div className="font-medium">{clienteNombre}</div>}
             <div className="text-muted-foreground text-xs">
@@ -255,11 +264,14 @@ export function PagoFacturaModal({
               </div>
             )}
           </div>
-        ) : (
+        ) : destino === 'PRESTAMO' ? (
           <div className="p-3 rounded-lg bg-purple-50 border border-purple-200 space-y-2 text-sm">
             {clienteNombre && <div className="font-medium text-purple-900">{clienteNombre}</div>}
             <div className="text-purple-700 text-xs">
-              Préstamo vinculado a factura #{factura.nro_factura}
+              {factura
+                ? `Préstamo vinculado a factura #${factura.nro_factura}`
+                : 'Préstamo sin factura asociada'
+              }
             </div>
 
             {/* Selector de préstamo si hay más de uno */}
@@ -313,7 +325,7 @@ export function PagoFacturaModal({
               <p className="text-xs text-purple-600">Seleccione un préstamo para continuar</p>
             )}
           </div>
-        )}
+        ) : null}
 
         <form onSubmit={handleSubmit} className="space-y-4">
 

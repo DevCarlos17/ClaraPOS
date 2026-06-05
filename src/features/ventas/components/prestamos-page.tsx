@@ -182,7 +182,7 @@ export function PrestamosPage() {
     empresaId
       ? `SELECT vc.id, vc.venta_id, vc.nro_cuota, vc.fecha_vencimiento,
                vc.monto_original_usd, vc.monto_pagado_usd, vc.saldo_pendiente_usd, vc.status,
-               vc.origen_fondos_tipo,
+               vc.origen_fondos_tipo, vc.cliente_id,
                v.nro_factura,
                c.nombre as cliente_nombre
          FROM vencimientos_cobrar vc
