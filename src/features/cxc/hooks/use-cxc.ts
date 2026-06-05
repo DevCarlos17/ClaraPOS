@@ -729,7 +729,7 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
 
     // 1. Leer el vencimiento
     const vencResult = await tx.execute(
-      `SELECT id, saldo_pendiente_usd, monto_pagado_usd, status
+      `SELECT id, saldo_pendiente_usd, monto_pagado_usd, status, venta_id, cliente_id
        FROM vencimientos_cobrar WHERE id = ? AND empresa_id = ?`,
       [vencimiento_id, empresa_id]
     )
@@ -739,6 +739,8 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
       saldo_pendiente_usd: string
       monto_pagado_usd: string
       status: string
+      venta_id: string | null
+      cliente_id: string
     }
     if (venc.status === 'PAGADO') throw new Error('Este préstamo ya está completamente pagado')
 
@@ -788,6 +790,89 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         fechaDoc, now, procesado_por,
       ]
     )
+
+    // 7. Si el préstamo está vinculado a una factura, actualizar también la CxC
+    if (venc.venta_id) {
+      // 7a. Leer UUID de moneda
+      const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
+      const monedaResult = await tx.execute(
+        'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+        [monedaCode]
+      )
+      const monedaId = monedaResult.rows?.length
+        ? (monedaResult.rows.item(0) as { id: string }).id
+        : null
+
+      // 7b. Leer saldo actual de la factura
+      const ventaResult = await tx.execute(
+        'SELECT saldo_pend_usd FROM ventas WHERE id = ?',
+        [venc.venta_id]
+      )
+      if (ventaResult.rows?.length) {
+        const saldoFacturaActual = parseFloat(
+          (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
+        )
+        const nuevoSaldoFactura = Math.max(0, Number((saldoFacturaActual - montoUsd).toFixed(2)))
+
+        // 7c. Registrar pago en tabla pagos
+        await tx.execute(
+          `INSERT INTO pagos
+             (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd,
+              referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(), venc.venta_id, venc.cliente_id, metodo_cobro_id,
+            monedaId ?? '',
+            tasa.toFixed(4),
+            monto.toFixed(2), montoUsd.toFixed(2),
+            referencia ?? null, sesion_caja_id ?? null,
+            fechaDoc, empresa_id, now, procesado_por,
+            params.procesado_por_nombre ?? null,
+          ]
+        )
+
+        // 7d. Actualizar saldo pendiente de la factura
+        await tx.execute(
+          'UPDATE ventas SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
+          [nuevoSaldoFactura.toFixed(2), now, venc.venta_id]
+        )
+
+        // 7e. Leer saldo actual del cliente
+        const clienteResult = await tx.execute(
+          'SELECT saldo_actual FROM clientes WHERE id = ?',
+          [venc.cliente_id]
+        )
+        if (clienteResult.rows?.length) {
+          const saldoClienteActual = parseFloat(
+            (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+          )
+          const nuevoSaldoCliente = Number((saldoClienteActual - montoUsd).toFixed(2))
+
+          // 7f. Registrar movimiento de cuenta (historial contable del cliente)
+          await tx.execute(
+            `INSERT INTO movimientos_cuenta
+               (id, empresa_id, cliente_id, tipo, monto_usd, saldo_anterior_usd, saldo_nuevo_usd,
+                descripcion, doc_origen_id, fecha, created_at, created_by)
+             VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(), empresa_id, venc.cliente_id,
+              montoUsd.toFixed(2),
+              saldoClienteActual.toFixed(2),
+              nuevoSaldoCliente.toFixed(2),
+              `Pago préstamo${referencia ? ` - ${referencia}` : ''}`,
+              venc.venta_id,
+              fechaDoc, now, procesado_por,
+            ]
+          )
+
+          // 7g. Actualizar saldo del cliente
+          await tx.execute(
+            'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+            [nuevoSaldoCliente.toFixed(2), now, venc.cliente_id]
+          )
+        }
+      }
+    }
   })
 }
 

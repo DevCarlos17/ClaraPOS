@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQuery } from '@powersync/react'
 import { CheckCircle, Warning, Clock, Handshake, Vault, Bank } from '@phosphor-icons/react'
 import {
   Dialog,
@@ -115,11 +116,22 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
   const { historial, isLoading } = useHistorialPrestamo(prestamo?.id ?? null)
   const [pagoModalOpen, setPagoModalOpen] = useState(false)
 
+  // Query reactiva para obtener el saldo actualizado del vencimiento
+  const { data: liveData } = useQuery(
+    prestamo?.id
+      ? `SELECT monto_pagado_usd, saldo_pendiente_usd, status
+         FROM vencimientos_cobrar WHERE id = ? LIMIT 1`
+      : '',
+    prestamo?.id ? [prestamo.id] : []
+  )
+  const live = (liveData?.[0] as { monto_pagado_usd: string; saldo_pendiente_usd: string; status: string } | undefined)
+
   if (!prestamo) return null
 
   const montoOriginal = parseFloat(prestamo.monto_original_usd)
-  const montoPagado = parseFloat(prestamo.monto_pagado_usd)
-  const saldoPend = parseFloat(prestamo.saldo_pendiente_usd)
+  const montoPagado = parseFloat(live?.monto_pagado_usd ?? prestamo.monto_pagado_usd)
+  const saldoPend = parseFloat(live?.saldo_pendiente_usd ?? prestamo.saldo_pendiente_usd)
+  const statusLive = live?.status ?? prestamo.status
   const porcentajePagado = montoOriginal > 0 ? (montoPagado / montoOriginal) * 100 : 0
 
   return (
@@ -158,7 +170,7 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
             </div>
 
             <div className="flex items-start justify-between">
-              <StatusBadge status={prestamo.status} fechaVenc={prestamo.fecha_vencimiento} />
+              <StatusBadge status={statusLive} fechaVenc={prestamo.fecha_vencimiento} />
               <div className="text-right text-xs text-muted-foreground space-y-1">
                 <div>
                   <div>Fecha vencimiento</div>
@@ -292,7 +304,7 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
             <Button variant="outline" onClick={onClose}>
               Cerrar
             </Button>
-            {prestamo.status === 'PENDIENTE' && saldoPend > 0.005 && (
+            {statusLive === 'PENDIENTE' && saldoPend > 0.005 && (
               <Button
                 onClick={() => setPagoModalOpen(true)}
                 className="bg-purple-600 hover:bg-purple-700 text-white"
