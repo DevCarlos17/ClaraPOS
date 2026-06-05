@@ -113,7 +113,10 @@ interface PrestamoDetalleModalProps {
 // ─── Componente ───────────────────────────────────────────────
 
 export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDetalleModalProps) {
-  const { historial, isLoading } = useHistorialPrestamo(prestamo?.id ?? null)
+  const { historial, isLoading } = useHistorialPrestamo(
+    prestamo?.id ?? null,
+    prestamo?.venta_id ?? null
+  )
   const [pagoModalOpen, setPagoModalOpen] = useState(false)
 
   // Query reactiva para obtener el saldo actualizado del vencimiento

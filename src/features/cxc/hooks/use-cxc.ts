@@ -426,24 +426,8 @@ export async function aplicarPagoFacturaEnTx(
       [nuevoPagadoVc.toFixed(2), nuevoSaldoVc.toFixed(2), nuevoStatusVc, now, vc.id]
     )
 
-    // Registrar en historial de préstamos (origen COBRO_PRESTAMO para que useHistorialPrestamo lo detecte)
-    await tx.execute(
-      `INSERT INTO movimientos_metodo_cobro
-         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'INGRESO', 'COBRO_PRESTAMO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        uuidv4(), empresa_id, metodo_cobro_id,
-        abonar.toFixed(2),
-        saldoVc.toFixed(2),
-        nuevoSaldoVc.toFixed(2),
-        vc.id,
-        `PREST-${vc.id.slice(0, 8).toUpperCase()}`,
-        `Abono préstamo vía CxC${referencia ? ` - ${referencia}` : ''}`,
-        sesion_caja_id ?? null,
-        fechaDoc, now, procesado_por,
-      ]
-    )
+    // El historial de Préstamos para facturas vinculadas se construye desde `pagos`
+    // (useHistorialPrestamo usa pagos cuando ventaId != null, cubriendo todos los paths de pago)
 
     montoRestante = Number((montoRestante - abonar).toFixed(2))
   }
@@ -962,21 +946,41 @@ export interface AbonoPrestamo {
 
 /**
  * Historial de abonos de un préstamo específico.
- * Consulta movimientos_metodo_cobro con origen = 'COBRO_PRESTAMO'
- * y doc_origen_id = vencimientoId.
+ *
+ * - Si ventaId != null (préstamo vinculado a factura): usa tabla `pagos`.
+ *   Cubre todos los caminos: pago desde CxC (FACTURA tab), pago desde Préstamos (PRESTAMO tab),
+ *   y pago desde POS. En todos estos paths se escribe un registro en `pagos`.
+ *
+ * - Si ventaId == null (préstamo standalone): usa `movimientos_metodo_cobro`
+ *   con origen = 'COBRO_PRESTAMO', que es el único registro que escribe registrarAbonoPrestamo.
  */
-export function useHistorialPrestamo(vencimientoId: string | null) {
+export function useHistorialPrestamo(
+  vencimientoId: string | null,
+  ventaId?: string | null
+) {
+  const usePagos = !!ventaId
+
   const { data, isLoading } = useQuery(
-    vencimientoId
-      ? `SELECT mmc.id, mmc.monto, mmc.saldo_anterior, mmc.saldo_nuevo,
-               mmc.concepto, mmc.fecha, mmc.created_by,
+    usePagos
+      ? `SELECT p.id, p.monto_usd as monto,
+               '' as saldo_anterior, '' as saldo_nuevo,
+               COALESCE(p.referencia, 'Pago registrado') as concepto,
+               p.fecha, p.created_by,
                mc.nombre as metodo_nombre
-         FROM movimientos_metodo_cobro mmc
-         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
-         WHERE mmc.doc_origen_id = ? AND mmc.origen = 'COBRO_PRESTAMO'
-         ORDER BY mmc.fecha ASC`
-      : '',
-    vencimientoId ? [vencimientoId] : []
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         WHERE p.venta_id = ? AND (p.is_reversed IS NULL OR p.is_reversed = 0)
+         ORDER BY p.fecha ASC`
+      : vencimientoId
+        ? `SELECT mmc.id, mmc.monto, mmc.saldo_anterior, mmc.saldo_nuevo,
+                 mmc.concepto, mmc.fecha, mmc.created_by,
+                 mc.nombre as metodo_nombre
+           FROM movimientos_metodo_cobro mmc
+           JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+           WHERE mmc.doc_origen_id = ? AND mmc.origen = 'COBRO_PRESTAMO'
+           ORDER BY mmc.fecha ASC`
+        : '',
+    usePagos ? [ventaId] : vencimientoId ? [vencimientoId] : []
   )
   return { historial: (data ?? []) as AbonoPrestamo[], isLoading }
 }
