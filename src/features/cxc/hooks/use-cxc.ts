@@ -421,9 +421,9 @@ export async function aplicarPagoFacturaEnTx(
 
     await tx.execute(
       `UPDATE vencimientos_cobrar
-       SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?, updated_at = ?
+       SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?
        WHERE id = ?`,
-      [nuevoPagadoVc.toFixed(2), nuevoSaldoVc.toFixed(2), nuevoStatusVc, now, vc.id]
+      [nuevoPagadoVc.toFixed(2), nuevoSaldoVc.toFixed(2), nuevoStatusVc, vc.id]
     )
 
     // El historial de Préstamos para facturas vinculadas se construye desde `pagos`
@@ -802,9 +802,9 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
     // 5. Actualizar vencimiento
     await tx.execute(
       `UPDATE vencimientos_cobrar
-       SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?, updated_at = ?
+       SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?
        WHERE id = ?`,
-      [nuevoPagado.toFixed(2), nuevoSaldo.toFixed(2), nuevoStatus, now, vencimiento_id]
+      [nuevoPagado.toFixed(2), nuevoSaldo.toFixed(2), nuevoStatus, vencimiento_id]
     )
 
     // 6. Registrar ingreso en metodo_cobro
