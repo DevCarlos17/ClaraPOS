@@ -1428,3 +1428,106 @@ export async function crearPrestamoStandalone(
     )
   })
 }
+
+// ─── Discrepancia de pago CxC (VUELTO / PROPINA) ──────────────
+
+export interface RegistrarDiscrepanciaCxCParams {
+  metodo_cobro_id: string
+  tipo: 'VUELTO' | 'PROPINA'
+  monto: number        // en moneda original (USD o BS)
+  moneda: 'USD' | 'BS'
+  tasa: number
+  empresa_id: string
+  doc_origen_id: string    // venta_id
+  doc_origen_ref: string   // nro_factura
+  referencia?: string
+  procesado_por: string
+}
+
+/**
+ * Registra el excedente de un pago CxC como VUELTO (EGRESO) o PROPINA (INGRESO)
+ * en movimientos_metodo_cobro. Se llama DESPUÉS de registrarPagoFactura con el saldo exacto.
+ */
+export async function registrarDiscrepanciaCxC(params: RegistrarDiscrepanciaCxCParams): Promise<void> {
+  const { metodo_cobro_id, tipo, monto, moneda, tasa, empresa_id, doc_origen_id, doc_origen_ref, procesado_por } = params
+
+  if (!Number.isFinite(monto) || monto <= 0) return   // nada que registrar
+
+  const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+  const tipoMov = tipo === 'VUELTO' ? 'EGRESO' : 'INGRESO'
+  const concepto = tipo === 'VUELTO'
+    ? `Vuelto fac. ${doc_origen_ref}`
+    : `Propina fac. ${doc_origen_ref}`
+  const now = localNow()
+
+  await db.execute(
+    `INSERT INTO movimientos_metodo_cobro
+       (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+        doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, NULL, ?, ?, ?)`,
+    [
+      uuidv4(), empresa_id, metodo_cobro_id,
+      tipoMov, tipo,
+      montoUsd.toFixed(2),
+      doc_origen_id, `PAG-${doc_origen_ref}`,
+      concepto,
+      now, now, procesado_por,
+    ]
+  )
+}
+
+// ─── SAF desde pago CxC — registra excedente como crédito al cliente ──
+
+export interface RegistrarSafExcedenteParams {
+  cliente_id: string
+  venta_id: string
+  nro_factura: string
+  excedenteUsd: number
+  tasa: number
+  empresa_id: string
+  procesado_por: string
+}
+
+/**
+ * Registra el excedente de un pago CxC como saldo a favor (crédito) en el cliente.
+ * Crea un movimiento_cuenta tipo 'SAF' que deja el saldo_actual negativo.
+ * Se llama DESPUÉS de registrarPagoFactura con el saldo exacto.
+ */
+export async function registrarSafExcedente(params: RegistrarSafExcedenteParams): Promise<void> {
+  const { cliente_id, venta_id, nro_factura, excedenteUsd, tasa, empresa_id, procesado_por } = params
+
+  if (!Number.isFinite(excedenteUsd) || excedenteUsd <= 0.001) return
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // Leer saldo actual del cliente
+    const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [cliente_id])
+    if (!clienteResult.rows?.length) throw new Error('Cliente no encontrado')
+    const saldoActual = parseFloat((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual)
+
+    // El excedente que el cliente pagó de más queda como crédito (saldo negativo)
+    const saldoNuevo = Number((saldoActual - excedenteUsd).toFixed(2))
+
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta
+         (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+          observacion, venta_id, fecha, empresa_id, created_at, created_by,
+          moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?)`,
+      [
+        uuidv4(), cliente_id,
+        `SAF-CXC-${nro_factura}`,
+        excedenteUsd.toFixed(2),
+        saldoActual.toFixed(2), saldoNuevo.toFixed(2),
+        `Saldo a favor generado en pago de factura ${nro_factura}`,
+        venta_id, now, empresa_id, now, procesado_por,
+        excedenteUsd.toFixed(2), tasa.toFixed(4),
+      ]
+    )
+
+    await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+      saldoNuevo.toFixed(2), now, cliente_id,
+    ])
+  })
+}

@@ -16,12 +16,19 @@ import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import {
   registrarPagoFactura,
   registrarAbonoPrestamo,
+  registrarDiscrepanciaCxC,
+  registrarSafExcedente,
+  aplicarSaldoFavor,
+  useFacturasPendientes,
   type VentaPendiente,
   type VencimientoVenta,
   type VencimientoPrestamo,
 } from '../hooks/use-cxc'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
+
+type OverpayMode = 'VUELTO' | 'SAF' | 'PROPINA' | null
+type SafSubMode = 'FIFO' | 'DIRECTO' | null
 
 interface PagoFacturaModalProps {
   isOpen: boolean
@@ -64,6 +71,13 @@ export function PagoFacturaModal({
   const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
 
+  // Overpayment
+  const [overpayMode, setOverpayMode] = useState<OverpayMode>(null)
+  const [safSubMode, setSafSubMode] = useState<SafSubMode>(null)
+
+  // Cargar otras facturas pendientes para preview FIFO (solo cuando hay overpago)
+  const { facturas: todasFacturas } = useFacturasPendientes(clienteId || null)
+
   // Préstamos con saldo pendiente — incluye vencimientoInicial si no está en vencimientos
   const effectiveVencimientos: VencimientoVenta[] = vencimientoInicial && !vencimientos.some((v) => v.id === vencimientoInicial.id)
     ? [...vencimientos, vencimientoInicial]
@@ -83,7 +97,6 @@ export function PagoFacturaModal({
       const row = res.rows?.item(0) as { valor: string } | undefined
       const val = row ? parseFloat(row.valor) : 0
       setTasaInternaNum(val)
-      // Pre-llenar la tasa editable con el valor encontrado
       setTasaStr(val > 0 ? val.toFixed(4) : '')
     }).catch(() => {
       setTasaInternaNum(0)
@@ -100,7 +113,8 @@ export function PagoFacturaModal({
       setMetodoCobro('')
       setMontoStr('')
       setReferencia('')
-      // La tasa se cargará por el efecto de fechaPago
+      setOverpayMode(null)
+      setSafSubMode(null)
     }
   }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -110,6 +124,8 @@ export function PagoFacturaModal({
       setVencimientoId(prestamosActivos[0].id)
     }
     setMontoStr('')
+    setOverpayMode(null)
+    setSafSubMode(null)
   }, [destino]) // eslint-disable-line react-hooks/exhaustive-deps
 
   function handleClose() {
@@ -121,6 +137,8 @@ export function PagoFacturaModal({
     setMontoStr('')
     setReferencia('')
     setTasaInternaNum(0)
+    setOverpayMode(null)
+    setSafSubMode(null)
     onClose()
   }
 
@@ -145,11 +163,40 @@ export function PagoFacturaModal({
   const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum) : montoNum
   const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaNum) : montoNum
 
-  const excedeSaldo = montoUsd > saldoEfectivo + 0.01
+  // Overpayment — solo aplica para destino FACTURA
+  const estaOverpago = destino === 'FACTURA' && montoUsd > saldoEfectivo + 0.01
+  const excedenteUsd = estaOverpago ? Number((montoUsd - saldoEfectivo).toFixed(2)) : 0
+
+  // Para PRESTAMO: mantener el bloqueo actual
+  const excedeSaldoPrestamo = destino === 'PRESTAMO' && montoUsd > saldoEfectivo + 0.01
+  const overpayResuelto = !estaOverpago || (
+    overpayMode !== null &&
+    (overpayMode !== 'SAF' || safSubMode !== null)
+  )
+
   const sinTasa = tasaNum <= 0
   const destinoPrestamoInvalido = destino === 'PRESTAMO' && !vencimientoId
   const canSubmit =
-    metodoCobro && montoNum > 0 && !excedeSaldo && !loading && tasaNum > 0 && !destinoPrestamoInvalido
+    !!metodoCobro && montoNum > 0 && !excedeSaldoPrestamo && !loading &&
+    tasaNum > 0 && !destinoPrestamoInvalido && overpayResuelto
+
+  // Otras facturas para FIFO preview (excluir la actual)
+  const otrasFacturas = todasFacturas.filter(f => f.id !== factura?.id)
+
+  // Calcular FIFO preview para el excedente sobre otras facturas
+  const fifoPreviewSaf = (() => {
+    if (!estaOverpago || excedenteUsd <= 0) return []
+    let restante = excedenteUsd
+    const result: { id: string; nro_factura: string; saldo: number; aplicar: number }[] = []
+    for (const f of otrasFacturas) {
+      if (restante <= 0.01) break
+      const saldo = parseFloat(f.saldo_pend_usd)
+      const aplicar = Math.min(saldo, restante)
+      result.push({ id: f.id, nro_factura: f.nro_factura, saldo, aplicar })
+      restante = Number((restante - aplicar).toFixed(2))
+    }
+    return result
+  })()
 
   function handlePayMax() {
     if (moneda === 'BS') {
@@ -181,20 +228,102 @@ export function PagoFacturaModal({
         toast.success(`Abono de ${formatUsd(montoUsd)} registrado al préstamo`)
       } else {
         if (!factura) return
-        await registrarPagoFactura({
-          venta_id: factura.id,
-          cliente_id: clienteId,
-          metodo_cobro_id: metodoCobro,
-          moneda,
-          tasa: tasaNum,
-          monto: montoNum,
-          fechaPago,
-          referencia: referencia.trim() || undefined,
-          empresa_id: user.empresa_id,
-          procesado_por: user.id,
-          procesado_por_nombre: user.nombre,
-        })
-        toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura.nro_factura}`)
+
+        if (estaOverpago && overpayMode) {
+          // Calcular monto exacto del saldo en la moneda original
+          const montoSaldo = moneda === 'BS' ? usdToBs(saldoEfectivo, tasaNum) : saldoEfectivo
+          const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaNum) : excedenteUsd
+
+          if (overpayMode === 'SAF') {
+            // Pagar solo el saldo exacto de la factura
+            await registrarPagoFactura({
+              venta_id: factura.id,
+              cliente_id: clienteId,
+              metodo_cobro_id: metodoCobro,
+              moneda,
+              tasa: tasaNum,
+              monto: montoSaldo,
+              fechaPago,
+              referencia: referencia.trim() || undefined,
+              empresa_id: user.empresa_id,
+              procesado_por: user.id,
+              procesado_por_nombre: user.nombre,
+            })
+            // Registrar el excedente como crédito SAF en el cliente
+            await registrarSafExcedente({
+              cliente_id: clienteId,
+              venta_id: factura.id,
+              nro_factura: factura.nro_factura,
+              excedenteUsd,
+              tasa: tasaNum,
+              empresa_id: user.empresa_id,
+              procesado_por: user.id,
+            })
+            // Si FIFO: aplicar el crédito generado a otras facturas
+            if (safSubMode === 'FIFO' && fifoPreviewSaf.length > 0) {
+              const assignments = fifoPreviewSaf.map(f => ({
+                ventaId: f.id,
+                nroFactura: f.nro_factura,
+                montoAplicarUsd: f.aplicar,
+              }))
+              await aplicarSaldoFavor({
+                clienteId,
+                empresaId: user.empresa_id,
+                cajeroId: user.id,
+                tasa: tasaNum,
+                facturas: assignments,
+                totalAplicadoUsd: fifoPreviewSaf.reduce((sum, f) => sum + f.aplicar, 0),
+              })
+            }
+            const safLabel = safSubMode === 'FIFO' ? 'SAF aplicado a facturas pendientes' : 'Crédito registrado como saldo a favor'
+            toast.success(`Factura pagada. ${safLabel} (${formatUsd(excedenteUsd)})`)
+          } else {
+            // VUELTO o PROPINA: pagar solo el saldo exacto
+            await registrarPagoFactura({
+              venta_id: factura.id,
+              cliente_id: clienteId,
+              metodo_cobro_id: metodoCobro,
+              moneda,
+              tasa: tasaNum,
+              monto: montoSaldo,
+              fechaPago,
+              referencia: referencia.trim() || undefined,
+              empresa_id: user.empresa_id,
+              procesado_por: user.id,
+              procesado_por_nombre: user.nombre,
+            })
+            await registrarDiscrepanciaCxC({
+              metodo_cobro_id: metodoCobro,
+              tipo: overpayMode as 'VUELTO' | 'PROPINA',
+              monto: montoExcedente,
+              moneda,
+              tasa: tasaNum,
+              empresa_id: user.empresa_id,
+              doc_origen_id: factura.id,
+              doc_origen_ref: factura.nro_factura,
+              referencia: referencia.trim() || undefined,
+              procesado_por: user.id,
+            })
+            const label = overpayMode === 'VUELTO' ? 'Vuelto' : 'Propina'
+            toast.success(`Factura pagada. ${label}: ${formatUsd(excedenteUsd)}`)
+          }
+        } else {
+          // Pago normal (sin overpago)
+          await registrarPagoFactura({
+            venta_id: factura.id,
+            cliente_id: clienteId,
+            metodo_cobro_id: metodoCobro,
+            moneda,
+            tasa: tasaNum,
+            monto: montoNum,
+            fechaPago,
+            referencia: referencia.trim() || undefined,
+            empresa_id: user.empresa_id,
+            procesado_por: user.id,
+            procesado_por_nombre: user.nombre,
+          })
+          toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura.nro_factura}`)
+        }
       }
       onSuccess()
       handleClose()
@@ -407,6 +536,15 @@ export function PagoFacturaModal({
                 </option>
               ))}
             </NativeSelect>
+
+            {/* Aviso efectivo */}
+            {metodoSeleccionado?.tipo === 'EFECTIVO' && (
+              <div className="p-2 rounded-md bg-blue-50 border border-blue-200">
+                <p className="text-xs text-blue-700">
+                  Este cobro es en efectivo. Si querés registrarlo en caja, hacelo desde el módulo POS con "Ingreso de efectivo".
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Monto */}
@@ -428,7 +566,12 @@ export function PagoFacturaModal({
               step="0.01"
               min="0.01"
               value={montoStr}
-              onChange={(e) => setMontoStr(e.target.value)}
+              onChange={(e) => {
+                setMontoStr(e.target.value)
+                // Reset overpay cuando cambia el monto
+                setOverpayMode(null)
+                setSafSubMode(null)
+              }}
               placeholder="0.00"
               className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
             />
@@ -447,12 +590,114 @@ export function PagoFacturaModal({
                 Ingresá un monto válido mayor a 0
               </p>
             )}
-            {excedeSaldo && (
+            {excedeSaldoPrestamo && (
               <p className="text-xs text-destructive">
-                El monto excede el saldo pendiente {destino === 'PRESTAMO' ? 'del préstamo' : 'de la factura'}
+                El monto excede el saldo pendiente del préstamo
               </p>
             )}
           </div>
+
+          {/* Panel de overpayment — solo para destino FACTURA */}
+          {estaOverpago && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 p-3 space-y-2">
+              <p className="text-xs font-semibold text-amber-800">
+                Excedente: {formatUsd(excedenteUsd)} — ¿Cómo se gestiona?
+              </p>
+              <div className="flex gap-2">
+                {([
+                  { mode: 'VUELTO' as OverpayMode, label: 'Dar vuelto' },
+                  { mode: 'SAF' as OverpayMode, label: 'Saldo a favor' },
+                  { mode: 'PROPINA' as OverpayMode, label: 'Propina' },
+                ] as { mode: OverpayMode; label: string }[]).map(({ mode, label }) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => { setOverpayMode(mode); setSafSubMode(null) }}
+                    className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium border transition-colors ${
+                      overpayMode === mode
+                        ? 'bg-amber-600 text-white border-amber-600'
+                        : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-100'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Sub-opciones SAF */}
+              {overpayMode === 'SAF' && (
+                <div className="mt-2 space-y-2">
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSafSubMode('DIRECTO')}
+                      className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium border transition-colors ${
+                        safSubMode === 'DIRECTO'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+                      }`}
+                    >
+                      Dejar como crédito
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSafSubMode('FIFO')}
+                      className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium border transition-colors ${
+                        safSubMode === 'FIFO'
+                          ? 'bg-blue-600 text-white border-blue-600'
+                          : 'bg-white text-blue-700 border-blue-300 hover:bg-blue-50'
+                      }`}
+                    >
+                      Aplicar a facturas (FIFO)
+                    </button>
+                  </div>
+
+                  {/* Preview FIFO */}
+                  {safSubMode === 'FIFO' && fifoPreviewSaf.length > 0 && (
+                    <div className="border rounded-md overflow-hidden">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b bg-muted/50">
+                            <th className="text-left px-2 py-1 font-medium">Factura</th>
+                            <th className="text-right px-2 py-1 font-medium">Aplicar</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fifoPreviewSaf.map(p => (
+                            <tr key={p.nro_factura} className="border-b border-muted">
+                              <td className="px-2 py-1 font-mono">#{p.nro_factura}</td>
+                              <td className="px-2 py-1 text-right text-green-600 font-medium">
+                                {formatUsd(p.aplicar)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  {safSubMode === 'FIFO' && fifoPreviewSaf.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      No hay otras facturas pendientes. El excedente quedará como crédito.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Info VUELTO */}
+              {overpayMode === 'VUELTO' && (
+                <p className="text-xs text-amber-700">
+                  Se registrará un egreso de {formatUsd(excedenteUsd)} por concepto de vuelto.
+                </p>
+              )}
+
+              {/* Info PROPINA */}
+              {overpayMode === 'PROPINA' && (
+                <p className="text-xs text-amber-700">
+                  El excedente de {formatUsd(excedenteUsd)} queda a favor del negocio.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Referencia */}
           <div className="space-y-1.5">

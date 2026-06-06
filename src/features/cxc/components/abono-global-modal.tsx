@@ -7,12 +7,15 @@ import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-paymen
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import {
   registrarAbonoGlobal,
+  registrarDiscrepanciaCxC,
   useFacturasPendientes,
 } from '../hooks/use-cxc'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
 import { NativeSelect } from '@/components/ui/native-select'
+
+type ExcessMode = 'ANTICIPO' | 'VUELTO' | 'PROPINA'
 
 interface AbonoGlobalModalProps {
   isOpen: boolean
@@ -43,6 +46,7 @@ export function AbonoGlobalModal({
   const [fechaPago, setFechaPago] = useState(() => todayStr())
   const [tasaFecha, setTasaFecha] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  const [excessMode, setExcessMode] = useState<ExcessMode>('ANTICIPO')
 
   // Buscar tasa BCV correspondiente a la fecha del abono
   useEffect(() => {
@@ -63,6 +67,7 @@ export function AbonoGlobalModal({
       setMontoStr('')
       setReferencia('')
       setFechaPago(todayStr())
+      setExcessMode('ANTICIPO')
     } else {
       dialogRef.current?.close()
     }
@@ -78,16 +83,29 @@ export function AbonoGlobalModal({
   const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva) : monto
   const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva) : monto
 
+  // Overpayment: cuando el monto supera la deuda total
+  const estaOverpago = saldoActual > 0 && montoUsd > saldoActual + 0.01
+  const excedenteUsd = estaOverpago ? Number((montoUsd - saldoActual).toFixed(2)) : 0
+
+  // Deteccion de efectivo para aviso
+  const esEfectivo =
+    !!metodoSeleccionado &&
+    (metodoSeleccionado.nombre.toLowerCase().includes('efectivo') ||
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (metodoSeleccionado as any).tipo === 'EFECTIVO')
+
   const canSubmit =
     !!metodoPagoId &&
     tasaEfectiva > 0 &&
     monto > 0 &&
     !submitting
 
-  // Simulacion FIFO para preview
+  // Preview FIFO — para VUELTO/PROPINA solo muestra las facturas (sin fila Anticipo)
   const fifoPreview = (() => {
     if (montoUsd <= 0) return []
-    let restante = montoUsd
+    // Para VUELTO/PROPINA el abono se limita a la deuda total
+    const montoEfectivo = (estaOverpago && excessMode !== 'ANTICIPO') ? saldoActual : montoUsd
+    let restante = montoEfectivo
     const result: { nro_factura: string; saldo: number; aplicar: number }[] = []
     for (const f of facturas) {
       if (restante <= 0.01) break
@@ -96,7 +114,8 @@ export function AbonoGlobalModal({
       result.push({ nro_factura: f.nro_factura, saldo, aplicar })
       restante = Number((restante - aplicar).toFixed(2))
     }
-    if (restante > 0.01) {
+    // Solo mostrar fila Anticipo cuando el modo es ANTICIPO
+    if (restante > 0.01 && excessMode === 'ANTICIPO') {
       result.push({ nro_factura: 'ANTICIPO', saldo: 0, aplicar: restante })
     }
     return result
@@ -115,18 +134,56 @@ export function AbonoGlobalModal({
 
     setSubmitting(true)
     try {
-      const result = await registrarAbonoGlobal({
-        cliente_id: clienteId,
-        metodo_cobro_id: metodoPagoId,
-        moneda: moneda as 'USD' | 'BS',
-        tasa: tasaEfectiva,
-        monto,
-        referencia: referencia.trim() || undefined,
-        empresa_id: user!.empresa_id!,
-        procesado_por: user!.id,
-        procesado_por_nombre: user!.nombre,
-      })
-      toast.success(`${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s)`)
+      if (estaOverpago && excessMode !== 'ANTICIPO') {
+        // VUELTO o PROPINA: abonar solo la deuda exacta y registrar el excedente aparte
+        const montoDeuda = moneda === 'BS' ? usdToBs(saldoActual, tasaEfectiva) : saldoActual
+        const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaEfectiva) : excedenteUsd
+
+        const result = await registrarAbonoGlobal({
+          cliente_id: clienteId,
+          metodo_cobro_id: metodoPagoId,
+          moneda: moneda as 'USD' | 'BS',
+          tasa: tasaEfectiva,
+          monto: montoDeuda,
+          referencia: referencia.trim() || undefined,
+          empresa_id: user!.empresa_id!,
+          procesado_por: user!.id,
+          procesado_por_nombre: user!.nombre,
+        })
+
+        await registrarDiscrepanciaCxC({
+          metodo_cobro_id: metodoPagoId,
+          tipo: excessMode as 'VUELTO' | 'PROPINA',
+          monto: montoExcedente,
+          moneda: moneda as 'USD' | 'BS',
+          tasa: tasaEfectiva,
+          empresa_id: user!.empresa_id!,
+          doc_origen_id: clienteId,
+          doc_origen_ref: `ABONO-GLOBAL-${clienteId.slice(0, 8).toUpperCase()}`,
+          referencia: referencia.trim() || undefined,
+          procesado_por: user!.id,
+        })
+
+        const label = excessMode === 'VUELTO' ? 'Vuelto' : 'Propina'
+        toast.success(
+          `${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s). ${label}: ${formatUsd(excedenteUsd)}`
+        )
+      } else {
+        // Comportamiento normal (incluye ANTICIPO cuando hay excedente)
+        const result = await registrarAbonoGlobal({
+          cliente_id: clienteId,
+          metodo_cobro_id: metodoPagoId,
+          moneda: moneda as 'USD' | 'BS',
+          tasa: tasaEfectiva,
+          monto,
+          referencia: referencia.trim() || undefined,
+          empresa_id: user!.empresa_id!,
+          procesado_por: user!.id,
+          procesado_por_nombre: user!.nombre,
+        })
+        toast.success(`${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s)`)
+      }
+
       onSuccess()
       onClose()
     } catch (error) {
@@ -229,6 +286,12 @@ export function AbonoGlobalModal({
                 </option>
               ))}
             </NativeSelect>
+            {/* Aviso efectivo */}
+            {esEfectivo && (
+              <p className="text-xs text-blue-600 mt-1">
+                Cobro en efectivo — no debe ingresar a caja. Si querés registrarlo, usá "Ingreso de efectivo" desde el POS.
+              </p>
+            )}
           </div>
 
           {/* Monto */}
@@ -259,11 +322,6 @@ export function AbonoGlobalModal({
                 Ingresá un monto válido mayor a 0
               </p>
             )}
-            {montoUsd > saldoActual + 0.01 && saldoActual > 0 && (
-              <p className="text-xs text-amber-600 mt-1">
-                El monto supera la deuda total. El excedente se registrará como anticipo.
-              </p>
-            )}
             {monto > 0 && (
               <p className="text-xs text-muted-foreground mt-1">
                 {moneda === 'USD'
@@ -287,6 +345,50 @@ export function AbonoGlobalModal({
             />
           </div>
         </div>
+
+        {/* Panel overpayment — solo cuando monto supera deuda total */}
+        {estaOverpago && (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/50 p-3 space-y-2">
+            <p className="text-xs font-semibold text-amber-800">
+              Excedente: {formatUsd(excedenteUsd)} — ¿Cómo se gestiona?
+            </p>
+            <div className="flex gap-2">
+              {([
+                { mode: 'ANTICIPO' as ExcessMode, label: 'Saldo a favor' },
+                { mode: 'VUELTO' as ExcessMode, label: 'Dar vuelto' },
+                { mode: 'PROPINA' as ExcessMode, label: 'Propina' },
+              ] as const).map(({ mode, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setExcessMode(mode)}
+                  className={`flex-1 rounded-md px-2 py-1.5 text-xs font-medium border transition-colors ${
+                    excessMode === mode
+                      ? 'bg-amber-600 text-white border-amber-600'
+                      : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-100'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {excessMode === 'ANTICIPO' && (
+              <p className="text-xs text-amber-700">
+                El excedente quedará como crédito en la cuenta del cliente.
+              </p>
+            )}
+            {excessMode === 'VUELTO' && (
+              <p className="text-xs text-amber-700">
+                Se abona la deuda exacta ({formatUsd(saldoActual)}) y se registra {formatUsd(excedenteUsd)} como vuelto.
+              </p>
+            )}
+            {excessMode === 'PROPINA' && (
+              <p className="text-xs text-amber-700">
+                Se abona la deuda exacta ({formatUsd(saldoActual)}) y el excedente de {formatUsd(excedenteUsd)} queda a favor del negocio.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Preview FIFO */}
         {fifoPreview.length > 0 && (
@@ -333,7 +435,11 @@ export function AbonoGlobalModal({
             Cancelar
           </Button>
           <Button onClick={handleSubmit} disabled={!canSubmit}>
-            {submitting ? 'Registrando...' : `Abonar ${montoUsd > 0 ? formatUsd(montoUsd) : ''}`}
+            {submitting
+              ? 'Registrando...'
+              : estaOverpago && excessMode !== 'ANTICIPO'
+                ? `Abonar ${formatUsd(saldoActual)}`
+                : `Abonar ${montoUsd > 0 ? formatUsd(montoUsd) : ''}`}
           </Button>
         </div>
       </div>
