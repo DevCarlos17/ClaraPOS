@@ -1,19 +1,21 @@
-import { Money, CreditCard, ArrowsClockwise } from '@phosphor-icons/react'
+import { Money, CreditCard, ArrowsClockwise, Coins } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, useCxcDelDia, useTotalesFiscales, useCobrosViaPOS, type CuadreFilters } from '../hooks/use-cuadre'
+import { usePagosPorMetodo, useCxcDelDia, useTotalesFiscales, useCobrosViaPOS, useSafDiario, type CuadreFilters } from '../hooks/use-cuadre'
 
 interface PagosResumenProps {
   filters: CuadreFilters
   tasaDelDia: number
   onMetodoClick?: (metodoNombre: string) => void
   onCreditoClick?: () => void
+  onSafClick?: () => void
 }
 
-export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick }: PagosResumenProps) {
+export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick, onSafClick }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
   const { totales, isLoading: loadingTotales } = useTotalesFiscales(filters)
   const { porMetodo: cobrosViaPOS, totalCobrosUsd, totalCobrosBs, isLoading: loadingCobros } = useCobrosViaPOS(filters)
+  const { totalUsd: safTotalUsd, isLoading: loadingSaf } = useSafDiario(filters)
 
   // Excluir metodos EFECTIVO con saldo $0 (fondo inicial sin ventas en efectivo)
   const metodosMostrar = metodos.filter((m) => m.totalUsd > 0.001 || m.totalOriginal > 0.001)
@@ -37,7 +39,10 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
   const hasDiferencial = diferencialAbs > 0.005
   const dentroTolerancia = diferencialAbs <= toleranciaBs
 
-  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingCobros
+  const haySaf = safTotalUsd > 0.001
+  const safBs = tasaDelDia > 0 ? safTotalUsd * tasaDelDia : 0
+
+  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingCobros || loadingSaf
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -117,6 +122,30 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                 </div>
               </div>
             </div>
+          )}
+
+          {/* Saldo a favor aplicado como pago directo en POS */}
+          {haySaf && (
+            <button
+              type="button"
+              onClick={onSafClick}
+              disabled={!onSafClick}
+              className={`w-full flex items-center justify-between rounded-lg border border-violet-200 bg-violet-50/40 px-3 py-2.5 text-left ${onSafClick ? 'hover:bg-violet-50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
+            >
+              <div className="flex items-center gap-2">
+                <Coins size={16} className="text-violet-500" />
+                <div>
+                  <p className="text-sm font-medium text-violet-700">Saldo a favor aplicado</p>
+                  <p className="text-xs text-violet-500">Credito consumido de clientes</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {safBs > 0 && (
+                  <span className="text-xs text-violet-400">{formatBs(safBs)}</span>
+                )}
+                <span className="text-sm font-bold text-violet-700">{formatUsd(safTotalUsd)}</span>
+              </div>
+            </button>
           )}
 
           {/* Credit (CxC) row — shown when there are pending credit invoices */}

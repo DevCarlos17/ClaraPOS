@@ -10,6 +10,7 @@ import { formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { cerrarSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { PagosResumen } from './pagos-resumen'
+import { SafDetalleModal } from './saf-detalle-modal'
 import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
 import { CuadreMetodoModal } from './cuadre-metodo-modal'
@@ -24,6 +25,7 @@ import {
   useTasaDelDia,
   useVentasDelDia,
   useCxcDelDia,
+  useSafDiario,
   type CuadreFilters,
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
@@ -54,6 +56,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [cxcOpen, setCxcOpen] = useState(false)
   const [metodoModal, setMetodoModal] = useState<string | null>(null)
   const [resumenOpen, setResumenOpen] = useState(false)
+  const [safModalOpen, setSafModalOpen] = useState(false)
 
   // Verified non-cash payment amounts (keyed by metodo_cobro_id)
   const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, VerifiedEntry>>({})
@@ -136,6 +139,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { totalVentasUsd, totalVentasBs, facturasCount, isLoading: loadingVentas } =
     useVentasDelDia(activeFilters)
   const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(activeFilters)
+  const { items: safItems } = useSafDiario(activeFilters)
 
   // Determine if exactly one ABIERTA session is selected (enables finalizar cuadre)
   const sesionAbiertaId = useMemo(() => {
@@ -532,6 +536,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               tasaDelDia={tasaPromedio}
               onMetodoClick={(nombre) => setMetodoModal(nombre)}
               onCreditoClick={() => setCxcOpen(true)}
+              onSafClick={() => setSafModalOpen(true)}
             />
           </div>
 
@@ -549,6 +554,12 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
           <AuditModal isOpen={auditOpen} onClose={() => setAuditOpen(false)} filters={activeFilters} />
           <CxcModal isOpen={cxcOpen} onClose={() => setCxcOpen(false)} filters={activeFilters} />
+          <SafDetalleModal
+            open={safModalOpen}
+            onClose={() => setSafModalOpen(false)}
+            items={safItems}
+            tasaDelDia={tasaPromedio}
+          />
           {metodoModal && (
             <CuadreMetodoModal
               isOpen={!!metodoModal}

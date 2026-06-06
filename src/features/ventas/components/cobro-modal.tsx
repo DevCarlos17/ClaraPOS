@@ -265,6 +265,8 @@ export function CobroModal({
     if (Math.abs(pendienteBs4) <= 0.01) {
       return (
         (pagos.length > 0 && esPagado) ||
+        // SAF como único método de cobro: pagos=[] pero SAF cubre el monto
+        (safSeleccionado && safMonto > 0 && esPagado) ||
         (tipoDetectado === 'CREDITO' && pagos.length > 0) ||
         (tipoDetectado === 'CREDITO' && pagos.length === 0 && !!clienteId)
       )

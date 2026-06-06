@@ -1398,6 +1398,95 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
   return { movimientos: items, isLoading }
 }
 
+// ─── SAF Diario (saldo a favor como metodo de pago en POS) ────
+
+export interface SafFacturaItem {
+  movimientoCuentaId: string
+  ventaId: string
+  nroFactura: string
+  clienteNombre: string
+  montoSafUsd: number
+  totalFacturaUsd: number
+  esPagoTotal: boolean  // montoSafUsd >= totalFacturaUsd - 0.01
+  tasa: number
+}
+
+export interface SafDiarioResult {
+  totalUsd: number
+  items: SafFacturaItem[]
+  isLoading: boolean
+}
+
+/**
+ * Retorna el total de saldo a favor aplicado como pago directo en el POS
+ * durante la sesion de caja indicada por `filters`.
+ * Excluye registros historicos con sesion_caja_id IS NULL.
+ * Solo aplica cuando hay sesionCajaIds definidos en filters.
+ */
+export function useSafDiario(filters: CuadreFilters | null): SafDiarioResult {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  // buildMovsWhere usa sesion_caja_id (tabla mc alias) — reutilizamos con alias 'mc'
+  const [whereMc, paramsMc] = useMemo(
+    () => filters ? buildMovsWhere(filters, empresaId, 'mc') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data: dataAggregate, isLoading: loadingAgg } = useQuery(
+    filters
+      ? `SELECT COALESCE(SUM(CAST(mc.monto AS REAL)), 0) as total_saf
+         FROM movimientos_cuenta mc
+         WHERE mc.tipo = 'SAF'
+           AND mc.sesion_caja_id IS NOT NULL
+           AND ${whereMc}`
+      : '',
+    filters ? paramsMc : []
+  )
+
+  const { data: dataItems, isLoading: loadingItems } = useQuery(
+    filters
+      ? `SELECT
+           mc.id as movimiento_cuenta_id,
+           mc.venta_id,
+           mc.monto,
+           mc.tasa_pago,
+           v.nro_factura,
+           v.total_usd,
+           c.nombre as cliente_nombre
+         FROM movimientos_cuenta mc
+         JOIN ventas v ON mc.venta_id = v.id
+         JOIN clientes c ON v.cliente_id = c.id
+         WHERE mc.tipo = 'SAF'
+           AND mc.sesion_caja_id IS NOT NULL
+           AND ${whereMc}
+         ORDER BY mc.fecha DESC`
+      : '',
+    filters ? paramsMc : []
+  )
+
+  const totalUsd = Number(
+    Number((dataAggregate?.[0] as { total_saf: number } | undefined)?.total_saf ?? 0).toFixed(2)
+  )
+
+  const items: SafFacturaItem[] = (dataItems ?? []).map((row: Record<string, unknown>) => {
+    const montoSafUsd = Number(Number(row.monto ?? 0).toFixed(2))
+    const totalFacturaUsd = Number(Number(row.total_usd ?? 0).toFixed(2))
+    return {
+      movimientoCuentaId: String(row.movimiento_cuenta_id ?? ''),
+      ventaId: String(row.venta_id ?? ''),
+      nroFactura: String(row.nro_factura ?? ''),
+      clienteNombre: String(row.cliente_nombre ?? ''),
+      montoSafUsd,
+      totalFacturaUsd,
+      esPagoTotal: montoSafUsd >= totalFacturaUsd - 0.01,
+      tasa: Number(Number(row.tasa_pago ?? 0).toFixed(4)),
+    }
+  })
+
+  return { totalUsd, items, isLoading: loadingAgg || loadingItems }
+}
+
 // ─── Cobros CxC vía POS (SAF-APL) ──────────────────────────
 
 export interface CobroViaPOS {

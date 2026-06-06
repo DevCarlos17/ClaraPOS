@@ -60,6 +60,17 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
 
   const saldo = parseFloat(cliente.saldo_actual)
 
+  // Deuda real: suma de saldo pendiente en facturas individuales (fuente de verdad)
+  const deudaFacturas = facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0)
+  // SAF disponible: solo cuando saldo_actual es negativo
+  const safCxcValue = saldo < -0.001 ? Math.abs(saldo) : 0
+  // Para el display, priorizar deuda de facturas sobre saldo_actual
+  const deudaDisplay = !isLoading && deudaFacturas > 0.001
+    ? deudaFacturas
+    : Math.max(0, saldo)
+  const tieneDeudaCxc = deudaDisplay > 0.001
+  const tieneSafCxc = safCxcValue > 0.001
+
   return (
     <>
       <div className="space-y-4">
@@ -73,16 +84,35 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
             </div>
             <div className="flex items-center gap-3 shrink-0">
               <div className="text-right">
-                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
-                  {saldo < -0.001 ? 'Saldo a Favor' : 'Deuda total'}
-                </p>
-                <p className={`text-sm font-bold tabular-nums ${saldo < -0.001 ? 'text-green-600' : 'text-destructive'}`}>
-                  {saldo < -0.001 ? `+${formatUsd(Math.abs(saldo))}` : formatUsd(saldo)}
-                </p>
-                {tasaValor > 0 && (
-                  <p className="text-[10px] text-muted-foreground/70">
-                    {formatBs(usdToBs(Math.abs(saldo), tasaValor))}
-                  </p>
+                {tieneDeudaCxc && tieneSafCxc ? (
+                  // Cliente con facturas pendientes Y saldo a favor — mostrar ambos por separado
+                  <div className="flex flex-col gap-1 items-end">
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Deuda total</p>
+                      <p className="text-sm font-bold tabular-nums text-destructive">{formatUsd(deudaDisplay)}</p>
+                      {tasaValor > 0 && (
+                        <p className="text-[10px] text-muted-foreground/70">{formatBs(usdToBs(deudaDisplay, tasaValor))}</p>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Saldo a favor</p>
+                      <p className="text-xs font-semibold tabular-nums text-green-600">+{formatUsd(safCxcValue)}</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wide">
+                      {tieneSafCxc ? 'Saldo a Favor' : 'Deuda total'}
+                    </p>
+                    <p className={`text-sm font-bold tabular-nums ${tieneSafCxc ? 'text-green-600' : 'text-destructive'}`}>
+                      {tieneSafCxc ? `+${formatUsd(safCxcValue)}` : formatUsd(deudaDisplay)}
+                    </p>
+                    {tasaValor > 0 && (
+                      <p className="text-[10px] text-muted-foreground/70">
+                        {formatBs(usdToBs(tieneSafCxc ? safCxcValue : deudaDisplay, tasaValor))}
+                      </p>
+                    )}
+                  </>
                 )}
               </div>
               {saldo < -0.001 && (

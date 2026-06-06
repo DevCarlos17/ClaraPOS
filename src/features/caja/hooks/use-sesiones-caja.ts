@@ -864,5 +864,43 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         )
       }
     }
+
+    // 7. Snapshot SAF: si hubo saldo a favor aplicado en esta sesion, insertar
+    //    una fila virtual en sesiones_caja_detalle para el historial de cierre.
+    //    metodo_cobro_id = NULL y moneda_id = NULL identifican la fila como SAF virtual.
+    //    Requiere migration 0052 que relaja las restricciones NOT NULL en esas columnas.
+    const safResult = await tx.execute(
+      `SELECT
+         COALESCE(SUM(CAST(monto AS REAL)), 0) as saf_total,
+         COUNT(*) as saf_count
+       FROM movimientos_cuenta
+       WHERE tipo = 'SAF'
+         AND sesion_caja_id = ?
+         AND sesion_caja_id IS NOT NULL
+         AND empresa_id = ?`,
+      [id, empresaId]
+    )
+
+    const safRow = safResult.rows?.item(0) as { saf_total: number; saf_count: number } | undefined
+    const safTotal = Number(safRow?.saf_total ?? 0)
+    const safCount = Number(safRow?.saf_count ?? 0)
+
+    if (safTotal > 0) {
+      await tx.execute(
+        `INSERT OR IGNORE INTO sesiones_caja_detalle
+           (id, sesion_caja_id, metodo_cobro_id, moneda_id, total_sistema, total_fisico,
+            diferencia, num_transacciones, empresa_id, created_at)
+         VALUES (?, ?, NULL, NULL, ?, NULL, NULL, ?, ?, ?)`,
+        [
+          uuidv4(),
+          id,
+          safTotal.toFixed(2),
+          safCount,
+          empresaId,
+          now,
+        ]
+      )
+    }
   })
+
 }

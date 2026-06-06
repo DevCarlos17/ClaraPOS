@@ -1169,8 +1169,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             `INSERT INTO movimientos_cuenta
                (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
                 observacion, venta_id, fecha, created_at, created_by,
-                moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
-             VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
+                moneda_pago, monto_moneda, tasa_pago, saf_origen_refs, sesion_caja_id)
+             VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)`,
             [
               uuidv4(), empresa_id, safClienteId,
               `SAF-VTA-${nroFactura}`,
@@ -1183,6 +1183,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               safMontoUsd.toFixed(2),
               tasa.toFixed(4),
               JSON.stringify(safOrigenRefsWithVenta),
+              params.sesion_caja_id ?? null,
             ]
           )
 
