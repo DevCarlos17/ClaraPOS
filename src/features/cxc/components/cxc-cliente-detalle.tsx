@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { useFacturasPendientes, type ClienteConDeuda, type VentaPendiente } from '../hooks/use-cxc'
-import { PagoFacturaModal } from './pago-factura-modal'
 import { AbonoGlobalModal } from './abono-global-modal'
 import { AplicarSafModal } from './aplicar-saf-modal'
 import { FacturaDetalleCxc } from './factura-detalle-cxc'
@@ -37,7 +36,6 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
   const { facturas, isLoading } = useFacturasPendientes(cliente.id)
 
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
-  const [pagoFacturaOpen, setPagoFacturaOpen] = useState(false)
   const [abonoGlobalOpen, setAbonoGlobalOpen] = useState(false)
   const [aplicarSafOpen, setAplicarSafOpen] = useState(false)
   const [detalleOpen, setDetalleOpen] = useState(false)
@@ -217,7 +215,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                         <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={() => { setFacturaSeleccionada(f); setPagoFacturaOpen(true) }}
+                            onClick={() => { setFacturaSeleccionada(f); setDetalleOpen(true) }}
                             className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors"
                           >
                             Pagar
@@ -245,15 +243,6 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
           )}
         </div>
       </div>
-
-      <PagoFacturaModal
-        isOpen={pagoFacturaOpen}
-        onClose={() => setPagoFacturaOpen(false)}
-        factura={facturaSeleccionada}
-        clienteId={cliente.id}
-        clienteNombre={cliente.nombre}
-        onSuccess={() => {}}
-      />
 
       <AbonoGlobalModal
         isOpen={abonoGlobalOpen}
