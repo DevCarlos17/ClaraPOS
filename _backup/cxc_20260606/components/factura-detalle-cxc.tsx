@@ -30,14 +30,6 @@ import { PagoFacturaModal } from './pago-factura-modal'
 
 // ─── Tipos internos ───────────────────────────────────────────
 
-interface SafMovimientoCxc {
-  id: string
-  referencia: string | null
-  monto: string
-  fecha: string
-  saf_origen_refs: string | null
-}
-
 interface VentaExtraRow {
   status: string
   procesado_por_nombre: string | null
@@ -177,17 +169,6 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
 
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(factura?.id ?? null)
   const { pagos, isLoading: loadingPagos } = usePagosFactura(factura?.id ?? null)
-
-  const { data: safMovData } = useQuery(
-    factura
-      ? `SELECT id, referencia, monto, fecha, saf_origen_refs
-         FROM movimientos_cuenta
-         WHERE venta_id = ? AND tipo = 'SAF'
-         ORDER BY fecha ASC`
-      : '',
-    factura ? [factura.id] : []
-  )
-  const safMovimientos = (safMovData as SafMovimientoCxc[]) ?? []
   const { cargos: cargosEspeciales } = useCargosEspecialesVenta(factura?.id ?? null)
   const { vencimientos } = useVencimientosVenta(factura?.id ?? null)
 
@@ -624,39 +605,6 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                           </tr>
                         )
                       })}
-                      {safMovimientos.map((mov) => (
-                        <tr key={mov.id} className="border-t border-border bg-green-50/30 dark:bg-green-950/20">
-                          <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
-                            {mov.fecha?.slice(0, 10)}
-                          </td>
-                          <td className="px-3 py-1.5 space-y-0.5">
-                            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400">
-                              Saldo a favor
-                            </span>
-                            {mov.saf_origen_refs && (() => {
-                              try {
-                                const refs = JSON.parse(mov.saf_origen_refs) as string[]
-                                return refs.length > 0 ? (
-                                  <div className="text-[10px] text-muted-foreground leading-tight">
-                                    Originado por: {refs.join(', ')}
-                                  </div>
-                                ) : null
-                              } catch { return null }
-                            })()}
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-muted-foreground">
-                            {mov.referencia || '—'}
-                          </td>
-                          <td className="px-3 py-1.5 text-right">
-                            <span className="font-medium tabular-nums text-green-600">
-                              {formatUsd(parseFloat(mov.monto))}
-                            </span>
-                          </td>
-                          <td className="px-3 py-1.5 text-center">
-                            <span className="text-[10px] text-muted-foreground italic">SAF</span>
-                          </td>
-                        </tr>
-                      ))}
                     </tbody>
                     {totalPagado > 0.005 && (
                       <tfoot>

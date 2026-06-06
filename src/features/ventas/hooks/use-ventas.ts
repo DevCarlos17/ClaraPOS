@@ -137,6 +137,19 @@ export interface CargoEspecial {
   egresosCaja?: Array<{ metodo_cobro_id: string; monto: number }>
 }
 
+/**
+ * SAF (saldo a favor) as a payment method in POS checkout.
+ * When provided, a movimiento_cuenta tipo='SAF' is inserted atomically,
+ * the invoice saldo_pend_usd is reduced, and clientes.saldo_actual is updated.
+ */
+export interface SafEntry {
+  clienteId: string
+  /** SAF amount to apply in USD. */
+  montoUsd: number
+  /** Traceability references for the origin of this credit. */
+  safOrigenRefs?: string[]
+}
+
 export interface CrearVentaParams {
   cliente_id: string
   tipo: 'CONTADO' | 'CREDITO'
@@ -157,6 +170,8 @@ export interface CrearVentaParams {
   totalIgtfUsd?: number
   /** Discrepancy resolution mode and amounts. */
   discrepancy?: DiscrepancyOptions
+  /** SAF as a payment method — applies existing client credit to this sale. */
+  safEntry?: SafEntry
 }
 
 export interface CrearVentaResult {
@@ -234,7 +249,7 @@ export async function buscarProductoPorCodigoBarras(
 }
 
 export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaResult> {
-  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0, vuelto, totalIgtfUsd = 0, discrepancy } = params
+  const { cliente_id, tipo, tasa, lineas, pagos, usuario_id, empresa_id, sesion_caja_id, cargosEspeciales = [], descuentoUsd = 0, vuelto, totalIgtfUsd = 0, discrepancy, safEntry } = params
 
   if (lineas.length === 0 && cargosEspeciales.length === 0) {
     throw new Error('Debe agregar al menos una linea o cargo especial a la venta')
@@ -1128,6 +1143,67 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         default:
           // Credit: saldo_pend_usd and movimientos_cuenta FAC already handled in steps 6+7
           break
+      }
+    }
+
+    // 7d. SAF as payment method: apply existing client credit to this sale
+    if (safEntry && safEntry.montoUsd > 0.001) {
+      const { clienteId: safClienteId, montoUsd: safMontoUsd, safOrigenRefs = [] } = safEntry
+
+      // Read and validate client SAF credit
+      const clienteSafRes = await tx.execute(
+        'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
+        [safClienteId]
+      )
+      if (clienteSafRes.rows?.length) {
+        const saldoActualSaf = parseFloat(
+          (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+        )
+        if (saldoActualSaf < -0.001) {
+          const saldoAntesSaf = saldoActualSaf
+          const saldoDespuesSaf = Number((saldoActualSaf + safMontoUsd).toFixed(2))
+
+          // INSERT movimiento_cuenta tipo='SAF' — traceability ref points to this sale
+          const safOrigenRefsWithVenta = safOrigenRefs.length > 0 ? safOrigenRefs : [ventaId]
+          await tx.execute(
+            `INSERT INTO movimientos_cuenta
+               (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+                observacion, venta_id, fecha, created_at, created_by,
+                moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
+             VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
+            [
+              uuidv4(), empresa_id, safClienteId,
+              `SAF-VTA-${nroFactura}`,
+              safMontoUsd.toFixed(2),
+              saldoAntesSaf.toFixed(2),
+              saldoDespuesSaf.toFixed(2),
+              `Saldo a favor aplicado en venta ${nroFactura}`,
+              ventaId,
+              now, now, usuario_id,
+              safMontoUsd.toFixed(2),
+              tasa.toFixed(4),
+              JSON.stringify(safOrigenRefsWithVenta),
+            ]
+          )
+
+          // Consume SAF credit: update clientes.saldo_actual
+          await tx.execute(
+            'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+            [saldoDespuesSaf.toFixed(2), now, safClienteId]
+          )
+
+          // Reduce saldo_pend_usd by SAF amount (sale partially covered by credit)
+          const saldoPendRes = await tx.execute('SELECT saldo_pend_usd FROM ventas WHERE id = ?', [ventaId])
+          if (saldoPendRes.rows?.length) {
+            const currentSaldoPend = parseFloat(
+              (saldoPendRes.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
+            )
+            const nuevoSaldoPendSaf = Math.max(0, Number((currentSaldoPend - safMontoUsd).toFixed(2)))
+            await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
+              nuevoSaldoPendSaf.toFixed(2), ventaId,
+            ])
+          }
+        }
       }
     }
 

@@ -11,8 +11,10 @@ import {
   validarStockServidor,
   type VueltoParam,
   type DiscrepancyOptions,
+  type SafEntry,
 } from '../hooks/use-ventas'
 import { useFacturasPendientes } from '@/features/cxc/hooks/use-cxc'
+import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import type { CargoEspecial } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -85,6 +87,11 @@ export function CobroModal({
   const [vueltoMetodoId, setVueltoMetodoId] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
+  // SAF as payment method
+  const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(clienteId || null)
+  const [safMonto, setSafMonto] = useState(0)
+  const [safSeleccionado, setSafSeleccionado] = useState(false)
+
   // ── Estado de resolución de discrepancias ─────────────────────────────────
   const [discrepancyMode, setDiscrepancyMode] = useState<DiscrepancyMode>(null)
   const [safSubMode, setSafSubMode] = useState<SafSubMode>(null)
@@ -108,6 +115,8 @@ export function CobroModal({
     setSplitVuelto([])
     setSupervisorAuthorized(false)
     setSupervisorId(null)
+    setSafMonto(0)
+    setSafSeleccionado(false)
   // La tasa se congela solo al abrir (se excluye tasa de deps intencionalmente)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
@@ -140,9 +149,11 @@ export function CobroModal({
   const igtfBs = Number((igtfUsd * tasaUsada).toFixed(2))
 
   // Ancla en Bs (sin doble conversion USD→Bs→USD)
+  // SAF se cuenta en USD; convertir a Bs para el balance
+  const safMontoBsEquiv = safSeleccionado ? safMonto * tasaUsada : 0
   const totalPagadoBs = pagos.reduce((sum, p) => {
     return sum + (p.moneda === 'BS' ? p.monto : p.monto * tasaUsada)
-  }, 0)
+  }, 0) + safMontoBsEquiv
   // El pendiente incluye el IGTF: el cliente debe cubrir factura + IGTF generado
   const pendienteBs4 = totalEfectivoBs + igtfBs - totalPagadoBs
   const umbralBs = tasaUsada * 0.01
@@ -434,6 +445,12 @@ export function CobroModal({
         empresaId,
       )
 
+      // Build SAF entry if client is using their credit balance as payment method
+      const safEntry: SafEntry | undefined =
+        safSeleccionado && safMonto > 0 && clienteId
+          ? { clienteId, montoUsd: safMonto, safOrigenRefs: [] }
+          : undefined
+
       const result = await crearVenta({
         cliente_id: clienteId,
         tipo: discrepancyMode === 'ABSORBER' ? 'CONTADO' : tipoDetectado,
@@ -460,6 +477,7 @@ export function CobroModal({
         descuentoMotivo: descuentoMotivo.trim() || undefined,
         totalIgtfUsd: igtfUsd,
         discrepancy,
+        safEntry,
       })
 
       onSuccess({
@@ -591,7 +609,7 @@ export function CobroModal({
         )}
 
         {/* Balance resumen */}
-        {pagos.length > 0 && (
+        {(pagos.length > 0 || safSeleccionado) && (
           <div className="px-5 py-2 border-b shrink-0 grid grid-cols-3 gap-2 text-xs">
             <div>
               <p className="text-muted-foreground">Abonado</p>
@@ -655,6 +673,47 @@ export function CobroModal({
             })
           )}
         </div>
+
+        {/* SAF como método de cobro dinámico — solo si cliente tiene crédito */}
+        {tieneSaf && clienteId && (
+          <div className="px-5 py-2 border-t shrink-0 bg-blue-50/50">
+            <div className="flex items-center justify-between">
+              <label className="flex items-center gap-1.5 text-xs font-medium text-blue-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={safSeleccionado}
+                  onChange={(e) => {
+                    const checked = e.target.checked
+                    setSafSeleccionado(checked)
+                    if (checked) {
+                      // Pre-cargar monto: min(disponible, totalVenta)
+                      setSafMonto(Number(Math.min(safDisponible, totalEfectivoUsd).toFixed(2)))
+                    } else {
+                      setSafMonto(0)
+                    }
+                  }}
+                  className="rounded border-blue-300"
+                />
+                Saldo a favor ({formatUsd(safDisponible)} disponible)
+              </label>
+              {safSeleccionado && (
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    max={safDisponible}
+                    value={safMonto || ''}
+                    onChange={(e) => setSafMonto(Math.min(parseFloat(e.target.value) || 0, safDisponible))}
+                    placeholder="0.00"
+                    className="h-7 w-24 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span className="text-xs text-blue-700">USD</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Formulario de pago */}
         <div className="px-5 py-3 border-t border-b shrink-0 space-y-2">
@@ -966,6 +1025,48 @@ export function CobroModal({
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Panel de vuelto por moneda — visible cuando hay overpago y modo VUELTO */}
+        {estaOverpago && discrepancyMode === 'VUELTO' && vueltoMontoBs > 0.01 && (
+          <div className="px-5 py-2 border-t shrink-0 bg-amber-50/50">
+            <p className="text-xs font-medium text-amber-800 mb-1.5">Desglose de vuelto</p>
+            {(() => {
+              const tieneUsd = pagos.some((p) => p.moneda === 'USD')
+              const tienebs = pagos.some((p) => p.moneda === 'BS')
+              const vueltoUsd = Number((vueltoMontoBs / tasaUsada).toFixed(2))
+
+              if (tieneUsd && tienebs) {
+                // Métodos mixtos: mostrar ambas denominaciones
+                return (
+                  <div className="flex gap-4">
+                    <div className="text-xs">
+                      <span className="text-amber-700">USD: </span>
+                      <span className="font-semibold">{formatUsd(vueltoUsd)}</span>
+                    </div>
+                    <div className="text-xs">
+                      <span className="text-amber-700">Bs: </span>
+                      <span className="font-semibold">{formatBs(vueltoMontoBs)}</span>
+                    </div>
+                  </div>
+                )
+              }
+              if (tieneUsd) {
+                return (
+                  <p className="text-xs">
+                    <span className="text-amber-700">Vuelto: </span>
+                    <span className="font-semibold">{formatUsd(vueltoUsd)}</span>
+                  </p>
+                )
+              }
+              return (
+                <p className="text-xs">
+                  <span className="text-amber-700">Vuelto: </span>
+                  <span className="font-semibold">{formatBs(vueltoMontoBs)}</span>
+                </p>
+              )
+            })()}
           </div>
         )}
 

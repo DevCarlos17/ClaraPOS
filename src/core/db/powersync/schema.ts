@@ -548,6 +548,7 @@ const movimientos_cuenta = new Table(
     moneda_pago: column.text,
     monto_moneda: column.text,
     tasa_pago: column.text,
+    saf_origen_refs: column.text,
   },
   { indexes: {} }
 )

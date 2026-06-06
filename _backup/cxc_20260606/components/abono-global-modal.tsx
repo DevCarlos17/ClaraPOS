@@ -2,7 +2,6 @@ import { useState, useRef, useEffect } from 'react'
 import { X } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
@@ -11,7 +10,6 @@ import {
   registrarDiscrepanciaCxC,
   useFacturasPendientes,
 } from '../hooks/use-cxc'
-import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
@@ -41,7 +39,6 @@ export function AbonoGlobalModal({
   const { user } = useCurrentUser()
   const { metodos } = useMetodosPagoActivos()
   const { facturas } = useFacturasPendientes(isOpen ? clienteId : null)
-  const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(isOpen ? clienteId : null)
 
   const [metodoPagoId, setMetodoPagoId] = useState('')
   const [montoStr, setMontoStr] = useState('')
@@ -50,10 +47,6 @@ export function AbonoGlobalModal({
   const [tasaFecha, setTasaFecha] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [excessMode, setExcessMode] = useState<ExcessMode>('ANTICIPO')
-
-  // Manual SAF state
-  const [usarSaf, setUsarSaf] = useState(false)
-  const [montoSafStr, setMontoSafStr] = useState('')
 
   // Buscar tasa BCV correspondiente a la fecha del abono
   useEffect(() => {
@@ -75,8 +68,6 @@ export function AbonoGlobalModal({
       setReferencia('')
       setFechaPago(todayStr())
       setExcessMode('ANTICIPO')
-      setUsarSaf(false)
-      setMontoSafStr('')
     } else {
       dialogRef.current?.close()
     }
@@ -92,15 +83,9 @@ export function AbonoGlobalModal({
   const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva) : monto
   const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva) : monto
 
-  // SAF manual calculations
-  const montoSafNum = usarSaf ? (parseFloat(montoSafStr) || 0) : 0
-  const maxSaf = Math.min(safDisponible, saldoActual)
-  // Effective debt after SAF reduction
-  const saldoConSaf = Math.max(0, Number((saldoActual - montoSafNum).toFixed(2)))
-
-  // Overpayment: cuando el monto supera la deuda total (descontando SAF)
-  const estaOverpago = saldoConSaf > 0 && montoUsd > saldoConSaf + 0.01
-  const excedenteUsd = estaOverpago ? Number((montoUsd - saldoConSaf).toFixed(2)) : 0
+  // Overpayment: cuando el monto supera la deuda total
+  const estaOverpago = saldoActual > 0 && montoUsd > saldoActual + 0.01
+  const excedenteUsd = estaOverpago ? Number((montoUsd - saldoActual).toFixed(2)) : 0
 
   // Deteccion de efectivo para aviso
   const esEfectivo =
@@ -109,20 +94,17 @@ export function AbonoGlobalModal({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (metodoSeleccionado as any).tipo === 'EFECTIVO')
 
-  const safCubreTodo = usarSaf && montoSafNum >= saldoActual - 0.001
   const canSubmit =
-    (safCubreTodo || (!!metodoPagoId && monto > 0)) &&
+    !!metodoPagoId &&
     tasaEfectiva > 0 &&
-    !submitting &&
-    (!usarSaf || montoSafNum > 0)
+    monto > 0 &&
+    !submitting
 
   // Preview FIFO — para VUELTO/PROPINA solo muestra las facturas (sin fila Anticipo)
-  // Los montos se muestran en la moneda del método seleccionado
   const fifoPreview = (() => {
-    const totalParaFifo = montoUsd + montoSafNum
-    if (totalParaFifo <= 0) return []
+    if (montoUsd <= 0) return []
     // Para VUELTO/PROPINA el abono se limita a la deuda total
-    const montoEfectivo = (estaOverpago && excessMode !== 'ANTICIPO') ? saldoConSaf : (montoUsd + montoSafNum)
+    const montoEfectivo = (estaOverpago && excessMode !== 'ANTICIPO') ? saldoActual : montoUsd
     let restante = montoEfectivo
     const result: { nro_factura: string; saldo: number; aplicar: number }[] = []
     for (const f of facturas) {
@@ -141,9 +123,9 @@ export function AbonoGlobalModal({
 
   const handlePayMax = () => {
     if (moneda === 'BS') {
-      setMontoStr(usdToBs(saldoConSaf, tasaEfectiva).toFixed(2))
+      setMontoStr(usdToBs(saldoActual, tasaEfectiva).toFixed(2))
     } else {
-      setMontoStr(saldoConSaf.toFixed(2))
+      setMontoStr(saldoActual.toFixed(2))
     }
   }
 
@@ -152,16 +134,9 @@ export function AbonoGlobalModal({
 
     setSubmitting(true)
     try {
-      const safFifoRefs = fifoPreview
-        .filter((f) => f.nro_factura !== 'ANTICIPO')
-        .map((f) => f.nro_factura)
-      const safParams = usarSaf && montoSafNum > 0
-        ? { aplicarSaf: true as const, montoSaf: montoSafNum, safOrigenRefs: safFifoRefs.length > 0 ? safFifoRefs : undefined }
-        : {}
-
       if (estaOverpago && excessMode !== 'ANTICIPO') {
         // VUELTO o PROPINA: abonar solo la deuda exacta y registrar el excedente aparte
-        const montoDeuda = moneda === 'BS' ? usdToBs(saldoConSaf, tasaEfectiva) : saldoConSaf
+        const montoDeuda = moneda === 'BS' ? usdToBs(saldoActual, tasaEfectiva) : saldoActual
         const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaEfectiva) : excedenteUsd
 
         const result = await registrarAbonoGlobal({
@@ -174,7 +149,6 @@ export function AbonoGlobalModal({
           empresa_id: user!.empresa_id!,
           procesado_por: user!.id,
           procesado_por_nombre: user!.nombre,
-          ...safParams,
         })
 
         await registrarDiscrepanciaCxC({
@@ -195,19 +169,17 @@ export function AbonoGlobalModal({
           `${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s). ${label}: ${formatUsd(excedenteUsd)}`
         )
       } else {
-        // Comportamiento normal (incluye ANTICIPO cuando hay excedente o SAF)
-        const montoMetodo = safCubreTodo ? 0 : monto
+        // Comportamiento normal (incluye ANTICIPO cuando hay excedente)
         const result = await registrarAbonoGlobal({
           cliente_id: clienteId,
           metodo_cobro_id: metodoPagoId,
           moneda: moneda as 'USD' | 'BS',
           tasa: tasaEfectiva,
-          monto: montoMetodo,
+          monto,
           referencia: referencia.trim() || undefined,
           empresa_id: user!.empresa_id!,
           procesado_por: user!.id,
           procesado_por_nombre: user!.nombre,
-          ...safParams,
         })
         toast.success(`${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s)`)
       }
@@ -374,64 +346,6 @@ export function AbonoGlobalModal({
           </div>
         </div>
 
-        {/* Sección SAF manual — visible solo cuando cliente tiene crédito */}
-        {tieneSaf && (
-          <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50/50 p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-blue-800">
-                Saldo a favor disponible: {formatUsd(safDisponible)}
-              </span>
-              <label className="flex items-center gap-1.5 text-xs text-blue-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={usarSaf}
-                  onChange={(e) => {
-                    setUsarSaf(e.target.checked)
-                    if (!e.target.checked) setMontoSafStr('')
-                    else setMontoSafStr(Math.min(safDisponible, saldoActual).toFixed(2))
-                  }}
-                  className="rounded border-blue-300"
-                />
-                Usar saldo a favor
-              </label>
-            </div>
-            {usarSaf && (
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs text-blue-700">Monto SAF a aplicar (USD)</label>
-                  <button
-                    type="button"
-                    onClick={() => setMontoSafStr(maxSaf.toFixed(2))}
-                    className="text-xs text-blue-600 hover:underline"
-                  >
-                    Máximo ({formatUsd(maxSaf)})
-                  </button>
-                </div>
-                <Input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  max={maxSaf}
-                  value={montoSafStr}
-                  onChange={(e) => setMontoSafStr(e.target.value)}
-                  placeholder="0.00"
-                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                />
-                {montoSafNum > 0 && !safCubreTodo && (
-                  <p className="text-xs text-blue-600">
-                    Resta a cobrar por método: {formatUsd(saldoConSaf)}
-                  </p>
-                )}
-                {safCubreTodo && (
-                  <p className="text-xs text-green-600 font-medium">
-                    El SAF cubre la deuda completa
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-
         {/* Panel overpayment — solo cuando monto supera deuda total */}
         {estaOverpago && (
           <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/50 p-3 space-y-2">
@@ -476,14 +390,11 @@ export function AbonoGlobalModal({
           </div>
         )}
 
-        {/* Preview FIFO — montos en la moneda del método seleccionado */}
+        {/* Preview FIFO */}
         {fifoPreview.length > 0 && (
           <div className="mt-4">
             <p className="text-xs font-medium text-muted-foreground mb-2">
               Distribucion del pago (FIFO)
-              {moneda === 'BS' && tasaEfectiva > 0 && (
-                <span className="ml-1 text-muted-foreground/70">— en Bs</span>
-              )}
             </p>
             <div className="overflow-x-auto border rounded-lg max-h-40 overflow-y-auto">
               <table className="w-full text-xs">
@@ -505,32 +416,14 @@ export function AbonoGlobalModal({
                         )}
                       </td>
                       <td className="px-2 py-1.5 text-right text-muted-foreground">
-                        {p.saldo > 0
-                          ? moneda === 'BS' && tasaEfectiva > 0
-                            ? formatBs(p.saldo * tasaEfectiva)
-                            : formatUsd(p.saldo)
-                          : '-'}
+                        {p.saldo > 0 ? formatUsd(p.saldo) : '-'}
                       </td>
                       <td className="px-2 py-1.5 text-right font-medium text-green-600">
-                        {moneda === 'BS' && tasaEfectiva > 0
-                          ? formatBs(p.aplicar * tasaEfectiva)
-                          : formatUsd(p.aplicar)}
+                        {formatUsd(p.aplicar)}
                       </td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot>
-                  <tr className="border-t bg-muted/30">
-                    <td colSpan={2} className="px-2 py-1.5 text-xs text-muted-foreground font-medium">
-                      Total abonado
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-semibold text-green-700">
-                      {moneda === 'BS' && tasaEfectiva > 0
-                        ? formatBs(fifoPreview.reduce((s, p) => s + p.aplicar, 0) * tasaEfectiva)
-                        : formatUsd(fifoPreview.reduce((s, p) => s + p.aplicar, 0))}
-                    </td>
-                  </tr>
-                </tfoot>
               </table>
             </div>
           </div>
@@ -544,11 +437,9 @@ export function AbonoGlobalModal({
           <Button onClick={handleSubmit} disabled={!canSubmit}>
             {submitting
               ? 'Registrando...'
-              : safCubreTodo
-                ? `Aplicar SAF ${formatUsd(montoSafNum)}`
-                : estaOverpago && excessMode !== 'ANTICIPO'
-                  ? `Abonar ${formatUsd(saldoConSaf)}`
-                  : `Abonar ${(montoUsd + montoSafNum) > 0 ? formatUsd(montoUsd + montoSafNum) : ''}`}
+              : estaOverpago && excessMode !== 'ANTICIPO'
+                ? `Abonar ${formatUsd(saldoActual)}`
+                : `Abonar ${montoUsd > 0 ? formatUsd(montoUsd) : ''}`}
           </Button>
         </div>
       </div>

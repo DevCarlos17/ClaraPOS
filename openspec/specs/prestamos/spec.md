@@ -1,7 +1,7 @@
 # Spec: Prestamos — Abono via PagoFacturaModal
 
 > **Domain**: prestamos (cross-cutting: `features/ventas` + `features/cxc`)
-> **Last updated by change**: `cxc-prestamos-modal-unificacion` (2026-06-05)
+> **Last updated by change**: `cxc-mejoras-pagos` (2026-06-06) — added REQ-005, resolved BRECHA-002
 
 ---
 
@@ -86,11 +86,32 @@ no additional refetch logic is required.
 
 ---
 
+### REQ-005: Overpayment in PagoFacturaModal Routes to SAF UI
+
+> **Added by change**: `cxc-mejoras-pagos` (2026-06-06)
+
+When a loan payment via `PagoFacturaModal` results in overpayment, the excess MUST be
+offered via the manual "Usar saldo a favor" section defined in CAP-1 of `cxc-mejoras-pagos`.
+The system MUST NOT automatically distribute the excess to other invoices or loans.
+
+#### Scenario: Loan overpayment — manual SAF section offered
+
+- GIVEN a loan with `saldo_pendiente_usd = $50` and the user enters $80
+- WHEN `PagoFacturaModal` processes the payment
+- THEN the $30 excess is offered via "Usar saldo a favor" (not auto-applied to other loans)
+
+#### Scenario: Cashier declines SAF — excess credited
+
+- GIVEN a loan overpayment of $30
+- WHEN the cashier does not enable the SAF option
+- THEN the $30 increases `cliente.saldo_actual` as new SAF credit
+
+---
+
 ## Known Open Items
 
 | ID | Description |
 |----|-------------|
-| BRECHA-002 | Overpayment flow (vuelto / SAF / saldo a favor) — not implemented |
 | BRECHA-003 | `movimientos_cuenta` entry for loan payments — not implemented |
 | BRECHA-004 | Atomicity in `AbonoGlobalModal` — not implemented |
 | BRECHA-007 | Standalone loan egress for BANCO/EFECTIVO_EMPRESA origins — not implemented |
