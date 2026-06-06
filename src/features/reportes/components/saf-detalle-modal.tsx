@@ -57,6 +57,17 @@ export function SafDetalleModal({ open, onClose, items, tasaDelDia }: SafDetalle
                           <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
                             Total
                           </span>
+                        ) : item.otrosPagos.length > 0 ? (
+                          <div className="space-y-0.5 text-xs text-left">
+                            <span className="block font-medium text-amber-700">
+                              SAF: {formatUsd(item.montoSafUsd)}
+                            </span>
+                            {item.otrosPagos.map((p, i) => (
+                              <span key={i} className="block text-muted-foreground">
+                                {p.metodoNombre}: {formatUsd(p.montoUsd)}
+                              </span>
+                            ))}
+                          </div>
                         ) : (
                           <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
                             Parcial

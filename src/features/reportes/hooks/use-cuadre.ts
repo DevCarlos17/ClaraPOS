@@ -1400,6 +1400,11 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
 
 // ─── SAF Diario (saldo a favor como metodo de pago en POS) ────
 
+export interface OtroPago {
+  metodoNombre: string
+  montoUsd: number
+}
+
 export interface SafFacturaItem {
   movimientoCuentaId: string
   ventaId: string
@@ -1409,6 +1414,7 @@ export interface SafFacturaItem {
   totalFacturaUsd: number
   esPagoTotal: boolean  // montoSafUsd >= totalFacturaUsd - 0.01
   tasa: number
+  otrosPagos: OtroPago[]
 }
 
 export interface SafDiarioResult {
@@ -1453,13 +1459,20 @@ export function useSafDiario(filters: CuadreFilters | null): SafDiarioResult {
            mc.tasa_pago,
            v.nro_factura,
            v.total_usd,
-           c.nombre as cliente_nombre
+           c.nombre as cliente_nombre,
+           GROUP_CONCAT(mp.nombre || ':' || pg.monto_usd, '|') as otros_pagos_raw
          FROM movimientos_cuenta mc
          JOIN ventas v ON mc.venta_id = v.id
          JOIN clientes c ON v.cliente_id = c.id
+         LEFT JOIN pagos pg ON pg.venta_id = mc.venta_id
+           AND pg.empresa_id = mc.empresa_id
+           AND pg.is_reversed = 0
+         LEFT JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
          WHERE mc.tipo = 'SAF'
            AND mc.sesion_caja_id IS NOT NULL
            AND ${whereMc}
+         GROUP BY mc.id, mc.venta_id, mc.monto, mc.tasa_pago,
+                  v.nro_factura, v.total_usd, c.nombre
          ORDER BY mc.fecha DESC`
       : '',
     filters ? paramsMc : []
@@ -1472,6 +1485,17 @@ export function useSafDiario(filters: CuadreFilters | null): SafDiarioResult {
   const items: SafFacturaItem[] = (dataItems ?? []).map((row: Record<string, unknown>) => {
     const montoSafUsd = Number(Number(row.monto ?? 0).toFixed(2))
     const totalFacturaUsd = Number(Number(row.total_usd ?? 0).toFixed(2))
+    const rawStr = String(row.otros_pagos_raw ?? '')
+    const otrosPagos: OtroPago[] = rawStr
+      ? rawStr.split('|').map((part) => {
+          const colonIdx = part.lastIndexOf(':')
+          if (colonIdx < 0) return null
+          return {
+            metodoNombre: part.slice(0, colonIdx),
+            montoUsd: Number(part.slice(colonIdx + 1)) || 0,
+          }
+        }).filter((p): p is OtroPago => p !== null)
+      : []
     return {
       movimientoCuentaId: String(row.movimiento_cuenta_id ?? ''),
       ventaId: String(row.venta_id ?? ''),
@@ -1481,6 +1505,7 @@ export function useSafDiario(filters: CuadreFilters | null): SafDiarioResult {
       totalFacturaUsd,
       esPagoTotal: montoSafUsd >= totalFacturaUsd - 0.01,
       tasa: Number(Number(row.tasa_pago ?? 0).toFixed(4)),
+      otrosPagos,
     }
   })
 
