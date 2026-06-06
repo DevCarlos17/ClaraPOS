@@ -581,6 +581,34 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           factura.id,
         ])
 
+        // Si la factura tiene préstamos vinculados, sincronizar vencimientos_cobrar FIFO
+        const vencFifoResult = await tx.execute(
+          `SELECT id, saldo_pendiente_usd, monto_pagado_usd
+           FROM vencimientos_cobrar
+           WHERE venta_id = ? AND empresa_id = ? AND status = 'PENDIENTE'
+           ORDER BY fecha_vencimiento ASC`,
+          [factura.id, empresa_id]
+        )
+        let montoRestanteVenc = montoAplicar
+        for (let j = 0; j < (vencFifoResult.rows?.length ?? 0) && montoRestanteVenc > 0.005; j++) {
+          const vc = vencFifoResult.rows!.item(j) as {
+            id: string; saldo_pendiente_usd: string; monto_pagado_usd: string
+          }
+          const saldoVc = parseFloat(vc.saldo_pendiente_usd)
+          const pagadoVc = parseFloat(vc.monto_pagado_usd)
+          const abonarVc = Math.min(montoRestanteVenc, saldoVc)
+          const nuevoSaldoVc = Math.max(0, Number((saldoVc - abonarVc).toFixed(2)))
+          const nuevoPagadoVc = Number((pagadoVc + abonarVc).toFixed(2))
+          const nuevoStatusVc = nuevoSaldoVc <= 0.005 ? 'PAGADO' : 'PENDIENTE'
+          await tx.execute(
+            `UPDATE vencimientos_cobrar
+             SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?
+             WHERE id = ?`,
+            [nuevoPagadoVc.toFixed(2), nuevoSaldoVc.toFixed(2), nuevoStatusVc, vc.id]
+          )
+          montoRestanteVenc = Number((montoRestanteVenc - abonarVc).toFixed(2))
+        }
+
         montoRestante = Number((montoRestante - montoAplicar).toFixed(2))
         facturasAfectadas++
       }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@powersync/react'
 import { CheckCircle, Warning, Clock, Handshake, Vault, Bank } from '@phosphor-icons/react'
 import {
@@ -118,13 +118,7 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
     prestamo?.venta_id ?? null
   )
 
-  // DEBUG TEMPORAL
-  useEffect(() => {
-    console.log('[HISTORIAL-DEBUG] prestamo.id:', prestamo?.id)
-    console.log('[HISTORIAL-DEBUG] prestamo.venta_id:', prestamo?.venta_id)
-    console.log('[HISTORIAL-DEBUG] historial count:', historial.length)
-    console.log('[HISTORIAL-DEBUG] historial data:', historial)
-  }, [prestamo?.id, prestamo?.venta_id, historial])
+
   const [pagoModalOpen, setPagoModalOpen] = useState(false)
 
   // Query reactiva para obtener el saldo actualizado del vencimiento
