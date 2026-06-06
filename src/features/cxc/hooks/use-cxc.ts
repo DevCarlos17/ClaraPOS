@@ -870,9 +870,10 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         )
 
         // 7d. Actualizar saldo pendiente de la factura
+        // Nota: updated_at lo maneja el trigger de Supabase — no se incluye aquí
         await tx.execute(
-          'UPDATE ventas SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
-          [nuevoSaldoFactura.toFixed(2), now, venc.venta_id]
+          'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+          [nuevoSaldoFactura.toFixed(2), venc.venta_id]
         )
 
         // 7e. Leer saldo actual del cliente
