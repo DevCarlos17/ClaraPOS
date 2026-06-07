@@ -40,13 +40,25 @@ export function useMovimientosFiltrados(fechaDesde: string, fechaHasta: string) 
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
+  // Nota sobre fechas:
+  // localNow() produce ISO 8601 con offset '-04:00' (ej. '2026-06-07T20:30:00-04:00').
+  // Supabase (TIMESTAMPTZ) convierte a UTC y al sincronizar devuelve '2026-06-07 22:30:00'
+  // (espacio, sin offset).  Comparar strings directamente falla porque 'T' > ' '.
+  //
+  // Solucion: datetime(mi.fecha) normaliza ambos formatos a UTC para la comparacion.
+  // Los bounds del filtro se expresan en hora venezolana (VET = UTC-4) usando el
+  // sufijo '-04:00', de modo que datetime() los convierte a UTC y la comparacion
+  // es consistente tanto para registros locales (pre-sync) como para los que ya
+  // sincronizaron (post-sync, almacenados en UTC).
   const { data, isLoading } = useQuery(
     `SELECT mi.*, p.codigo as prod_codigo, p.nombre as prod_nombre, p.departamento_id
      FROM movimientos_inventario mi
      LEFT JOIN productos p ON p.id = mi.producto_id
-     WHERE mi.empresa_id = ? AND mi.fecha >= ? AND mi.fecha <= ?
+     WHERE mi.empresa_id = ?
+       AND datetime(mi.fecha) >= datetime(? || 'T00:00:00-04:00')
+       AND datetime(mi.fecha) <= datetime(? || 'T23:59:59-04:00')
      ORDER BY mi.fecha DESC LIMIT 500`,
-    [empresaId, fechaDesde, fechaHasta + ' 23:59:59']
+    [empresaId, fechaDesde, fechaHasta]
   )
   return { movimientos: (data ?? []) as MovimientoConProducto[], isLoading }
 }

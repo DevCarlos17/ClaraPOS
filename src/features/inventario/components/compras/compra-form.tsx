@@ -46,6 +46,8 @@ interface LineaUI {
   lote_nro: string
   lote_fecha_fab: string
   lote_fecha_venc: string
+  /** Precio de venta actual del producto (USD). Usado para advertir cuando costo > precio. */
+  precio_venta_usd: string
 }
 
 interface PagoUI {
@@ -326,6 +328,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         lote_nro: '',
         lote_fecha_fab: '',
         lote_fecha_venc: '',
+        precio_venta_usd: producto.precio_venta_usd,
       },
     ])
     setBusqueda('')
@@ -574,6 +577,25 @@ export function CompraForm({ onClose }: CompraFormProps) {
     : 'Registrar Factura de Compra'
 
   const mostrarColumnasSistema = usaTasaParalela && tasaInternaNum > 0
+
+  // Lineas cuyo costo de compra supera el precio de venta vigente del producto.
+  // Se usa para mostrar advertencias (la constraint chk_precio_costo fue eliminada
+  // de Supabase porque causaba perdida silenciosa de datos via PowerSync, pero
+  // la advertencia en UI ayuda al usuario a actualizar sus precios de venta).
+  const lineasConCostoAlto = useMemo(() => {
+    return lineas.filter((l) => {
+      const precioVenta = parseFloat(l.precio_venta_usd) || 0
+      if (precioVenta <= 0) return false
+      let costoUsd: number
+      if (moneda === 'USD') {
+        costoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
+      } else {
+        const costoOrig = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
+        costoUsd = l.factor > 0 ? costoOrig / l.factor : costoOrig
+      }
+      return costoUsd > precioVenta + 0.001
+    })
+  }, [lineas, moneda, tasaFacturaNum])
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-6 space-y-6">
@@ -911,7 +933,17 @@ export function CompraForm({ onClose }: CompraFormProps) {
                       <React.Fragment key={linea.producto_id}>
                       <tr>
                         <td className="px-3 py-2 text-sm font-mono text-muted-foreground">{linea.codigo}</td>
-                        <td className="px-3 py-2 text-sm text-foreground">{linea.nombre}</td>
+                        <td className="px-3 py-2 text-sm text-foreground">
+                          <span>{linea.nombre}</span>
+                          {lineasConCostoAlto.some((l) => l.producto_id === linea.producto_id) && (
+                            <span
+                              title="El costo de compra supera el precio de venta vigente. Actualize el precio de venta del producto."
+                              className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-400/50"
+                            >
+                              COSTO &gt; PRECIO
+                            </span>
+                          )}
+                        </td>
                         <td className="px-3 py-2">
                           <select
                             value={linea.unidad_seleccionada_id ?? '__base__'}
@@ -1445,6 +1477,23 @@ export function CompraForm({ onClose }: CompraFormProps) {
               {tipoDetectado === 'CREDITO' && <span>{formatUsd(pendienteUsd)}</span>}
             </div>
           </div>
+
+          {lineasConCostoAlto.length > 0 && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-sm text-amber-800 dark:text-amber-300">
+              <p className="font-semibold mb-1">⚠ Costo de compra supera precio de venta en {lineasConCostoAlto.length} producto(s):</p>
+              <ul className="list-disc list-inside space-y-0.5 text-xs">
+                {lineasConCostoAlto.map((l) => (
+                  <li key={l.producto_id}>
+                    {l.nombre} — costo compra vs. precio venta actual{' '}
+                    <span className="font-mono">{formatUsd(parseFloat(l.precio_venta_usd))}</span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-xs opacity-80">
+                Puede continuar. Recuerde actualizar el precio de venta de estos productos.
+              </p>
+            </div>
+          )}
 
           <div className="flex justify-end gap-3 pt-2 border-t">
             <button

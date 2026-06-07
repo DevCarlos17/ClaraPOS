@@ -1,0 +1,31 @@
+-- ============================================================
+-- 0053_drop_precio_costo_constraints.sql
+-- Elimina los CHECK constraints de negocio en la tabla productos.
+--
+-- PROBLEMA:
+--   crearCompra() actualiza productos.costo_usd al costo de la
+--   nueva compra.  Si ese costo supera el precio_venta_usd vigente
+--   (ej. compra de emergencia a precio alto, fluctuacion de mercado),
+--   Supabase lanza error 23514 (check constraint violation).
+--
+--   El connector de PowerSync clasifica 23514 como error FATAL
+--   (regex '^23...$') y llama transaction.complete() descartando
+--   TODOS los ops restantes de esa transaccion CRUD: los INSERT de
+--   facturas_compra_det y movimientos_inventario de los articulos
+--   siguientes en el mismo lote nunca llegan a Supabase, y PowerSync
+--   los borra del SQLite local al sincronizar de vuelta.
+--
+--   Resultado visible: la factura aparece con totales correctos pero
+--   solo muestra los primeros 1-2 articulos; los demas desaparecen
+--   silenciosamente sin ningun mensaje de error al usuario.
+--
+-- SOLUCION:
+--   Eliminar los constraints de BD para que la actualizacion de
+--   costo nunca interrumpa el ciclo de upload de PowerSync.
+--   La regla de negocio "precio_venta >= costo" se mantiene como
+--   validacion de UI (advertencia en el formulario de compras y en
+--   el formulario de productos), no como restriccion de BD.
+-- ============================================================
+
+ALTER TABLE productos DROP CONSTRAINT IF EXISTS chk_precio_costo;
+ALTER TABLE productos DROP CONSTRAINT IF EXISTS chk_precio_mayor;
