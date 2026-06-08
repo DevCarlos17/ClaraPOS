@@ -1574,7 +1574,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
                                   <label className="text-muted-foreground shrink-0">Nro.</label>
                                   <input type="text" value={linea.lote_nro}
                                     onChange={(e) => handleLoteChange(index, 'lote_nro', e.target.value.toUpperCase())}
+                                    onKeyDown={handleSafeTextKeyDown}
+                                    onPaste={handleSafeTextPaste}
                                     placeholder="Ej: LOT-001" autoComplete="off"
+                                    maxLength={30}
                                     className="w-28 rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
                                 </div>
                                 <div className="flex items-center gap-1.5">
