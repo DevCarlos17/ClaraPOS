@@ -234,9 +234,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // Fecha pasada: buscar tasa historica para esa fecha
+    // Fecha pasada: buscar tasa historica para esa fecha.
+    // substr(fecha, 1, 10) extrae YYYY-MM-DD del timestamp ISO almacenado como texto
+    // ('2026-06-07T18:30:00.000-04:00' → '2026-06-07'), evitando que la comparacion
+    // lexicografica falle porque el timestamp completo es mayor que la fecha plana.
     db.getAll<{ valor: string }>(
-      `SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND fecha <= ? ORDER BY fecha DESC LIMIT 1`,
+      `SELECT valor FROM tasas_cambio WHERE empresa_id = ? AND substr(fecha, 1, 10) <= ? ORDER BY fecha DESC LIMIT 1`,
       [user.empresa_id, fechaFactura]
     ).then((rows) => {
       if (rows.length > 0) {
