@@ -1182,8 +1182,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     <th className="px-1 py-2 w-px bg-border/40"></th>
                     {/* ── LADO PRECIOS DEL SISTEMA ── */}
                     <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-20">Margen%</th>
-                    <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-24">PVP ($)</th>
-                    <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-24">PVP + IVA</th>
+                    <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-24">PVP ({monedaLabel})</th>
+                    <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-24">PVP + IVA ({monedaLabel})</th>
                     {/* ── ESTADO / DECISIÓN ── */}
                     <th className="px-2 py-2 text-center font-medium text-muted-foreground uppercase w-32">Estado</th>
                     <th className="px-2 py-2 w-8"></th>
@@ -1267,7 +1267,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                               onChange={(e) => handleNuevoCostoChange(index, e.target.value)}
                               onKeyDown={handleNumericKeyDown}
                               onPaste={handleNumericPaste}
-                              placeholder={moneda === 'USD' ? formatUsd(linea.costo_actual) : formatBs(linea.costo_actual)}
+                              placeholder={Number(linea.costo_actual).toFixed(2)}
                               className={`w-full rounded border px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                                 costoCambio
                                   ? costoForzado
@@ -1332,13 +1332,15 @@ export function CompraForm({ onClose }: CompraFormProps) {
                                 className="w-20 rounded border border-blue-400 bg-blue-50 dark:bg-blue-950/20 px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               />
                             ) : (
-                              <span className="tabular-nums text-muted-foreground">{formatUsd(pvpEfectivoUsd)}</span>
+                              <span className="tabular-nums text-muted-foreground">
+                                {moneda === 'USD' ? formatUsd(pvpEfectivoUsd) : formatBs(pvpEfectivoUsd * tasaFacturaNum)}
+                              </span>
                             )}
                           </td>
 
                           {/* PVP + IVA */}
                           <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
-                            {formatUsd(pvpMasIva)}
+                            {moneda === 'USD' ? formatUsd(pvpMasIva) : formatBs(pvpMasIva * tasaFacturaNum)}
                           </td>
 
                           {/* Estado / Decisión */}
