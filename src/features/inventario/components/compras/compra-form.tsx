@@ -437,8 +437,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
           return { ...updated, pvp_decision: null }
         }
 
-        // Si nuevo costo > pvp → forzado: auto-rellenar pvp/margen con proyección
-        if (costoNuevoUsd > pvpActualUsd + 0.001) {
+        // Si costo SUBIÓ → auto-recalcular PVP manteniendo margen establecido
+        if (costoNuevoUsd > costoUsdActual + 0.0001) {
           const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
             ? (pvpActualUsd - costoUsdActual) / costoUsdActual
             : 0
@@ -466,7 +466,24 @@ export function CompraForm({ onClose }: CompraFormProps) {
       prev.map((l, i) => {
         if (i !== index) return l
         if (decision === 'mantener') {
-          return { ...l, pvp_decision: 'mantener' }
+          // Pre-calcular nuevo margen: (pvp_actual - nuevo_costo) / nuevo_costo
+          let costoNuevoUsd: number
+          if (moneda === 'USD') {
+            costoNuevoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
+          } else {
+            const costoOrig = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
+            costoNuevoUsd = l.factor > 0 ? costoOrig / l.factor : costoOrig
+          }
+          const pvpActualUsd = parseFloat(l.precio_venta_usd) || 0
+          const nuevoMargen = costoNuevoUsd > 0
+            ? ((pvpActualUsd - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+            : '0.0'
+          return {
+            ...l,
+            pvp_decision: 'mantener',
+            nuevo_pvp_input: pvpActualUsd.toFixed(2),
+            nuevo_margen_input: nuevoMargen,
+          }
         }
         // Actualizar: pre-rellenar pvp/margen con los valores proyectados
         let costoNuevoUsd: number
@@ -1267,7 +1284,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                               onChange={(e) => handleNuevoCostoChange(index, e.target.value)}
                               onKeyDown={handleNumericKeyDown}
                               onPaste={handleNumericPaste}
-                              placeholder={Number(linea.costo_actual).toFixed(2)}
+                              placeholder=""
                               className={`w-full rounded border px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                                 costoCambio
                                   ? costoForzado
@@ -1306,7 +1323,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
                           {/* Margen% — read-only o editable */}
                           <td className="px-2 py-2 text-right">
-                            {linea.pvp_decision === 'actualizar' ? (
+                            {linea.pvp_decision === 'actualizar' || linea.pvp_decision === 'mantener' ? (
                               <input
                                 type="number" step="0.1" min="0"
                                 value={linea.nuevo_margen_input}
@@ -1320,9 +1337,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                             )}
                           </td>
 
-                          {/* PVP ($) — read-only o editable */}
+                          {/* PVP — read-only o editable */}
                           <td className="px-2 py-2 text-right">
-                            {linea.pvp_decision === 'actualizar' ? (
+                            {linea.pvp_decision === 'actualizar' || linea.pvp_decision === 'mantener' ? (
                               <input
                                 type="number" step="0.01" min="0.01"
                                 value={linea.nuevo_pvp_input}
