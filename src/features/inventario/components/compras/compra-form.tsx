@@ -81,6 +81,38 @@ interface CompraFormProps {
   onClose: () => void
 }
 
+// ── Límites numéricos por contexto de negocio ─────────────────────────────────
+// Derivados de la realidad del negocio, no de límites técnicos arbitrarios.
+// El techo real es la columna NUMERIC(12,2) de PostgreSQL (~10 mil millones);
+// estos límites son más conservadores y representan valores realistas para
+// una clínica estética con operación bimonetaria venezolana.
+const NUMERIC_LIMITS = {
+  tasa:     { max: 9_999_999,  decimals: 4 },  // Bs/USD: cubre hiperinflación extrema
+  cantidad: { max: 999_999,    decimals: 3 },  // Unidades: suficiente para cualquier inventario
+  costo:    { max: 9_999.99,   decimals: 2 },  // USD por unidad: avisa si supera $9.999
+  pvp:      { max: 9_999.99,   decimals: 2 },  // USD por unidad
+  margen:   { max: 9_999,      decimals: 1 },  // %: margen de 10.000% es irreal
+  monto:    { max: 9_999_999,  decimals: 2 },  // Monto de pago
+} as const
+
+/**
+ * Clamps un valor numérico al máximo permitido y lo devuelve como string
+ * con la precisión decimal correcta. Retorna '' si el input está vacío.
+ * Úsalo en onChange para evitar que el usuario acumule dígitos sin sentido.
+ */
+function clampNumeric(value: string, max: number, decimals: number): string {
+  if (value === '' || value === '-') return value
+  const num = parseFloat(value)
+  if (isNaN(num)) return value
+  if (num > max) return max.toFixed(decimals)
+  // Truncar decimales excedentes sin redondear (para no alterar el valor intencionado)
+  const parts = value.split('.')
+  if (parts[1] && parts[1].length > decimals) {
+    return parts[0] + '.' + parts[1].slice(0, decimals)
+  }
+  return value
+}
+
 // ── Handlers globales para inputs (sin estado, seguros fuera del componente) ───
 
 /**
@@ -440,7 +472,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
     setLineas((prev) =>
       prev.map((l, i) => {
         if (i !== index) return l
-        const num = parseFloat(value)
+        const clamped = clampNumeric(value, NUMERIC_LIMITS.cantidad.max, NUMERIC_LIMITS.cantidad.decimals)
+        const num = parseFloat(clamped)
         return { ...l, [field]: isNaN(num) || num < 0 ? 0 : num }
       })
     )
@@ -457,11 +490,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
           return { ...l, nuevo_costo_raw: '', costo_input: l.costo_actual, pvp_decision: null }
         }
 
-        const numericalValue = parseFloat(value)
+        const clamped = clampNumeric(value, NUMERIC_LIMITS.costo.max, NUMERIC_LIMITS.costo.decimals)
+        const numericalValue = parseFloat(clamped)
         if (isNaN(numericalValue) || numericalValue < 0) return l
 
-        // costo_input = nuevo costo ingresado
-        const updated = { ...l, nuevo_costo_raw: value, costo_input: numericalValue }
+        // costo_input = nuevo costo ingresado (ya clampeado)
+        const updated = { ...l, nuevo_costo_raw: clamped, costo_input: numericalValue }
 
         // Calcular costo nuevo en USD por unidad base (para comparar con pvp)
         let costoNuevoUsd: number
@@ -560,8 +594,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
     setLineas((prev) =>
       prev.map((l, i) => {
         if (i !== index) return l
-        const pvpNum = parseFloat(value)
-        if (isNaN(pvpNum) || pvpNum < 0) return { ...l, nuevo_pvp_input: value }
+        const clamped = clampNumeric(value, NUMERIC_LIMITS.pvp.max, NUMERIC_LIMITS.pvp.decimals)
+        const pvpNum = parseFloat(clamped)
+        if (isNaN(pvpNum) || pvpNum < 0) return { ...l, nuevo_pvp_input: clamped }
         // Convertir a USD para calcular el margen (que siempre es USD/USD)
         const pvpUsd = moneda === 'USD' ? pvpNum : (tasaFacturaNum > 0 ? pvpNum / tasaFacturaNum : pvpNum)
         let costoNuevoUsd: number
@@ -574,7 +609,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         const nuevoMargen = costoNuevoUsd > 0
           ? ((pvpUsd - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
           : '0.0'
-        return { ...l, nuevo_pvp_input: value, nuevo_margen_input: nuevoMargen }
+        return { ...l, nuevo_pvp_input: clamped, nuevo_margen_input: nuevoMargen }
       })
     )
   }
@@ -584,8 +619,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
     setLineas((prev) =>
       prev.map((l, i) => {
         if (i !== index) return l
-        const margenNum = parseFloat(value)
-        if (isNaN(margenNum)) return { ...l, nuevo_margen_input: value }
+        const clamped = clampNumeric(value, NUMERIC_LIMITS.margen.max, NUMERIC_LIMITS.margen.decimals)
+        const margenNum = parseFloat(clamped)
+        if (isNaN(margenNum)) return { ...l, nuevo_margen_input: clamped }
         let costoNuevoUsd: number
         if (moneda === 'USD') {
           costoNuevoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
@@ -595,7 +631,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         }
         const nuevoPvpUsd = Number((costoNuevoUsd * (1 + margenNum / 100)).toFixed(2))
         const nuevoPvpDisplay = moneda === 'USD' ? nuevoPvpUsd : nuevoPvpUsd * tasaFacturaNum
-        return { ...l, nuevo_margen_input: value, nuevo_pvp_input: Math.max(0, nuevoPvpDisplay).toFixed(2) }
+        return { ...l, nuevo_margen_input: clamped, nuevo_pvp_input: Math.max(0, nuevoPvpDisplay).toFixed(2) }
       })
     )
   }
@@ -1093,8 +1129,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 type="number"
                 step="0.0001"
                 min="0.0001"
+                max={NUMERIC_LIMITS.tasa.max}
                 value={tasaInterna}
-                onChange={(e) => setTasaInterna(e.target.value)}
+                onChange={(e) => setTasaInterna(clampNumeric(e.target.value, NUMERIC_LIMITS.tasa.max, NUMERIC_LIMITS.tasa.decimals))}
                 placeholder="0.0000"
                 className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                   errors.tasa_interna ? 'border-destructive' : 'border-input'
@@ -1169,8 +1206,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     type="number"
                     step="0.0001"
                     min="0.0001"
+                    max={NUMERIC_LIMITS.tasa.max}
                     value={tasaProveedor}
-                    onChange={(e) => setTasaProveedor(e.target.value)}
+                    onChange={(e) => setTasaProveedor(clampNumeric(e.target.value, NUMERIC_LIMITS.tasa.max, NUMERIC_LIMITS.tasa.decimals))}
                     placeholder="0.0000"
                     className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                       errors.tasa_proveedor ? 'border-destructive' : 'border-amber-200 dark:border-amber-700'
@@ -1365,7 +1403,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           {/* Cantidad */}
                           <td className="px-2 py-2">
                             <input
-                              type="number" step="0.001" min="0.001"
+                              type="number" step="0.001" min="0.001" max={NUMERIC_LIMITS.cantidad.max}
                               value={linea.cantidad_input || ''}
                               onChange={(e) => handleLineaChange(index, 'cantidad_input', e.target.value)}
                               onKeyDown={handleNumericKeyDown}
@@ -1382,7 +1420,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           {/* Nuevo Costo (editable, blank = sin cambio) */}
                           <td className="px-2 py-2">
                             <input
-                              type="number" step="0.01" min="0.01"
+                              type="number" step="0.01" min="0.01" max={NUMERIC_LIMITS.costo.max}
                               value={linea.nuevo_costo_raw}
                               onChange={(e) => handleNuevoCostoChange(index, e.target.value)}
                               onKeyDown={handleNumericKeyDown}
@@ -1428,7 +1466,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           <td className="px-2 py-2 text-right">
                             {linea.pvp_decision === 'actualizar' || linea.pvp_decision === 'mantener' ? (
                               <input
-                                type="number" step="0.1" min="0"
+                                type="number" step="0.1" min="-99" max={NUMERIC_LIMITS.margen.max}
                                 value={linea.nuevo_margen_input}
                                 onChange={(e) => handleNuevoMargenChange(index, e.target.value)}
                                 onKeyDown={handleNumericKeyDown}
@@ -1444,7 +1482,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           <td className="px-2 py-2 text-right">
                             {linea.pvp_decision === 'actualizar' || linea.pvp_decision === 'mantener' ? (
                               <input
-                                type="number" step="0.01" min="0.01"
+                                type="number" step="0.01" min="0.01" max={NUMERIC_LIMITS.pvp.max}
                                 value={linea.nuevo_pvp_input}
                                 onChange={(e) => handleNuevoPvpChange(index, e.target.value)}
                                 onKeyDown={handleNumericKeyDown}
@@ -1620,8 +1658,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 type="number"
                 step="0.01"
                 min="0.01"
+                max={NUMERIC_LIMITS.monto.max}
                 value={pagoMonto}
-                onChange={(e) => setPagoMonto(e.target.value)}
+                onChange={(e) => setPagoMonto(clampNumeric(e.target.value, NUMERIC_LIMITS.monto.max, NUMERIC_LIMITS.monto.decimals))}
                 placeholder="0.00"
                 className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
