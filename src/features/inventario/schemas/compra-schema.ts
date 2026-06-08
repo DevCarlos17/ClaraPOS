@@ -43,8 +43,8 @@ function campoTexto(maxLen: number, nombre: string) {
 // ── Schema: linea de compra ────────────────────────────────────────────────────
 export const lineaCompraSchema = z.object({
   producto_id: campoUuid('El producto'),
-  cantidad: campoFinanciero(999_999, 'La cantidad'),
-  costo_unitario_usd: campoFinanciero(999_999, 'El costo unitario'),
+  cantidad: campoFinanciero(999_999_999, 'La cantidad'),        // NUMERIC(12,3) → max 999,999,999.999
+  costo_unitario_usd: campoFinanciero(9_999_999_999, 'El costo unitario'),  // NUMERIC(12,2) → max 9,999,999,999.99
   tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
   impuesto_pct: z.number().min(0).max(100).default(0),
 })
@@ -53,7 +53,7 @@ export const lineaCompraSchema = z.object({
 export const pagoCompraSchema = z.object({
   metodo_cobro_id: campoUuid('El método de pago'),
   moneda: z.enum(['USD', 'BS']),
-  monto: campoFinanciero(9_999_999, 'El monto'),
+  monto: campoFinanciero(9_999_999_999, 'El monto'),  // NUMERIC(12,2) → max 9,999,999,999.99
   banco_empresa_id: z
     .string()
     .refine((v) => !v || UUID_RE.test(v), 'ID de banco inválido')
@@ -99,17 +99,15 @@ export const compraHeaderSchema = z.object({
   /**
    * Número de factura:
    *  - requerido, máx 50 caracteres
-   *  - solo alfanumérico, guión, punto y espacio (formato venezolano)
-   *  - sin caracteres de inyección HTML/script
+   *  - solo letras, dígitos y guiones (coincide exactamente con lo que el input permite)
    */
   nro_factura: z
     .string()
     .min(1, 'El número de factura es requerido')
     .max(50, 'El número de factura no puede superar 50 caracteres')
-    .refine((v) => !HTML_CHARS_RE.test(v), 'El número de factura contiene caracteres no permitidos')
     .refine(
-      (v) => /^[\dA-Za-z\-\.\s]+$/.test(v.trim()),
-      'El número de factura solo admite dígitos, letras, guiones, puntos y espacios'
+      (v) => /^[A-Z0-9\-]+$/.test(v.trim()),
+      'El número de factura solo admite letras, números y guiones'
     )
     .transform((v) => v.trim().toUpperCase()),
 

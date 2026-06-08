@@ -87,12 +87,15 @@ interface CompraFormProps {
 // estos límites son más conservadores y representan valores realistas para
 // una clínica estética con operación bimonetaria venezolana.
 const NUMERIC_LIMITS = {
-  tasa:     { max: 9_999_999,  decimals: 4 },  // Bs/USD: cubre hiperinflación extrema
-  cantidad: { max: 999_999,    decimals: 3 },  // Unidades: suficiente para cualquier inventario
-  costo:    { max: 9_999.99,   decimals: 2 },  // USD por unidad: avisa si supera $9.999
-  pvp:      { max: 9_999.99,   decimals: 2 },  // USD por unidad
-  margen:   { max: 9_999,      decimals: 1 },  // %: margen de 10.000% es irreal
-  monto:    { max: 9_999_999,  decimals: 2 },  // Monto de pago
+  // NUMERIC(12,4) en DB → max teórico 99,999,999. Usamos 9,999,999 como techo práctico para tasas Bs/USD.
+  tasa:     { max: 9_999_999,       decimals: 4 },
+  // NUMERIC(12,3) en DB → max teórico 999,999,999.999.
+  cantidad: { max: 999_999_999,     decimals: 3 },
+  // NUMERIC(12,2) en DB → max exacto 9,999,999,999.99. Cubre USD y Bs sin problema.
+  costo:    { max: 9_999_999_999,   decimals: 2 },
+  pvp:      { max: 9_999_999_999,   decimals: 2 },
+  margen:   { max: 9_999,           decimals: 1 },  // % — 10.000% de margen es irreal
+  monto:    { max: 9_999_999_999,   decimals: 2 },
 } as const
 
 /**
@@ -116,11 +119,12 @@ function clampNumeric(value: string, max: number, decimals: number): string {
 // ── Handlers globales para inputs (sin estado, seguros fuera del componente) ───
 
 /**
- * Bloquea caracteres de inyección HTML/script en campos de texto libre.
- * Solo permite: letras, dígitos, guión, punto, barra, espacio y teclas de control.
+ * Campos de texto seguro: solo [A-Za-z0-9-].
+ * Bloquea todo lo demás incluyendo Alt+numpad (Windows) que permite insertar
+ * caracteres especiales aunque el key visible parezca inofensivo.
  * Se aplica a nro_factura, nro_control y referencia de pago.
  */
-const SAFE_TEXT_RE = /^[A-Za-z0-9\-\.\/ ]$/
+const SAFE_TEXT_RE = /^[A-Za-z0-9\-]$/
 
 function handleSafeTextKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
   const control = [
@@ -129,13 +133,15 @@ function handleSafeTextKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     'Home', 'End',
   ]
   if (control.includes(e.key)) return
-  if (e.ctrlKey || e.metaKey) return  // Ctrl+C, Ctrl+V, etc.
+  if (e.ctrlKey || e.metaKey) return  // Ctrl+C, Ctrl+V, Ctrl+A, etc.
+  // Bloquear Alt+numpad (Windows): genera chars especiales aunque pasen el regex
+  if (e.altKey) { e.preventDefault(); return }
   if (!SAFE_TEXT_RE.test(e.key)) e.preventDefault()
 }
 
 function handleSafeTextPaste(e: React.ClipboardEvent<HTMLInputElement>) {
   const text = e.clipboardData.getData('text')
-  const cleaned = text.replace(/[^A-Za-z0-9\-\.\/ ]/g, '')
+  const cleaned = text.replace(/[^A-Za-z0-9\-]/g, '')
   if (cleaned !== text) {
     e.preventDefault()
     const sanitized = cleaned.toUpperCase()
@@ -1056,7 +1062,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
               />
               {errors.nro_factura
                 ? <p className="text-destructive text-xs mt-1">{errors.nro_factura}</p>
-                : <p className="text-muted-foreground/60 text-[11px] mt-1">Letras, números, guiones y puntos. Máx. 50 caracteres.</p>
+                : <p className="text-muted-foreground/60 text-[11px] mt-1">Solo letras, números y guiones. Máx. 50 caracteres.</p>
               }
             </div>
 
@@ -1077,7 +1083,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 autoComplete="off"
                 className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <p className="text-muted-foreground/60 text-[11px] mt-1">Formato: XX-XXXXXXX. Solo dígitos y guiones.</p>
+              <p className="text-muted-foreground/60 text-[11px] mt-1">Solo dígitos, letras y guiones. Ej: 00-0012345. Máx. 20 caracteres.</p>
             </div>
           </div>
 
@@ -1132,6 +1138,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 max={NUMERIC_LIMITS.tasa.max}
                 value={tasaInterna}
                 onChange={(e) => setTasaInterna(clampNumeric(e.target.value, NUMERIC_LIMITS.tasa.max, NUMERIC_LIMITS.tasa.decimals))}
+                onKeyDown={handleNumericKeyDown}
                 placeholder="0.0000"
                 className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                   errors.tasa_interna ? 'border-destructive' : 'border-input'
@@ -1209,6 +1216,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     max={NUMERIC_LIMITS.tasa.max}
                     value={tasaProveedor}
                     onChange={(e) => setTasaProveedor(clampNumeric(e.target.value, NUMERIC_LIMITS.tasa.max, NUMERIC_LIMITS.tasa.decimals))}
+                    onKeyDown={handleNumericKeyDown}
                     placeholder="0.0000"
                     className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
                       errors.tasa_proveedor ? 'border-destructive' : 'border-amber-200 dark:border-amber-700'
@@ -1661,6 +1669,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 max={NUMERIC_LIMITS.monto.max}
                 value={pagoMonto}
                 onChange={(e) => setPagoMonto(clampNumeric(e.target.value, NUMERIC_LIMITS.monto.max, NUMERIC_LIMITS.monto.decimals))}
+                onKeyDown={handleNumericKeyDown}
                 placeholder="0.00"
                 className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
               />
@@ -1679,7 +1688,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 autoComplete="off"
                 className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               />
-              <p className="text-muted-foreground/60 text-[11px] mt-1">Letras, números y guiones. Máx. 100 caracteres.</p>
+              <p className="text-muted-foreground/60 text-[11px] mt-1">Solo letras, números y guiones. Máx. 100 caracteres.</p>
             </div>
 
             <div>
