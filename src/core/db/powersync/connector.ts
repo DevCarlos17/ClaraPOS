@@ -53,9 +53,24 @@ function convertBooleans(table: string, payload: Record<string, unknown>): Recor
   return result
 }
 
+export type UploadFailedInfo = {
+  table: string
+  op: string
+  id: string
+  code: string
+  message: string
+}
+
 export type SupabaseConnectorListener = {
   initialized: () => void
   sessionStarted: (session: Session) => void
+  /**
+   * Se emite cuando una operación offline es descartada permanentemente por el servidor.
+   * Códigos fatales: 22xxx (data exception), 23xxx (constraint violation),
+   * 42501 (RLS), P0001 (trigger raise exception).
+   * El registro existe en SQLite local pero NO en Supabase — el usuario debe re-ingresar el dato.
+   */
+  uploadFailed: (info: UploadFailedInfo) => void
 }
 
 export class SupabaseConnector
@@ -434,6 +449,15 @@ export class SupabaseConnector
           code: error.code,
           message: error.message,
         })
+        // Notificar a la UI antes de descartar, para que el usuario sepa que
+        // debe re-ingresar el dato manualmente.
+        this.iterateListeners((cb) => cb.uploadFailed?.({
+          table: lastOp?.table ?? 'desconocida',
+          op: lastOp?.op ?? 'desconocida',
+          id: lastOp?.id ?? 'desconocido',
+          code: error.code ?? 'desconocido',
+          message: error.message ?? 'Error desconocido',
+        }))
         await transaction.complete()
       } else {
         console.error('[PowerSync upload] Error transitorio - reintentando:', {
