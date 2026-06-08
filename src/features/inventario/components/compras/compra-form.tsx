@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { toast } from 'sonner'
 import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise } from '@phosphor-icons/react'
-import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
+import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
 import { useProductosTipo, type Producto } from '@/features/inventario/hooks/use-productos'
@@ -81,7 +81,45 @@ interface CompraFormProps {
   onClose: () => void
 }
 
-// ── Handlers globales para inputs numéricos (sin estado, seguros fuera del componente) ──
+// ── Handlers globales para inputs (sin estado, seguros fuera del componente) ───
+
+/**
+ * Bloquea caracteres de inyección HTML/script en campos de texto libre.
+ * Solo permite: letras, dígitos, guión, punto, barra, espacio y teclas de control.
+ * Se aplica a nro_factura, nro_control y referencia de pago.
+ */
+const SAFE_TEXT_RE = /^[A-Za-z0-9\-\.\/ ]$/
+
+function handleSafeTextKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+  const control = [
+    'Backspace', 'Delete', 'Tab', 'Escape', 'Enter',
+    'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+    'Home', 'End',
+  ]
+  if (control.includes(e.key)) return
+  if (e.ctrlKey || e.metaKey) return  // Ctrl+C, Ctrl+V, etc.
+  if (!SAFE_TEXT_RE.test(e.key)) e.preventDefault()
+}
+
+function handleSafeTextPaste(e: React.ClipboardEvent<HTMLInputElement>) {
+  const text = e.clipboardData.getData('text')
+  const cleaned = text.replace(/[^A-Za-z0-9\-\.\/ ]/g, '')
+  if (cleaned !== text) {
+    e.preventDefault()
+    const sanitized = cleaned.toUpperCase()
+    // Insertar solo la parte segura del clipboard en la posicion del cursor
+    const input = e.currentTarget
+    const start = input.selectionStart ?? input.value.length
+    const end = input.selectionEnd ?? input.value.length
+    const newValue = input.value.slice(0, start) + sanitized + input.value.slice(end)
+    // Disparar el cambio via el setter nativo para que React lo procese
+    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype, 'value'
+    )?.set
+    nativeInputValueSetter?.call(input, newValue)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+}
 
 function handleNumericKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
   const allowed = [
@@ -642,17 +680,33 @@ export function CompraForm({ onClose }: CompraFormProps) {
   }
 
   function handleAddPago() {
+    if (!metodoSeleccionado) return
+
     const montoNum = parseFloat(pagoMonto)
-    if (!pagoMetodoId || isNaN(montoNum) || montoNum <= 0 || !metodoSeleccionado) return
+
+    const parsed = pagoCompraSchema.safeParse({
+      metodo_cobro_id: pagoMetodoId,
+      moneda: metodoSeleccionado.moneda,
+      monto: isNaN(montoNum) ? 0 : montoNum,
+      banco_empresa_id: metodoSeleccionado.banco_empresa_id ?? null,
+      referencia: pagoReferencia.trim() || undefined,
+    })
+
+    if (!parsed.success) {
+      const msg = parsed.error.issues[0]?.message ?? 'Datos de pago inválidos'
+      toast.error(msg)
+      return
+    }
+
     setPagos((prev) => [
       ...prev,
       {
-        metodo_cobro_id: pagoMetodoId,
+        metodo_cobro_id: parsed.data.metodo_cobro_id,
         metodo_nombre: metodoSeleccionado.nombre,
-        moneda: metodoSeleccionado.moneda as 'USD' | 'BS',
-        monto: montoNum,
+        moneda: parsed.data.moneda as 'USD' | 'BS',
+        monto: parsed.data.monto,
         banco_empresa_id: metodoSeleccionado.banco_empresa_id,
-        referencia: pagoReferencia.trim() || undefined,
+        referencia: parsed.data.referencia,
       },
     ])
     setPagoMetodoId('')
@@ -792,6 +846,23 @@ export function CompraForm({ onClose }: CompraFormProps) {
       referencia: p.referencia,
     }))
 
+    // Validar pagos con Zod (segunda barrera — la primera es en handleAddPago)
+    for (let i = 0; i < pagos.length; i++) {
+      const p = pagos[i]
+      const parsedPago = pagoCompraSchema.safeParse({
+        metodo_cobro_id: p.metodo_cobro_id,
+        moneda: p.moneda,
+        monto: p.monto,
+        banco_empresa_id: p.banco_empresa_id ?? null,
+        referencia: p.referencia,
+      })
+      if (!parsedPago.success) {
+        const msg = parsedPago.error.issues[0]?.message ?? 'Error en pago'
+        setErrors({ pagos: `Pago ${i + 1} (${p.metodo_nombre}): ${msg}` })
+        return
+      }
+    }
+
     // Validar que no haya PVP menor al costo sistema antes de mostrar confirmacion
     const lineasConMargenNeg = lineasValidas.filter(
       (l) => l.nuevo_precio_venta_usd !== undefined && l.nuevo_precio_venta_usd < l.costo_usd_sistema
@@ -920,12 +991,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 type="text"
                 value={nroFactura}
                 onChange={(e) => setNroFactura(e.target.value.toUpperCase())}
+                onKeyDown={handleSafeTextKeyDown}
+                onPaste={handleSafeTextPaste}
                 placeholder="Ej: 00012345"
+                maxLength={50}
+                autoComplete="off"
                 className={`w-full rounded-xl border px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring ${
                   errors.nro_factura ? 'border-destructive' : 'border-input'
                 }`}
               />
-              {errors.nro_factura && <p className="text-destructive text-xs mt-1">{errors.nro_factura}</p>}
+              {errors.nro_factura
+                ? <p className="text-destructive text-xs mt-1">{errors.nro_factura}</p>
+                : <p className="text-muted-foreground/60 text-[11px] mt-1">Letras, números, guiones y puntos. Máx. 50 caracteres.</p>
+              }
             </div>
 
             {/* Nro Control */}
@@ -938,9 +1016,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 type="text"
                 value={nroControl}
                 onChange={(e) => setNroControl(e.target.value.toUpperCase())}
+                onKeyDown={handleSafeTextKeyDown}
+                onPaste={handleSafeTextPaste}
                 placeholder="Ej: 00-0012345"
+                maxLength={20}
+                autoComplete="off"
                 className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               />
+              <p className="text-muted-foreground/60 text-[11px] mt-1">Formato: XX-XXXXXXX. Solo dígitos y guiones.</p>
             </div>
           </div>
 
@@ -1530,9 +1613,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
                 type="text"
                 value={pagoReferencia}
                 onChange={(e) => setPagoReferencia(e.target.value.toUpperCase())}
+                onKeyDown={handleSafeTextKeyDown}
+                onPaste={handleSafeTextPaste}
                 placeholder="Opcional"
+                maxLength={100}
+                autoComplete="off"
                 className="w-full rounded-xl border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               />
+              <p className="text-muted-foreground/60 text-[11px] mt-1">Letras, números y guiones. Máx. 100 caracteres.</p>
             </div>
 
             <div>
