@@ -59,6 +59,12 @@ export type UploadFailedInfo = {
   id: string
   code: string
   message: string
+  /** Motivo del descarte:
+   *  - 'db_error'    → PostgreSQL rechazó el dato (constraint, trigger, RLS)
+   *  - 'max_retries' → Se agotaron los reintentos por errores transitorios
+   *  - 'validation'  → Dato inválido detectado en el conector antes de enviar
+   */
+  reason: 'db_error' | 'max_retries' | 'validation'
 }
 
 export type SupabaseConnectorListener = {
@@ -82,6 +88,14 @@ export class SupabaseConnector
 
   ready: boolean
   currentSession: Session | null
+
+  /**
+   * Reintentos por transacción (clave = ID del primer op de la tx).
+   * Permite abandonar transacciones que fallan repetidamente con errores
+   * transitorios (red caída, token expirado) en lugar de bloquear la cola.
+   */
+  private readonly MAX_UPLOAD_RETRIES = 5
+  private readonly uploadRetries = new Map<string, number>()
 
   constructor() {
     super()
@@ -268,6 +282,10 @@ export class SupabaseConnector
 
     console.log('⬆️ [PowerSync upload] Procesando transaccion con', transaction.crud.length, 'operaciones')
 
+    // Clave estable para esta transacción a través de reintentos
+    const txKey = transaction.crud[0]?.id ?? 'tx_unknown'
+    const retryCount = this.uploadRetries.get(txKey) ?? 0
+
     let lastOp: CrudEntry | null = null
     try {
       for (const op of transaction.crud) {
@@ -280,6 +298,12 @@ export class SupabaseConnector
             const identificacion = String(op.opData?.identificacion ?? '')
             if (!isValidCedula(identificacion)) {
               console.error('[PowerSync upload] FATAL - identificacion invalida en clientes:', identificacion)
+              this.iterateListeners((cb) => cb.uploadFailed?.({
+                table: op.table, op: op.op, id: op.id,
+                code: 'VALIDATION', message: `Cédula inválida: ${identificacion}`,
+                reason: 'validation',
+              }))
+              this.uploadRetries.delete(txKey)
               await transaction.complete()
               return
             }
@@ -288,6 +312,12 @@ export class SupabaseConnector
             const rif = String(op.opData?.rif ?? '')
             if (!isValidRif(rif)) {
               console.error('[PowerSync upload] FATAL - RIF invalido en proveedores:', rif)
+              this.iterateListeners((cb) => cb.uploadFailed?.({
+                table: op.table, op: op.op, id: op.id,
+                code: 'VALIDATION', message: `RIF inválido: ${rif}`,
+                reason: 'validation',
+              }))
+              this.uploadRetries.delete(txKey)
               await transaction.complete()
               return
             }
@@ -296,6 +326,12 @@ export class SupabaseConnector
             const depositoId = op.opData?.deposito_id
             if (!depositoId) {
               console.error('[PowerSync upload] FATAL - deposito_id nulo en ventas, descartando:', op.id)
+              this.iterateListeners((cb) => cb.uploadFailed?.({
+                table: op.table, op: op.op, id: op.id,
+                code: 'VALIDATION', message: 'Venta sin depósito asignado',
+                reason: 'validation',
+              }))
+              this.uploadRetries.delete(txKey)
               await transaction.complete()
               return
             }
@@ -437,6 +473,7 @@ export class SupabaseConnector
       }
 
       await transaction.complete()
+      this.uploadRetries.delete(txKey)  // éxito — limpiar contador
     } catch (ex: unknown) {
       const error = ex as { code?: string; message?: string }
       const isFatal =
@@ -445,27 +482,44 @@ export class SupabaseConnector
 
       if (isFatal) {
         console.error('[PowerSync upload] FATAL - descartando operacion:', {
-          op: lastOp,
-          code: error.code,
-          message: error.message,
+          op: lastOp, code: error.code, message: error.message,
         })
-        // Notificar a la UI antes de descartar, para que el usuario sepa que
-        // debe re-ingresar el dato manualmente.
         this.iterateListeners((cb) => cb.uploadFailed?.({
           table: lastOp?.table ?? 'desconocida',
           op: lastOp?.op ?? 'desconocida',
           id: lastOp?.id ?? 'desconocido',
           code: error.code ?? 'desconocido',
           message: error.message ?? 'Error desconocido',
+          reason: 'db_error',
         }))
+        this.uploadRetries.delete(txKey)
         await transaction.complete()
       } else {
-        console.error('[PowerSync upload] Error transitorio - reintentando:', {
-          op: lastOp,
-          code: error.code,
-          message: error.message,
-        })
-        throw ex
+        const attempts = retryCount + 1
+
+        if (attempts >= this.MAX_UPLOAD_RETRIES) {
+          // La transacción falló demasiadas veces con errores transitorios.
+          // Descartarla para desbloquear la cola y notificar al usuario.
+          console.error('[PowerSync upload] MAX REINTENTOS alcanzado - descartando:', {
+            txKey, attempts, op: lastOp, code: error.code, message: error.message,
+          })
+          this.iterateListeners((cb) => cb.uploadFailed?.({
+            table: lastOp?.table ?? 'desconocida',
+            op: lastOp?.op ?? 'desconocida',
+            id: lastOp?.id ?? 'desconocido',
+            code: error.code ?? 'desconocido',
+            message: error.message ?? 'Error desconocido',
+            reason: 'max_retries',
+          }))
+          this.uploadRetries.delete(txKey)
+          await transaction.complete()
+        } else {
+          this.uploadRetries.set(txKey, attempts)
+          console.error(`[PowerSync upload] Error transitorio - reintentando (${attempts}/${this.MAX_UPLOAD_RETRIES}):`, {
+            op: lastOp, code: error.code, message: error.message,
+          })
+          throw ex
+        }
       }
     }
   }

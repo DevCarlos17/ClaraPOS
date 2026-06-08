@@ -35,6 +35,22 @@ function buildUploadFailedMessage(info: UploadFailedInfo): {
   description: string
 } {
   const label = TABLE_LABELS[info.table] ?? info.table
+
+  if (info.reason === 'max_retries') {
+    return {
+      title: `No se pudo sincronizar: ${label}`,
+      description: `La operación falló ${5} veces seguidas por problemas de conexión y fue descartada. Verificá tu red y volvé a ingresar el dato si es necesario.`,
+    }
+  }
+
+  if (info.reason === 'validation') {
+    return {
+      title: `Dato inválido descartado: ${label}`,
+      description: info.message,
+    }
+  }
+
+  // reason === 'db_error'
   const isConstraint = info.code.startsWith('23')
   const isTrigger    = info.code === 'P0001'
   const isRls        = info.code === '42501'
