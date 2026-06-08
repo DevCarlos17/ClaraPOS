@@ -64,7 +64,7 @@ interface LineaUI {
   // Decisión del usuario sobre qué hacer con el PVP cuando el costo cambia
   // null = no decidió aún | 'mantener' = no tocar pvp | 'actualizar' = recalcular
   pvp_decision: null | 'mantener' | 'actualizar'
-  nuevo_pvp_input: string       // PVP editable en USD (solo activo cuando pvp_decision='actualizar')
+  nuevo_pvp_input: string       // PVP editable en moneda factura (solo activo cuando pvp_decision='actualizar')
   nuevo_margen_input: string    // Margen % editable (solo activo cuando pvp_decision='actualizar')
 }
 
@@ -429,6 +429,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   function handleRemoveLinea(index: number) {
     setLineas((prev) => prev.filter((_, i) => i !== index))
+    setErrors((prev) => {
+      const next = { ...prev }
+      delete next['lineas']
+      return next
+    })
   }
 
   function handleLineaChange(index: number, field: 'cantidad_input', value: string) {
@@ -487,7 +492,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
           return {
             ...updated,
             pvp_decision: 'actualizar',
-            nuevo_pvp_input: proyPvp.toFixed(2),
+            nuevo_pvp_input: moneda === 'USD' ? proyPvp.toFixed(2) : (proyPvp * tasaFacturaNum).toFixed(2),
             nuevo_margen_input: proyMargen,
           }
         }
@@ -519,7 +524,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
           return {
             ...l,
             pvp_decision: 'mantener',
-            nuevo_pvp_input: pvpActualUsd.toFixed(2),
+            nuevo_pvp_input: moneda === 'USD' ? pvpActualUsd.toFixed(2) : (pvpActualUsd * tasaFacturaNum).toFixed(2),
             nuevo_margen_input: nuevoMargen,
           }
         }
@@ -543,7 +548,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
         return {
           ...l,
           pvp_decision: 'actualizar',
-          nuevo_pvp_input: proyPvp.toFixed(2),
+          nuevo_pvp_input: moneda === 'USD' ? proyPvp.toFixed(2) : (proyPvp * tasaFacturaNum).toFixed(2),
           nuevo_margen_input: proyMargen,
         }
       })
@@ -557,6 +562,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
         if (i !== index) return l
         const pvpNum = parseFloat(value)
         if (isNaN(pvpNum) || pvpNum < 0) return { ...l, nuevo_pvp_input: value }
+        // Convertir a USD para calcular el margen (que siempre es USD/USD)
+        const pvpUsd = moneda === 'USD' ? pvpNum : (tasaFacturaNum > 0 ? pvpNum / tasaFacturaNum : pvpNum)
         let costoNuevoUsd: number
         if (moneda === 'USD') {
           costoNuevoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
@@ -565,7 +572,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
           costoNuevoUsd = l.factor > 0 ? c / l.factor : c
         }
         const nuevoMargen = costoNuevoUsd > 0
-          ? ((pvpNum - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+          ? ((pvpUsd - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
           : '0.0'
         return { ...l, nuevo_pvp_input: value, nuevo_margen_input: nuevoMargen }
       })
@@ -586,8 +593,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
           const c = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
           costoNuevoUsd = l.factor > 0 ? c / l.factor : c
         }
-        const nuevoPvp = Number((costoNuevoUsd * (1 + margenNum / 100)).toFixed(2))
-        return { ...l, nuevo_margen_input: value, nuevo_pvp_input: Math.max(0, nuevoPvp).toFixed(2) }
+        const nuevoPvpUsd = Number((costoNuevoUsd * (1 + margenNum / 100)).toFixed(2))
+        const nuevoPvpDisplay = moneda === 'USD' ? nuevoPvpUsd : nuevoPvpUsd * tasaFacturaNum
+        return { ...l, nuevo_margen_input: value, nuevo_pvp_input: Math.max(0, nuevoPvpDisplay).toFixed(2) }
       })
     )
   }
@@ -668,11 +676,18 @@ export function CompraForm({ onClose }: CompraFormProps) {
           newCostoInput = Number(newNuevoCostoRaw)
         }
 
+        // Convertir también el PVP ingresado (nuevo_pvp_input está en moneda display)
+        let newNuevoPvpInput = l.nuevo_pvp_input
+        if (l.nuevo_pvp_input !== '') {
+          newNuevoPvpInput = convert(parseFloat(l.nuevo_pvp_input)).toFixed(2)
+        }
+
         return {
           ...l,
           costo_actual: newCostoActual,
           nuevo_costo_raw: newNuevoCostoRaw,
           costo_input: newCostoInput,
+          nuevo_pvp_input: newNuevoPvpInput,
         }
       })
     )
@@ -816,7 +831,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
       // null = usuario no decidió → safe default: mantener pvp actual
       const noActualizarPvp = !costoCambio || l.pvp_decision === 'mantener' || l.pvp_decision === null
       const nuevoPvpUsd = l.pvp_decision === 'actualizar' && l.nuevo_pvp_input !== ''
-        ? Number(parseFloat(l.nuevo_pvp_input).toFixed(2))
+        ? Number((moneda === 'USD'
+            ? parseFloat(l.nuevo_pvp_input)
+            : (tasaFacturaNum > 0 ? parseFloat(l.nuevo_pvp_input) / tasaFacturaNum : 0)
+          ).toFixed(2))
         : undefined
 
       return {
@@ -1296,9 +1314,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     const costoCambio = lineaTieneCostoCambiado(linea)
                     const costoForzado = lineaCostoSuperaPvp(linea)
 
-                    // PVP efectivo (vigente o el que el usuario editó)
+                    // PVP efectivo en USD (vigente o el que el usuario editó)
                     const pvpEfectivoUsd = linea.pvp_decision === 'actualizar' && linea.nuevo_pvp_input !== ''
-                      ? parseFloat(linea.nuevo_pvp_input) || 0
+                      ? (moneda === 'USD'
+                          ? parseFloat(linea.nuevo_pvp_input) || 0
+                          : (tasaFacturaNum > 0 ? (parseFloat(linea.nuevo_pvp_input) || 0) / tasaFacturaNum : 0))
                       : parseFloat(linea.precio_venta_usd) || 0
                     const pvpMasIva = linea.tipo_impuesto === 'Gravable'
                       ? pvpEfectivoUsd * (1 + linea.impuesto_pct / 100)
@@ -1886,7 +1906,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     const sts = getSubtotalSistema(l)
                     const costoCambio = lineaTieneCostoCambiado(l)
                     const pvpResultante = l.pvp_decision === 'actualizar' && l.nuevo_pvp_input !== ''
-                      ? parseFloat(l.nuevo_pvp_input)
+                      ? (moneda === 'USD'
+                          ? parseFloat(l.nuevo_pvp_input)
+                          : (tasaFacturaNum > 0 ? parseFloat(l.nuevo_pvp_input) / tasaFacturaNum : 0))
                       : parseFloat(l.precio_venta_usd) || 0
                     return (
                       <tr key={l.producto_id} className={costoCambio ? 'bg-amber-50/40' : ''}>
@@ -1992,7 +2014,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
               <ul className="space-y-0.5">
                 {lineas.filter(lineaTieneCostoCambiado).map((l) => {
                   const pvpResultante = l.pvp_decision === 'actualizar' && l.nuevo_pvp_input !== ''
-                    ? parseFloat(l.nuevo_pvp_input)
+                    ? (moneda === 'USD'
+                        ? parseFloat(l.nuevo_pvp_input)
+                        : (tasaFacturaNum > 0 ? parseFloat(l.nuevo_pvp_input) / tasaFacturaNum : 0))
                     : parseFloat(l.precio_venta_usd) || 0
                   return (
                     <li key={l.producto_id} className="flex items-center gap-2 flex-wrap">

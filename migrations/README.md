@@ -22,6 +22,7 @@ NNNN_descripcion_corta.sql
 |---|---------|-----------|
 | 0001 | `0001_initial_schema.sql` | Schema base completo: tablas, indices, triggers de inmutabilidad, RLS policies, funcion `current_empresa_id()`, edge functions stubs. Es el setup fundacional del proyecto. |
 | 0002 | `0002_fix_rls_recursion.sql` | Patch idempotente que arregla la recursion infinita en RLS (PostgreSQL error `42P17`) reemplazando subqueries recursivas por la funcion `current_empresa_id()`. **Solo necesario en bases de datos creadas antes de incorporar el fix a `0001_initial_schema.sql`**. En instalaciones nuevas es un no-op (no rompe nada al ejecutarse). |
+| 0055 | `0055_compras_security_constraints.sql` | Agrega CHECK constraints de seguridad en `facturas_compra` y `facturas_compra_det`: formato y longitud de `nro_factura`/`nro_control` (previene XSS persistente), rango valido de `fecha_factura`, y corrige `costo_unitario_usd >= 0` a `> 0`. Los constraints de formato usan `NOT VALID` para no bloquear datos historicos. |
 
 ## Como aplicar
 
