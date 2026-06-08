@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { toast } from 'sonner'
-import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { compraHeaderSchema, lineaCompraSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
@@ -39,15 +39,33 @@ interface LineaUI {
   unidad_seleccionada_id: string | null
   factor: number
   cantidad_input: number
-  costo_input: number
+
+  // Costo en dos partes:
+  // • costo_actual   = costo vigente en sistema en la moneda display (read-only)
+  // • nuevo_costo_raw = lo que escribe el usuario ('' = sin cambio)
+  // • costo_input    = efectivo = nuevo_costo_raw si no vacío, si no costo_actual
+  //   (mantenemos costo_input como campo derivado para que todos los cálculos existentes funcionen)
+  costo_actual: number
+  nuevo_costo_raw: string
+  costo_input: number  // = getCostoEfectivo(l) — se mantiene sincronizado
+
   tipo_impuesto: 'Gravable' | 'Exento' | 'Exonerado'
   impuesto_pct: number
   maneja_lotes: number
   lote_nro: string
   lote_fecha_fab: string
   lote_fecha_venc: string
-  /** Precio de venta actual del producto (USD). Usado para advertir cuando costo > precio. */
-  precio_venta_usd: string
+
+  // Datos del sistema para contexto de precios (read-only)
+  costo_usd_actual: string      // costo en USD (para comparaciones y proyecciones)
+  precio_venta_usd: string      // PVP actual en USD
+  margen_actual: string         // margen % actual (derivado de costo/pvp vigentes)
+
+  // Decisión del usuario sobre qué hacer con el PVP cuando el costo cambia
+  // null = no decidió aún | 'mantener' = no tocar pvp | 'actualizar' = recalcular
+  pvp_decision: null | 'mantener' | 'actualizar'
+  nuevo_pvp_input: string       // PVP editable en USD (solo activo cuando pvp_decision='actualizar')
+  nuevo_margen_input: string    // Margen % editable (solo activo cuando pvp_decision='actualizar')
 }
 
 interface PagoUI {
@@ -61,6 +79,28 @@ interface PagoUI {
 
 interface CompraFormProps {
   onClose: () => void
+}
+
+// ── Handlers globales para inputs numéricos (sin estado, seguros fuera del componente) ──
+
+function handleNumericKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+  const allowed = [
+    'Backspace', 'Delete', 'Tab', 'Escape', 'Enter',
+    'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+    'Home', 'End',
+  ]
+  if (allowed.includes(e.key)) return
+  if (e.key === '.' && !e.currentTarget.value.includes('.')) return
+  if (!/^\d$/.test(e.key)) e.preventDefault()
+}
+
+function handleNumericPaste(e: React.ClipboardEvent<HTMLInputElement>) {
+  const text = e.clipboardData.getData('text')
+  const cleaned = text.replace(/[^0-9.]/g, '')
+  if (cleaned !== text) {
+    e.preventDefault()
+    toast.error('Pegado bloqueado: ingresá el valor manualmente para evitar errores.')
+  }
 }
 
 export function CompraForm({ onClose }: CompraFormProps) {
@@ -303,6 +343,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
     const options = getUnidadOptions(producto)
     const costoBase = parseFloat(producto.costo_usd) || 0
     const costoDisplay = moneda === 'USD' ? costoBase : costoBase * tasaFacturaNum
+    const pvpUsd = parseFloat(producto.precio_venta_usd) || 0
+
+    // Margen actual del producto: (pvp - costo) / costo * 100
+    const margenActual = costoBase > 0 && pvpUsd > 0
+      ? ((pvpUsd - costoBase) / costoBase * 100).toFixed(1)
+      : '0.0'
 
     // Resolver porcentaje IVA desde el catálogo de impuestos
     const tipoImp = (producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento'
@@ -310,6 +356,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       ? (impuestoMap.get(producto.impuesto_iva_id) ?? 0)
       : 0
 
+    const costoDisplayRounded = Number(costoDisplay.toFixed(2))
     setLineas((prev) => [
       ...prev,
       {
@@ -321,14 +368,21 @@ export function CompraForm({ onClose }: CompraFormProps) {
         unidad_seleccionada_id: null,
         factor: 1,
         cantidad_input: 1,
-        costo_input: Number(costoDisplay.toFixed(2)),
+        costo_actual: costoDisplayRounded,
+        nuevo_costo_raw: '',
+        costo_input: costoDisplayRounded,  // efectivo = costo_actual hasta que el usuario escriba
         tipo_impuesto: tipoImp,
         impuesto_pct: pctIva,
         maneja_lotes: Number(producto.maneja_lotes) || 0,
         lote_nro: '',
         lote_fecha_fab: '',
         lote_fecha_venc: '',
+        costo_usd_actual: producto.costo_usd,
         precio_venta_usd: producto.precio_venta_usd,
+        margen_actual: margenActual,
+        pvp_decision: null,
+        nuevo_pvp_input: '',
+        nuevo_margen_input: margenActual,
       },
     ])
     setBusqueda('')
@@ -339,15 +393,163 @@ export function CompraForm({ onClose }: CompraFormProps) {
     setLineas((prev) => prev.filter((_, i) => i !== index))
   }
 
-  function handleLineaChange(index: number, field: keyof LineaUI, value: string) {
+  function handleLineaChange(index: number, field: 'cantidad_input', value: string) {
     setLineas((prev) =>
       prev.map((l, i) => {
         if (i !== index) return l
-        if (field === 'cantidad_input' || field === 'costo_input') {
-          const num = parseFloat(value)
-          return { ...l, [field]: isNaN(num) || num < 0 ? 0 : num }
+        const num = parseFloat(value)
+        return { ...l, [field]: isNaN(num) || num < 0 ? 0 : num }
+      })
+    )
+  }
+
+  /** Maneja cambios en el campo "Nuevo Costo" de una línea. */
+  function handleNuevoCostoChange(index: number, value: string) {
+    setLineas((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l
+
+        // Blank → sin cambio: restaurar costo_input al costo_actual
+        if (value === '') {
+          return { ...l, nuevo_costo_raw: '', costo_input: l.costo_actual, pvp_decision: null }
         }
-        return l
+
+        const numericalValue = parseFloat(value)
+        if (isNaN(numericalValue) || numericalValue < 0) return l
+
+        // costo_input = nuevo costo ingresado
+        const updated = { ...l, nuevo_costo_raw: value, costo_input: numericalValue }
+
+        // Calcular costo nuevo en USD por unidad base (para comparar con pvp)
+        let costoNuevoUsd: number
+        if (moneda === 'USD') {
+          costoNuevoUsd = l.factor > 0 ? numericalValue / l.factor : numericalValue
+        } else {
+          const costoOrig = tasaFacturaNum > 0 ? numericalValue / tasaFacturaNum : 0
+          costoNuevoUsd = l.factor > 0 ? costoOrig / l.factor : costoOrig
+        }
+
+        const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
+        const pvpActualUsd = parseFloat(l.precio_venta_usd) || 0
+
+        // Sin cambio real → no necesita decisión
+        if (Math.abs(costoNuevoUsd - costoUsdActual) < 0.0001) {
+          return { ...updated, pvp_decision: null }
+        }
+
+        // Si nuevo costo > pvp → forzado: auto-rellenar pvp/margen con proyección
+        if (costoNuevoUsd > pvpActualUsd + 0.001) {
+          const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
+            ? (pvpActualUsd - costoUsdActual) / costoUsdActual
+            : 0
+          const proyPvp = Math.max(costoNuevoUsd, Number((costoNuevoUsd * (1 + margenDecimal)).toFixed(2)))
+          const proyMargen = costoNuevoUsd > 0
+            ? ((proyPvp - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+            : '0.0'
+          return {
+            ...updated,
+            pvp_decision: 'actualizar',
+            nuevo_pvp_input: proyPvp.toFixed(2),
+            nuevo_margen_input: proyMargen,
+          }
+        }
+
+        // Costo cambió pero < pvp → mantener decisión actual (o null si no ha elegido)
+        return updated
+      })
+    )
+  }
+
+  /** Maneja la decisión del usuario: mantener o actualizar PVP. */
+  function handlePvpDecision(index: number, decision: 'mantener' | 'actualizar') {
+    setLineas((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l
+        if (decision === 'mantener') {
+          return { ...l, pvp_decision: 'mantener' }
+        }
+        // Actualizar: pre-rellenar pvp/margen con los valores proyectados
+        let costoNuevoUsd: number
+        if (moneda === 'USD') {
+          costoNuevoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
+        } else {
+          const costoOrig = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
+          costoNuevoUsd = l.factor > 0 ? costoOrig / l.factor : costoOrig
+        }
+        const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
+        const pvpActualUsd = parseFloat(l.precio_venta_usd) || 0
+        const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
+          ? (pvpActualUsd - costoUsdActual) / costoUsdActual
+          : 0
+        const proyPvp = Math.max(costoNuevoUsd, Number((costoNuevoUsd * (1 + margenDecimal)).toFixed(2)))
+        const proyMargen = costoNuevoUsd > 0
+          ? ((proyPvp - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+          : '0.0'
+        return {
+          ...l,
+          pvp_decision: 'actualizar',
+          nuevo_pvp_input: proyPvp.toFixed(2),
+          nuevo_margen_input: proyMargen,
+        }
+      })
+    )
+  }
+
+  /** Usuario edita el PVP directamente → recalcular margen. */
+  function handleNuevoPvpChange(index: number, value: string) {
+    setLineas((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l
+        const pvpNum = parseFloat(value)
+        if (isNaN(pvpNum) || pvpNum < 0) return { ...l, nuevo_pvp_input: value }
+        let costoNuevoUsd: number
+        if (moneda === 'USD') {
+          costoNuevoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
+        } else {
+          const c = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
+          costoNuevoUsd = l.factor > 0 ? c / l.factor : c
+        }
+        const nuevoMargen = costoNuevoUsd > 0
+          ? ((pvpNum - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+          : '0.0'
+        return { ...l, nuevo_pvp_input: value, nuevo_margen_input: nuevoMargen }
+      })
+    )
+  }
+
+  /** Usuario edita el margen → recalcular PVP. */
+  function handleNuevoMargenChange(index: number, value: string) {
+    setLineas((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l
+        const margenNum = parseFloat(value)
+        if (isNaN(margenNum)) return { ...l, nuevo_margen_input: value }
+        let costoNuevoUsd: number
+        if (moneda === 'USD') {
+          costoNuevoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
+        } else {
+          const c = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
+          costoNuevoUsd = l.factor > 0 ? c / l.factor : c
+        }
+        const nuevoPvp = Number((costoNuevoUsd * (1 + margenNum / 100)).toFixed(2))
+        return { ...l, nuevo_margen_input: value, nuevo_pvp_input: Math.max(0, nuevoPvp).toFixed(2) }
+      })
+    )
+  }
+
+  /** Revierte una línea al estado original: sin nuevo costo ni decisión de PVP. */
+  function handleResetLinea(index: number) {
+    setLineas((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l
+        return {
+          ...l,
+          nuevo_costo_raw: '',
+          costo_input: l.costo_actual,
+          pvp_decision: null,
+          nuevo_pvp_input: '',
+          nuevo_margen_input: '',
+        }
       })
     )
   }
@@ -367,14 +569,27 @@ export function CompraForm({ onClose }: CompraFormProps) {
         )
         if (!option) return l
 
-        const oldCostoPerBase = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
-        const newCostoDisplay = oldCostoPerBase * option.factor
+        // Convertir costo_actual y costo_input a la nueva unidad
+        const oldActualPerBase = l.factor > 0 ? l.costo_actual / l.factor : l.costo_actual
+        const newCostoActual = Number((oldActualPerBase * option.factor).toFixed(2))
+
+        let newNuevoCostoRaw = l.nuevo_costo_raw
+        let newCostoInput = newCostoActual
+        if (l.nuevo_costo_raw !== '') {
+          const oldNuevoCostoPerBase = l.factor > 0
+            ? parseFloat(l.nuevo_costo_raw) / l.factor
+            : parseFloat(l.nuevo_costo_raw)
+          newNuevoCostoRaw = (oldNuevoCostoPerBase * option.factor).toFixed(2)
+          newCostoInput = Number(newNuevoCostoRaw)
+        }
 
         return {
           ...l,
           unidad_seleccionada_id: option.id,
           factor: option.factor,
-          costo_input: Number(newCostoDisplay.toFixed(2)),
+          costo_actual: newCostoActual,
+          nuevo_costo_raw: newNuevoCostoRaw,
+          costo_input: newCostoInput,
         }
       })
     )
@@ -385,11 +600,25 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
     setLineas((prev) =>
       prev.map((l) => {
-        const newCosto =
+        const convert = (val: number) =>
           newMoneda === 'BS'
-            ? Number((l.costo_input * tasaFacturaNum).toFixed(2))
-            : Number((l.costo_input / tasaFacturaNum).toFixed(2))
-        return { ...l, costo_input: newCosto }
+            ? Number((val * tasaFacturaNum).toFixed(2))
+            : Number((val / tasaFacturaNum).toFixed(2))
+
+        const newCostoActual = convert(l.costo_actual)
+        let newNuevoCostoRaw = l.nuevo_costo_raw
+        let newCostoInput = newCostoActual
+        if (l.nuevo_costo_raw !== '') {
+          newNuevoCostoRaw = convert(parseFloat(l.nuevo_costo_raw)).toString()
+          newCostoInput = Number(newNuevoCostoRaw)
+        }
+
+        return {
+          ...l,
+          costo_actual: newCostoActual,
+          nuevo_costo_raw: newNuevoCostoRaw,
+          costo_input: newCostoInput,
+        }
       })
     )
     setMoneda(newMoneda)
@@ -508,6 +737,17 @@ export function CompraForm({ onClose }: CompraFormProps) {
         return null
       }
 
+      // Determinar si el costo realmente cambió respecto al sistema
+      const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
+      const costoCambio = l.nuevo_costo_raw !== '' && Math.abs(costoUnitarioUsd - costoUsdActual) > 0.0001
+
+      // Determinar decisión sobre el PVP
+      // null = usuario no decidió → safe default: mantener pvp actual
+      const noActualizarPvp = !costoCambio || l.pvp_decision === 'mantener' || l.pvp_decision === null
+      const nuevoPvpUsd = l.pvp_decision === 'actualizar' && l.nuevo_pvp_input !== ''
+        ? Number(parseFloat(l.nuevo_pvp_input).toFixed(2))
+        : undefined
+
       return {
         producto_id: l.producto_id,
         cantidad: cantidadBase,
@@ -518,6 +758,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
         lote_nro: l.lote_nro.trim() || undefined,
         lote_fecha_fab: l.lote_fecha_fab || undefined,
         lote_fecha_venc: l.lote_fecha_venc || undefined,
+        costo_cambio: costoCambio,
+        no_actualizar_pvp: noActualizarPvp,
+        nuevo_precio_venta_usd: nuevoPvpUsd,
       }
     })
 
@@ -531,6 +774,15 @@ export function CompraForm({ onClose }: CompraFormProps) {
       banco_empresa_id: p.banco_empresa_id,
       referencia: p.referencia,
     }))
+
+    // Validar que no haya PVP menor al costo sistema antes de mostrar confirmacion
+    const lineasConMargenNeg = lineasValidas.filter(
+      (l) => l.nuevo_precio_venta_usd !== undefined && l.nuevo_precio_venta_usd < l.costo_usd_sistema
+    )
+    if (lineasConMargenNeg.length > 0) {
+      toast.error('Hay productos con PVP menor al costo. Corrija los precios antes de guardar.')
+      return
+    }
 
     // Guardar params y mostrar confirmacion
     pendingParamsRef.current = {
@@ -578,24 +830,24 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   const mostrarColumnasSistema = usaTasaParalela && tasaInternaNum > 0
 
-  // Lineas cuyo costo de compra supera el precio de venta vigente del producto.
-  // Se usa para mostrar advertencias (la constraint chk_precio_costo fue eliminada
-  // de Supabase porque causaba perdida silenciosa de datos via PowerSync, pero
-  // la advertencia en UI ayuda al usuario a actualizar sus precios de venta).
-  const lineasConCostoAlto = useMemo(() => {
-    return lineas.filter((l) => {
-      const precioVenta = parseFloat(l.precio_venta_usd) || 0
-      if (precioVenta <= 0) return false
-      let costoUsd: number
-      if (moneda === 'USD') {
-        costoUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
-      } else {
-        const costoOrig = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
-        costoUsd = l.factor > 0 ? costoOrig / l.factor : costoOrig
-      }
-      return costoUsd > precioVenta + 0.001
-    })
-  }, [lineas, moneda, tasaFacturaNum])
+  /** True si el nuevo_costo_raw de una línea difiere del costo vigente en sistema. */
+  function lineaTieneCostoCambiado(l: LineaUI): boolean {
+    if (l.nuevo_costo_raw === '') return false
+    const costoNuevoUsd = moneda === 'USD'
+      ? (l.factor > 0 ? l.costo_input / l.factor : l.costo_input)
+      : (tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum / (l.factor > 0 ? l.factor : 1) : 0)
+    const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
+    return Math.abs(costoNuevoUsd - costoUsdActual) > 0.0001
+  }
+
+  /** True si el nuevo costo USD supera el pvp actual (obliga recalculo). */
+  function lineaCostoSuperaPvp(l: LineaUI): boolean {
+    if (l.nuevo_costo_raw === '') return false
+    const costoNuevoUsd = moneda === 'USD'
+      ? (l.factor > 0 ? l.costo_input / l.factor : l.costo_input)
+      : (tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum / (l.factor > 0 ? l.factor : 1) : 0)
+    return costoNuevoUsd > (parseFloat(l.precio_venta_usd) || 0) + 0.001
+  }
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-6 space-y-6">
@@ -901,155 +1153,279 @@ export function CompraForm({ onClose }: CompraFormProps) {
           {/* Line items table */}
           {lineas.length > 0 && (
             <div className="overflow-x-auto rounded-xl border border-border">
-              <table className="min-w-full divide-y divide-border">
+              <table className="min-w-full divide-y divide-border text-xs">
                 <thead className="bg-muted/50">
                   <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Codigo</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase">Producto</th>
-                    <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground uppercase w-32">Unidad</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-24">Cantidad</th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase w-32">
-                      Costo ({monedaLabel})
+                    {/* ── LADO FACTURA ── */}
+                    <th className="px-2 py-2 text-left font-medium text-muted-foreground uppercase">Codigo</th>
+                    <th className="px-2 py-2 text-left font-medium text-muted-foreground uppercase">Producto</th>
+                    <th className="px-2 py-2 text-left font-medium text-muted-foreground uppercase w-24">Unidad</th>
+                    <th className="px-2 py-2 text-right font-medium text-muted-foreground uppercase w-20">Cantidad</th>
+                    <th className="px-2 py-2 text-right font-medium text-muted-foreground uppercase w-24">
+                      Costo actual ({monedaLabel})
+                    </th>
+                    <th className="px-2 py-2 text-right font-medium text-amber-600 uppercase w-28">
+                      Nuevo costo ({monedaLabel})
                     </th>
                     {mostrarColumnasSistema && (
-                      <th className="px-3 py-2 text-right text-xs font-medium text-slate-400 uppercase w-32">
-                        Costo Contab. ($)
+                      <th className="px-2 py-2 text-right font-medium text-slate-400 uppercase w-28">
+                        Costo contab. ($)
                       </th>
                     )}
-                    <th className="px-3 py-2 text-center text-xs font-medium text-muted-foreground uppercase w-24">
-                      IVA
+                    <th className="px-2 py-2 text-center font-medium text-muted-foreground uppercase w-20">
+                      IVA compra
                     </th>
-                    <th className="px-3 py-2 text-right text-xs font-medium text-muted-foreground uppercase">
+                    <th className="px-2 py-2 text-right font-medium text-muted-foreground uppercase w-24">
                       Subtotal ({monedaLabel})
                     </th>
-                    <th className="px-3 py-2 w-12"></th>
+                    {/* ── SEPARADOR ── */}
+                    <th className="px-1 py-2 w-px bg-border/40"></th>
+                    {/* ── LADO PRECIOS DEL SISTEMA ── */}
+                    <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-20">Margen%</th>
+                    <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-24">PVP ($)</th>
+                    <th className="px-2 py-2 text-right font-medium text-blue-600 uppercase w-24">PVP + IVA</th>
+                    {/* ── ESTADO / DECISIÓN ── */}
+                    <th className="px-2 py-2 text-center font-medium text-muted-foreground uppercase w-32">Estado</th>
+                    <th className="px-2 py-2 w-8"></th>
                   </tr>
                 </thead>
                 <tbody className="bg-background divide-y divide-border">
                   {lineas.map((linea, index) => {
                     const subtotal = getLineSubtotal(linea)
                     const costoSistema = getCostoSistema(linea)
+                    const costoCambio = lineaTieneCostoCambiado(linea)
+                    const costoForzado = lineaCostoSuperaPvp(linea)
+
+                    // PVP efectivo (vigente o el que el usuario editó)
+                    const pvpEfectivoUsd = linea.pvp_decision === 'actualizar' && linea.nuevo_pvp_input !== ''
+                      ? parseFloat(linea.nuevo_pvp_input) || 0
+                      : parseFloat(linea.precio_venta_usd) || 0
+                    const pvpMasIva = linea.tipo_impuesto === 'Gravable'
+                      ? pvpEfectivoUsd * (1 + linea.impuesto_pct / 100)
+                      : pvpEfectivoUsd
+
+                    // Margen efectivo
+                    const margenEfectivo = linea.pvp_decision === 'actualizar' && linea.nuevo_margen_input !== ''
+                      ? linea.nuevo_margen_input
+                      : linea.margen_actual
+
+                    // Colores según si hay cambio
+                    const nuevoCostoBg = costoCambio
+                      ? 'bg-amber-50 dark:bg-amber-950/20'
+                      : ''
+
+                    const totalCols = mostrarColumnasSistema ? 16 : 15
+
                     return (
                       <React.Fragment key={linea.producto_id}>
-                      <tr>
-                        <td className="px-3 py-2 text-sm font-mono text-muted-foreground">{linea.codigo}</td>
-                        <td className="px-3 py-2 text-sm text-foreground">
-                          <span>{linea.nombre}</span>
-                          {lineasConCostoAlto.some((l) => l.producto_id === linea.producto_id) && (
-                            <span
-                              title="El costo de compra supera el precio de venta vigente. Actualize el precio de venta del producto."
-                              className="ml-1.5 inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400 ring-1 ring-amber-400/50"
-                            >
-                              COSTO &gt; PRECIO
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2">
-                          <select
-                            value={linea.unidad_seleccionada_id ?? '__base__'}
-                            onChange={(e) => handleUnidadChange(index, e.target.value)}
-                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                          >
-                            {linea.unidadOptions.map((opt) => (
-                              <option key={opt.id ?? '__base__'} value={opt.id ?? '__base__'}>
-                                {opt.abreviatura}
-                                {opt.factor > 1 && ` (x${opt.factor})`}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="0.001"
-                            min="0.001"
-                            value={linea.cantidad_input || ''}
-                            onChange={(e) => handleLineaChange(index, 'cantidad_input', e.target.value)}
-                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={linea.costo_input || ''}
-                            onChange={(e) => handleLineaChange(index, 'costo_input', e.target.value)}
-                            className="w-full rounded border border-input bg-background px-2 py-1 text-sm text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          />
-                        </td>
-                        {mostrarColumnasSistema && (
-                          <td className="px-3 py-2 text-sm text-right text-slate-400 tabular-nums">
-                            {costoSistema !== null ? formatUsd(costoSistema) : '—'}
+                        <tr className={nuevoCostoBg}>
+                          {/* Codigo */}
+                          <td className="px-2 py-2 font-mono text-muted-foreground">{linea.codigo}</td>
+
+                          {/* Producto */}
+                          <td className="px-2 py-2 text-foreground max-w-[180px]">
+                            <span className="truncate block">{linea.nombre}</span>
                           </td>
-                        )}
-                        <td className="px-3 py-2 text-center">
-                          {linea.tipo_impuesto === 'Exento' ? (
-                            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                              Exento
-                            </span>
-                          ) : linea.tipo_impuesto === 'Exonerado' ? (
-                            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400">
-                              Exonerado
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400">
-                              {linea.impuesto_pct}%
-                            </span>
+
+                          {/* Unidad */}
+                          <td className="px-2 py-2">
+                            <select
+                              value={linea.unidad_seleccionada_id ?? '__base__'}
+                              onChange={(e) => handleUnidadChange(index, e.target.value)}
+                              className="w-full rounded border border-input bg-background px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                            >
+                              {linea.unidadOptions.map((opt) => (
+                                <option key={opt.id ?? '__base__'} value={opt.id ?? '__base__'}>
+                                  {opt.abreviatura}{opt.factor > 1 && ` ×${opt.factor}`}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+
+                          {/* Cantidad */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="number" step="0.001" min="0.001"
+                              value={linea.cantidad_input || ''}
+                              onChange={(e) => handleLineaChange(index, 'cantidad_input', e.target.value)}
+                              onKeyDown={handleNumericKeyDown}
+                              onPaste={handleNumericPaste}
+                              className="w-full rounded border border-input bg-background px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </td>
+
+                          {/* Costo Actual (read-only) */}
+                          <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
+                            {moneda === 'USD' ? formatUsd(linea.costo_actual) : formatBs(linea.costo_actual)}
+                          </td>
+
+                          {/* Nuevo Costo (editable, blank = sin cambio) */}
+                          <td className="px-2 py-2">
+                            <input
+                              type="number" step="0.01" min="0.01"
+                              value={linea.nuevo_costo_raw}
+                              onChange={(e) => handleNuevoCostoChange(index, e.target.value)}
+                              onKeyDown={handleNumericKeyDown}
+                              onPaste={handleNumericPaste}
+                              placeholder={moneda === 'USD' ? formatUsd(linea.costo_actual) : formatBs(linea.costo_actual)}
+                              className={`w-full rounded border px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                                costoCambio
+                                  ? costoForzado
+                                    ? 'border-red-400 bg-red-50 dark:bg-red-950/20'
+                                    : 'border-amber-400 bg-amber-50 dark:bg-amber-950/20'
+                                  : 'border-input bg-background'
+                              }`}
+                            />
+                          </td>
+
+                          {/* Costo Contab. (tasa paralela) */}
+                          {mostrarColumnasSistema && (
+                            <td className="px-2 py-2 text-right tabular-nums text-slate-400">
+                              {costoSistema !== null ? formatUsd(costoSistema) : '—'}
+                            </td>
                           )}
-                        </td>
-                        <td className="px-3 py-2 text-sm text-right font-medium text-foreground">
-                          {moneda === 'USD' ? formatUsd(subtotal) : formatBs(subtotal)}
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveLinea(index)}
-                            className="text-muted-foreground hover:text-destructive transition-colors"
-                          >
-                            <Trash className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                      {linea.maneja_lotes === 1 && (
-                        <tr key={`lote-${linea.producto_id}`} className="bg-amber-50/50 border-b border-amber-100">
-                          <td colSpan={mostrarColumnasSistema ? 9 : 8} className="px-3 py-2">
-                            <div className="flex flex-wrap items-center gap-3 text-xs">
-                              <span className="text-amber-700 font-medium shrink-0">Lote:</span>
-                              <div className="flex items-center gap-1.5">
-                                <label className="text-muted-foreground shrink-0">Nro.</label>
-                                <input
-                                  type="text"
-                                  value={linea.lote_nro}
-                                  onChange={(e) => handleLoteChange(index, 'lote_nro', e.target.value.toUpperCase())}
-                                  placeholder="Ej: LOT-001"
-                                  autoComplete="off"
-                                  className="w-28 rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                />
+
+                          {/* IVA de Compra */}
+                          <td className="px-2 py-2 text-center">
+                            {linea.tipo_impuesto === 'Exento' ? (
+                              <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">Exento</span>
+                            ) : linea.tipo_impuesto === 'Exonerado' ? (
+                              <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-400">Exonerado</span>
+                            ) : (
+                              <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-400">{linea.impuesto_pct}%</span>
+                            )}
+                          </td>
+
+                          {/* Subtotal */}
+                          <td className="px-2 py-2 text-right tabular-nums font-medium text-foreground">
+                            {moneda === 'USD' ? formatUsd(subtotal) : formatBs(subtotal)}
+                          </td>
+
+                          {/* Separador visual */}
+                          <td className="px-0 bg-border/30 w-px"></td>
+
+                          {/* Margen% — read-only o editable */}
+                          <td className="px-2 py-2 text-right">
+                            {linea.pvp_decision === 'actualizar' ? (
+                              <input
+                                type="number" step="0.1" min="0"
+                                value={linea.nuevo_margen_input}
+                                onChange={(e) => handleNuevoMargenChange(index, e.target.value)}
+                                onKeyDown={handleNumericKeyDown}
+                                onPaste={handleNumericPaste}
+                                className="w-16 rounded border border-blue-400 bg-blue-50 dark:bg-blue-950/20 px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            ) : (
+                              <span className="tabular-nums text-muted-foreground">{margenEfectivo}%</span>
+                            )}
+                          </td>
+
+                          {/* PVP ($) — read-only o editable */}
+                          <td className="px-2 py-2 text-right">
+                            {linea.pvp_decision === 'actualizar' ? (
+                              <input
+                                type="number" step="0.01" min="0.01"
+                                value={linea.nuevo_pvp_input}
+                                onChange={(e) => handleNuevoPvpChange(index, e.target.value)}
+                                onKeyDown={handleNumericKeyDown}
+                                onPaste={handleNumericPaste}
+                                className="w-20 rounded border border-blue-400 bg-blue-50 dark:bg-blue-950/20 px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-blue-400 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            ) : (
+                              <span className="tabular-nums text-muted-foreground">{formatUsd(pvpEfectivoUsd)}</span>
+                            )}
+                          </td>
+
+                          {/* PVP + IVA */}
+                          <td className="px-2 py-2 text-right tabular-nums text-muted-foreground">
+                            {formatUsd(pvpMasIva)}
+                          </td>
+
+                          {/* Estado / Decisión */}
+                          <td className="px-2 py-2 text-center">
+                            {!costoCambio ? (
+                              <span className="text-[9px] text-muted-foreground/50">—</span>
+                            ) : costoForzado && linea.pvp_decision !== 'actualizar' ? (
+                              <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
+                                ⚠ PVP &lt; costo
+                              </span>
+                            ) : linea.pvp_decision === null ? (
+                              <div className="flex flex-col gap-1 items-center">
+                                <button type="button" onClick={() => handlePvpDecision(index, 'mantener')}
+                                  className="w-full rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground hover:bg-muted/80 transition-colors">
+                                  Mantener PVP
+                                </button>
+                                <button type="button" onClick={() => handlePvpDecision(index, 'actualizar')}
+                                  className="w-full rounded px-1.5 py-0.5 text-[9px] font-medium bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 hover:bg-amber-200 transition-colors">
+                                  Actualizar PVP
+                                </button>
                               </div>
-                              <div className="flex items-center gap-1.5">
-                                <label className="text-muted-foreground shrink-0">Fab.</label>
-                                <input
-                                  type="date"
-                                  value={linea.lote_fecha_fab}
-                                  onChange={(e) => handleLoteChange(index, 'lote_fecha_fab', e.target.value)}
-                                  className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                />
+                            ) : linea.pvp_decision === 'mantener' ? (
+                              <div className="flex flex-col gap-1 items-center">
+                                <button type="button" onClick={() => handlePvpDecision(index, 'actualizar')}
+                                  className="w-full rounded px-1.5 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-500 hover:bg-amber-100 hover:text-amber-700 transition-colors">
+                                  ✓ Manteniendo
+                                </button>
+                                <button type="button" title="Revertir a valores originales"
+                                  onClick={() => handleResetLinea(index)}
+                                  className="rounded p-0.5 text-muted-foreground hover:text-destructive transition-colors">
+                                  <ArrowCounterClockwise className="h-3 w-3" />
+                                </button>
                               </div>
-                              <div className="flex items-center gap-1.5">
-                                <label className="text-muted-foreground shrink-0">Venc.</label>
-                                <input
-                                  type="date"
-                                  value={linea.lote_fecha_venc}
-                                  onChange={(e) => handleLoteChange(index, 'lote_fecha_venc', e.target.value)}
-                                  className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400"
-                                />
+                            ) : (
+                              <div className="flex flex-col gap-1 items-center">
+                                <button type="button" onClick={() => handlePvpDecision(index, 'mantener')}
+                                  className="w-full rounded px-1.5 py-0.5 text-[9px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 hover:bg-slate-100 hover:text-slate-500 transition-colors">
+                                  ✎ Editando PVP
+                                </button>
+                                <button type="button" title="Revertir a valores originales"
+                                  onClick={() => handleResetLinea(index)}
+                                  className="rounded p-0.5 text-muted-foreground hover:text-destructive transition-colors">
+                                  <ArrowCounterClockwise className="h-3 w-3" />
+                                </button>
                               </div>
-                              <span className="text-amber-600/70 text-xs italic">Opcional - dejar vacio si no aplica</span>
-                            </div>
+                            )}
+                          </td>
+
+                          {/* Delete */}
+                          <td className="px-2 py-2 text-center">
+                            <button type="button" onClick={() => handleRemoveLinea(index)}
+                              className="text-muted-foreground hover:text-destructive transition-colors">
+                              <Trash className="h-3.5 w-3.5" />
+                            </button>
                           </td>
                         </tr>
-                      )}
+
+                        {/* Fila de lote (si aplica) */}
+                        {linea.maneja_lotes === 1 && (
+                          <tr key={`lote-${linea.producto_id}`} className="bg-amber-50/50">
+                            <td colSpan={totalCols} className="px-3 py-2">
+                              <div className="flex flex-wrap items-center gap-3 text-xs">
+                                <span className="text-amber-700 font-medium shrink-0">Lote:</span>
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-muted-foreground shrink-0">Nro.</label>
+                                  <input type="text" value={linea.lote_nro}
+                                    onChange={(e) => handleLoteChange(index, 'lote_nro', e.target.value.toUpperCase())}
+                                    placeholder="Ej: LOT-001" autoComplete="off"
+                                    className="w-28 rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-muted-foreground shrink-0">Fab.</label>
+                                  <input type="date" value={linea.lote_fecha_fab}
+                                    onChange={(e) => handleLoteChange(index, 'lote_fecha_fab', e.target.value)}
+                                    className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <label className="text-muted-foreground shrink-0">Venc.</label>
+                                  <input type="date" value={linea.lote_fecha_venc}
+                                    onChange={(e) => handleLoteChange(index, 'lote_fecha_venc', e.target.value)}
+                                    className="rounded border border-amber-200 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                                </div>
+                                <span className="text-amber-600/70 italic">Opcional</span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                       </React.Fragment>
                     )
                   })}
@@ -1393,6 +1769,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                       <th className="text-right px-3 py-2 font-medium text-slate-400">Costo Contab. ($)</th>
                     )}
                     <th className="text-right px-3 py-2 font-medium text-muted-foreground">Subtotal ({monedaLabel})</th>
+                    <th className="text-right px-3 py-2 font-medium text-blue-600">PVP resultante</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -1400,17 +1777,37 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     const cs = getCostoSistema(l)
                     const st = getLineSubtotal(l)
                     const sts = getSubtotalSistema(l)
+                    const costoCambio = lineaTieneCostoCambiado(l)
+                    const pvpResultante = l.pvp_decision === 'actualizar' && l.nuevo_pvp_input !== ''
+                      ? parseFloat(l.nuevo_pvp_input)
+                      : parseFloat(l.precio_venta_usd) || 0
                     return (
-                      <tr key={l.producto_id}>
+                      <tr key={l.producto_id} className={costoCambio ? 'bg-amber-50/40' : ''}>
                         <td className="px-3 py-1.5">
                           <span className="font-mono text-muted-foreground text-[10px]">{l.codigo}</span>
                           {' '}{l.nombre}
+                          {costoCambio && (
+                            <span className={`ml-1 text-[9px] font-bold ${
+                              l.pvp_decision === 'actualizar' ? 'text-blue-600' : l.pvp_decision === 'mantener' ? 'text-slate-500' : 'text-amber-600'
+                            }`}>
+                              {l.pvp_decision === 'actualizar' ? '↺ PVP actualizado' : l.pvp_decision === 'mantener' ? '✓ PVP sin cambio' : '⚠ sin decidir'}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-1.5 text-right tabular-nums">
                           {l.cantidad_input} {l.unidadOptions.find((o) => (o.id ?? '__base__') === (l.unidad_seleccionada_id ?? '__base__'))?.abreviatura}
                         </td>
                         <td className="px-3 py-1.5 text-right tabular-nums">
-                          {moneda === 'USD' ? formatUsd(l.costo_input) : formatBs(l.costo_input)}
+                          {l.nuevo_costo_raw !== '' ? (
+                            <div>
+                              <div className="text-muted-foreground line-through text-[10px]">
+                                {moneda === 'USD' ? formatUsd(l.costo_actual) : formatBs(l.costo_actual)}
+                              </div>
+                              <div className="font-medium">{moneda === 'USD' ? formatUsd(l.costo_input) : formatBs(l.costo_input)}</div>
+                            </div>
+                          ) : (
+                            moneda === 'USD' ? formatUsd(l.costo_input) : formatBs(l.costo_input)
+                          )}
                         </td>
                         {mostrarColumnasSistema && (
                           <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">
@@ -1422,6 +1819,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           {sts !== null && (
                             <div className="text-[10px] text-slate-400">{formatUsd(sts)}</div>
                           )}
+                        </td>
+                        <td className="px-3 py-1.5 text-right tabular-nums text-blue-700 dark:text-blue-400">
+                          {formatUsd(pvpResultante)}
                         </td>
                       </tr>
                     )
@@ -1478,20 +1878,40 @@ export function CompraForm({ onClose }: CompraFormProps) {
             </div>
           </div>
 
-          {lineasConCostoAlto.length > 0 && (
-            <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-sm text-amber-800 dark:text-amber-300">
-              <p className="font-semibold mb-1">⚠ Costo de compra supera precio de venta en {lineasConCostoAlto.length} producto(s):</p>
-              <ul className="list-disc list-inside space-y-0.5 text-xs">
-                {lineasConCostoAlto.map((l) => (
-                  <li key={l.producto_id}>
-                    {l.nombre} — costo compra vs. precio venta actual{' '}
-                    <span className="font-mono">{formatUsd(parseFloat(l.precio_venta_usd))}</span>
-                  </li>
-                ))}
+          {/* Resumen de cambios de costo/pvp */}
+          {lineas.some(lineaTieneCostoCambiado) && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
+              <p className="font-semibold text-sm">⚠ Cambios de costo en esta compra</p>
+              <ul className="space-y-0.5">
+                {lineas.filter(lineaTieneCostoCambiado).map((l) => {
+                  const pvpResultante = l.pvp_decision === 'actualizar' && l.nuevo_pvp_input !== ''
+                    ? parseFloat(l.nuevo_pvp_input)
+                    : parseFloat(l.precio_venta_usd) || 0
+                  return (
+                    <li key={l.producto_id} className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-[10px]">{l.codigo}</span>
+                      <span className="font-medium">{l.nombre}</span>
+                      <span className="text-muted-foreground">
+                        costo: {moneda === 'USD' ? formatUsd(l.costo_actual) : formatBs(l.costo_actual)} →{' '}
+                        <span className="font-medium">{moneda === 'USD' ? formatUsd(l.costo_input) : formatBs(l.costo_input)}</span>
+                      </span>
+                      <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${
+                        l.pvp_decision === 'actualizar'
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400'
+                          : l.pvp_decision === 'mantener'
+                          ? 'bg-slate-100 text-slate-600'
+                          : 'bg-amber-100 text-amber-700'
+                      }`}>
+                        {l.pvp_decision === 'actualizar'
+                          ? `PVP → ${formatUsd(pvpResultante)}`
+                          : l.pvp_decision === 'mantener'
+                          ? 'PVP sin cambio'
+                          : 'PVP sin decidir (se mantendrá)'}
+                      </span>
+                    </li>
+                  )
+                })}
               </ul>
-              <p className="mt-1.5 text-xs opacity-80">
-                Puede continuar. Recuerde actualizar el precio de venta de estos productos.
-              </p>
             </div>
           )}
 

@@ -1156,6 +1156,22 @@ const vencimientos_pagar = new Table(
   { indexes: {} }
 )
 
+// Auditoria de cambios de precio generados por facturas de compra
+const historico_precios = new Table(
+  {
+    empresa_id: column.text,
+    factura_compra_id: column.text,
+    producto_id: column.text,
+    usuario_id: column.text,
+    costo_anterior: column.text,   // NUMERIC → text para preservar precision
+    costo_nuevo: column.text,
+    pvp_anterior: column.text,
+    pvp_nuevo: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
 // =============================================
 // CONTABILIDAD
 // =============================================
@@ -1483,6 +1499,7 @@ export const AppSchema = new Schema({
   notas_fiscales_compra_det,
   movimientos_cuenta_proveedor,
   vencimientos_pagar,
+  historico_precios,
   // Contabilidad
   plan_cuentas,
   gastos,

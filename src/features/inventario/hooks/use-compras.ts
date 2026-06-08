@@ -56,6 +56,22 @@ export interface LineaCompra {
   lote_nro?: string
   lote_fecha_fab?: string
   lote_fecha_venc?: string
+  /**
+   * Si false (o undefined), el costo no cambio respecto al sistema: solo se actualiza stock,
+   * no se toca costo_usd ni precios en productos.
+   */
+  costo_cambio?: boolean
+  /**
+   * Si true, el usuario decidio mantener el pvp actual: NO actualizar precio_venta_usd.
+   * Ignorado cuando costo_cambio = false.
+   */
+  no_actualizar_pvp?: boolean
+  /**
+   * PVP en USD definido por el usuario en el formulario.
+   * Si se provee, se usa directamente en lugar del auto-calculo por margen.
+   * Ignorado cuando no_actualizar_pvp = true o costo_cambio = false.
+   */
+  nuevo_precio_venta_usd?: number
 }
 
 export interface PagoCompraParam {
@@ -405,17 +421,35 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   }
   const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
-  // 0c. Stocks actuales de todos los productos de las lineas
+  // 0c. Stocks y precios actuales de todos los productos de las lineas
   const stocksMap = new Map<string, number>()
+  type PreciosActuales = {
+    costo_usd: number
+    precio_venta_usd: number
+    precio_mayor_usd: number | null
+  }
+  const preciosMap = new Map<string, PreciosActuales>()
+
   for (const linea of lineas) {
     const prodRes = await db.execute(
-      'SELECT stock FROM productos WHERE id = ? LIMIT 1',
+      'SELECT stock, costo_usd, precio_venta_usd, precio_mayor_usd FROM productos WHERE id = ? LIMIT 1',
       [linea.producto_id]
     )
     if (!prodRes.rows || prodRes.rows.length === 0) {
       throw new Error('Producto no encontrado. Verifique que todos los productos esten sincronizados.')
     }
-    stocksMap.set(linea.producto_id, parseFloat((prodRes.rows.item(0) as { stock: string }).stock) || 0)
+    const p = prodRes.rows.item(0) as {
+      stock: string
+      costo_usd: string
+      precio_venta_usd: string
+      precio_mayor_usd: string | null
+    }
+    stocksMap.set(linea.producto_id, parseFloat(p.stock) || 0)
+    preciosMap.set(linea.producto_id, {
+      costo_usd: parseFloat(p.costo_usd) || 0,
+      precio_venta_usd: parseFloat(p.precio_venta_usd) || 0,
+      precio_mayor_usd: p.precio_mayor_usd != null ? (parseFloat(p.precio_mayor_usd) || null) : null,
+    })
   }
 
   let compraId = ''
@@ -579,16 +613,97 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         ]
       )
 
-      // 4f. UPDATE producto: stock y costo_usd — usa costo sistema (BCV)
-      await tx.execute(
-        'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-        [
-          stockNuevo.toFixed(3),
-          costoSistema.toFixed(4),
-          now,
-          linea.producto_id,
-        ]
-      )
+      // 4f. UPDATE producto: stock + costo + precios (según decisión del usuario).
+      //
+      // costo_cambio = false → solo actualizar stock (el costo no cambió)
+      // no_actualizar_pvp = true → actualizar costo pero mantener pvp
+      // nuevo_precio_venta_usd provisto → usar pvp elegido por el usuario
+      // ninguna de las anteriores → auto-calcular pvp desde el margen actual
+      const precios = preciosMap.get(linea.producto_id)
+      const costoActual = precios?.costo_usd ?? 0
+      const pvpActual = precios?.precio_venta_usd ?? 0
+      const mayorActual = precios?.precio_mayor_usd ?? null
+      // pvpNuevoAudit: captura el pvp final para el registro de auditoria de precios
+      let pvpNuevoAudit: number | null = null
+
+      if (!linea.costo_cambio) {
+        // Costo no cambio: solo actualizar stock
+        await tx.execute(
+          'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
+          [stockNuevo.toFixed(3), now, linea.producto_id]
+        )
+      } else if (linea.no_actualizar_pvp) {
+        // Costo cambio pero usuario eligio mantener el pvp actual
+        await tx.execute(
+          'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
+          [stockNuevo.toFixed(3), costoSistema.toFixed(4), now, linea.producto_id]
+        )
+        pvpNuevoAudit = pvpActual
+      } else {
+        // Determinar nuevo pvp
+        let nuevoPvp: number
+        if (linea.nuevo_precio_venta_usd !== undefined && linea.nuevo_precio_venta_usd > 0) {
+          // Guard: PVP no puede ser menor al costo
+          if (linea.nuevo_precio_venta_usd < costoSistema) {
+            throw new Error(
+              `El PVP ($${linea.nuevo_precio_venta_usd.toFixed(2)}) es menor al costo ($${costoSistema.toFixed(2)}). Corrija el precio antes de guardar.`
+            )
+          }
+          // Usuario especifico el pvp manualmente en el formulario
+          nuevoPvp = linea.nuevo_precio_venta_usd
+        } else if (costoActual > 0 && pvpActual > 0) {
+          // Auto-calcular manteniendo el margen actual
+          const margen = (pvpActual - costoActual) / costoActual
+          nuevoPvp = Math.max(costoSistema, Number((costoSistema * (1 + margen)).toFixed(2)))
+        } else {
+          // Sin precios configurados: el nuevo costo es el pvp
+          nuevoPvp = Number(costoSistema.toFixed(2))
+        }
+
+        pvpNuevoAudit = nuevoPvp
+
+        // Precio mayor: auto-calcular con su propio margen (siempre >= pvp)
+        let nuevoMayor: number | null = null
+        if (mayorActual !== null && mayorActual > 0 && costoActual > 0) {
+          const margenMayor = (mayorActual - costoActual) / costoActual
+          nuevoMayor = Number((costoSistema * (1 + margenMayor)).toFixed(2))
+          if (nuevoMayor < nuevoPvp) nuevoMayor = nuevoPvp
+        }
+
+        if (nuevoMayor !== null) {
+          await tx.execute(
+            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
+            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoMayor.toFixed(2), now, linea.producto_id]
+          )
+        } else {
+          await tx.execute(
+            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, updated_at = ? WHERE id = ?',
+            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), now, linea.producto_id]
+          )
+        }
+      }
+
+      // 4g. Registrar historico de precios cuando el costo cambio
+      if (linea.costo_cambio && pvpNuevoAudit !== null) {
+        await tx.execute(
+          `INSERT INTO historico_precios
+             (id, empresa_id, factura_compra_id, producto_id, usuario_id,
+              costo_anterior, costo_nuevo, pvp_anterior, pvp_nuevo, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(),
+            empresa_id,
+            compraId,
+            linea.producto_id,
+            usuario_id,
+            String(costoActual.toFixed(4)),
+            String(costoSistema.toFixed(4)),
+            String(pvpActual.toFixed(2)),
+            String(pvpNuevoAudit.toFixed(2)),
+            now,
+          ]
+        )
+      }
     }
 
     // 5. Registrar movimientos de cuenta del proveedor
