@@ -499,6 +499,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
           return { ...l, nuevo_costo_raw: '', costo_input: l.costo_actual, pvp_decision: null }
         }
 
+        // Decimal incompleto ("1.", "12.", etc.) → guardar el raw sin recalcular todavía.
+        // type="text" nos da el valor real; no recalculamos hasta tener un número completo.
+        if (/^\d+\.$/.test(value)) {
+          return { ...l, nuevo_costo_raw: value }
+        }
+
         const clamped = clampNumeric(value, NUMERIC_LIMITS.costo.max, NUMERIC_LIMITS.costo.decimals)
         const numericalValue = parseFloat(clamped)
         if (isNaN(numericalValue) || numericalValue < 0) return l
@@ -1459,13 +1465,13 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           {/* Nuevo Costo (editable, blank = sin cambio) */}
                           <td className="px-2 py-2">
                             <input
-                              type="number" step="0.01" min="0.01" max={NUMERIC_LIMITS.costo.max}
+                              type="text" inputMode="decimal"
                               value={linea.nuevo_costo_raw}
                               onChange={(e) => handleNuevoCostoChange(index, e.target.value)}
                               onKeyDown={handleNumericKeyDown}
                               onPaste={handleNumericPaste}
                               placeholder=""
-                              className={`w-full rounded border px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${
+                              className={`w-full rounded border px-1.5 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring ${
                                 costoCambio
                                   ? costoForzado
                                     ? 'border-red-400 bg-red-50 dark:bg-red-950/20'
