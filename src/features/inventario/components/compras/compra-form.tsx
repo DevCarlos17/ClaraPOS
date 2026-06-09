@@ -518,6 +518,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
         const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
         const pvpActualUsd = parseFloat(l.precio_venta_usd) || 0
 
+        console.log('[NuevoCosto]', {
+          producto: l.nombre,
+          costoNuevoUsd: costoNuevoUsd.toFixed(4),
+          costoUsdActual: costoUsdActual.toFixed(4),
+          pvpActualUsd: pvpActualUsd.toFixed(4),
+          superaPvp: costoNuevoUsd > pvpActualUsd + 0.0001,
+        })
+
         // Sin cambio real → no necesita decisión
         if (Math.abs(costoNuevoUsd - costoUsdActual) < 0.0001) {
           return { ...updated, pvp_decision: null }
@@ -994,6 +1002,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
     : 'Registrar Factura de Compra'
 
   const mostrarColumnasSistema = usaTasaParalela && tasaInternaNum > 0
+
+  // True si hay al menos una línea con costo cambiado pero sin decisión de PVP.
+  // Usada para deshabilitar el botón de guardar visualmente antes del submit.
+  const hayLineasSinDecisionPvp = lineas.some(
+    (l) => l.nuevo_costo_raw !== '' && l.pvp_decision === null
+  )
 
   /** True si el nuevo_costo_raw de una línea difiere del costo vigente en sistema. */
   function lineaTieneCostoCambiado(l: LineaUI): boolean {
@@ -1901,7 +1915,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
           </button>
           <button
             type="submit"
-            disabled={submitting || lineas.length === 0}
+            disabled={submitting || lineas.length === 0 || hayLineasSinDecisionPvp}
             className="px-5 py-2.5 text-sm font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {submitLabel}
