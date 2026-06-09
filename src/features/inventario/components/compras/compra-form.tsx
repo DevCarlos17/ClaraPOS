@@ -1009,10 +1009,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   const mostrarColumnasSistema = usaTasaParalela && tasaInternaNum > 0
 
-  // True si hay al menos una línea con costo cambiado pero sin decisión de PVP.
-  // Usada para deshabilitar el botón de guardar visualmente antes del submit.
+  // True si hay al menos una línea con costo REALMENTE cambiado pero sin decisión de PVP.
+  // Usa lineaTieneCostoCambiado (hoisted) para no dispararse cuando el usuario
+  // tipea el mismo valor que el costo actual.
   const hayLineasSinDecisionPvp = lineas.some(
-    (l) => l.nuevo_costo_raw !== '' && l.pvp_decision === null
+    (l) => lineaTieneCostoCambiado(l) && l.pvp_decision === null
   )
 
   /** True si el nuevo_costo_raw de una línea difiere del costo vigente en sistema. */
