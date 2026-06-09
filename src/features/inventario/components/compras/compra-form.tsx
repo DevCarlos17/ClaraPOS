@@ -523,8 +523,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
           return { ...updated, pvp_decision: null }
         }
 
-        // Si costo SUBIÓ → auto-recalcular PVP manteniendo margen establecido
-        if (costoNuevoUsd > costoUsdActual + 0.0001) {
+        // Nuevo costo SUPERA el PVP → forzar actualización obligatoria.
+        // No se puede registrar una compra donde el costo sea mayor al precio de venta.
+        if (costoNuevoUsd > pvpActualUsd + 0.0001) {
           const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
             ? (pvpActualUsd - costoUsdActual) / costoUsdActual
             : 0
@@ -540,8 +541,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
           }
         }
 
-        // Costo cambió pero < pvp → mantener decisión actual (o null si no ha elegido)
-        return updated
+        // Costo cambió pero el PVP todavía cubre el nuevo costo → el usuario decide.
+        // Resetear a null para que aparezcan los botones "Mantener PVP" / "Actualizar PVP".
+        return { ...updated, pvp_decision: null }
       })
     )
   }
@@ -830,6 +832,17 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
+    // Validar que todos los productos con costo modificado tengan una decisión de PVP.
+    // pvp_decision === null significa que el usuario aún no eligió entre mantener o actualizar.
+    const lineasSinDecision = lineas.filter(
+      (l) => lineaTieneCostoCambiado(l) && l.pvp_decision === null
+    )
+    if (lineasSinDecision.length > 0) {
+      const nombres = lineasSinDecision.map((l) => l.nombre).join(', ')
+      setErrors({ lineas: `Elegí qué hacer con el PVP de: ${nombres}` })
+      return
+    }
+
     // Convertir lineas a unidades base en USD para almacenamiento
     const lineasConvertidas = lineas.map((l, i) => {
       const cantidadBase = l.cantidad_input * l.factor
@@ -872,8 +885,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
       const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
       const costoCambio = l.nuevo_costo_raw !== '' && Math.abs(costoUnitarioUsd - costoUsdActual) > 0.0001
 
-      // Determinar decisión sobre el PVP
-      // null = usuario no decidió → safe default: mantener pvp actual
+      // Determinar decisión sobre el PVP.
+      // Si llegamos acá con pvp_decision === null, la validación previa lo bloqueó,
+      // pero el fallback seguro es no actualizar (nunca pisar un PVP sin decisión explícita).
       const noActualizarPvp = !costoCambio || l.pvp_decision === 'mantener' || l.pvp_decision === null
       const nuevoPvpUsd = l.pvp_decision === 'actualizar' && l.nuevo_pvp_input !== ''
         ? Number((moneda === 'USD'
