@@ -90,8 +90,9 @@ export async function generarAsientos(
   for (let i = 0; i < lineas.length; i++) {
     const linea = lineas[i]
     const id = uuidv4()
-    // Cada linea tiene su propio nro_asiento correlativo
-    const nroAsiento = `LC-${String(count + i + 1).padStart(6, '0')}`
+    // Sufijo UUID (6 chars) garantiza unicidad en sistemas offline-first donde
+    // COUNT(*) local puede divergir de Supabase y generar el mismo número correlativo.
+    const nroAsiento = `LC-${String(count + i + 1).padStart(6, '0')}-${id.slice(0, 6).toUpperCase()}`
 
     await tx.execute(
       `INSERT INTO libro_contable (
@@ -667,7 +668,7 @@ export async function reversarAsientos(
     }
 
     const nuevoId = uuidv4()
-    const nroAsiento = `LC-${String(count + 1).padStart(6, '0')}`
+    const nroAsiento = `LC-${String(count + 1).padStart(6, '0')}-${nuevoId.slice(0, 6).toUpperCase()}`
     count++
 
     await tx.execute(
