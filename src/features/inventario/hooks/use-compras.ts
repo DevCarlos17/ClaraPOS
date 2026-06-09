@@ -386,6 +386,22 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     throw new Error('La tasa de cambio debe ser mayor a 0')
   }
 
+  // ─── Pre-check: número de factura único por proveedor ────────────────────────
+  // Se consulta ANTES de abrir la transacción para fallar rápido y mantener
+  // el formulario abierto. No protege contra conflictos offline con otro
+  // dispositivo (eso lo cubre el UNIQUE constraint en Supabase + uploadFailed).
+  const dupCheck = await db.execute(
+    `SELECT id FROM facturas_compra
+     WHERE empresa_id = ? AND proveedor_id = ? AND nro_factura = ? LIMIT 1`,
+    [empresa_id, proveedor_id, nro_factura]
+  )
+  if (dupCheck.rows && dupCheck.rows.length > 0) {
+    throw new Error(
+      `Ya existe una factura con el número "${nro_factura}" para este proveedor. ` +
+      `Cambiá el número antes de registrar.`
+    )
+  }
+
   // ─── Pre-fetch: deposito, moneda y stocks ANTES de la transaccion ──────────
   // Hacemos los SELECTs fuera del writeTransaction para evitar mezclar
   // lecturas y escrituras dentro del loop, lo que puede causar que solo
