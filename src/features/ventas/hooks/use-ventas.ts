@@ -921,14 +921,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             ['0.00', ventaId]
           )
           try {
-            const nroGastoAbsRes = await tx.execute(
-              'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
-              [empresa_id]
-            )
-            const nroGastoAbsNum = Number(
-              (nroGastoAbsRes.rows?.item(0) as { cnt: number })?.cnt ?? 0
-            ) + 1
-            const nroGastoAbs = `POS-ABSORB-${String(nroGastoAbsNum).padStart(5, '0')}`
+            // UUID-based: unique per venta, immune to multi-device COUNT collisions
+            const nroGastoAbs = `POS-ABSORB-${ventaId.slice(0, 8).toUpperCase()}`
             const cuentaAbsRes = await tx.execute(
               `SELECT cuenta_contable_id FROM cuentas_config
                WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
@@ -978,14 +972,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             ['0.00', ventaId]
           )
           try {
-            const nroGastoDiffRes = await tx.execute(
-              'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
-              [empresa_id]
-            )
-            const nroGastoDiffNum = Number(
-              (nroGastoDiffRes.rows?.item(0) as { cnt: number })?.cnt ?? 0
-            ) + 1
-            const nroGastoDiff = `POS-DIFF-${String(nroGastoDiffNum).padStart(5, '0')}`
+            // UUID-based: unique per venta, immune to multi-device COUNT collisions
+            const nroGastoDiff = `POS-DIFF-${ventaId.slice(0, 8).toUpperCase()}`
             const cuentaDiffRes = await tx.execute(
               `SELECT cuenta_contable_id FROM cuentas_config
                WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
