@@ -601,6 +601,8 @@ const ventas = new Table(
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,
+    // 0056: accounting observability
+    contabilidad_ok: column.integer,
   },
   { indexes: {} }
 )
@@ -1009,6 +1011,8 @@ const facturas_compra = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+    // 0056: accounting observability
+    contabilidad_ok: column.integer,
   },
   { indexes: {} }
 )
@@ -1277,6 +1281,18 @@ const gasto_pagos = new Table(
 )
 
 // =============================================
+// OBSERVABILIDAD CONTABLE (0056)
+// =============================================
+
+const errores_contabilidad = new Table({
+  empresa_id: column.text,
+  tabla_origen: column.text,
+  doc_origen_id: column.text,
+  error_msg: column.text,
+  created_at: column.text,
+})
+
+// =============================================
 // AGENDA Y CITAS
 // =============================================
 
@@ -1506,6 +1522,8 @@ export const AppSchema = new Schema({
   gasto_pagos,
   cuentas_config,
   libro_contable,
+  // Observabilidad contable (0056)
+  errores_contabilidad,
   // Agenda y Citas
   citas,
   citas_servicios,

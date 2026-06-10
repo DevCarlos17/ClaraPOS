@@ -836,8 +836,26 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         monedaContable: 'BS',
         tasa,
       })
-    } catch {
-      // Fallo en contabilidad no bloquea la compra
+
+      await tx.execute('UPDATE facturas_compra SET contabilidad_ok = 1 WHERE id = ?', [compraId])
+    } catch (err: unknown) {
+      console.warn('⚠️ contabilidad: fallo en asientos para compra', compraId, err)
+      try {
+        await tx.execute(
+          `INSERT INTO errores_contabilidad
+             (id, empresa_id, tabla_origen, doc_origen_id, error_msg, created_at)
+           VALUES (?, ?, 'facturas_compra', ?, ?, ?)`,
+          [
+            uuidv4(),
+            empresa_id,
+            compraId,
+            err instanceof Error ? err.message : String(err),
+            now,
+          ]
+        )
+      } catch {
+        // El log de errores_contabilidad es best-effort — nunca bloquea la compra
+      }
     }
   })
 

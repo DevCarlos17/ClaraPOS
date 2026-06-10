@@ -1388,8 +1388,26 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         monedaContable,
         tasa,
       })
-    } catch {
-      // Fallo en contabilidad no bloquea la venta
+
+      await tx.execute('UPDATE ventas SET contabilidad_ok = 1 WHERE id = ?', [ventaId])
+    } catch (err: unknown) {
+      console.warn('⚠️ contabilidad: fallo en asientos para venta', ventaId, err)
+      try {
+        await tx.execute(
+          `INSERT INTO errores_contabilidad
+             (id, empresa_id, tabla_origen, doc_origen_id, error_msg, created_at)
+           VALUES (?, ?, 'ventas', ?, ?, ?)`,
+          [
+            uuidv4(),
+            empresa_id,
+            ventaId,
+            err instanceof Error ? err.message : String(err),
+            now,
+          ]
+        )
+      } catch {
+        // El log de errores_contabilidad es best-effort — nunca bloquea la venta
+      }
     }
   })
 
