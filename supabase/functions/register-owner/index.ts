@@ -48,6 +48,29 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    // IDEMPOTENCY: si el email ya existe, retornar datos existentes sin crear duplicado.
+    // Cubre el caso donde la red cae después de procesar pero antes de devolver el response,
+    // y el cliente reintenta la llamada.
+    const { data: existingUsuario } = await supabaseAdmin
+      .from("usuarios")
+      .select("id, empresa_id")
+      .eq("email", email.trim())
+      .maybeSingle();
+
+    if (existingUsuario?.empresa_id) {
+      const { data: existingEmpresa } = await supabaseAdmin
+        .from("empresas")
+        .select("tenant_id")
+        .eq("id", existingUsuario.empresa_id)
+        .single();
+      return jsonResponse({
+        success: true,
+        userId: existingUsuario.id,
+        empresaId: existingUsuario.empresa_id,
+        tenantId: existingEmpresa?.tenant_id ?? null,
+      }, 200);
+    }
+
     // 1. Crear tenant
     const { data: tenant, error: tenantError } = await supabaseAdmin
       .from("tenants")

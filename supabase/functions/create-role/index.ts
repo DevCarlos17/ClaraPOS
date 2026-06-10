@@ -108,10 +108,10 @@ serve(async (req) => {
       .maybeSingle();
 
     if (existingRole) {
-      return jsonResponse(
-        { error: "Ya existe un rol con ese nombre en tu empresa" },
-        400,
-      );
+      // IDEMPOTENCY: el rol ya existe con este nombre en la empresa.
+      // Retornar éxito con el roleId existente en lugar de error,
+      // para que los reintentos (red caída, timeout) sean transparentes al cliente.
+      return jsonResponse({ success: true, roleId: existingRole.id }, 200);
     }
 
     // Crear el rol

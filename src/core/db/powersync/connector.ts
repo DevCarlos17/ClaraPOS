@@ -41,6 +41,32 @@ const IMMUTABLE_COLUMNS: Record<string, string[]> = {
   horarios_staff: ['created_at', 'empresa_id', 'usuario_id', 'dia_semana'],
 }
 
+// Tablas con triggers PostgreSQL que bloquean UPDATE (total o parcialmente).
+// Para estas tablas, un PUT de reintento usa INSERT ... ON CONFLICT DO NOTHING
+// en lugar del upsert estándar (INSERT ... ON CONFLICT DO UPDATE).
+// Esto previene que el trigger de inmutabilidad dispare como error fatal P0001
+// cuando PowerSync reintenta cargar una operación ya persistida en Supabase.
+const IMMUTABLE_TABLES = new Set([
+  'movimientos_inventario',       // trg_kardex_no_update
+  'movimientos_cuenta',           // trg_mov_cuenta_no_update
+  'movimientos_cuenta_proveedor', // trg_mov_cuenta_prov_no_update
+  'tasas_cambio',                 // trg_tasas_cambio_no_update
+  'ventas_det',                   // trg_ventas_det_no_update
+  'pagos',                        // trg_pagos_no_update
+  'notas_credito',                // trg_notas_credito_no_update
+  'notas_credito_det',            // trg_nc_det_no_update
+  'notas_debito',                 // trg_notas_debito_no_update
+  'notas_debito_det',             // trg_nd_det_no_update
+  'facturas_compra_det',          // trg_fact_compra_det_no_update
+  'retenciones_iva',              // trg_ret_iva_compra_protect
+  'retenciones_islr',             // trg_ret_islr_compra_protect
+  'retenciones_iva_ventas',       // trigger inmutabilidad retenciones ventas
+  'retenciones_islr_ventas',      // trigger inmutabilidad retenciones ventas
+  'notas_fiscales_compra',        // trg_nf_compra_no_update
+  'notas_fiscales_compra_det',    // trg_nf_compra_det_no_update
+  'libro_contable',               // trg_libro_contable_protect
+])
+
 function convertBooleans(table: string, payload: Record<string, unknown>): Record<string, unknown> {
   const boolCols = BOOLEAN_COLUMNS[table]
   if (!boolCols) return payload
@@ -392,7 +418,9 @@ export class SupabaseConnector
               }
             } else {
               const convertedRecord = convertBooleans(op.table, record as Record<string, unknown>)
-              result = await table.upsert(convertedRecord)
+              result = IMMUTABLE_TABLES.has(op.table)
+                ? await table.upsert(convertedRecord, { ignoreDuplicates: true })
+                : await table.upsert(convertedRecord)
             }
             break
           }

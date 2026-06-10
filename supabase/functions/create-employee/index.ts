@@ -146,6 +146,25 @@ serve(async (req) => {
       });
 
     if (createError) {
+      // IDEMPOTENCY: si el error es email duplicado y el usuario ya existe en esta empresa,
+      // retornar éxito con el userId existente en lugar de propagar el error.
+      // Cubre reintentos cuando la red cae después de crear el auth user pero antes del response.
+      const isDuplicateEmail =
+        createError.message?.toLowerCase().includes("already registered") ||
+        createError.message?.toLowerCase().includes("already been registered");
+
+      if (isDuplicateEmail) {
+        const { data: existingUsuario } = await supabaseAdmin
+          .from("usuarios")
+          .select("id, empresa_id")
+          .eq("email", email.trim())
+          .maybeSingle();
+
+        if (existingUsuario?.empresa_id === callerUser.empresa_id) {
+          return jsonResponse({ success: true, userId: existingUsuario.id }, 200);
+        }
+      }
+
       return jsonResponse(
         { error: `Error al crear empleado: ${createError.message}` },
         400,
