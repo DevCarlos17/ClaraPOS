@@ -179,6 +179,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+-- NOTE: trigger name is intentionally NOT trg_actualizar_saldo_cliente
+-- (that name is created by 0006_ventas.sql for incremental-migration DBs).
+-- On fresh installs this is the only trigger; on incremental DBs 0006 creates its own.
+-- If both files are ever applied to the same DB, 0057 drops this duplicate.
+DROP TRIGGER IF EXISTS trg_actualizar_saldo ON movimientos_cuenta;
 CREATE TRIGGER trg_actualizar_saldo
   BEFORE INSERT ON movimientos_cuenta
   FOR EACH ROW EXECUTE FUNCTION actualizar_saldo_cliente();

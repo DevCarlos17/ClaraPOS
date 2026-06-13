@@ -72,6 +72,16 @@ export interface LineaCompra {
    * Ignorado cuando no_actualizar_pvp = true o costo_cambio = false.
    */
   nuevo_precio_venta_usd?: number
+  /**
+   * Precio mayor en USD definido por el usuario. Si se provee, se usa directamente.
+   * Si no se provee, se auto-calcula manteniendo el margen actual del precio mayor.
+   */
+  nuevo_precio_mayor_usd?: number
+  /**
+   * Precio especial en USD definido por el usuario. Si se provee, se usa directamente.
+   * Si no se provee, se auto-calcula manteniendo el margen actual del precio especial.
+   */
+  nuevo_precio_especial_usd?: number
 }
 
 export interface PagoCompraParam {
@@ -443,12 +453,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     costo_usd: number
     precio_venta_usd: number
     precio_mayor_usd: number | null
+    precio_especial_usd: number | null
   }
   const preciosMap = new Map<string, PreciosActuales>()
 
   for (const linea of lineas) {
     const prodRes = await db.execute(
-      'SELECT stock, costo_usd, precio_venta_usd, precio_mayor_usd FROM productos WHERE id = ? LIMIT 1',
+      'SELECT stock, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd FROM productos WHERE id = ? LIMIT 1',
       [linea.producto_id]
     )
     if (!prodRes.rows || prodRes.rows.length === 0) {
@@ -459,12 +470,14 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       costo_usd: string
       precio_venta_usd: string
       precio_mayor_usd: string | null
+      precio_especial_usd: string | null
     }
     stocksMap.set(linea.producto_id, parseFloat(p.stock) || 0)
     preciosMap.set(linea.producto_id, {
       costo_usd: parseFloat(p.costo_usd) || 0,
       precio_venta_usd: parseFloat(p.precio_venta_usd) || 0,
       precio_mayor_usd: p.precio_mayor_usd != null ? (parseFloat(p.precio_mayor_usd) || null) : null,
+      precio_especial_usd: p.precio_especial_usd != null ? (parseFloat(p.precio_especial_usd) || null) : null,
     })
   }
 
@@ -639,6 +652,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       const costoActual = precios?.costo_usd ?? 0
       const pvpActual = precios?.precio_venta_usd ?? 0
       const mayorActual = precios?.precio_mayor_usd ?? null
+      const especialActual = precios?.precio_especial_usd ?? null
       // pvpNuevoAudit: captura el pvp final para el registro de auditoria de precios
       let pvpNuevoAudit: number | null = null
 
@@ -656,7 +670,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         )
         pvpNuevoAudit = pvpActual
       } else {
-        // Determinar nuevo pvp
+        // Determinar nuevo pvp (nivel 1)
         let nuevoPvp: number
         if (linea.nuevo_precio_venta_usd !== undefined && linea.nuevo_precio_venta_usd > 0) {
           // Guard: PVP no puede ser menor al costo
@@ -665,31 +679,50 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
               `El PVP ($${linea.nuevo_precio_venta_usd.toFixed(2)}) es menor al costo ($${costoSistema.toFixed(2)}). Corrija el precio antes de guardar.`
             )
           }
-          // Usuario especifico el pvp manualmente en el formulario
           nuevoPvp = linea.nuevo_precio_venta_usd
         } else if (costoActual > 0 && pvpActual > 0) {
-          // Auto-calcular manteniendo el margen actual
           const margen = (pvpActual - costoActual) / costoActual
           nuevoPvp = Math.max(costoSistema, Number((costoSistema * (1 + margen)).toFixed(2)))
         } else {
-          // Sin precios configurados: el nuevo costo es el pvp
           nuevoPvp = Number(costoSistema.toFixed(2))
         }
 
         pvpNuevoAudit = nuevoPvp
 
-        // Precio mayor: auto-calcular con su propio margen (siempre >= pvp)
+        // Precio mayor: usar provisto o auto-calcular con margen propio (siempre >= pvp)
         let nuevoMayor: number | null = null
-        if (mayorActual !== null && mayorActual > 0 && costoActual > 0) {
+        if (linea.nuevo_precio_mayor_usd !== undefined && linea.nuevo_precio_mayor_usd > 0) {
+          nuevoMayor = linea.nuevo_precio_mayor_usd
+        } else if (mayorActual !== null && mayorActual > 0 && costoActual > 0) {
           const margenMayor = (mayorActual - costoActual) / costoActual
           nuevoMayor = Number((costoSistema * (1 + margenMayor)).toFixed(2))
           if (nuevoMayor < nuevoPvp) nuevoMayor = nuevoPvp
         }
 
-        if (nuevoMayor !== null) {
+        // Precio especial: usar provisto o auto-calcular con margen propio (siempre >= pvp)
+        let nuevoEspecial: number | null = null
+        if (linea.nuevo_precio_especial_usd !== undefined && linea.nuevo_precio_especial_usd > 0) {
+          nuevoEspecial = linea.nuevo_precio_especial_usd
+        } else if (especialActual !== null && especialActual > 0 && costoActual > 0) {
+          const margenEspecial = (especialActual - costoActual) / costoActual
+          nuevoEspecial = Number((costoSistema * (1 + margenEspecial)).toFixed(2))
+          if (nuevoEspecial < nuevoPvp) nuevoEspecial = nuevoPvp
+        }
+
+        if (nuevoMayor !== null && nuevoEspecial !== null) {
+          await tx.execute(
+            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
+            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoMayor.toFixed(2), nuevoEspecial.toFixed(2), now, linea.producto_id]
+          )
+        } else if (nuevoMayor !== null) {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
             [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoMayor.toFixed(2), now, linea.producto_id]
+          )
+        } else if (nuevoEspecial !== null) {
+          await tx.execute(
+            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
+            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoEspecial.toFixed(2), now, linea.producto_id]
           )
         } else {
           await tx.execute(
