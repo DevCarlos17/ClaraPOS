@@ -1443,6 +1443,20 @@ const horarios_plantillas = new Table(
 )
 
 // =============================================
+// SYSTEM SETTINGS (global, no empresa_id)
+// =============================================
+
+const system_settings = new Table(
+  {
+    key: column.text,
+    value: column.text,
+    description: column.text,
+    updated_at: column.text,
+  },
+  { indexes: {} }
+)
+
+// =============================================
 // SCHEMA EXPORT
 // =============================================
 
@@ -1453,6 +1467,7 @@ export const AppSchema = new Schema({
   islr_conceptos_ve,
   tipos_movimiento,
   permisos,
+  system_settings,
   // Core
   empresas,
   empresas_fiscal_ve,
