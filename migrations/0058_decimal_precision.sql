@@ -491,10 +491,208 @@ CREATE POLICY "system_config_audit_deny_all"
 -- =============================================================================
 -- DOWN (only safe BEFORE any 8-decimal values written to production)
 -- =============================================================================
--- NOTE: Once PR1 app is live and toStorageString() values hit production,
--- narrowing back will truncate data. Snapshot the DB before applying UP.
---
--- ALTER TABLE tasas_cambio ALTER COLUMN valor TYPE NUMERIC(12,4) USING valor::NUMERIC(12,4);
+-- ROLLBACK GATE: Once PR1 app is live and toStorageString() values hit
+-- production, narrowing back WILL truncate data. Only run DOWN during the
+-- window between SQL deploy and app deploy.
+-- Restore order: run in reverse of UP (new tables first, then ALTER columns).
+-- =============================================================================
+
+-- DROP TABLE IF EXISTS system_config_audit;
+-- DROP TABLE IF EXISTS system_settings;
+
+-- ALTER TABLE cita_items_extras ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+-- ALTER TABLE cita_items_extras ALTER COLUMN precio_usd TYPE NUMERIC(12,2) USING precio_usd::NUMERIC(12,2);
+
+-- ALTER TABLE citas_servicios ALTER COLUMN precio_usd TYPE NUMERIC(12,2) USING precio_usd::NUMERIC(12,2);
+-- ALTER TABLE citas_servicios ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+
+-- ALTER TABLE citas ALTER COLUMN total_usd TYPE NUMERIC(12,2) USING total_usd::NUMERIC(12,2);
+-- ALTER TABLE citas ALTER COLUMN tasa TYPE NUMERIC(12,4) USING tasa::NUMERIC(12,4);
+-- ALTER TABLE citas ALTER COLUMN total_bs TYPE NUMERIC(12,2) USING total_bs::NUMERIC(12,2);
+
+-- ALTER TABLE libro_contable ALTER COLUMN monto TYPE NUMERIC(12,2) USING monto::NUMERIC(12,2);
+
+-- ALTER TABLE gasto_pagos ALTER COLUMN monto_usd TYPE NUMERIC(12,2) USING monto_usd::NUMERIC(12,2);
+
+-- ALTER TABLE gastos ALTER COLUMN tasa TYPE NUMERIC(12,4) USING tasa::NUMERIC(12,4);
+-- ALTER TABLE gastos ALTER COLUMN tasa_proveedor TYPE NUMERIC(12,4) USING tasa_proveedor::NUMERIC(12,4);
+-- ALTER TABLE gastos ALTER COLUMN monto_factura TYPE NUMERIC(12,2) USING monto_factura::NUMERIC(12,2);
+-- ALTER TABLE gastos ALTER COLUMN monto_usd TYPE NUMERIC(12,2) USING monto_usd::NUMERIC(12,2);
+-- ALTER TABLE gastos ALTER COLUMN porcentaje_iva TYPE NUMERIC(12,2) USING porcentaje_iva::NUMERIC(12,2);
+-- ALTER TABLE gastos ALTER COLUMN base_imponible_usd TYPE NUMERIC(12,2) USING base_imponible_usd::NUMERIC(12,2);
+-- ALTER TABLE gastos ALTER COLUMN monto_iva_usd TYPE NUMERIC(12,2) USING monto_iva_usd::NUMERIC(12,2);
+-- ALTER TABLE gastos ALTER COLUMN saldo_pendiente_usd TYPE NUMERIC(12,2) USING saldo_pendiente_usd::NUMERIC(12,2);
+
+-- ALTER TABLE traspasos_tesoreria ALTER COLUMN monto_origen TYPE NUMERIC(12,2) USING monto_origen::NUMERIC(12,2);
+-- ALTER TABLE traspasos_tesoreria ALTER COLUMN monto_destino TYPE NUMERIC(12,2) USING monto_destino::NUMERIC(12,2);
+-- ALTER TABLE traspasos_tesoreria ALTER COLUMN tasa_cambio TYPE NUMERIC(12,4) USING tasa_cambio::NUMERIC(12,4);
+
+-- ALTER TABLE mov_caja_fuerte ALTER COLUMN monto TYPE NUMERIC(12,2) USING monto::NUMERIC(12,2);
+-- ALTER TABLE mov_caja_fuerte ALTER COLUMN saldo_anterior TYPE NUMERIC(12,2) USING saldo_anterior::NUMERIC(12,2);
+-- ALTER TABLE mov_caja_fuerte ALTER COLUMN saldo_nuevo TYPE NUMERIC(12,2) USING saldo_nuevo::NUMERIC(12,2);
+
+-- ALTER TABLE caja_fuerte ALTER COLUMN saldo_actual TYPE NUMERIC(12,2) USING saldo_actual::NUMERIC(12,2);
+
+-- ALTER TABLE bancos_empresa ALTER COLUMN saldo_actual TYPE NUMERIC(12,2) USING saldo_actual::NUMERIC(12,2);
+
+-- ALTER TABLE movimientos_bancarios ALTER COLUMN monto TYPE NUMERIC(12,2) USING monto::NUMERIC(12,2);
+-- ALTER TABLE movimientos_bancarios ALTER COLUMN saldo_anterior TYPE NUMERIC(12,2) USING saldo_anterior::NUMERIC(12,2);
+-- ALTER TABLE movimientos_bancarios ALTER COLUMN saldo_nuevo TYPE NUMERIC(12,2) USING saldo_nuevo::NUMERIC(12,2);
+
+-- ALTER TABLE metodos_cobro ALTER COLUMN saldo_actual TYPE NUMERIC(12,2) USING saldo_actual::NUMERIC(12,2);
+
+-- ALTER TABLE movimientos_metodo_cobro ALTER COLUMN monto TYPE NUMERIC(12,2) USING monto::NUMERIC(12,2);
+-- ALTER TABLE movimientos_metodo_cobro ALTER COLUMN saldo_anterior TYPE NUMERIC(12,2) USING saldo_anterior::NUMERIC(12,2);
+-- ALTER TABLE movimientos_metodo_cobro ALTER COLUMN saldo_nuevo TYPE NUMERIC(12,2) USING saldo_nuevo::NUMERIC(12,2);
+
+-- ALTER TABLE sesiones_caja_detalle ALTER COLUMN total_sistema TYPE NUMERIC(12,2) USING total_sistema::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja_detalle ALTER COLUMN total_fisico TYPE NUMERIC(12,2) USING total_fisico::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja_detalle ALTER COLUMN diferencia TYPE NUMERIC(12,2) USING diferencia::NUMERIC(12,2);
+
+-- ALTER TABLE sesiones_caja ALTER COLUMN monto_apertura_usd TYPE NUMERIC(12,2) USING monto_apertura_usd::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja ALTER COLUMN monto_apertura_bs TYPE NUMERIC(12,2) USING monto_apertura_bs::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja ALTER COLUMN monto_sistema_usd TYPE NUMERIC(12,2) USING monto_sistema_usd::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja ALTER COLUMN monto_fisico_usd TYPE NUMERIC(12,2) USING monto_fisico_usd::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja ALTER COLUMN diferencia_usd TYPE NUMERIC(12,2) USING diferencia_usd::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja ALTER COLUMN monto_sistema_bs TYPE NUMERIC(12,2) USING monto_sistema_bs::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja ALTER COLUMN monto_fisico_bs TYPE NUMERIC(12,2) USING monto_fisico_bs::NUMERIC(12,2);
+-- ALTER TABLE sesiones_caja ALTER COLUMN diferencia_bs TYPE NUMERIC(12,2) USING diferencia_bs::NUMERIC(12,2);
+
+-- ALTER TABLE historico_precios ALTER COLUMN costo_anterior TYPE NUMERIC(12,2) USING costo_anterior::NUMERIC(12,2);
+-- ALTER TABLE historico_precios ALTER COLUMN costo_nuevo TYPE NUMERIC(12,2) USING costo_nuevo::NUMERIC(12,2);
+-- ALTER TABLE historico_precios ALTER COLUMN pvp_anterior TYPE NUMERIC(12,2) USING pvp_anterior::NUMERIC(12,2);
+-- ALTER TABLE historico_precios ALTER COLUMN pvp_nuevo TYPE NUMERIC(12,2) USING pvp_nuevo::NUMERIC(12,2);
+
+-- ALTER TABLE vencimientos_pagar ALTER COLUMN monto_original_usd TYPE NUMERIC(12,2) USING monto_original_usd::NUMERIC(12,2);
+-- ALTER TABLE vencimientos_pagar ALTER COLUMN monto_pagado_usd TYPE NUMERIC(12,2) USING monto_pagado_usd::NUMERIC(12,2);
+-- ALTER TABLE vencimientos_pagar ALTER COLUMN saldo_pendiente_usd TYPE NUMERIC(12,2) USING saldo_pendiente_usd::NUMERIC(12,2);
+
+-- ALTER TABLE movimientos_cuenta_proveedor ALTER COLUMN monto TYPE NUMERIC(12,2) USING monto::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta_proveedor ALTER COLUMN saldo_anterior TYPE NUMERIC(12,2) USING saldo_anterior::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta_proveedor ALTER COLUMN saldo_nuevo TYPE NUMERIC(12,2) USING saldo_nuevo::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta_proveedor ALTER COLUMN monto_moneda TYPE NUMERIC(12,2) USING monto_moneda::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta_proveedor ALTER COLUMN tasa_pago TYPE NUMERIC(12,4) USING tasa_pago::NUMERIC(12,4);
+-- ALTER TABLE movimientos_cuenta_proveedor ALTER COLUMN monto_usd_interno TYPE NUMERIC(12,2) USING monto_usd_interno::NUMERIC(12,2);
+
+-- ALTER TABLE notas_fiscales_compra_det ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+-- ALTER TABLE notas_fiscales_compra_det ALTER COLUMN precio_unitario_usd TYPE NUMERIC(12,2) USING precio_unitario_usd::NUMERIC(12,2);
+-- ALTER TABLE notas_fiscales_compra_det ALTER COLUMN impuesto_pct TYPE NUMERIC(12,2) USING impuesto_pct::NUMERIC(12,2);
+-- ALTER TABLE notas_fiscales_compra_det ALTER COLUMN subtotal_usd TYPE NUMERIC(12,2) USING subtotal_usd::NUMERIC(12,2);
+
+-- ALTER TABLE notas_fiscales_compra ALTER COLUMN tasa TYPE NUMERIC(12,4) USING tasa::NUMERIC(12,4);
+-- ALTER TABLE notas_fiscales_compra ALTER COLUMN total_exento_usd TYPE NUMERIC(12,2) USING total_exento_usd::NUMERIC(12,2);
+-- ALTER TABLE notas_fiscales_compra ALTER COLUMN total_base_usd TYPE NUMERIC(12,2) USING total_base_usd::NUMERIC(12,2);
+-- ALTER TABLE notas_fiscales_compra ALTER COLUMN total_iva_usd TYPE NUMERIC(12,2) USING total_iva_usd::NUMERIC(12,2);
+-- ALTER TABLE notas_fiscales_compra ALTER COLUMN total_usd TYPE NUMERIC(12,2) USING total_usd::NUMERIC(12,2);
+-- ALTER TABLE notas_fiscales_compra ALTER COLUMN total_bs TYPE NUMERIC(12,2) USING total_bs::NUMERIC(12,2);
+
+-- ALTER TABLE retenciones_islr ALTER COLUMN base_imponible_bs TYPE NUMERIC(12,2) USING base_imponible_bs::NUMERIC(12,2);
+-- ALTER TABLE retenciones_islr ALTER COLUMN porcentaje_retencion TYPE NUMERIC(12,2) USING porcentaje_retencion::NUMERIC(12,2);
+-- ALTER TABLE retenciones_islr ALTER COLUMN monto_retenido_bs TYPE NUMERIC(12,2) USING monto_retenido_bs::NUMERIC(12,2);
+-- ALTER TABLE retenciones_islr ALTER COLUMN sustraendo_bs TYPE NUMERIC(12,2) USING sustraendo_bs::NUMERIC(12,2);
+
+-- ALTER TABLE retenciones_iva ALTER COLUMN base_imponible TYPE NUMERIC(12,2) USING base_imponible::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva ALTER COLUMN porcentaje_iva TYPE NUMERIC(12,2) USING porcentaje_iva::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva ALTER COLUMN monto_iva TYPE NUMERIC(12,2) USING monto_iva::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva ALTER COLUMN porcentaje_retencion TYPE NUMERIC(12,2) USING porcentaje_retencion::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva ALTER COLUMN monto_retenido TYPE NUMERIC(12,2) USING monto_retenido::NUMERIC(12,2);
+
+-- ALTER TABLE facturas_compra_det ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+-- ALTER TABLE facturas_compra_det ALTER COLUMN costo_unitario_usd TYPE NUMERIC(12,2) USING costo_unitario_usd::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra_det ALTER COLUMN costo_usd_sistema TYPE NUMERIC(12,2) USING costo_usd_sistema::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra_det ALTER COLUMN impuesto_pct TYPE NUMERIC(12,2) USING impuesto_pct::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra_det ALTER COLUMN subtotal_usd TYPE NUMERIC(12,2) USING subtotal_usd::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra_det ALTER COLUMN subtotal_bs TYPE NUMERIC(12,2) USING subtotal_bs::NUMERIC(12,2);
+
+-- ALTER TABLE facturas_compra ALTER COLUMN tasa TYPE NUMERIC(12,4) USING tasa::NUMERIC(12,4);
+-- ALTER TABLE facturas_compra ALTER COLUMN tasa_costo TYPE NUMERIC(12,4) USING tasa_costo::NUMERIC(12,4);
+-- ALTER TABLE facturas_compra ALTER COLUMN total_exento_usd TYPE NUMERIC(12,2) USING total_exento_usd::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra ALTER COLUMN total_base_usd TYPE NUMERIC(12,2) USING total_base_usd::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra ALTER COLUMN total_iva_usd TYPE NUMERIC(12,2) USING total_iva_usd::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra ALTER COLUMN total_igtf_usd TYPE NUMERIC(12,2) USING total_igtf_usd::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra ALTER COLUMN total_usd TYPE NUMERIC(12,2) USING total_usd::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra ALTER COLUMN total_bs TYPE NUMERIC(12,2) USING total_bs::NUMERIC(12,2);
+-- ALTER TABLE facturas_compra ALTER COLUMN saldo_pend_usd TYPE NUMERIC(12,2) USING saldo_pend_usd::NUMERIC(12,2);
+
+-- ALTER TABLE proveedores ALTER COLUMN retencion_iva_pct TYPE NUMERIC(12,2) USING retencion_iva_pct::NUMERIC(12,2);
+-- ALTER TABLE proveedores ALTER COLUMN limite_credito_usd TYPE NUMERIC(12,2) USING limite_credito_usd::NUMERIC(12,2);
+-- ALTER TABLE proveedores ALTER COLUMN saldo_actual TYPE NUMERIC(12,2) USING saldo_actual::NUMERIC(12,2);
+
+-- ALTER TABLE islr_conceptos_ve ALTER COLUMN porcentaje_pj TYPE NUMERIC(12,2) USING porcentaje_pj::NUMERIC(12,2);
+-- ALTER TABLE islr_conceptos_ve ALTER COLUMN porcentaje_pn TYPE NUMERIC(12,2) USING porcentaje_pn::NUMERIC(12,2);
+-- ALTER TABLE islr_conceptos_ve ALTER COLUMN sustraendo_ut TYPE NUMERIC(12,2) USING sustraendo_ut::NUMERIC(12,2);
+-- ALTER TABLE islr_conceptos_ve ALTER COLUMN monto_minimo_base TYPE NUMERIC(12,2) USING monto_minimo_base::NUMERIC(12,2);
+
+-- ALTER TABLE retenciones_islr_ventas ALTER COLUMN base_imponible_bs TYPE NUMERIC(12,2) USING base_imponible_bs::NUMERIC(12,2);
+-- ALTER TABLE retenciones_islr_ventas ALTER COLUMN porcentaje_retencion TYPE NUMERIC(12,2) USING porcentaje_retencion::NUMERIC(12,2);
+-- ALTER TABLE retenciones_islr_ventas ALTER COLUMN monto_retenido_bs TYPE NUMERIC(12,2) USING monto_retenido_bs::NUMERIC(12,2);
+-- ALTER TABLE retenciones_islr_ventas ALTER COLUMN sustraendo_bs TYPE NUMERIC(12,2) USING sustraendo_bs::NUMERIC(12,2);
+
+-- ALTER TABLE retenciones_iva_ventas ALTER COLUMN base_imponible TYPE NUMERIC(12,2) USING base_imponible::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva_ventas ALTER COLUMN porcentaje_iva TYPE NUMERIC(12,2) USING porcentaje_iva::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva_ventas ALTER COLUMN monto_iva TYPE NUMERIC(12,2) USING monto_iva::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva_ventas ALTER COLUMN porcentaje_retencion TYPE NUMERIC(12,2) USING porcentaje_retencion::NUMERIC(12,2);
+-- ALTER TABLE retenciones_iva_ventas ALTER COLUMN monto_retenido TYPE NUMERIC(12,2) USING monto_retenido::NUMERIC(12,2);
+
+-- ALTER TABLE pagos ALTER COLUMN tasa TYPE NUMERIC(12,4) USING tasa::NUMERIC(12,4);
+-- ALTER TABLE pagos ALTER COLUMN monto TYPE NUMERIC(12,2) USING monto::NUMERIC(12,2);
+-- ALTER TABLE pagos ALTER COLUMN monto_usd TYPE NUMERIC(12,2) USING monto_usd::NUMERIC(12,2);
+
+-- ALTER TABLE ventas_det ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+-- ALTER TABLE ventas_det ALTER COLUMN precio_unitario_usd TYPE NUMERIC(12,2) USING precio_unitario_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas_det ALTER COLUMN impuesto_pct TYPE NUMERIC(12,2) USING impuesto_pct::NUMERIC(12,2);
+-- ALTER TABLE ventas_det ALTER COLUMN subtotal_usd TYPE NUMERIC(12,2) USING subtotal_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas_det ALTER COLUMN subtotal_bs TYPE NUMERIC(12,2) USING subtotal_bs::NUMERIC(12,2);
+
+-- ALTER TABLE ventas ALTER COLUMN tasa TYPE NUMERIC(12,4) USING tasa::NUMERIC(12,4);
+-- ALTER TABLE ventas ALTER COLUMN total_exento_usd TYPE NUMERIC(12,2) USING total_exento_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN total_base_usd TYPE NUMERIC(12,2) USING total_base_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN total_iva_usd TYPE NUMERIC(12,2) USING total_iva_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN total_igtf_usd TYPE NUMERIC(12,2) USING total_igtf_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN total_usd TYPE NUMERIC(12,2) USING total_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN total_bs TYPE NUMERIC(12,2) USING total_bs::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN descuento_usd TYPE NUMERIC(12,2) USING descuento_usd::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN descuento_bs TYPE NUMERIC(12,2) USING descuento_bs::NUMERIC(12,2);
+-- ALTER TABLE ventas ALTER COLUMN saldo_pend_usd TYPE NUMERIC(12,2) USING saldo_pend_usd::NUMERIC(12,2);
+
+-- ALTER TABLE vencimientos_cobrar ALTER COLUMN monto_original_usd TYPE NUMERIC(12,2) USING monto_original_usd::NUMERIC(12,2);
+-- ALTER TABLE vencimientos_cobrar ALTER COLUMN monto_pagado_usd TYPE NUMERIC(12,2) USING monto_pagado_usd::NUMERIC(12,2);
+-- ALTER TABLE vencimientos_cobrar ALTER COLUMN saldo_pendiente_usd TYPE NUMERIC(12,2) USING saldo_pendiente_usd::NUMERIC(12,2);
+
+-- ALTER TABLE movimientos_cuenta ALTER COLUMN monto TYPE NUMERIC(12,2) USING monto::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta ALTER COLUMN saldo_anterior TYPE NUMERIC(12,2) USING saldo_anterior::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta ALTER COLUMN saldo_nuevo TYPE NUMERIC(12,2) USING saldo_nuevo::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta ALTER COLUMN monto_moneda TYPE NUMERIC(12,2) USING monto_moneda::NUMERIC(12,2);
+-- ALTER TABLE movimientos_cuenta ALTER COLUMN tasa_pago TYPE NUMERIC(12,4) USING tasa_pago::NUMERIC(12,4);
+
+-- ALTER TABLE clientes ALTER COLUMN limite_credito_usd TYPE NUMERIC(12,2) USING limite_credito_usd::NUMERIC(12,2);
+-- ALTER TABLE clientes ALTER COLUMN saldo_actual TYPE NUMERIC(12,2) USING saldo_actual::NUMERIC(12,2);
+-- ALTER TABLE clientes ALTER COLUMN porcentaje_retencion_iva TYPE NUMERIC(12,2) USING porcentaje_retencion_iva::NUMERIC(12,2);
+
+-- ALTER TABLE niveles_precio ALTER COLUMN porcentaje_defecto TYPE NUMERIC(12,2) USING porcentaje_defecto::NUMERIC(12,2);
+
+-- ALTER TABLE impuestos_ve ALTER COLUMN porcentaje TYPE NUMERIC(12,2) USING porcentaje::NUMERIC(12,2);
+
+-- ALTER TABLE unidades_conversion ALTER COLUMN factor TYPE NUMERIC(12,4) USING factor::NUMERIC(12,4);
+
+-- ALTER TABLE lotes ALTER COLUMN cantidad_inicial TYPE NUMERIC(12,3) USING cantidad_inicial::NUMERIC(12,3);
+-- ALTER TABLE lotes ALTER COLUMN cantidad_actual TYPE NUMERIC(12,3) USING cantidad_actual::NUMERIC(12,3);
+-- ALTER TABLE lotes ALTER COLUMN costo_unitario TYPE NUMERIC(12,2) USING costo_unitario::NUMERIC(12,2);
+
+-- ALTER TABLE ajustes_det ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+-- ALTER TABLE ajustes_det ALTER COLUMN costo_unitario TYPE NUMERIC(12,2) USING costo_unitario::NUMERIC(12,2);
+
+-- ALTER TABLE recetas ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+
+-- ALTER TABLE movimientos_inventario ALTER COLUMN cantidad TYPE NUMERIC(12,3) USING cantidad::NUMERIC(12,3);
+-- ALTER TABLE movimientos_inventario ALTER COLUMN stock_anterior TYPE NUMERIC(12,3) USING stock_anterior::NUMERIC(12,3);
+-- ALTER TABLE movimientos_inventario ALTER COLUMN stock_nuevo TYPE NUMERIC(12,3) USING stock_nuevo::NUMERIC(12,3);
+-- ALTER TABLE movimientos_inventario ALTER COLUMN costo_unitario TYPE NUMERIC(12,2) USING costo_unitario::NUMERIC(12,2);
+-- ALTER TABLE movimientos_inventario ALTER COLUMN tasa_cambio TYPE NUMERIC(12,4) USING tasa_cambio::NUMERIC(12,4);
+
+-- ALTER TABLE inventario_stock ALTER COLUMN cantidad_actual TYPE NUMERIC(12,3) USING cantidad_actual::NUMERIC(12,3);
+-- ALTER TABLE inventario_stock ALTER COLUMN stock_reservado TYPE NUMERIC(12,3) USING stock_reservado::NUMERIC(12,3);
+
 -- ALTER TABLE productos ALTER COLUMN costo_usd TYPE NUMERIC(12,2) USING costo_usd::NUMERIC(12,2);
 -- ALTER TABLE productos ALTER COLUMN precio_venta_usd TYPE NUMERIC(12,2) USING precio_venta_usd::NUMERIC(12,2);
 -- ALTER TABLE productos ALTER COLUMN precio_mayor_usd TYPE NUMERIC(12,2) USING precio_mayor_usd::NUMERIC(12,2);
@@ -503,6 +701,5 @@ CREATE POLICY "system_config_audit_deny_all"
 -- ALTER TABLE productos ALTER COLUMN costo_ultimo TYPE NUMERIC(12,2) USING costo_ultimo::NUMERIC(12,2);
 -- ALTER TABLE productos ALTER COLUMN stock TYPE NUMERIC(12,3) USING stock::NUMERIC(12,3);
 -- ALTER TABLE productos ALTER COLUMN stock_minimo TYPE NUMERIC(12,3) USING stock_minimo::NUMERIC(12,3);
--- -- ... (continue for all tables above) ...
--- DROP TABLE IF EXISTS system_config_audit;
--- DROP TABLE IF EXISTS system_settings;
+
+-- ALTER TABLE tasas_cambio ALTER COLUMN valor TYPE NUMERIC(12,4) USING valor::NUMERIC(12,4);
