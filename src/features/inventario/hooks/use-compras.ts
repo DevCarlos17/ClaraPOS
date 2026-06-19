@@ -867,7 +867,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         empresaId: empresa_id,
         compraId,
         nroFactura: nro_factura,
-        totalUsd,
+        totalUsd: totalUsd.toNumber(),
         esContado: tipo === 'CONTADO',
         banco_empresa_id: null,
         pagos: pagosContabilidad,
