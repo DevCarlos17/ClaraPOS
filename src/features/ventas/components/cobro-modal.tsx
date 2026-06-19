@@ -5,7 +5,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
-import { formatUsd, formatBs } from '@/lib/currency'
+import Decimal from 'decimal.js'
+import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import {
   crearVenta,
   validarStockServidor,
@@ -126,69 +127,71 @@ export function CobroModal({
   // ── Calculo de totales (con tasa congelada) ───────────────────────────────
   // Los cargos especiales con totalCargoBs se suman en su moneda nativa para
   // preservar el monto exacto aunque la tasa haya cambiado desde el modal de avance.
-  const totalCargosEnUsd = cargosEspeciales.reduce((s, c) => s + c.montoCargoUsd, 0)
+  const totalCargosEnUsd = cargosEspeciales.reduce((s, c) => s.plus(c.montoCargoUsd), new Decimal(0))
   const totalCargosNativosBs = cargosEspeciales.reduce((s, c) =>
-    s + (c.totalCargoBs ?? c.montoCargoUsd * tasaUsada), 0)
-  const totalProductosBs = (totalBrutoUsd - totalCargosEnUsd) * tasaUsada
-  const totalEfectivoBs = Math.max(0, totalProductosBs + totalCargosNativosBs - descuentoBs)
-  const totalEfectivoUsd = Number((totalEfectivoBs / tasaUsada).toFixed(2))
+    s.plus(c.totalCargoBs !== undefined ? new Decimal(c.totalCargoBs) : usdToBs(c.montoCargoUsd, tasaUsada)),
+    new Decimal(0))
+  const totalProductosBs = usdToBs(new Decimal(totalBrutoUsd).minus(totalCargosEnUsd), tasaUsada)
+  const totalEfectivoBs = Decimal.max(new Decimal(0), totalProductosBs.plus(totalCargosNativosBs).minus(descuentoBs))
+  const totalEfectivoUsd = bsToUsd(totalEfectivoBs, tasaUsada)
 
   // ── Calculo IGTF (antes del balance para que el pendiente lo incluya) ────
   const { aplicaIgtf, tasaIgtf } = useIgtfConfig()
   const totalPagosUsdNativo = pagos
     .filter((p) => p.moneda !== 'BS')
-    .reduce((sum, p) => sum + p.monto, 0)
+    .reduce((sum, p) => sum.plus(p.monto), new Decimal(0))
   // Base: solo la porcion de la factura pagada en USD.
   // Se capea en totalEfectivoUsd para evitar recursividad: el propio IGTF
   // no genera un nuevo IGTF si el cliente lo paga en divisas.
-  const igtfBase = Math.min(totalPagosUsdNativo, totalEfectivoUsd)
+  const igtfBase = Decimal.min(totalPagosUsdNativo, totalEfectivoUsd)
   const igtfUsd =
-    aplicaIgtf && igtfBase > 0
-      ? Number((igtfBase * tasaIgtf / 100).toFixed(2))
-      : 0
-  const igtfBs = Number((igtfUsd * tasaUsada).toFixed(2))
+    aplicaIgtf && igtfBase.gt(0)
+      ? igtfBase.times(tasaIgtf).dividedBy(100)
+      : new Decimal(0)
+  const igtfBs = usdToBs(igtfUsd, tasaUsada)
 
   // Ancla en Bs (sin doble conversion USD→Bs→USD)
   // SAF se cuenta en USD; convertir a Bs para el balance
-  const safMontoBsEquiv = safSeleccionado ? safMonto * tasaUsada : 0
+  const safMontoBsEquiv = safSeleccionado ? usdToBs(safMonto, tasaUsada) : new Decimal(0)
   const totalPagadoBs = pagos.reduce((sum, p) => {
-    return sum + (p.moneda === 'BS' ? p.monto : p.monto * tasaUsada)
-  }, 0) + safMontoBsEquiv
+    return sum.plus(p.moneda === 'BS' ? p.monto : usdToBs(p.monto, tasaUsada))
+  }, new Decimal(0)).plus(safMontoBsEquiv)
   // El pendiente incluye el IGTF: el cliente debe cubrir factura + IGTF generado
-  const pendienteBs4 = totalEfectivoBs + igtfBs - totalPagadoBs
-  const umbralBs = tasaUsada * 0.01
-  const esPagado = pendienteBs4 <= umbralBs
-  const esDiferencialRedondeo = pendienteBs4 > 0.001 && pendienteBs4 <= umbralBs
+  const pendienteBs4 = totalEfectivoBs.plus(igtfBs).minus(totalPagadoBs)
+  const umbralBs = new Decimal(tasaUsada).times('0.01')
+  const esPagado = pendienteBs4.lte(umbralBs)
+  const esDiferencialRedondeo = pendienteBs4.gt('0.001') && pendienteBs4.lte(umbralBs)
   const tipoDetectado: 'CONTADO' | 'CREDITO' = esPagado ? 'CONTADO' : 'CREDITO'
-  const pendienteUsd = Number((Math.max(0, pendienteBs4) / tasaUsada).toFixed(2))
+  const pendienteUsd = bsToUsd(Decimal.max(new Decimal(0), pendienteBs4), tasaUsada)
 
   // ── Vuelto (cliente pago de mas) ──────────────────────────────────────────
-  const estaOverpago = pendienteBs4 < -0.01
-  const vueltoMontoBs = estaOverpago ? Math.abs(pendienteBs4) : 0
+  const estaOverpago = pendienteBs4.lt('-0.01')
+  const vueltoMontoBs = estaOverpago ? pendienteBs4.abs() : new Decimal(0)
   // ── Discrepancia en USD (negativo = overpago, positivo = faltante) ────────
   const montoDiscrepanciaUsd = useMemo(() => {
-    if (!tasaUsada || tasaUsada <= 0) return 0
-    return pendienteBs4 / tasaUsada
+    if (!tasaUsada || tasaUsada <= 0) return new Decimal(0)
+    return bsToUsd(pendienteBs4, tasaUsada)
   }, [pendienteBs4, tasaUsada])
 
   // Auto-seleccionar primer metodo efectivo cuando hay vuelto (legado)
+  const estaOverpagoRef = estaOverpago
   useEffect(() => {
-    if (estaOverpago && !vueltoMetodoId) {
+    if (estaOverpagoRef && !vueltoMetodoId) {
       const efectivos = metodos.filter((m) => m.tipo === 'EFECTIVO')
       if (efectivos.length > 0) setVueltoMetodoId(efectivos[0].id)
-    } else if (!estaOverpago && vueltoMetodoId) {
+    } else if (!estaOverpagoRef && vueltoMetodoId) {
       setVueltoMetodoId('')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [estaOverpago])
+  }, [estaOverpagoRef])
 
   // ── Auto-selección de modo de discrepancia ────────────────────────────────
   useEffect(() => {
-    if (Math.abs(pendienteBs4) <= 0.01) {
+    if (pendienteBs4.abs().lte('0.01')) {
       setDiscrepancyMode(null)
       return
     }
-    if (pendienteBs4 < -0.01) {
+    if (pendienteBs4.lt('-0.01')) {
       // Overpago: siempre mostrar formulario completo, sin auto-resolver por diferencial
       if (
         discrepancyMode === null ||
@@ -199,7 +202,7 @@ export function CobroModal({
       ) {
         setDiscrepancyMode('VUELTO')
       }
-    } else if (pendienteBs4 > 0.01) {
+    } else if (pendienteBs4.gt('0.01')) {
       // Faltante: CREDITO por defecto, sin sobreescribir elección activa del cajero
       if (
         discrepancyMode === null ||
@@ -226,43 +229,43 @@ export function CobroModal({
   // Distribución FIFO: cómo se aplica el excedente a las facturas pendientes
   const fifoPreview = useMemo(() => {
     if (safSubMode !== 'FACTURAS' || !facturasPendientesSAF.length) return []
-    const montoDisp = Math.abs(montoDiscrepanciaUsd)
+    const montoDisp = montoDiscrepanciaUsd.abs()
     let remaining = montoDisp
     const result: Array<{ ventaId: string; nroFactura: string; aplicar: number }> = []
     for (const f of facturasPendientesSAF) {
-      if (remaining <= 0.001) break
-      const saldo = parseFloat(f.saldo_pend_usd)
-      const aplicar = Number(Math.min(saldo, remaining).toFixed(2))
-      if (aplicar > 0.001) {
-        result.push({ ventaId: f.id, nroFactura: f.nro_factura, aplicar })
-        remaining = Number((remaining - aplicar).toFixed(2))
+      if (remaining.lte('0.001')) break
+      const saldo = new Decimal(f.saldo_pend_usd)
+      const aplicar = Decimal.min(saldo, remaining)
+      if (aplicar.gt('0.001')) {
+        result.push({ ventaId: f.id, nroFactura: f.nro_factura, aplicar: aplicar.toNumber() })
+        remaining = remaining.minus(aplicar)
       }
     }
     return result
   }, [safSubMode, facturasPendientesSAF, montoDiscrepanciaUsd])
 
   const fifoSobrante = useMemo(() => {
-    const totalAplicado = fifoPreview.reduce((s, x) => s + x.aplicar, 0)
-    return Math.max(0, Number((Math.abs(montoDiscrepanciaUsd) - totalAplicado).toFixed(2)))
+    const totalAplicado = fifoPreview.reduce((s, x) => s.plus(x.aplicar), new Decimal(0))
+    return Decimal.max(new Decimal(0), montoDiscrepanciaUsd.abs().minus(totalAplicado)).toNumber()
   }, [fifoPreview, montoDiscrepanciaUsd])
 
   const metodosEfectivo = metodos.filter((m) => m.tipo === 'EFECTIVO')
 
   // ── Validación de split vuelto ────────────────────────────────────────────
-  const splitVueltoSumBs = splitVuelto.reduce((s, e) => s + e.montoBs, 0)
+  const splitVueltoSumBs = splitVuelto.reduce((s, e) => s.plus(e.montoBs), new Decimal(0))
   // Diferencia: positivo = se asigna MÁS que el vuelto (diferencial cambiario por
   // redondeo de denominaciones físicas en USD); negativo = se asigna MENOS (el
   // sobrante queda en caja como diferencial implícito).
-  const splitVueltoExceso = splitVueltoSumBs - vueltoMontoBs
+  const splitVueltoExceso = splitVueltoSumBs.minus(vueltoMontoBs)
   const splitVueltoValid =
     splitVuelto.length === 0 ||
     // Bajo-distribución: siempre válido — el monto no asignado queda en caja
     // Sobre-distribución: válido si el exceso ≤ umbralBs (e.g. redondeo USD→Bs)
-    splitVueltoExceso <= umbralBs + 0.01
+    splitVueltoExceso.lte(umbralBs.plus('0.01'))
 
   // ── Estado del botón Procesar (modo-aware) ────────────────────────────────
   const puedeProcesar = (() => {
-    if (Math.abs(pendienteBs4) <= 0.01) {
+    if (pendienteBs4.abs().lte('0.01')) {
       return (
         (pagos.length > 0 && esPagado) ||
         // SAF como único método de cobro: pagos=[] pero SAF cubre el monto
@@ -318,26 +321,26 @@ export function CobroModal({
   // Rellena el monto pendiente exacto en la moneda del metodo seleccionado
   const handleAutocompletar = () => {
     if (!monedaMetodo) return
-    const pendBs = Math.max(0, pendienteBs4)
+    const pendBs = Decimal.max(new Decimal(0), pendienteBs4)
     const montoPend =
       monedaMetodo === 'BS'
-        ? Number(pendBs.toFixed(2))
-        : Number((pendBs / tasaUsada).toFixed(2))
-    setMontoStr(String(montoPend))
+        ? pendBs.toFixed(2)
+        : bsToUsd(pendBs, tasaUsada).toFixed(2)
+    setMontoStr(montoPend)
   }
 
   const handleProcesar = async () => {
     // Validar limite de credito — solo aplica cuando el cajero eligió factura a crédito,
     // NO cuando el modo es faltante de caja (DIFERENCIAL_FALTANTE) o absorción (ABSORBER)
     if (discrepancyMode === 'CREDITO' && clienteData) {
-      const limite = parseFloat(clienteData.limite_credito_usd)
-      const saldoActual = parseFloat(clienteData.saldo_actual)
-      if (limite <= 0) {
+      const limite = new Decimal(clienteData.limite_credito_usd)
+      const saldoActual = new Decimal(clienteData.saldo_actual)
+      if (limite.lte(0)) {
         toast.error('Este cliente no tiene credito asignado. Registra un pago para facturar a contado.')
         return
       }
-      const creditoDisponible = Math.max(0, limite - saldoActual)
-      if (pendienteUsd > creditoDisponible + 0.01) {
+      const creditoDisponible = Decimal.max(new Decimal(0), limite.minus(saldoActual))
+      if (pendienteUsd.gt(creditoDisponible.plus('0.01'))) {
         toast.error(
           `El monto a credito (${formatUsd(pendienteUsd)}) excede el credito disponible (${formatUsd(creditoDisponible)})`
         )
@@ -348,11 +351,11 @@ export function CobroModal({
     // Avances deben cubrirse completamente (no se aceptan a credito)
     const totalAvancesUsd = cargosEspeciales
       .filter((c) => c.tipo === 'AVANCE')
-      .reduce((sum, c) => sum + c.montoCargoUsd, 0)
+      .reduce((sum, c) => sum.plus(c.montoCargoUsd), new Decimal(0))
     const totalPagadoUsd = pagos.reduce((sum, p) => {
-      return sum + (p.moneda === 'BS' ? p.monto / tasaUsada : p.monto)
-    }, 0)
-    if (totalAvancesUsd > 0.01 && totalPagadoUsd < totalAvancesUsd - 0.01) {
+      return sum.plus(p.moneda === 'BS' ? bsToUsd(p.monto, tasaUsada) : p.monto)
+    }, new Decimal(0))
+    if (totalAvancesUsd.gt('0.01') && totalPagadoUsd.lt(totalAvancesUsd.minus('0.01'))) {
       toast.error(
         `El avance de efectivo debe pagarse en su totalidad. Registra un pago de al menos ${formatUsd(totalAvancesUsd)}.`
       )
@@ -364,7 +367,7 @@ export function CobroModal({
       toast.error('Selecciona cómo manejar el excedente de pago')
       return
     }
-    if (!estaOverpago && pendienteBs4 > umbralBs && discrepancyMode === null) {
+    if (!estaOverpago && pendienteBs4.gt(umbralBs) && discrepancyMode === null) {
       toast.error('Selecciona cómo manejar el pago incompleto')
       return
     }
@@ -387,8 +390,8 @@ export function CobroModal({
         if (!metodo) return undefined
         const monto =
           metodo.moneda === 'BS'
-            ? Number(first.montoBs.toFixed(2))
-            : Number((first.montoBs / tasaUsada).toFixed(2))
+            ? new Decimal(first.montoBs).toNumber()
+            : bsToUsd(first.montoBs, tasaUsada).toNumber()
         return {
           metodo_cobro_id: first.metodoCobro_id,
           moneda: metodo.moneda as 'BS' | 'USD',
@@ -400,8 +403,8 @@ export function CobroModal({
       if (!efectivo) return undefined
       const monto =
         efectivo.moneda === 'BS'
-          ? Number(vueltoMontoBs.toFixed(2))
-          : Number((vueltoMontoBs / tasaUsada).toFixed(2))
+          ? vueltoMontoBs.toNumber()
+          : bsToUsd(vueltoMontoBs, tasaUsada).toNumber()
       return {
         metodo_cobro_id: efectivo.id,
         moneda: efectivo.moneda as 'BS' | 'USD',
@@ -419,8 +422,8 @@ export function CobroModal({
     const discrepancy: DiscrepancyOptions | undefined = discrepancyMode
       ? {
           mode: discrepancyMode,
-          montoUsd: Math.abs(montoDiscrepanciaUsd),
-          montoBs: Math.abs(pendienteBs4),
+          montoUsd: montoDiscrepanciaUsd.abs().toNumber(),
+          montoBs: pendienteBs4.abs().toNumber(),
           clienteId: clienteId || undefined,
           cajeroId: usuarioId,
           supervisorId: supervisorId ?? undefined,
@@ -475,9 +478,9 @@ export function CobroModal({
         empresa_id: empresaId,
         sesion_caja_id: sesionCajaId,
         cargosEspeciales,
-        descuentoUsd: descuentoBs > 0 ? Number((descuentoBs / tasaUsada).toFixed(4)) : 0,
+        descuentoUsd: descuentoBs > 0 ? bsToUsd(descuentoBs, tasaUsada).toNumber() : 0,
         descuentoMotivo: descuentoMotivo.trim() || undefined,
-        totalIgtfUsd: igtfUsd,
+        totalIgtfUsd: igtfUsd.toNumber(),
         discrepancy,
         safEntry,
       })
@@ -485,14 +488,14 @@ export function CobroModal({
       onSuccess({
         nroFactura: result.nroFactura,
         clienteNombre,
-        totalUsd: totalEfectivoUsd,
-        totalBs: totalEfectivoBs,
+        totalUsd: totalEfectivoUsd.toNumber(),
+        totalBs: totalEfectivoBs.toNumber(),
         tipo: tipoDetectado,
         pagos: [...pagos],
         tasa: tasaUsada,
         cargosEspeciales: [...cargosEspeciales],
-        igtfUsd,
-        igtfBs,
+        igtfUsd: igtfUsd.toNumber(),
+        igtfBs: igtfBs.toNumber(),
         tasaIgtfPct: tasaIgtf,
       })
     } catch (error) {
@@ -515,7 +518,7 @@ export function CobroModal({
   const selectModeRef = useRef<(key: string) => void>(() => {})
   useEffect(() => {
     selectModeRef.current = (key: string) => {
-      if (!estaOverpago && pendienteBs4 > 0.01) {
+      if (!estaOverpago && pendienteBs4.gt('0.01')) {
         // Faltante: F5=Crédito  F6=Faltante caja  F7=Negocio asume
         if (key === 'F5') { setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }
         if (key === 'F6') { setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null) }
@@ -571,7 +574,7 @@ export function CobroModal({
         <div className="px-5 py-3 bg-primary/5 border-b shrink-0 flex items-center justify-between">
           <div>
             <p className="text-[10px] text-primary/60 uppercase tracking-widest font-semibold mb-0.5">
-              {igtfUsd > 0 ? 'Total factura' : 'Total a cobrar'}
+              {igtfUsd.gt(0) ? 'Total factura' : 'Total a cobrar'}
             </p>
             <p className="text-2xl font-bold tabular-nums leading-tight">{formatBs(totalEfectivoBs)}</p>
             <p className="text-xs text-muted-foreground">{formatUsd(totalEfectivoUsd)}</p>
@@ -585,7 +588,7 @@ export function CobroModal({
         </div>
 
         {/* IGTF + Total general */}
-        {aplicaIgtf && igtfUsd > 0 && (
+        {aplicaIgtf && igtfUsd.gt(0) && (
           <>
             <div className="px-5 py-2 border-b shrink-0 bg-amber-50 flex items-center justify-between">
               <p className="text-xs text-amber-800 font-medium">
@@ -602,9 +605,9 @@ export function CobroModal({
               </p>
               <div className="text-right">
                 <p className="text-base font-bold tabular-nums text-amber-900">
-                  {formatBs(totalEfectivoBs + igtfBs)}
+                  {formatBs(totalEfectivoBs.plus(igtfBs))}
                 </p>
-                <p className="text-xs text-amber-700">{formatUsd(totalEfectivoUsd + igtfUsd)}</p>
+                <p className="text-xs text-amber-700">{formatUsd(totalEfectivoUsd.plus(igtfUsd))}</p>
               </div>
             </div>
           </>
@@ -624,8 +627,8 @@ export function CobroModal({
               ) : esDiferencialRedondeo ? (
                 <p className="font-semibold text-muted-foreground">Dif. redondeo</p>
               ) : (
-                <p className={`font-semibold ${pendienteBs4 > umbralBs ? 'text-orange-600' : 'text-green-600'}`}>
-                  {formatBs(Math.max(0, pendienteBs4))}
+                <p className={`font-semibold ${pendienteBs4.gt(umbralBs) ? 'text-orange-600' : 'text-green-600'}`}>
+                  {formatBs(Decimal.max(new Decimal(0), pendienteBs4))}
                 </p>
               )}
             </div>
@@ -646,7 +649,7 @@ export function CobroModal({
             </div>
           ) : (
             pagos.map((p, i) => {
-              const equiv = p.moneda === 'BS' ? Number((p.monto / tasaUsada).toFixed(2)) : p.monto
+              const equiv = p.moneda === 'BS' ? bsToUsd(p.monto, tasaUsada) : p.monto
               return (
                 <div key={i} className="flex items-center justify-between px-5 py-2.5 hover:bg-muted/30">
                   <div className="min-w-0">
@@ -689,7 +692,7 @@ export function CobroModal({
                     setSafSeleccionado(checked)
                     if (checked) {
                       // Pre-cargar monto: min(disponible, totalVenta)
-                      setSafMonto(Number(Math.min(safDisponible, totalEfectivoUsd).toFixed(2)))
+                      setSafMonto(Decimal.min(new Decimal(safDisponible), totalEfectivoUsd).toNumber())
                     } else {
                       setSafMonto(0)
                     }
@@ -744,7 +747,7 @@ export function CobroModal({
                 className="h-8 text-sm pr-16"
                 autoFocus={false}
               />
-              {monedaMetodo && pendienteBs4 > umbralBs && (
+              {monedaMetodo && pendienteBs4.gt(umbralBs) && (
                 <button
                   type="button"
                   onClick={handleAutocompletar}
@@ -776,7 +779,7 @@ export function CobroModal({
         </div>
 
         {/* Panel de resolución de discrepancias */}
-        {Math.abs(pendienteBs4) > 0.01 && (
+        {pendienteBs4.abs().gt(new Decimal('0.01')) && (
           <div className="px-5 py-3 border-b shrink-0">
 
             {/* Auto-resuelto: diferencial cambiario sobrante */}
@@ -784,7 +787,7 @@ export function CobroModal({
               <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm">
                 <p className="font-medium text-amber-800">Diferencial cambiario (sobrante)</p>
                 <p className="text-amber-700 text-xs mt-0.5">
-                  {formatBs(Math.abs(pendienteBs4))} — se registrará como ingreso de diferencial
+                  {formatBs(pendienteBs4.abs())} — se registrará como ingreso de diferencial
                 </p>
               </div>
             )}
@@ -793,7 +796,7 @@ export function CobroModal({
             {estaOverpago && discrepancyMode !== 'DIFERENCIAL_SOBRANTE' && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">
-                  Excedente: {formatBs(vueltoMontoBs)} / {formatUsd(Math.abs(montoDiscrepanciaUsd))}
+                  Excedente: {formatBs(vueltoMontoBs)} / {formatUsd(montoDiscrepanciaUsd.abs())}
                 </p>
                 <div className="grid grid-cols-3 gap-2">
                   <button
@@ -947,16 +950,16 @@ export function CobroModal({
                         </span>
                         <span
                           className={
-                            Math.abs(splitVueltoExceso) <= 0.01
+                            splitVueltoExceso.abs().lte(new Decimal('0.01'))
                               ? 'text-green-600 font-medium'
                               : splitVueltoValid
                               ? 'text-amber-600 font-medium'
                               : 'text-orange-600 font-medium'
                           }
                         >
-                          {Math.abs(splitVueltoExceso) <= 0.01
+                          {splitVueltoExceso.abs().lte(new Decimal('0.01'))
                             ? '✓ Correcto'
-                            : splitVueltoExceso < -0.01
+                            : splitVueltoExceso.lt(new Decimal('-0.01'))
                             ? `Sin asignar: ${formatBs(-splitVueltoExceso)}`
                             : splitVueltoValid
                             ? `Dif. cambio: +${formatBs(splitVueltoExceso)}`
@@ -970,7 +973,7 @@ export function CobroModal({
             )}
 
             {/* Faltante: 3 botones siempre disponibles */}
-            {!estaOverpago && pendienteBs4 > 0.01 && (
+            {!estaOverpago && pendienteBs4.gt(new Decimal('0.01')) && (
               <div className="space-y-2">
                 <p className="text-xs text-muted-foreground">
                   Pendiente: {formatBs(pendienteBs4)} / {formatUsd(montoDiscrepanciaUsd)}
@@ -1031,13 +1034,13 @@ export function CobroModal({
         )}
 
         {/* Panel de vuelto por moneda — visible cuando hay overpago y modo VUELTO */}
-        {estaOverpago && discrepancyMode === 'VUELTO' && vueltoMontoBs > 0.01 && (
+        {estaOverpago && discrepancyMode === 'VUELTO' && vueltoMontoBs.gt(new Decimal('0.01')) && (
           <div className="px-5 py-2 border-t shrink-0 bg-amber-50/50">
             <p className="text-xs font-medium text-amber-800 mb-1.5">Desglose de vuelto</p>
             {(() => {
               const tieneUsd = pagos.some((p) => p.moneda === 'USD')
               const tienebs = pagos.some((p) => p.moneda === 'BS')
-              const vueltoUsd = Number((vueltoMontoBs / tasaUsada).toFixed(2))
+              const vueltoUsd = vueltoMontoBs.dividedBy(tasaUsada).toDecimalPlaces(2).toNumber()
 
               if (tieneUsd && tienebs) {
                 // Métodos mixtos: mostrar ambas denominaciones
