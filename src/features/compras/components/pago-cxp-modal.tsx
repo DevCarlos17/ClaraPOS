@@ -84,8 +84,8 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const tasaBcvParaDiferencial = tasaCostoDocumento ?? (parseFloat(tasaBcvStr) || 0)
   const necesitaTasaBcv = !tasaCostoDocumento
 
-  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum) : montoNum
-  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum) : montoNum
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum).toNumber() : montoNum
+  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum).toNumber() : montoNum
 
   // USD a tasa interna (para contabilidad, solo en pagos BS)
   const montoUsdInterno = moneda === 'BS' && tasaInternaNum > 0

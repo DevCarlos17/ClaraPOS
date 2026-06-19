@@ -84,8 +84,8 @@ export function PagoGastoCxpModal({
 
   const tasaPagoNum = parseFloat(tasaPagoStr) || tasaNegociacion
 
-  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum) : montoNum
-  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum) : montoNum
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum).toNumber() : montoNum
+  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum).toNumber() : montoNum
 
   const montoUsdInterno = moneda === 'BS' && tasaInternaNum > 0
     ? montoNum / tasaInternaNum

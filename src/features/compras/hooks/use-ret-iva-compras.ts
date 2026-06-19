@@ -3,6 +3,7 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { toStorageString } from '@/lib/currency'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -109,11 +110,11 @@ export async function crearRetencionIva(data: {
       nro_comprobante: data.nro_comprobante.toUpperCase(),
       fecha_comprobante: data.fecha_comprobante,
       periodo_fiscal: data.periodo_fiscal ?? null,
-      base_imponible: data.base_imponible.toFixed(2),
-      porcentaje_iva: data.porcentaje_iva.toFixed(2),
-      monto_iva: data.monto_iva.toFixed(2),
-      porcentaje_retencion: data.porcentaje_retencion.toFixed(2),
-      monto_retenido: data.monto_retenido.toFixed(2),
+      base_imponible: toStorageString(data.base_imponible),
+      porcentaje_iva: toStorageString(data.porcentaje_iva),
+      monto_iva: toStorageString(data.monto_iva),
+      porcentaje_retencion: toStorageString(data.porcentaje_retencion),
+      monto_retenido: toStorageString(data.monto_retenido),
       status: 'PENDIENTE',
       observaciones: data.observaciones ?? null,
       created_at: now,
