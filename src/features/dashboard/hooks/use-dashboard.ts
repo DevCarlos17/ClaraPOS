@@ -50,15 +50,6 @@ export function useDebugVentas() {
     []
   )
 
-  console.group('🔍 DEBUG VENTAS')
-  console.log('empresa_id del usuario:', empresaId)
-  console.log('user completo:', user)
-  console.log('Total ventas (sin filtro):', (allVentas?.[0] as Record<string, unknown>)?.cnt)
-  console.log('Total ventas (con empresa_id):', (empresaVentas?.[0] as Record<string, unknown>)?.cnt)
-  console.log('Sample ventas (ultimas 5):', sampleVentas)
-  console.log('Empresas distintas en ventas:', empresasEnVentas)
-  console.groupEnd()
-
   return {
     totalSinFiltro: Number((allVentas?.[0] as Record<string, unknown>)?.cnt ?? 0),
     totalConEmpresa: Number((empresaVentas?.[0] as Record<string, unknown>)?.cnt ?? 0),
