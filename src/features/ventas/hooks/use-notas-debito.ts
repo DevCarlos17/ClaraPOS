@@ -2,6 +2,8 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
+import { usdToBs, toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
@@ -133,28 +135,25 @@ export async function crearNotaDebito(
     nroNdb = `NDB-${String(count + 1).padStart(4, '0')}`
 
     // 2. Calcular totales por tipo de impuesto
-    let totalExentoUsd = 0
-    let totalBaseUsd = 0
-    let totalIvaUsd = 0
+    let totalExentoUsd = new Decimal(0)
+    let totalBaseUsd = new Decimal(0)
+    let totalIvaUsd = new Decimal(0)
 
     for (const linea of lineas) {
-      const subtotal = linea.cantidad * linea.precio_unitario_usd
+      const subtotal = new Decimal(linea.cantidad).times(linea.precio_unitario_usd)
 
       if (!linea.tipo_impuesto || linea.tipo_impuesto === 'Exento' || linea.tipo_impuesto === 'Exonerado') {
-        totalExentoUsd += subtotal
+        totalExentoUsd = totalExentoUsd.plus(subtotal)
       } else {
         // Gravable: calcular IVA sobre el subtotal
-        totalBaseUsd += subtotal
-        const pct = linea.impuesto_pct ?? 0
-        totalIvaUsd += subtotal * (pct / 100)
+        totalBaseUsd = totalBaseUsd.plus(subtotal)
+        const pct = new Decimal(linea.impuesto_pct ?? 0)
+        totalIvaUsd = totalIvaUsd.plus(subtotal.times(pct).dividedBy(100))
       }
     }
 
-    totalExentoUsd = Number(totalExentoUsd.toFixed(2))
-    totalBaseUsd = Number(totalBaseUsd.toFixed(2))
-    totalIvaUsd = Number(totalIvaUsd.toFixed(2))
-    const totalUsd = Number((totalExentoUsd + totalBaseUsd + totalIvaUsd).toFixed(2))
-    const totalBs = Number((totalUsd * tasa).toFixed(2))
+    const totalUsd = totalExentoUsd.plus(totalBaseUsd).plus(totalIvaUsd)
+    const totalBs = usdToBs(totalUsd, tasa)
 
     // 3. INSERT nota_debito cabecera
     await tx.execute(
@@ -171,12 +170,12 @@ export async function crearNotaDebito(
         cliente_id,
         motivo,
         moneda_id ?? null,
-        tasa.toFixed(4),
-        totalExentoUsd.toFixed(2),
-        totalBaseUsd.toFixed(2),
-        totalIvaUsd.toFixed(2),
-        totalUsd.toFixed(2),
-        totalBs.toFixed(2),
+        toStorageString(tasa),
+        toStorageString(totalExentoUsd),
+        toStorageString(totalBaseUsd),
+        toStorageString(totalIvaUsd),
+        toStorageString(totalUsd),
+        toStorageString(totalBs),
         usuario_id,
         now,
         now,
@@ -186,7 +185,7 @@ export async function crearNotaDebito(
     // 4. INSERT lineas de detalle
     for (const linea of lineas) {
       const detalleId = uuidv4()
-      const subtotalUsd = Number((linea.cantidad * linea.precio_unitario_usd).toFixed(2))
+      const subtotalUsd = new Decimal(linea.cantidad).times(linea.precio_unitario_usd)
 
       await tx.execute(
         `INSERT INTO notas_debito_det (
@@ -199,10 +198,10 @@ export async function crearNotaDebito(
           notaDebitoId,
           linea.descripcion,
           linea.cantidad.toFixed(3),
-          linea.precio_unitario_usd.toFixed(2),
+          toStorageString(linea.precio_unitario_usd),
           linea.tipo_impuesto ?? null,
-          linea.impuesto_pct !== undefined ? linea.impuesto_pct.toFixed(2) : null,
-          subtotalUsd.toFixed(2),
+          linea.impuesto_pct !== undefined ? toStorageString(linea.impuesto_pct) : null,
+          toStorageString(subtotalUsd),
           now,
         ]
       )

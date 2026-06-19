@@ -2,6 +2,8 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
+import { toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
@@ -365,18 +367,18 @@ export async function crearNotaCredito(
     }
 
     // 5. Ajuste de saldo del cliente — solo si hay deuda pendiente
-    const saldoPend = parseFloat(venta.saldo_pend_usd)
-    if (saldoPend > 0.01) {
+    const saldoPend = new Decimal(venta.saldo_pend_usd)
+    if (saldoPend.gt('0.01')) {
       const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
         venta.cliente_id,
       ])
       if (!clienteResult.rows || clienteResult.rows.length === 0) {
         throw new Error('Cliente no encontrado')
       }
-      const saldoActual = parseFloat(
+      const saldoActual = new Decimal(
         (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
       )
-      const saldoNuevo = Math.max(0, Number((saldoActual - saldoPend).toFixed(2)))
+      const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(saldoPend))
 
       const movCuentaId = uuidv4()
       await tx.execute(
@@ -386,9 +388,9 @@ export async function crearNotaCredito(
           movCuentaId,
           venta.cliente_id,
           nroNcr,
-          saldoPend.toFixed(2),
-          saldoActual.toFixed(2),
-          saldoNuevo.toFixed(2),
+          toStorageString(saldoPend),
+          toStorageString(saldoActual),
+          toStorageString(saldoNuevo),
           `Anulacion de factura ${venta.nro_factura}`,
           venta_id,
           now,
@@ -398,7 +400,7 @@ export async function crearNotaCredito(
       )
 
       await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-        saldoNuevo.toFixed(2),
+        toStorageString(saldoNuevo),
         now,
         venta.cliente_id,
       ])
@@ -418,8 +420,8 @@ export async function crearNotaCredito(
         ncrId,
         nroNcr,
         ventaId: venta_id,
-        totalUsd: parseFloat(venta.total_usd),
-        afectaCxC: saldoPend > 0.01,
+        totalUsd: new Decimal(venta.total_usd).toNumber(),
+        afectaCxC: saldoPend.gt('0.01'),
         banco_empresa_id: null,
         cuentas,
         usuarioId: usuario_id,

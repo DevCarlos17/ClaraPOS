@@ -10,7 +10,8 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
-import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import Decimal from 'decimal.js'
+import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
@@ -109,41 +110,44 @@ export function PosTerminal() {
   const keyboardHandlerRef = useRef<((e: KeyboardEvent) => void) | undefined>(undefined)
   const pendingFocusIndexRef = useRef<number | null>(null)
 
-  // Totales de la factura
-  const totalProductosUsd = lineas.reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
-  const totalCargosEspUsd = cargosEspeciales.reduce((sum, c) => sum + c.montoCargoUsd, 0)
+  // Totales de la factura — usar Decimal para evitar drift en sumas monetarias
+  const totalProductosUsd = lineas.reduce((sum, l) => sum.plus(new Decimal(l.cantidad).times(l.precio_unitario_usd)), new Decimal(0))
+  const totalCargosEspUsd = cargosEspeciales.reduce((sum, c) => sum.plus(c.montoCargoUsd), new Decimal(0))
   const totalIvaUsd = lineas
     .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') !== 'Exento')
-    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd * (((l.impuesto_pct as number | undefined) ?? 0) / 100), 0)
-  const totalUsd = totalProductosUsd + totalIvaUsd + totalCargosEspUsd
+    .reduce((sum, l) => sum.plus(
+      new Decimal(l.cantidad).times(l.precio_unitario_usd).times((l.impuesto_pct as number | undefined) ?? 0).dividedBy(100)
+    ), new Decimal(0))
+  const totalUsd = totalProductosUsd.plus(totalIvaUsd).plus(totalCargosEspUsd)
 
   // Desglose fiscal por alicuota y tipo
-  const _ivaByAlicuota = new Map<number, number>()
+  const _ivaByAlicuota = new Map<number, Decimal>()
   for (const l of lineas) {
     if ((l.tipo_impuesto as string | undefined) === 'Gravable') {
       const pct = (l.impuesto_pct as number | undefined) ?? 0
       if (pct > 0) {
-        const iva = l.cantidad * l.precio_unitario_usd * pct / 100
-        _ivaByAlicuota.set(pct, (_ivaByAlicuota.get(pct) ?? 0) + iva)
+        const iva = new Decimal(l.cantidad).times(l.precio_unitario_usd).times(pct).dividedBy(100)
+        _ivaByAlicuota.set(pct, (_ivaByAlicuota.get(pct) ?? new Decimal(0)).plus(iva))
       }
     }
   }
-  const ivaEntries = [..._ivaByAlicuota.entries()].filter(([, v]) => v > 0.001).sort((a, b) => b[0] - a[0])
+  const ivaEntries = [..._ivaByAlicuota.entries()].filter(([, v]) => v.gt('0.001')).sort((a, b) => b[0] - a[0])
   const baseGravableUsd = lineas
     .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') === 'Gravable')
-    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
+    .reduce((sum, l) => sum.plus(new Decimal(l.cantidad).times(l.precio_unitario_usd)), new Decimal(0))
   const baseExentoUsd = lineas
     .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') === 'Exento')
-    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
+    .reduce((sum, l) => sum.plus(new Decimal(l.cantidad).times(l.precio_unitario_usd)), new Decimal(0))
   const baseExoneradoUsd = lineas
     .filter(l => ((l.tipo_impuesto as string | undefined) ?? 'Exento') === 'Exonerado')
-    .reduce((sum, l) => sum + l.cantidad * l.precio_unitario_usd, 0)
-  const mostrarDesgloseFiscal = ivaEntries.length > 0 || baseExentoUsd > 0.001 || baseExoneradoUsd > 0.001
+    .reduce((sum, l) => sum.plus(new Decimal(l.cantidad).times(l.precio_unitario_usd)), new Decimal(0))
+  const mostrarDesgloseFiscal = ivaEntries.length > 0 || baseExentoUsd.gt('0.001') || baseExoneradoUsd.gt('0.001')
   // Calcular totalBs usando el monto nativo de cada cargo especial (si existe)
   // para evitar diferencias cuando la tasa cambia entre el momento del avance y el display.
   const totalCargosEspBs = cargosEspeciales.reduce((s, c) =>
-    s + (c.totalCargoBs ?? usdToBs(c.montoCargoUsd, tasaValor)), 0)
-  const totalBs = Number((usdToBs(totalUsd - totalCargosEspUsd, tasaValor) + totalCargosEspBs).toFixed(2))
+    s.plus(c.totalCargoBs !== undefined ? new Decimal(c.totalCargoBs) : usdToBs(c.montoCargoUsd, tasaValor)),
+    new Decimal(0))
+  const totalBs = usdToBs(totalUsd.minus(totalCargosEspUsd), tasaValor).plus(totalCargosEspBs)
   const totalItems = lineas.reduce((sum, l) => sum + l.cantidad, 0)
 
   // Egresos de caja pendientes: factura actual + todas las facturas en espera (aun no debitados de DB)
@@ -235,9 +239,9 @@ export function PosTerminal() {
     const lineasActuales = lineasRef.current
     const cargosActuales = cargosEspecialesRef.current
     if ((lineasActuales.length > 0 || cargosActuales.length > 0) && user) {
-      const totalLineasUsd = lineasActuales.reduce((s, l) => s + l.cantidad * l.precio_unitario_usd, 0)
-      const totalCargosUsd = cargosActuales.reduce((s, c) => s + c.montoCargoUsd, 0)
-      const totalUsdFactura = totalLineasUsd + totalCargosUsd
+      const totalLineasUsd = lineasActuales.reduce((s, l) => s.plus(new Decimal(l.cantidad).times(l.precio_unitario_usd)), new Decimal(0))
+      const totalCargosUsd = cargosActuales.reduce((s, c) => s.plus(c.montoCargoUsd), new Decimal(0))
+      const totalUsdFactura = totalLineasUsd.plus(totalCargosUsd)
       const factura: FacturaEnEspera = {
         id: uuidv4(),
         clienteId: clienteIdRef.current,
@@ -246,8 +250,8 @@ export function PosTerminal() {
         pagos: [],
         cargosEspeciales: [...cargosActuales],
         tasa: tasaValor,
-        totalUsd: totalUsdFactura,
-        totalBs: usdToBs(totalUsdFactura, tasaValor),
+        totalUsd: totalUsdFactura.toNumber(),
+        totalBs: usdToBs(totalUsdFactura, tasaValor).toNumber(),
         itemsCount: lineasActuales.reduce((s, l) => s + l.cantidad, 0),
         usuarioId: user.id,
         usuarioNombre: user.nombre ?? user.email ?? '',
@@ -396,8 +400,8 @@ export function PosTerminal() {
       pagos: [],
       cargosEspeciales: [...cargosEspeciales],
       tasa: tasaValor,
-      totalUsd,
-      totalBs,
+      totalUsd: totalUsd.toNumber(),
+      totalBs: totalBs.toNumber(),
       itemsCount: totalItems,
       usuarioId: user.id,
       usuarioNombre: user.nombre ?? user.email ?? '',
@@ -820,7 +824,7 @@ export function PosTerminal() {
             {/* Cargos footer */}
             <div className="shrink-0 border-t px-3 py-1.5 flex items-center justify-between text-xs text-muted-foreground bg-muted/20">
               <span>Cargos especiales</span>
-              <span className={totalCargosEspUsd > 0 ? 'font-medium text-amber-700' : ''}>
+              <span className={totalCargosEspUsd.gt(0) ? 'font-medium text-amber-700' : ''}>
                 {formatUsd(totalCargosEspUsd)}
               </span>
             </div>
@@ -834,28 +838,28 @@ export function PosTerminal() {
               <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
               {mostrarDesgloseFiscal && (
                 <div className="space-y-0.5 mb-2">
-                  {baseGravableUsd > 0.001 && (
+                  {baseGravableUsd.gt('0.001') && (
                     <div className="flex justify-between text-xs text-muted-foreground">
                       <span>Base Gravable</span>
-                      <span>{formatBs(usdToBs(Number(baseGravableUsd.toFixed(2)), tasaValor))}</span>
+                      <span>{formatBs(usdToBs(baseGravableUsd, tasaValor))}</span>
                     </div>
                   )}
                   {ivaEntries.map(([pct, iva]) => (
                     <div key={pct} className="flex justify-between text-xs text-amber-700 font-medium">
                       <span>IVA {pct}%</span>
-                      <span>+{formatBs(usdToBs(Number(iva.toFixed(2)), tasaValor))}</span>
+                      <span>+{formatBs(usdToBs(iva, tasaValor))}</span>
                     </div>
                   ))}
-                  {baseExentoUsd > 0.001 && (
+                  {baseExentoUsd.gt('0.001') && (
                     <div className="flex justify-between text-xs text-blue-600">
                       <span>Exento</span>
-                      <span>{formatBs(usdToBs(Number(baseExentoUsd.toFixed(2)), tasaValor))}</span>
+                      <span>{formatBs(usdToBs(baseExentoUsd, tasaValor))}</span>
                     </div>
                   )}
-                  {baseExoneradoUsd > 0.001 && (
+                  {baseExoneradoUsd.gt('0.001') && (
                     <div className="flex justify-between text-xs text-green-700">
                       <span>Exonerado</span>
-                      <span>{formatBs(usdToBs(Number(baseExoneradoUsd.toFixed(2)), tasaValor))}</span>
+                      <span>{formatBs(usdToBs(baseExoneradoUsd, tasaValor))}</span>
                     </div>
                   )}
                 </div>
@@ -897,12 +901,12 @@ export function PosTerminal() {
                     <Input
                       type="number"
                       min={0}
-                      max={totalBs}
+                      max={totalBs.toNumber()}
                       step={1}
                       value={descuentoBs || ''}
                       onChange={(e) => {
                         const v = parseFloat(e.target.value) || 0
-                        setDescuentoBs(Math.min(Math.max(0, v), totalBs))
+                        setDescuentoBs(Math.min(Math.max(0, v), totalBs.toNumber()))
                       }}
                       className="h-7 text-sm"
                       placeholder="0"
@@ -922,7 +926,7 @@ export function PosTerminal() {
                 </div>
                 {descuentoBs > 0 && (
                   <p className="text-xs font-medium text-orange-600 mt-1.5 text-right">
-                    −{formatBs(descuentoBs)} ({formatUsd(Number((descuentoBs / tasaValor).toFixed(2)))})
+                    −{formatBs(descuentoBs)} ({formatUsd(bsToUsd(descuentoBs, tasaValor))})
                   </p>
                 )}
               </div>
@@ -1157,12 +1161,12 @@ export function PosTerminal() {
                     <Input
                       type="number"
                       min={0}
-                      max={totalBs}
+                      max={totalBs.toNumber()}
                       step={1}
                       value={descuentoBs || ''}
                       onChange={(e) => {
                         const v = parseFloat(e.target.value) || 0
-                        setDescuentoBs(Math.min(Math.max(0, v), totalBs))
+                        setDescuentoBs(Math.min(Math.max(0, v), totalBs.toNumber()))
                       }}
                       className="h-7 text-sm"
                       placeholder="0"
@@ -1182,7 +1186,7 @@ export function PosTerminal() {
                 </div>
                 {descuentoBs > 0 && (
                   <p className="text-xs font-medium text-orange-600 mt-1.5 text-right">
-                    −{formatBs(descuentoBs)} ({formatUsd(Number((descuentoBs / tasaValor).toFixed(2)))})
+                    −{formatBs(descuentoBs)} ({formatUsd(bsToUsd(descuentoBs, tasaValor))})
                   </p>
                 )}
               </div>
@@ -1262,7 +1266,7 @@ export function PosTerminal() {
         isOpen={showCobroModal}
         onClose={() => setShowCobroModal(false)}
         tasa={tasaValor}
-        totalBrutoUsd={totalUsd}
+        totalBrutoUsd={totalUsd.toNumber()}
         descuentoBs={descuentoBs}
         descuentoMotivo={descuentoMotivo}
         clienteId={clienteId ?? ''}

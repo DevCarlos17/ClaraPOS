@@ -1,5 +1,11 @@
 import { z } from 'zod'
 
+// NOTE: precio_unitario_usd and monto keep z.number() intentionally.
+// These fields come from form inputs (already numbers) and from the POS state
+// which stores them as JS numbers for UI reactivity. Decimal arithmetic happens
+// at the hook layer (crearVenta, etc.) where toStorageString() is applied before writes.
+// Schemas with DecimalInput transforms are only needed when fields come from PowerSync strings.
+
 export const lineaVentaSchema = z.object({
   producto_id: z.string().min(1, 'Producto requerido'),
   codigo: z.string(),

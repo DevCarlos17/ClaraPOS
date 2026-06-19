@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
@@ -144,10 +145,10 @@ export async function crearRetencionIslrVenta(
         nro_comprobante,
         fecha_comprobante,
         periodo_fiscal ?? null,
-        base_imponible_bs.toFixed(2),
-        porcentaje_retencion.toFixed(2),
-        monto_retenido_bs.toFixed(2),
-        sustraendo_bs !== undefined ? sustraendo_bs.toFixed(2) : null,
+        toStorageString(base_imponible_bs),
+        toStorageString(porcentaje_retencion),
+        toStorageString(monto_retenido_bs),
+        sustraendo_bs !== undefined ? toStorageString(sustraendo_bs) : null,
         statusFinal,
         observaciones ?? null,
         now,

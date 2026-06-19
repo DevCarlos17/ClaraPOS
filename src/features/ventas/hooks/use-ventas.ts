@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { localNow, timestampToVE } from '@/lib/dates'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
+import { usdToBs, bsToUsd, toStorageString } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import { connector } from '@/core/db/powersync/connector'
@@ -308,44 +310,41 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     const monedaBsId = (monedaBsResult.rows.item(0) as { id: string }).id
 
     // 1. Calcular totales con desglose fiscal
-    let totalExentoUsd = 0
-    let totalBaseUsd = 0
-    let totalIvaUsd = 0
+    let totalExentoUsd = new Decimal(0)
+    let totalBaseUsd = new Decimal(0)
+    let totalIvaUsd = new Decimal(0)
     for (const linea of lineas) {
-      const subtotal = Number((linea.cantidad * linea.precio_unitario_usd).toFixed(2))
+      const subtotal = new Decimal(linea.cantidad).times(linea.precio_unitario_usd)
       const tipoImp = (linea.tipo_impuesto as string | undefined) ?? 'Exento'
       if (tipoImp === 'Exento') {
-        totalExentoUsd += subtotal
+        totalExentoUsd = totalExentoUsd.plus(subtotal)
       } else {
-        totalBaseUsd += subtotal
-        const pct = (linea.impuesto_pct as number | undefined) ?? 0
-        totalIvaUsd += Number((subtotal * (pct / 100)).toFixed(2))
+        totalBaseUsd = totalBaseUsd.plus(subtotal)
+        const pct = new Decimal((linea.impuesto_pct as number | undefined) ?? 0)
+        totalIvaUsd = totalIvaUsd.plus(subtotal.times(pct).dividedBy(100))
       }
     }
-    totalExentoUsd = Number(totalExentoUsd.toFixed(2))
-    totalBaseUsd = Number(totalBaseUsd.toFixed(2))
-    totalIvaUsd = Number(totalIvaUsd.toFixed(2))
-    let totalUsd = totalExentoUsd + totalBaseUsd + totalIvaUsd
+    let totalUsd = totalExentoUsd.plus(totalBaseUsd).plus(totalIvaUsd)
     // Agregar cargos especiales (avance/prestamo) al total
     for (const cargo of cargosEspeciales) {
-      totalUsd += cargo.montoCargoUsd
+      totalUsd = totalUsd.plus(cargo.montoCargoUsd)
     }
-    totalUsd = Number(totalUsd.toFixed(2))
 
     // Descuento comercial: se resta del total BRUTO antes de almacenar.
     // total_usd y total_bs quedan como montos NETOS (lo que el cliente paga).
     // descuento_usd y descuento_bs se guardan aparte para reportes del cuadre.
-    const descuentoUsdFinal = Math.min(Number(descuentoUsd.toFixed(2)), totalUsd)
-    const descuentoBsFinal = Number((descuentoUsdFinal * tasa).toFixed(2))
-    totalUsd = Number((totalUsd - descuentoUsdFinal).toFixed(2))
+    const descuentoUsdFinal = Decimal.min(new Decimal(descuentoUsd), totalUsd)
+    const descuentoBsFinal = usdToBs(descuentoUsdFinal, tasa)
+    totalUsd = totalUsd.minus(descuentoUsdFinal)
 
     // total_bs: los cargos especiales con totalCargoBs se suman en su moneda nativa
     // para evitar diferencias por tasa entre el momento del avance y el de la factura.
-    const totalCargosUsd = cargosEspeciales.reduce((s, c) => s + c.montoCargoUsd, 0)
+    const totalCargosUsd = cargosEspeciales.reduce((s, c) => s.plus(c.montoCargoUsd), new Decimal(0))
     const totalCargosNativosBs = cargosEspeciales.reduce((s, c) =>
-      s + (c.totalCargoBs ?? Number((c.montoCargoUsd * tasa).toFixed(2))), 0)
-    const totalProductosNetUsd = Number((totalUsd - totalCargosUsd).toFixed(2))
-    const totalBs = Number((totalProductosNetUsd * tasa + totalCargosNativosBs).toFixed(2))
+      s.plus(c.totalCargoBs !== undefined ? new Decimal(c.totalCargoBs) : usdToBs(c.montoCargoUsd, tasa)),
+      new Decimal(0))
+    const totalProductosNetUsd = totalUsd.minus(totalCargosUsd)
+    const totalBs = usdToBs(totalProductosNetUsd, tasa).plus(totalCargosNativosBs)
 
     // 2. Generar nro_factura con prefijo por caja (C01-000001).
     //    Cada caja tiene su propio contador acumulado a traves de todas sus sesiones.
@@ -407,16 +406,16 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         nroFactura,
         depositoId,
         sesion_caja_id ?? null,
-        tasa.toFixed(4),
-        totalExentoUsd.toFixed(2),
-        totalBaseUsd.toFixed(2),
-        totalIvaUsd.toFixed(2),
-        totalIgtfUsd.toFixed(2),
-        totalUsd.toFixed(2),
-        totalBs.toFixed(2),
-        descuentoUsdFinal.toFixed(2),
-        descuentoBsFinal.toFixed(2),
-        totalUsd.toFixed(2),
+        toStorageString(tasa),
+        toStorageString(totalExentoUsd),
+        toStorageString(totalBaseUsd),
+        toStorageString(totalIvaUsd),
+        toStorageString(totalIgtfUsd),
+        toStorageString(totalUsd),
+        toStorageString(totalBs),
+        toStorageString(descuentoUsdFinal),
+        toStorageString(descuentoBsFinal),
+        toStorageString(totalUsd),
         tipo,
         usuario_id,
         now,
@@ -427,12 +426,12 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     )
 
     // 4. Por cada linea: detalle + kardex
-    let montoProductos = 0
-    let montoServicios = 0
+    let montoProductos = new Decimal(0)
+    let montoServicios = new Decimal(0)
     for (const linea of lineas) {
       const detalleId = uuidv4()
-      const subtotalUsd = Number((linea.cantidad * linea.precio_unitario_usd).toFixed(2))
-      const subtotalBs = Number((subtotalUsd * tasa).toFixed(2))
+      const subtotalUsd = new Decimal(linea.cantidad).times(linea.precio_unitario_usd)
+      const subtotalBs = usdToBs(subtotalUsd, tasa)
 
       await tx.execute(
         `INSERT INTO ventas_det (id, venta_id, producto_id, deposito_id, cantidad, precio_unitario_usd, tipo_impuesto, impuesto_pct, subtotal_usd, subtotal_bs, empresa_id, created_at)
@@ -443,11 +442,11 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           linea.producto_id,
           depositoId,
           linea.cantidad.toFixed(3),
-          linea.precio_unitario_usd.toFixed(2),
+          toStorageString(linea.precio_unitario_usd),
           (linea.tipo_impuesto as string | undefined) ?? 'Exento',
-          ((linea.impuesto_pct as number | undefined) ?? 0).toFixed(2),
-          subtotalUsd.toFixed(2),
-          subtotalBs.toFixed(2),
+          toStorageString((linea.impuesto_pct as number | undefined) ?? 0),
+          toStorageString(subtotalUsd),
+          toStorageString(subtotalBs),
           empresa_id,
           now,
         ]
@@ -469,8 +468,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       }
 
       // Acumular subtotales por tipo para contabilidad
-      if (producto.tipo === 'P') montoProductos = Number((montoProductos + subtotalUsd).toFixed(2))
-      else if (producto.tipo === 'S') montoServicios = Number((montoServicios + subtotalUsd).toFixed(2))
+      if (producto.tipo === 'P') montoProductos = montoProductos.plus(subtotalUsd)
+      else if (producto.tipo === 'S') montoServicios = montoServicios.plus(subtotalUsd)
 
       if (producto.tipo === 'P') {
         const stockActual = parseFloat(producto.stock)
@@ -523,26 +522,26 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
               const movLoteId = uuidv4()
               await tx.execute(
-                `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
-                 VALUES (?, ?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                  movLoteId,
-                  linea.producto_id,
-                  depositoId,
-                  aDescontar.toFixed(3),
-                  stockCursor.toFixed(3),
-                  stockLoteNuevo.toFixed(3),
-                  linea.precio_unitario_usd.toFixed(4),
-                  lote.id,
-                  ventaId,
-                  `VEN-${nroFactura}`,
-                  `Venta ${nroFactura}`,
-                  usuario_id,
-                  now,
-                  empresa_id,
-                  now,
-                ]
-              )
+                 `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+                  VALUES (?, ?, ?, 'S', 'VEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 [
+                   movLoteId,
+                   linea.producto_id,
+                   depositoId,
+                   aDescontar.toFixed(3),
+                   stockCursor.toFixed(3),
+                   stockLoteNuevo.toFixed(3),
+                   toStorageString(linea.precio_unitario_usd),
+                   lote.id,
+                   ventaId,
+                   `VEN-${nroFactura}`,
+                   `Venta ${nroFactura}`,
+                   usuario_id,
+                   now,
+                   empresa_id,
+                   now,
+                 ]
+               )
 
               stockCursor = stockLoteNuevo
               pendiente -= aDescontar
@@ -573,7 +572,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               linea.cantidad.toFixed(3),
               stockActual.toFixed(3),
               stockNuevo.toFixed(3),
-              linea.precio_unitario_usd.toFixed(4),
+              toStorageString(linea.precio_unitario_usd),
               ventaId,
               `VEN-${nroFactura}`,
               `Venta ${nroFactura}`,
@@ -650,10 +649,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     }
 
     // 5. Por cada pago: calcular monto_usd e insertar
-    let totalAbonadoUsd = 0
+    let totalAbonadoUsd = new Decimal(0)
     for (const pago of pagos) {
       const pagoId = uuidv4()
-      const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
+      const montoUsd = pago.moneda === 'BS' ? bsToUsd(pago.monto, tasa) : new Decimal(pago.monto)
       const pagoMonedaId = pago.moneda === 'BS' ? monedaBsId : monedaUsdId
 
       await tx.execute(
@@ -665,9 +664,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           cliente_id,
           pago.metodo_cobro_id,
           pagoMonedaId,
-          tasa.toFixed(4),
-          pago.monto.toFixed(2),
-          montoUsd.toFixed(2),
+          toStorageString(tasa),
+          toStorageString(pago.monto),
+          toStorageString(montoUsd),
           pago.referencia ?? null,
           sesion_caja_id ?? null,
           now,
@@ -682,9 +681,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       // venta aquí (cap en totalUsd). La parte de cobranza se registra en el SAF-APL
       // loop con origen='COBRO' para evitar double-counting en el cuadre de caja.
       const montoMovVenta = discrepancy?.mode === 'SAF'
-        ? Math.min(montoUsd, Math.max(0, totalUsd - totalAbonadoUsd))
+        ? Decimal.min(montoUsd, Decimal.max(new Decimal(0), totalUsd.minus(totalAbonadoUsd)))
         : montoUsd
-      if (montoMovVenta > 0) {
+      if (montoMovVenta.gt(0)) {
         const movMetodoId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_metodo_cobro
@@ -695,7 +694,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             movMetodoId,
             empresa_id,
             pago.metodo_cobro_id,
-            montoMovVenta.toFixed(2),
+            toStorageString(montoMovVenta),
             ventaId,
             `VEN-${nroFactura}`,
             `Venta ${nroFactura}`,
@@ -707,7 +706,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         )
       }
 
-      totalAbonadoUsd += montoUsd
+      totalAbonadoUsd = totalAbonadoUsd.plus(montoUsd)
     }
 
     // 5b. VUELTO: registrar el cambio entregado al cliente como EGRESO inmutable.
@@ -724,7 +723,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           vueltoId,
           empresa_id,
           vuelto.metodo_cobro_id,
-          vuelto.monto.toFixed(2),
+          toStorageString(vuelto.monto),
           ventaId,
           `VEN-${nroFactura}`,
           `Vuelto Venta ${nroFactura}`,
@@ -737,19 +736,23 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     }
 
     // 6. UPDATE venta saldo_pend_usd (ancla en Bs, consistente con el calculo del POS)
-    const abonado_BsNativo = pagos.filter((p) => p.moneda === 'BS').reduce((s, p) => s + p.monto, 0)
-    const abonado_UsdNativo = pagos.filter((p) => p.moneda === 'USD').reduce((s, p) => s + p.monto, 0)
-    const pendienteBs4_db = Math.max(0, totalUsd * tasa - abonado_BsNativo - abonado_UsdNativo * tasa)
+    const abonado_BsNativo = pagos.filter((p) => p.moneda === 'BS').reduce((s, p) => s.plus(p.monto), new Decimal(0))
+    const abonado_UsdNativo = pagos.filter((p) => p.moneda === 'USD').reduce((s, p) => s.plus(p.monto), new Decimal(0))
+    const pendienteBs4_db = Decimal.max(
+      new Decimal(0),
+      usdToBs(totalUsd, tasa).minus(abonado_BsNativo).minus(usdToBs(abonado_UsdNativo, tasa))
+    )
     // Si el residuo en Bs es <= $0.01 equivalente, es diferencial de redondeo: se absorbe (saldo = 0)
-    const saldoPend = pendienteBs4_db <= tasa * 0.01 ? 0 : Number((pendienteBs4_db / tasa).toFixed(2))
+    const umbral = new Decimal(tasa).times('0.01')
+    const saldoPend = pendienteBs4_db.lte(umbral) ? new Decimal(0) : bsToUsd(pendienteBs4_db, tasa)
     await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-      saldoPend.toFixed(2),
+      toStorageString(saldoPend),
       ventaId,
     ])
 
     // 7. Si CREDITO y deuda > 0.01: crear movimiento de cuenta
     //    Excluir modos de absorcion: el gasto absorbe el faltante, no queda deuda en CxC.
-    if (tipo === 'CREDITO' && saldoPend > 0.01
+    if (tipo === 'CREDITO' && saldoPend.gt('0.01')
         && discrepancy?.mode !== 'ABSORBER'
         && discrepancy?.mode !== 'DIFERENCIAL_FALTANTE') {
       const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
@@ -758,10 +761,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       if (!clienteResult.rows || clienteResult.rows.length === 0) {
         throw new Error('Cliente no encontrado')
       }
-      const saldoActual = parseFloat(
+      const saldoActual = new Decimal(
         (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
       )
-      const saldoNuevo = Number((saldoActual + saldoPend).toFixed(2))
+      const saldoNuevo = saldoActual.plus(saldoPend)
 
       const movCuentaId = uuidv4()
       await tx.execute(
@@ -771,21 +774,21 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           movCuentaId,
           cliente_id,
           `FAC-${nroFactura}`,
-          saldoPend.toFixed(2),
-          saldoActual.toFixed(2),
-          saldoNuevo.toFixed(2),
+          toStorageString(saldoPend),
+          toStorageString(saldoActual),
+          toStorageString(saldoNuevo),
           `Venta a credito ${nroFactura}`,
           ventaId,
           now,
           empresa_id,
           now,
-          tasa.toFixed(4),
+          toStorageString(tasa),
         ]
       )
 
       // Actualizar saldo del cliente localmente
       await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-        saldoNuevo.toFixed(2),
+        toStorageString(saldoNuevo),
         now,
         cliente_id,
       ])
@@ -817,7 +820,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
                 // Convertir a moneda nativa del método de pago
                 const montoNativo = monedaSaf === 'BS'
-                  ? Number((inv.montoUsd * tasa).toFixed(2))
+                  ? usdToBs(inv.montoUsd, tasa).toNumber()
                   : inv.montoUsd
 
                 await aplicarPagoFacturaEnTx(
@@ -847,11 +850,11 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
             // Paso B: SAF remanente (excedente sin facturas a las que aplicar)
             // Crea crédito puro en la cuenta del cliente (saldo_actual baja a negativo).
-            const remainingSaf = Math.max(
-              0,
-              Number((discrepancy.montoUsd - totalAppliedUsd).toFixed(2))
+            const remainingSaf = Decimal.max(
+              new Decimal(0),
+              new Decimal(discrepancy.montoUsd).minus(totalAppliedUsd)
             )
-            if (remainingSaf > 0.001) {
+            if (remainingSaf.gt('0.001')) {
               // Obtener moneda UUID para el pago anticipo
               const monedaCodeSaf = monedaSaf === 'BS' ? 'VES' : 'USD'
               const monedaIdSafRes = await tx.execute(
@@ -863,7 +866,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 : (monedaSaf === 'BS' ? monedaBsId : monedaUsdId)
 
               const montoRestNativo = monedaSaf === 'BS'
-                ? Number((remainingSaf * tasa).toFixed(2))
+                ? usdToBs(remainingSaf, tasa)
                 : remainingSaf
 
               // Pago sin factura (anticipo / crédito a favor)
@@ -872,7 +875,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                  VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
                 [
                   uuidv4(), discrepancy.clienteId, metodoIdSaf, monedaIdSaf,
-                  tasa.toFixed(4), montoRestNativo.toFixed(2), remainingSaf.toFixed(2),
+                  toStorageString(tasa), toStorageString(montoRestNativo), toStorageString(remainingSaf),
                   pagoSaf?.referencia ?? null, sesion_caja_id ?? null,
                   now, empresa_id, now, usuario_id,
                 ]
@@ -883,10 +886,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 'SELECT saldo_actual FROM clientes WHERE id = ?',
                 [discrepancy.clienteId]
               )
-              const saldoActualRem = parseFloat(
+              const saldoActualRem = new Decimal(
                 (clienteRemRes.rows?.item(0) as { saldo_actual: string } | undefined)?.saldo_actual ?? '0'
               )
-              const saldoNuevoRem = Number((saldoActualRem - remainingSaf).toFixed(2))
+              const saldoNuevoRem = saldoActualRem.minus(remainingSaf)
 
               const movRemId = uuidv4()
               await tx.execute(
@@ -895,18 +898,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 [
                   movRemId, discrepancy.clienteId,
                   `SAF-ANTICIPO-${nroFactura}`,
-                  remainingSaf.toFixed(2),
-                  saldoActualRem.toFixed(2),
-                  saldoNuevoRem.toFixed(2),
+                  toStorageString(remainingSaf),
+                  toStorageString(saldoActualRem),
+                  toStorageString(saldoNuevoRem),
                   `Saldo a favor — excedente venta ${nroFactura}`,
                   ventaId, now, empresa_id, now, usuario_id,
-                  monedaSaf, montoRestNativo.toFixed(2), tasa.toFixed(4),
+                  monedaSaf, toStorageString(montoRestNativo), toStorageString(tasa),
                 ]
               )
 
               await tx.execute(
                 'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-                [saldoNuevoRem.toFixed(2), now, discrepancy.clienteId]
+                [toStorageString(saldoNuevoRem), now, discrepancy.clienteId]
               )
             }
           }
@@ -948,10 +951,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 cuentaAbsId,
                 now,
                 monedaUsdId,
-                tasa.toFixed(4),
-                discrepancy.montoUsd.toFixed(2),
-                discrepancy.montoUsd.toFixed(2),
-                discrepancy.montoUsd.toFixed(2),
+                toStorageString(tasa),
+                toStorageString(discrepancy.montoUsd),
+                toStorageString(discrepancy.montoUsd),
+                toStorageString(discrepancy.montoUsd),
                 `Diferencial asumido por negocio. Cajero: ${discrepancy.cajeroId ?? usuario_id}. Supervisor: ${discrepancy.supervisorId ?? ''}. Venta: ${ventaId}`,
                 now,
                 now,
@@ -999,10 +1002,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 cuentaDiffId,
                 now,
                 monedaUsdId,
-                tasa.toFixed(4),
-                discrepancy.montoUsd.toFixed(2),
-                discrepancy.montoUsd.toFixed(2),
-                discrepancy.montoUsd.toFixed(2),
+                toStorageString(tasa),
+                toStorageString(discrepancy.montoUsd),
+                toStorageString(discrepancy.montoUsd),
+                toStorageString(discrepancy.montoUsd),
                 `Diferencial cambiario faltante — denominacion. Cajero: ${discrepancy.cajeroId ?? usuario_id}. Venta: ${ventaId}`,
                 now,
                 now,
@@ -1033,7 +1036,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 uuidv4(),
                 empresa_id,
                 metodoPropinaId,
-                discrepancy.montoBs.toFixed(2),
+                toStorageString(discrepancy.montoBs),
                 ventaId,
                 `VEN-${nroFactura}`,
                 `Propina — Venta ${nroFactura}`,
@@ -1064,7 +1067,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 uuidv4(),
                 empresa_id,
                 metodoDiffSobrId,
-                discrepancy.montoBs.toFixed(2),
+                toStorageString(discrepancy.montoBs),
                 ventaId,
                 `VEN-${nroFactura}`,
                 `Diferencial cambiario sobrante — Venta ${nroFactura}`,
@@ -1091,7 +1094,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                   uuidv4(),
                   empresa_id,
                   entry.metodoCobro_id,
-                  entry.montoBs.toFixed(2),
+                  toStorageString(entry.montoBs),
                   ventaId,
                   `VEN-${nroFactura}`,
                   `Vuelto — Venta ${nroFactura}`,
@@ -1113,7 +1116,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 uuidv4(),
                 empresa_id,
                 vuelto.metodo_cobro_id,
-                vuelto.monto.toFixed(2),
+                toStorageString(vuelto.monto),
                 ventaId,
                 `VEN-${nroFactura}`,
                 `Vuelto Venta ${nroFactura}`,
@@ -1137,6 +1140,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     // 7d. SAF as payment method: apply existing client credit to this sale
     if (safEntry && safEntry.montoUsd > 0.001) {
       const { clienteId: safClienteId, montoUsd: safMontoUsd, safOrigenRefs = [] } = safEntry
+      const safMontoUsdD = new Decimal(safMontoUsd)
 
       // Read and validate client SAF credit
       const clienteSafRes = await tx.execute(
@@ -1144,12 +1148,12 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         [safClienteId]
       )
       if (clienteSafRes.rows?.length) {
-        const saldoActualSaf = parseFloat(
+        const saldoActualSaf = new Decimal(
           (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual
         )
-        if (saldoActualSaf < -0.001) {
+        if (saldoActualSaf.lt('-0.001')) {
           const saldoAntesSaf = saldoActualSaf
-          const saldoDespuesSaf = Number((saldoActualSaf + safMontoUsd).toFixed(2))
+          const saldoDespuesSaf = saldoActualSaf.plus(safMontoUsdD)
 
           // INSERT movimiento_cuenta tipo='SAF' — traceability ref points to this sale
           const safOrigenRefsWithVenta = safOrigenRefs.length > 0 ? safOrigenRefs : [ventaId]
@@ -1162,14 +1166,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             [
               uuidv4(), empresa_id, safClienteId,
               `SAF-VTA-${nroFactura}`,
-              safMontoUsd.toFixed(2),
-              saldoAntesSaf.toFixed(2),
-              saldoDespuesSaf.toFixed(2),
+              toStorageString(safMontoUsdD),
+              toStorageString(saldoAntesSaf),
+              toStorageString(saldoDespuesSaf),
               `Saldo a favor aplicado en venta ${nroFactura}`,
               ventaId,
               now, now, usuario_id,
-              safMontoUsd.toFixed(2),
-              tasa.toFixed(4),
+              toStorageString(safMontoUsdD),
+              toStorageString(tasa),
               JSON.stringify(safOrigenRefsWithVenta),
               params.sesion_caja_id ?? null,
             ]
@@ -1178,18 +1182,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           // Consume SAF credit: update clientes.saldo_actual
           await tx.execute(
             'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-            [saldoDespuesSaf.toFixed(2), now, safClienteId]
+            [toStorageString(saldoDespuesSaf), now, safClienteId]
           )
 
           // Reduce saldo_pend_usd by SAF amount (sale partially covered by credit)
           const saldoPendRes = await tx.execute('SELECT saldo_pend_usd FROM ventas WHERE id = ?', [ventaId])
           if (saldoPendRes.rows?.length) {
-            const currentSaldoPend = parseFloat(
+            const currentSaldoPend = new Decimal(
               (saldoPendRes.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
             )
-            const nuevoSaldoPendSaf = Math.max(0, Number((currentSaldoPend - safMontoUsd).toFixed(2)))
+            const nuevoSaldoPendSaf = Decimal.max(new Decimal(0), currentSaldoPend.minus(safMontoUsdD))
             await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-              nuevoSaldoPendSaf.toFixed(2), ventaId,
+              toStorageString(nuevoSaldoPendSaf), ventaId,
             ])
           }
         }
@@ -1283,8 +1287,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               )
             }
 
-            const saldoActual = parseFloat(metodoRow.saldo_actual ?? '0') || 0
-            const saldoNuevo  = Number((saldoActual - entrada.monto).toFixed(2))
+            const saldoActualMetodo = new Decimal(metodoRow.saldo_actual ?? '0')
+            const saldoNuevoMetodo  = saldoActualMetodo.minus(entrada.monto)
             const movId = uuidv4()
             await tx.execute(
               `INSERT INTO movimientos_metodo_cobro
@@ -1294,7 +1298,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               [
                 movId, empresa_id, entrada.metodo_cobro_id,
                 cargo.tipo,
-                entrada.monto.toFixed(2), disponible.toFixed(2), (disponible - entrada.monto).toFixed(2),
+                toStorageString(entrada.monto), toStorageString(disponible), toStorageString(new Decimal(disponible).minus(entrada.monto)),
                 ventaId, `VEN-${nroFactura}`,
                 cargo.descripcion,
                 sesion_caja_id ?? null, now, now, usuario_id,
@@ -1302,7 +1306,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             )
             await tx.execute(
               'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-              [saldoNuevo.toFixed(2), now, entrada.metodo_cobro_id]
+              [toStorageString(saldoNuevoMetodo), now, entrada.metodo_cobro_id]
             )
           }
         } else {
@@ -1324,10 +1328,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                (id, empresa_id, venta_id, cliente_id, nro_cuota, fecha_vencimiento,
                 monto_original_usd, monto_pagado_usd, saldo_pendiente_usd, status,
                 origen_fondos_tipo, created_at, updated_at)
-             VALUES (?, ?, ?, ?, 1, ?, ?, '0.00', ?, 'PENDIENTE', ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, 1, ?, ?, '0.00000000', ?, 'PENDIENTE', ?, ?, ?)`,
             [
               vencId, empresa_id, ventaId, cliente_id, fechaVencStr,
-              cargo.montoCargoUsd.toFixed(2), cargo.montoCargoUsd.toFixed(2),
+              toStorageString(cargo.montoCargoUsd), toStorageString(cargo.montoCargoUsd),
               cargo.origenFondosTipo ?? 'CAJA', now, now,
             ]
           )
@@ -1345,7 +1349,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       // Resolver banco_empresa_id por metodo de cobro para contabilidad y movimientos bancarios
       const pagosContadoContab: Array<{ monto_usd: number; banco_empresa_id: string | null }> = []
       for (const pago of pagos) {
-        const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
+        const montoUsd = pago.moneda === 'BS' ? bsToUsd(pago.monto, tasa).toNumber() : pago.monto
         const metodoResult = await tx.execute(
           'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
           [pago.metodo_cobro_id]
@@ -1365,7 +1369,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
              VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'VENTA', ?, 0, ?, ?, ?, ?)`,
             [
               movBancoId, empresa_id, bancoId,
-              montoUsd.toFixed(2),
+              toStorageString(montoUsd),
               ventaId,
               pago.referencia ?? null,
               `Venta ${nroFactura}`,
@@ -1380,9 +1384,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         ventaId,
         nroFactura,
         pagosContado: pagosContadoContab,
-        montoCredito: saldoPend,
-        montoProductos,
-        montoServicios,
+        montoCredito: saldoPend.toNumber(),
+        montoProductos: montoProductos.toNumber(),
+        montoServicios: montoServicios.toNumber(),
         cuentas,
         usuarioId: usuario_id,
         monedaContable,

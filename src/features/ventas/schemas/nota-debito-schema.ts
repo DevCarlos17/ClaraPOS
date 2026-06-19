@@ -2,6 +2,9 @@ import { z } from 'zod'
 
 // ─── Linea de detalle ────────────────────────────────────────
 
+// NOTE: precio_unitario_usd keeps z.number() — values come from form inputs.
+// Decimal arithmetic is applied at the crearNotaDebito hook layer before writes.
+
 export const lineaNotaDebitoSchema = z.object({
   descripcion: z.string().min(1, 'La descripcion es requerida'),
   cantidad: z.number().positive('La cantidad debe ser mayor a 0'),
