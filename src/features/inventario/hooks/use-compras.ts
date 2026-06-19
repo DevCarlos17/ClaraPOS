@@ -1,8 +1,10 @@
 import { useQuery } from '@powersync/react'
+import Decimal from 'decimal.js'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { toStorageString } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
 
@@ -277,8 +279,8 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
 
     // 5. Por cada linea: validar stock y crear Kardex inverso (salida por devolucion)
     for (const linea of lineas) {
-      const qty = parseFloat(linea.cantidad)
-      const costoSistema = parseFloat(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
+      const qty = new Decimal(linea.cantidad)
+      const costoSistema = new Decimal(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
 
       const prodRes = await tx.execute(
         'SELECT stock, costo_usd FROM productos WHERE id = ?',
@@ -286,22 +288,22 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
       )
       if (!prodRes.rows?.length) throw new Error('Producto no encontrado')
       const prod = prodRes.rows.item(0) as { stock: string; costo_usd: string }
-      const currentStock = parseFloat(prod.stock)
-      const currentCosto = parseFloat(prod.costo_usd)
+      const currentStock = new Decimal(prod.stock)
+      const currentCosto = new Decimal(prod.costo_usd)
 
-      if (currentStock < qty - 0.001) {
+      if (currentStock.lt(qty.minus(0.001))) {
         throw new Error(
           `Stock insuficiente para reversar. Disponible: ${currentStock.toFixed(3)}, requerido: ${qty.toFixed(3)}. Es posible que el inventario ya haya sido consumido.`
         )
       }
 
-      const newStock = Math.max(0, Number((currentStock - qty).toFixed(3)))
+      const newStock = Decimal.max(0, currentStock.minus(qty))
 
       // Recalcular costo promedio ponderado (reverso de la contribucion de esta compra)
       let newCosto = currentCosto
-      if (newStock > 0.001) {
-        const rawCosto = (currentStock * currentCosto - qty * costoSistema) / newStock
-        newCosto = Math.max(0, Number(rawCosto.toFixed(4)))
+      if (newStock.gt(0.001)) {
+        const rawCosto = currentStock.times(currentCosto).minus(qty.times(costoSistema)).dividedBy(newStock)
+        newCosto = Decimal.max(0, rawCosto)
       }
 
       // Kardex: salida por devolucion de compra
@@ -315,10 +317,10 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
           uuidv4(),
           linea.producto_id,
           linea.deposito_id,
-          qty.toFixed(3),
-          currentStock.toFixed(3),
-          newStock.toFixed(3),
-          costoSistema.toFixed(4),
+          toStorageString(qty),
+          toStorageString(currentStock),
+          toStorageString(newStock),
+          toStorageString(costoSistema),
           linea.lote_id ?? null,
           compraId,
           `DEV-${compra.nro_factura}`,
@@ -333,19 +335,19 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
       // Actualizar stock y costo del producto
       await tx.execute(
         'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-        [newStock.toFixed(3), newCosto.toFixed(4), now, linea.producto_id]
+        [toStorageString(newStock), toStorageString(newCosto), now, linea.producto_id]
       )
     }
 
     // 6. Movimiento CxP: cancelar deuda pendiente (CREDITO sin abonos)
-    const saldoPend = parseFloat(compra.saldo_pend_usd)
-    if (saldoPend > 0.01) {
+    const saldoPend = new Decimal(compra.saldo_pend_usd)
+    if (saldoPend.gt(0.01)) {
       const provRes = await tx.execute(
         'SELECT saldo_actual FROM proveedores WHERE id = ? AND empresa_id = ?',
         [compra.proveedor_id, empresaId]
       )
-      const saldoProvActual = parseFloat((provRes.rows?.item(0) as { saldo_actual: string })?.saldo_actual ?? '0')
-      const nuevoSaldoProv = Math.max(0, Number((saldoProvActual - saldoPend).toFixed(2)))
+      const saldoProvActual = new Decimal((provRes.rows?.item(0) as { saldo_actual: string })?.saldo_actual ?? '0')
+      const nuevoSaldoProv = Decimal.max(0, saldoProvActual.minus(saldoPend))
 
       await tx.execute(
         `INSERT INTO movimientos_cuenta_proveedor
@@ -355,9 +357,9 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
         [
           uuidv4(), empresaId, compra.proveedor_id,
           `DEV-${compra.nro_factura}`,
-          saldoPend.toFixed(2),
-          saldoProvActual.toFixed(2),
-          nuevoSaldoProv.toFixed(2),
+          toStorageString(saldoPend),
+          toStorageString(saldoProvActual),
+          toStorageString(nuevoSaldoProv),
           `Devolucion de factura de compra ${compra.nro_factura}`,
           compraId, compraId,
           now, now, usuarioId,
@@ -448,12 +450,12 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
   // 0c. Stocks y precios actuales de todos los productos de las lineas
-  const stocksMap = new Map<string, number>()
+  const stocksMap = new Map<string, Decimal>()
   type PreciosActuales = {
-    costo_usd: number
-    precio_venta_usd: number
-    precio_mayor_usd: number | null
-    precio_especial_usd: number | null
+    costo_usd: Decimal
+    precio_venta_usd: Decimal
+    precio_mayor_usd: Decimal | null
+    precio_especial_usd: Decimal | null
   }
   const preciosMap = new Map<string, PreciosActuales>()
 
@@ -472,12 +474,12 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       precio_mayor_usd: string | null
       precio_especial_usd: string | null
     }
-    stocksMap.set(linea.producto_id, parseFloat(p.stock) || 0)
+    stocksMap.set(linea.producto_id, new Decimal(p.stock || '0'))
     preciosMap.set(linea.producto_id, {
-      costo_usd: parseFloat(p.costo_usd) || 0,
-      precio_venta_usd: parseFloat(p.precio_venta_usd) || 0,
-      precio_mayor_usd: p.precio_mayor_usd != null ? (parseFloat(p.precio_mayor_usd) || null) : null,
-      precio_especial_usd: p.precio_especial_usd != null ? (parseFloat(p.precio_especial_usd) || null) : null,
+      costo_usd: new Decimal(p.costo_usd || '0'),
+      precio_venta_usd: new Decimal(p.precio_venta_usd || '0'),
+      precio_mayor_usd: p.precio_mayor_usd != null ? new Decimal(p.precio_mayor_usd) : null,
+      precio_especial_usd: p.precio_especial_usd != null ? new Decimal(p.precio_especial_usd) : null,
     })
   }
 
@@ -488,36 +490,35 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     compraId = uuidv4()
 
     // 1. Calcular totales con desglose fiscal (lineas ya vienen en USD)
-    let totalExentoUsd = 0
-    let totalBaseUsd = 0
-    let totalIvaUsd = 0
+    const dTasa = new Decimal(tasa)
+    let totalExentoUsd = new Decimal(0)
+    let totalBaseUsd = new Decimal(0)
+    let totalIvaUsd = new Decimal(0)
     for (const linea of lineas) {
-      const subtotal = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
+      const subtotal = new Decimal(linea.cantidad).times(linea.costo_unitario_usd)
       const tipoImp = linea.tipo_impuesto ?? 'Exento'
       if (tipoImp === 'Exento') {
-        totalExentoUsd += subtotal
+        totalExentoUsd = totalExentoUsd.plus(subtotal)
       } else {
         // Gravable o Exonerado: contribuye a la base imponible
-        totalBaseUsd += subtotal
-        const pct = linea.impuesto_pct ?? 0
-        totalIvaUsd += Number((subtotal * (pct / 100)).toFixed(2))
+        totalBaseUsd = totalBaseUsd.plus(subtotal)
+        const pct = new Decimal(linea.impuesto_pct ?? 0)
+        totalIvaUsd = totalIvaUsd.plus(subtotal.times(pct).dividedBy(100))
       }
     }
-    totalExentoUsd = Number(totalExentoUsd.toFixed(2))
-    totalBaseUsd = Number(totalBaseUsd.toFixed(2))
-    totalIvaUsd = Number(totalIvaUsd.toFixed(2))
-    const totalUsd = Number((totalExentoUsd + totalBaseUsd + totalIvaUsd).toFixed(2))
-    const totalBs = Number((totalUsd * tasa).toFixed(2))
+    const totalUsd = totalExentoUsd.plus(totalBaseUsd).plus(totalIvaUsd)
+    const totalBs = totalUsd.times(dTasa)
 
     // 2. Calcular pagos inmediatos y saldo pendiente
-    let totalAbonadoUsd = 0
+    let totalAbonadoUsd = new Decimal(0)
     for (const pago of pagos) {
-      const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
-      totalAbonadoUsd += montoUsd
+      const montoUsd = pago.moneda === 'BS'
+        ? new Decimal(pago.monto).dividedBy(dTasa)
+        : new Decimal(pago.monto)
+      totalAbonadoUsd = totalAbonadoUsd.plus(montoUsd)
     }
-    totalAbonadoUsd = Number(totalAbonadoUsd.toFixed(2))
-    const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
-    const tipo: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
+    const pendienteUsd = Decimal.max(0, totalUsd.minus(totalAbonadoUsd))
+    const tipo: 'CONTADO' | 'CREDITO' = pendienteUsd.lte(0.01) ? 'CONTADO' : 'CREDITO'
     const saldoPendUsd = pendienteUsd
 
     // 3. INSERT facturas_compra (cabecera)
@@ -533,15 +534,15 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         nro_control ?? null,
         depositoId,
         monedaId,
-        tasa.toFixed(4),
-        tasa_costo ? tasa_costo.toFixed(4) : null,
-        totalExentoUsd.toFixed(2),
-        totalBaseUsd.toFixed(2),
-        totalIvaUsd.toFixed(2),
-        '0.00',
-        totalUsd.toFixed(2),
-        totalBs.toFixed(2),
-        saldoPendUsd.toFixed(2),
+        toStorageString(tasa),
+        tasa_costo ? toStorageString(tasa_costo) : null,
+        toStorageString(totalExentoUsd),
+        toStorageString(totalBaseUsd),
+        toStorageString(totalIvaUsd),
+        '0.00000000',
+        toStorageString(totalUsd),
+        toStorageString(totalBs),
+        toStorageString(saldoPendUsd),
         tipo,
         'PROCESADA',
         fecha_factura,
@@ -557,11 +558,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     // 4. Por cada linea: detalle + kardex + actualizar producto
     for (const linea of lineas) {
       const detalleId = uuidv4()
-      const subtotalUsd = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
-      const subtotalBs = Number((subtotalUsd * tasa).toFixed(2))
+      const dCantidad = new Decimal(linea.cantidad)
+      const dCostoUnit = new Decimal(linea.costo_unitario_usd)
+      const subtotalUsd = dCantidad.times(dCostoUnit)
+      const subtotalBs = subtotalUsd.times(dTasa)
       // costoSistema: BCV-adjusted cost for inventory valuation.
       // Equals costo_unitario_usd when not using tasa paralela.
-      const costoSistema = linea.costo_usd_sistema ?? linea.costo_unitario_usd
+      const costoSistema = new Decimal(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
 
       // 4a. Crear lote si aplica
       let loteId: string | null = null
@@ -578,9 +581,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             linea.lote_nro.trim().toUpperCase(),
             linea.lote_fecha_fab ?? null,
             linea.lote_fecha_venc ?? null,
-            linea.cantidad.toFixed(3),
-            linea.cantidad.toFixed(3),
-            costoSistema.toFixed(2),
+            toStorageString(dCantidad),
+            toStorageString(dCantidad),
+            toStorageString(costoSistema),
             compraId,
             now,
             now,
@@ -598,13 +601,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           compraId,
           linea.producto_id,
           depositoId,
-          linea.cantidad.toFixed(3),
-          linea.costo_unitario_usd.toFixed(4),
-          costoSistema.toFixed(4),
+          toStorageString(dCantidad),
+          toStorageString(dCostoUnit),
+          toStorageString(costoSistema),
           linea.tipo_impuesto ?? 'Exento',
-          (linea.impuesto_pct ?? 0).toFixed(2),
-          subtotalUsd.toFixed(2),
-          subtotalBs.toFixed(2),
+          toStorageString(linea.impuesto_pct ?? 0),
+          toStorageString(subtotalUsd),
+          toStorageString(subtotalBs),
           loteId,
           empresa_id,
           now,
@@ -612,10 +615,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       )
 
       // 4c. Stock actual (pre-cargado; se actualiza localmente para acumular lineas del mismo producto)
-      const stockActual = stocksMap.get(linea.producto_id) ?? 0
+      const stockActual = stocksMap.get(linea.producto_id) ?? new Decimal(0)
 
       // 4d. Calcular nuevo stock y actualizar mapa para proximas iteraciones
-      const stockNuevo = stockActual + linea.cantidad
+      const stockNuevo = stockActual.plus(dCantidad)
       stocksMap.set(linea.producto_id, stockNuevo)
 
       // 4e. INSERT movimiento de inventario (entrada por compra) — usa costo sistema (BCV)
@@ -627,10 +630,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           movId,
           linea.producto_id,
           depositoId,
-          linea.cantidad.toFixed(3),
-          stockActual.toFixed(3),
-          stockNuevo.toFixed(3),
-          costoSistema.toFixed(4),
+          toStorageString(dCantidad),
+          toStorageString(stockActual),
+          toStorageString(stockNuevo),
+          toStorageString(costoSistema),
           loteId,
           compraId,
           `COM-${nro_factura}`,
@@ -649,85 +652,86 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // nuevo_precio_venta_usd provisto → usar pvp elegido por el usuario
       // ninguna de las anteriores → auto-calcular pvp desde el margen actual
       const precios = preciosMap.get(linea.producto_id)
-      const costoActual = precios?.costo_usd ?? 0
-      const pvpActual = precios?.precio_venta_usd ?? 0
+      const costoActual = precios?.costo_usd ?? new Decimal(0)
+      const pvpActual = precios?.precio_venta_usd ?? new Decimal(0)
       const mayorActual = precios?.precio_mayor_usd ?? null
       const especialActual = precios?.precio_especial_usd ?? null
       // pvpNuevoAudit: captura el pvp final para el registro de auditoria de precios
-      let pvpNuevoAudit: number | null = null
+      let pvpNuevoAudit: Decimal | null = null
 
       if (!linea.costo_cambio) {
         // Costo no cambio: solo actualizar stock
         await tx.execute(
           'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), now, linea.producto_id]
+          [toStorageString(stockNuevo), now, linea.producto_id]
         )
       } else if (linea.no_actualizar_pvp) {
         // Costo cambio pero usuario eligio mantener el pvp actual
         await tx.execute(
           'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), costoSistema.toFixed(4), now, linea.producto_id]
+          [toStorageString(stockNuevo), toStorageString(costoSistema), now, linea.producto_id]
         )
         pvpNuevoAudit = pvpActual
       } else {
         // Determinar nuevo pvp (nivel 1)
-        let nuevoPvp: number
+        let nuevoPvp: Decimal
         if (linea.nuevo_precio_venta_usd !== undefined && linea.nuevo_precio_venta_usd > 0) {
+          const dNuevoPvp = new Decimal(linea.nuevo_precio_venta_usd)
           // Guard: PVP no puede ser menor al costo
-          if (linea.nuevo_precio_venta_usd < costoSistema) {
+          if (dNuevoPvp.lt(costoSistema)) {
             throw new Error(
-              `El PVP ($${linea.nuevo_precio_venta_usd.toFixed(2)}) es menor al costo ($${costoSistema.toFixed(2)}). Corrija el precio antes de guardar.`
+              `El PVP ($${dNuevoPvp.toFixed(2)}) es menor al costo ($${costoSistema.toFixed(2)}). Corrija el precio antes de guardar.`
             )
           }
-          nuevoPvp = linea.nuevo_precio_venta_usd
-        } else if (costoActual > 0 && pvpActual > 0) {
-          const margen = (pvpActual - costoActual) / costoActual
-          nuevoPvp = Math.max(costoSistema, Number((costoSistema * (1 + margen)).toFixed(2)))
+          nuevoPvp = dNuevoPvp
+        } else if (costoActual.gt(0) && pvpActual.gt(0)) {
+          const margen = pvpActual.minus(costoActual).dividedBy(costoActual)
+          nuevoPvp = Decimal.max(costoSistema, costoSistema.times(new Decimal(1).plus(margen)))
         } else {
-          nuevoPvp = Number(costoSistema.toFixed(2))
+          nuevoPvp = costoSistema
         }
 
         pvpNuevoAudit = nuevoPvp
 
         // Precio mayor: usar provisto o auto-calcular con margen propio (siempre >= pvp)
-        let nuevoMayor: number | null = null
+        let nuevoMayor: Decimal | null = null
         if (linea.nuevo_precio_mayor_usd !== undefined && linea.nuevo_precio_mayor_usd > 0) {
-          nuevoMayor = linea.nuevo_precio_mayor_usd
-        } else if (mayorActual !== null && mayorActual > 0 && costoActual > 0) {
-          const margenMayor = (mayorActual - costoActual) / costoActual
-          nuevoMayor = Number((costoSistema * (1 + margenMayor)).toFixed(2))
-          if (nuevoMayor < nuevoPvp) nuevoMayor = nuevoPvp
+          nuevoMayor = new Decimal(linea.nuevo_precio_mayor_usd)
+        } else if (mayorActual !== null && mayorActual.gt(0) && costoActual.gt(0)) {
+          const margenMayor = mayorActual.minus(costoActual).dividedBy(costoActual)
+          nuevoMayor = costoSistema.times(new Decimal(1).plus(margenMayor))
+          if (nuevoMayor.lt(nuevoPvp)) nuevoMayor = nuevoPvp
         }
 
         // Precio especial: usar provisto o auto-calcular con margen propio (siempre >= pvp)
-        let nuevoEspecial: number | null = null
+        let nuevoEspecial: Decimal | null = null
         if (linea.nuevo_precio_especial_usd !== undefined && linea.nuevo_precio_especial_usd > 0) {
-          nuevoEspecial = linea.nuevo_precio_especial_usd
-        } else if (especialActual !== null && especialActual > 0 && costoActual > 0) {
-          const margenEspecial = (especialActual - costoActual) / costoActual
-          nuevoEspecial = Number((costoSistema * (1 + margenEspecial)).toFixed(2))
-          if (nuevoEspecial < nuevoPvp) nuevoEspecial = nuevoPvp
+          nuevoEspecial = new Decimal(linea.nuevo_precio_especial_usd)
+        } else if (especialActual !== null && especialActual.gt(0) && costoActual.gt(0)) {
+          const margenEspecial = especialActual.minus(costoActual).dividedBy(costoActual)
+          nuevoEspecial = costoSistema.times(new Decimal(1).plus(margenEspecial))
+          if (nuevoEspecial.lt(nuevoPvp)) nuevoEspecial = nuevoPvp
         }
 
         if (nuevoMayor !== null && nuevoEspecial !== null) {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoMayor.toFixed(2), nuevoEspecial.toFixed(2), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), toStorageString(nuevoMayor), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else if (nuevoMayor !== null) {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoMayor.toFixed(2), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), toStorageString(nuevoMayor), now, linea.producto_id]
           )
         } else if (nuevoEspecial !== null) {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoEspecial.toFixed(2), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), now, linea.producto_id]
           )
         }
       }
@@ -745,10 +749,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             compraId,
             linea.producto_id,
             usuario_id,
-            String(costoActual.toFixed(4)),
-            String(costoSistema.toFixed(4)),
-            String(pvpActual.toFixed(2)),
-            String(pvpNuevoAudit.toFixed(2)),
+            toStorageString(costoActual),
+            toStorageString(costoSistema),
+            toStorageString(pvpActual),
+            toStorageString(pvpNuevoAudit),
             now,
           ]
         )
@@ -765,13 +769,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
        FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
       [proveedor_id, empresa_id]
     )
-    const sumAfterInsert = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+    const sumAfterInsert = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
     // saldo antes de esta factura = sum actual - pendienteUsd (contribucion de la nueva factura)
-    let saldoProv = Math.max(0, Number((sumAfterInsert - pendienteUsd).toFixed(2)))
+    let saldoProv = Decimal.max(0, sumAfterInsert.minus(pendienteUsd))
 
     // 5b. Si hay deuda pendiente: crear entrada FAC
-    if (pendienteUsd > 0.01) {
-      const nuevoSaldo = Number((saldoProv + pendienteUsd).toFixed(2))
+    if (pendienteUsd.gt(0.01)) {
+      const nuevoSaldo = saldoProv.plus(pendienteUsd)
       const movFacId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_cuenta_proveedor
@@ -781,9 +785,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         [
           movFacId, empresa_id, proveedor_id,
           `FAC-${nro_factura}`,
-          pendienteUsd.toFixed(2),
-          saldoProv.toFixed(2),
-          nuevoSaldo.toFixed(2),
+          toStorageString(pendienteUsd),
+          toStorageString(saldoProv),
+          toStorageString(nuevoSaldo),
           `Factura compra ${nro_factura}`,
           compraId, compraId,
           now, now, usuario_id,
@@ -794,16 +798,17 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
     // 5c. Por cada pago inmediato: crear entrada PAG
     // tasa_interna: para pagos iniciales usar tasa_costo si existe, sino tasa del proveedor
-    const tasaInterna = tasa_costo ?? tasa
+    const dTasaInterna = tasa_costo ? new Decimal(tasa_costo) : dTasa
 
     for (const pago of pagos) {
-      const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
-      if (montoUsd <= 0) continue
+      const dMontoPago = new Decimal(pago.monto)
+      const montoUsd = pago.moneda === 'BS' ? dMontoPago.dividedBy(dTasa) : dMontoPago
+      if (montoUsd.lte(0)) continue
       // monto a tasa interna (para contabilidad)
       const montoUsdInterno = pago.moneda === 'BS'
-        ? Number((pago.monto / tasaInterna).toFixed(2))
-        : pago.monto
-      const nuevoSaldo = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
+        ? dMontoPago.dividedBy(dTasaInterna)
+        : dMontoPago
+      const nuevoSaldo = Decimal.max(0, saldoProv.minus(montoUsd))
       const movPagId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_cuenta_proveedor
@@ -815,15 +820,15 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         [
           movPagId, empresa_id, proveedor_id,
           pago.referencia ? pago.referencia : `PAG-${nro_factura}`,
-          montoUsd.toFixed(2),
-          saldoProv.toFixed(2),
-          nuevoSaldo.toFixed(2),
+          toStorageString(montoUsd),
+          toStorageString(saldoProv),
+          toStorageString(nuevoSaldo),
           `Pago inicial compra ${nro_factura}`,
           compraId, compraId,
           pago.moneda,
-          pago.monto.toFixed(2),
-          tasa.toFixed(4),
-          montoUsdInterno.toFixed(2),
+          toStorageString(dMontoPago),
+          toStorageString(dTasa),
+          toStorageString(montoUsdInterno),
           now, now, usuario_id,
         ]
       )
@@ -839,7 +844,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
            VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoId, empresa_id, pago.banco_empresa_id,
-            montoUsd.toFixed(2),
+            toStorageString(montoUsd),
             compraId,
             pago.referencia ?? null,
             `Pago compra ${nro_factura}`,
@@ -853,7 +858,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     try {
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
       const pagosContabilidad = pagos.map((p) => ({
-        monto_usd: p.moneda === 'BS' ? Number((p.monto / tasa).toFixed(2)) : p.monto,
+        monto_usd: p.moneda === 'BS'
+          ? new Decimal(p.monto).dividedBy(dTasa).toNumber()
+          : p.monto,
         banco_empresa_id: p.banco_empresa_id,
       }))
       await generarAsientosCompra(tx, {
