@@ -108,14 +108,22 @@ export function useBuscarClientesDeuda(query: string) {
 }
 
 /**
- * Facturas pendientes de un cliente (saldo_pend_usd > 0), ordenadas por fecha ASC (FIFO)
+ * Facturas de un cliente ordenadas por fecha ASC.
+ * Por defecto solo devuelve las pendientes (saldo_pend_usd > 0).
+ * Con incluirPagadas=true devuelve todas menos las anuladas/reversadas,
+ * lo que permite acceder al historial de pagos para reversarlos.
  */
-export function useFacturasPendientes(clienteId: string | null) {
+export function useFacturasPendientes(clienteId: string | null, incluirPagadas = false) {
   const { data, isLoading } = useQuery(
     clienteId
-      ? `SELECT * FROM ventas
-         WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
-         ORDER BY fecha ASC`
+      ? incluirPagadas
+        ? `SELECT * FROM ventas
+           WHERE cliente_id = ?
+             AND (status IS NULL OR status NOT IN ('ANULADA', 'REVERSADA'))
+           ORDER BY fecha ASC`
+        : `SELECT * FROM ventas
+           WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
+           ORDER BY fecha ASC`
       : '',
     clienteId ? [clienteId] : []
   )

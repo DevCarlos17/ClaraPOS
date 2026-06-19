@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useQuery } from '@powersync/react'
 import { X, CurrencyDollar, CaretUp, CaretDown, ArrowDown } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -33,7 +34,18 @@ function SortIcon({
 
 export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) {
   const { tasaValor } = useTasaActual()
-  const { facturas, isLoading } = useFacturasPendientes(cliente.id)
+  const [mostrarPagadas, setMostrarPagadas] = useState(false)
+  const { facturas, isLoading } = useFacturasPendientes(cliente.id, mostrarPagadas)
+
+  // Saldo reactivo: query directa a SQLite para reflejar cambios inmediatamente
+  // sin depender del prop `cliente` que puede quedar stale tras un abono global.
+  const { data: clienteLiveData } = useQuery(
+    'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
+    [cliente.id]
+  )
+  const saldo = clienteLiveData?.[0]
+    ? parseFloat((clienteLiveData[0] as { saldo_actual: string }).saldo_actual)
+    : parseFloat(cliente.saldo_actual)
 
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
   const [abonoGlobalOpen, setAbonoGlobalOpen] = useState(false)
@@ -57,8 +69,6 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
     }
     return String(a[sortField]).localeCompare(String(b[sortField])) * mult
   })
-
-  const saldo = parseFloat(cliente.saldo_actual)
 
   // Deuda real: suma de saldo pendiente en facturas individuales (fuente de verdad)
   const deudaFacturas = facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0)
@@ -129,10 +139,13 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
               <Button
                 size="sm"
                 onClick={() => setAbonoGlobalOpen(true)}
-                disabled={saldo < 0.01}
+                disabled={tieneSafCxc}
+                className={!tieneDeudaCxc && !tieneSafCxc && !isLoading
+                  ? 'bg-green-600 hover:bg-green-700 text-white border-green-600'
+                  : undefined}
               >
                 <CurrencyDollar size={14} className="mr-1" />
-                Abono Global
+                {!tieneDeudaCxc && !tieneSafCxc && !isLoading ? 'Anticipo' : 'Abono Global'}
               </Button>
               <CxcClienteReporte cliente={cliente} facturas={facturas} />
               <button
@@ -146,10 +159,17 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
           </div>
 
           {/* Sub-header */}
-          <div className="px-4 py-2 border-b border-border/50 bg-muted/20">
+          <div className="px-4 py-2 border-b border-border/50 bg-muted/20 flex items-center justify-between">
             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
-              Facturas Pendientes
+              {mostrarPagadas ? 'Todas las Facturas' : 'Facturas Pendientes'}
             </span>
+            <button
+              type="button"
+              onClick={() => setMostrarPagadas((v) => !v)}
+              className="text-[10px] text-primary hover:underline"
+            >
+              {mostrarPagadas ? 'Ocultar pagadas' : 'Ver pagadas'}
+            </button>
           </div>
 
           {/* Tabla */}
@@ -161,7 +181,9 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
             </div>
           ) : facturas.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
-              <p className="text-sm">No hay facturas pendientes</p>
+              <p className="text-sm">
+                {mostrarPagadas ? 'Sin facturas registradas' : 'No hay facturas pendientes'}
+              </p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -206,11 +228,12 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                 <tbody>
                   {facturasSorted.map((f) => {
                     const saldoPend = parseFloat(f.saldo_pend_usd)
+                    const esPagada = saldoPend <= 0.01
                     return (
                       <tr
                         key={f.id}
                         onClick={() => { setFacturaSeleccionada(f); setDetalleOpen(true) }}
-                        className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
+                        className={`border-t border-border hover:bg-muted/30 cursor-pointer transition-colors ${esPagada ? 'opacity-60' : ''}`}
                       >
                         <td className="px-4 py-3 font-mono text-xs text-foreground">
                           #{f.nro_factura}
@@ -236,8 +259,8 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                         <td className="px-4 py-3 text-right tabular-nums text-foreground text-sm">
                           {formatUsd(parseFloat(f.total_usd))}
                         </td>
-                        <td className="px-4 py-3 text-right tabular-nums font-semibold text-destructive text-sm">
-                          {formatUsd(saldoPend)}
+                        <td className={`px-4 py-3 text-right tabular-nums font-semibold text-sm ${esPagada ? 'text-green-600' : 'text-destructive'}`}>
+                          {esPagada ? '—' : formatUsd(saldoPend)}
                         </td>
                         <td className="px-4 py-3 text-right text-muted-foreground text-xs hidden md:table-cell">
                           {tasaValor > 0 ? formatBs(usdToBs(saldoPend, tasaValor)) : '-'}
@@ -246,9 +269,13 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                           <button
                             type="button"
                             onClick={() => { setFacturaSeleccionada(f); setDetalleOpen(true) }}
-                            className="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-primary-foreground bg-primary rounded-xl hover:bg-primary/90 transition-colors"
+                            className={`inline-flex items-center gap-1 px-3 py-1 text-xs font-medium rounded-xl transition-colors ${
+                              esPagada
+                                ? 'text-muted-foreground bg-muted hover:bg-muted/80'
+                                : 'text-primary-foreground bg-primary hover:bg-primary/90'
+                            }`}
                           >
-                            Pagar
+                            {esPagada ? 'Ver' : 'Pagar'}
                           </button>
                         </td>
                       </tr>
