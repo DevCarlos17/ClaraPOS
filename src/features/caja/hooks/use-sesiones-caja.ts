@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import Decimal from 'decimal.js'
+import { bsToUsd, toStorageString } from '@/lib/currency'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -224,39 +226,41 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   const sesion = (sesionData ?? [])[0] as
     | { monto_apertura_usd: string; monto_apertura_bs: string }
     | undefined
-  const aperturaUsd = parseFloat(sesion?.monto_apertura_usd ?? '0') || 0
-  const aperturaBs  = parseFloat(sesion?.monto_apertura_bs  ?? '0') || 0
+  const aperturaUsd = new Decimal(sesion?.monto_apertura_usd ?? '0')
+  const aperturaBs  = new Decimal(sesion?.monto_apertura_bs  ?? '0')
 
   const pagosRow = (pagosData ?? [])[0] as
     | { ventas_usd: number; ventas_bs: number }
     | undefined
-  const ventasUsd = pagosRow?.ventas_usd ?? 0
-  const ventasBs  = pagosRow?.ventas_bs  ?? 0
+  const ventasUsd = new Decimal(pagosRow?.ventas_usd ?? 0)
+  const ventasBs  = new Decimal(pagosRow?.ventas_bs  ?? 0)
 
   type MovRow = { origen: string; total_usd: number; total_bs: number }
-  const movsMap = new Map<string, { usd: number; bs: number }>()
+  const movsMap = new Map<string, { usd: Decimal; bs: Decimal }>()
   for (const row of (movsData ?? []) as MovRow[]) {
-    movsMap.set(row.origen, { usd: row.total_usd, bs: row.total_bs })
+    movsMap.set(row.origen, { usd: new Decimal(row.total_usd), bs: new Decimal(row.total_bs) })
   }
 
-  const ingManualUsd = movsMap.get('INGRESO_MANUAL')?.usd ?? 0
-  const ingManualBs  = movsMap.get('INGRESO_MANUAL')?.bs  ?? 0
-  const egrManualUsd = movsMap.get('EGRESO_MANUAL')?.usd  ?? 0
-  const egrManualBs  = movsMap.get('EGRESO_MANUAL')?.bs   ?? 0
-  const avancesUsd   = movsMap.get('AVANCE')?.usd ?? 0
-  const avancesBs    = movsMap.get('AVANCE')?.bs  ?? 0
-  const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? 0
-  const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? 0
+  const ingManualUsd = movsMap.get('INGRESO_MANUAL')?.usd ?? new Decimal(0)
+  const ingManualBs  = movsMap.get('INGRESO_MANUAL')?.bs  ?? new Decimal(0)
+  const egrManualUsd = movsMap.get('EGRESO_MANUAL')?.usd  ?? new Decimal(0)
+  const egrManualBs  = movsMap.get('EGRESO_MANUAL')?.bs   ?? new Decimal(0)
+  const avancesUsd   = movsMap.get('AVANCE')?.usd ?? new Decimal(0)
+  const avancesBs    = movsMap.get('AVANCE')?.bs  ?? new Decimal(0)
+  const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? new Decimal(0)
+  const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? new Decimal(0)
 
-  const saldoUsd = Math.max(0, Number((
-    aperturaUsd + ventasUsd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
-  ).toFixed(2)))
+  const saldoUsdD = Decimal.max(
+    new Decimal(0),
+    aperturaUsd.plus(ventasUsd).plus(ingManualUsd).minus(egrManualUsd).minus(avancesUsd).minus(prestamosUsd)
+  )
 
-  const saldoBs = Math.max(0, Number((
-    aperturaBs + ventasBs + ingManualBs - egrManualBs - avancesBs - prestamosBs
-  ).toFixed(2)))
+  const saldoBsD = Decimal.max(
+    new Decimal(0),
+    aperturaBs.plus(ventasBs).plus(ingManualBs).minus(egrManualBs).minus(avancesBs).minus(prestamosBs)
+  )
 
-  return { saldoUsd, saldoBs, isLoading: l1 || l2 || l3 }
+  return { saldoUsd: saldoUsdD.toNumber(), saldoBs: saldoBsD.toNumber(), isLoading: l1 || l2 || l3 }
 }
 
 // ─── Interface: SesionActivaDashboard ────────────────────────
@@ -424,25 +428,29 @@ export function useSesionesActivasDashboard() {
     const pagos   = pagosMap.get(s.id) ?? { usd: 0, bs: 0 }
     const movs    = movsMap.get(s.id) ?? new Map<string, { usd: number; bs: number }>()
 
-    const aperturaUsd  = parseFloat(s.monto_apertura_usd ?? '0') || 0
-    const aperturaBs   = parseFloat(s.monto_apertura_bs  ?? '0') || 0
+    const aperturaUsd  = new Decimal(s.monto_apertura_usd ?? '0')
+    const aperturaBs   = new Decimal(s.monto_apertura_bs  ?? '0')
 
-    const ingManualUsd = movs.get('INGRESO_MANUAL')?.usd ?? 0
-    const ingManualBs  = movs.get('INGRESO_MANUAL')?.bs  ?? 0
-    const egrManualUsd = movs.get('EGRESO_MANUAL')?.usd  ?? 0
-    const egrManualBs  = movs.get('EGRESO_MANUAL')?.bs   ?? 0
-    const avancesUsd   = movs.get('AVANCE')?.usd ?? 0
-    const avancesBs    = movs.get('AVANCE')?.bs  ?? 0
-    const prestamosUsd = movs.get('PRESTAMO')?.usd ?? 0
-    const prestamosBs  = movs.get('PRESTAMO')?.bs  ?? 0
+    const ingManualUsd = new Decimal(movs.get('INGRESO_MANUAL')?.usd ?? 0)
+    const ingManualBs  = new Decimal(movs.get('INGRESO_MANUAL')?.bs  ?? 0)
+    const egrManualUsd = new Decimal(movs.get('EGRESO_MANUAL')?.usd  ?? 0)
+    const egrManualBs  = new Decimal(movs.get('EGRESO_MANUAL')?.bs   ?? 0)
+    const avancesUsd   = new Decimal(movs.get('AVANCE')?.usd ?? 0)
+    const avancesBs    = new Decimal(movs.get('AVANCE')?.bs  ?? 0)
+    const prestamosUsd = new Decimal(movs.get('PRESTAMO')?.usd ?? 0)
+    const prestamosBs  = new Decimal(movs.get('PRESTAMO')?.bs  ?? 0)
+    const pagosUsd     = new Decimal(pagos.usd)
+    const pagosBs      = new Decimal(pagos.bs)
 
-    const saldoUsd = Math.max(0, Number((
-      aperturaUsd + pagos.usd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
-    ).toFixed(2)))
+    const saldoUsd = Decimal.max(
+      new Decimal(0),
+      aperturaUsd.plus(pagosUsd).plus(ingManualUsd).minus(egrManualUsd).minus(avancesUsd).minus(prestamosUsd)
+    ).toNumber()
 
-    const saldoBs = Math.max(0, Number((
-      aperturaBs + pagos.bs + ingManualBs - egrManualBs - avancesBs - prestamosBs
-    ).toFixed(2)))
+    const saldoBs = Decimal.max(
+      new Decimal(0),
+      aperturaBs.plus(pagosBs).plus(ingManualBs).minus(egrManualBs).minus(avancesBs).minus(prestamosBs)
+    ).toNumber()
 
     const horasTranscurridas = Math.max(0.1, (now - new Date(s.fecha_apertura).getTime()) / 3_600_000)
     const totalArticulos = Math.round(arts)
@@ -556,6 +564,8 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
 
   const id = uuidv4()
   const now = localNow()
+  const montoAperturaUsdD = new Decimal(monto_apertura_usd)
+  const montoAperturaBsD  = new Decimal(monto_apertura_bs)
 
   await db.writeTransaction(async (tx) => {
     // Validar que no haya ya una sesion abierta para esta caja (Plan B)
@@ -581,7 +591,7 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
          monto_sistema_usd, monto_fisico_usd, diferencia_usd,
          observaciones_cierre, status, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 'ABIERTA', ?, ?)`,
-      [id, empresa_id, caja_id, usuario_id, now, monto_apertura_usd.toFixed(2), monto_apertura_bs.toFixed(2), now, now]
+      [id, empresa_id, caja_id, usuario_id, now, toStorageString(montoAperturaUsdD), toStorageString(montoAperturaBsD), now, now]
     )
   })
 
@@ -615,6 +625,8 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
   if (monto_fisico_bs < 0) throw new Error('El monto fisico Bs no puede ser negativo')
 
   const now = localNow()
+  const montoFisicoUsdD = new Decimal(monto_fisico_usd)
+  const montoFisicoBsD  = new Decimal(monto_fisico_bs)
 
   await db.writeTransaction(async (tx) => {
     // 1. Leer sesion y validar que este abierta
@@ -639,8 +651,8 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       throw new Error('La sesion de caja ya fue cerrada')
     }
 
-    const aperturaUsd = parseFloat(sesion.monto_apertura_usd)
-    const aperturaBs  = parseFloat(sesion.monto_apertura_bs ?? '0')
+    const aperturaUsd = new Decimal(sesion.monto_apertura_usd || '0')
+    const aperturaBs  = new Decimal(sesion.monto_apertura_bs ?? '0')
     const empresaId   = sesion.empresa_id
 
     // 2a. Pagos en EFECTIVO cobrados en USD (monto nativo = USD)
@@ -655,7 +667,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
          AND COALESCE(p.is_reversed, 0) = 0`,
       [id]
     )
-    const pagosEfectivoUsd = Number(
+    const pagosEfectivoUsd = new Decimal(
       (pagosEfectivoUsdResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
     )
 
@@ -671,7 +683,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
          AND COALESCE(p.is_reversed, 0) = 0`,
       [id]
     )
-    const pagosEfectivoBs = Number(
+    const pagosEfectivoBs = new Decimal(
       (pagosEfectivoBsResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
     )
 
@@ -688,16 +700,16 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       [id]
     )
 
-    let ingresosManualUsd = 0
-    let egresosManualUsd  = 0
+    let ingresosManualUsd = new Decimal(0)
+    let egresosManualUsd  = new Decimal(0)
     if (movsManualUsdResult.rows) {
       for (let i = 0; i < movsManualUsdResult.rows.length; i++) {
         const row = movsManualUsdResult.rows.item(i) as { origen: string; total: number }
         if (row.origen === 'INGRESO_MANUAL') {
-          ingresosManualUsd += row.total
+          ingresosManualUsd = ingresosManualUsd.plus(new Decimal(row.total))
         } else {
           // EGRESO_MANUAL, AVANCE, PRESTAMO y VUELTO son salidas de efectivo
-          egresosManualUsd += row.total
+          egresosManualUsd = egresosManualUsd.plus(new Decimal(row.total))
         }
       }
     }
@@ -715,15 +727,15 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       [id]
     )
 
-    let ingresosManualBs = 0
-    let egresosManualBs  = 0
+    let ingresosManualBs = new Decimal(0)
+    let egresosManualBs  = new Decimal(0)
     if (movsManualBsResult.rows) {
       for (let i = 0; i < movsManualBsResult.rows.length; i++) {
         const row = movsManualBsResult.rows.item(i) as { origen: string; total: number }
         if (row.origen === 'INGRESO_MANUAL') {
-          ingresosManualBs += row.total
+          ingresosManualBs = ingresosManualBs.plus(new Decimal(row.total))
         } else {
-          egresosManualBs += row.total
+          egresosManualBs = egresosManualBs.plus(new Decimal(row.total))
         }
       }
     }
@@ -733,19 +745,22 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     //    todos los metodos), se usa ese valor directamente para mantener consistencia con lo
     //    mostrado al usuario. Si no, se calcula solo desde pagos efectivo (fallback).
     //    Para Bs: siempre desde efectivo (los otros metodos son USD en este sistema).
-    const montoSistemaUsdFromDB = Number(
-      (aperturaUsd + pagosEfectivoUsd + ingresosManualUsd - egresosManualUsd).toFixed(2)
-    )
+    const montoSistemaUsdFromDB = aperturaUsd
+      .plus(pagosEfectivoUsd)
+      .plus(ingresosManualUsd)
+      .minus(egresosManualUsd)
+
     const montoSistemaUsd = montoSistemaUsdParam !== undefined
-      ? Number(montoSistemaUsdParam.toFixed(2))
+      ? new Decimal(montoSistemaUsdParam)
       : montoSistemaUsdFromDB
 
-    const montoSistemaBs = Number(
-      (aperturaBs + pagosEfectivoBs + ingresosManualBs - egresosManualBs).toFixed(2)
-    )
+    const montoSistemaBs = aperturaBs
+      .plus(pagosEfectivoBs)
+      .plus(ingresosManualBs)
+      .minus(egresosManualBs)
 
-    const diferenciaUsd = Number((monto_fisico_usd - montoSistemaUsd).toFixed(2))
-    const diferenciaBs  = Number((monto_fisico_bs  - montoSistemaBs).toFixed(2))
+    const diferenciaUsd = montoFisicoUsdD.minus(montoSistemaUsd)
+    const diferenciaBs  = montoFisicoBsD.minus(montoSistemaBs)
 
     // 5. Actualizar la sesion a CERRADA con saldos por divisa
     await tx.execute(
@@ -765,12 +780,12 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       [
         usuario_cierre_id,
         now,
-        montoSistemaUsd.toFixed(2),
-        monto_fisico_usd.toFixed(2),
-        diferenciaUsd.toFixed(2),
-        montoSistemaBs.toFixed(2),
-        monto_fisico_bs.toFixed(2),
-        diferenciaBs.toFixed(2),
+        toStorageString(montoSistemaUsd),
+        toStorageString(montoFisicoUsdD),
+        toStorageString(diferenciaUsd),
+        toStorageString(montoSistemaBs),
+        toStorageString(montoFisicoBsD),
+        toStorageString(diferenciaBs),
         observaciones_cierre ?? null,
         now,
         id,
@@ -827,21 +842,22 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         }
 
         const manual = movsManualPorMetodo.get(row.metodo_cobro_id) ?? { ingreso: 0, egreso: 0 }
-        const totalSistema = Number(
-          (row.total_pagos + manual.ingreso - manual.egreso).toFixed(2)
-        )
+        const totalSistemaD = new Decimal(row.total_pagos)
+          .plus(new Decimal(manual.ingreso))
+          .minus(new Decimal(manual.egreso))
 
         // Calcular total_fisico y diferencia si se recibio conteo del usuario
         let totalFisicoNativo: number | null = null
-        let diferenciaValor: number | null = null
+        let diferenciaValor: Decimal | null = null
         if (conteoFisicoPorMetodo && row.metodo_cobro_id in conteoFisicoPorMetodo) {
           totalFisicoNativo = conteoFisicoPorMetodo[row.metodo_cobro_id]
+          const totalFisicoD = new Decimal(totalFisicoNativo)
           // Convertir a USD para calcular diferencia homogenea
           const fisicoUsd =
             row.moneda_id !== 'USD' && (tasaDelDia ?? 0) > 0
-              ? totalFisicoNativo / tasaDelDia!
-              : totalFisicoNativo
-          diferenciaValor = Number((fisicoUsd - totalSistema).toFixed(2))
+              ? bsToUsd(totalFisicoD, new Decimal(tasaDelDia!))
+              : totalFisicoD
+          diferenciaValor = fisicoUsd.minus(totalSistemaD)
         }
 
         const detalleId = uuidv4()
@@ -854,9 +870,9 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
             id,
             row.metodo_cobro_id,
             row.moneda_id,
-            totalSistema.toFixed(2),
-            totalFisicoNativo !== null ? totalFisicoNativo.toFixed(2) : null,
-            diferenciaValor !== null ? diferenciaValor.toFixed(2) : null,
+            toStorageString(totalSistemaD),
+            totalFisicoNativo !== null ? toStorageString(new Decimal(totalFisicoNativo)) : null,
+            diferenciaValor !== null ? toStorageString(diferenciaValor) : null,
             row.num_transacciones,
             empresaId,
             now,
@@ -882,10 +898,10 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     )
 
     const safRow = safResult.rows?.item(0) as { saf_total: number; saf_count: number } | undefined
-    const safTotal = Number(safRow?.saf_total ?? 0)
+    const safTotal = new Decimal(safRow?.saf_total ?? 0)
     const safCount = Number(safRow?.saf_count ?? 0)
 
-    if (safTotal > 0) {
+    if (safTotal.gt(0)) {
       await tx.execute(
         `INSERT OR IGNORE INTO sesiones_caja_detalle
            (id, sesion_caja_id, metodo_cobro_id, moneda_id, total_sistema, total_fisico,
@@ -894,7 +910,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         [
           uuidv4(),
           id,
-          safTotal.toFixed(2),
+          toStorageString(safTotal),
           safCount,
           empresaId,
           now,
