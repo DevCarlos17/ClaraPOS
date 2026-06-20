@@ -168,8 +168,8 @@ export function PagoFacturaModal({
   const saldoRequeridoConSaf = Math.max(0, Number((saldoEfectivo - montoSafNum).toFixed(2)))
 
   // Para pago USD: monto directo. Para pago BS: se divide por la tasa
-  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum) : montoNum
-  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaNum) : montoNum
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum).toNumber() : montoNum
+  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaNum).toNumber() : montoNum
 
   // Overpayment para destino FACTURA
   const estaOverpago = destino === 'FACTURA' && montoUsd > saldoRequeridoConSaf + 0.01
@@ -208,8 +208,8 @@ export function PagoFacturaModal({
       if (destino === 'PRESTAMO') {
         if (estaOverpagoPrestamo && overpayMode) {
           // Overpago: pagar el saldo exacto del préstamo y gestionar el excedente
-          const montoSaldoExacto = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum) : saldoRequeridoConSaf
-          const montoExcedentePrestamo = moneda === 'BS' ? usdToBs(excedentePrestamo, tasaNum) : excedentePrestamo
+          const montoSaldoExacto = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum).toNumber() : saldoRequeridoConSaf
+          const montoExcedentePrestamo = moneda === 'BS' ? usdToBs(excedentePrestamo, tasaNum).toNumber() : excedentePrestamo
           await registrarAbonoPrestamo({
             vencimiento_id: vencimientoId,
             metodo_cobro_id: metodoCobro,
@@ -279,8 +279,8 @@ export function PagoFacturaModal({
 
         if (estaOverpago && overpayMode) {
           // Calcular monto exacto del saldo requerido en la moneda original
-          const montoSaldo = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum) : saldoRequeridoConSaf
-          const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaNum) : excedenteUsd
+          const montoSaldo = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum).toNumber() : saldoRequeridoConSaf
+          const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaNum).toNumber() : excedenteUsd
 
           if (overpayMode === 'SAF') {
             // Pagar solo el saldo exacto de la factura (excedente queda como crédito)

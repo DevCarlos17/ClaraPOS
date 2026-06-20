@@ -89,8 +89,8 @@ export function AbonoGlobalModal({
   // Tasa efectiva: la de la fecha del abono (historica si es pasada), con fallback a la actual
   const tasaEfectiva = tasaFecha || tasaValor
 
-  const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva) : monto
-  const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva) : monto
+  const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva).toNumber() : monto
+  const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva).toNumber() : monto
 
   // SAF manual calculations
   const montoSafNum = usarSaf ? (parseFloat(montoSafStr) || 0) : 0
@@ -161,8 +161,8 @@ export function AbonoGlobalModal({
 
       if (estaOverpago && excessMode !== 'ANTICIPO') {
         // VUELTO o PROPINA: abonar solo la deuda exacta y registrar el excedente aparte
-        const montoDeuda = moneda === 'BS' ? usdToBs(saldoConSaf, tasaEfectiva) : saldoConSaf
-        const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaEfectiva) : excedenteUsd
+        const montoDeuda = moneda === 'BS' ? usdToBs(saldoConSaf, tasaEfectiva).toNumber() : saldoConSaf
+        const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaEfectiva).toNumber() : excedenteUsd
 
         const result = await registrarAbonoGlobal({
           cliente_id: clienteId,

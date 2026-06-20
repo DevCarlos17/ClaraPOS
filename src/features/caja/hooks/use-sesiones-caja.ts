@@ -569,7 +569,7 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
     )
 
     if (existente.rows && existente.rows.length > 0) {
-      const row = existente.rows[0] as { usuario_nombre: string | null }
+      const row = existente.rows.item(0) as { usuario_nombre: string | null }
       const quien = row.usuario_nombre ? ` Responsable actual: ${row.usuario_nombre}.` : ''
       throw new Error(`Esta caja ya tiene una sesion abierta.${quien} Solicita el cierre antes de continuar.`)
     }
