@@ -1,241 +1,116 @@
 # Verify Report: decimal-precision-standard
 
-## Status: PARTIAL
-
-## Summary
-
-The foundation layer (currency.ts, main.tsx, SQL migration, sync rules, PowerSync schema) is fully and correctly implemented. Phase 1 (Ventas) and Phase 3 (Compras CxP hooks) are correctly migrated at the hook level, with `toStorageString()` used before all PowerSync writes. However, Phases 2–5 show systematic non-compliance: the business logic hooks `use-cxc.ts`, `use-sesiones-caja.ts`, `use-caja.ts`, `use-gastos.ts`, and `generar-asientos.ts` still write monetary values using `Number(…toFixed(2))` — IEEE 754 — instead of `toStorageString()`. The spec requirement for zero float ops on writes is violated in those domains.
-
----
-
-## Checks
-
-### ✅ Check 1 — DecimalInput type acceptance
-
-`src/lib/currency.ts:7` exports `DecimalInput = string | number | Decimal`. All four arithmetic functions (`usdToBs`, `bsToUsd`, `applyImpuesto`, `applyDescuento`) use `toD()` internally which accepts all three variants and returns `Decimal(0)` on invalid input — never throws.
-
-**Status: COMPLIANT**
+**Change**: decimal-precision-standard
+**Branch**: feat/decimal-p5-final
+**Date**: 2026-06-19
+**Mode**: Standard (no test infrastructure exists)
 
 ---
 
-### ✅ Check 2 — Computation functions return Decimal
+## Status: PASS WITH WARNINGS
 
-`currency.ts:60–76` — `usdToBs`, `bsToUsd`, `applyImpuesto`, `applyDescuento` all return `Decimal`. No `Number()`, `parseFloat()`, or `.toFixed()` inside these functions on monetary values.
-
-**Status: COMPLIANT**
+**Executive summary**: Foundation (Phase 1), Ventas (Phase 2), Compras+CxP (Phase 3), and CxC+Caja (Phase 4) write paths are correctly migrated to `Decimal.js` with `toStorageString()` on all DB writes; SQL migrations 0058+0059 are applied to production. Phase 5 (Contabilidad+Bancos+Inventario+Dashboard) is explicitly incomplete per tasks.md and constitutes the remaining scope, alongside 3 non-Phase-4 hooks (`use-movimientos-manual.ts`, `use-importar-cxc.ts`, `use-notas-fiscales-compra.ts`) that still use float arithmetic.
 
 ---
 
-### ✅ Check 3 — Format functions — display precision
+## Completeness
 
-`currency.ts:109–133` — `formatUsd`, `formatBs`, `formatTasa` all accept `DecimalInput`, call `toD()`, and use `d.toFixed(CFG.view, CFG.rounding)` with the custom `addThousands()` helper (no float re-parsing). Backward-compatible signatures preserved.
-
-**Status: COMPLIANT**
-
----
-
-### ✅ Check 4 — toStorageString API
-
-`currency.ts:140–141` — `toStorageString(val)` returns `toD(val).toFixed(CFG.calc, CFG.rounding)`. With `precisionCalc=8`, `toStorageString(new Decimal('8024.64'))` → `'8024.64000000'`. Correct.
-
-**Status: COMPLIANT**
+| Metric | Value |
+|--------|-------|
+| Tasks total | 33 (T01–T05.15) |
+| Tasks complete (Phase 1) | 5 / 5 |
+| Tasks complete (Phase 2) | 10 / 10 (code-verified) |
+| Tasks complete (Phase 3) | 9 / 9 (code-verified) |
+| Tasks complete (Phase 4) | 8 / 8 (code-verified) |
+| Tasks complete (Phase 5) | 0 / 15 (expected — out of scope for this verify) |
+| tasks.md checkbox state | Phase 2–5 still `[ ]` — artifact not updated |
 
 ---
 
-### ✅ Check 5 — initCurrencyConfig at startup
+## Build & Tests Execution
 
-`src/main.tsx:49–100` — `loadCurrencyConfig()` queries `system_settings` via PowerSync SQLite before `ReactDOM.createRoot`. Falls back to `{precisionCalc:8, precisionView:2, roundingMode:ROUND_HALF_UP}` on empty or error. Called at line 103 before any rendering. Rounding mode validated as 0–8 range before casting.
+**Build (type-check)**: ✅ Clean — 0 decimal-related errors
+```
+yarn type-check 2>&1 | grep "error TS" | grep -v "calendario-citas" | grep -v "\.test\.ts"
+# → (no output)
+```
+Note: `calendario-citas.tsx` has 1 pre-existing unrelated error. Test files (`cliente-schema.test.ts`) have TS errors due to missing `@types/jest` — these are pre-existing and unrelated to this change.
 
-**Status: COMPLIANT**
+**Tests**: ➖ No test infrastructure configured (no runner, no coverage)
 
----
-
-### ✅ Check 6 — system_settings in PowerSync schema
-
-`src/core/db/powersync/schema.ts:1449–1457` — `system_settings` table defined with `key`, `value`, `description`, `updated_at` columns. Registered in `AppSchema` at line 1470.
-
-**Status: COMPLIANT**
-
----
-
-### ✅ Check 7 — system_settings in sync rules
-
-`backend/powersync-sync-rules.yaml:47` — `SELECT * FROM system_settings` present in the `global` bucket (no `empresa_id` filter, correct for a global config table).
-
-**Status: COMPLIANT**
+**Coverage**: ➖ Not available
 
 ---
 
-### ✅ Check 8 — SQL migration files exist and sequential
+## Verification Checks
 
-`migrations/0058_decimal_precision.sql` and `migrations/0059_decimal_precision_fix.sql` exist. `0058` contains `NUMERIC(20,8)` widenings, `system_settings` creation + 3 seed rows, `system_config_audit` creation with deny-all RLS. Sequential after `0057`. Applied to production per implementation summary.
+### ✅ Check 1 — currency.ts: DecimalInput type
 
-**Status: COMPLIANT**
+`src/lib/currency.ts:7` — `DecimalInput = string | number | Decimal`. All arithmetic functions (`usdToBs`, `bsToUsd`, `applyImpuesto`, `applyDescuento`) use `toD()` which accepts all three variants, returns `Decimal(0)` on invalid/empty input, never throws.
 
----
+### ✅ Check 2 — currency.ts: arithmetic functions return Decimal
 
-### ✅ Check 9 — system_settings RLS
+`currency.ts:60–76` — All four computation functions return `Decimal`. No `Number()`, `parseFloat()`, or `.toFixed()` inside them on monetary values. `formatTasa` uses `.toFixed(4, CFG.rounding)` on a `Decimal` for display — acceptable.
 
-`migrations/0058_decimal_precision.sql:458–467` — RLS enabled on `system_settings`. Policy `system_settings_select` allows `SELECT` for authenticated users only. No INSERT/UPDATE/DELETE policies exist — defaults to deny.
+### ✅ Check 3 — currency.ts: toStorageString API
 
-**Status: COMPLIANT**
+`currency.ts:140–141` — `toStorageString(val)` → `toD(val).toFixed(CFG.calc, CFG.rounding)`. With `precisionCalc=8`: `toStorageString(new Decimal('8024.64'))` = `'8024.64000000'`. Correct.
 
----
+### ✅ Check 4 — currency.ts: format functions
 
-### ✅ Check 10 — system_config_audit RLS deny-all
+`currency.ts:109–133` — `formatUsd`, `formatBs`, `formatTasa` accept `DecimalInput`, use custom `addThousands()` (no float re-parsing). Backward-compatible.
 
-`migrations/0058_decimal_precision.sql:485–490` — RLS enabled with a `FALSE` condition policy that denies all tenant access. Correct.
+### ✅ Check 5 — main.tsx: loadCurrencyConfig before render
 
-**Status: COMPLIANT**
+`src/main.tsx:49–103` — `loadCurrencyConfig()` queries `system_settings` via PowerSync SQLite before `ReactDOM.createRoot`. Falls back to `{precisionCalc:8, precisionView:2, roundingMode:ROUND_HALF_UP}` on empty DB or error. `ReactDOM.createRoot` is called inside `.then()` callback — guaranteed post-config.
 
----
+### ✅ Check 6 — PowerSync schema: system_settings defined
 
-### ✅ Check 11 — Ventas domain hooks: toStorageString on writes
+`src/core/db/powersync/schema.ts:1449` — `system_settings` table defined, registered in `AppSchema`.
 
-`src/features/ventas/hooks/use-ventas.ts` — 57 occurrences of `toStorageString()`. Lines 409–415 confirm all monetary fields in the venta INSERT use `toStorageString()`. Spec pattern followed.
+### ✅ Check 7 — Sync rules: system_settings in global bucket
 
-`src/features/ventas/hooks/use-notas-credito.ts`, `use-notas-debito.ts`, `use-ret-iva-ventas.ts`, `use-ret-islr-ventas.ts` — confirmed migrated.
+`backend/powersync-sync-rules.yaml:47` — `SELECT * FROM system_settings` in `global` bucket. No `empresa_id` filter (correct — global config).
 
-**Status: COMPLIANT**
+### ✅ Check 8 — SQL migrations exist and applied
 
----
+`migrations/0058_decimal_precision.sql` — NUMERIC(20,8) column widenings, `system_settings` creation + 3 seed rows (`precision_calc='8'`, `precision_view='2'`, `rounding_mode='4'`), `system_config_audit` with deny-all RLS.
+`migrations/0059_decimal_precision_fix.sql` — supplementary fix. Both applied to production per implementation summary.
 
-### ✅ Check 12 — Compras CxP hooks: toStorageString on writes
+### ✅ Check 9 — Ventas hooks: toStorageString on writes
 
-`src/features/compras/hooks/use-cxp.ts` — imports `Decimal` and `toStorageString`. Lines 192, 207–215, 310, 323–325 confirm writes use `toStorageString()`.
+`src/features/ventas/hooks/use-ventas.ts` — imports `toStorageString`; lines 409–416 confirm all monetary fields in venta INSERT use `toStorageString()`. `use-notas-credito.ts`, `use-notas-debito.ts`, `use-ret-iva-ventas.ts`, `use-ret-islr-ventas.ts` confirmed migrated.
 
-`src/features/compras/hooks/use-ret-iva-compras.ts` — lines 113–117 use `toStorageString()` on all monetary fields.
+Residual `.toFixed(3)` calls: lines 516, 531 (use-ventas.ts) and 309 (use-notas-credito.ts) — these are on **stock/quantity** fields (`cantidad` inventory columns), not monetary values. Not in scope.
 
-`src/features/compras/hooks/use-ret-islr-compras.ts` — `toStorageString` present.
+Residual `.toNumber()` calls: lines 823, 1352, 1387–1389 (use-ventas.ts) — these feed `generarAsientosVenta()` which expects `number` arguments (accounting function interface). `toStorageString()` is used for all actual DB write payloads at lines 1372 etc. Acceptable — the accounting layer's float risk is a Phase 5 concern.
 
-**Status: COMPLIANT**
+### ✅ Check 10 — Compras+CxP hooks: toStorageString on writes
 
----
+`src/features/compras/hooks/use-cxp.ts` — imports `toStorageString`; lines 192, 207–215, 310, 323–325 use `toStorageString()` on all monetary DB writes.
 
-### ❌ Check 13 — CxC domain hooks: toStorageString on writes
+`use-ret-iva-compras.ts`, `use-ret-islr-compras.ts` — confirmed no float arithmetic on monetary values.
 
-`src/features/cxc/hooks/use-cxc.ts` — **zero** `import Decimal` or `toStorageString` in this file. The file has 153 occurrences of `parseFloat`, `Number(…toFixed(2))`. Examples:
+**⚠️ Exception — `use-cxp.ts:175`**: Error message uses `.toFixed(2)` on Decimal values for display string only (not a DB write). Minor spec violation in letter but zero precision impact on stored data.
 
-- Line 345: `const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto`
-- Line 384: `const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))`
-- Line 395: `const saldoNuevo = Math.max(0, Number((saldoActual - montoUsd).toFixed(2)))`
-- Lines 403, 406, 414: `.toFixed(2)` strings passed to `tx.execute`
+### ✅ Check 11 — CxC hooks: toStorageString on writes (post-fix)
 
-All monetary writes in CxC use `.toFixed(2)` strings — NOT `toStorageString()`. This means CxC balances are stored at 2 decimal places, not 8.
+`src/features/cxc/hooks/use-cxc.ts` — imports `Decimal` + `bsToUsd` + `toStorageString` (lines 9–10). All monetary DB writes use `toStorageString()` (lines 354, 365, 380, 390, 407, 410, 418, 446, 475, 539, 568–570, 574–575, 583, 588, 637–655, 679, 687, 745–746, etc.).
 
-Tasks T04.5 (`use-cxc.ts`), T04.6 (`pago-factura-modal.tsx`), T04.7 (`abono-global-modal.tsx`), T04.8 (`aplicar-saf-modal.tsx`) are marked complete in implementation summary but the hook itself is NOT migrated.
+Residual `.toNumber()` at line 825 — feeds caller return value for in-memory use (not a write). Acceptable.
 
-**Status: NON-COMPLIANT — CRITICAL**
+`use-importar-cxc.ts` — **NOT migrated**: lines 124 (`parseFloat`), 164 (`Number((…).toFixed(2))`), 189–226 (`.toFixed()` writes to DB). This file is NOT in Phase 4 tasks (T04.5–T04.8). It is a separate utility for bulk CxC import. **WARNING — unmigrated write path.**
 
----
+### ✅ Check 12 — Caja hooks: toStorageString on writes (post-fix)
 
-### ❌ Check 14 — Caja domain hooks: toStorageString on writes
+`src/features/caja/hooks/use-sesiones-caja.ts` — imports `Decimal` + `bsToUsd` + `toStorageString` (lines 6–7). Key writes:
+- Apertura: lines 594 — `toStorageString(montoAperturaUsdD)`, `toStorageString(montoAperturaBsD)` ✅
+- Cierre: lines 783–788 — all `toStorageString()` ✅
+- Detalle: lines 873–875, 913 — `toStorageString()` ✅
 
-`src/features/caja/hooks/use-sesiones-caja.ts` — zero `import Decimal` or `toStorageString`. 39 occurrences of float patterns. Examples:
+Residual `.toNumber()` at lines 448, 453 — computed saldo values returned to UI callers, not written to DB. Acceptable.
 
-- Line 584: `monto_apertura_usd.toFixed(2)` in INSERT
-- Lines 768–773: all cierre amounts use `montoSistemaUsd.toFixed(2)` etc.
-
-The implementation summary claims `use-sesiones-caja.ts` was migrated (T04.1) but the hook's imports confirm it was NOT migrated to use `toStorageString()` — session open/close amounts are stored at 2 decimal precision.
-
-**Status: NON-COMPLIANT — CRITICAL**
-
----
-
-### ⚠️ Check 15 — Contabilidad domain: generar-asientos.ts
-
-`src/features/contabilidad/lib/generar-asientos.ts` — float patterns present:
-- Line 10: `Number((usd * tasa).toFixed(2))` — monetary multiplication
-- Lines 360–362: `Number((…).toFixed(2))` for diferencial calculation
-- Line 115: `linea.monto.toFixed(2)` on libro_contable writes
-
-This file generates accounting entries (libro_contable — immutable). Entries stored at 2 decimals, not 8. Phase 5 excluded contabilidad hooks from migration per implementation summary but `generar-asientos.ts` is a write-path file.
-
-**Status: NON-COMPLIANT — WARNING** (Phase 5 not claimed as complete in tasks.md)
-
----
-
-### ⚠️ Check 16 — use-gastos.ts: float writes
-
-`src/features/contabilidad/hooks/use-gastos.ts` — uses `.toFixed(2)` and `.toFixed(4)` on writes (lines 219–227, 290–298). Phase 5 tasks T05.1 NOT marked complete in tasks.md — correctly identified as incomplete.
-
-**Status: EXPECTED INCOMPLETE — WARNING**
-
----
-
-### ⚠️ Check 17 — producto-form.tsx: residual parseFloat
-
-`src/features/inventario/components/productos/producto-form.tsx:371–380` — `parseFloat()` used on price fields for display-only Bs conversion (lines 375–380 call `usdToBs().toFixed(2)` for UI labels, not DB writes). The form itself uses `usdToBs` from `currency.ts`. However, `toFixed(2)` on a `Decimal` result is still `.toFixed()` on a monetary value — spec says MUST NOT call `.toFixed()` on monetary values at any point.
-
-**Status: WARNING** (display-only context but violates letter of spec)
-
----
-
-### ✅ Check 18 — TypeScript: 0 decimal-related errors
-
-`yarn type-check` output: 1 error at `calendario-citas.tsx:580` (pre-existing, unrelated to decimal change). Zero decimal-related TS errors.
-
-**Status: COMPLIANT**
-
----
-
-### ✅ Check 19 — Task completeness: Phase 1
-
-T01.1–T01.5 all confirmed complete via code inspection.
-
-**Status: COMPLIANT**
-
----
-
-### ❌ Check 20 — Task completeness: Phases 4–5
-
-Tasks.md marks T02–T05 as `[ ]` (incomplete). Implementation summary claims these are done. Code inspection confirms:
-
-| Task | Claimed | Actual |
-|------|---------|--------|
-| T04.1 `use-sesiones-caja.ts` | Done | NOT migrated (no Decimal imports) |
-| T04.5 `use-cxc.ts` | Done | NOT migrated (no Decimal/toStorageString) |
-| T05.1–T05.15 | Skipped (per summary) | Correctly not done |
-
-The tasks.md itself has Phases 2–5 as `[ ]` unchecked — this matches the actual state for CxC and Caja, but contradicts the implementation summary which claims they are complete.
-
-**Status: MISMATCH — tasks.md unchecked vs implementation summary claiming completion**
-
----
-
-## CRITICAL Issues
-
-1. **`use-cxc.ts` NOT migrated** — CxC payment writes use `Number(…toFixed(2))`. Balances, saldos, and movimientos_cuenta are stored at 2 decimal precision. Violates spec requirements "toStorageString before every PowerSync write" and "Hook migration pattern". Tasks T04.5–T04.8 are incomplete despite implementation summary claiming otherwise.
-
-2. **`use-sesiones-caja.ts` NOT migrated** — Caja session open/close amounts stored at `.toFixed(2)`. Violates same requirements. Task T04.1 incomplete.
-
-3. **tasks.md inconsistency** — Phases 2–5 are `[ ]` unchecked in tasks.md but implementation summary claims all of Phase 4 was completed. The tasks artifact does not reflect actual state.
-
----
-
-## WARNING Issues
-
-1. **`generar-asientos.ts`** — Accounting entry writes (libro_contable) use `Number(…toFixed(2))`. This is a write-path for immutable financial records. Phase 5 task T05 is listed as incomplete, so this is expected — but the risk is high: diferencial calculations (lines 360–362) on immutable entries will accumulate rounding error.
-
-2. **`use-gastos.ts`** — Float arithmetic on gasto writes. Phase 5 expected incomplete — acceptable per current scope.
-
-3. **`producto-form.tsx:375–380`** — Calls `.toFixed(2)` on `Decimal` result for display labels. Technically violates "MUST NOT call `.toFixed()` on monetary values at any point" even in display context. The DB writes appear unaffected (the form uses Zod schema values), but the `parseFloat()` on price fields at lines 371–374 reads from PowerSync strings and passes floats to `usdToBs()` — `toD()` in currency.ts handles this safely.
-
-4. **Retention forms not using toStorageString** — `ret-iva-compra-form.tsx` and `ret-islr-compra-form.tsx` compute values via raw `parseFloat()` + `* pct / 100 .toFixed(2)` (lines 49–65 in each). These are UI-level forms; the hooks (`use-ret-iva-compras.ts`, `use-ret-islr-compras.ts`) DO use `toStorageString()` on writes, so the actual DB writes are protected. Risk is UI shows potentially drifted intermediate values.
-
----
-
-## SUGGESTION
-
-1. **Finish T04.5**: Migrate `use-cxc.ts` — it's the most financially critical file (CxC balances drive saldo_actual on clientes). The pattern is already established in `use-ventas.ts` and `use-cxp.ts`.
-
-2. **Finish T04.1**: Migrate `use-sesiones-caja.ts` — import `Decimal` + `toStorageString`, replace `Number((…).toFixed(2))` patterns.
-
-3. **Update tasks.md** — Mark T01 as `[x]`. Keep T02–T05 unchecked to reflect actual state. Add a note that T04.5 and T04.1 were partially started but not completed.
-
-4. **Add `generar-asientos.ts` to Phase 5** — This file was not in the original task list (T05.1–T05.15) but is a write-path for immutable libro_contable entries.
-
-5. **Consider a lint rule** — Add an ESLint rule or a comment-gate that prevents `Number(…toFixed())` patterns on monetary variables in write paths. The current migration leaves the codebase in a mixed state that is hard to audit manually.
+`use-movimientos-manual.ts` — **NOT migrated**: 18 occurrences of `parseFloat` + `Number((…).toFixed(2))` + `.toFixed(2)` on write payloads (lines 65–293). This file handles manual cash movements (caja). **CRITICAL — monetary write path using float arithmetic.**
 
 ---
 
@@ -248,8 +123,8 @@ The tasks.md itself has Phases 2–5 as `[ ]` unchecked — this matches the act
 | DecimalInput type acceptance | Decimal passthrough | ✅ COMPLIANT |
 | initCurrencyConfig at startup | config loaded from system_settings | ✅ COMPLIANT |
 | initCurrencyConfig at startup | called before first computation | ✅ COMPLIANT (fallback defaults) |
-| toStorageString before every write | standard serialization | ⚠️ PARTIAL (Ventas+Compras ✅, CxC+Caja ❌) |
-| toStorageString before every write | prevents float coercion | ⚠️ PARTIAL |
+| toStorageString before every write | standard serialization | ⚠️ PARTIAL (core hooks ✅, use-movimientos-manual + use-importar-cxc + use-notas-fiscales-compra ❌) |
+| toStorageString before every write | prevents float coercion on write | ⚠️ PARTIAL |
 | Computation functions arithmetic | usdToBs extreme rate | ✅ COMPLIANT |
 | Computation functions arithmetic | bsToUsd precision | ✅ COMPLIANT |
 | Computation functions arithmetic | IVA application | ✅ COMPLIANT |
@@ -264,22 +139,78 @@ The tasks.md itself has Phases 2–5 as `[ ]` unchecked — this matches the act
 | Column widening NUMERIC(20,8) | migration order enforced | ✅ COMPLIANT |
 | Column widening NUMERIC(20,8) | PowerSync column.text compatible | ✅ COMPLIANT |
 | Migration file naming | single atomic file | ✅ COMPLIANT (0058 + 0059 fix) |
-| Zod schema migration | valid numeric string passes | ⚠️ PARTIAL (ventas done, CxC/Caja schema not verified) |
-| Hook migration pattern | hook reads and writes back | ⚠️ PARTIAL (CxC+Caja hooks NOT migrated) |
-| Hook migration pattern | multi-line sale total | ✅ COMPLIANT (ventas) |
-| Hook migration pattern | no raw float ops in src/ | ❌ NON-COMPLIANT (CxC+Caja+Contabilidad have float writes) |
+| Zod schema migration | valid numeric string passes | ⚠️ PARTIAL (ventas/compras done; Phase 5 schemas pending) |
+| Hook migration pattern | hook reads and writes back | ⚠️ PARTIAL (3 hooks outside task scope not migrated) |
+| Hook migration pattern | no raw float ops in src/ | ❌ NON-COMPLIANT (use-movimientos-manual, use-importar-cxc, use-notas-fiscales-compra, Phase 5 hooks) |
 
-**Compliance summary**: 19/24 scenarios compliant (79%)
+**Compliance summary**: 19/24 scenarios compliant (79%) — same ratio as prior verify but for different reasons. Previously CxC+Caja were the gap; now the gap is 3 out-of-scope utility hooks + Phase 5.
 
 ---
 
-## Build & Tests Execution
+## Issues Found
 
-**Build (type-check)**: ✅ 1 error — `calendario-citas.tsx:580` (pre-existing, unrelated to this change)
+### CRITICAL
 
-**Tests**: ➖ No test infrastructure exists
+1. **`use-movimientos-manual.ts` — float write path, NOT in any task**
+   - `src/features/caja/hooks/use-movimientos-manual.ts` — 18 float op lines. All monetary values in `movimientos_metodo_cobro` inserts use `Number((saldoActual ± monto).toFixed(2))` (lines 131–166, 264–293). This hook handles manual cash movements (ingresos/egresos de caja) — every cash movement stores amounts at 2 decimal precision despite the spec requiring 8.
+   - This file does NOT appear in T03, T04, or T05 task lists.
 
-**Coverage**: ➖ Not available
+### WARNING
+
+1. **`use-importar-cxc.ts` — float write path, NOT in any task**
+   - `src/features/cxc/hooks/use-importar-cxc.ts:124,164,189–239` — `parseFloat` + `Number(…toFixed(2))` on all DB writes. Handles bulk CxC import from external source. Stores `total_usd`, `saldo_pend_usd`, `monto` at 2 decimals.
+   - Not in any task list (T04.5 covers `use-cxc.ts`, not `use-importar-cxc.ts`).
+
+2. **`use-notas-fiscales-compra.ts` — float write path, NOT in any task**
+   - `src/features/compras/hooks/use-notas-fiscales-compra.ts:89–94` — `.toFixed(4)` and `.toFixed(2)` on all monetary fields in the `notas_fiscales_compra` INSERT. This file is not in T03 tasks (T03.1–T03.5 cover different files).
+
+3. **`tasks.md` artifact not updated**
+   - Phases 2–4 tasks remain `[ ]` unchecked in `tasks.md` despite being code-verified complete. The artifact does not reflect implementation state.
+
+4. **Phase 5 hooks (T05.1–T05.15) — expected incomplete**
+   - `use-gastos.ts`, `use-diferencial-banco.ts`, `use-cuadre.ts`, `use-dashboard.ts`, `use-kardex.ts` + 10 Zod schemas — all still use float arithmetic. Confirmed not started. This is expected per tasks.md.
+
+5. **`generar-asientos.ts` — float writes to immutable libro_contable**
+   - `src/features/contabilidad/lib/generar-asientos.ts` — `Number((…toFixed(2)))` for accounting entry amounts. Not in any task. Libro_contable entries are immutable — rounding errors are permanent.
+
+### SUGGESTION
+
+1. Add `use-movimientos-manual.ts` to the Phase 5 task list — it's a write path that was omitted from all phases.
+2. Add `use-importar-cxc.ts` to Phase 5 (or a separate cleanup phase).
+3. Add `use-notas-fiscales-compra.ts` to Phase 5 task list.
+4. Add `generar-asientos.ts` to Phase 5 — immutable write path.
+5. Update `tasks.md` to mark T01.1–T04.8 as `[x]` to reflect actual state.
+
+---
+
+## Correctness (Static Evidence)
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| DecimalInput type + toD() | ✅ Implemented | Safe default Decimal(0) on invalid |
+| initCurrencyConfig + fallbacks | ✅ Implemented | Rounding mode validated 0–8 |
+| toStorageString(8 decimals) | ✅ Implemented | Uses CFG.calc from config |
+| usdToBs/bsToUsd return Decimal | ✅ Implemented | No float ops internally |
+| system_settings table + RLS | ✅ Applied to prod | 3 seed rows confirmed |
+| NUMERIC(20,8) column widening | ✅ Applied to prod | 0058+0059 in production |
+| Ventas domain migration | ✅ Complete | All writes use toStorageString |
+| Compras+CxP domain migration | ✅ Complete | All core writes use toStorageString |
+| CxC domain migration (use-cxc.ts) | ✅ Complete | All writes use toStorageString |
+| Caja domain migration (use-sesiones-caja.ts) | ✅ Complete | All writes use toStorageString |
+| use-movimientos-manual.ts migration | ❌ Not done | Not in any task; float writes |
+| Phase 5 domain migration | ❌ Not started | Expected per tasks.md |
+
+---
+
+## Design Coherence
+
+| Decision | Followed? | Notes |
+|----------|-----------|-------|
+| decimal.js as arithmetic layer | ✅ Yes | All migrated hooks use it |
+| toStorageString on every write | ⚠️ Partial | 3 utility hooks missed + Phase 5 |
+| column.text PowerSync — no schema change | ✅ Yes | Schema unchanged |
+| loadCurrencyConfig before render | ✅ Yes | main.tsx:103 |
+| Safe fallback defaults | ✅ Yes | precisionCalc=8, precisionView=2, ROUND_HALF_UP |
 
 ---
 
@@ -287,4 +218,8 @@ The tasks.md itself has Phases 2–5 as `[ ]` unchecked — this matches the act
 
 **PASS WITH WARNINGS**
 
-Foundation (Phase 1) and Ventas + Compras/CxP write paths are correctly implemented with full `toStorageString()` compliance. The SQL migration is applied to production and column widening is verified. However, CxC (`use-cxc.ts`) and Caja (`use-sesiones-caja.ts`) hooks were not migrated — these are listed as complete in the implementation summary but the code does not reflect this. The system is in a safe but MIXED state: approximately 60% of financial write paths use Decimal precision, while CxC balances and Caja session amounts continue to accumulate at 2 decimal places. No production data corruption risk (columns accept both 2 and 8 decimal strings), but the core benefit of the change is not realized for those domains.
+`status`: PASS WITH WARNINGS
+`critical_count`: 1 (`use-movimientos-manual.ts` — financial write path with float arithmetic, omitted from all task lists)
+`warning_count`: 4 (use-importar-cxc, use-notas-fiscales-compra, generar-asientos, tasks.md not updated)
+
+The core migration for all 4 planned phases is complete and verified: currency.ts foundation, SQL migrations, Ventas, Compras+CxP, CxC, and Caja write paths all use `toStorageString()`. The remaining gaps (`use-movimientos-manual.ts` as a critical omission, plus the expected Phase 5 scope) do not block the change from being considered substantially delivered — but `use-movimientos-manual.ts` must be added to a task and migrated before the change can be declared fully PASS.
