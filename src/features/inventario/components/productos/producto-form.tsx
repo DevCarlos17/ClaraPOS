@@ -523,7 +523,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
       setCostoUsd(usd.toFixed(2))
-      applyPricesFromCosto(usd)
+      applyPricesFromCosto(usd.toNumber())
     }
   }
 
@@ -546,8 +546,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       const usd = bsToUsd(num, tasaValor)
       setPrecioVentaUsd(usd.toFixed(2))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-      if (costoN > 0 && usd > 0) {
-        setMargen(((usd - costoN) / costoN * 100).toFixed(2))
+      const usdN = usd.toNumber()
+      if (costoN > 0 && usdN > 0) {
+        setMargen(((usdN - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
@@ -607,8 +608,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       const usd = bsToUsd(num, tasaValor)
       setPrecioMayorUsd(usd.toFixed(2))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-      if (costoN > 0 && usd > 0) {
-        setMargenMayor(((usd - costoN) / costoN * 100).toFixed(2))
+      const usdN = usd.toNumber()
+      if (costoN > 0 && usdN > 0) {
+        setMargenMayor(((usdN - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
@@ -632,8 +634,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       const usd = bsToUsd(num, tasaValor)
       setPrecioEspecialUsd(usd.toFixed(2))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-      if (costoN > 0 && usd > 0) {
-        setMargenEspecial(((usd - costoN) / costoN * 100).toFixed(2))
+      const usdN = usd.toNumber()
+      if (costoN > 0 && usdN > 0) {
+        setMargenEspecial(((usdN - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
@@ -655,7 +658,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
-    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
     setPrecioVentaUsd(baseUsd.toFixed(2))
@@ -682,7 +685,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
-    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
     setPrecioMayorUsd(baseUsd.toFixed(2))
@@ -709,7 +712,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
-    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
     setPrecioEspecialUsd(baseUsd.toFixed(2))
@@ -896,15 +899,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   // IVA y Precio Final por nivel
   const ivaDetalUsd = (parseFloat(precioVentaUsd) || 0) * alicuota / 100
   const pfDetalUsd = (parseFloat(precioVentaUsd) || 0) + ivaDetalUsd
-  const pfDetalBs = tasaValor > 0 ? usdToBs(pfDetalUsd, tasaValor) : 0
+  const pfDetalBs = tasaValor > 0 ? usdToBs(pfDetalUsd, tasaValor).toNumber() : 0
 
   const ivaMayorUsd = (parseFloat(precioMayorUsd) || 0) * alicuota / 100
   const pfMayorUsd = (parseFloat(precioMayorUsd) || 0) + ivaMayorUsd
-  const pfMayorBs = tasaValor > 0 ? usdToBs(pfMayorUsd, tasaValor) : 0
+  const pfMayorBs = tasaValor > 0 ? usdToBs(pfMayorUsd, tasaValor).toNumber() : 0
 
   const ivaEspecialUsd = (parseFloat(precioEspecialUsd) || 0) * alicuota / 100
   const pfEspecialUsd = (parseFloat(precioEspecialUsd) || 0) + ivaEspecialUsd
-  const pfEspecialBs = tasaValor > 0 ? usdToBs(pfEspecialUsd, tasaValor) : 0
+  const pfEspecialBs = tasaValor > 0 ? usdToBs(pfEspecialUsd, tasaValor).toNumber() : 0
 
   const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
