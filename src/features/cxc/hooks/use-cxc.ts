@@ -6,6 +6,8 @@ import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
+import Decimal from 'decimal.js'
+import { bsToUsd, toStorageString } from '@/lib/currency'
 
 export interface VentaPendiente {
   id: string
