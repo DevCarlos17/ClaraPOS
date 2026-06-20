@@ -1103,7 +1103,7 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
     if (venc.venta_id) {
       // 7a. Leer UUID de moneda (solo necesario si hay método de cobro)
       let monedaId: string | null = null
-      if (montoUsd > 0) {
+      if (montoUsd.gt(0)) {
         const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
         const monedaResult = await tx.execute(
           'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
