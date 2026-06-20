@@ -155,6 +155,8 @@ function SearchSelect({
       <PopoverContent
         align="start"
         sideOffset={4}
+        side="bottom"
+        avoidCollisions={false}
         className="p-0"
         style={{ width: 'var(--radix-popover-trigger-width, 280px)' }}
         container={container}
