@@ -522,7 +522,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setCostoUsd(usd.toFixed(2))
+      setCostoUsd(usd.toFixed(8))
       applyPricesFromCosto(usd.toNumber())
     }
   }
@@ -544,7 +544,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioVentaUsd(usd.toFixed(2))
+      setPrecioVentaUsd(usd.toFixed(8))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
       if (costoN > 0 && usdN > 0) {
@@ -606,7 +606,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioMayorUsd(usd.toFixed(2))
+      setPrecioMayorUsd(usd.toFixed(8))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
       if (costoN > 0 && usdN > 0) {
@@ -632,7 +632,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioEspecialUsd(usd.toFixed(2))
+      setPrecioEspecialUsd(usd.toFixed(8))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
       if (costoN > 0 && usdN > 0) {
@@ -661,7 +661,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioVentaUsd(baseUsd.toFixed(2))
+    setPrecioVentaUsd(baseUsd.toFixed(8))
     setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
@@ -688,7 +688,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioMayorUsd(baseUsd.toFixed(2))
+    setPrecioMayorUsd(baseUsd.toFixed(8))
     setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
@@ -715,7 +715,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioEspecialUsd(baseUsd.toFixed(2))
+    setPrecioEspecialUsd(baseUsd.toFixed(8))
     setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
