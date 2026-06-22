@@ -1359,7 +1359,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       id="prod-costo"
                       type="number"
                       inputMode="decimal"
-                      step="0.01"
+                      step="any"
                       min="0"
                       value={esComboLocal ? '0' : costoUsd}
                       onChange={(e) => handleCostoUsdChange(e.target.value)}
@@ -1385,7 +1385,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       id="prod-costo-bs"
                       type="number"
                       inputMode="decimal"
-                      step="0.01"
+                      step="any"
                       min="0"
                       value={esComboLocal ? '0' : costoBs}
                       onChange={(e) => handleCostoBsChange(e.target.value)}
@@ -1441,7 +1441,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               value={margen}
                               onChange={(e) => handleMargenChange(e.target.value)}
                               onWheel={stopScroll}
@@ -1454,7 +1454,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               id="prod-venta"
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioVentaUsd}
                               onChange={(e) => handlePrecioVentaUsdChange(e.target.value)}
@@ -1472,7 +1472,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioVentaBs}
                               onChange={(e) => handlePrecioVentaBsChange(e.target.value)}
@@ -1499,7 +1499,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-detal-usd-${pfDetalUsd.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalDetalUsdChange(e.target.value)}
@@ -1514,7 +1514,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-detal-bs-${pfDetalBs.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfDetalBs > 0 ? pfDetalBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalDetalBsChange(e.target.value)}
@@ -1541,7 +1541,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               value={margenMayor}
                               onChange={(e) => handleMargenMayorChange(e.target.value)}
                               onWheel={stopScroll}
@@ -1554,7 +1554,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               id="prod-mayor"
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioMayorUsd}
                               onChange={(e) => handlePrecioMayorUsdChange(e.target.value)}
@@ -1572,7 +1572,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioMayorBs}
                               onChange={(e) => handlePrecioMayorBsChange(e.target.value)}
@@ -1599,7 +1599,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-mayor-usd-${pfMayorUsd.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalMayorUsdChange(e.target.value)}
@@ -1614,7 +1614,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-mayor-bs-${pfMayorBs.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfMayorBs > 0 ? pfMayorBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalMayorBsChange(e.target.value)}
@@ -1642,7 +1642,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               value={margenEspecial}
                               onChange={(e) => handleMargenEspecialChange(e.target.value)}
                               onWheel={stopScroll}
@@ -1655,7 +1655,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               id="prod-especial"
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioEspecialUsd}
                               onChange={(e) => handlePrecioEspecialUsdChange(e.target.value)}
@@ -1673,7 +1673,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioEspecialBs}
                               onChange={(e) => handlePrecioEspecialBsChange(e.target.value)}
@@ -1700,7 +1700,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-especial-usd-${pfEspecialUsd.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalEspecialUsdChange(e.target.value)}
@@ -1715,7 +1715,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-especial-bs-${pfEspecialBs.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalEspecialBsChange(e.target.value)}
