@@ -477,12 +477,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   // Recalcula precios cuando cambia el costo.
   // Prioridad: si hay margen configurado → calcula precio; si no → recalcula margen del precio existente.
   function applyPricesFromCosto(costoN: number) {
+    console.log('[APPLY-COSTO] called with costoN:', costoN, '| margen:', margen)
     if (costoN <= 0) return
 
     const margenN = parseFloat(margen)
     const ventaN = parseFloat(precioVentaUsd) || 0
     if (!isNaN(margenN) && margenN !== 0) {
       const pvp = Math.max(0, costoN * (1 + margenN / 100))
+      console.log('[APPLY-COSTO] overwriting precioVentaUsd with:', pvp.toFixed(2))
       setPrecioVentaUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
     } else if (ventaN > 0) {
@@ -540,21 +542,27 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioVentaBsChange(val: string) {
+    console.log('[PVP-BS] input val:', val, '| tasaValor:', tasaValor)
     setPrecioVentaBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioVentaUsd(usd.toFixed(8))
+      const usdStr = usd.toFixed(8)
+      console.log('[PVP-BS] usd decimal:', usd.toString(), '| toFixed(8):', usdStr)
+      setPrecioVentaUsd(usdStr)
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
       if (costoN > 0 && usdN > 0) {
         setMargen(((usdN - costoN) / costoN * 100).toFixed(2))
       }
+    } else {
+      console.log('[PVP-BS] SKIPPED — num:', num, '| tasaValor:', tasaValor)
     }
   }
 
   // --- Margen Detal ---
   function handleMargenChange(val: string) {
+    console.log('[MARGEN] handleMargenChange called with:', val)
     setMargen(val)
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
@@ -1407,7 +1415,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 <div>
                   <div className="mb-2">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                      Esquema de Precios
+                      Esquema de Precios <span className="text-red-500 font-bold">v2</span>
                     </p>
                   </div>
 
