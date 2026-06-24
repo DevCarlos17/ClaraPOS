@@ -119,14 +119,14 @@ export async function crearProducto(data: {
       tipo: data.tipo,
       nombre: data.nombre.toUpperCase(),
       departamento_id: data.departamento_id,
-      costo_usd: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
-      precio_venta_usd: data.precio_venta_usd.toFixed(2),
-      precio_mayor_usd: data.precio_mayor_usd?.toFixed(2) ?? null,
-      precio_especial_usd: data.precio_especial_usd?.toFixed(2) ?? null,
+      costo_usd: isServicioOCombo && data.tipo === 'C' ? '0.00000000' : data.costo_usd.toFixed(8),
+      precio_venta_usd: data.precio_venta_usd.toFixed(8),
+      precio_mayor_usd: data.precio_mayor_usd?.toFixed(8) ?? null,
+      precio_especial_usd: data.precio_especial_usd?.toFixed(8) ?? null,
       stock: '0.000',
       stock_minimo: isServicioOCombo ? '0.000' : data.stock_minimo.toFixed(3),
       costo_promedio: '0.00',
-      costo_ultimo: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
+      costo_ultimo: isServicioOCombo && data.tipo === 'C' ? '0.00000000' : data.costo_usd.toFixed(8),
       tipo_impuesto: data.tipo_impuesto ?? 'Exento',
       impuesto_iva_id: data.tipo_impuesto === 'Gravable' ? (data.impuesto_iva_id ?? null) : null,
       maneja_lotes: isServicioOCombo ? 0 : (data.maneja_lotes ? 1 : 0),
@@ -172,10 +172,10 @@ export async function actualizarProducto(
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()
   if (data.departamento_id !== undefined) updates.departamento_id = data.departamento_id
-  if (data.costo_usd !== undefined) updates.costo_usd = data.costo_usd.toFixed(2)
-  if (data.precio_venta_usd !== undefined) updates.precio_venta_usd = data.precio_venta_usd.toFixed(2)
-  if (data.precio_mayor_usd !== undefined) updates.precio_mayor_usd = data.precio_mayor_usd?.toFixed(2) ?? null
-  if (data.precio_especial_usd !== undefined) updates.precio_especial_usd = data.precio_especial_usd?.toFixed(2) ?? null
+  if (data.costo_usd !== undefined) updates.costo_usd = data.costo_usd.toFixed(8)
+  if (data.precio_venta_usd !== undefined) updates.precio_venta_usd = data.precio_venta_usd.toFixed(8)
+  if (data.precio_mayor_usd !== undefined) updates.precio_mayor_usd = data.precio_mayor_usd?.toFixed(8) ?? null
+  if (data.precio_especial_usd !== undefined) updates.precio_especial_usd = data.precio_especial_usd?.toFixed(8) ?? null
   if (data.stock_minimo !== undefined) updates.stock_minimo = data.stock_minimo.toFixed(3)
   if (data.tipo_impuesto !== undefined) updates.tipo_impuesto = data.tipo_impuesto
   if (data.impuesto_iva_id !== undefined) {
