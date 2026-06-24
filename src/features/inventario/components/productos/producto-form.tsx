@@ -805,6 +805,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setSubmitting(true)
     try {
       if (isEditing && producto) {
+        console.log('[SUBMIT] actualizarProducto payload:', {
+          id: producto.id,
+          precio_venta_usd: parsed.data.precio_venta_usd,
+          precio_mayor_usd: parsed.data.precio_mayor_usd ?? null,
+          precio_especial_usd: parsed.data.precio_especial_usd ?? null,
+          costo_usd: esCombo ? 0 : parsed.data.costo_usd,
+        })
         await actualizarProducto(producto.id, {
           nombre: parsed.data.nombre,
           departamento_id: parsed.data.departamento_id,

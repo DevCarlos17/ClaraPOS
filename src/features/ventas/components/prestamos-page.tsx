@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@powersync/react";
 import { Warning, Clock, CheckCircle, Plus } from "@phosphor-icons/react";
 import { useCurrentUser } from "@/core/hooks/use-current-user";
-import { formatUsd } from "@/lib/currency";
+import { formatUsd, formatBs, usdToBs } from "@/lib/currency";
+import { useTasaActual } from "@/features/configuracion/hooks/use-tasas";
 import { todayStr } from "@/lib/dates";
 import { cn } from "@/lib/utils";
 import { SegmentedTabs, tabContentVariants } from "@/components/shared/segmented-tabs";
@@ -40,9 +41,10 @@ interface TablaVencimientosProps {
   items: (VencimientoCobrar & { diasRestantes: number })[];
   emptyMessage: string;
   onSelect: (item: VencimientoCobrar) => void;
+  tasa: number;
 }
 
-function TablaVencimientos({ items, emptyMessage, onSelect }: TablaVencimientosProps) {
+function TablaVencimientos({ items, emptyMessage, onSelect, tasa }: TablaVencimientosProps) {
   if (items.length === 0) {
     return (
       <div className="rounded-b-xl rounded-tr-xl border bg-card py-16 text-center">
@@ -77,10 +79,16 @@ function TablaVencimientos({ items, emptyMessage, onSelect }: TablaVencimientosP
                 Original
               </th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Original (Bs)
+              </th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Pagado
               </th>
               <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                 Pendiente
+              </th>
+              <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                Pendiente (Bs)
               </th>
             </tr>
           </thead>
@@ -147,6 +155,9 @@ function TablaVencimientos({ items, emptyMessage, onSelect }: TablaVencimientosP
                   <td className="px-4 py-3 text-right tabular-nums">
                     {formatUsd(parseFloat(v.monto_original_usd))}
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-xs text-muted-foreground">
+                    {tasa > 0 ? formatBs(usdToBs(parseFloat(v.monto_original_usd), tasa)) : "—"}
+                  </td>
                   <td className="px-4 py-3 text-right tabular-nums text-green-600 dark:text-green-400">
                     {formatUsd(parseFloat(v.monto_pagado_usd))}
                   </td>
@@ -159,6 +170,16 @@ function TablaVencimientos({ items, emptyMessage, onSelect }: TablaVencimientosP
                     )}
                   >
                     {formatUsd(parseFloat(v.saldo_pendiente_usd))}
+                  </td>
+                  <td
+                    className={cn(
+                      "px-4 py-3 text-right tabular-nums text-xs font-semibold",
+                      parseFloat(v.saldo_pendiente_usd) > 0.01
+                        ? "text-orange-600 dark:text-orange-400"
+                        : "text-green-600 dark:text-green-400",
+                    )}
+                  >
+                    {tasa > 0 ? formatBs(usdToBs(parseFloat(v.saldo_pendiente_usd), tasa)) : "—"}
                   </td>
                 </tr>
               );
@@ -173,6 +194,7 @@ function TablaVencimientos({ items, emptyMessage, onSelect }: TablaVencimientosP
 export function PrestamosPage() {
   const { user } = useCurrentUser();
   const empresaId = user?.empresa_id ?? "";
+  const { tasaValor: tasaActual } = useTasaActual();
   const [activeTab, setActiveTab] = useState<TabKey>("TODOS");
   const [prevTab, setPrevTab] = useState<TabKey>("TODOS");
   const [prestamoSeleccionado, setPrestamoSeleccionado] = useState<VencimientoCobrar | null>(null);
@@ -299,6 +321,7 @@ export function PrestamosPage() {
                 items={filteredMap[activeTab]}
                 emptyMessage={tabEmptyMessages[activeTab]}
                 onSelect={setPrestamoSeleccionado}
+                tasa={tasaActual}
               />
             </motion.div>
           </AnimatePresence>

@@ -165,7 +165,8 @@ export function PagoFacturaModal({
   const montoSafNum = usarSaf ? (parseFloat(montoSafStr) || 0) : 0
   const maxSaf = Math.min(safDisponible, saldoEfectivo)
   // Required payment via method = saldo - SAF
-  const saldoRequeridoConSaf = Math.max(0, Number((saldoEfectivo - montoSafNum).toFixed(2)))
+  // Do NOT use toFixed(2) here — that truncates small USD amounts like $0.022 → $0.02
+  const saldoRequeridoConSaf = Math.max(0, saldoEfectivo - montoSafNum)
 
   // Para pago USD: monto directo. Para pago BS: se divide por la tasa
   const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum).toNumber() : montoNum
@@ -195,7 +196,9 @@ export function PagoFacturaModal({
     if (moneda === 'BS') {
       setMontoStr(usdToBs(saldoRequeridoConSaf, tasaNum > 0 ? tasaNum : tasaValor).toFixed(2))
     } else {
-      setMontoStr(saldoRequeridoConSaf.toFixed(2))
+      // Preserve sub-cent precision (e.g. $0.022 for a Bs-denominated loan at 500 Bs/USD)
+      // Round to 6 decimals then strip trailing zeros for a clean display
+      setMontoStr(parseFloat(saldoRequeridoConSaf.toFixed(6)).toString())
     }
   }
 

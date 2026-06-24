@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
-import { formatUsd, formatBs } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
+import Decimal from 'decimal.js'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -103,23 +104,31 @@ function FormPrestamo({
 
   // Calculos — cada moneda se procesa en su dominio nativo para evitar errores de redondeo.
   // Si se convirtiera Bs→USD→%→Bs, los toFixed(2) intermedios acumulan desvíos.
-  const multiplier = 1 + interesPct / 100
+  // Use Decimal.js for intermediate calculations to avoid toFixed(2) precision loss.
+  const tasaD = new Decimal(tasaActual > 0 ? tasaActual : 1)
+  const usdD  = new Decimal(usd)
+  const bsD   = new Decimal(bs)
+  const multiplierD = new Decimal(1).plus(new Decimal(interesPct).dividedBy(100))
 
-  // Porcion Bs: cargo directo en Bs
-  const totalDeudaBsFromBs   = Number((bs  * multiplier).toFixed(2))
-  const totalDeudaUsdFromBs  = tasaActual > 0 ? Number((totalDeudaBsFromBs  / tasaActual).toFixed(2)) : 0
+  // Bs portion: apply interest in Bs domain then convert to USD
+  const totalDeudaBsFromBsD  = bsD.times(multiplierD)
+  const totalDeudaUsdFromBsD = tasaActual > 0 ? totalDeudaBsFromBsD.dividedBy(tasaD) : new Decimal(0)
 
-  // Porcion USD: cargo directo en USD
-  const totalDeudaUsdFromUsd = Number((usd * multiplier).toFixed(2))
-  const totalDeudaBsFromUsd  = Number((usd * multiplier * tasaActual).toFixed(2))
+  // USD portion: apply interest in USD domain then convert to Bs
+  const totalDeudaUsdFromUsdD = usdD.times(multiplierD)
+  const totalDeudaBsFromUsdD  = usdToBs(totalDeudaUsdFromUsdD, tasaD)
 
-  const totalDeudaUsd = Number((totalDeudaUsdFromUsd + totalDeudaUsdFromBs).toFixed(2))
-  const totalDeudaBs  = Number((totalDeudaBsFromBs   + totalDeudaBsFromUsd).toFixed(2))
+  const totalDeudaUsdD = totalDeudaUsdFromUsdD.plus(totalDeudaUsdFromBsD)
+  const totalDeudaBsD  = totalDeudaBsFromBsD.plus(totalDeudaBsFromUsdD)
+
+  // Plain numbers for pass-through to onAplicado and display
+  const totalDeudaUsd = totalDeudaUsdD.toNumber()
+  const totalDeudaBs  = totalDeudaBsD.toNumber()
 
   // Desglose para el resumen visual
-  const bsEnUsd         = tasaActual > 0 ? Number((bs / tasaActual).toFixed(2)) : 0
-  const prestamoTotalUsd = Number((usd + bsEnUsd).toFixed(2))
-  const interesUsd      = Number((totalDeudaUsd - prestamoTotalUsd).toFixed(2))
+  const bsEnUsdD       = tasaActual > 0 ? bsToUsd(bsD, tasaD) : new Decimal(0)
+  const prestamoTotalUsd = usdD.plus(bsEnUsdD).toNumber()
+  const interesUsd     = totalDeudaUsdD.minus(new Decimal(prestamoTotalUsd)).toNumber()
 
   function reset() {
     setOrigenFondos('CAJA')

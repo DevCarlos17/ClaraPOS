@@ -15,7 +15,8 @@ import { useSesionesActivas, type SesionCajaConNombre } from '@/features/caja/ho
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { crearPrestamoStandalone, type CrearPrestamoStandaloneParams } from '@/features/cxc/hooks/use-cxc'
-import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
+import Decimal from 'decimal.js'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -170,11 +171,18 @@ function FormPrestamoStandalone({
   const dias = parseInt(diasPlazo) || DEFAULT_DIAS_PLAZO
   const tasa = tasaValor
 
-  const bsEnUsd = tasa > 0 ? Number((bs / tasa).toFixed(2)) : 0
-  const principalUsd = Number((usd + bsEnUsd).toFixed(2))
-  const interesUsd = Number((principalUsd * interesPct / 100).toFixed(2))
-  const totalDeudaUsd = Number((principalUsd + interesUsd).toFixed(2))
-  const totalDeudaBs = usdToBs(totalDeudaUsd, tasa)
+  // Use Decimal.js for intermediate calculations to avoid toFixed(2) precision loss.
+  // Example: Bs 10 at 10% tasa 500 → interest = $0.002, total = $0.022 (not $0.02)
+  const bsEnUsdD = tasa > 0 ? bsToUsd(bs, tasa) : new Decimal(0)
+  const principalUsdD = bsEnUsdD.plus(usd)
+  const interesUsdD = principalUsdD.times(interesPct).dividedBy(100)
+  const totalDeudaUsdD = principalUsdD.plus(interesUsdD)
+  const totalDeudaBsD = usdToBs(totalDeudaUsdD, tasa)
+  // Plain numbers for display and validation
+  const principalUsd = principalUsdD.toNumber()
+  const interesUsd = interesUsdD.toNumber()
+  const totalDeudaUsd = totalDeudaUsdD.toNumber()
+  const totalDeudaBs = totalDeudaBsD
 
   function reset() {
     setCliente(null)

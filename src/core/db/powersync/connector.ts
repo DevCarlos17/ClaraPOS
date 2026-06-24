@@ -474,7 +474,28 @@ export class SupabaseConnector
                 result = { error: null }
               }
             } else {
-              result = await table.update(patchPayload).eq('id', op.id)
+              // Use select('id') to detect silent 0-row updates (e.g. RLS blocking the update
+              // without returning an error). If 0 rows are affected, Supabase will return
+              // { data: [], error: null } instead of silently discarding the change.
+              const { data: patchedRows, error: patchErr } = await table
+                .update(patchPayload)
+                .eq('id', op.id)
+                .select('id')
+
+              if (patchErr) {
+                result = { error: patchErr }
+              } else if (!patchedRows || patchedRows.length === 0) {
+                // 0 rows affected — most likely causes:
+                //   1. Row was deleted in Supabase (ok to ignore)
+                //   2. RLS is silently blocking the update (data will NOT persist)
+                console.warn(
+                  '⬆️ [PowerSync upload] PATCH afecto 0 filas — posible bloqueo RLS o fila eliminada:',
+                  { table: op.table, id: op.id }
+                )
+                result = { error: null }
+              } else {
+                result = { error: null }
+              }
             }
             break
           }
