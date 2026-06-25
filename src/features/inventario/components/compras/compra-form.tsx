@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
+import Decimal from 'decimal.js'
 import { toast } from 'sonner'
 import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema } from '@/features/inventario/schemas/compra-schema'
@@ -341,7 +342,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   }
 
   function getLineSubtotal(l: LineaUI): number {
-    return l.cantidad_input * l.costo_input
+    return new Decimal(l.cantidad_input).times(l.costo_input).toNumber()
   }
 
   // Costo sistema por unidad (a tasa interna) para mostrar en gris
@@ -349,40 +350,46 @@ export function CompraForm({ onClose }: CompraFormProps) {
     if (!usaTasaParalela || tasaInternaNum <= 0) return null
     if (moneda === 'USD') {
       // costo_usd * tasa_proveedor / tasa_interna
-      return tasaFacturaNum > 0 ? l.costo_input * tasaFacturaNum / tasaInternaNum : null
+      return tasaFacturaNum > 0
+        ? new Decimal(l.costo_input).times(tasaFacturaNum).dividedBy(tasaInternaNum).toNumber()
+        : null
     } else {
       // costo_bs / tasa_interna
-      return l.costo_input / tasaInternaNum
+      return new Decimal(l.costo_input).dividedBy(tasaInternaNum).toNumber()
     }
   }
 
   function getSubtotalSistema(l: LineaUI): number | null {
     const cs = getCostoSistema(l)
     if (cs === null) return null
-    return l.cantidad_input * cs
+    return new Decimal(l.cantidad_input).times(cs).toNumber()
   }
 
   // Subtotal sin IVA (en moneda de visualizacion)
-  const totalDisplay = lineas.reduce((sum, l) => sum + getLineSubtotal(l), 0)
+  const totalDisplay = lineas.reduce(
+    (sum, l) => new Decimal(sum).plus(getLineSubtotal(l)).toNumber(),
+    0
+  )
 
   // Desglose fiscal en USD, agrupado por alicuota de IVA
   const desgloseUsd = useMemo(() => {
-    let exento = 0
-    const gravableMap = new Map<number, { base: number; iva: number }>()
+    let exento = new Decimal(0)
+    const gravableMap = new Map<number, { base: Decimal; iva: Decimal }>()
 
     for (const l of lineas) {
+      const lineaSub = new Decimal(getLineSubtotal(l))
       const subtotalUsd = moneda === 'USD'
-        ? getLineSubtotal(l)
-        : (tasaFacturaNum > 0 ? getLineSubtotal(l) / tasaFacturaNum : 0)
+        ? lineaSub
+        : (tasaFacturaNum > 0 ? lineaSub.dividedBy(tasaFacturaNum) : new Decimal(0))
 
       if (l.tipo_impuesto !== 'Gravable') {
-        exento += subtotalUsd
+        exento = exento.plus(subtotalUsd)
       } else {
-        const existing = gravableMap.get(l.impuesto_pct) ?? { base: 0, iva: 0 }
-        const ivaAmount = subtotalUsd * (l.impuesto_pct / 100)
+        const existing = gravableMap.get(l.impuesto_pct) ?? { base: new Decimal(0), iva: new Decimal(0) }
+        const ivaAmount = subtotalUsd.times(l.impuesto_pct).dividedBy(100)
         gravableMap.set(l.impuesto_pct, {
-          base: existing.base + subtotalUsd,
-          iva: existing.iva + ivaAmount,
+          base: existing.base.plus(subtotalUsd),
+          iva: existing.iva.plus(ivaAmount),
         })
       }
     }
@@ -391,14 +398,17 @@ export function CompraForm({ onClose }: CompraFormProps) {
       .sort(([a], [b]) => a - b)
       .map(([pct, { base, iva }]) => ({
         pct,
-        base: Number(base.toFixed(2)),
-        iva: Number(iva.toFixed(2)),
+        base: base.toDecimalPlaces(8).toNumber(),
+        iva: iva.toDecimalPlaces(8).toNumber(),
       }))
 
-    const totalIvaUsd = Number(gravableGroups.reduce((sum, g) => sum + g.iva, 0).toFixed(2))
+    const totalIvaUsd = gravableGroups.reduce(
+      (sum, g) => new Decimal(sum).plus(g.iva).toNumber(),
+      0
+    )
 
     return {
-      exentoUsd: Number(exento.toFixed(2)),
+      exentoUsd: exento.toDecimalPlaces(8).toNumber(),
       gravableGroups,
       totalIvaUsd,
     }
@@ -411,37 +421,45 @@ export function CompraForm({ onClose }: CompraFormProps) {
   // doble conversion (Bs->USD->redondeo->Bs) que genera perdida de precision
   const totalIvaBs = lineas.reduce((sum, l) => {
     if (l.tipo_impuesto !== 'Gravable') return sum
-    return sum + getLineSubtotal(l) * (l.impuesto_pct / 100)
+    return new Decimal(sum).plus(
+      new Decimal(getLineSubtotal(l)).times(l.impuesto_pct).dividedBy(100)
+    ).toNumber()
   }, 0)
   const totalIvaDisplay = moneda === 'USD' ? totalIvaUsd : totalIvaBs
-  const totalConIvaDisplay = totalDisplay + totalIvaDisplay
+  const totalConIvaDisplay = new Decimal(totalDisplay).plus(totalIvaDisplay).toNumber()
 
   // totalUsd: siempre a tasa del proveedor (para CxP), incluye IVA
   const totalUsd = moneda === 'USD'
     ? totalConIvaDisplay
-    : (tasaFacturaNum > 0 ? totalConIvaDisplay / tasaFacturaNum : 0)
-  const totalBs = moneda === 'BS' ? totalConIvaDisplay : totalConIvaDisplay * tasaFacturaNum
+    : (tasaFacturaNum > 0 ? new Decimal(totalConIvaDisplay).dividedBy(tasaFacturaNum).toNumber() : 0)
+  const totalBs = moneda === 'BS'
+    ? totalConIvaDisplay
+    : new Decimal(totalConIvaDisplay).times(tasaFacturaNum).toNumber()
 
   // totalUsdSistema: a tasa interna (para inventario y contabilidad, sin IVA)
   const totalUsdSistema = usaTasaParalela && tasaInternaNum > 0
     ? (moneda === 'USD'
-        ? (tasaFacturaNum > 0 ? totalDisplay * tasaFacturaNum / tasaInternaNum : 0)
-        : totalDisplay / tasaInternaNum)
+        ? (tasaFacturaNum > 0
+            ? new Decimal(totalDisplay).times(tasaFacturaNum).dividedBy(tasaInternaNum).toNumber()
+            : 0)
+        : new Decimal(totalDisplay).dividedBy(tasaInternaNum).toNumber())
     : totalUsd
 
   // Payment calculations always at proveedor rate (tasaFacturaNum)
   const totalAbonadoUsd = pagos.reduce((sum, p) => {
-    const mUsd = p.moneda === 'BS' ? (tasaFacturaNum > 0 ? p.monto / tasaFacturaNum : 0) : p.monto
-    return sum + mUsd
+    const mUsd = p.moneda === 'BS'
+      ? (tasaFacturaNum > 0 ? new Decimal(p.monto).dividedBy(tasaFacturaNum).toNumber() : 0)
+      : p.monto
+    return new Decimal(sum).plus(mUsd).toNumber()
   }, 0)
   // totalAbonadoBs: suma directa en Bs sin pasar por USD para evitar perdida de precision
   const totalAbonadoBs = pagos.reduce((sum, p) => {
-    const mBs = p.moneda === 'USD' ? p.monto * tasaFacturaNum : p.monto
-    return sum + mBs
+    const mBs = p.moneda === 'USD' ? new Decimal(p.monto).times(tasaFacturaNum).toNumber() : p.monto
+    return new Decimal(sum).plus(mBs).toNumber()
   }, 0)
-  const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
+  const pendienteUsd = Math.max(0, new Decimal(totalUsd).minus(totalAbonadoUsd).toDecimalPlaces(2).toNumber())
   // pendienteBs: calculado directo desde totalBs, no desde pendienteUsd * tasa
-  const pendienteBs = Math.max(0, Number((totalBs - totalAbonadoBs).toFixed(2)))
+  const pendienteBs = Math.max(0, new Decimal(totalBs).minus(totalAbonadoBs).toDecimalPlaces(2).toNumber())
   const tipoDetectado: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
 
   const metodoSeleccionado = metodos.find((m) => m.id === pagoMetodoId)
@@ -449,7 +467,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
   function handleAddProducto(producto: Producto) {
     const options = getUnidadOptions(producto)
     const costoBase = parseFloat(producto.costo_usd) || 0
-    const costoDisplay = moneda === 'USD' ? costoBase : costoBase * tasaFacturaNum
+    const costoDisplay = moneda === 'USD'
+      ? costoBase
+      : new Decimal(costoBase).times(tasaFacturaNum).toNumber()
     const pvpUsd = parseFloat(producto.precio_venta_usd) || 0
 
     // Margen actual del producto: (pvp - costo) / costo * 100
@@ -543,10 +563,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
         // Calcular costo nuevo en USD por unidad base
         let costoNuevoUsd: number
         if (moneda === 'USD') {
-          costoNuevoUsd = l.factor > 0 ? numericalValue / l.factor : numericalValue
+          costoNuevoUsd = l.factor > 0
+            ? new Decimal(numericalValue).dividedBy(l.factor).toNumber()
+            : numericalValue
         } else {
-          const costoOrig = tasaFacturaNum > 0 ? numericalValue / tasaFacturaNum : 0
-          costoNuevoUsd = l.factor > 0 ? costoOrig / l.factor : costoOrig
+          const costoOrig = tasaFacturaNum > 0
+            ? new Decimal(numericalValue).dividedBy(tasaFacturaNum).toNumber()
+            : 0
+          costoNuevoUsd = l.factor > 0
+            ? new Decimal(costoOrig).dividedBy(l.factor).toNumber()
+            : costoOrig
         }
 
         const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
@@ -554,7 +580,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
         // Sin cambio real → limpiar estado de edición.
         // Normalizar a Bs para comparar con precisión en ambos modos:
         // en USD con tasas altas, Bs 0.01 de diferencia equivale a < $0.0001.
-        const toBS = (v: number) => moneda === 'BS' ? v : (tasaFacturaNum > 0 ? v * tasaFacturaNum : v)
+        const toBS = (v: number) => moneda === 'BS'
+          ? v
+          : (tasaFacturaNum > 0 ? new Decimal(v).times(tasaFacturaNum).toNumber() : v)
         if (Math.abs(toBS(numericalValue) - toBS(l.costo_actual)) < 0.001) {
           return { ...updated, pvp_editando: false, pvp_niveles: [] }
         }
@@ -572,13 +600,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
           // Proyectar PVP manteniendo el margen original de este nivel
           const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
-            ? (pvpActualUsd - costoUsdActual) / costoUsdActual
+            ? new Decimal(pvpActualUsd).minus(costoUsdActual).dividedBy(costoUsdActual).toNumber()
             : 0
-          const proyPvpUsd = Math.max(costoNuevoUsd, Number((costoNuevoUsd * (1 + margenDecimal)).toFixed(2)))
+          const dProyPvp = Decimal.max(
+            new Decimal(costoNuevoUsd),
+            new Decimal(costoNuevoUsd).times(new Decimal(1).plus(margenDecimal))
+          )
+          const proyPvpUsd = dProyPvp.toNumber()
           const proyMargen = costoNuevoUsd > 0
-            ? ((proyPvpUsd - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+            ? dProyPvp.minus(costoNuevoUsd).dividedBy(costoNuevoUsd).times(100).toFixed(1)
             : '0.0'
-          const pvpDisplay = moneda === 'USD' ? proyPvpUsd : proyPvpUsd * tasaFacturaNum
+          const pvpDisplay = moneda === 'USD'
+            ? proyPvpUsd
+            : new Decimal(proyPvpUsd).times(tasaFacturaNum).toNumber()
 
           return {
             orden: nivel.orden,
@@ -614,8 +648,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
         // Abrir editor: re-calcular proyecciones para todos los niveles
         const costoNuevoUsd = moneda === 'USD'
-          ? (l.factor > 0 ? l.costo_input / l.factor : l.costo_input)
-          : (tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum / (l.factor > 0 ? l.factor : 1) : 0)
+          ? (l.factor > 0
+              ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
+              : l.costo_input)
+          : (tasaFacturaNum > 0
+              ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
+              : 0)
         const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
 
         const nivelesEf: NivelPrecio[] = nivelesActivos.length > 0
@@ -633,13 +671,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
             return { ...existing, violado }
           }
           const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
-            ? (pvpActualUsd - costoUsdActual) / costoUsdActual
+            ? new Decimal(pvpActualUsd).minus(costoUsdActual).dividedBy(costoUsdActual).toNumber()
             : 0
-          const proyPvpUsd = Math.max(costoNuevoUsd, Number((costoNuevoUsd * (1 + margenDecimal)).toFixed(2)))
+          const dProyPvp = Decimal.max(
+            new Decimal(costoNuevoUsd),
+            new Decimal(costoNuevoUsd).times(new Decimal(1).plus(margenDecimal))
+          )
+          const proyPvpUsd = dProyPvp.toNumber()
           const proyMargen = costoNuevoUsd > 0
-            ? ((proyPvpUsd - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+            ? dProyPvp.minus(costoNuevoUsd).dividedBy(costoNuevoUsd).times(100).toFixed(1)
             : '0.0'
-          const pvpDisplay = moneda === 'USD' ? proyPvpUsd : proyPvpUsd * tasaFacturaNum
+          const pvpDisplay = moneda === 'USD'
+            ? proyPvpUsd
+            : new Decimal(proyPvpUsd).times(tasaFacturaNum).toNumber()
           return {
             orden: nivel.orden,
             nombre: nivel.nombre,
@@ -664,15 +708,21 @@ export function CompraForm({ onClose }: CompraFormProps) {
         const clamped = clampNumeric(value, NUMERIC_LIMITS.pvp.max, NUMERIC_LIMITS.pvp.decimals)
         const pvpNum = parseFloat(clamped)
         const costoNuevoUsd = moneda === 'USD'
-          ? (l.factor > 0 ? l.costo_input / l.factor : l.costo_input)
-          : (tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum / (l.factor > 0 ? l.factor : 1) : 0)
+          ? (l.factor > 0
+              ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
+              : l.costo_input)
+          : (tasaFacturaNum > 0
+              ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
+              : 0)
 
         const pvpNiveles = l.pvp_niveles.map((n) => {
           if (n.orden !== orden) return n
           if (isNaN(pvpNum) || pvpNum < 0) return { ...n, pvp_input: clamped }
-          const pvpUsd = moneda === 'USD' ? pvpNum : (tasaFacturaNum > 0 ? pvpNum / tasaFacturaNum : pvpNum)
+          const pvpUsd = moneda === 'USD'
+            ? pvpNum
+            : (tasaFacturaNum > 0 ? new Decimal(pvpNum).dividedBy(tasaFacturaNum).toNumber() : pvpNum)
           const nuevoMargen = costoNuevoUsd > 0
-            ? ((pvpUsd - costoNuevoUsd) / costoNuevoUsd * 100).toFixed(1)
+            ? new Decimal(pvpUsd).minus(costoNuevoUsd).dividedBy(costoNuevoUsd).times(100).toFixed(1)
             : '0.0'
           return { ...n, pvp_input: clamped, margen_input: nuevoMargen }
         })
@@ -689,14 +739,20 @@ export function CompraForm({ onClose }: CompraFormProps) {
         const clamped = clampNumeric(value, NUMERIC_LIMITS.margen.max, NUMERIC_LIMITS.margen.decimals)
         const margenNum = parseFloat(clamped)
         const costoNuevoUsd = moneda === 'USD'
-          ? (l.factor > 0 ? l.costo_input / l.factor : l.costo_input)
-          : (tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum / (l.factor > 0 ? l.factor : 1) : 0)
+          ? (l.factor > 0
+              ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
+              : l.costo_input)
+          : (tasaFacturaNum > 0
+              ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
+              : 0)
 
         const pvpNiveles = l.pvp_niveles.map((n) => {
           if (n.orden !== orden) return n
           if (isNaN(margenNum)) return { ...n, margen_input: clamped }
-          const nuevoPvpUsd = Number((costoNuevoUsd * (1 + margenNum / 100)).toFixed(2))
-          const nuevoPvpDisplay = moneda === 'USD' ? nuevoPvpUsd : nuevoPvpUsd * tasaFacturaNum
+          const nuevoPvpUsd = new Decimal(costoNuevoUsd).times(new Decimal(1).plus(margenNum / 100)).toNumber()
+          const nuevoPvpDisplay = moneda === 'USD'
+            ? nuevoPvpUsd
+            : new Decimal(nuevoPvpUsd).times(tasaFacturaNum).toNumber()
           return { ...n, margen_input: clamped, pvp_input: Math.max(0, nuevoPvpDisplay).toFixed(2) }
         })
         return { ...l, pvp_niveles: pvpNiveles }
@@ -736,17 +792,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
         if (!option) return l
 
       // Convertir costo_actual y costo_input a la nueva unidad.
-      // Sin toFixed(2): el estado mantiene precisión completa; el display redondea via formatUsd/formatBs.
-      const oldActualPerBase = l.factor > 0 ? l.costo_actual / l.factor : l.costo_actual
-      const newCostoActual = oldActualPerBase * option.factor
+      // Usar Decimal para evitar acumulación de errores de punto flotante al cambiar unidades.
+      const oldActualPerBase = l.factor > 0
+        ? new Decimal(l.costo_actual).dividedBy(l.factor).toNumber()
+        : l.costo_actual
+      const newCostoActual = new Decimal(oldActualPerBase).times(option.factor).toNumber()
 
       let newNuevoCostoRaw = l.nuevo_costo_raw
       let newCostoInput = newCostoActual
       if (l.nuevo_costo_raw !== '') {
         const oldNuevoCostoPerBase = l.factor > 0
-          ? parseFloat(l.nuevo_costo_raw) / l.factor
+          ? new Decimal(parseFloat(l.nuevo_costo_raw)).dividedBy(l.factor).toNumber()
           : parseFloat(l.nuevo_costo_raw)
-        const newNuevoCosto = oldNuevoCostoPerBase * option.factor
+        const newNuevoCosto = new Decimal(oldNuevoCostoPerBase).times(option.factor).toNumber()
         newNuevoCostoRaw = String(newNuevoCosto)
         newCostoInput = newNuevoCosto
       }
@@ -769,34 +827,32 @@ export function CompraForm({ onClose }: CompraFormProps) {
     setLineas((prev) =>
       prev.map((l) => {
         // costo_actual: reconstruir desde la fuente de verdad (costo_usd_actual)
-        // ajustado por el factor de unidad, NO convirtiendo l.costo_actual.
+        // ajustado por el factor de unidad activo, NO convirtiendo l.costo_actual.
         // Razón: convertir el valor display con toFixed(2) pierde precisión en ida-vuelta.
         // Ej: Bs 6 → /500 → toFixed(2) = 0.01 → ×500 = Bs 5 (debería ser Bs 6).
-        const costoUsdBase = parseFloat(l.costo_usd_actual) || 0
-        const costoUsdConFactor = costoUsdBase * l.factor
+        const dCostoUsdConFactor = new Decimal(parseFloat(l.costo_usd_actual) || 0).times(l.factor)
         const newCostoActual = newMoneda === 'BS'
-          ? Number((costoUsdConFactor * tasaFacturaNum).toFixed(2))
-          : costoUsdConFactor  // Sin redondear en USD para preservar precisión en futura conversión a BS
+          ? dCostoUsdConFactor.times(tasaFacturaNum).toNumber()
+          : dCostoUsdConFactor.toNumber()  // Sin redondear en USD para preservar precisión
 
         let newNuevoCostoRaw = l.nuevo_costo_raw
         let newCostoInput = newCostoActual
         if (l.nuevo_costo_raw !== '') {
-          const rawNum = parseFloat(l.nuevo_costo_raw)
-          // nuevo_costo_raw: preservar precisión completa para ida-vuelta exacta.
-          // BS→USD: sin redondear (Bs 4.99 / 500 = 0.00998, no 0.01).
-          // USD→BS: toFixed(2) está bien (Bs tiene precisión de 2 decimales).
+          const dRaw = new Decimal(parseFloat(l.nuevo_costo_raw))
+          // BS→USD: sin redondear para ida-vuelta exacta (Bs 4.99 / 500 = 0.00998).
+          // USD→BS: el resultado siempre tiene precisión representable en Bs.
           const converted = newMoneda === 'BS'
-            ? Number((rawNum * tasaFacturaNum).toFixed(2))
-            : rawNum / tasaFacturaNum
+            ? dRaw.times(tasaFacturaNum).toNumber()
+            : dRaw.dividedBy(tasaFacturaNum).toNumber()
           newNuevoCostoRaw = String(converted)
           newCostoInput = converted
         }
 
-        // pvp_input: redondear a 2 decimales (estos valores no tienen problema de precisión)
+        // pvp_input: también con Decimal para consistencia
         const convertRounded = (val: number) =>
           newMoneda === 'BS'
-            ? Number((val * tasaFacturaNum).toFixed(2))
-            : Number((val / tasaFacturaNum).toFixed(2))
+            ? new Decimal(val).times(tasaFacturaNum).toDecimalPlaces(8).toNumber()
+            : new Decimal(val).dividedBy(tasaFacturaNum).toDecimalPlaces(8).toNumber()
 
         // Convertir pvp_input de cada nivel (están en moneda display)
         const newPvpNiveles = l.pvp_niveles.map((n) => ({
@@ -935,18 +991,26 @@ export function CompraForm({ onClose }: CompraFormProps) {
       let costoUsdSistema: number
 
       if (moneda === 'USD') {
-        costoUnitarioUsd = l.factor > 0 ? l.costo_input / l.factor : l.costo_input
+        costoUnitarioUsd = l.factor > 0
+          ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
+          : l.costo_input
         if (usaTasaParalela && tasaInternaNum > 0 && tasaFacturaNum > 0) {
-          costoUsdSistema = costoUnitarioUsd * tasaFacturaNum / tasaInternaNum
+          costoUsdSistema = new Decimal(costoUnitarioUsd).times(tasaFacturaNum).dividedBy(tasaInternaNum).toNumber()
         } else {
           costoUsdSistema = costoUnitarioUsd
         }
       } else {
-        const costoOrigPerUnit = tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum : 0
-        costoUnitarioUsd = l.factor > 0 ? costoOrigPerUnit / l.factor : costoOrigPerUnit
+        const costoOrigPerUnit = tasaFacturaNum > 0
+          ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).toNumber()
+          : 0
+        costoUnitarioUsd = l.factor > 0
+          ? new Decimal(costoOrigPerUnit).dividedBy(l.factor).toNumber()
+          : costoOrigPerUnit
         if (usaTasaParalela && tasaInternaNum > 0) {
-          const costoBcvPerUnit = l.costo_input / tasaInternaNum
-          costoUsdSistema = l.factor > 0 ? costoBcvPerUnit / l.factor : costoBcvPerUnit
+          const costoBcvPerUnit = new Decimal(l.costo_input).dividedBy(tasaInternaNum).toNumber()
+          costoUsdSistema = l.factor > 0
+            ? new Decimal(costoBcvPerUnit).dividedBy(l.factor).toNumber()
+            : costoBcvPerUnit
         } else {
           costoUsdSistema = costoUnitarioUsd
         }
@@ -984,7 +1048,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
         if (!nivel || nivel.pvp_input === '') return undefined
         const pvpNum = parseFloat(nivel.pvp_input)
         if (isNaN(pvpNum) || pvpNum <= 0) return undefined
-        return moneda === 'USD' ? pvpNum : (tasaFacturaNum > 0 ? pvpNum / tasaFacturaNum : pvpNum)
+        return moneda === 'USD'
+          ? pvpNum
+          : (tasaFacturaNum > 0 ? new Decimal(pvpNum).dividedBy(tasaFacturaNum).toNumber() : pvpNum)
       }
 
       const nuevoPrecioVentaUsd = getNewPvpUsdForNivel(1)
@@ -1098,7 +1164,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
    */
   function lineaTieneCostoCambiado(l: LineaUI): boolean {
     if (l.nuevo_costo_raw === '') return false
-    const toBS = (v: number) => moneda === 'BS' ? v : (tasaFacturaNum > 0 ? v * tasaFacturaNum : v)
+    const toBS = (v: number) => moneda === 'BS'
+      ? v
+      : (tasaFacturaNum > 0 ? new Decimal(v).times(tasaFacturaNum).toNumber() : v)
     return Math.abs(toBS(l.costo_input) - toBS(l.costo_actual)) > 0.001
   }
 
