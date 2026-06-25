@@ -549,8 +549,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
         const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
 
-        // Sin cambio real → limpiar estado de edición
-        if (Math.abs(costoNuevoUsd - costoUsdActual) < 0.0001) {
+        // Sin cambio real → limpiar estado de edición.
+        // Comparar en moneda display (no en USD) para evitar desincronización
+        // cuando la tasa cambia después de agregar el producto al formulario.
+        if (Math.abs(numericalValue - l.costo_actual) < 0.001) {
           return { ...updated, pvp_editando: false, pvp_niveles: [] }
         }
 
@@ -1068,14 +1070,13 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   const mostrarColumnasSistema = usaTasaParalela && tasaInternaNum > 0
 
-  /** True si el nuevo_costo_raw de una línea difiere del costo vigente en sistema. */
+  /** True si el nuevo_costo_raw de una línea difiere del costo vigente en sistema.
+   *  Comparación en moneda display para evitar errores de conversión cuando la
+   *  tasa cambia después de agregar el producto al formulario.
+   */
   function lineaTieneCostoCambiado(l: LineaUI): boolean {
     if (l.nuevo_costo_raw === '') return false
-    const costoNuevoUsd = moneda === 'USD'
-      ? (l.factor > 0 ? l.costo_input / l.factor : l.costo_input)
-      : (tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum / (l.factor > 0 ? l.factor : 1) : 0)
-    const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
-    return Math.abs(costoNuevoUsd - costoUsdActual) > 0.0001
+    return Math.abs(l.costo_input - l.costo_actual) > 0.001
   }
 
   /** True si algún nivel de precio está violado (nuevo costo supera su PVP). */
