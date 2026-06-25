@@ -473,28 +473,46 @@ export function PagoFacturaModal({
             {/* Datos del préstamo seleccionado */}
             {vencSeleccionado && (
               <>
+                {/* Total c/interés */}
                 <div className="flex justify-between">
                   <span className="text-purple-700">Total c/interés:</span>
-                  <span className="font-medium">{formatUsd(parseFloat(vencSeleccionado.monto_original_usd))}</span>
+                  <div className="text-right">
+                    <div className="font-medium">{formatUsd(parseFloat(vencSeleccionado.monto_original_usd))}</div>
+                    {tasaNum > 0 && (
+                      <div className="text-xs text-purple-500">
+                        {formatBs(usdToBs(parseFloat(vencSeleccionado.monto_original_usd), tasaNum))}
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {/* Pagado */}
                 <div className="flex justify-between">
                   <span className="text-purple-700">Pagado:</span>
-                  <span className="text-green-700">{formatUsd(parseFloat(vencSeleccionado.monto_pagado_usd))}</span>
+                  <div className="text-right">
+                    <div className="text-green-700">{formatUsd(parseFloat(vencSeleccionado.monto_pagado_usd))}</div>
+                    {tasaNum > 0 && parseFloat(vencSeleccionado.monto_pagado_usd) > 0 && (
+                      <div className="text-xs text-green-600/70">
+                        {formatBs(usdToBs(parseFloat(vencSeleccionado.monto_pagado_usd), tasaNum))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex justify-between font-semibold">
+                {/* Saldo pendiente */}
+                <div className="flex justify-between font-semibold border-t border-purple-200 pt-1.5">
                   <span className="text-purple-800">Saldo pendiente:</span>
-                  <span className="text-destructive">{formatUsd(saldoPrestamo)}</span>
+                  <div className="text-right">
+                    <div className="text-destructive">{formatUsd(saldoPrestamo)}</div>
+                    {tasaNum > 0 && saldoPrestamo > 0 && (
+                      <div className="text-xs font-normal text-destructive/70">
+                        {formatBs(usdToBs(saldoPrestamo, tasaNum))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex justify-between text-purple-700 text-xs">
                   <span>Fecha vencimiento:</span>
                   <span>{vencSeleccionado.fecha_vencimiento}</span>
                 </div>
-                {tasaNum > 0 && (
-                  <div className="flex justify-between text-purple-600 text-xs">
-                    <span>Equivalente Bs:</span>
-                    <span>{formatBs(usdToBs(saldoPrestamo, tasaNum))}</span>
-                  </div>
-                )}
               </>
             )}
 

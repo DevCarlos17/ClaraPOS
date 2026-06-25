@@ -8,7 +8,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { todayStr } from '@/lib/dates'
 import {
   useHistorialPrestamo,
@@ -117,7 +118,7 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
     prestamo?.id ?? null,
     prestamo?.venta_id ?? null
   )
-
+  const { tasaValor: tasa } = useTasaActual()
 
   const [pagoModalOpen, setPagoModalOpen] = useState(false)
 
@@ -190,16 +191,31 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
               <div className="rounded-md bg-white/80 border border-purple-100 px-3 py-2 text-center">
                 <div className="text-xs text-muted-foreground mb-0.5">Total c/interés</div>
                 <div className="font-semibold text-sm">{formatUsd(montoOriginal)}</div>
+                {tasa > 0 && (
+                  <div className="text-xs text-muted-foreground mt-0.5">
+                    {formatBs(usdToBs(montoOriginal, tasa))}
+                  </div>
+                )}
               </div>
               <div className="rounded-md bg-white/80 border border-purple-100 px-3 py-2 text-center">
                 <div className="text-xs text-muted-foreground mb-0.5">Pagado</div>
                 <div className="font-semibold text-sm text-green-600">{formatUsd(montoPagado)}</div>
+                {tasa > 0 && montoPagado > 0 && (
+                  <div className="text-xs text-green-600/70 mt-0.5">
+                    {formatBs(usdToBs(montoPagado, tasa))}
+                  </div>
+                )}
               </div>
               <div className="rounded-md bg-white/80 border border-purple-100 px-3 py-2 text-center">
                 <div className="text-xs text-muted-foreground mb-0.5">Saldo pendiente</div>
                 <div className={`font-semibold text-sm ${saldoPend > 0.005 ? 'text-destructive' : 'text-green-600'}`}>
                   {saldoPend > 0.005 ? formatUsd(saldoPend) : '—'}
                 </div>
+                {tasa > 0 && saldoPend > 0.005 && (
+                  <div className="text-xs text-destructive/70 mt-0.5">
+                    {formatBs(usdToBs(saldoPend, tasa))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -237,9 +253,10 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
                     <tr>
                       <th className="text-left px-3 py-2 font-medium text-muted-foreground">Fecha</th>
                       <th className="text-left px-3 py-2 font-medium text-muted-foreground">Método</th>
-                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Abono</th>
-                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Saldo antes</th>
-                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Saldo después</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Abono $</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Abono Bs</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Saldo antes $</th>
+                      <th className="text-right px-3 py-2 font-medium text-muted-foreground">Saldo después $</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -255,6 +272,9 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
                           <td className="px-3 py-2">{a.metodo_nombre}</td>
                           <td className="px-3 py-2 text-right tabular-nums font-medium text-green-600">
                             {formatUsd(monto)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums text-green-600/80">
+                            {tasa > 0 ? formatBs(usdToBs(monto, tasa)) : '—'}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                             {saldoAntes > 0 ? formatUsd(saldoAntes) : '—'}
@@ -277,6 +297,9 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
                         </td>
                         <td className="px-3 py-2 text-right font-bold text-green-600 tabular-nums">
                           {formatUsd(historial.reduce((s, a) => s + parseFloat(a.monto), 0))}
+                        </td>
+                        <td className="px-3 py-2 text-right font-bold text-green-600/80 tabular-nums">
+                          {tasa > 0 ? formatBs(usdToBs(historial.reduce((s, a) => s + parseFloat(a.monto), 0), tasa)) : '—'}
                         </td>
                         <td colSpan={2} />
                       </tr>
