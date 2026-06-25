@@ -44,7 +44,7 @@ function campoTexto(maxLen: number, nombre: string) {
 export const lineaCompraSchema = z.object({
   producto_id: campoUuid('El producto'),
   cantidad: campoFinanciero(999_999_999, 'La cantidad'),        // NUMERIC(12,3) → max 999,999,999.999
-  costo_unitario_usd: campoFinanciero(9_999_999_999, 'El costo unitario'),  // NUMERIC(12,2) → max 9,999,999,999.99
+  costo_unitario_usd: campoFinanciero(9_999_999_999, 'El costo unitario'),  // NUMERIC(20,8) — migración 0058 amplió a 8 decimales
   tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
   impuesto_pct: z.number().min(0).max(100).default(0),
 })

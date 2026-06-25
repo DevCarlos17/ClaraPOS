@@ -103,9 +103,10 @@ const NUMERIC_LIMITS = {
   tasa:     { max: 9_999_999,       decimals: 4 },
   // NUMERIC(12,3) en DB → max teórico 999,999,999.999.
   cantidad: { max: 999_999_999,     decimals: 3 },
-  // NUMERIC(12,2) en DB → max exacto 9,999,999,999.99. Cubre USD y Bs sin problema.
-  costo:    { max: 9_999_999_999,   decimals: 2 },
-  pvp:      { max: 9_999_999_999,   decimals: 2 },
+  // NUMERIC(20,8) en DB → 8 decimales de precisión. Necesario para costos USD pequeños
+  // (ej: Bs 6.01 / tasa 500 = $ 0,01202000) y para ida-vuelta BS↔USD sin pérdida.
+  costo:    { max: 9_999_999_999,   decimals: 8 },
+  pvp:      { max: 9_999_999_999,   decimals: 8 },
   margen:   { max: 9_999,           decimals: 1 },  // % — 10.000% de margen es irreal
   monto:    { max: 9_999_999_999,   decimals: 2 },
 } as const
@@ -462,7 +463,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
       ? (impuestoMap.get(producto.impuesto_iva_id) ?? 0)
       : 0
 
-    const costoDisplayRounded = Number(costoDisplay.toFixed(2))
+    // No redondear a 2dp: el estado mantiene precisión completa (8 decimales).
+    // El redondeo a 2dp solo ocurre al momento del display via formatUsd / formatBs.
     setLineas((prev) => [
       ...prev,
       {
@@ -474,9 +476,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
         unidad_seleccionada_id: null,
         factor: 1,
         cantidad_input: 1,
-        costo_actual: costoDisplayRounded,
+        costo_actual: costoDisplay,
         nuevo_costo_raw: '',
-        costo_input: costoDisplayRounded,  // efectivo = costo_actual hasta que el usuario escriba
+        costo_input: costoDisplay,  // efectivo = costo_actual hasta que el usuario escriba
         tipo_impuesto: tipoImp,
         impuesto_pct: pctIva,
         maneja_lotes: Number(producto.maneja_lotes) || 0,
@@ -733,19 +735,21 @@ export function CompraForm({ onClose }: CompraFormProps) {
         )
         if (!option) return l
 
-        // Convertir costo_actual y costo_input a la nueva unidad
-        const oldActualPerBase = l.factor > 0 ? l.costo_actual / l.factor : l.costo_actual
-        const newCostoActual = Number((oldActualPerBase * option.factor).toFixed(2))
+      // Convertir costo_actual y costo_input a la nueva unidad.
+      // Sin toFixed(2): el estado mantiene precisión completa; el display redondea via formatUsd/formatBs.
+      const oldActualPerBase = l.factor > 0 ? l.costo_actual / l.factor : l.costo_actual
+      const newCostoActual = oldActualPerBase * option.factor
 
-        let newNuevoCostoRaw = l.nuevo_costo_raw
-        let newCostoInput = newCostoActual
-        if (l.nuevo_costo_raw !== '') {
-          const oldNuevoCostoPerBase = l.factor > 0
-            ? parseFloat(l.nuevo_costo_raw) / l.factor
-            : parseFloat(l.nuevo_costo_raw)
-          newNuevoCostoRaw = (oldNuevoCostoPerBase * option.factor).toFixed(2)
-          newCostoInput = Number(newNuevoCostoRaw)
-        }
+      let newNuevoCostoRaw = l.nuevo_costo_raw
+      let newCostoInput = newCostoActual
+      if (l.nuevo_costo_raw !== '') {
+        const oldNuevoCostoPerBase = l.factor > 0
+          ? parseFloat(l.nuevo_costo_raw) / l.factor
+          : parseFloat(l.nuevo_costo_raw)
+        const newNuevoCosto = oldNuevoCostoPerBase * option.factor
+        newNuevoCostoRaw = String(newNuevoCosto)
+        newCostoInput = newNuevoCosto
+      }
 
         return {
           ...l,
@@ -951,7 +955,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       const parsed = lineaCompraSchema.safeParse({
         producto_id: l.producto_id,
         cantidad: cantidadBase,
-        costo_unitario_usd: Number(costoUnitarioUsd.toFixed(4)),
+        costo_unitario_usd: Number(costoUnitarioUsd.toFixed(8)),
         tipo_impuesto: l.tipo_impuesto,
         impuesto_pct: l.impuesto_pct,
       })
@@ -990,8 +994,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return {
         producto_id: l.producto_id,
         cantidad: cantidadBase,
-        costo_unitario_usd: Number(costoUnitarioUsd.toFixed(4)),
-        costo_usd_sistema: Number(costoUsdSistema.toFixed(4)),
+        costo_unitario_usd: Number(costoUnitarioUsd.toFixed(8)),
+        costo_usd_sistema: Number(costoUsdSistema.toFixed(8)),
         tipo_impuesto: l.tipo_impuesto,
         impuesto_pct: l.impuesto_pct,
         lote_nro: l.lote_nro.trim() || undefined,
