@@ -550,9 +550,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
         const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
 
         // Sin cambio real → limpiar estado de edición.
-        // Comparar en moneda display (no en USD) para evitar desincronización
-        // cuando la tasa cambia después de agregar el producto al formulario.
-        if (Math.abs(numericalValue - l.costo_actual) < 0.001) {
+        // Normalizar a Bs para comparar con precisión en ambos modos:
+        // en USD con tasas altas, Bs 0.01 de diferencia equivale a < $0.0001.
+        const toBS = (v: number) => moneda === 'BS' ? v : (tasaFacturaNum > 0 ? v * tasaFacturaNum : v)
+        if (Math.abs(toBS(numericalValue) - toBS(l.costo_actual)) < 0.001) {
           return { ...updated, pvp_editando: false, pvp_niveles: [] }
         }
 
@@ -763,23 +764,31 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
     setLineas((prev) =>
       prev.map((l) => {
-        const convert = (val: number) =>
+        // costo_actual y pvp_input: redondear a 2 decimales (precision del sistema).
+        const convertRounded = (val: number) =>
           newMoneda === 'BS'
             ? Number((val * tasaFacturaNum).toFixed(2))
             : Number((val / tasaFacturaNum).toFixed(2))
 
-        const newCostoActual = convert(l.costo_actual)
+        const newCostoActual = convertRounded(l.costo_actual)
         let newNuevoCostoRaw = l.nuevo_costo_raw
         let newCostoInput = newCostoActual
         if (l.nuevo_costo_raw !== '') {
-          newNuevoCostoRaw = convert(parseFloat(l.nuevo_costo_raw)).toString()
-          newCostoInput = Number(newNuevoCostoRaw)
+          const rawNum = parseFloat(l.nuevo_costo_raw)
+          // nuevo_costo_raw: preservar precisión completa para ida-vuelta exacta.
+          // BS→USD: sin redondear (Bs 4.99 / 500 = 0.00998, no 0.01).
+          // USD→BS: toFixed(2) está bien (Bs tiene precisión de 2 decimales).
+          const converted = newMoneda === 'BS'
+            ? Number((rawNum * tasaFacturaNum).toFixed(2))
+            : rawNum / tasaFacturaNum
+          newNuevoCostoRaw = String(converted)
+          newCostoInput = converted
         }
 
         // Convertir pvp_input de cada nivel (están en moneda display)
         const newPvpNiveles = l.pvp_niveles.map((n) => ({
           ...n,
-          pvp_input: n.pvp_input !== '' ? convert(parseFloat(n.pvp_input)).toFixed(2) : n.pvp_input,
+          pvp_input: n.pvp_input !== '' ? convertRounded(parseFloat(n.pvp_input)).toFixed(2) : n.pvp_input,
         }))
 
         return {
@@ -1071,12 +1080,13 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const mostrarColumnasSistema = usaTasaParalela && tasaInternaNum > 0
 
   /** True si el nuevo_costo_raw de una línea difiere del costo vigente en sistema.
-   *  Comparación en moneda display para evitar errores de conversión cuando la
-   *  tasa cambia después de agregar el producto al formulario.
+   *  Normaliza a Bs para comparar con precisión independientemente del modo activo:
+   *  en USD con tasas altas, Bs 0.01 de diferencia puede ser < $0.0001.
    */
   function lineaTieneCostoCambiado(l: LineaUI): boolean {
     if (l.nuevo_costo_raw === '') return false
-    return Math.abs(l.costo_input - l.costo_actual) > 0.001
+    const toBS = (v: number) => moneda === 'BS' ? v : (tasaFacturaNum > 0 ? v * tasaFacturaNum : v)
+    return Math.abs(toBS(l.costo_input) - toBS(l.costo_actual)) > 0.001
   }
 
   /** True si algún nivel de precio está violado (nuevo costo supera su PVP). */
