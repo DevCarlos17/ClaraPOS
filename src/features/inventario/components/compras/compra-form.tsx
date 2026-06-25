@@ -764,13 +764,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
     setLineas((prev) =>
       prev.map((l) => {
-        // costo_actual y pvp_input: redondear a 2 decimales (precision del sistema).
-        const convertRounded = (val: number) =>
-          newMoneda === 'BS'
-            ? Number((val * tasaFacturaNum).toFixed(2))
-            : Number((val / tasaFacturaNum).toFixed(2))
+        // costo_actual: reconstruir desde la fuente de verdad (costo_usd_actual)
+        // ajustado por el factor de unidad, NO convirtiendo l.costo_actual.
+        // Razón: convertir el valor display con toFixed(2) pierde precisión en ida-vuelta.
+        // Ej: Bs 6 → /500 → toFixed(2) = 0.01 → ×500 = Bs 5 (debería ser Bs 6).
+        const costoUsdBase = parseFloat(l.costo_usd_actual) || 0
+        const costoUsdConFactor = costoUsdBase * l.factor
+        const newCostoActual = newMoneda === 'BS'
+          ? Number((costoUsdConFactor * tasaFacturaNum).toFixed(2))
+          : costoUsdConFactor  // Sin redondear en USD para preservar precisión en futura conversión a BS
 
-        const newCostoActual = convertRounded(l.costo_actual)
         let newNuevoCostoRaw = l.nuevo_costo_raw
         let newCostoInput = newCostoActual
         if (l.nuevo_costo_raw !== '') {
@@ -784,6 +787,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
           newNuevoCostoRaw = String(converted)
           newCostoInput = converted
         }
+
+        // pvp_input: redondear a 2 decimales (estos valores no tienen problema de precisión)
+        const convertRounded = (val: number) =>
+          newMoneda === 'BS'
+            ? Number((val * tasaFacturaNum).toFixed(2))
+            : Number((val / tasaFacturaNum).toFixed(2))
 
         // Convertir pvp_input de cada nivel (están en moneda display)
         const newPvpNiveles = l.pvp_niveles.map((n) => ({
