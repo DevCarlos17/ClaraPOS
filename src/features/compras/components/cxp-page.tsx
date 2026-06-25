@@ -21,6 +21,7 @@ import {
 import { PagoCxPModal } from './pago-cxp-modal'
 import { PagoGastoCxpModal } from './pago-gasto-cxp-modal'
 import { FacturaProveedorModal } from './factura-proveedor-modal'
+import Decimal from 'decimal.js'
 import { formatUsd } from '@/lib/currency'
 
 // ─── Sort ─────────────────────────────────────────────────────
@@ -77,7 +78,10 @@ function printReporteProveedor(
     )
     .join('')
 
-  const totalPend = facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0)
+  const totalPend = facturas.reduce(
+    (s, f) => s.plus(new Decimal(f.saldo_pend_usd || '0')),
+    new Decimal(0)
+  ).toNumber()
 
   const html = `<!DOCTYPE html>
 <html lang="es">
@@ -295,7 +299,7 @@ function DetallePanel({
                     Total facturas pendientes
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
-                    {formatUsd(facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0))}
+                    {formatUsd(facturas.reduce((s, f) => s.plus(new Decimal(f.saldo_pend_usd || '0')), new Decimal(0)).toNumber())}
                   </td>
                   <td />
                 </tr>
@@ -379,7 +383,7 @@ function DetallePanel({
                         Total gastos pendientes
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
-                        {formatUsd(gastosPendientes.reduce((s, g) => s + parseFloat(g.saldo_pendiente_usd), 0))}
+                        {formatUsd(gastosPendientes.reduce((s, g) => s.plus(new Decimal(g.saldo_pendiente_usd || '0')), new Decimal(0)).toNumber())}
                       </td>
                       <td />
                     </tr>
@@ -430,9 +434,9 @@ export function CxpPage() {
 
   // KPIs globales derivados de la lista de proveedores
   const deudaTotal = proveedores.reduce(
-    (sum, p) => sum + parseFloat(p.saldo_actual),
-    0
-  )
+    (sum, p) => sum.plus(new Decimal(p.saldo_actual || '0')),
+    new Decimal(0)
+  ).toNumber()
   const nroProveedores = proveedores.length
   const proveedorMayorDeuda = proveedores.length > 0
     ? [...proveedores].sort((a, b) => parseFloat(b.saldo_actual) - parseFloat(a.saldo_actual))[0]

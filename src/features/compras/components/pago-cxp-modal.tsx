@@ -12,6 +12,7 @@ import { registrarPagoCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import Decimal from 'decimal.js'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
@@ -89,7 +90,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
 
   // USD a tasa interna (para contabilidad, solo en pagos BS)
   const montoUsdInterno = moneda === 'BS' && tasaInternaNum > 0
-    ? montoNum / tasaInternaNum
+    ? bsToUsd(montoNum, tasaInternaNum).toNumber()
     : null
 
   const excedeSaldo = montoUsd > saldoPend + 0.01
@@ -242,7 +243,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
                 {' ('}
                 {tasaPagoNum > tasaBcvParaDiferencial ? 'perdida' : 'ganancia'}
                 {' Bs '}
-                {formatBs(Math.abs(saldoPend * (tasaPagoNum - tasaBcvParaDiferencial)))}
+                {formatBs(new Decimal(saldoPend).times(new Decimal(tasaPagoNum).minus(new Decimal(tasaBcvParaDiferencial))).abs())}
                 {' aproximado)'}
               </p>
             )}

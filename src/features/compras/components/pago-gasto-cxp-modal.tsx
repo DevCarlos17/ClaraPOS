@@ -88,7 +88,7 @@ export function PagoGastoCxpModal({
   const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum).toNumber() : montoNum
 
   const montoUsdInterno = moneda === 'BS' && tasaInternaNum > 0
-    ? montoNum / tasaInternaNum
+    ? bsToUsd(montoNum, tasaInternaNum).toNumber()
     : null
 
   const excedeSaldo = montoUsd > saldoPend + 0.01

@@ -2,6 +2,8 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
+import { toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosGasto, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
@@ -153,31 +155,33 @@ export async function crearGasto(data: {
     const monedaId = (monedaResult.rows?.item(0) as { id: string } | undefined)?.id
     if (!monedaId) throw new Error(`Moneda no encontrada: ${data.moneda_id}`)
 
-    // Calcular desglose IVA en USD
+    // Calcular desglose IVA en USD con Decimal.js para evitar errores de punto flotante
     // monto_factura = BASE (antes de IVA) en moneda_factura
     // base_imponible_usd = base convertida a USD
     // monto_iva_usd = base_usd × (pct / 100)
     // monto_usd (total) = base_usd + iva_usd
-    const baseFacturaEnUsd = (() => {
-      if (data.moneda_factura === 'USD') return data.monto_factura
+    const baseFacturaEnUsd: Decimal = (() => {
+      if (data.moneda_factura === 'USD') return new Decimal(data.monto_factura)
       const tasaRef = data.usa_tasa_paralela && data.tasa_proveedor
         ? data.tasa_proveedor
         : data.tasa
-      return tasaRef > 0 ? Number((data.monto_factura / tasaRef).toFixed(2)) : data.monto_usd
+      return tasaRef > 0
+        ? new Decimal(data.monto_factura).dividedBy(new Decimal(tasaRef))
+        : new Decimal(data.monto_usd)
     })()
-    const baseImponibleUsd = Number(baseFacturaEnUsd.toFixed(2))
-    const montoIvaUsd = data.tipo_impuesto === 'Gravable'
-      ? Number((baseImponibleUsd * (data.porcentaje_iva / 100)).toFixed(2))
-      : 0
+    const baseImponibleUsd: Decimal = baseFacturaEnUsd
+    const montoIvaUsd: Decimal = data.tipo_impuesto === 'Gravable'
+      ? baseImponibleUsd.times(new Decimal(data.porcentaje_iva).dividedBy(100))
+      : new Decimal(0)
     // monto_usd recibido desde el form ya incluye IVA; si no coincide usamos el calculado
-    const totalUsd = Number((baseImponibleUsd + montoIvaUsd).toFixed(2))
+    const totalUsd: Decimal = baseImponibleUsd.plus(montoIvaUsd)
 
-    // Perspectiva proveedor (para CxP): usa totalUsd (base + IVA)
-    const montoProveedorUsd = totalUsd
-
-    // Saldo pendiente = perspectiva proveedor - sum de abonos al tipo proveedor
-    const totalAbonadoProveedorUsd = data.pagos.reduce((s, p) => s + p.monto_usd, 0)
-    const saldoPendiente = Number(Math.max(0, montoProveedorUsd - totalAbonadoProveedorUsd).toFixed(2))
+    // Saldo pendiente = total (base + IVA) - sum de abonos al tipo proveedor
+    const totalAbonadoProveedorUsd: Decimal = data.pagos.reduce(
+      (s, p) => s.plus(new Decimal(p.monto_usd)),
+      new Decimal(0)
+    )
+    const saldoPendiente: Decimal = Decimal.max(new Decimal(0), totalUsd.minus(totalAbonadoProveedorUsd))
 
     // Generar nro_gasto secuencial por empresa (formato GTO-XXXX)
     const countResult = await tx.execute(
@@ -221,10 +225,10 @@ export async function crearGasto(data: {
         data.tipo_impuesto,
         data.porcentaje_iva.toFixed(2),
         data.monto_factura.toFixed(2),
-        baseImponibleUsd.toFixed(2),
-        montoIvaUsd.toFixed(2),
-        totalUsd.toFixed(2),
-        saldoPendiente.toFixed(2),
+        toStorageString(baseImponibleUsd),
+        toStorageString(montoIvaUsd),
+        toStorageString(totalUsd),
+        toStorageString(saldoPendiente),
         primerPago?.metodo_cobro_id ?? null,
         primerPago?.banco_empresa_id ?? null,
         primerPago?.referencia ?? null,
@@ -249,7 +253,7 @@ export async function crearGasto(data: {
           gastoId,
           pago.metodo_cobro_id,
           pago.banco_empresa_id ?? null,
-          pago.monto_usd.toFixed(2),
+          toStorageString(pago.monto_usd),
           pago.referencia ?? null,
           now,
         ]
@@ -267,14 +271,14 @@ export async function crearGasto(data: {
              as saldo`,
           [data.proveedor_id, data.empresa_id, data.proveedor_id, data.empresa_id]
         )
-        const saldoPostGasto = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+        const saldoPostGasto = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
         // Reconstruir el saldo ANTES de los abonos: saldoPostGasto ya tiene saldo_pendiente reducido
         // saldoAntes = saldoPostGasto + totalAbonado (restauramos los pagos para el audit trail)
-        let saldoRunning = Number((saldoPostGasto + totalAbonadoProveedorUsd).toFixed(2))
+        let saldoRunning: Decimal = saldoPostGasto.plus(totalAbonadoProveedorUsd)
 
         for (const pago of data.pagos) {
-          const saldoAntes = saldoRunning
-          const nuevoSaldo = Math.max(0, Number((saldoRunning - pago.monto_usd).toFixed(2)))
+          const saldoAntes: Decimal = saldoRunning
+          const nuevoSaldo: Decimal = Decimal.max(new Decimal(0), saldoRunning.minus(new Decimal(pago.monto_usd)))
           saldoRunning = nuevoSaldo
 
           await tx.execute(
@@ -287,15 +291,15 @@ export async function crearGasto(data: {
             [
               uuidv4(), data.empresa_id, data.proveedor_id,
               `PAG-${nroGasto}`,
-              pago.monto_usd.toFixed(2),
-              saldoAntes.toFixed(2),
-              nuevoSaldo.toFixed(2),
+              toStorageString(pago.monto_usd),
+              toStorageString(saldoAntes),
+              toStorageString(nuevoSaldo),
               `Pago inicial gasto ${nroGasto}`,
               gastoId,
               pago.moneda,
-              pago.monto_moneda.toFixed(2),
+              toStorageString(pago.monto_moneda),
               pago.tasa_pago.toFixed(4),
-              pago.monto_usd_interno.toFixed(2),
+              toStorageString(pago.monto_usd_interno),
               now, now, data.created_by ?? null,
             ]
           )
@@ -317,7 +321,7 @@ export async function crearGasto(data: {
              VALUES (?, ?, ?, 'EGRESO', 'GASTO', ?, 0, 0, ?, 'GASTO', ?, 0, ?, ?, ?, ?)`,
             [
               movBancoId, data.empresa_id, pago.banco_empresa_id,
-              pago.monto_usd.toFixed(2),
+              toStorageString(pago.monto_usd),
               gastoId,
               pago.referencia ?? null,
               `Gasto ${nroGasto}`,
@@ -341,7 +345,7 @@ export async function crearGasto(data: {
         gastoId,
         nroGasto,
         cuentaGastoId: data.cuenta_id,
-        monto_usd: totalUsd,
+        monto_usd: totalUsd.toNumber(),
         pagos: data.pagos.map((p) => ({
           monto_usd: p.monto_usd,
           monto_usd_interno: p.monto_usd_interno,
@@ -351,7 +355,7 @@ export async function crearGasto(data: {
         usuarioId: data.created_by ?? '',
         monedaContable,
         tasa: data.tasa,
-        saldoPendienteProveedorUsd: saldoPendiente,
+        saldoPendienteProveedorUsd: saldoPendiente.toNumber(),
       })
     } catch {
       // Si falla la contabilidad no bloqueamos el gasto
@@ -536,19 +540,23 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
     const gasto = gastoResult.rows.item(0) as {
       nro_gasto: string; nro_factura: string | null; saldo_pendiente_usd: string; tasa: string
     }
-    const saldoGasto = parseFloat(gasto.saldo_pendiente_usd)
+    const saldoGasto = new Decimal(gasto.saldo_pendiente_usd || '0')
 
-    const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+    const montoUsd: Decimal = moneda === 'BS'
+      ? new Decimal(monto).dividedBy(new Decimal(tasa))
+      : new Decimal(monto)
 
-    let montoUsdInterno: number
+    let montoUsdInterno: Decimal
     if (moneda === 'BS') {
       const tasaInt = tasaInternaPago ?? parseFloat(gasto.tasa) ?? tasa
-      montoUsdInterno = tasaInt > 0 ? Number((monto / tasaInt).toFixed(2)) : montoUsd
+      montoUsdInterno = tasaInt > 0
+        ? new Decimal(monto).dividedBy(new Decimal(tasaInt))
+        : montoUsd
     } else {
       montoUsdInterno = montoUsd
     }
 
-    if (montoUsd > saldoGasto + 0.01) {
+    if (montoUsd.greaterThan(saldoGasto.plus(new Decimal('0.01')))) {
       throw new Error(
         `El pago ($${montoUsd.toFixed(2)}) excede el saldo pendiente ($${saldoGasto.toFixed(2)}) del gasto ${gasto.nro_gasto}`
       )
@@ -562,13 +570,13 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
          as saldo`,
       [proveedor_id, empresa_id, proveedor_id, empresa_id]
     )
-    const saldoProv = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
-    const nuevoSaldoProv = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
+    const saldoProv = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
+    const nuevoSaldoProv: Decimal = Decimal.max(new Decimal(0), saldoProv.minus(montoUsd))
 
-    const nuevoSaldoGasto = Math.max(0, Number((saldoGasto - montoUsd).toFixed(2)))
+    const nuevoSaldoGasto: Decimal = Decimal.max(new Decimal(0), saldoGasto.minus(montoUsd))
     await tx.execute(
       'UPDATE gastos SET saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
-      [nuevoSaldoGasto.toFixed(2), now, gasto_id]
+      [toStorageString(nuevoSaldoGasto), now, gasto_id]
     )
 
     const cntResult = await tx.execute(
@@ -590,22 +598,22 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
       [
         movId, empresa_id, proveedor_id,
         ref,
-        montoUsd.toFixed(2),
-        saldoProv.toFixed(2),
-        nuevoSaldoProv.toFixed(2),
+        toStorageString(montoUsd),
+        toStorageString(saldoProv),
+        toStorageString(nuevoSaldoProv),
         `Pago gasto ${gasto.nro_gasto}${gasto.nro_factura ? ` - Fact. ${gasto.nro_factura}` : ''}`,
         gasto_id,
         moneda,
-        monto.toFixed(2),
+        toStorageString(monto),
         tasa.toFixed(4),
-        montoUsdInterno.toFixed(2),
+        toStorageString(montoUsdInterno),
         fechaPago,
         now, usuario_id,
       ]
     )
 
     try {
-      if (banco_empresa_id && montoUsd > 0) {
+      if (banco_empresa_id && montoUsd.greaterThan(0)) {
         const movBancoId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_bancarios
@@ -614,7 +622,7 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
            VALUES (?, ?, ?, 'EGRESO', 'PAGO_GASTO', ?, 0, 0, ?, 'GASTO', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoId, empresa_id, banco_empresa_id,
-            montoUsd.toFixed(2),
+            toStorageString(montoUsd),
             gasto_id,
             referencia ?? null,
             `Pago gasto ${gasto.nro_gasto}`,
@@ -647,7 +655,7 @@ export async function reversarPagoGasto(params: ReversarPagoGastoParams): Promis
     if (!abonoResult.rows?.length) throw new Error('Abono no encontrado')
     const abono = abonoResult.rows.item(0) as { monto: string; tipo: string; referencia: string }
     if (abono.tipo !== 'PAG') throw new Error('Solo se pueden reversar movimientos de tipo PAG')
-    const montoAbono = parseFloat(abono.monto)
+    const montoAbono = new Decimal(abono.monto || '0')
 
     const gastoResult = await tx.execute(
       'SELECT nro_gasto, saldo_pendiente_usd, monto_usd FROM gastos WHERE id = ? AND empresa_id = ?',
@@ -655,8 +663,8 @@ export async function reversarPagoGasto(params: ReversarPagoGastoParams): Promis
     )
     if (!gastoResult.rows?.length) throw new Error('Gasto no encontrado')
     const gasto = gastoResult.rows.item(0) as { nro_gasto: string; saldo_pendiente_usd: string; monto_usd: string }
-    const saldoGasto = parseFloat(gasto.saldo_pendiente_usd)
-    const totalUsd = parseFloat(gasto.monto_usd)
+    const saldoGasto = new Decimal(gasto.saldo_pendiente_usd || '0')
+    const totalUsd = new Decimal(gasto.monto_usd || '0')
 
     const sumResult = await tx.execute(
       `SELECT
@@ -665,15 +673,15 @@ export async function reversarPagoGasto(params: ReversarPagoGastoParams): Promis
          as saldo`,
       [proveedorId, empresaId, proveedorId, empresaId]
     )
-    const saldoProvAnterior = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+    const saldoProvAnterior = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
 
-    const nuevoSaldoGasto = Math.min(totalUsd, Number((saldoGasto + montoAbono).toFixed(2)))
+    const nuevoSaldoGasto: Decimal = Decimal.min(totalUsd, saldoGasto.plus(montoAbono))
     await tx.execute(
       'UPDATE gastos SET saldo_pendiente_usd = ?, updated_at = ? WHERE id = ?',
-      [nuevoSaldoGasto.toFixed(2), now, gastoId]
+      [toStorageString(nuevoSaldoGasto), now, gastoId]
     )
 
-    const nuevoSaldoProv = Number((saldoProvAnterior + montoAbono).toFixed(2))
+    const nuevoSaldoProv: Decimal = saldoProvAnterior.plus(montoAbono)
     await tx.execute(
       `INSERT INTO movimientos_cuenta_proveedor
          (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
@@ -682,9 +690,9 @@ export async function reversarPagoGasto(params: ReversarPagoGastoParams): Promis
       [
         uuidv4(), empresaId, proveedorId,
         `DEV-${abono.referencia}`,
-        montoAbono.toFixed(2),
-        saldoProvAnterior.toFixed(2),
-        nuevoSaldoProv.toFixed(2),
+        toStorageString(montoAbono),
+        toStorageString(saldoProvAnterior),
+        toStorageString(nuevoSaldoProv),
         `Reversa de abono ${abono.referencia} - Gasto ${gasto.nro_gasto}`,
         gastoId,
         now, now, usuarioId,
