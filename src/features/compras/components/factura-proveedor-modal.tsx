@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import Decimal from 'decimal.js'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -200,33 +201,50 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
 
   const amounts = useMemo(() => {
     if (tipo === 'COMPRA' && compra) {
-      const tasaFactura = parseFloat(compra.tasa)
-      const tasaInterna = compra.tasa_costo ? parseFloat(compra.tasa_costo) : tasaFactura
+      const tasaFactura = new Decimal(compra.tasa || '0')
+      const tasaInterna = compra.tasa_costo ? new Decimal(compra.tasa_costo) : tasaFactura
       const usaParalela = Boolean(
-        compra.tasa_costo && Math.abs(tasaFactura - parseFloat(compra.tasa_costo)) > 0.001
+        compra.tasa_costo &&
+        tasaFactura.minus(new Decimal(compra.tasa_costo)).abs().greaterThan(new Decimal('0.001'))
       )
-      const totalProveedorUsd = parseFloat(compra.total_usd)
-      const totalBs = parseFloat(compra.total_bs)
-      const totalContableUsd = usaParalela && tasaInterna > 0
-        ? totalBs / tasaInterna
+      const totalProveedorUsd = new Decimal(compra.total_usd || '0')
+      const totalBs = new Decimal(compra.total_bs || '0')
+      const totalContableUsd: Decimal = usaParalela && tasaInterna.greaterThan(0)
+        ? totalBs.dividedBy(tasaInterna)
         : totalProveedorUsd
-      const saldo = parseFloat(compra.saldo_pend_usd)
-      return { tasaFactura, tasaInterna, usaParalela, totalProveedorUsd, totalContableUsd, totalBs, saldo }
+      const saldo = new Decimal(compra.saldo_pend_usd || '0')
+      return {
+        tasaFactura: tasaFactura.toNumber(),
+        tasaInterna: tasaInterna.toNumber(),
+        usaParalela,
+        totalProveedorUsd: totalProveedorUsd.toNumber(),
+        totalContableUsd: totalContableUsd.toNumber(),
+        totalBs: totalBs.toNumber(),
+        saldo: saldo.toNumber(),
+      }
     }
     if (tipo === 'GASTO' && gasto) {
-      const tasaInterna = parseFloat(gasto.tasa)
-      const tasaFactura = gasto.tasa_proveedor ? parseFloat(gasto.tasa_proveedor) : tasaInterna
+      const tasaInterna = new Decimal(gasto.tasa || '0')
+      const tasaFactura = gasto.tasa_proveedor ? new Decimal(gasto.tasa_proveedor) : tasaInterna
       const usaParalela = gasto.usa_tasa_paralela === 1 && Boolean(gasto.tasa_proveedor)
-      const montoFactura = parseFloat(gasto.monto_factura)
-      const totalContableUsd = parseFloat(gasto.monto_usd)
-      const totalBs = totalContableUsd * tasaValor
-      const totalProveedorUsd = (() => {
+      const montoFactura = new Decimal(gasto.monto_factura || '0')
+      const totalContableUsd = new Decimal(gasto.monto_usd || '0')
+      const totalBs: Decimal = totalContableUsd.times(tasaValor)
+      const totalProveedorUsd: Decimal = (() => {
         if (gasto.moneda_factura === 'USD') return montoFactura
-        const tasaRef = usaParalela && tasaFactura > 0 ? tasaFactura : tasaInterna
-        return tasaRef > 0 ? montoFactura / tasaRef : totalContableUsd
+        const tasaRef = usaParalela && tasaFactura.greaterThan(0) ? tasaFactura : tasaInterna
+        return tasaRef.greaterThan(0) ? montoFactura.dividedBy(tasaRef) : totalContableUsd
       })()
-      const saldo = parseFloat(gasto.saldo_pendiente_usd)
-      return { tasaFactura, tasaInterna, usaParalela, totalProveedorUsd, totalContableUsd, totalBs, saldo }
+      const saldo = new Decimal(gasto.saldo_pendiente_usd || '0')
+      return {
+        tasaFactura: tasaFactura.toNumber(),
+        tasaInterna: tasaInterna.toNumber(),
+        usaParalela,
+        totalProveedorUsd: totalProveedorUsd.toNumber(),
+        totalContableUsd: totalContableUsd.toNumber(),
+        totalBs: totalBs.toNumber(),
+        saldo: saldo.toNumber(),
+      }
     }
     return null
   }, [tipo, compra, gasto, tasaValor])
@@ -534,8 +552,8 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         </thead>
                         <tbody className="divide-y divide-border">
                           {detalle.map((d) => {
-                            const cant = parseFloat(d.cantidad)
-                            const costo = parseFloat(d.costo_unitario_usd)
+                            const cant = new Decimal(d.cantidad || '0')
+                            const costo = new Decimal(d.costo_unitario_usd || '0')
                             return (
                               <tr key={d.id}>
                                 <td className="px-3 py-1.5">
@@ -549,10 +567,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                                   {cant.toFixed(2)}
                                 </td>
                                 <td className="px-3 py-1.5 text-right tabular-nums">
-                                  {formatUsd(costo)}
+                                  {formatUsd(costo.toNumber())}
                                 </td>
                                 <td className="px-3 py-1.5 text-right tabular-nums font-medium">
-                                  {formatUsd(cant * costo)}
+                                  {formatUsd(cant.times(costo).toNumber())}
                                 </td>
                               </tr>
                             )
@@ -728,25 +746,26 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                                 {a.referencia ?? '—'}
                               </td>
                               <td className="px-3 py-1.5 text-right">
-                                <div className="font-medium tabular-nums">
-                                  {a.tipo === 'PAG' ? '+' : '-'}
-                                  {formatUsd(parseFloat(a.monto))}
-                                </div>
-                                {esBs && (
-                                  <div className="text-muted-foreground text-[10px] leading-tight">
-                                    {formatBs(parseFloat(a.monto_moneda!))} @{' '}
-                                    {parseFloat(a.tasa_pago!).toFixed(2)}
-                                    {a.monto_usd_interno &&
-                                      Math.abs(
-                                        parseFloat(a.monto_usd_interno) - parseFloat(a.monto)
-                                      ) > 0.005 && (
-                                        <span className="text-slate-400 ml-1">
-                                          / {formatUsd(parseFloat(a.monto_usd_interno))} int.
-                                        </span>
-                                      )}
-                                  </div>
-                                )}
-                              </td>
+                                 <div className="font-medium tabular-nums">
+                                   {a.tipo === 'PAG' ? '+' : '-'}
+                                   {formatUsd(new Decimal(a.monto || '0').toNumber())}
+                                 </div>
+                                 {esBs && (
+                                   <div className="text-muted-foreground text-[10px] leading-tight">
+                                     {formatBs(new Decimal(a.monto_moneda || '0').toNumber())} @{' '}
+                                     {new Decimal(a.tasa_pago || '0').toFixed(2)}
+                                     {a.monto_usd_interno &&
+                                       new Decimal(a.monto_usd_interno || '0')
+                                         .minus(new Decimal(a.monto || '0'))
+                                         .abs()
+                                         .greaterThan(new Decimal('0.005')) && (
+                                         <span className="text-slate-400 ml-1">
+                                           / {formatUsd(new Decimal(a.monto_usd_interno || '0').toNumber())} int.
+                                         </span>
+                                       )}
+                                   </div>
+                                 )}
+                               </td>
                               {puedeReversarAbono && (
                                 <td className="px-3 py-1.5 text-center">
                                   {a.tipo === 'PAG' && !esReversado ? (
