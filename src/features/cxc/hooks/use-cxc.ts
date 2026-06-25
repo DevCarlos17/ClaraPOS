@@ -619,6 +619,11 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     const now = localNow()
     const tasaD = new Decimal(tasa)
 
+    // Minimum processable amount: $1e-8 USD.
+    // Supports micro-payments like Bs 0.01 at tasa 500 ($0.00002) or even at tasa 100,000 ($1e-7).
+    // Old threshold was $0.01, which silently skipped any Bs payment < Bs 5 at tasa 500.
+    const FIFO_EPSILON = new Decimal('0.00000001')
+
     // SAF pre-step: apply SAF credit before FIFO distribution
     if (params.aplicarSaf && params.montoSaf && params.montoSaf > 0) {
       const montoSaf = new Decimal(params.montoSaf)
@@ -670,7 +675,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       )
       let montoSafRestante = montoSaf
       if (facturasSafRes.rows) {
-        for (let i = 0; i < facturasSafRes.rows.length && montoSafRestante.gt(new Decimal('0.01')); i++) {
+        for (let i = 0; i < facturasSafRes.rows.length && montoSafRestante.gt(FIFO_EPSILON); i++) {
           const fSaf = facturasSafRes.rows.item(i) as { id: string; nro_factura: string; saldo_pend_usd: string }
           const saldoFSaf = new Decimal(fSaf.saldo_pend_usd || '0')
           const aplicarSaf = Decimal.min(saldoFSaf, montoSafRestante)
@@ -721,7 +726,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
     // 3. Cascada FIFO
     if (facturasResult.rows) {
-      for (let i = 0; i < facturasResult.rows.length && montoRestante.gt(new Decimal('0.01')); i++) {
+      for (let i = 0; i < facturasResult.rows.length && montoRestante.gt(FIFO_EPSILON); i++) {
         const factura = facturasResult.rows.item(i) as {
           id: string
           nro_factura: string
@@ -771,7 +776,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           [factura.id, empresa_id]
         )
         let montoRestanteVenc = montoAplicar
-        for (let j = 0; j < (vencFifoResult.rows?.length ?? 0) && montoRestanteVenc.gt(new Decimal('0.005')); j++) {
+        for (let j = 0; j < (vencFifoResult.rows?.length ?? 0) && montoRestanteVenc.gt(FIFO_EPSILON); j++) {
           const vc = vencFifoResult.rows!.item(j) as {
             id: string; saldo_pendiente_usd: string; monto_pagado_usd: string
           }

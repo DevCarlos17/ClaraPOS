@@ -126,7 +126,7 @@ export function AbonoGlobalModal({
     let restante = montoEfectivo
     const result: { nro_factura: string; saldo: number; aplicar: number }[] = []
     for (const f of facturas) {
-      if (restante <= 0.01) break
+      if (restante <= 1e-8) break  // same epsilon as registrarAbonoGlobal
       const saldo = parseFloat(f.saldo_pend_usd)
       const aplicar = Math.min(saldo, restante)
       result.push({ nro_factura: f.nro_factura, saldo, aplicar })
