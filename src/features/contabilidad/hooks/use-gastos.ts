@@ -224,7 +224,7 @@ export async function crearGasto(data: {
         data.tasa_proveedor ? data.tasa_proveedor.toFixed(4) : null,
         data.tipo_impuesto,
         data.porcentaje_iva.toFixed(2),
-        data.monto_factura.toFixed(2),
+        toStorageString(new Decimal(data.monto_factura)),
         toStorageString(baseImponibleUsd),
         toStorageString(montoIvaUsd),
         toStorageString(totalUsd),
@@ -548,9 +548,11 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
 
     let montoUsdInterno: Decimal
     if (moneda === 'BS') {
-      const tasaInt = tasaInternaPago ?? parseFloat(gasto.tasa) ?? tasa
-      montoUsdInterno = tasaInt > 0
-        ? new Decimal(monto).dividedBy(new Decimal(tasaInt))
+      const tasaIntDecimal = tasaInternaPago
+        ? new Decimal(tasaInternaPago)
+        : new Decimal(gasto.tasa || '0')
+      montoUsdInterno = tasaIntDecimal.greaterThan(0)
+        ? new Decimal(monto).dividedBy(tasaIntDecimal)
         : montoUsd
     } else {
       montoUsdInterno = montoUsd
