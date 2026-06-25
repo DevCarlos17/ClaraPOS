@@ -1224,6 +1224,11 @@ export interface AbonoPrestamo {
   metodo_nombre: string
   fecha: string
   created_by: string | null
+  /** Monto en Bs al tipo de cambio del MOMENTO del registro (no la tasa actual).
+   *  Para pagos: monto_usd * tasa_pago.
+   *  Para mmc (standalone): monto_usd * tasa histórica de la fecha del movimiento.
+   *  Nunca revaluar abonos históricos con la tasa vigente. */
+  monto_bs_historico: string | null
 }
 
 /**
@@ -1248,7 +1253,8 @@ export function useHistorialPrestamo(
                '' as saldo_anterior, '' as saldo_nuevo,
                COALESCE(p.referencia, 'Pago registrado') as concepto,
                p.fecha, p.created_by,
-               mc.nombre as metodo_nombre
+               mc.nombre as metodo_nombre,
+               CAST(CAST(p.monto_usd AS REAL) * CAST(p.tasa AS REAL) AS TEXT) as monto_bs_historico
          FROM pagos p
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          WHERE p.venta_id = ? AND (p.is_reversed IS NULL OR p.is_reversed = 0)
@@ -1256,7 +1262,13 @@ export function useHistorialPrestamo(
       : vencimientoId
         ? `SELECT mmc.id, mmc.monto, mmc.saldo_anterior, mmc.saldo_nuevo,
                  mmc.concepto, mmc.fecha, mmc.created_by,
-                 mc.nombre as metodo_nombre
+                 mc.nombre as metodo_nombre,
+                 CAST(CAST(mmc.monto AS REAL) * COALESCE(
+                   (SELECT CAST(tc.valor AS REAL) FROM tasas_cambio tc
+                    WHERE DATE(tc.fecha) <= DATE(mmc.fecha)
+                    ORDER BY tc.fecha DESC, tc.created_at DESC LIMIT 1),
+                   1.0
+                 ) AS TEXT) as monto_bs_historico
            FROM movimientos_metodo_cobro mmc
            JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
            WHERE mmc.doc_origen_id = ? AND mmc.origen = 'COBRO_PRESTAMO'

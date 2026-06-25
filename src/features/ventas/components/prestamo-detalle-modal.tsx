@@ -274,7 +274,9 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
                             {formatUsd(monto)}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-green-600/80">
-                            {tasa > 0 ? formatBs(usdToBs(monto, tasa)) : '—'}
+                            {a.monto_bs_historico
+                              ? formatBs(parseFloat(a.monto_bs_historico))
+                              : '—'}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
                             {saldoAntes > 0 ? formatUsd(saldoAntes) : '—'}
@@ -299,7 +301,9 @@ export function PrestamoDetalleModal({ isOpen, onClose, prestamo }: PrestamoDeta
                           {formatUsd(historial.reduce((s, a) => s + parseFloat(a.monto), 0))}
                         </td>
                         <td className="px-3 py-2 text-right font-bold text-green-600/80 tabular-nums">
-                          {tasa > 0 ? formatBs(usdToBs(historial.reduce((s, a) => s + parseFloat(a.monto), 0), tasa)) : '—'}
+                          {historial.some((a) => a.monto_bs_historico)
+                            ? formatBs(historial.reduce((s, a) => s + parseFloat(a.monto_bs_historico ?? '0'), 0))
+                            : '—'}
                         </td>
                         <td colSpan={2} />
                       </tr>
