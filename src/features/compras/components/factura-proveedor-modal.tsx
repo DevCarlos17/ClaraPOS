@@ -252,16 +252,16 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   // ─── Totales abonados ─────────────────────────────────────
 
   const { totalAbonadoProveedor, totalAbonadoContable } = useMemo(() => {
-    let prov = 0
-    let cont = 0
+    let prov = new Decimal(0)
+    let cont = new Decimal(0)
     for (const a of abonos) {
       if (a.tipo !== 'PAG') continue
       if (reversedPagRefs.has(a.referencia ?? '')) continue
-      const m = parseFloat(a.monto)
-      prov += m
-      cont += a.monto_usd_interno ? parseFloat(a.monto_usd_interno) : m
+      const m = new Decimal(a.monto || '0')
+      prov = prov.plus(m)
+      cont = cont.plus(a.monto_usd_interno ? new Decimal(a.monto_usd_interno) : m)
     }
-    return { totalAbonadoProveedor: prov, totalAbonadoContable: cont }
+    return { totalAbonadoProveedor: prov.toNumber(), totalAbonadoContable: cont.toNumber() }
   }, [abonos, reversedPagRefs])
 
   // ─── Acciones ─────────────────────────────────────────────
