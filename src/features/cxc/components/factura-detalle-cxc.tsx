@@ -22,10 +22,12 @@ import {
   useCargosEspecialesVenta,
   useVencimientosVenta,
   registrarReversoAbono,
+  registrarDiferencialCxC,
   type VentaPendiente,
   type PagoFacturaCxc,
   type VencimientoVenta,
 } from '../hooks/use-cxc'
+import Decimal from 'decimal.js'
 import { PagoFacturaModal } from './pago-factura-modal'
 
 // ─── Tipos internos ───────────────────────────────────────────
@@ -216,6 +218,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const [supervisorId, setSupervisorId] = useState<string | null>(null)
   const [reversing, setReversing] = useState(false)
   const [pagoOpen, setPagoOpen] = useState(false)
+  const [aplicandoDiferencial, setAplicandoDiferencial] = useState(false)
 
   if (!factura) return null
 
@@ -229,6 +232,30 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
     .reduce((sum, p) => sum + parseFloat(p.monto_usd), 0)
 
   const esAnulada = extra?.status === 'ANULADA' || extra?.status === 'REVERSADA'
+
+  // ─── Diferencial cambiario ───────────────────────────────
+
+  async function handleDiferencialCambiario() {
+    if (!user?.empresa_id || !user.id) return
+    // Usar la tasa de la factura como referencia para el equivalente Bs
+    const tasaRef = parseFloat(factura.tasa) || 1
+    setAplicandoDiferencial(true)
+    try {
+      await registrarDiferencialCxC({
+        ventaId: factura.id,
+        clienteId: factura.cliente_id,
+        empresaId: user.empresa_id,
+        procesadoPor: user.id,
+        tasa: tasaRef,
+      })
+      toast.success('Diferencial cambiario registrado. Factura saldada.')
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar diferencial cambiario')
+    } finally {
+      setAplicandoDiferencial(false)
+    }
+  }
 
   // ─── Flujo de reverso ────────────────────────────────────
 
@@ -545,10 +572,23 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                   <span className="font-medium text-green-600">{formatUsd(totalAbonado)}</span>
                 </div>
               )}
-              {saldoPend > 0.005 ? (
+              {saldoPend > 0 ? (
                 <div className="flex justify-between text-sm border-t border-border pt-1.5">
                   <span className="font-medium text-muted-foreground">Saldo Pendiente:</span>
-                  <span className="font-bold text-destructive">{formatUsd(saldoPend)}</span>
+                  <div className="text-right">
+                    {saldoPend < 0.01 ? (
+                      <>
+                        <div className="font-mono text-xs text-amber-600 dark:text-amber-400">
+                          {new Decimal(saldoPend).toFixed(8)} USD
+                        </div>
+                        <div className="font-bold text-destructive text-sm">
+                          {formatBs(new Decimal(saldoPend).times(new Decimal(parseFloat(factura.tasa) || 1)).toNumber())}
+                        </div>
+                      </>
+                    ) : (
+                      <span className="font-bold text-destructive">{formatUsd(saldoPend)}</span>
+                    )}
+                  </div>
                 </div>
               ) : totalAbonado > 0.005 ? (
                 <div className="text-center text-xs text-green-600 font-medium pt-1.5 border-t border-border">
@@ -681,11 +721,24 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
               <Button variant="outline" onClick={onClose}>
                 Cerrar
               </Button>
-              {!esAnulada && (saldoPend > 0.01 || vencimientos.some((v) => parseFloat(v.saldo_pendiente_usd) > 0.01)) && (
-                <Button onClick={() => setPagoOpen(true)}>
-                  Registrar Pago
-                </Button>
-              )}
+              <div className="flex gap-2">
+                {saldoPend > 0 && saldoPend < 0.01 && !esAnulada && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDiferencialCambiario}
+                    disabled={aplicandoDiferencial}
+                    className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+                  >
+                    {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+                  </Button>
+                )}
+                {!esAnulada && (saldoPend > 0 || vencimientos.some((v) => parseFloat(v.saldo_pendiente_usd) > 0.01)) && (
+                  <Button onClick={() => setPagoOpen(true)}>
+                    Registrar Pago
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </DialogContent>

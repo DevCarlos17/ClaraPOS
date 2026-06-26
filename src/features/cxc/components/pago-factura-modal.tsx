@@ -18,10 +18,12 @@ import {
   registrarAbonoPrestamo,
   registrarDiscrepanciaCxC,
   registrarSafExcedente,
+  registrarDiferencialCxC,
   type VentaPendiente,
   type VencimientoVenta,
   type VencimientoPrestamo,
 } from '../hooks/use-cxc'
+import Decimal from 'decimal.js'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
@@ -69,6 +71,8 @@ export function PagoFacturaModal({
   // Tasa interna auto-cargada de la DB para la fecha seleccionada
   const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [microBalance, setMicroBalance] = useState<{ saldoUsd: Decimal; saldoBs: Decimal; tasa: number } | null>(null)
+  const [loadingDiferencial, setLoadingDiferencial] = useState(false)
 
   // Manual SAF application state
   const [usarSaf, setUsarSaf] = useState(false)
@@ -141,7 +145,30 @@ export function PagoFacturaModal({
     setOverpayMode(null)
     setUsarSaf(false)
     setMontoSafStr('')
+    setMicroBalance(null)
+    setLoadingDiferencial(false)
     onClose()
+  }
+
+  async function handleDiferencial() {
+    if (!factura || !user?.empresa_id || !user.id) return
+    setLoadingDiferencial(true)
+    try {
+      await registrarDiferencialCxC({
+        ventaId: factura.id,
+        clienteId,
+        empresaId: user.empresa_id,
+        procesadoPor: user.id,
+        tasa: microBalance?.tasa ?? tasaNum,
+      })
+      toast.success(`Diferencial cambiario registrado. Factura ${factura.nro_factura} saldada.`)
+      onSuccess()
+      handleClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar diferencial cambiario')
+    } finally {
+      setLoadingDiferencial(false)
+    }
   }
 
   if (!factura && defaultDestino !== 'PRESTAMO') return null
@@ -371,6 +398,18 @@ export function PagoFacturaModal({
           if (usarSaf && montoSafNum > 0) labels.push(`SAF ${formatUsd(montoSafNum)}`)
           if (montoMetodo > 0) labels.push(formatUsd(montoUsd))
           toast.success(`Pago registrado a factura ${factura.nro_factura}${labels.length ? ` (${labels.join(' + ')})` : ''}`)
+
+          // Detectar micro-saldo residual sub-centavo
+          const totalAbonado = new Decimal(montoUsd).plus(new Decimal(usarSaf ? montoSafNum : 0))
+          const saldoRestante = new Decimal(saldoEfectivo).minus(totalAbonado)
+          if (saldoRestante.gt(new Decimal('0')) && saldoRestante.lt(new Decimal('0.01'))) {
+            setMicroBalance({
+              saldoUsd: saldoRestante,
+              saldoBs: saldoRestante.times(new Decimal(tasaNum)),
+              tasa: tasaNum,
+            })
+            return  // No cerrar el modal todavía
+          }
         }
       }
       onSuccess()
@@ -389,6 +428,46 @@ export function PagoFacturaModal({
           <DialogTitle>Registrar Pago CxC</DialogTitle>
         </DialogHeader>
 
+        {/* ── Panel de micro-saldo residual post-pago ── */}
+        {microBalance ? (
+          <div className="space-y-4">
+            <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                Pago registrado. Queda un residual sub-centavo:
+              </p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-amber-900 dark:text-amber-100">
+                  {formatBs(microBalance.saldoBs.toNumber())}
+                </span>
+                <span className="text-xs text-amber-600 dark:text-amber-400 font-mono">
+                  = {microBalance.saldoUsd.toFixed(8)} USD @ {microBalance.tasa.toFixed(2)}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Este monto no es cobrable en USD (menor a $0.01).
+              </p>
+            </div>
+            <p className="text-sm font-medium text-foreground">¿Qué hacemos con este residual?</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={handleDiferencial}
+                disabled={loadingDiferencial}
+                className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+              >
+                {loadingDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+              </Button>
+              <Button variant="outline" onClick={() => { onSuccess(); handleClose() }} disabled={loadingDiferencial}>
+                Dejar pendiente en Bs
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              <strong>Diferencial cambiario:</strong> cierra la factura asumiendo la diferencia como pérdida cambiaria.<br />
+              <strong>Dejar pendiente:</strong> la factura queda con {formatBs(microBalance.saldoBs.toNumber())} adeudados, pagables en Bs.
+            </p>
+          </div>
+        ) : (
+        <>
         {/* Selector de destino (solo cuando hay factura Y préstamos activos) */}
         {factura && tienePrestamoActivo && (
           <div className="flex rounded-lg border border-border overflow-hidden text-sm">
@@ -826,6 +905,8 @@ export function PagoFacturaModal({
             </Button>
           </div>
         </form>
+        </>
+        )}
       </DialogContent>
     </Dialog>
   )

@@ -1813,3 +1813,88 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
     ])
   })
 }
+
+// ─── Diferencial cambiario CxC ───────────────────────────────
+
+export interface DiferencialCxCParams {
+  ventaId: string
+  clienteId: string
+  empresaId: string
+  procesadoPor: string
+  tasa: number  // para calcular el equivalente en Bs
+}
+
+/**
+ * Registrar el saldo residual sub-centavo de una factura de venta como
+ * diferencial cambiario. Crea un abono de sistema (sin movimiento bancario)
+ * que cierra la factura y reduce el saldo del cliente.
+ * Solo aplica cuando ventas.saldo_pend_usd > 0 y < $0.01.
+ */
+export async function registrarDiferencialCxC(params: DiferencialCxCParams): Promise<void> {
+  const { ventaId, clienteId, empresaId, procesadoPor, tasa } = params
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // 1. Leer factura
+    const ventaResult = await tx.execute(
+      'SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?',
+      [ventaId, empresaId]
+    )
+    if (!ventaResult.rows?.length) throw new Error('Factura no encontrada')
+    const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+    const saldoUsd = new Decimal(venta.saldo_pend_usd || '0')
+
+    if (saldoUsd.lte(0)) throw new Error('La factura no tiene saldo pendiente')
+    if (saldoUsd.gte(new Decimal('0.01'))) {
+      throw new Error('El diferencial cambiario solo aplica para saldos sub-centavo (< $0.01)')
+    }
+
+    // 2. Leer saldo actual del cliente
+    const clienteResult = await tx.execute(
+      'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+      [clienteId, empresaId]
+    )
+    if (!clienteResult.rows?.length) throw new Error('Cliente no encontrado')
+    const saldoActual = new Decimal(
+      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+    )
+    const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(saldoUsd))
+
+    const dTasa = new Decimal(tasa)
+    const saldoBs = saldoUsd.times(dTasa)
+
+    // 3. Movimiento de cuenta (abono de sistema — sin metodo de cobro real)
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta
+         (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+          observacion, venta_id, fecha, empresa_id, created_at, created_by,
+          moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BS', ?, ?)`,
+      [
+        uuidv4(), clienteId,
+        `DIFE-${venta.nro_factura}`,
+        toStorageString(saldoUsd),
+        toStorageString(saldoActual),
+        toStorageString(saldoNuevo),
+        `Diferencial cambiario - Factura ${venta.nro_factura}`,
+        ventaId, now, empresaId, now, procesadoPor,
+        toStorageString(saldoBs),
+        toStorageString(dTasa),
+      ]
+    )
+
+    // 4. Cerrar la factura
+    await tx.execute(
+      'UPDATE ventas SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
+      [toStorageString(new Decimal(0)), now, ventaId]
+    )
+
+    // 5. Actualizar saldo cliente en SQLite local inmediatamente
+    // (En Supabase el trigger actualizar_saldo_cliente lo gestiona via movimientos_cuenta)
+    await tx.execute(
+      'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+      [toStorageString(saldoNuevo), now, clienteId]
+    )
+  })
+}
