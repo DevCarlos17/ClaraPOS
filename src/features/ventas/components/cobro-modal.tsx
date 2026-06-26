@@ -203,7 +203,7 @@ export function CobroModal({
         setDiscrepancyMode('VUELTO')
       }
     } else if (pendienteBs4.gt('0.01')) {
-      // Faltante: CREDITO por defecto, sin sobreescribir elección activa del cajero
+      // Faltante: sin sobreescribir elección activa del cajero
       if (
         discrepancyMode === null ||
         discrepancyMode === 'VUELTO' ||
@@ -211,7 +211,13 @@ export function CobroModal({
         discrepancyMode === 'PROPINA' ||
         discrepancyMode === 'DIFERENCIAL_SOBRANTE'
       ) {
-        setDiscrepancyMode('CREDITO')
+        // Sub-centavo USD → diferencial cambiario como opción sugerida
+        const faltanteUsd = bsToUsd(pendienteBs4, tasaUsada)
+        if (faltanteUsd.gt(0) && faltanteUsd.lt('0.01')) {
+          setDiscrepancyMode('DIFERENCIAL_FALTANTE')
+        } else {
+          setDiscrepancyMode('CREDITO')
+        }
       }
     } else {
       setDiscrepancyMode(null)
@@ -1000,7 +1006,7 @@ export function CobroModal({
                         : 'bg-white text-foreground border-border hover:bg-muted'
                     }`}
                   >
-                    <span>Faltante de caja</span>
+                    <span>Diferencial cambiario</span>
                     <kbd className={`rounded border px-1 py-px text-[9px] font-mono leading-none ${discrepancyMode === 'DIFERENCIAL_FALTANTE' ? 'border-white/30 bg-white/20' : 'border-border bg-muted'}`}>F6</kbd>
                   </button>
                   <button

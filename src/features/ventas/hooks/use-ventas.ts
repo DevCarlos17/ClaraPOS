@@ -979,7 +979,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const nroGastoDiff = `POS-DIFF-${ventaId.slice(0, 8).toUpperCase()}`
             const cuentaDiffRes = await tx.execute(
               `SELECT cuenta_contable_id FROM cuentas_config
-               WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
+               WHERE empresa_id = ? AND clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO' LIMIT 1`,
               [empresa_id]
             )
             const cuentaDiffId = (
