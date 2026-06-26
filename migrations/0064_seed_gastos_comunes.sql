@@ -482,6 +482,11 @@ BEGIN
   FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.24'
   ON CONFLICT (empresa_id,clave) DO NOTHING;
 
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'PERDIDA_EN_VUELTO',id,'Diferencia no cobrable al dar vuelto al cliente',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.2.04'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
   RETURN (SELECT COUNT(*) FROM cuentas_config WHERE empresa_id = p_empresa_id);
 END;
 $$ LANGUAGE plpgsql;
@@ -524,4 +529,11 @@ SELECT uuid_generate_v4(), e.id, 'EXTRAVIO_INVENTARIO', pc.id,
        'Productos perdidos por robo o extravio', NOW(), NOW(), NULL
 FROM empresas e
 JOIN plan_cuentas pc ON pc.empresa_id = e.id AND pc.codigo = '6.1.24'
+ON CONFLICT (empresa_id, clave) DO NOTHING;
+
+INSERT INTO cuentas_config (id, empresa_id, clave, cuenta_contable_id, descripcion, created_at, updated_at, created_by)
+SELECT uuid_generate_v4(), e.id, 'PERDIDA_EN_VUELTO', pc.id,
+       'Diferencia no cobrable al dar vuelto al cliente', NOW(), NOW(), NULL
+FROM empresas e
+JOIN plan_cuentas pc ON pc.empresa_id = e.id AND pc.codigo = '6.2.04'
 ON CONFLICT (empresa_id, clave) DO NOTHING;
