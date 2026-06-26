@@ -321,6 +321,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
         proveedorId: compra.proveedor_id,
         empresaId: user.empresa_id,
         usuarioId: user.id,
+        tasa: amounts?.tasaFactura ?? 1,
       })
       toast.success('Diferencial cambiario registrado. Factura saldada.')
       onClose()
@@ -780,27 +781,38 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                               <td className="px-3 py-1.5 font-mono text-muted-foreground">
                                 {a.referencia ?? '—'}
                               </td>
-                              <td className="px-3 py-1.5 text-right">
-                                 <div className="font-medium tabular-nums">
-                                   {a.tipo === 'PAG' ? '+' : '-'}
-                                   {formatUsd(new Decimal(a.monto || '0').toNumber())}
-                                 </div>
-                                 {esBs && (
-                                   <div className="text-muted-foreground text-[10px] leading-tight">
-                                     {formatBs(new Decimal(a.monto_moneda || '0').toNumber())} @{' '}
-                                     {new Decimal(a.tasa_pago || '0').toFixed(2)}
-                                     {a.monto_usd_interno &&
-                                       new Decimal(a.monto_usd_interno || '0')
-                                         .minus(new Decimal(a.monto || '0'))
-                                         .abs()
-                                         .greaterThan(new Decimal('0.005')) && (
-                                         <span className="text-slate-400 ml-1">
-                                           / {formatUsd(new Decimal(a.monto_usd_interno || '0').toNumber())} int.
-                                         </span>
+                               <td className="px-3 py-1.5 text-right">
+                                 {(() => {
+                                   const dMonto = new Decimal(a.monto || '0')
+                                   const esSubCentavo = dMonto.gt(0) && dMonto.lt(new Decimal('0.01'))
+                                   return (
+                                     <>
+                                       <div className="font-medium tabular-nums">
+                                         {a.tipo === 'PAG' ? '+' : '-'}
+                                         {esSubCentavo
+                                           ? <span className="font-mono text-[11px]">{dMonto.toFixed(8)} USD</span>
+                                           : formatUsd(dMonto.toNumber())
+                                         }
+                                       </div>
+                                       {esBs && (
+                                         <div className="text-muted-foreground text-[10px] leading-tight">
+                                           {formatBs(new Decimal(a.monto_moneda || '0').toNumber())} @{' '}
+                                           {new Decimal(a.tasa_pago || '0').toFixed(2)}
+                                           {a.monto_usd_interno &&
+                                             new Decimal(a.monto_usd_interno || '0')
+                                               .minus(dMonto)
+                                               .abs()
+                                               .greaterThan(new Decimal('0.005')) && (
+                                               <span className="text-slate-400 ml-1">
+                                                 / {formatUsd(new Decimal(a.monto_usd_interno || '0').toNumber())} int.
+                                               </span>
+                                             )}
+                                         </div>
                                        )}
-                                   </div>
-                                 )}
-                               </td>
+                                     </>
+                                   )
+                                 })()}
+                                </td>
                               {puedeReversarAbono && (
                                 <td className="px-3 py-1.5 text-center">
                                   {a.tipo === 'PAG' && !esReversado ? (

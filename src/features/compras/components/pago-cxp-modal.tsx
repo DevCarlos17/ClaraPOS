@@ -82,6 +82,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
         proveedorId,
         empresaId: user.empresa_id,
         usuarioId: user.id,
+        tasa: microBalance?.tasaPago ?? tasaPagoNum,
       })
       toast.success(`Diferencial cambiario registrado. Factura ${factura.nro_factura} saldada.`)
       handleClose()

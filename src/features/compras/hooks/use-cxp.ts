@@ -349,6 +349,7 @@ export interface DiferencialCxPParams {
   proveedorId: string
   empresaId: string
   usuarioId: string
+  tasa: number  // tasa usada para calcular el equivalente en Bs
 }
 
 /**
@@ -357,7 +358,7 @@ export interface DiferencialCxPParams {
  * Solo aplica cuando saldo_pend_usd > 0 y < $0.01.
  */
 export async function registrarDiferencialCxP(params: DiferencialCxPParams): Promise<void> {
-  const { facturaCompraId, proveedorId, empresaId, usuarioId } = params
+  const { facturaCompraId, proveedorId, empresaId, usuarioId, tasa } = params
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
@@ -388,11 +389,16 @@ export async function registrarDiferencialCxP(params: DiferencialCxPParams): Pro
       [toStorageString(new Decimal(0)), now, facturaCompraId]
     )
 
+    const dTasa = new Decimal(tasa)
+    const saldoBs = saldoActual.times(dTasa)
+
     await tx.execute(
       `INSERT INTO movimientos_cuenta_proveedor
          (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
-          observacion, factura_compra_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          observacion, factura_compra_id,
+          moneda_pago, monto_moneda, tasa_pago, monto_usd_interno,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         uuidv4(), empresaId, proveedorId,
         `DIFE-${factura.nro_factura}`,
@@ -401,6 +407,10 @@ export async function registrarDiferencialCxP(params: DiferencialCxPParams): Pro
         toStorageString(nuevoSaldoProv),
         `Diferencial cambiario - Factura ${factura.nro_factura}`,
         facturaCompraId,
+        'BS',
+        toStorageString(saldoBs),
+        toStorageString(dTasa),
+        toStorageString(saldoActual),
         now, now, usuarioId,
       ]
     )
