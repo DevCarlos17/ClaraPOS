@@ -374,6 +374,7 @@ export interface AjusteMotivos {
   es_sistema: number
   operacion_base: string
   afecta_costo: number
+  cuentas_config_clave: string | null  // clave en cuentas_config para registro contable automático
   is_active: number
   created_at: string
   updated_at: string

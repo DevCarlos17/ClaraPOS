@@ -31,22 +31,42 @@ export function useEnsureDefaultMotivos(empresaId: string) {
 
         const now = localNow()
         await db.writeTransaction(async (tx) => {
+          // Motivos sin impacto contable
           await tx.execute(
             `INSERT INTO ajuste_motivos
-             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, is_active, created_at, updated_at, created_by)
-             VALUES (?, ?, 'CONTEO FISICO - ENTRADA', 1, 'SUMA', 0, 1, ?, ?, NULL)`,
+             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, cuentas_config_clave, is_active, created_at, updated_at, created_by)
+             VALUES (?, ?, 'CONTEO FISICO - ENTRADA', 1, 'SUMA', 0, NULL, 1, ?, ?, NULL)`,
             [uuidv4(), empresaId, now, now]
           )
           await tx.execute(
             `INSERT INTO ajuste_motivos
-             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, is_active, created_at, updated_at, created_by)
-             VALUES (?, ?, 'CONTEO FISICO - SALIDA', 1, 'RESTA', 0, 1, ?, ?, NULL)`,
+             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, cuentas_config_clave, is_active, created_at, updated_at, created_by)
+             VALUES (?, ?, 'CONTEO FISICO - SALIDA', 1, 'RESTA', 0, NULL, 1, ?, ?, NULL)`,
             [uuidv4(), empresaId, now, now]
           )
           await tx.execute(
             `INSERT INTO ajuste_motivos
-             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, is_active, created_at, updated_at, created_by)
-             VALUES (?, ?, 'AJUSTE DE COSTO', 1, 'NEUTRO', 1, 1, ?, ?, NULL)`,
+             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, cuentas_config_clave, is_active, created_at, updated_at, created_by)
+             VALUES (?, ?, 'AJUSTE DE COSTO', 1, 'NEUTRO', 1, NULL, 1, ?, ?, NULL)`,
+            [uuidv4(), empresaId, now, now]
+          )
+          // Motivos con impacto contable automático (vinculados a cuentas_config)
+          await tx.execute(
+            `INSERT INTO ajuste_motivos
+             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, cuentas_config_clave, is_active, created_at, updated_at, created_by)
+             VALUES (?, ?, 'MERMA', 1, 'RESTA', 1, 'MERMA_INVENTARIO', 1, ?, ?, NULL)`,
+            [uuidv4(), empresaId, now, now]
+          )
+          await tx.execute(
+            `INSERT INTO ajuste_motivos
+             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, cuentas_config_clave, is_active, created_at, updated_at, created_by)
+             VALUES (?, ?, 'EXTRAVIO', 1, 'RESTA', 1, 'EXTRAVIO_INVENTARIO', 1, ?, ?, NULL)`,
+            [uuidv4(), empresaId, now, now]
+          )
+          await tx.execute(
+            `INSERT INTO ajuste_motivos
+             (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo, cuentas_config_clave, is_active, created_at, updated_at, created_by)
+             VALUES (?, ?, 'CONSUMO INTERNO', 1, 'RESTA', 1, 'CONSUMO_INTERNO', 1, ?, ?, NULL)`,
             [uuidv4(), empresaId, now, now]
           )
         })

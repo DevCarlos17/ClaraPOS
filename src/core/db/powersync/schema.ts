@@ -402,6 +402,7 @@ const ajuste_motivos = new Table(
     es_sistema: column.integer,
     operacion_base: column.text,
     afecta_costo: column.integer,
+    cuentas_config_clave: column.text,  // clave en cuentas_config para registro contable automático
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,
