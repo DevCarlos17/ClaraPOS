@@ -83,13 +83,13 @@ export function useProveedoresConDeuda() {
      INNER JOIN (
        SELECT proveedor_id, id as doc_id, CAST(saldo_pend_usd AS REAL) as saldo
        FROM facturas_compra
-       WHERE empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
+       WHERE empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
        UNION ALL
        SELECT proveedor_id, id as doc_id, CAST(saldo_pendiente_usd AS REAL) as saldo
        FROM gastos
        WHERE empresa_id = ? AND proveedor_id IS NOT NULL
          AND status = 'REGISTRADO'
-         AND CAST(saldo_pendiente_usd AS REAL) > 0.01
+         AND CAST(saldo_pendiente_usd AS REAL) > 0.001
      ) d ON d.proveedor_id = p.id
      WHERE p.empresa_id = ? AND p.is_active = 1
      GROUP BY p.id, p.rif, p.razon_social
@@ -105,8 +105,8 @@ export function useFacturasCompraPendientes(proveedorId: string | null) {
     proveedorId
       ? `SELECT id, nro_factura, fecha_factura, total_usd, saldo_pend_usd, tipo, tasa, tasa_costo
          FROM facturas_compra
-         WHERE proveedor_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
-         ORDER BY fecha_factura ASC`
+         WHERE proveedor_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
+          ORDER BY fecha_factura ASC`
       : '',
     proveedorId ? [proveedorId] : []
   )

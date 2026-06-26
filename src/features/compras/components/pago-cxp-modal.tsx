@@ -26,6 +26,13 @@ interface PagoCxPModalProps {
   proveedorNombre: string
 }
 
+interface MicroBalance {
+  saldoUsd: Decimal
+  saldoBs: Decimal
+  tasaPago: number
+  nroFactura: string
+}
+
 export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNombre }: PagoCxPModalProps) {
   const { user } = useCurrentUser()
   const { metodos } = useMetodosPagoActivos()
@@ -35,15 +42,12 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const [monto, setMonto] = useState('')
   const [metodoCobro, setMetodoCobro] = useState('')
   const [referencia, setReferencia] = useState('')
-  // tasa de pago: el usuario puede editar. default = tasa de negociacion de la factura
   const [tasaPagoStr, setTasaPagoStr] = useState('')
-  // tasa BCV del documento: solo visible cuando la factura no tenia tasa_costo guardada
   const [tasaBcvStr, setTasaBcvStr] = useState('')
-  // tasa interna a la fecha del pago (buscada de tasas_cambio)
   const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [microBalance, setMicroBalance] = useState<MicroBalance | null>(null)
 
-  // Buscar tasa interna vigente a la fecha del abono
   useEffect(() => {
     if (!user?.empresa_id || !fechaPago) return
     db.execute(
@@ -63,32 +67,33 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
     setTasaPagoStr('')
     setTasaBcvStr('')
     setTasaInternaNum(0)
+    setMicroBalance(null)
     onClose()
   }
 
   if (!factura) return null
 
-  const saldoPend = parseFloat(factura.saldo_pend_usd)
-  const totalFactura = parseFloat(factura.total_usd)
+  const dSaldoPend = new Decimal(factura.saldo_pend_usd || '0')
+  const saldoPend = dSaldoPend.toNumber()
+  const totalFactura = new Decimal(factura.total_usd || '0').toNumber()
   const tasaNegociacion = parseFloat(factura.tasa) || 0
   const tasaCostoDocumento = factura.tasa_costo ? parseFloat(factura.tasa_costo) : null
 
-  // Derivar moneda del metodo seleccionado
+  // El saldo es sub-centavo USD (< $0.01) — no pagable en USD
+  const esSaldoSubCentavo = dSaldoPend.gt(0) && dSaldoPend.lt(new Decimal('0.01'))
+
   const metodoSeleccionado = metodos.find((m) => m.id === metodoCobro)
   const moneda = (metodoSeleccionado?.moneda ?? 'USD') as 'USD' | 'BS'
   const montoNum = parseFloat(monto) || 0
 
-  // tasa de pago: default a tasa de negociacion del documento
   const tasaPagoNum = parseFloat(tasaPagoStr) || tasaNegociacion
 
-  // tasa BCV para diferencial: del documento si existe, sino del input del usuario
   const tasaBcvParaDiferencial = tasaCostoDocumento ?? (parseFloat(tasaBcvStr) || 0)
   const necesitaTasaBcv = !tasaCostoDocumento
 
   const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaPagoNum).toNumber() : montoNum
   const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaPagoNum).toNumber() : montoNum
 
-  // USD a tasa interna (para contabilidad, solo en pagos BS)
   const montoUsdInterno = moneda === 'BS' && tasaInternaNum > 0
     ? bsToUsd(montoNum, tasaInternaNum).toNumber()
     : null
@@ -98,14 +103,26 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const canSubmit = metodoCobro && montoNum > 0 && !excedeSaldo && !loading
     && tasaPagoNum > 0 && tasaBcvValida
 
-  // diferencial: cuando la tasa de pago difiere de la tasa BCV original del documento
   const hayDiferencial = tasaBcvParaDiferencial > 0 && tasaPagoNum !== tasaBcvParaDiferencial
+
+  // Residual sub-centavo que quedaria luego del pago
+  const dMontoUsd = new Decimal(montoUsd)
+  const saldoResultante = dSaldoPend.minus(dMontoUsd)
+  const quedaMicroBalance = !excedeSaldo && montoNum > 0
+    && saldoResultante.gt(new Decimal('0'))
+    && saldoResultante.lt(new Decimal('0.01'))
+  const residualBs = quedaMicroBalance
+    ? saldoResultante.times(new Decimal(tasaPagoNum))
+    : new Decimal('0')
 
   function handlePayMax() {
     if (moneda === 'BS') {
       setMonto(usdToBs(saldoPend, tasaPagoNum).toFixed(2))
     } else {
-      setMonto(saldoPend.toFixed(2))
+      // En USD no se puede pagar sub-centavo. Si el saldo exacto > $0.01 se usa
+      // la precision completa. Si es sub-centavo, el campo queda bloqueado (ver abajo).
+      const exacto = dSaldoPend
+      setMonto(exacto.gte(new Decimal('0.01')) ? exacto.toDecimalPlaces(2).toFixed(2) : '0.01')
     }
   }
 
@@ -130,8 +147,21 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
         empresa_id: user.empresa_id,
         usuario_id: user.id,
       })
-      toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura!.nro_factura}`)
-      handleClose()
+
+      const saldoRestante = dSaldoPend.minus(new Decimal(montoUsd))
+
+      if (saldoRestante.gt(new Decimal('0')) && saldoRestante.lt(new Decimal('0.01'))) {
+        toast.success(`Pago de ${formatUsd(montoUsd)} registrado`)
+        setMicroBalance({
+          saldoUsd: saldoRestante,
+          saldoBs: saldoRestante.times(new Decimal(tasaPagoNum)),
+          tasaPago: tasaPagoNum,
+          nroFactura: factura!.nro_factura,
+        })
+      } else {
+        toast.success(`Pago de ${formatUsd(montoUsd)} registrado a factura ${factura!.nro_factura}`)
+        handleClose()
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al registrar pago')
     } finally {
@@ -146,196 +176,251 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
           <DialogTitle>Registrar Pago CxP</DialogTitle>
         </DialogHeader>
 
-        {/* Resumen de la factura */}
-        <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
-          <div className="font-medium">{proveedorNombre}</div>
-          <div className="text-muted-foreground">
-            Factura: {factura.nro_factura}
-            {' · '}
-            <span className="text-xs">Tasa negociacion: {tasaNegociacion > 0 ? tasaNegociacion.toFixed(4) : '—'}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-muted-foreground">Total factura:</span>
-            <span>{formatUsd(totalFactura)}</span>
-          </div>
-          <div className="flex justify-between font-semibold">
-            <span>Saldo pendiente:</span>
-            <span className="text-destructive">{formatUsd(saldoPend)}</span>
-          </div>
-          {tasaPagoNum > 0 && (
-            <div className="flex justify-between text-muted-foreground">
-              <span>Equivalente Bs (a tasa pago):</span>
-              <span>{formatBs(usdToBs(saldoPend, tasaPagoNum))}</span>
-            </div>
-          )}
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Fecha del abono */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Fecha del abono</label>
-            <Input
-              type="date"
-              value={fechaPago}
-              onChange={(e) => setFechaPago(e.target.value)}
-              max={localNow().slice(0, 10)}
-            />
-            {tasaInternaNum > 0 && (
+        {/* ── Panel de micro-saldo residual post-pago ── */}
+        {microBalance ? (
+          <div className="space-y-4">
+            <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                Pago registrado. Queda un residual sub-centavo:
+              </p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-amber-900 dark:text-amber-100">
+                  {formatBs(microBalance.saldoBs.toNumber())}
+                </span>
+                <span className="text-xs text-amber-600 dark:text-amber-400 font-mono">
+                  = {microBalance.saldoUsd.toFixed(8)} USD @ {microBalance.tasaPago.toFixed(2)}
+                </span>
+              </div>
               <p className="text-xs text-muted-foreground">
-                Tasa interna a esta fecha: <span className="font-medium">{tasaInternaNum.toFixed(4)}</span>
+                Este monto no es pagable en USD (menor a $0.01). Queda pendiente en CxP
+                y podés saldarlo con una transferencia en Bs.
               </p>
-            )}
+            </div>
+            <div className="flex justify-end">
+              <Button onClick={handleClose}>Entendido</Button>
+            </div>
           </div>
+        ) : (
+          <>
+            {/* Resumen de la factura */}
+            <div className="p-3 rounded-lg bg-muted/50 space-y-1 text-sm">
+              <div className="font-medium">{proveedorNombre}</div>
+              <div className="text-muted-foreground">
+                Factura: {factura.nro_factura}
+                {' · '}
+                <span className="text-xs">Tasa negociacion: {tasaNegociacion > 0 ? tasaNegociacion.toFixed(4) : '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total factura:</span>
+                <span>{formatUsd(totalFactura)}</span>
+              </div>
+              <div className="flex justify-between font-semibold">
+                <span>Saldo pendiente:</span>
+                <div className="text-right">
+                  {esSaldoSubCentavo ? (
+                    <>
+                      <span className="text-amber-600 dark:text-amber-400 font-mono text-xs">
+                        {dSaldoPend.toFixed(8)} USD
+                      </span>
+                      {tasaPagoNum > 0 && (
+                        <div className="text-destructive">
+                          {formatBs(usdToBs(saldoPend, tasaPagoNum))}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-destructive">{formatUsd(saldoPend)}</span>
+                  )}
+                </div>
+              </div>
+              {!esSaldoSubCentavo && tasaPagoNum > 0 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Equivalente Bs (a tasa pago):</span>
+                  <span>{formatBs(usdToBs(saldoPend, tasaPagoNum))}</span>
+                </div>
+              )}
+              {esSaldoSubCentavo && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 pt-1 border-t border-amber-200 dark:border-amber-800">
+                  Saldo sub-centavo — usa un metodo de pago en Bs para saldar este monto
+                </p>
+              )}
+            </div>
 
-          {/* Tasa BCV del documento (solo si no estaba guardada) */}
-          {necesitaTasaBcv && (
-            <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
-              <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
-                Esta factura no tiene tasa BCV/interna registrada.
-                Ingrese la tasa BCV vigente en la fecha del documento para calcular el diferencial cambiario.
-              </p>
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">
-                  Tasa BCV a la fecha del documento <span className="text-destructive">*</span>
-                  <span className="text-muted-foreground font-normal ml-1">({factura.fecha_factura})</span>
-                </label>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Fecha del abono */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Fecha del abono</label>
+                <Input
+                  type="date"
+                  value={fechaPago}
+                  onChange={(e) => setFechaPago(e.target.value)}
+                  max={localNow().slice(0, 10)}
+                />
+                {tasaInternaNum > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Tasa interna a esta fecha: <span className="font-medium">{tasaInternaNum.toFixed(4)}</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Tasa BCV del documento (solo si no estaba guardada) */}
+              {necesitaTasaBcv && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
+                  <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">
+                    Esta factura no tiene tasa BCV/interna registrada.
+                    Ingrese la tasa BCV vigente en la fecha del documento para calcular el diferencial cambiario.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-medium text-muted-foreground mb-1">
+                      Tasa BCV a la fecha del documento <span className="text-destructive">*</span>
+                      <span className="text-muted-foreground font-normal ml-1">({factura.fecha_factura})</span>
+                    </label>
+                    <Input
+                      type="number"
+                      step="0.0001"
+                      min="0.0001"
+                      value={tasaBcvStr}
+                      onChange={(e) => setTasaBcvStr(e.target.value)}
+                      placeholder="Ej: 50.0000"
+                      className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Tasa de pago */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Tasa de pago pactada (Bs/USD)
+                  </label>
+                  {tasaValor > 0 && tasaPagoNum !== tasaValor && (
+                    <button
+                      type="button"
+                      onClick={() => setTasaPagoStr(tasaValor.toFixed(4))}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Usar tasa actual ({tasaValor.toFixed(2)})
+                    </button>
+                  )}
+                </div>
                 <Input
                   type="number"
                   step="0.0001"
                   min="0.0001"
-                  value={tasaBcvStr}
-                  onChange={(e) => setTasaBcvStr(e.target.value)}
-                  placeholder="Ej: 50.0000"
+                  value={tasaPagoStr}
+                  onChange={(e) => setTasaPagoStr(e.target.value)}
+                  placeholder={tasaNegociacion > 0 ? tasaNegociacion.toFixed(4) : '0.0000'}
                   className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
-              </div>
-            </div>
-          )}
-
-          {/* Tasa de pago */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-muted-foreground">
-                Tasa de pago pactada (Bs/USD)
-              </label>
-              {tasaValor > 0 && tasaPagoNum !== tasaValor && (
-                <button
-                  type="button"
-                  onClick={() => setTasaPagoStr(tasaValor.toFixed(4))}
-                  className="text-xs text-primary hover:underline"
-                >
-                  Usar tasa actual ({tasaValor.toFixed(2)})
-                </button>
-              )}
-            </div>
-            <Input
-              type="number"
-              step="0.0001"
-              min="0.0001"
-              value={tasaPagoStr}
-              onChange={(e) => setTasaPagoStr(e.target.value)}
-              placeholder={tasaNegociacion > 0 ? tasaNegociacion.toFixed(4) : '0.0000'}
-              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-            />
-            {hayDiferencial && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                Diferencial cambiario: tasa BCV doc {tasaBcvParaDiferencial.toFixed(2)} → pago {tasaPagoNum.toFixed(2)}
-                {' ('}
-                {tasaPagoNum > tasaBcvParaDiferencial ? 'perdida' : 'ganancia'}
-                {' Bs '}
-                {formatBs(new Decimal(saldoPend).times(new Decimal(tasaPagoNum).minus(new Decimal(tasaBcvParaDiferencial))).abs())}
-                {' aproximado)'}
-              </p>
-            )}
-          </div>
-
-          {/* Metodo de pago */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Metodo de pago</label>
-            <NativeSelect
-              value={metodoCobro}
-              onChange={(e) => {
-                setMetodoCobro(e.target.value)
-                setMonto('')
-              }}
-            >
-              <option value="">Seleccionar...</option>
-              {metodos.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.nombre} ({m.moneda})
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-
-          {/* Monto */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-muted-foreground">
-                Monto ({moneda})
-              </label>
-              <button
-                type="button"
-                onClick={handlePayMax}
-                className="text-xs text-primary hover:underline"
-              >
-                Pagar total
-              </button>
-            </div>
-            <Input
-              type="number"
-              step="0.01"
-              min="0.01"
-              value={monto}
-              onChange={(e) => setMonto(e.target.value)}
-              placeholder="0.00"
-              className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-            />
-            {montoNum > 0 && moneda === 'USD' && (
-              <p className="text-xs text-muted-foreground">
-                Equivale a {formatBs(montoBs)}
-              </p>
-            )}
-            {montoNum > 0 && moneda === 'BS' && (
-              <div className="space-y-0.5">
-                <p className="text-xs text-muted-foreground">
-                  {formatUsd(montoUsd)} a tasa proveedor {tasaPagoNum.toFixed(2)}
-                </p>
-                {montoUsdInterno !== null && Math.abs(montoUsdInterno - montoUsd) > 0.005 && (
-                  <p className="text-xs text-slate-400">
-                    {formatUsd(montoUsdInterno)} a tasa interna {tasaInternaNum.toFixed(2)}
+                {hayDiferencial && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    Diferencial cambiario: tasa BCV doc {tasaBcvParaDiferencial.toFixed(2)} → pago {tasaPagoNum.toFixed(2)}
+                    {' ('}
+                    {tasaPagoNum > tasaBcvParaDiferencial ? 'perdida' : 'ganancia'}
+                    {' Bs '}
+                    {formatBs(new Decimal(saldoPend).times(new Decimal(tasaPagoNum).minus(new Decimal(tasaBcvParaDiferencial))).abs())}
+                    {' aproximado)'}
                   </p>
                 )}
               </div>
-            )}
-            {excedeSaldo && (
-              <p className="text-xs text-destructive">
-                El monto excede el saldo pendiente de la factura
-              </p>
-            )}
-          </div>
 
-          {/* Referencia */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">
-              Referencia (opcional)
-            </label>
-            <Input
-              value={referencia}
-              onChange={(e) => setReferencia(e.target.value)}
-              placeholder="Nro. transferencia, etc."
-            />
-          </div>
+              {/* Metodo de pago */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Metodo de pago</label>
+                <NativeSelect
+                  value={metodoCobro}
+                  onChange={(e) => {
+                    setMetodoCobro(e.target.value)
+                    setMonto('')
+                  }}
+                >
+                  <option value="">Seleccionar...</option>
+                  {metodos.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.nombre} ({m.moneda})
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
 
-          <div className="flex gap-2 justify-end">
-            <Button type="button" variant="outline" onClick={handleClose} disabled={loading}>
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={!canSubmit}>
-              {loading ? 'Registrando...' : `Pagar ${formatUsd(montoUsd)}`}
-            </Button>
-          </div>
-        </form>
+              {/* Monto */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    Monto ({moneda})
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handlePayMax}
+                    disabled={esSaldoSubCentavo && moneda === 'USD'}
+                    className="text-xs text-primary hover:underline disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Pagar total
+                  </button>
+                </div>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={monto}
+                  onChange={(e) => setMonto(e.target.value)}
+                  placeholder="0.00"
+                  className="[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                />
+                {montoNum > 0 && moneda === 'USD' && (
+                  <p className="text-xs text-muted-foreground">
+                    Equivale a {formatBs(montoBs)}
+                  </p>
+                )}
+                {montoNum > 0 && moneda === 'BS' && (
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-muted-foreground">
+                      {formatUsd(montoUsd)} a tasa proveedor {tasaPagoNum.toFixed(2)}
+                    </p>
+                    {montoUsdInterno !== null && Math.abs(montoUsdInterno - montoUsd) > 0.005 && (
+                      <p className="text-xs text-slate-400">
+                        {formatUsd(montoUsdInterno)} a tasa interna {tasaInternaNum.toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                )}
+                {excedeSaldo && (
+                  <p className="text-xs text-destructive">
+                    El monto excede el saldo pendiente de la factura
+                  </p>
+                )}
+                {quedaMicroBalance && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    Quedara un residual de {formatBs(residualBs.toNumber())}
+                    {' '}({saldoResultante.toFixed(8)} USD — sub-centavo, pagable en Bs)
+                  </p>
+                )}
+              </div>
+
+              {/* Referencia */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium text-muted-foreground">
+                  Referencia (opcional)
+                </label>
+                <Input
+                  value={referencia}
+                  onChange={(e) => setReferencia(e.target.value)}
+                  placeholder="Nro. transferencia, etc."
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end">
+                <Button type="button" variant="outline" onClick={handleClose} disabled={loading}>
+                  Cancelar
+                </Button>
+                <Button type="submit" disabled={!canSubmit}>
+                  {loading ? 'Registrando...' : `Pagar ${formatUsd(montoUsd)}`}
+                </Button>
+              </div>
+            </form>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   )
