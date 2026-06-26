@@ -649,13 +649,17 @@ export async function reversarPagoGasto(params: ReversarPagoGastoParams): Promis
     const now = localNow()
 
     const abonoResult = await tx.execute(
-      `SELECT monto, tipo, referencia
+      `SELECT monto, tipo, referencia, moneda_pago, monto_moneda, tasa_pago, monto_usd_interno
        FROM movimientos_cuenta_proveedor
        WHERE id = ? AND empresa_id = ? AND doc_origen_tipo = 'GASTO'`,
       [abonoId, empresaId]
     )
     if (!abonoResult.rows?.length) throw new Error('Abono no encontrado')
-    const abono = abonoResult.rows.item(0) as { monto: string; tipo: string; referencia: string }
+    const abono = abonoResult.rows.item(0) as {
+      monto: string; tipo: string; referencia: string
+      moneda_pago: string | null; monto_moneda: string | null
+      tasa_pago: string | null; monto_usd_interno: string | null
+    }
     if (abono.tipo !== 'PAG') throw new Error('Solo se pueden reversar movimientos de tipo PAG')
     const montoAbono = new Decimal(abono.monto || '0')
 
@@ -687,8 +691,10 @@ export async function reversarPagoGasto(params: ReversarPagoGastoParams): Promis
     await tx.execute(
       `INSERT INTO movimientos_cuenta_proveedor
          (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
-          observacion, factura_compra_id, doc_origen_id, doc_origen_tipo, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'DEV', ?, ?, ?, ?, ?, NULL, ?, 'GASTO', ?, ?, ?)`,
+          observacion, factura_compra_id, doc_origen_id, doc_origen_tipo,
+          moneda_pago, monto_moneda, tasa_pago, monto_usd_interno,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'DEV', ?, ?, ?, ?, ?, NULL, ?, 'GASTO', ?, ?, ?, ?, ?, ?, ?)`,
       [
         uuidv4(), empresaId, proveedorId,
         `DEV-${abono.referencia}`,
@@ -697,6 +703,10 @@ export async function reversarPagoGasto(params: ReversarPagoGastoParams): Promis
         toStorageString(nuevoSaldoProv),
         `Reversa de abono ${abono.referencia} - Gasto ${gasto.nro_gasto}`,
         gastoId,
+        abono.moneda_pago ?? null,
+        abono.monto_moneda ?? null,
+        abono.tasa_pago ?? null,
+        abono.monto_usd_interno ?? null,
         now, now, usuarioId,
       ]
     )
