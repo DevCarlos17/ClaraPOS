@@ -266,7 +266,7 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
         {showConfirmAnular && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-md">
             <p className="text-sm font-medium text-red-800 mb-2">
-              Anular este ajuste revertira todos los movimientos de inventario generados. Ingresa el motivo:
+              Reversar este ajuste creara contra-movimientos en el inventario y anulara el gasto contable asociado (si existe). Ingresa el motivo:
             </p>
             <input
               type="text"
@@ -281,7 +281,7 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                 disabled={applying || !motivoAnulacion.trim()}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
               >
-                {applying ? 'Anulando...' : 'Confirmar Anulacion'}
+                {applying ? 'Reversando...' : 'Confirmar reverso'}
               </button>
               <button
                 onClick={() => { setShowConfirmAnular(false); setMotivoAnulacion('') }}
@@ -307,14 +307,14 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                 Aplicar Ajuste
               </button>
             )}
-            {/* Anular: solo si APLICADO */}
+            {/* Reversar: solo si APLICADO */}
             {ajuste?.status === 'APLICADO' && !showConfirmAplicar && (
               <button
                 onClick={() => setShowConfirmAnular((v) => !v)}
                 disabled={applying}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
               >
-                Anular
+                Reversar ajuste
               </button>
             )}
             {/* PDF */}
