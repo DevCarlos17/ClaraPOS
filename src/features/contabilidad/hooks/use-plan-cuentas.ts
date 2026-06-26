@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { db } from '@/core/db/powersync/db'
@@ -43,7 +44,25 @@ export function usePlanCuentas() {
     [empresaId]
   )
 
-  return { cuentas: (data ?? []) as CuentaContable[], isLoading }
+  // IDs de cuentas vinculadas al sistema (no pueden desactivarse)
+  const { data: configData } = useQuery(
+    'SELECT cuenta_contable_id FROM cuentas_config WHERE empresa_id = ?',
+    [empresaId]
+  )
+
+  const sistemaCuentaIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const row of (configData ?? []) as { cuenta_contable_id: string }[]) {
+      if (row.cuenta_contable_id) set.add(row.cuenta_contable_id)
+    }
+    return set
+  }, [configData])
+
+  return {
+    cuentas: (data ?? []) as CuentaContable[],
+    isLoading,
+    sistemaCuentaIds,
+  }
 }
 
 /**
