@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { registrarPagoCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
+import { registrarPagoCxP, registrarDiferencialCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -47,6 +47,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
   const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
   const [microBalance, setMicroBalance] = useState<MicroBalance | null>(null)
+  const [loadingDiferencial, setLoadingDiferencial] = useState(false)
 
   useEffect(() => {
     if (!user?.empresa_id || !fechaPago) return
@@ -68,7 +69,27 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
     setTasaBcvStr('')
     setTasaInternaNum(0)
     setMicroBalance(null)
+    setLoadingDiferencial(false)
     onClose()
+  }
+
+  async function handleDiferencial() {
+    if (!factura || !user?.empresa_id || !user.id) return
+    setLoadingDiferencial(true)
+    try {
+      await registrarDiferencialCxP({
+        facturaCompraId: factura.id,
+        proveedorId,
+        empresaId: user.empresa_id,
+        usuarioId: user.id,
+      })
+      toast.success(`Diferencial cambiario registrado. Factura ${factura.nro_factura} saldada.`)
+      handleClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar diferencial cambiario')
+    } finally {
+      setLoadingDiferencial(false)
+    }
   }
 
   if (!factura) return null
@@ -192,13 +213,27 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Este monto no es pagable en USD (menor a $0.01). Queda pendiente en CxP
-                y podés saldarlo con una transferencia en Bs.
+                Este monto no es pagable en USD (menor a $0.01).
               </p>
             </div>
-            <div className="flex justify-end">
-              <Button onClick={handleClose}>Entendido</Button>
+            <p className="text-sm font-medium text-foreground">¿Qué hacemos con este residual?</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={handleDiferencial}
+                disabled={loadingDiferencial}
+                className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+              >
+                {loadingDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+              </Button>
+              <Button variant="outline" onClick={handleClose} disabled={loadingDiferencial}>
+                Dejar pendiente en Bs
+              </Button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              <strong>Diferencial cambiario:</strong> cierra la factura asumiendo la diferencia como perdida/ganancia cambiaria.<br />
+              <strong>Dejar pendiente:</strong> la factura queda en CxP con {formatBs(microBalance.saldoBs.toNumber())} adeudados, pagables en Bs.
+            </p>
           </div>
         ) : (
           <>

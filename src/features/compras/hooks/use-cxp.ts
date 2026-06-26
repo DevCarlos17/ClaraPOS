@@ -341,3 +341,68 @@ export async function reversarAbonoCxP(params: ReversarAbonoCxPParams): Promise<
     )
   })
 }
+
+// ─── Diferencial cambiario ───────────────────────────────────
+
+export interface DiferencialCxPParams {
+  facturaCompraId: string
+  proveedorId: string
+  empresaId: string
+  usuarioId: string
+}
+
+/**
+ * Registrar el saldo residual sub-centavo como diferencial cambiario.
+ * Crea un abono de sistema (sin movimiento bancario) que cierra la factura.
+ * Solo aplica cuando saldo_pend_usd > 0 y < $0.01.
+ */
+export async function registrarDiferencialCxP(params: DiferencialCxPParams): Promise<void> {
+  const { facturaCompraId, proveedorId, empresaId, usuarioId } = params
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    const facturaResult = await tx.execute(
+      'SELECT nro_factura, saldo_pend_usd FROM facturas_compra WHERE id = ? AND empresa_id = ?',
+      [facturaCompraId, empresaId]
+    )
+    if (!facturaResult.rows?.length) throw new Error('Factura no encontrada')
+    const factura = facturaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+    const saldoActual = new Decimal(factura.saldo_pend_usd || '0')
+
+    if (saldoActual.lte(0)) throw new Error('La factura ya no tiene saldo pendiente')
+    if (saldoActual.gte(new Decimal('0.01'))) {
+      throw new Error('El diferencial cambiario solo aplica para saldos sub-centavo (< $0.01)')
+    }
+
+    const sumResult = await tx.execute(
+      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
+       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
+      [proveedorId, empresaId]
+    )
+    const saldoProv = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
+    const nuevoSaldoProv = Decimal.max(0, saldoProv.minus(saldoActual))
+
+    await tx.execute(
+      'UPDATE facturas_compra SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
+      [toStorageString(new Decimal(0)), now, facturaCompraId]
+    )
+
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta_proveedor
+         (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+          observacion, factura_compra_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresaId, proveedorId,
+        `DIFE-${factura.nro_factura}`,
+        toStorageString(saldoActual),
+        toStorageString(saldoProv),
+        toStorageString(nuevoSaldoProv),
+        `Diferencial cambiario - Factura ${factura.nro_factura}`,
+        facturaCompraId,
+        now, now, usuarioId,
+      ]
+    )
+  })
+}

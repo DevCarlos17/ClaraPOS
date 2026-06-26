@@ -15,7 +15,7 @@ import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
-import { reversarAbonoCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
+import { reversarAbonoCxP, registrarDiferencialCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import {
   anularGasto,
@@ -117,6 +117,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   const [pagoOpen, setPagoOpen] = useState(false)
   const [confirmandoAnular, setConfirmandoAnular] = useState(false)
   const [anulando, setAnulando] = useState(false)
+  const [aplicandoDiferencial, setAplicandoDiferencial] = useState(false)
 
   // ─── Compra data ──────────────────────────────────────────
 
@@ -308,6 +309,25 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
       toast.error(err instanceof Error ? err.message : 'Error al anular el gasto')
     } finally {
       setAnulando(false)
+    }
+  }
+
+  async function handleDiferencialCambiario() {
+    if (!user?.empresa_id || !user.id || !compra) return
+    setAplicandoDiferencial(true)
+    try {
+      await registrarDiferencialCxP({
+        facturaCompraId: id,
+        proveedorId: compra.proveedor_id,
+        empresaId: user.empresa_id,
+        usuarioId: user.id,
+      })
+      toast.success('Diferencial cambiario registrado. Factura saldada.')
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar diferencial cambiario')
+    } finally {
+      setAplicandoDiferencial(false)
     }
   }
 
@@ -671,10 +691,25 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     </div>
                   )}
 
-                  {saldo > 0.005 ? (
+                  {saldo > 0 ? (
                     <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
                       <span className="font-medium text-muted-foreground">Saldo Pendiente:</span>
-                      <span className="font-bold text-destructive">{formatUsd(saldo)}</span>
+                      <div className="text-right">
+                        {saldo < 0.01 ? (
+                          <>
+                            <div className="font-mono text-xs text-amber-600 dark:text-amber-400">
+                              {new Decimal(saldo).toFixed(8)} USD
+                            </div>
+                            {amounts && amounts.tasaInterna > 0 && (
+                              <div className="font-bold text-destructive text-sm">
+                                {formatBs(new Decimal(saldo).times(new Decimal(amounts.tasaInterna)).toNumber())}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="font-bold text-destructive">{formatUsd(saldo)}</span>
+                        )}
+                      </div>
                     </div>
                   ) : totalAbonadoProveedor > 0.005 ? (
                     <div className="text-center text-xs text-green-600 font-medium pt-1.5 border-t border-border">
@@ -820,11 +855,24 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                 <Button variant="outline" onClick={onClose}>
                   Cerrar
                 </Button>
-                {saldo > 0.01 && !esAnulado && (
-                  <Button onClick={() => setPagoOpen(true)}>
-                    Registrar Pago
-                  </Button>
-                )}
+                <div className="flex gap-2">
+                  {tipo === 'COMPRA' && saldo > 0 && saldo < 0.01 && !esAnulado && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDiferencialCambiario}
+                      disabled={aplicandoDiferencial}
+                      className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+                    >
+                      {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+                    </Button>
+                  )}
+                  {saldo > 0 && !esAnulado && (
+                    <Button onClick={() => setPagoOpen(true)}>
+                      Registrar Pago
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           )}
