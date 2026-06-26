@@ -35,8 +35,8 @@ BEGIN
         (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo,
          cuentas_config_clave, is_active, created_at, updated_at, created_by)
       VALUES
-        (uuid_generate_v4(), v_empresa.id, 'MERMA', 1, 'RESTA', 1,
-         'MERMA_INVENTARIO', 1, v_now, v_now, NULL);
+        (uuid_generate_v4(), v_empresa.id, 'MERMA', TRUE, 'RESTA', TRUE,
+         'MERMA_INVENTARIO', TRUE, v_now, v_now, NULL);
     ELSE
       -- Si ya existe, vincular la clave si aún no la tiene
       UPDATE ajuste_motivos
@@ -53,8 +53,8 @@ BEGIN
         (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo,
          cuentas_config_clave, is_active, created_at, updated_at, created_by)
       VALUES
-        (uuid_generate_v4(), v_empresa.id, 'EXTRAVIO', 1, 'RESTA', 1,
-         'EXTRAVIO_INVENTARIO', 1, v_now, v_now, NULL);
+        (uuid_generate_v4(), v_empresa.id, 'EXTRAVIO', TRUE, 'RESTA', TRUE,
+         'EXTRAVIO_INVENTARIO', TRUE, v_now, v_now, NULL);
     ELSE
       UPDATE ajuste_motivos
       SET cuentas_config_clave = 'EXTRAVIO_INVENTARIO', updated_at = v_now
@@ -70,8 +70,8 @@ BEGIN
         (id, empresa_id, nombre, es_sistema, operacion_base, afecta_costo,
          cuentas_config_clave, is_active, created_at, updated_at, created_by)
       VALUES
-        (uuid_generate_v4(), v_empresa.id, 'CONSUMO INTERNO', 1, 'RESTA', 1,
-         'CONSUMO_INTERNO', 1, v_now, v_now, NULL);
+        (uuid_generate_v4(), v_empresa.id, 'CONSUMO INTERNO', TRUE, 'RESTA', TRUE,
+         'CONSUMO_INTERNO', TRUE, v_now, v_now, NULL);
     ELSE
       UPDATE ajuste_motivos
       SET cuentas_config_clave = 'CONSUMO_INTERNO', updated_at = v_now
