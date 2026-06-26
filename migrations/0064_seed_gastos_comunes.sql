@@ -215,7 +215,7 @@ BEGIN
 
   -- Existentes (de 0021)
   INSERT INTO plan_cuentas (id,empresa_id,codigo,nombre,tipo,naturaleza,parent_id,nivel,es_cuenta_detalle,is_active,created_at,updated_at,created_by)
-  VALUES (uuid_generate_v4(),p_empresa_id,'6.1.01','SUELDOS Y SALARIOS (NOMINA)','GASTO','DEUDORA',(SELECT id FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1'),3,TRUE,TRUE,v_now,v_now,p_created_by)
+  VALUES (uuid_generate_v4(),p_empresa_id,'6.1.01','NOMINA','GASTO','DEUDORA',(SELECT id FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1'),3,TRUE,TRUE,v_now,v_now,p_created_by)
   ON CONFLICT (empresa_id,codigo) DO NOTHING;
 
   INSERT INTO plan_cuentas (id,empresa_id,codigo,nombre,tipo,naturaleza,parent_id,nivel,es_cuenta_detalle,is_active,created_at,updated_at,created_by)
@@ -257,7 +257,7 @@ BEGIN
   ON CONFLICT (empresa_id,codigo) DO NOTHING;
 
   INSERT INTO plan_cuentas (id,empresa_id,codigo,nombre,tipo,naturaleza,parent_id,nivel,es_cuenta_detalle,is_active,created_at,updated_at,created_by)
-  VALUES (uuid_generate_v4(),p_empresa_id,'6.1.11','OTROS SERVICIOS CONTRATADOS','GASTO','DEUDORA',(SELECT id FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1'),3,TRUE,TRUE,v_now,v_now,p_created_by)
+  VALUES (uuid_generate_v4(),p_empresa_id,'6.1.11','SUSCRIPCIONES Y SERVICIOS DIGITALES','GASTO','DEUDORA',(SELECT id FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1'),3,TRUE,TRUE,v_now,v_now,p_created_by)
   ON CONFLICT (empresa_id,codigo) DO NOTHING;
 
   -- Personal y beneficios
@@ -460,10 +460,26 @@ BEGIN
   FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.2.02'
   ON CONFLICT (empresa_id,clave) DO NOTHING;
 
-  -- Nuevo (de 0064): comision bancaria como cuenta de sistema
+  -- Nuevas (de 0064): cuentas de sistema para operaciones automáticas
   INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
   SELECT uuid_generate_v4(),p_empresa_id,'COMISION_BANCARIA',id,'Comision cobrada por el banco en transferencias',v_now,v_now,p_created_by
   FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.2.03'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  -- Vinculadas a ajustes de inventario (usadas automáticamente por el sistema)
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'CONSUMO_INTERNO',id,'Productos del inventario consumidos internamente (al costo)',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.22'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'MERMA_INVENTARIO',id,'Productos danados, vencidos o deteriorados',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.23'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'EXTRAVIO_INVENTARIO',id,'Productos perdidos por robo o extravio',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.24'
   ON CONFLICT (empresa_id,clave) DO NOTHING;
 
   RETURN (SELECT COUNT(*) FROM cuentas_config WHERE empresa_id = p_empresa_id);
@@ -476,4 +492,36 @@ $$ LANGUAGE plpgsql;
 --    ON CONFLICT DO NOTHING → idempotente, no toca datos actuales
 -- ============================================================
 
+-- 3a. Cuentas del plan (seed_plan_cuentas es idempotente)
 SELECT seed_plan_cuentas(id, NULL) FROM empresas;
+
+-- 3b. Claves de sistema en cuentas_config para empresas existentes
+--     (seed_cuentas_config tiene guard COUNT > 0, así que se hace directo)
+
+INSERT INTO cuentas_config (id, empresa_id, clave, cuenta_contable_id, descripcion, created_at, updated_at, created_by)
+SELECT uuid_generate_v4(), e.id, 'COMISION_BANCARIA', pc.id,
+       'Comision cobrada por el banco en transferencias', NOW(), NOW(), NULL
+FROM empresas e
+JOIN plan_cuentas pc ON pc.empresa_id = e.id AND pc.codigo = '6.2.03'
+ON CONFLICT (empresa_id, clave) DO NOTHING;
+
+INSERT INTO cuentas_config (id, empresa_id, clave, cuenta_contable_id, descripcion, created_at, updated_at, created_by)
+SELECT uuid_generate_v4(), e.id, 'CONSUMO_INTERNO', pc.id,
+       'Productos del inventario consumidos internamente (al costo)', NOW(), NOW(), NULL
+FROM empresas e
+JOIN plan_cuentas pc ON pc.empresa_id = e.id AND pc.codigo = '6.1.22'
+ON CONFLICT (empresa_id, clave) DO NOTHING;
+
+INSERT INTO cuentas_config (id, empresa_id, clave, cuenta_contable_id, descripcion, created_at, updated_at, created_by)
+SELECT uuid_generate_v4(), e.id, 'MERMA_INVENTARIO', pc.id,
+       'Productos danados, vencidos o deteriorados', NOW(), NOW(), NULL
+FROM empresas e
+JOIN plan_cuentas pc ON pc.empresa_id = e.id AND pc.codigo = '6.1.23'
+ON CONFLICT (empresa_id, clave) DO NOTHING;
+
+INSERT INTO cuentas_config (id, empresa_id, clave, cuenta_contable_id, descripcion, created_at, updated_at, created_by)
+SELECT uuid_generate_v4(), e.id, 'EXTRAVIO_INVENTARIO', pc.id,
+       'Productos perdidos por robo o extravio', NOW(), NOW(), NULL
+FROM empresas e
+JOIN plan_cuentas pc ON pc.empresa_id = e.id AND pc.codigo = '6.1.24'
+ON CONFLICT (empresa_id, clave) DO NOTHING;
