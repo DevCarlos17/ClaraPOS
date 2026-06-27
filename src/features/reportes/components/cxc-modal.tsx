@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react'
 import { X } from '@phosphor-icons/react'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { useDetalleCxcDia, type CuadreFilters } from '../hooks/use-cuadre'
 
@@ -26,8 +26,12 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
     if (e.target === dialogRef.current) onClose()
   }
 
-  const totalPendiente = facturas.reduce(
+  const totalPendienteUsd = facturas.reduce(
     (sum, f) => sum + parseFloat(f.saldo_pend_usd),
+    0
+  )
+  const totalPendienteBs = facturas.reduce(
+    (sum, f) => sum + parseFloat(f.saldo_pend_usd) * parseFloat(f.tasa),
     0
   )
 
@@ -71,7 +75,8 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
                     <th className="text-left px-3 py-2 font-medium">Factura</th>
                     <th className="text-left px-3 py-2 font-medium">Cliente</th>
                     <th className="text-left px-3 py-2 font-medium">Fecha</th>
-                    <th className="text-right px-3 py-2 font-medium">Pendiente</th>
+                    <th className="text-right px-3 py-2 font-medium">Pendiente Bs</th>
+                    <th className="text-right px-3 py-2 font-medium">Pendiente USD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -95,6 +100,11 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
                       </td>
                       <td className="px-3 py-2 text-right">
                         <span className="font-bold text-xs text-red-600">
+                          {formatBs(parseFloat(f.saldo_pend_usd) * parseFloat(f.tasa))}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <span className="text-xs text-muted-foreground">
                           {formatUsd(parseFloat(f.saldo_pend_usd))}
                         </span>
                       </td>
@@ -107,7 +117,10 @@ export function CxcModal({ isOpen, onClose, filters }: CxcModalProps) {
             {/* Total */}
             <div className="pt-3 mt-3 border-t flex justify-between text-sm font-semibold shrink-0">
               <span>Total pendiente</span>
-              <span className="text-red-600">{formatUsd(totalPendiente)}</span>
+              <div className="text-right">
+                <span className="text-red-600">{formatBs(totalPendienteBs)}</span>
+                <span className="text-xs text-muted-foreground ml-2">({formatUsd(totalPendienteUsd)})</span>
+              </div>
             </div>
           </div>
         )}

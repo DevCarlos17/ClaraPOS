@@ -75,8 +75,8 @@ export function useClientesConDeuda() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-       (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
+     `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
+       (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes
      FROM clientes c
      WHERE c.empresa_id = ? AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001 AND c.is_active = 1
      ORDER BY CAST(c.saldo_actual AS REAL) DESC`,
@@ -98,7 +98,7 @@ export function useBuscarClientesDeuda(query: string) {
   const { data, isLoading } = useQuery(
     shouldSearch
       ? `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-           (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
+           (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes
          FROM clientes c
          WHERE c.empresa_id = ? AND c.is_active = 1 AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001
            AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
@@ -124,7 +124,7 @@ export function useFacturasPendientes(clienteId: string | null, incluirPagadas =
              AND (status IS NULL OR status NOT IN ('ANULADA', 'REVERSADA'))
            ORDER BY fecha ASC`
         : `SELECT * FROM ventas
-           WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
+           WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
            ORDER BY fecha ASC`
       : '',
     clienteId ? [clienteId] : []
