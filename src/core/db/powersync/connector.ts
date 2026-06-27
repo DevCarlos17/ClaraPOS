@@ -41,6 +41,17 @@ const IMMUTABLE_COLUMNS: Record<string, string[]> = {
   horarios_staff: ['created_at', 'empresa_id', 'usuario_id', 'dia_semana'],
 }
 
+// Columnas gestionadas por triggers de PostgreSQL — se actualizan server-side
+// como efecto secundario de INSERTs en otras tablas.
+// El conector las stripea del PATCH antes de subir para evitar que el trigger
+// levante P0001 al recibir un UPDATE directo.
+// (La escritura local en SQLite sigue ocurriendo para mantener la UI reactiva.)
+const TRIGGER_MANAGED_PATCH_COLUMNS: Record<string, string[]> = {
+  // saldo_actual se actualiza via trigger actualizar_saldo_cliente
+  // disparado por INSERT en movimientos_cuenta
+  clientes: ['saldo_actual'],
+}
+
 // Tablas con triggers PostgreSQL que bloquean UPDATE (total o parcialmente).
 // Para estas tablas, un PUT de reintento usa INSERT ... ON CONFLICT DO NOTHING
 // en lugar del upsert estándar (INSERT ... ON CONFLICT DO UPDATE).
@@ -426,7 +437,21 @@ export class SupabaseConnector
           }
           case UpdateType.PATCH: {
             const naturalKey = TABLE_NATURAL_KEYS[op.table]
-            const patchPayload = convertBooleans(op.table, op.opData as Record<string, unknown>)
+            let patchPayload = convertBooleans(op.table, op.opData as Record<string, unknown>)
+
+            // Strip columns managed by server-side triggers (updated automatically
+            // as a side-effect of INSERTs in other tables; direct UPDATE is rejected with P0001)
+            const triggerManagedCols = TRIGGER_MANAGED_PATCH_COLUMNS[op.table]
+            if (triggerManagedCols?.length) {
+              patchPayload = Object.fromEntries(
+                Object.entries(patchPayload).filter(([k]) => !triggerManagedCols.includes(k))
+              )
+              // If nothing left to update, skip the PATCH entirely
+              if (Object.keys(patchPayload).length === 0) {
+                result = { error: null }
+                break
+              }
+            }
 
             if (naturalKey) {
               // Para tablas con clave natural: intentar por UUID primero,
