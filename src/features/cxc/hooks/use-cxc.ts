@@ -1845,7 +1845,11 @@ export async function registrarDiferencialCxC(params: DiferencialCxCParams): Pro
     const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
     const saldoUsd = new Decimal(venta.saldo_pend_usd || '0')
 
-    if (saldoUsd.lte(0)) throw new Error('La factura no tiene saldo pendiente')
+    if (saldoUsd.lte(0)) {
+      // Factura ya saldada en DB — puede ocurrir si un pago exacto disparó un
+      // microBalance falso por imprecisión de float en JS; no hay nada que registrar.
+      return
+    }
     if (saldoUsd.gte(new Decimal('0.01'))) {
       throw new Error('El diferencial cambiario solo aplica para saldos sub-centavo (< $0.01)')
     }

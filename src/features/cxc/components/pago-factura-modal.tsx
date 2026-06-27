@@ -511,14 +511,17 @@ export function PagoFacturaModal({
             </div>
             <div className="flex justify-between font-semibold">
               <span>Saldo pendiente:</span>
-              <span className="text-destructive">{formatUsd(saldoPend)}</span>
-            </div>
-            {tasaNum > 0 && (
-              <div className="flex justify-between text-muted-foreground">
-                <span>Equivalente Bs:</span>
-                <span>{formatBs(usdToBs(saldoPend, tasaNum))}</span>
+              <div className="text-right">
+                {tasaNum > 0 ? (
+                  <>
+                    <span className="text-destructive">{formatBs(usdToBs(saldoPend, tasaNum))}</span>
+                    <span className="ml-1.5 text-xs text-muted-foreground font-normal">({formatUsd(saldoPend)})</span>
+                  </>
+                ) : (
+                  <span className="text-destructive">{formatUsd(saldoPend)}</span>
+                )}
               </div>
-            )}
+            </div>
           </div>
         ) : destino === 'PRESTAMO' ? (
           <div className="p-3 rounded-lg bg-purple-50 border border-purple-200 space-y-2 text-sm">

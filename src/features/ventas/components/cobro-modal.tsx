@@ -633,7 +633,7 @@ export function CobroModal({
               {estaOverpago ? (
                 <p className="font-semibold text-amber-600">Vuelto {formatBs(vueltoMontoBs)}</p>
               ) : esDiferencialRedondeo ? (
-                <p className="font-semibold text-muted-foreground">Dif. redondeo</p>
+                <p className="font-semibold text-orange-600">{formatBs(pendienteBs4)}</p>
               ) : (
                 <p className={`font-semibold ${pendienteBs4.gt(umbralBs) ? 'text-orange-600' : 'text-green-600'}`}>
                   {formatBs(Decimal.max(new Decimal(0), pendienteBs4))}
