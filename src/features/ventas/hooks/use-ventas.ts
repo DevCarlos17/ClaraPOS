@@ -950,7 +950,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                VALUES (?, ?, ?, ?, 'ABSORCION_DIFERENCIAL_POS', ?,
                        ?, 'USD', 0, ?, ?, ?,
                        'Exento', '0.00', ?, '0.00',
-                       '0.00', ?, 'PAGADO', ?, ?, ?)`,
+                        '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
               [
                 uuidv4(),
                 empresa_id,
@@ -1003,7 +1003,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                VALUES (?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_FALTANTE', ?,
                        ?, 'USD', 0, ?, ?, ?,
                        'Exento', '0.00', ?, '0.00',
-                       '0.00', ?, 'PAGADO', ?, ?, ?)`,
+                        '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
               [
                 uuidv4(),
                 empresa_id,
@@ -1388,12 +1388,21 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         }
       }
 
+      // When the balance is absorbed (DIFERENCIAL_FALTANTE / ABSORBER), saldoPend = 0
+      // but accounting still needs to balance. Add the absorbed amount to montoCredito so the
+      // entry stays in double-entry balance; the matching expense side is handled by the
+      // gastos record created in the discrepancy switch above.
+      const montoAbsorbidoContab =
+        (discrepancy?.mode === 'DIFERENCIAL_FALTANTE' || discrepancy?.mode === 'ABSORBER')
+          ? (discrepancy?.montoUsd ?? 0)
+          : 0
+
       await generarAsientosVenta(tx, {
         empresaId: empresa_id,
         ventaId,
         nroFactura,
         pagosContado: pagosContadoContab,
-        montoCredito: saldoPend.toNumber(),
+        montoCredito: saldoPend.toNumber() + montoAbsorbidoContab,
         montoProductos: montoProductos.toNumber(),
         montoServicios: montoServicios.toNumber(),
         cuentas,
