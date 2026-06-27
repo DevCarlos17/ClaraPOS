@@ -249,7 +249,7 @@ export function useCxcDelDia(filters: CuadreFilters | null) {
      FROM ventas
      WHERE ${where}
        AND tipo = 'CREDITO'
-       AND CAST(saldo_pend_usd AS REAL) > 0.01`,
+       AND CAST(saldo_pend_usd AS REAL) > 0.001`,
     params
   )
 
@@ -598,7 +598,7 @@ export function useDetalleCxcDia(filters: CuadreFilters | null) {
      JOIN clientes c ON v.cliente_id = c.id
      WHERE ${where}
        AND v.tipo = 'CREDITO'
-       AND CAST(v.saldo_pend_usd AS REAL) > 0.01
+       AND CAST(v.saldo_pend_usd AS REAL) > 0.001
      ORDER BY v.fecha ASC`,
     params
   )

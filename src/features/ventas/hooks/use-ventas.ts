@@ -742,17 +742,22 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       new Decimal(0),
       usdToBs(totalUsd, tasa).minus(abonado_BsNativo).minus(usdToBs(abonado_UsdNativo, tasa))
     )
-    // Si el residuo en Bs es <= $0.01 equivalente, es diferencial de redondeo: se absorbe (saldo = 0)
+    // Si el residuo en Bs es <= $0.01 equivalente Y el usuario NO eligió crédito explícitamente,
+    // es diferencial de redondeo: se absorbe (saldo = 0).
+    // Cuando mode === 'CREDITO', respetar la elección manual del cajero — NO auto-absorber.
     const umbral = new Decimal(tasa).times('0.01')
-    const saldoPend = pendienteBs4_db.lte(umbral) ? new Decimal(0) : bsToUsd(pendienteBs4_db, tasa)
+    const esAutoAbsorb = pendienteBs4_db.lte(umbral) && discrepancy?.mode !== 'CREDITO'
+    const saldoPend = esAutoAbsorb ? new Decimal(0) : bsToUsd(pendienteBs4_db, tasa)
     await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
       toStorageString(saldoPend),
       ventaId,
     ])
 
-    // 7. Si CREDITO y deuda > 0.01: crear movimiento de cuenta
+    // 7. Si CREDITO y deuda > 0: crear movimiento de cuenta
+    //    Umbral 0.001 (no 0.01) para capturar montos sub-centavo en USD que son legítimos
+    //    en contexto bimonetario (ej: Bs 0.99 a tasa 500 = $0.00198).
     //    Excluir modos de absorcion: el gasto absorbe el faltante, no queda deuda en CxC.
-    if (tipo === 'CREDITO' && saldoPend.gt('0.01')
+    if (tipo === 'CREDITO' && saldoPend.gt('0.001')
         && discrepancy?.mode !== 'ABSORBER'
         && discrepancy?.mode !== 'DIFERENCIAL_FALTANTE') {
       const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
