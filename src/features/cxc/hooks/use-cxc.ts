@@ -1888,10 +1888,10 @@ export async function registrarDiferencialCxC(params: DiferencialCxCParams): Pro
       ]
     )
 
-    // 4. Cerrar la factura
+    // 4. Cerrar la factura (ventas no tiene updated_at)
     await tx.execute(
-      'UPDATE ventas SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
-      [toStorageString(new Decimal(0)), now, ventaId]
+      'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+      [toStorageString(new Decimal(0)), ventaId]
     )
 
     // 5. Actualizar saldo cliente en SQLite local inmediatamente
