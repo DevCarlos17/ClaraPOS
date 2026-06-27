@@ -939,6 +939,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const cuentaAbsId = (
               cuentaAbsRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
             )?.cuenta_contable_id ?? ''
+            // Only insert if account is configured — empty cuenta_id violates FK in Supabase
+            if (!cuentaAbsId) throw new Error('sin-cuenta')
             await tx.execute(
               `INSERT INTO gastos
                  (id, empresa_id, nro_gasto, cuenta_id, descripcion, fecha,
@@ -990,6 +992,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const cuentaDiffId = (
               cuentaDiffRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
             )?.cuenta_contable_id ?? ''
+            // Only insert if account is configured — empty cuenta_id violates FK in Supabase
+            if (!cuentaDiffId) throw new Error('sin-cuenta')
             await tx.execute(
               `INSERT INTO gastos
                  (id, empresa_id, nro_gasto, cuenta_id, descripcion, fecha,

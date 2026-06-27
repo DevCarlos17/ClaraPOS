@@ -1830,6 +1830,95 @@ export interface DiferencialCxCParams {
  * que cierra la factura y reduce el saldo del cliente.
  * Solo aplica cuando ventas.saldo_pend_usd > 0 y < $0.01.
  */
+export interface ReversoDiferencialCxCParams {
+  ventaId: string
+  clienteId: string
+  nroFactura: string
+  empresaId: string
+  procesadoPor: string
+}
+
+/**
+ * Reversa un abono de diferencial cambiario registrado vía registrarDiferencialCxC.
+ * Restaura ventas.saldo_pend_usd y crea un movimiento_cuenta tipo='REV'.
+ * Inmutable: no modifica el movimiento_cuenta original (tabla protegida por trigger).
+ */
+export async function registrarReversoDiferencialCxC(
+  params: ReversoDiferencialCxCParams
+): Promise<void> {
+  const { ventaId, clienteId, nroFactura, empresaId, procesadoPor } = params
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+    const refDife = `DIFE-${nroFactura}`
+    const refRev  = `REV-DIFE-${nroFactura}`
+
+    // 1. Buscar el movimiento DIFE original
+    const difeRes = await tx.execute(
+      `SELECT id, monto, saldo_nuevo FROM movimientos_cuenta
+       WHERE venta_id = ? AND referencia = ? AND tipo = 'PAG'
+       LIMIT 1`,
+      [ventaId, refDife]
+    )
+    if (!difeRes.rows?.length) {
+      throw new Error(`No se encontró el movimiento diferencial para la factura ${nroFactura}`)
+    }
+    const dife = difeRes.rows.item(0) as { id: string; monto: string; saldo_nuevo: string }
+    const montoUsd = new Decimal(dife.monto || '0')
+
+    // 2. Verificar que no esté ya reversado
+    const revExistsRes = await tx.execute(
+      `SELECT id FROM movimientos_cuenta WHERE venta_id = ? AND referencia = ? LIMIT 1`,
+      [ventaId, refRev]
+    )
+    if (revExistsRes.rows?.length) {
+      throw new Error('El diferencial cambiario ya fue reversado')
+    }
+
+    // 3. Leer saldo actual del cliente
+    const clienteRes = await tx.execute(
+      'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+      [clienteId, empresaId]
+    )
+    if (!clienteRes.rows?.length) throw new Error('Cliente no encontrado')
+    const saldoActual = new Decimal(
+      (clienteRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+    )
+    // Reversar: devolver la deuda que fue absorbida por el diferencial
+    const saldoNuevo = saldoActual.plus(montoUsd)
+
+    // 4. Insertar movimiento reverso (tipo REV, no se puede editar el original)
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta
+         (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+          observacion, venta_id, fecha, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, ?, 'REV', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, '1')`,
+      [
+        uuidv4(), empresaId, clienteId,
+        refRev,
+        toStorageString(montoUsd),
+        toStorageString(saldoActual),
+        toStorageString(saldoNuevo),
+        `Reverso diferencial cambiario — Factura ${nroFactura}`,
+        ventaId, now, now, procesadoPor,
+        toStorageString(montoUsd),
+      ]
+    )
+
+    // 5. Restaurar saldo_pend_usd en la factura (ventas no tiene updated_at)
+    await tx.execute(
+      'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+      [toStorageString(montoUsd), ventaId]
+    )
+
+    // 6. Actualizar saldo cliente en SQLite local
+    await tx.execute(
+      'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+      [toStorageString(saldoNuevo), now, clienteId]
+    )
+  })
+}
+
 export async function registrarDiferencialCxC(params: DiferencialCxCParams): Promise<void> {
   const { ventaId, clienteId, empresaId, procesadoPor, tasa } = params
 
