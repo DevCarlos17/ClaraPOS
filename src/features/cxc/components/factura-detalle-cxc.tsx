@@ -45,8 +45,10 @@ interface DifeMovimientoCxc {
   id: string
   referencia: string
   monto: string
+  tasa_pago: string | null
+  cajero_nombre: string | null
   fecha: string
-  yaReversado: number  // 1 si existe REV, 0 si no
+  yaReversado: number
 }
 
 interface VentaExtraRow {
@@ -204,12 +206,14 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   const { data: difeMovData } = useQuery(
     factura
       ? `SELECT
-           d.id, d.referencia, d.monto, d.fecha,
+           d.id, d.referencia, d.monto, d.tasa_pago, d.fecha,
+           u.nombre as cajero_nombre,
            (SELECT COUNT(*) FROM movimientos_cuenta r
             WHERE r.venta_id = d.venta_id
               AND r.referencia = 'REV-' || d.referencia
               AND r.tipo = 'REV') as yaReversado
          FROM movimientos_cuenta d
+         LEFT JOIN usuarios u ON d.created_by = u.id
          WHERE d.venta_id = ? AND d.tipo = 'PAG'
            AND d.referencia LIKE 'DIFE-%'
          ORDER BY d.fecha ASC`
@@ -713,41 +717,53 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
                           </tr>
                         )
                       })}
-                      {difeMovimientos.map((mov) => (
-                        <tr key={mov.id} className="border-t border-border bg-amber-50/30 dark:bg-amber-950/20">
-                          <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
-                            {mov.fecha?.slice(0, 10)}
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
-                              Diferencial cambiario
-                            </span>
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-muted-foreground text-[10px]">
-                            {mov.referencia}
-                          </td>
-                          <td className="px-3 py-1.5 text-right">
-                            <span className="font-medium tabular-nums text-amber-600">
-                              {formatUsd(parseFloat(mov.monto))}
-                            </span>
-                          </td>
-                          <td className="px-3 py-1.5 text-center">
-                            {mov.yaReversado ? (
-                              <span className="text-[10px] text-muted-foreground italic">Reversado</span>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={handleReversarDiferencial}
-                                disabled={reversandoDife}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors disabled:opacity-50"
-                              >
-                                <ArrowCounterClockwise className="h-2.5 w-2.5" />
-                                {reversandoDife ? '...' : 'Reversar'}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                      {difeMovimientos.map((mov) => {
+                        const tasaMov = parseFloat(mov.tasa_pago ?? factura.tasa) || 1
+                        const montoUsdDife = parseFloat(mov.monto)
+                        const montoBsDife = montoUsdDife * tasaMov
+                        return (
+                          <tr key={mov.id} className="border-t border-border bg-amber-50/30 dark:bg-amber-950/20">
+                            <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">
+                              {mov.fecha?.slice(0, 10)}
+                            </td>
+                            <td className="px-3 py-1.5 space-y-0.5">
+                              <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400">
+                                Diferencial cambiario
+                              </span>
+                              <div className="text-[10px] text-muted-foreground leading-tight">
+                                Fac. #{factura.nro_factura}
+                                {mov.cajero_nombre && ` · ${mov.cajero_nombre}`}
+                              </div>
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-muted-foreground text-[10px]">
+                              {mov.referencia}
+                            </td>
+                            <td className="px-3 py-1.5 text-right">
+                              <span className="font-medium tabular-nums text-amber-600 block">
+                                {formatBs(montoBsDife)}
+                              </span>
+                              <span className="text-[10px] text-muted-foreground tabular-nums">
+                                {formatUsd(montoUsdDife)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-1.5 text-center">
+                              {mov.yaReversado ? (
+                                <span className="text-[10px] text-muted-foreground italic">Reversado</span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={handleReversarDiferencial}
+                                  disabled={reversandoDife}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-destructive border border-destructive/30 rounded hover:bg-destructive/10 transition-colors disabled:opacity-50"
+                                >
+                                  <ArrowCounterClockwise className="h-2.5 w-2.5" />
+                                  {reversandoDife ? '...' : 'Reversar'}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
                       {safMovimientos.map((mov) => (
                         <tr key={mov.id} className="border-t border-border bg-green-50/30 dark:bg-green-950/20">
                           <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">

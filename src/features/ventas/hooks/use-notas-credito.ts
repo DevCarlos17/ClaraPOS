@@ -7,6 +7,7 @@ import { toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
+import { reversarDiferencialEnTx } from '@/features/cxc/hooks/use-cxc'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -404,6 +405,19 @@ export async function crearNotaCredito(
         now,
         venta.cliente_id,
       ])
+    }
+
+    // 5b. Si la factura tenía un diferencial cambiario aplicado, reversarlo también
+    try {
+      await reversarDiferencialEnTx(tx, {
+        ventaId: venta_id,
+        clienteId: venta.cliente_id,
+        nroFactura: venta.nro_factura,
+        empresaId: empresa_id,
+        procesadoPor: usuario_id,
+      }, now)
+    } catch {
+      // DIFE reversal opcional — no bloquea la anulación
     }
 
     // 6. Marcar factura como anulada
