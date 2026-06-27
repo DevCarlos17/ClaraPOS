@@ -111,6 +111,43 @@ export function useGastos(fechaDesde?: string, fechaHasta?: string) {
   }
 }
 
+/**
+ * Últimos N gastos manuales (excluye los automáticos de diferencial cambiario
+ * y absorción POS, que el sistema gestiona automáticamente).
+ * Siempre activo — no requiere filtro de fechas.
+ */
+export function useGastosManualesRecientes(limit = 10) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    empresaId
+      ? `SELECT g.*,
+           pc.nombre as cuenta_nombre,
+           p.razon_social as proveedor_nombre,
+           u.nombre as created_by_nombre
+         FROM gastos g
+         LEFT JOIN plan_cuentas pc ON g.cuenta_id = pc.id
+         LEFT JOIN proveedores p ON g.proveedor_id = p.id
+         LEFT JOIN usuarios u ON g.created_by = u.id
+         WHERE g.empresa_id = ?
+           AND g.descripcion NOT IN ('DIFERENCIAL_CAMBIARIO_FALTANTE', 'ABSORCION_DIFERENCIAL_POS')
+         ORDER BY g.fecha DESC, g.created_at DESC
+         LIMIT ?`
+      : '',
+    empresaId ? [empresaId, limit] : []
+  )
+
+  return {
+    gastos: (data ?? []) as (Gasto & {
+      cuenta_nombre: string
+      proveedor_nombre: string | null
+      created_by_nombre: string | null
+    })[],
+    isLoading,
+  }
+}
+
 // ─── Funciones de escritura ──────────────────────────────────
 
 /**

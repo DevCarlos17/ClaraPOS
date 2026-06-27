@@ -941,31 +941,46 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             )?.cuenta_contable_id ?? ''
             // Only insert if account is configured — empty cuenta_id violates FK in Supabase
             if (!cuentaAbsId) throw new Error('sin-cuenta')
+
+            const cajeroNomAbsRes = await tx.execute(
+              'SELECT nombre FROM usuarios WHERE id = ? LIMIT 1',
+              [discrepancy.cajeroId ?? usuario_id]
+            )
+            const cajeroNomAbs = (cajeroNomAbsRes.rows?.item(0) as { nombre: string } | undefined)?.nombre ?? 'Sistema'
+            let supNomAbs = ''
+            if (discrepancy.supervisorId) {
+              const supRes = await tx.execute('SELECT nombre FROM usuarios WHERE id = ? LIMIT 1', [discrepancy.supervisorId])
+              supNomAbs = (supRes.rows?.item(0) as { nombre: string } | undefined)?.nombre ?? discrepancy.supervisorId
+            }
+            let sesionFechaAbs = ''
+            if (sesion_caja_id) {
+              const sesionResAbs = await tx.execute(
+                'SELECT fecha_apertura FROM sesiones_caja WHERE id = ? LIMIT 1',
+                [sesion_caja_id]
+              )
+              sesionFechaAbs = (sesionResAbs.rows?.item(0) as { fecha_apertura: string } | undefined)
+                ?.fecha_apertura?.slice(0, 10) ?? ''
+            }
+            const obsAbs = `Absorcion diferencial. Fac. ${nroFactura}. Cajero: ${cajeroNomAbs}${supNomAbs ? '. Supervisor: ' + supNomAbs : ''}${sesionFechaAbs ? '. Sesion: ' + sesionFechaAbs : ''}`
+
             await tx.execute(
               `INSERT INTO gastos
-                 (id, empresa_id, nro_gasto, cuenta_id, descripcion, fecha,
+                 (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
                   moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
                   tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
                   saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
-               VALUES (?, ?, ?, ?, 'ABSORCION_DIFERENCIAL_POS', ?,
+               VALUES (?, ?, ?, ?, ?, 'ABSORCION_DIFERENCIAL_POS', ?,
                        ?, 'USD', 0, ?, ?, ?,
                        'Exento', '0.00', ?, '0.00',
                         '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
               [
-                uuidv4(),
-                empresa_id,
-                nroGastoAbs,
-                cuentaAbsId,
-                now,
-                monedaUsdId,
+                uuidv4(), empresa_id, nroGastoAbs, nroFactura, cuentaAbsId,
+                now, monedaUsdId,
                 toStorageString(tasa),
                 toStorageString(discrepancy.montoUsd),
                 toStorageString(discrepancy.montoUsd),
                 toStorageString(discrepancy.montoUsd),
-                `Diferencial asumido por negocio. Cajero: ${discrepancy.cajeroId ?? usuario_id}. Supervisor: ${discrepancy.supervisorId ?? ''}. Venta: ${ventaId}`,
-                now,
-                now,
-                usuario_id,
+                obsAbs, now, now, usuario_id,
               ]
             )
           } catch {
@@ -994,31 +1009,42 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             )?.cuenta_contable_id ?? ''
             // Only insert if account is configured — empty cuenta_id violates FK in Supabase
             if (!cuentaDiffId) throw new Error('sin-cuenta')
+
+            // Cajero nombre y fecha sesión para observacion legible (no UUIDs)
+            const cajeroNomDiffRes = await tx.execute(
+              'SELECT nombre FROM usuarios WHERE id = ? LIMIT 1',
+              [discrepancy.cajeroId ?? usuario_id]
+            )
+            const cajeroNomDiff = (cajeroNomDiffRes.rows?.item(0) as { nombre: string } | undefined)?.nombre ?? 'Sistema'
+            let sesionFechaDiff = ''
+            if (sesion_caja_id) {
+              const sesionResDiff = await tx.execute(
+                'SELECT fecha_apertura FROM sesiones_caja WHERE id = ? LIMIT 1',
+                [sesion_caja_id]
+              )
+              sesionFechaDiff = (sesionResDiff.rows?.item(0) as { fecha_apertura: string } | undefined)
+                ?.fecha_apertura?.slice(0, 10) ?? ''
+            }
+            const obsDiff = `Diferencial cambiario. Fac. ${nroFactura}. Cajero: ${cajeroNomDiff}${sesionFechaDiff ? '. Sesion: ' + sesionFechaDiff : ''}`
+
             await tx.execute(
               `INSERT INTO gastos
-                 (id, empresa_id, nro_gasto, cuenta_id, descripcion, fecha,
+                 (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
                   moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
                   tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
                   saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
-               VALUES (?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_FALTANTE', ?,
+               VALUES (?, ?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_FALTANTE', ?,
                        ?, 'USD', 0, ?, ?, ?,
                        'Exento', '0.00', ?, '0.00',
                         '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
               [
-                uuidv4(),
-                empresa_id,
-                nroGastoDiff,
-                cuentaDiffId,
-                now,
-                monedaUsdId,
+                uuidv4(), empresa_id, nroGastoDiff, nroFactura, cuentaDiffId,
+                now, monedaUsdId,
                 toStorageString(tasa),
                 toStorageString(discrepancy.montoUsd),
                 toStorageString(discrepancy.montoUsd),
                 toStorageString(discrepancy.montoUsd),
-                `Diferencial cambiario faltante — denominacion. Cajero: ${discrepancy.cajeroId ?? usuario_id}. Venta: ${ventaId}`,
-                now,
-                now,
-                usuario_id,
+                obsDiff, now, now, usuario_id,
               ]
             )
           } catch {

@@ -2,6 +2,7 @@ import { useRef, useState, useEffect, useMemo } from 'react'
 import { Plus, ChartBar, CaretDown, CaretUp, MagnifyingGlass, CalendarDots, BookOpen, X } from '@phosphor-icons/react'
 import {
   useGastos,
+  useGastosManualesRecientes,
   type Gasto,
 } from '@/features/contabilidad/hooks/use-gastos'
 import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -11,7 +12,7 @@ import { GastoReportes, type TipoReporte } from './gasto-reportes'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { formatDate } from '@/lib/format'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { todayStr, startOfMonth } from '@/lib/dates'
 
 // ─── Tipos ───────────────────────────────────────────────────
@@ -98,10 +99,15 @@ export function GastoList() {
 
   const hasConsulta = Boolean(consultaActiva)
 
-  const { gastos, isLoading } = useGastos(
+  const { gastos: gastosPorFecha, isLoading: isLoadingFecha } = useGastos(
     consultaActiva?.desde,
     consultaActiva?.hasta
   )
+  const { gastos: gastosRecientes, isLoading: isLoadingRecientes } = useGastosManualesRecientes(10)
+
+  // Usar gastos del rango si hay consulta activa, si no mostrar últimos manuales
+  const gastos = hasConsulta ? gastosPorFecha : gastosRecientes
+  const isLoading = hasConsulta ? isLoadingFecha : isLoadingRecientes
   const { grupos } = useGruposGastoConSubcuentas()
 
   // Validacion del rango
@@ -248,12 +254,82 @@ export function GastoList() {
         )}
       </div>
 
-      {/* Estado sin consulta activa */}
+      {/* Vista por defecto: últimos 10 gastos manuales (sin consulta activa) */}
       {!hasConsulta ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <CalendarDots className="h-10 w-10 mx-auto mb-3 opacity-40" />
-          <p className="text-base font-medium">Seleccione un rango de fechas</p>
-          <p className="text-sm mt-1">Elija las fechas de inicio y fin, luego presione "Consultar"</p>
+        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-muted/40 border-b border-border">
+            <p className="text-sm text-muted-foreground font-medium">
+              Últimos 10 gastos manuales
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Use el filtro de fechas para consultar períodos específicos
+            </p>
+          </div>
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-12 bg-muted/50 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : gastos.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <p className="text-sm">Sin gastos manuales registrados</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Gasto</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Factura</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto</th>
+                    <th className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gastos.map((g) => {
+                    const anulado = g.status === 'ANULADO'
+                    const montoUsd = parseFloat(g.monto_usd)
+                    const tasaGasto = parseFloat(g.tasa) || 1
+                    const montoBs = montoUsd * tasaGasto
+                    return (
+                      <tr
+                        key={g.id}
+                        onClick={() => setDetalleId(g.id)}
+                        className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
+                      >
+                        <td className={`px-4 py-3 font-mono text-foreground ${anulado ? 'line-through opacity-50' : ''}`}>
+                          {g.nro_gasto}
+                        </td>
+                        <td className={`px-4 py-3 font-mono text-muted-foreground text-xs ${anulado ? 'line-through opacity-50' : ''}`}>
+                          {g.nro_factura ?? '—'}
+                        </td>
+                        <td className={`px-4 py-3 text-muted-foreground whitespace-nowrap ${anulado ? 'line-through opacity-50' : ''}`}>
+                          {formatDate(g.fecha)}
+                        </td>
+                        <td className={`px-4 py-3 text-foreground max-w-[180px] truncate ${anulado ? 'opacity-50' : ''}`}>
+                          {(g as GastoConJoins).cuenta_nombre}
+                        </td>
+                        <td className={`px-4 py-3 text-muted-foreground ${anulado ? 'opacity-50' : ''}`}>
+                          {(g as GastoConJoins).proveedor_nombre ?? '—'}
+                        </td>
+                        <td className={`px-4 py-3 text-right tabular-nums ${anulado ? 'line-through opacity-50' : ''}`}>
+                          <div className="font-medium text-foreground">{formatBs(montoBs)}</div>
+                          <div className="text-xs text-muted-foreground">{formatUsd(montoUsd)} @ {tasaGasto.toFixed(2)}</div>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <StatusBadge status={g.status} />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -400,7 +476,7 @@ export function GastoList() {
                         className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
                         onClick={() => toggleSort('monto_usd')}
                       >
-                        Monto USD<SortIcon field="monto_usd" current={sortKey} dir={sortDir} />
+                        Monto<SortIcon field="monto_usd" current={sortKey} dir={sortDir} />
                       </th>
                       <th
                         className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
@@ -435,8 +511,18 @@ export function GastoList() {
                           <td className={`px-4 py-3 text-muted-foreground ${anulado ? 'opacity-50' : ''}`}>
                             {g.proveedor_nombre ?? '—'}
                           </td>
-                          <td className={`px-4 py-3 text-right tabular-nums font-medium ${anulado ? 'line-through opacity-50' : 'text-foreground'}`}>
-                            {formatUsd(parseFloat(g.monto_usd))}
+                          <td className={`px-4 py-3 text-right tabular-nums ${anulado ? 'line-through opacity-50' : ''}`}>
+                            {(() => {
+                              const montoUsd = parseFloat(g.monto_usd)
+                              const tasaGasto = parseFloat(g.tasa) || 1
+                              const montoBs = montoUsd * tasaGasto
+                              return (
+                                <>
+                                  <div className="font-medium text-foreground">{formatBs(montoBs)}</div>
+                                  <div className="text-xs text-muted-foreground">{formatUsd(montoUsd)} @ {tasaGasto.toFixed(2)}</div>
+                                </>
+                              )
+                            })()}
                           </td>
                           <td className="px-4 py-3 text-center">
                             <StatusBadge status={g.status} />
