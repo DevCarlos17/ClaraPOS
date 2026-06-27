@@ -1,192 +1,571 @@
 import { useMemo, useState } from 'react'
+import { Plus, BookOpen } from '@phosphor-icons/react'
 import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
-import { todayStr } from '@/lib/dates'
+import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import { todayStr, startOfMonth } from '@/lib/dates'
+import { formatUsd, formatBs } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 import { GastosKpis } from './gastos-kpis'
+import { GastoForm } from './gasto-form'
+import { CuentaGastoModal } from './cuenta-gasto-modal'
+import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 
-// ─── Constantes ──────────────────────────────────────────────
+// ─── Tipos ───────────────────────────────────────────────────
 
-const MESES = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-]
+type Criterio = 'TODAS' | 'GRUPO' | 'CUENTA'
+type Intervalo = 'DIARIO' | 'SEMANAL' | 'MENSUAL'
 
-const COLORES_PIE = [
-  '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
-  '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16',
-]
+// ─── Helpers de fecha ────────────────────────────────────────
 
-// ─── Helpers ─────────────────────────────────────────────────
+const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
 
-function padMes(n: number) {
-  return String(n).padStart(2, '0')
+function lastDayOfMonth(yyyyMM: string): string {
+  const [y, m] = yyyyMM.split('-').map(Number)
+  const last = new Date(y, m, 0).getDate()
+  return `${yyyyMM}-${String(last).padStart(2, '0')}`
 }
 
-// ─── Componente ──────────────────────────────────────────────
+function dayLabel(dateStr: string): string {
+  const [, m, d] = dateStr.split('-')
+  return `${d}/${m}`
+}
+
+function getXKey(dateStr: string, intervalo: Intervalo): string {
+  if (intervalo === 'DIARIO') return dateStr.slice(0, 10)
+  if (intervalo === 'SEMANAL') {
+    const d = new Date(dateStr + 'T00:00:00')
+    const thu = new Date(d)
+    thu.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7)
+    const yearStart = new Date(thu.getFullYear(), 0, 4)
+    const week = 1 + Math.round(
+      ((thu.getTime() - yearStart.getTime()) / 86400000 - 3 + (yearStart.getDay() + 6) % 7) / 7
+    )
+    return `${thu.getFullYear()}-W${String(week).padStart(2, '0')}`
+  }
+  return dateStr.slice(0, 7)
+}
+
+function xKeyToLabel(key: string, intervalo: Intervalo): string {
+  if (intervalo === 'DIARIO') return dayLabel(key)
+  if (intervalo === 'SEMANAL') {
+    const w = key.split('-W')[1]
+    return `S${parseInt(w)}`
+  }
+  const month = parseInt(key.slice(5, 7)) - 1
+  return MESES_CORTOS[month] ?? key
+}
+
+// Badge status reutilizable
+function StatusBadge({ status }: { status: string }) {
+  return status === 'ANULADO'
+    ? <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">ANULADO</span>
+    : <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">REGISTRADO</span>
+}
+
+// ─── Componente principal ─────────────────────────────────────
 
 export function GastosDashboard() {
-  const [yearStr, monthStr] = todayStr().split('-')
-  const [mes, setMes] = useState(Number(monthStr))
-  const [anio, setAnio] = useState(Number(yearStr))
+  const today = todayStr()
+  const defaultMesDesde = today.slice(0, 7)
 
-  const fechaDesde = `${anio}-${padMes(mes)}-01`
-  const ultimoDia = new Date(anio, mes, 0).getDate()
-  const fechaHasta = `${anio}-${padMes(mes)}-${ultimoDia}`
+  // ── Estado de filtros
+  const [criterio, setCriterio]       = useState<Criterio>('TODAS')
+  const [grupoId, setGrupoId]         = useState<string>('')
+  const [cuentaId, setCuentaId]       = useState<string>('')
+  const [intervalo, setIntervalo]     = useState<Intervalo>('MENSUAL')
 
-  const { gastos, isLoading } = useGastos(fechaDesde, fechaHasta)
+  // Dates per interval type — preserves selection when switching
+  const [dailyDesde, setDailyDesde]   = useState(startOfMonth())
+  const [dailyHasta, setDailyHasta]   = useState(today)
+  const [mesDesde, setMesDesde]       = useState(defaultMesDesde)
+  const [mesHasta, setMesHasta]       = useState(defaultMesDesde)
 
-  const gastosFiltrados = useMemo(
-    () => gastos.filter((g) => g.status === 'REGISTRADO'),
-    [gastos]
+  // ── Modales
+  const [formOpen, setFormOpen]               = useState(false)
+  const [cuentaModalOpen, setCuentaModalOpen] = useState(false)
+  const [detalleId, setDetalleId]             = useState<string | null>(null)
+
+  // ── Datos
+  const { grupos } = useGruposGastoConSubcuentas()
+
+  // Compute actual desde/hasta for query
+  const { queryDesde, queryHasta } = useMemo(() => {
+    if (intervalo === 'MENSUAL') {
+      return {
+        queryDesde: `${mesDesde}-01`,
+        queryHasta: lastDayOfMonth(mesHasta),
+      }
+    }
+    // DIARIO and SEMANAL both use date pickers
+    return { queryDesde: dailyDesde, queryHasta: dailyHasta }
+  }, [intervalo, mesDesde, mesHasta, dailyDesde, dailyHasta])
+
+  const { gastos, isLoading } = useGastos(queryDesde, queryHasta)
+
+  // ── Filtrar por criterio
+  const gastosFiltrados = useMemo(() => {
+    const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
+    if (criterio === 'GRUPO' && grupoId) {
+      const grupo = grupos.find((g) => g.id === grupoId)
+      const ids = new Set(grupo?.subcuentas.map((s) => s.id) ?? [])
+      return registrados.filter((g) => ids.has(g.cuenta_id))
+    }
+    if (criterio === 'CUENTA' && cuentaId) {
+      return registrados.filter((g) => g.cuenta_id === cuentaId)
+    }
+    return registrados
+  }, [gastos, criterio, grupoId, cuentaId, grupos])
+
+  // ── Datos gráfica: agrupar por intervalo
+  const chartData = useMemo(() => {
+    const bucket: Record<string, number> = {}
+    for (const g of gastosFiltrados) {
+      const key = getXKey(g.fecha, intervalo)
+      bucket[key] = (bucket[key] ?? 0) + (parseFloat(g.monto_usd) || 0)
+    }
+    return Object.entries(bucket)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, total]) => ({
+        name: xKeyToLabel(key, intervalo),
+        total: Number(total.toFixed(4)),
+      }))
+  }, [gastosFiltrados, intervalo])
+
+  // ── Resumen por criterio (card lateral)
+  const resumenItems = useMemo(() => {
+    if (criterio === 'TODAS') {
+      // Totals per group
+      return grupos.map((grupo) => {
+        const ids = new Set(grupo.subcuentas.map((s) => s.id))
+        const total = gastosFiltrados
+          .filter((g) => ids.has(g.cuenta_id))
+          .reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, total }
+      }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total)
+    }
+    if (criterio === 'GRUPO' && grupoId) {
+      const grupo = grupos.find((g) => g.id === grupoId)
+      return (grupo?.subcuentas ?? []).map((sub) => {
+        const total = gastosFiltrados
+          .filter((g) => g.cuenta_id === sub.id)
+          .reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, total }
+      }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total)
+    }
+    if (criterio === 'CUENTA' && cuentaId) {
+      const allSubs = grupos.flatMap((g) => g.subcuentas)
+      const sub = allSubs.find((s) => s.id === cuentaId)
+      if (!sub) return []
+      const total = gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+      return [{ id: sub.id, nombre: sub.nombre, codigo: sub.codigo, total }]
+    }
+    return []
+  }, [criterio, gastosFiltrados, grupos, grupoId, cuentaId])
+
+  // Flat list of all accounts for CUENTA dropdown
+  const todasLasCuentas = useMemo(
+    () => grupos.flatMap((g) => g.subcuentas),
+    [grupos]
   )
 
-  // Datos para grafico de barras: agrupados por semana del mes
-  const datosBarras = useMemo(() => {
-    const semanas: Record<string, number> = {
-      'Sem 1': 0, 'Sem 2': 0, 'Sem 3': 0, 'Sem 4': 0,
+  // When interval changes, keep daily dates consistent
+  function handleIntervaloChange(newIntervalo: Intervalo) {
+    setIntervalo(newIntervalo)
+    if (newIntervalo !== 'MENSUAL') {
+      // If switching to daily/weekly and dates are still month format, reset
+      if (!dailyDesde) {
+        setDailyDesde(startOfMonth())
+        setDailyHasta(today)
+      }
     }
-    for (const g of gastosFiltrados) {
-      const dia = new Date(g.fecha).getUTCDate()
-      let semana: string
-      if (dia <= 7) semana = 'Sem 1'
-      else if (dia <= 14) semana = 'Sem 2'
-      else if (dia <= 21) semana = 'Sem 3'
-      else semana = 'Sem 4'
-      semanas[semana] += parseFloat(g.monto_usd) || 0
-    }
-    return Object.entries(semanas).map(([name, total]) => ({
-      name,
-      total: Number(total.toFixed(2)),
-    }))
-  }, [gastosFiltrados])
+  }
 
-  // Datos para grafico de torta: por cuenta contable
-  const datosPie = useMemo(() => {
-    const porCuenta: Record<string, number> = {}
-    for (const g of gastosFiltrados) {
-      const nombre = g.cuenta_nombre ?? 'Sin cuenta'
-      porCuenta[nombre] = (porCuenta[nombre] ?? 0) + (parseFloat(g.monto_usd) || 0)
-    }
-    return Object.entries(porCuenta)
-      .map(([name, value]) => ({ name, value: Number(value.toFixed(2)) }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8)
-  }, [gastosFiltrados])
+  if (formOpen) {
+    return <GastoForm onClose={() => setFormOpen(false)} />
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Selector de periodo */}
+    <div className="space-y-4">
+
+      {/* ── Barra de filtros ─────────────────────────────────── */}
       <div className="rounded-2xl bg-card shadow-lg p-4">
-      <div className="flex flex-wrap items-center gap-4">
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Mes</label>
-          <select
-            value={mes}
-            onChange={(e) => setMes(Number(e.target.value))}
-            className="rounded-md border border-input px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {MESES.map((nombre, i) => (
-              <option key={i + 1} value={i + 1}>{nombre}</option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-end gap-3">
+
+          {/* Criterio */}
+          <div className="flex-shrink-0">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Criterio</label>
+            <select
+              value={criterio}
+              onChange={(e) => { setCriterio(e.target.value as Criterio); setGrupoId(''); setCuentaId('') }}
+              className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="TODAS">Todas las cuentas</option>
+              <option value="GRUPO">Por grupo</option>
+              <option value="CUENTA">Por cuenta</option>
+            </select>
+          </div>
+
+          {/* Grupo selector */}
+          {criterio === 'GRUPO' && (
+            <div className="flex-shrink-0">
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Grupo</label>
+              <select
+                value={grupoId}
+                onChange={(e) => setGrupoId(e.target.value)}
+                className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Seleccionar grupo...</option>
+                {grupos.map((g) => (
+                  <option key={g.id} value={g.id}>{g.codigo} — {g.nombre}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Cuenta selector */}
+          {criterio === 'CUENTA' && (
+            <div className="flex-shrink-0">
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Cuenta</label>
+              <select
+                value={cuentaId}
+                onChange={(e) => setCuentaId(e.target.value)}
+                className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring min-w-[200px]"
+              >
+                <option value="">Seleccionar cuenta...</option>
+                {todasLasCuentas.map((s) => (
+                  <option key={s.id} value={s.id}>{s.codigo} — {s.nombre}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Intervalo */}
+          <div className="flex-shrink-0">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Intervalo</label>
+            <div className="flex rounded-md border border-input overflow-hidden text-sm">
+              {(['DIARIO', 'SEMANAL', 'MENSUAL'] as Intervalo[]).map((iv) => (
+                <button
+                  key={iv}
+                  type="button"
+                  onClick={() => handleIntervaloChange(iv)}
+                  className={`px-3 py-2 font-medium transition-colors ${
+                    intervalo === iv
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  {iv === 'DIARIO' ? 'Diario' : iv === 'SEMANAL' ? 'Semanal' : 'Mensual'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Rango de fechas — adapta al intervalo */}
+          {intervalo === 'MENSUAL' ? (
+            <>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Mes inicio</label>
+                <input
+                  type="month"
+                  value={mesDesde}
+                  onChange={(e) => setMesDesde(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Mes fin</label>
+                <input
+                  type="month"
+                  value={mesHasta}
+                  min={mesDesde}
+                  onChange={(e) => setMesHasta(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  {intervalo === 'SEMANAL' ? 'Semana inicio' : 'Fecha inicio'}
+                </label>
+                <input
+                  type="date"
+                  value={dailyDesde}
+                  onChange={(e) => setDailyDesde(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  {intervalo === 'SEMANAL' ? 'Semana fin' : 'Fecha fin'}
+                </label>
+                <input
+                  type="date"
+                  value={dailyHasta}
+                  min={dailyDesde}
+                  onChange={(e) => setDailyHasta(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </>
+          )}
+
+          {/* Separador + acciones */}
+          <div className="flex-1" />
+          <div className="flex gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setCuentaModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors"
+            >
+              <BookOpen className="h-4 w-4" />
+              Crear cuenta
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Agregar gasto
+            </button>
+          </div>
         </div>
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Ano</label>
-          <input
-            type="number"
-            value={anio}
-            onChange={(e) => setAnio(Number(e.target.value))}
-            min={2020}
-            max={2099}
-            className="w-24 rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {isLoading ? 'Cargando...' : `${gastosFiltrados.length} gastos registrados`}
-        </p>
-      </div>
+
+        {/* Estado de carga */}
+        {isLoading && (
+          <p className="text-xs text-muted-foreground mt-3">Cargando...</p>
+        )}
+        {!isLoading && (
+          <p className="text-xs text-muted-foreground mt-2">
+            {gastosFiltrados.length} gasto{gastosFiltrados.length !== 1 ? 's' : ''} registrado{gastosFiltrados.length !== 1 ? 's' : ''}
+            {' · '}
+            {queryDesde} al {queryHasta}
+          </p>
+        )}
       </div>
 
-      {/* KPIs */}
-      <GastosKpis gastos={gastos} />
+      {/* ── KPIs ─────────────────────────────────────────────── */}
+      {!isLoading && <GastosKpis gastos={gastosFiltrados} />}
 
-      {/* Graficas */}
-      {gastosFiltrados.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Grafico de barras: total por semana */}
-          <div className="bg-card border border-border rounded-2xl shadow-lg p-4">
-            <h3 className="text-sm font-semibold text-foreground mb-4">Gastos por Semana (USD)</h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={datosBarras} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+      {/* ── Resumen + Gráfica ─────────────────────────────────── */}
+      {!isLoading && gastosFiltrados.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+          {/* Card grupos/cuentas (scroll) */}
+          <div className="lg:col-span-2 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col max-h-72">
+            <div className="px-4 py-3 border-b border-border bg-muted/40 shrink-0">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                {criterio === 'TODAS' ? 'Por grupo' : criterio === 'GRUPO' ? 'Por cuenta' : 'Cuenta seleccionada'}
+              </p>
+            </div>
+            <div className="overflow-y-auto divide-y divide-border flex-1">
+              {resumenItems.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-6">Sin datos</p>
+              ) : (
+                resumenItems.map((item) => (
+                  <div key={item.id} className="flex items-center justify-between px-4 py-2.5">
+                    <div className="min-w-0">
+                      <span className="text-[10px] font-mono text-muted-foreground/60 mr-1.5">{item.codigo}</span>
+                      <span className="text-sm text-foreground truncate">{item.nombre}</span>
+                    </div>
+                    <div className="text-right ml-3 shrink-0">
+                      <div className="text-sm font-semibold tabular-nums text-foreground">
+                        {formatUsd(item.total)}
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+            {/* Total */}
+            <div className="px-4 py-2.5 border-t border-border bg-muted/30 shrink-0 flex justify-between">
+              <span className="text-xs font-semibold text-muted-foreground">Total</span>
+              <span className="text-sm font-bold tabular-nums">
+                {formatUsd(resumenItems.reduce((s, i) => s + i.total, 0))}
+              </span>
+            </div>
+          </div>
+
+          {/* Gráfica de barras */}
+          <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              Gastos por {intervalo === 'DIARIO' ? 'día' : intervalo === 'SEMANAL' ? 'semana' : 'mes'} (USD)
+            </p>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(v) => `$${v}`}
+                  width={52}
+                />
                 <Tooltip
                   formatter={(value) => {
                     const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
-                    return [`$${num.toFixed(2)}`, 'Total USD']
+                    return [`$${num.toFixed(4)}`, 'Total USD']
                   }}
+                  cursor={{ fill: 'hsl(var(--muted))' }}
                 />
-                <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="total" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-
-          {/* Grafico de torta: por cuenta contable */}
-          <div className="bg-card border border-border rounded-2xl shadow-lg p-4">
-            <h3 className="text-sm font-semibold text-foreground mb-4">Distribucion por Cuenta</h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie
-                  data={datosPie}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={90}
-                  paddingAngle={3}
-                  dataKey="value"
-                >
-                  {datosPie.map((_entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={COLORES_PIE[index % COLORES_PIE.length]}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value) => {
-                    const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
-                    return [`$${num.toFixed(2)}`, 'USD']
-                  }}
-                />
-                <Legend
-                  formatter={(value) =>
-                    value.length > 20 ? `${value.slice(0, 18)}...` : value
-                  }
-                  wrapperStyle={{ fontSize: 11 }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
         </div>
-      ) : (
-        !isLoading && (
-          <div className="text-center py-12 border border-dashed border-border rounded-lg text-muted-foreground">
-            <p className="text-base font-medium">Sin datos para el periodo seleccionado</p>
-            <p className="text-sm mt-1">Registra gastos para ver las graficas</p>
-          </div>
-        )
       )}
+
+      {/* ── Tabla de detalle ──────────────────────────────────── */}
+      {!isLoading && (
+        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-border bg-muted/40">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Detalle de registros
+            </p>
+          </div>
+
+          {gastosFiltrados.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <p className="text-sm font-medium">Sin gastos en el periodo</p>
+              <p className="text-xs mt-1">Ajusta los filtros o registra un gasto</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 sticky top-0 z-[1]">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Factura</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto</th>
+                    <th className="text-center px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Group by: group separator when TODAS or GRUPO */}
+                  {criterio === 'TODAS' ? (
+                    grupos.map((grupo) => {
+                      const ids = new Set(grupo.subcuentas.map((s) => s.id))
+                      const rows = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
+                      if (rows.length === 0) return null
+                      const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+                      return [
+                        <tr key={`grp-${grupo.id}`} className="bg-muted/40 border-t-2 border-border">
+                          <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-foreground uppercase tracking-wide">
+                            <span className="font-mono text-muted-foreground/60 mr-2">{grupo.codigo}</span>
+                            {grupo.nombre}
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-foreground">
+                            {formatUsd(subtotal)}
+                          </td>
+                          <td />
+                        </tr>,
+                        ...rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />),
+                      ]
+                    })
+                  ) : criterio === 'GRUPO' ? (
+                    grupos.map((grupo) => {
+                      if (grupoId && grupo.id !== grupoId) return null
+                      return grupo.subcuentas.map((sub) => {
+                        const rows = gastosFiltrados.filter((g) => g.cuenta_id === sub.id)
+                        if (rows.length === 0) return null
+                        const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+                        return [
+                          <tr key={`sub-${sub.id}`} className="bg-muted/20 border-t border-border">
+                            <td colSpan={5} className="px-4 py-1.5 text-xs font-medium text-muted-foreground">
+                              <span className="font-mono mr-2">{sub.codigo}</span>{sub.nombre}
+                            </td>
+                            <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotal)}</td>
+                            <td />
+                          </tr>,
+                          ...rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />),
+                        ]
+                      })
+                    })
+                  ) : (
+                    gastosFiltrados.map((g) => (
+                      <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />
+                    ))
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-border bg-muted/30">
+                    <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total periodo</td>
+                    <td className="px-4 py-2.5 text-right text-sm font-bold tabular-nums">
+                      {formatUsd(gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0))}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Modales ───────────────────────────────────────────── */}
+      <FacturaProveedorModal
+        tipo="GASTO"
+        id={detalleId ?? ''}
+        isOpen={!!detalleId}
+        onClose={() => setDetalleId(null)}
+      />
+      <CuentaGastoModal
+        isOpen={cuentaModalOpen}
+        onClose={() => setCuentaModalOpen(false)}
+      />
     </div>
+  )
+}
+
+// ─── Fila de gasto ────────────────────────────────────────────
+
+type GastoConJoins = {
+  id: string; nro_gasto: string; nro_factura: string | null; cuenta_nombre: string
+  proveedor_nombre: string | null; fecha: string; monto_usd: string; tasa: string; status: string
+  created_by_nombre?: string | null
+}
+
+function GastoRow({ g, onClick }: { g: GastoConJoins; onClick: () => void }) {
+  const anulado = g.status === 'ANULADO'
+  const montoUsd = parseFloat(g.monto_usd)
+  const tasaGasto = parseFloat(g.tasa) || 1
+  const montoBs = montoUsd * tasaGasto
+  return (
+    <tr
+      onClick={onClick}
+      className={`border-t border-border hover:bg-muted/30 cursor-pointer transition-colors ${anulado ? 'opacity-50' : ''}`}
+    >
+      <td className={`px-4 py-2.5 font-mono text-xs text-foreground ${anulado ? 'line-through' : ''}`}>
+        {g.nro_gasto}
+      </td>
+      <td className={`px-4 py-2.5 font-mono text-xs text-muted-foreground ${anulado ? 'line-through' : ''}`}>
+        {g.nro_factura ?? '—'}
+      </td>
+      <td className={`px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap ${anulado ? 'line-through' : ''}`}>
+        {formatDate(g.fecha)}
+      </td>
+      <td className={`px-4 py-2.5 text-xs text-foreground max-w-[160px] truncate ${anulado ? 'line-through' : ''}`}>
+        {g.cuenta_nombre}
+      </td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+        {g.proveedor_nombre ?? '—'}
+      </td>
+      <td className="px-4 py-2.5 text-right tabular-nums">
+        <div className={`text-sm font-medium ${anulado ? 'line-through' : 'text-foreground'}`}>
+          {formatBs(montoBs)}
+        </div>
+        <div className="text-[10px] text-muted-foreground">{formatUsd(montoUsd)} @ {tasaGasto.toFixed(2)}</div>
+      </td>
+      <td className="px-4 py-2.5 text-center">
+        <StatusBadge status={g.status} />
+      </td>
+    </tr>
   )
 }
