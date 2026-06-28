@@ -7,7 +7,12 @@ import { VE_TZ } from './dates'
  */
 export function formatDate(dateStr: string): string {
   try {
-    const date = new Date(dateStr)
+    // Bare YYYY-MM-DD strings are parsed as UTC midnight by new Date(), which in
+    // Venezuela (UTC-4) falls on the previous day at 20:00. Treat them as VET noon
+    // to keep the date stable regardless of when the record was synced.
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+      ? new Date(`${dateStr}T12:00:00${VE_OFFSET}`)
+      : new Date(dateStr)
     if (isNaN(date.getTime())) return dateStr
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: VE_TZ,
@@ -28,7 +33,9 @@ export function formatDate(dateStr: string): string {
  */
 export function formatDateTime(dateStr: string): string {
   try {
-    const date = new Date(dateStr)
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr)
+      ? new Date(`${dateStr}T12:00:00${VE_OFFSET}`)
+      : new Date(dateStr)
     if (isNaN(date.getTime())) return dateStr
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: VE_TZ,

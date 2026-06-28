@@ -1,7 +1,7 @@
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { localNow, timestampToVE } from '@/lib/dates'
+import { localNow, timestampToVE, todayStr } from '@/lib/dates'
 import { v4 as uuidv4 } from 'uuid'
 import Decimal from 'decimal.js'
 import { usdToBs, bsToUsd, toStorageString } from '@/lib/currency'
@@ -975,7 +975,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                         '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
               [
                 uuidv4(), empresa_id, nroGastoAbs, nroFactura, cuentaAbsId,
-                now, monedaUsdId,
+                todayStr(), monedaUsdId,
                 toStorageString(tasa),
                 toStorageString(discrepancy.montoUsd),
                 toStorageString(discrepancy.montoUsd),
@@ -1050,7 +1050,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                         '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
               [
                 uuidv4(), empresa_id, nroGastoDiff, nroFactura, cuentaDiffId,
-                now, monedaUsdId,
+                todayStr(), monedaUsdId,
                 toStorageString(tasa),
                 toStorageString(discrepancy.montoUsd),
                 toStorageString(discrepancy.montoUsd),
