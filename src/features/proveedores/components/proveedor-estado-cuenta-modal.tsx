@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { useQuery } from '@powersync/react'
 import { formatUsd } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
+import { startOfMonth, todayStr } from '@/lib/dates'
 import { useMovCuentaProveedor } from '@/features/compras/hooks/use-mov-cuenta-proveedor'
 import {
   Dialog,
@@ -34,13 +35,14 @@ interface Props {
   onClose: () => void
 }
 
-interface FacturaResumen {
+interface DocResumen {
   id: string
-  nro_factura: string
-  fecha_factura: string
+  nro_doc: string
+  fecha: string
   total_usd: string
   saldo_pend_usd: string
   status: string
+  tipo_doc: 'FACTURA' | 'GASTO'
 }
 
 // ─── Badge de status ─────────────────────────────────────────
@@ -49,6 +51,7 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
     PAGADO:    { label: 'Pagado',    cls: 'bg-green-50 text-green-700 ring-green-600/20' },
     PROCESADA: { label: 'Procesada', cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
+    REGISTRADO:{ label: 'Registrado',cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
     PENDIENTE: { label: 'Pendiente', cls: 'bg-orange-50 text-orange-700 ring-orange-600/20' },
     PARCIAL:   { label: 'Parcial',   cls: 'bg-yellow-50 text-yellow-700 ring-yellow-600/20' },
     ANULADO:   { label: 'Anulado',   cls: 'bg-red-50 text-red-700 ring-red-600/20' },
@@ -65,27 +68,95 @@ function StatusBadge({ status }: { status: string }) {
 // ─── Componente principal ────────────────────────────────────
 
 export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props) {
-  const { movimientos, isLoading: loadingMovs } = useMovCuentaProveedor(proveedor.id, proveedor.empresa_id)
+  const today = todayStr()
+  const [fechaDesde, setFechaDesde] = useState(startOfMonth())
+  const [fechaHasta, setFechaHasta] = useState(today)
 
-  // Siempre ejecutar la query cuando tenemos proveedor.id — no condicionar en empresa_id
-  // para evitar que PowerSync no re-ejecute cuando empresa_id cambia de '' a UUID.
-  const { data: facturasData, isLoading: loadingFacturas } = useQuery(
-    proveedor.id
-      ? `SELECT id, nro_factura, fecha_factura, total_usd, saldo_pend_usd, status
-         FROM facturas_compra
-         WHERE proveedor_id = ? AND empresa_id = ?
-         ORDER BY fecha_factura ASC`
-      : '',
-    proveedor.id ? [proveedor.id, proveedor.empresa_id] : []
+  // Movimientos filtrados por fecha
+  const { movimientos: todosMovimientos, isLoading: loadingMovs } = useMovCuentaProveedor(
+    proveedor.id,
+    proveedor.empresa_id,
   )
 
-  const facturas = useMemo(() => (facturasData ?? []) as FacturaResumen[], [facturasData])
+  const movimientos = useMemo(
+    () => todosMovimientos.filter((m) => {
+      const f = m.fecha.slice(0, 10)
+      return f >= fechaDesde && f <= fechaHasta
+    }),
+    [todosMovimientos, fechaDesde, fechaHasta],
+  )
 
+  // Documentos: facturas_compra + gastos a crédito, filtrados por fecha
+  const { data: facturasRaw, isLoading: loadingFacturas } = useQuery(
+    proveedor.id
+      ? `SELECT id, nro_factura as nro_doc, fecha_factura as fecha,
+                total_usd, saldo_pend_usd, status, 'FACTURA' as tipo_doc
+         FROM facturas_compra
+         WHERE proveedor_id = ? AND empresa_id = ?
+           AND DATE(fecha_factura) >= ? AND DATE(fecha_factura) <= ?
+         ORDER BY fecha_factura ASC`
+      : '',
+    proveedor.id ? [proveedor.id, proveedor.empresa_id, fechaDesde, fechaHasta] : [],
+  )
+
+  const { data: gastosRaw, isLoading: loadingGastos } = useQuery(
+    proveedor.id
+      ? `SELECT id, nro_gasto as nro_doc, fecha,
+                monto_usd as total_usd, saldo_pendiente_usd as saldo_pend_usd,
+                status, 'GASTO' as tipo_doc
+         FROM gastos
+         WHERE proveedor_id = ? AND empresa_id = ?
+           AND DATE(fecha) >= ? AND DATE(fecha) <= ?
+         ORDER BY fecha ASC`
+      : '',
+    proveedor.id ? [proveedor.id, proveedor.empresa_id, fechaDesde, fechaHasta] : [],
+  )
+
+  const documentos = useMemo(() => {
+    const facs = (facturasRaw ?? []) as DocResumen[]
+    const gsts = (gastosRaw ?? []) as DocResumen[]
+    return [...facs, ...gsts].sort((a, b) => a.fecha.localeCompare(b.fecha))
+  }, [facturasRaw, gastosRaw])
+
+  const loadingDocs = loadingFacturas || loadingGastos
   const saldo = parseFloat(proveedor.saldo_actual) || 0
+
+  // ─── Filtro de fechas ────────────────────────────────────
+
+  const DateFilter = (
+    <div className="flex flex-wrap items-end gap-3 rounded-xl bg-muted/30 border border-border px-4 py-3">
+      <div>
+        <label className="block text-xs font-medium text-muted-foreground mb-1">Desde</label>
+        <input
+          type="date"
+          value={fechaDesde}
+          onChange={(e) => setFechaDesde(e.target.value)}
+          className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-muted-foreground mb-1">Hasta</label>
+        <input
+          type="date"
+          value={fechaHasta}
+          min={fechaDesde}
+          onChange={(e) => setFechaHasta(e.target.value)}
+          className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => { setFechaDesde(startOfMonth()); setFechaHasta(today) }}
+        className="px-3 py-1.5 text-xs font-medium rounded-md border border-border text-muted-foreground hover:bg-muted transition-colors cursor-pointer"
+      >
+        Mes actual
+      </button>
+    </div>
+  )
 
   return (
     <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Estado de Cuenta — {proveedor.razon_social}</DialogTitle>
         </DialogHeader>
@@ -112,24 +183,25 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
           </div>
         </div>
 
+        {/* Filtro de fechas */}
+        {DateFilter}
+
         {/* Tabs */}
         <Tabs defaultValue="movimientos">
           <TabsList>
             <TabsTrigger value="movimientos">Movimientos</TabsTrigger>
-            <TabsTrigger value="facturas">Facturas</TabsTrigger>
+            <TabsTrigger value="documentos">Documentos</TabsTrigger>
           </TabsList>
 
           {/* Tab: Movimientos */}
           <TabsContent value="movimientos">
             {loadingMovs ? (
               <div className="space-y-2 py-4">
-                {[0, 1, 2].map((i) => (
-                  <div key={i} className="h-10 bg-muted rounded animate-pulse" />
-                ))}
+                {[0, 1, 2].map((i) => <div key={i} className="h-10 bg-muted rounded animate-pulse" />)}
               </div>
             ) : movimientos.length === 0 ? (
               <div className="py-10 text-center text-muted-foreground text-sm">
-                Sin movimientos registrados
+                Sin movimientos en el periodo seleccionado
               </div>
             ) : (
               <div className="overflow-x-auto border border-border rounded-lg mt-2">
@@ -146,8 +218,7 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
                   </thead>
                   <tbody>
                     {movimientos.map((mov) => {
-                      // FAC = nueva deuda (factura), SAL/CARG = cargos → Debe
-                      // PAG = pago, DEV = devolucion → Haber
+                      // FAC/SAL/CARG = deuda → Debe | PAG/DEV = pago → Haber
                       const isDebe = mov.tipo === 'FAC' || mov.tipo === 'SAL' || mov.tipo === 'CARG'
                       const monto = parseFloat(mov.monto) || 0
                       return (
@@ -179,24 +250,23 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
             )}
           </TabsContent>
 
-          {/* Tab: Facturas */}
-          <TabsContent value="facturas">
-            {loadingFacturas ? (
+          {/* Tab: Documentos (facturas + gastos) */}
+          <TabsContent value="documentos">
+            {loadingDocs ? (
               <div className="space-y-2 py-4">
-                {[0, 1, 2].map((i) => (
-                  <div key={i} className="h-10 bg-muted rounded animate-pulse" />
-                ))}
+                {[0, 1, 2].map((i) => <div key={i} className="h-10 bg-muted rounded animate-pulse" />)}
               </div>
-            ) : facturas.length === 0 ? (
+            ) : documentos.length === 0 ? (
               <div className="py-10 text-center text-muted-foreground text-sm">
-                Sin facturas registradas
+                Sin documentos en el periodo seleccionado
               </div>
             ) : (
               <div className="overflow-x-auto border border-border rounded-lg mt-2">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted">
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Nro Factura</th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Tipo</th>
+                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Nro</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Fecha</th>
                       <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Total</th>
                       <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Pagado</th>
@@ -205,17 +275,26 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
                     </tr>
                   </thead>
                   <tbody>
-                    {facturas.map((fc) => {
-                      const total = parseFloat(fc.total_usd) || 0
-                      const saldoPend = parseFloat(fc.saldo_pend_usd) || 0
+                    {documentos.map((doc) => {
+                      const total = parseFloat(doc.total_usd) || 0
+                      const saldoPend = parseFloat(doc.saldo_pend_usd) || 0
                       const pagado = total - saldoPend
                       return (
-                        <tr key={fc.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                        <tr key={`${doc.tipo_doc}-${doc.id}`} className="border-b border-border last:border-0 hover:bg-muted/30">
+                          <td className="px-4 py-2.5">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+                              doc.tipo_doc === 'FACTURA'
+                                ? 'bg-blue-50 text-blue-700 ring-blue-600/20'
+                                : 'bg-purple-50 text-purple-700 ring-purple-600/20'
+                            }`}>
+                              {doc.tipo_doc === 'FACTURA' ? 'Factura' : 'Gasto'}
+                            </span>
+                          </td>
                           <td className="px-4 py-2.5 font-mono text-xs text-foreground">
-                            {fc.nro_factura}
+                            {doc.nro_doc}
                           </td>
                           <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                            {formatDate(fc.fecha_factura)}
+                            {formatDate(doc.fecha)}
                           </td>
                           <td className="px-4 py-2.5 text-right tabular-nums">
                             {formatUsd(total)}
@@ -227,22 +306,33 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
                             {formatUsd(saldoPend)}
                           </td>
                           <td className="px-4 py-2.5 text-center">
-                            <StatusBadge status={fc.status} />
+                            <StatusBadge status={doc.status} />
                           </td>
                         </tr>
                       )
                     })}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30">
+                      <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
+                        Saldo pendiente en periodo
+                      </td>
+                      <td className="px-4 py-2.5 text-right text-sm font-bold tabular-nums text-destructive">
+                        {formatUsd(documentos.reduce((s, d) => s + (parseFloat(d.saldo_pend_usd) || 0), 0))}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )}
           </TabsContent>
         </Tabs>
 
-        {/* Footer: saldo total */}
+        {/* Footer: saldo total del proveedor */}
         <div className="flex items-center justify-between border-t border-border pt-3 mt-1">
           <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-            Saldo Total
+            Saldo Total Proveedor
           </span>
           <span className={`text-lg font-bold tabular-nums ${saldo > 0 ? 'text-destructive' : 'text-foreground'}`}>
             {formatUsd(proveedor.saldo_actual)}
