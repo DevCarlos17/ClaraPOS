@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
-import { Plus, BookOpen, CaretDown, CaretUp } from '@phosphor-icons/react'
+import { Plus, BookOpen, CaretDown, CaretUp, Printer } from '@phosphor-icons/react'
 import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
 import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { todayStr, startOfMonth } from '@/lib/dates'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -11,6 +13,39 @@ import { FacturaProveedorModal } from '@/features/compras/components/factura-pro
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
+
+// ─── Utilidades de impresión ─────────────────────────────────
+
+const PRINT_STYLES = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a1a1a; font-size: 12px; }
+  .empresa-header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 10px; margin-bottom: 16px; }
+  .empresa-nombre { font-size: 16px; font-weight: 700; color: #2563eb; }
+  .empresa-rif, .empresa-dir { font-size: 11px; color: #555; margin-top: 2px; }
+  .report-title { text-align: center; font-size: 15px; font-weight: 700; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 1px; }
+  .report-meta { text-align: center; font-size: 10px; color: #666; margin-bottom: 14px; }
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #2563eb; border-bottom: 1px solid #2563eb; padding-bottom: 3px; margin: 14px 0 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { background: #f0f4ff; text-align: left; padding: 5px 8px; font-weight: 600; border-bottom: 1px solid #cdd; }
+  td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  tr.grupo-row td { background: #e8edf8; font-weight: 700; font-size: 11px; }
+  tr.cuenta-row td { background: #f5f7fc; font-weight: 600; font-size: 11px; padding-left: 16px; }
+  tr.detail-row td:first-child { padding-left: 28px; }
+  .text-right { text-align: right; }
+  .mono { font-family: monospace; }
+  .total-row td { font-weight: 700; border-top: 2px solid #2563eb; background: #f0f4ff; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+`
+
+function openPrintWindow(title: string, html: string) {
+  const w = window.open('', '_blank', 'width=900,height=700')
+  if (!w) return
+  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>${PRINT_STYLES}</style></head><body>${html}</body></html>`)
+  w.document.close()
+  w.focus()
+  setTimeout(() => w.print(), 350)
+}
 
 // ─── Tipos ───────────────────────────────────────────────────
 
@@ -57,6 +92,8 @@ function StatusBadge({ status }: { status: string }) {
 export function GastosDashboard() {
   const today = todayStr()
   const defaultMesDesde = today.slice(0, 7)
+  const { user } = useCurrentUser()
+  const { company } = useCompany()
 
   // ── Estado de filtros
   const [criterio, setCriterio]       = useState<Criterio>('TODAS')
@@ -183,6 +220,104 @@ export function GastosDashboard() {
 
   function handleIntervaloChange(newIntervalo: Intervalo) {
     setIntervalo(newIntervalo)
+  }
+
+  // ── Impresión PDF ─────────────────────────────────────────
+
+  function handleImprimir() {
+    const nombreEmpresa = company?.nombre ?? ''
+    const rifEmpresa    = company?.rif ?? undefined
+    const nombreUsuario = user?.nombre ?? user?.email ?? 'Sistema'
+    const ahora = new Date().toLocaleString('es-VE')
+
+    const criterioLabel =
+      criterio === 'TODAS' ? 'Todas las cuentas'
+      : criterio === 'GRUPO' ? `Grupo: ${grupos.find((g) => g.id === grupoId)?.nombre ?? grupoId}`
+      : `Cuenta: ${todasLasCuentas.find((s) => s.id === cuentaId)?.nombre ?? cuentaId}`
+
+    const intervaloLabel =
+      intervalo === 'DIARIO' ? 'Diario'
+      : intervalo === 'ULTIMOS_7' ? 'Últimos 7 días'
+      : 'Mensual'
+
+    const periodoLabel = `${queryDesde}  →  ${queryHasta}`
+
+    const totalGeneral = gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+
+    // Construir filas de la tabla según criterio
+    let tableRows = ''
+
+    if (criterio === 'TODAS') {
+      for (const grupo of grupos) {
+        const ids = new Set(grupo.subcuentas.map((s) => s.id))
+        const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
+        if (rowsGrupo.length === 0) continue
+        const subtotalGrupo = rowsGrupo.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        tableRows += `<tr class="grupo-row"><td colspan="4">${grupo.codigo} — ${grupo.nombre}</td><td class="text-right">${formatUsd(subtotalGrupo)}</td></tr>`
+        for (const sub of grupo.subcuentas) {
+          const rowsCuenta = rowsGrupo.filter((g) => g.cuenta_id === sub.id).sort((a, b) => a.fecha.localeCompare(b.fecha))
+          if (rowsCuenta.length === 0) continue
+          const subtotalCuenta = rowsCuenta.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+          tableRows += `<tr class="cuenta-row"><td colspan="4">${sub.codigo} — ${sub.nombre}</td><td class="text-right">${formatUsd(subtotalCuenta)}</td></tr>`
+          for (const g of rowsCuenta) {
+            tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(parseFloat(g.monto_usd))}</td></tr>`
+          }
+        }
+      }
+    } else if (criterio === 'GRUPO') {
+      const grupo = grupos.find((g) => g.id === grupoId)
+      const subcuentas = grupo?.subcuentas ?? grupos.flatMap((g) => g.subcuentas)
+      for (const sub of subcuentas) {
+        const rows = gastosFiltrados.filter((g) => g.cuenta_id === sub.id).sort((a, b) => a.fecha.localeCompare(b.fecha))
+        if (rows.length === 0) continue
+        const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        tableRows += `<tr class="cuenta-row"><td colspan="4">${sub.codigo} — ${sub.nombre}</td><td class="text-right">${formatUsd(subtotal)}</td></tr>`
+        for (const g of rows) {
+          tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(parseFloat(g.monto_usd))}</td></tr>`
+        }
+      }
+    } else {
+      const rows = gastosFiltrados.sort((a, b) => a.fecha.localeCompare(b.fecha))
+      for (const g of rows) {
+        tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(parseFloat(g.monto_usd))}</td></tr>`
+      }
+    }
+
+    const html = `
+      <div class="empresa-header">
+        <div class="empresa-nombre">${nombreEmpresa}</div>
+        ${rifEmpresa ? `<div class="empresa-rif">RIF: ${rifEmpresa}</div>` : ''}
+      </div>
+
+      <div class="report-title">Reporte de Gastos</div>
+      <div class="report-meta">
+        Criterio: ${criterioLabel} &nbsp;|&nbsp; Intervalo: ${intervaloLabel} &nbsp;|&nbsp; Periodo: ${periodoLabel}
+        <br/>Generado: ${ahora} &nbsp;|&nbsp; Usuario: ${nombreUsuario}
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Nro Gasto</th>
+            <th>Fecha</th>
+            <th>Factura</th>
+            <th>Descripcion</th>
+            <th class="text-right">Monto USD</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+        </tbody>
+        <tfoot>
+          <tr class="total-row">
+            <td colspan="4">Total general</td>
+            <td class="text-right">${formatUsd(totalGeneral)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `
+
+    openPrintWindow('Reporte de Gastos', html)
   }
 
   if (formOpen) {
@@ -329,6 +464,15 @@ export function GastosDashboard() {
             >
               <BookOpen className="h-4 w-4" />
               Crear cuenta
+            </button>
+            <button
+              type="button"
+              onClick={handleImprimir}
+              disabled={gastosFiltrados.length === 0 || isLoading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors disabled:opacity-40"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimir
             </button>
             <button
               type="button"

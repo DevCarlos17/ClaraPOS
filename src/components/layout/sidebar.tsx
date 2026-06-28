@@ -32,8 +32,7 @@ import {
   Monitor,
   ArrowsDownUp,
   FileXls,
-  Percent,
-  FileMinus,
+
   BookBookmark,
   HandCoins,
   TrendUp,
@@ -124,10 +123,8 @@ const menuItems: MenuItem[] = [
     title: 'Compras y Gastos',
     icon: ClipboardText,
     children: [
-      { title: 'Facturas', url: '/compras/facturas', icon: FileXls, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Compras', url: '/compras/facturas', icon: FileXls, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Cuentas por Pagar', url: '/compras/cxp', icon: CreditCard, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Retenciones', url: '/compras/retenciones', icon: Percent, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Notas Fiscales', url: '/compras/notas-fiscales', icon: FileMinus, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Gastos', url: '/compras/gastos', icon: HandCoins, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Dashboard Gastos', url: '/compras/gastos-dashboard', icon: ChartBar, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
     ],
