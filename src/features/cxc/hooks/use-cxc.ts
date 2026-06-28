@@ -3,7 +3,7 @@ import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
-import { localNow } from '@/lib/dates'
+import { localNow, todayStr } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import Decimal from 'decimal.js'
@@ -2013,5 +2013,61 @@ export async function registrarDiferencialCxC(params: DiferencialCxCParams): Pro
       'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
       [toStorageString(saldoNuevo), now, clienteId]
     )
+
+    // 6. Registrar gasto de diferencial cambiario en el libro de gastos
+    try {
+      const monedaUsdRes = await tx.execute(
+        `SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1`
+      )
+      const monedaUsdId = (monedaUsdRes.rows?.item(0) as { id: string } | undefined)?.id ?? ''
+
+      // Cuenta contable: intentar PERDIDA_DIFERENCIAL_CAMBIARIO, fallback a gastos_generales
+      const cuentaDiffRes = await tx.execute(
+        `SELECT cuenta_contable_id FROM cuentas_config
+         WHERE empresa_id = ? AND clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO' LIMIT 1`,
+        [empresaId]
+      )
+      let cuentaDiffId = (
+        cuentaDiffRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+      )?.cuenta_contable_id ?? ''
+      if (!cuentaDiffId) {
+        const fallbackRes = await tx.execute(
+          `SELECT cuenta_contable_id FROM cuentas_config
+           WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
+          [empresaId]
+        )
+        cuentaDiffId = (
+          fallbackRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+        )?.cuenta_contable_id ?? ''
+      }
+      if (!cuentaDiffId || !monedaUsdId) throw new Error('sin-cuenta')
+
+      const nroGastoDiff = `CXC-DIFF-${ventaId.slice(0, 8).toUpperCase()}`
+      const obsDiff = `Diferencial cambiario CxC. Fac. ${venta.nro_factura}. Procesado por: ${procesadoPor}`
+
+      await tx.execute(
+        `INSERT INTO gastos
+           (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
+            moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+            tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+            saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
+         VALUES (?, ?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_CXC', ?,
+                 ?, 'USD', 0, ?, ?, ?,
+                 'Exento', '0.00', ?, '0.00',
+                 '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
+        [
+          uuidv4(), empresaId, nroGastoDiff, venta.nro_factura, cuentaDiffId,
+          todayStr(), monedaUsdId,
+          toStorageString(dTasa),
+          toStorageString(saldoUsd),
+          toStorageString(saldoUsd),
+          toStorageString(saldoUsd),
+          obsDiff, now, now, procesadoPor,
+        ]
+      )
+    } catch {
+      // El gasto es opcional — no bloquea el diferencial
+      console.warn('⚠️ DIFERENCIAL_CXC: fallo al registrar gasto para factura', venta.nro_factura)
+    }
   })
 }

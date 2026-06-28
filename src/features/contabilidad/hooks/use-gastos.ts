@@ -131,7 +131,7 @@ export function useGastosManualesRecientes(limit = 10) {
          LEFT JOIN proveedores p ON g.proveedor_id = p.id
          LEFT JOIN usuarios u ON g.created_by = u.id
          WHERE g.empresa_id = ?
-           AND g.descripcion NOT IN ('DIFERENCIAL_CAMBIARIO_FALTANTE', 'ABSORCION_DIFERENCIAL_POS')
+           AND g.descripcion NOT IN ('DIFERENCIAL_CAMBIARIO_FALTANTE', 'ABSORCION_DIFERENCIAL_POS', 'DIFERENCIAL_CAMBIARIO_CXC')
          ORDER BY g.fecha DESC, g.created_at DESC
          LIMIT ?`
       : '',
