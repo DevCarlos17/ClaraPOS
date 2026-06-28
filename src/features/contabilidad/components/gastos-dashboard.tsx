@@ -527,7 +527,7 @@ export function GastosDashboard() {
 
       {/* ── Resumen + Gráfica ─────────────────────────────────── */}
       {!isLoading && gastosFiltrados.length > 0 && !(criterio === 'GRUPO' && !grupoId) && (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-stretch">
 
           {/* Card de estadísticas + pie */}
           <div className="lg:col-span-2 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col">
@@ -598,12 +598,13 @@ export function GastosDashboard() {
             )}
           </div>
 
-          {/* Gráfica de barras */}
-          <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+          {/* Gráfica de barras — ocupa toda la altura de la card de estadísticas */}
+          <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4 flex flex-col">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 shrink-0">
               Gastos por {intervalo === 'MENSUAL' ? 'mes' : 'día'} (USD)
             </p>
-            <ResponsiveContainer width="100%" height={220}>
+            <div className="flex-1 min-h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                 <XAxis dataKey="name" tick={{ fontSize: 11 }} />
@@ -622,6 +623,7 @@ export function GastosDashboard() {
                 <Bar dataKey="total" fill="#2563eb" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
         </div>
       )}
