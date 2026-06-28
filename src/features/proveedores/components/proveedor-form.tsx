@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { toast } from 'sonner'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
+import { db } from '@/core/db/powersync/db'
 import { proveedorSchema } from '@/features/proveedores/schemas/proveedor-schema'
 import { filterRifInput } from '@/lib/identity'
 import {
@@ -12,7 +13,6 @@ import {
 import {
   useBancosProveedor,
   crearBancoProveedor,
-  actualizarBancoProveedor,
 } from '@/features/compras/hooks/use-proveedores-bancos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
@@ -49,6 +49,7 @@ interface AgregarBancoFormProps {
 }
 
 function AgregarBancoForm({ proveedorId, empresaId, onSaved, onCancel }: AgregarBancoFormProps) {
+  const [titular, setTitular] = useState('')
   const [titularDoc, setTitularDoc] = useState('')
   const [nroCuenta, setNroCuenta] = useState('')
   const [nombreBanco, setNombreBanco] = useState('')
@@ -71,6 +72,7 @@ function AgregarBancoForm({ proveedorId, empresaId, onSaved, onCancel }: Agregar
         proveedor_id: proveedorId,
         nombre_banco: nombreBanco.trim(),
         nro_cuenta: nroCuenta.trim(),
+        titular: titular.trim() || undefined,
         titular_documento: titularDoc.trim() || undefined,
         moneda_id: monedaId || undefined,
         empresa_id: empresaId,
@@ -89,7 +91,19 @@ function AgregarBancoForm({ proveedorId, empresaId, onSaved, onCancel }: Agregar
     <div className="space-y-4">
       <div>
         <label className="block text-sm font-medium text-muted-foreground mb-1">
-          RIF / Cedula del proveedor
+          Titular de la cuenta
+        </label>
+        <input
+          type="text"
+          value={titular}
+          onChange={(e) => setTitular(e.target.value.toUpperCase())}
+          placeholder="Nombre del titular"
+          className={inputClass(false)}
+        />
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-muted-foreground mb-1">
+          RIF / Cedula del titular
         </label>
         <input
           type="text"
@@ -188,6 +202,16 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
   const [agregarBancoOpen, setAgregarBancoOpen] = useState(false)
   const { bancos, isLoading: loadingBancos } = useBancosProveedor(proveedor?.id ?? '')
 
+  // Lookup de monedas para mostrar nombre en vez de UUID
+  const { data: monedasData } = useQuery('SELECT id, codigo_iso FROM monedas ORDER BY nombre ASC')
+  const monedaMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const row of (monedasData ?? []) as { id: string; codigo_iso: string }[]) {
+      m[row.id] = row.codigo_iso
+    }
+    return m
+  }, [monedasData])
+
   useEffect(() => {
     if (isOpen) {
       if (proveedor) {
@@ -283,7 +307,7 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
 
   async function handleEliminarBanco(id: string) {
     try {
-      await actualizarBancoProveedor(id, { is_active: false })
+      await db.execute('DELETE FROM proveedores_bancos WHERE id = ?', [id])
       toast.success('Cuenta eliminada')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error inesperado'
@@ -554,9 +578,9 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
                             <td
                               className="px-3 py-2 cursor-pointer hover:text-primary transition-colors"
                               title="Clic para copiar"
-                              onClick={() => handleCopiarCelda(banco.moneda_id ?? '')}
+                              onClick={() => handleCopiarCelda(monedaMap[banco.moneda_id ?? ''] ?? banco.moneda_id ?? '')}
                             >
-                              {banco.moneda_id ?? '—'}
+                              {banco.moneda_id ? (monedaMap[banco.moneda_id] ?? banco.moneda_id) : '—'}
                             </td>
                             <td className="px-3 py-2 text-right">
                               <button
