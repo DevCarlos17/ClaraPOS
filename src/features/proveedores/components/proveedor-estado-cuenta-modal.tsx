@@ -37,7 +37,7 @@ interface Props {
   onClose: () => void
 }
 
-interface RawDoc { id: string; ref: string; fecha: string; monto: string }
+interface RawDoc { id: string; ref: string; fecha: string; monto: string; saldo_doc: string }
 interface LedgerItem {
   id: string
   tipo: string
@@ -45,7 +45,7 @@ interface LedgerItem {
   fecha: string
   cargo: number
   abono: number
-  saldo: number
+  saldo: number  // saldo pendiente actual del documento, o saldo_nuevo tras el abono
 }
 
 // ─── Componente principal ────────────────────────────────────
@@ -62,7 +62,8 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
 
   // Facturas de compra en el período (fuente de deuda)
   const { data: facRaw } = useQuery(
-    pid ? `SELECT id, nro_factura as ref, fecha_factura as fecha, total_usd as monto
+    pid ? `SELECT id, nro_factura as ref, fecha_factura as fecha,
+                  total_usd as monto, saldo_pend_usd as saldo_doc
            FROM facturas_compra
            WHERE proveedor_id = ? AND empresa_id = ?
              AND DATE(fecha_factura) >= ? AND DATE(fecha_factura) <= ?
@@ -72,7 +73,8 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
 
   // Gastos a crédito en el período (fuente de deuda)
   const { data: gtoRaw } = useQuery(
-    pid ? `SELECT id, nro_gasto as ref, fecha, monto_usd as monto
+    pid ? `SELECT id, nro_gasto as ref, fecha,
+                  monto_usd as monto, saldo_pendiente_usd as saldo_doc
            FROM gastos
            WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'
              AND DATE(fecha) >= ? AND DATE(fecha) <= ?
@@ -99,6 +101,8 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
       fecha: r.fecha?.slice(0, 10) ?? '',
       cargo: parseFloat(r.monto) || 0,
       abono: 0,
+      // saldo_doc = saldo pendiente ACTUAL de esta factura
+      saldo: parseFloat(r.saldo_doc) || 0,
     }))
     const gtos = ((gtoRaw ?? []) as RawDoc[]).map((r) => ({
       id: `gto-${r.id}`,
@@ -107,6 +111,8 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
       fecha: r.fecha?.slice(0, 10) ?? '',
       cargo: parseFloat(r.monto) || 0,
       abono: 0,
+      // saldo_doc = saldo pendiente ACTUAL de este gasto
+      saldo: parseFloat(r.saldo_doc) || 0,
     }))
     const pags = pagMovs.map((m) => ({
       id: `pag-${m.id}`,
@@ -115,15 +121,11 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
       fecha: m.fecha.slice(0, 10),
       cargo: 0,
       abono: parseFloat(m.monto) || 0,
+      // saldo_nuevo = balance total del proveedor tras este abono
+      saldo: parseFloat(m.saldo_nuevo) || 0,
     }))
 
-    const all = [...facs, ...gtos, ...pags].sort((a, b) => a.fecha.localeCompare(b.fecha))
-
-    let saldo = 0
-    return all.map((item) => {
-      saldo = saldo + item.cargo - item.abono
-      return { ...item, saldo }
-    })
+    return [...facs, ...gtos, ...pags].sort((a, b) => a.fecha.localeCompare(b.fecha))
   }, [facRaw, gtoRaw, pagMovs])
 
   // ── Datos para tab Documentos (mismas fuentes que CxP) ──────

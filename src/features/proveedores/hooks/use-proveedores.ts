@@ -26,12 +26,32 @@ export interface Proveedor {
   updated_at: string
 }
 
+// Subquery que calcula saldo_actual en tiempo real desde documentos pendientes.
+// proveedores.saldo_actual en SQLite local es siempre 0 (lo actualiza el trigger
+// de Supabase, no SQLite). Calcularlo desde las fuentes es lo correcto offline.
+const SALDO_SUBQUERY = `
+  COALESCE((
+    SELECT SUM(CAST(fc.saldo_pend_usd AS REAL))
+    FROM facturas_compra fc
+    WHERE fc.proveedor_id = p.id AND fc.empresa_id = p.empresa_id
+  ), 0) +
+  COALESCE((
+    SELECT SUM(CAST(g.saldo_pendiente_usd AS REAL))
+    FROM gastos g
+    WHERE g.proveedor_id = p.id AND g.empresa_id = p.empresa_id
+      AND g.status = 'REGISTRADO'
+  ), 0)
+`.trim()
+
 export function useProveedores() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM proveedores WHERE empresa_id = ? ORDER BY razon_social ASC',
+    `SELECT p.*, (${SALDO_SUBQUERY}) AS saldo_actual
+     FROM proveedores p
+     WHERE p.empresa_id = ?
+     ORDER BY p.razon_social ASC`,
     [empresaId]
   )
   return { proveedores: (data ?? []) as Proveedor[], isLoading }
@@ -42,7 +62,10 @@ export function useProveedoresActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM proveedores WHERE empresa_id = ? AND is_active = 1 ORDER BY razon_social ASC',
+    `SELECT p.*, (${SALDO_SUBQUERY}) AS saldo_actual
+     FROM proveedores p
+     WHERE p.empresa_id = ? AND p.is_active = 1
+     ORDER BY p.razon_social ASC`,
     [empresaId]
   )
   return { proveedores: (data ?? []) as Proveedor[], isLoading }
