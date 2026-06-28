@@ -12,7 +12,10 @@ import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  PieChart, Pie, Cell,
 } from 'recharts'
+
+const COLORES_PIE = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6']
 
 // ─── Utilidades de impresión ─────────────────────────────────
 
@@ -216,6 +219,33 @@ export function GastosDashboard() {
   const todasLasCuentas = useMemo(
     () => grupos.flatMap((g) => g.subcuentas),
     [grupos]
+  )
+
+  // ── Estadísticas del panel lateral ───────────────────────────
+  const totalPeriodo = useMemo(
+    () => gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0),
+    [gastosFiltrados]
+  )
+
+  const numDivisiones = useMemo(() => {
+    if (intervalo === 'ULTIMOS_7') return 7
+    if (intervalo === 'MENSUAL') {
+      const [y1, m1] = mesDesde.split('-').map(Number)
+      const [y2, m2] = mesHasta.split('-').map(Number)
+      return Math.max(1, (y2 - y1) * 12 + (m2 - m1) + 1)
+    }
+    // DIARIO
+    const d1 = new Date(queryDesde + 'T00:00:00')
+    const d2 = new Date(queryHasta + 'T00:00:00')
+    return Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1)
+  }, [intervalo, mesDesde, mesHasta, queryDesde, queryHasta])
+
+  const promedioPeriodo = numDivisiones > 0 ? totalPeriodo / numDivisiones : 0
+
+  // Pie data: usa resumenItems (ya calculados y filtrados)
+  const pieData = useMemo(
+    () => resumenItems.slice(0, 10).map((item) => ({ name: item.nombre, value: item.total })),
+    [resumenItems]
   )
 
   function handleIntervaloChange(newIntervalo: Intervalo) {
@@ -499,39 +529,73 @@ export function GastosDashboard() {
       {!isLoading && gastosFiltrados.length > 0 && !(criterio === 'GRUPO' && !grupoId) && (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
-          {/* Card grupos/cuentas (scroll) */}
-          <div className="lg:col-span-2 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col max-h-72">
+          {/* Card de estadísticas + pie */}
+          <div className="lg:col-span-2 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col">
             <div className="px-4 py-3 border-b border-border bg-muted/40 shrink-0">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                {criterio === 'TODAS' ? 'Por grupo' : criterio === 'GRUPO' ? 'Por cuenta' : 'Cuenta seleccionada'}
-              </p>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Estadísticas</p>
             </div>
-            <div className="overflow-y-auto divide-y divide-border flex-1">
-              {resumenItems.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-6">Sin datos</p>
-              ) : (
-                resumenItems.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between px-4 py-2.5">
-                    <div className="min-w-0">
-                      <span className="text-[10px] font-mono text-muted-foreground/60 mr-1.5">{item.codigo}</span>
-                      <span className="text-sm text-foreground truncate">{item.nombre}</span>
+
+            {/* Total + promedio */}
+            <div className="grid grid-cols-2 divide-x divide-border border-b border-border shrink-0">
+              <div className="px-4 py-3">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Total periodo</p>
+                <p className="text-lg font-bold tabular-nums text-foreground">{formatUsd(totalPeriodo)}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{formatBs(totalPeriodo * (gastosFiltrados[0] ? parseFloat(gastosFiltrados[0].tasa) : 1))}</p>
+              </div>
+              <div className="px-4 py-3">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-0.5">
+                  Promedio / {intervalo === 'MENSUAL' ? 'mes' : 'día'}
+                </p>
+                <p className="text-lg font-bold tabular-nums text-foreground">{formatUsd(promedioPeriodo)}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {numDivisiones} {intervalo === 'MENSUAL' ? `mes${numDivisiones !== 1 ? 'es' : ''}` : `día${numDivisiones !== 1 ? 's' : ''}`}
+                </p>
+              </div>
+            </div>
+
+            {/* Pie chart de distribución */}
+            {pieData.length > 0 && (
+              <div className="flex-1 flex flex-col items-center justify-center py-2">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Distribución</p>
+                <ResponsiveContainer width="100%" height={160}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={42}
+                      outerRadius={68}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {pieData.map((_entry, i) => (
+                        <Cell key={i} fill={COLORES_PIE[i % COLORES_PIE.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) => {
+                        const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
+                        const pct = totalPeriodo > 0 ? ((num / totalPeriodo) * 100).toFixed(1) : '0'
+                        return [`$${num.toFixed(2)} (${pct}%)`, '']
+                      }}
+                      cursor={false}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                {/* Leyenda compacta */}
+                <div className="w-full px-3 space-y-1 pb-2">
+                  {pieData.slice(0, 5).map((item, i) => (
+                    <div key={item.name} className="flex items-center gap-1.5 text-[10px]">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: COLORES_PIE[i % COLORES_PIE.length] }} />
+                      <span className="text-muted-foreground truncate flex-1">{item.name}</span>
+                      <span className="tabular-nums text-foreground font-medium shrink-0">
+                        {totalPeriodo > 0 ? `${((item.value / totalPeriodo) * 100).toFixed(0)}%` : '0%'}
+                      </span>
                     </div>
-                    <div className="text-right ml-3 shrink-0">
-                      <div className="text-sm font-semibold tabular-nums text-foreground">
-                        {formatUsd(item.total)}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            {/* Total */}
-            <div className="px-4 py-2.5 border-t border-border bg-muted/30 shrink-0 flex justify-between">
-              <span className="text-xs font-semibold text-muted-foreground">Total</span>
-              <span className="text-sm font-bold tabular-nums">
-                {formatUsd(resumenItems.reduce((s, i) => s + i.total, 0))}
-              </span>
-            </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Gráfica de barras */}
