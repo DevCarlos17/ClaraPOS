@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Buildings,
   CaretRight,
@@ -400,9 +400,20 @@ function DetallePanel({
 
 // ─── Componente principal ─────────────────────────────────────
 
-export function CxpPage() {
+interface CxpPageProps {
+  initialProveedorId?: string
+}
+
+export function CxpPage({ initialProveedorId }: CxpPageProps) {
   const { proveedores, isLoading } = useProveedoresConDeuda()
   const [proveedorSeleccionado, setProveedorSeleccionado] = useState<ProveedorConDeuda | null>(null)
+
+  // Pre-select proveedor from URL param once the list is loaded
+  useEffect(() => {
+    if (!initialProveedorId || isLoading || proveedores.length === 0) return
+    const found = proveedores.find((p) => p.id === initialProveedorId)
+    if (found) setProveedorSeleccionado(found)
+  }, [initialProveedorId, proveedores, isLoading])
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaCompraPendiente | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [gastoSeleccionado, setGastoSeleccionado] = useState<GastoPendiente | null>(null)

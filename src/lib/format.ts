@@ -1,4 +1,4 @@
-import { VE_TZ } from './dates'
+import { VE_TZ, VE_OFFSET } from './dates'
 
 /**
  * Formatea cualquier string de fecha/hora ISO (con o sin offset) como DD/MM/YYYY
