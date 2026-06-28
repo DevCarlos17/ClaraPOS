@@ -113,19 +113,13 @@ const menuItems: MenuItem[] = [
     ],
   },
   {
-    title: 'Proveedores',
-    icon: Truck,
-    children: [
-      { title: 'Gestion de Proveedores', url: '/proveedores/gestion', icon: Truck, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
-    ],
-  },
-  {
     title: 'Compras y Gastos',
     icon: ClipboardText,
     children: [
       { title: 'Compras', url: '/compras/facturas', icon: FileXls, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Gastos', url: '/compras/gastos-dashboard', icon: ChartBar, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Cuentas por Pagar', url: '/compras/cxp', icon: CreditCard, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Proveedor', url: '/proveedores/gestion', icon: Truck, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
     ],
   },
   {
