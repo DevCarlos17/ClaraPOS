@@ -32,7 +32,7 @@ function SortIndicator({ col, current, dir }: { col: SortCol; current: SortCol; 
 
 // ─── Print helper ────────────────────────────────────────────
 
-function printProveedores(list: Proveedor[]) {
+function printProveedores(list: Proveedor[], mostrarSaldo: boolean) {
   const rows = list
     .map(
       (p) =>
@@ -40,7 +40,7 @@ function printProveedores(list: Proveedor[]) {
           <td>${p.rif}</td>
           <td>${p.razon_social}</td>
           <td>${p.telefono ?? ''}</td>
-          <td style="text-align:right">${parseFloat(p.saldo_actual).toFixed(2)}</td>
+          ${mostrarSaldo ? `<td style="text-align:right">${parseFloat(p.saldo_actual).toFixed(2)}</td>` : ''}
         </tr>`
     )
     .join('')
@@ -67,7 +67,7 @@ function printProveedores(list: Proveedor[]) {
         <th>RIF</th>
         <th>Razon Social</th>
         <th>Telefono</th>
-        <th style="text-align:right">Saldo (USD)</th>
+        ${mostrarSaldo ? '<th style="text-align:right">Saldo (USD)</th>' : ''}
       </tr>
     </thead>
     <tbody>${rows}</tbody>
@@ -106,6 +106,7 @@ export function ProveedorList() {
   // Print multi-select
   const [selectionMode, setSelectionMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [mostrarSaldo, setMostrarSaldo] = useState(true)
 
   // Estado de cuenta modal
   const [estadoCuentaProveedor, setEstadoCuentaProveedor] = useState<Proveedor | null>(null)
@@ -395,11 +396,20 @@ export function ProveedorList() {
           <span className="text-sm font-medium text-foreground">
             {selected.size} seleccionado{selected.size !== 1 ? 's' : ''}
           </span>
+          <label className="flex items-center gap-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={mostrarSaldo}
+              onChange={(e) => setMostrarSaldo(e.target.checked)}
+              className="h-4 w-4 rounded border-input"
+            />
+            Mostrar saldo
+          </label>
           <button
             disabled={selected.size === 0}
             onClick={() => {
               const lista = filteredAndSorted.filter((p) => selected.has(p.id))
-              printProveedores(lista)
+              printProveedores(lista, mostrarSaldo)
             }}
             className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-40 cursor-pointer"
           >

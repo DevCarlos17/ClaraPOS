@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { toast } from 'sonner'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
@@ -165,7 +165,6 @@ function AgregarBancoForm({ proveedorId, empresaId, onSaved, onCancel }: Agregar
 // ─── Componente principal ────────────────────────────────────
 
 export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!proveedor
   const { user } = useCurrentUser()
 
@@ -213,9 +212,6 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
         setLimiteCreditoUsd('0')
       }
       setErrors({})
-      dialogRef.current?.showModal()
-    } else {
-      dialogRef.current?.close()
     }
   }, [isOpen, proveedor])
 
@@ -285,12 +281,6 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
     }
   }
 
-  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
-    if (e.target === dialogRef.current) {
-      onClose()
-    }
-  }
-
   async function handleEliminarBanco(id: string) {
     try {
       await actualizarBancoProveedor(id, { is_active: false })
@@ -312,16 +302,13 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
 
   return (
     <>
-      <dialog
-        ref={dialogRef}
-        onClose={onClose}
-        onClick={handleBackdropClick}
-        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-xl shadow-xl"
-      >
-        <div className="p-6 max-h-[90vh] overflow-y-auto">
-          <h2 className="text-lg font-semibold mb-5">
-            {isEditing ? 'Editar Proveedor' : 'Nuevo Proveedor'}
-          </h2>
+      <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {isEditing ? 'Editar Proveedor' : 'Nuevo Proveedor'}
+            </DialogTitle>
+          </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-5">
             {/* ---- Identificacion ---- */}
@@ -609,8 +596,8 @@ export function ProveedorForm({ isOpen, onClose, proveedor }: ProveedorFormProps
               </button>
             </div>
           </form>
-        </div>
-      </dialog>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog interno: agregar cuenta bancaria */}
       <Dialog open={agregarBancoOpen} onOpenChange={(v) => !v && setAgregarBancoOpen(false)}>

@@ -47,10 +47,12 @@ interface FacturaResumen {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; cls: string }> = {
-    PAGADO: { label: 'Pagado', cls: 'bg-green-50 text-green-700 ring-green-600/20' },
+    PAGADO:    { label: 'Pagado',    cls: 'bg-green-50 text-green-700 ring-green-600/20' },
+    PROCESADA: { label: 'Procesada', cls: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
     PENDIENTE: { label: 'Pendiente', cls: 'bg-orange-50 text-orange-700 ring-orange-600/20' },
-    PARCIAL: { label: 'Parcial', cls: 'bg-yellow-50 text-yellow-700 ring-yellow-600/20' },
-    ANULADO: { label: 'Anulado', cls: 'bg-red-50 text-red-700 ring-red-600/20' },
+    PARCIAL:   { label: 'Parcial',   cls: 'bg-yellow-50 text-yellow-700 ring-yellow-600/20' },
+    ANULADO:   { label: 'Anulado',   cls: 'bg-red-50 text-red-700 ring-red-600/20' },
+    REVERSADA: { label: 'Reversada', cls: 'bg-gray-50 text-gray-600 ring-gray-400/20' },
   }
   const s = map[status] ?? { label: status, cls: 'bg-muted text-muted-foreground ring-border' }
   return (
@@ -145,7 +147,9 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
                   </thead>
                   <tbody>
                     {movimientos.map((mov) => {
-                      const isDebe = mov.tipo === 'SAL' || mov.tipo === 'CARG'
+                      // FAC = nueva deuda (factura), SAL/CARG = cargos → Debe
+                      // PAG = pago, DEV = devolucion → Haber
+                      const isDebe = mov.tipo === 'FAC' || mov.tipo === 'SAL' || mov.tipo === 'CARG'
                       const monto = parseFloat(mov.monto) || 0
                       return (
                         <tr key={mov.id} className="border-b border-border last:border-0 hover:bg-muted/30">
