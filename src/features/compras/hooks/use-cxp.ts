@@ -176,11 +176,13 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
       )
     }
 
-    // 5. Leer saldo proveedor ANTES de modificar la factura (desde facturas_compra)
+    // 5. Leer saldo proveedor ANTES de modificar (facturas + gastos)
     const sumResult = await tx.execute(
-      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
-       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
-      [proveedor_id, empresa_id]
+      `SELECT
+         COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+         + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+         as saldo`,
+      [proveedor_id, empresa_id, proveedor_id, empresa_id]
     )
     const saldoProv = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
     const nuevoSaldoProv = Decimal.max(0, saldoProv.minus(montoUsd))
@@ -298,11 +300,13 @@ export async function reversarAbonoCxP(params: ReversarAbonoCxPParams): Promise<
     const saldoFactura = new Decimal(factura.saldo_pend_usd)
     const totalUsd = new Decimal(factura.total_usd)
 
-    // 3. Saldo total del proveedor ANTES de modificar (para el movimiento)
+    // 3. Saldo total del proveedor ANTES de modificar (facturas + gastos)
     const sumResult = await tx.execute(
-      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
-       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
-      [proveedorId, empresaId]
+      `SELECT
+         COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+         + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+         as saldo`,
+      [proveedorId, empresaId, proveedorId, empresaId]
     )
     const saldoProvAnterior = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
 
@@ -377,9 +381,11 @@ export async function registrarDiferencialCxP(params: DiferencialCxPParams): Pro
     }
 
     const sumResult = await tx.execute(
-      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
-       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
-      [proveedorId, empresaId]
+      `SELECT
+         COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+         + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+         as saldo`,
+      [proveedorId, empresaId, proveedorId, empresaId]
     )
     const saldoProv = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
     const nuevoSaldoProv = Decimal.max(0, saldoProv.minus(saldoActual))

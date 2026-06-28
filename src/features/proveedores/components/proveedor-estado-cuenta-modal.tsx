@@ -37,12 +37,11 @@ interface Props {
   onClose: () => void
 }
 
-interface RawDoc {
+interface LedgerRawDoc {
   id: string
   ref: string
   fecha: string
   monto: string
-  saldo_doc: string
 }
 
 interface LedgerItem {
@@ -127,69 +126,96 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
   const pid = proveedor.id
   const eid = proveedor.empresa_id
 
-  // ── Datos para tab Movimientos ───────────────────────────────
+  // ── Datos para tab Movimientos (historia completa, sin filtro de fecha) ─────
 
-  const { data: facRaw } = useQuery(
-    pid ? `SELECT id, nro_factura AS ref, fecha_factura AS fecha,
-                  total_usd AS monto, saldo_pend_usd AS saldo_doc
+  // Todas las facturas del proveedor — para calcular el balance corriente desde el inicio
+  const { data: facLedgerRaw } = useQuery(
+    pid ? `SELECT id, nro_factura AS ref, fecha_factura AS fecha, total_usd AS monto
            FROM facturas_compra
            WHERE proveedor_id = ? AND empresa_id = ?
-             AND DATE(fecha_factura) >= ? AND DATE(fecha_factura) <= ?
-           ORDER BY fecha_factura ASC` : '',
-    pid ? [pid, eid, fechaDesde, fechaHasta] : [],
+           ORDER BY fecha_factura ASC, created_at ASC` : '',
+    pid ? [pid, eid] : [],
   )
 
-  const { data: gtoRaw } = useQuery(
-    pid ? `SELECT id, nro_gasto AS ref, fecha,
-                  monto_usd AS monto, saldo_pendiente_usd AS saldo_doc
+  // Todos los gastos del proveedor — idem
+  const { data: gtoLedgerRaw } = useQuery(
+    pid ? `SELECT id, nro_gasto AS ref, fecha, monto_usd AS monto
            FROM gastos
            WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'
-             AND DATE(fecha) >= ? AND DATE(fecha) <= ?
-           ORDER BY fecha ASC` : '',
-    pid ? [pid, eid, fechaDesde, fechaHasta] : [],
+           ORDER BY fecha ASC, created_at ASC` : '',
+    pid ? [pid, eid] : [],
   )
 
   const { movimientos: todosMovs } = useMovCuentaProveedor(pid, eid)
 
-  const pagMovs = useMemo(
-    () => todosMovs.filter((m) => {
-      const f = m.fecha.slice(0, 10)
-      return (m.tipo === 'PAG' || m.tipo === 'DEV') && f >= fechaDesde && f <= fechaHasta
-    }),
-    [todosMovs, fechaDesde, fechaHasta],
+  // Todos los movimientos de cuenta (PAG + DEV) sin filtro de fecha
+  const allMovs = useMemo(
+    () => todosMovs.filter((m) => m.tipo === 'PAG' || m.tipo === 'DEV'),
+    [todosMovs],
   )
 
+  /**
+   * Ledger estilo Kardex: historial completo cronologico con balance corriente.
+   *
+   * Cada evento contribuye al balance global con el proveedor:
+   *   Factura / Gasto  → cargo  (suma al balance)
+   *   PAG              → abono  (resta al balance)
+   *   DEV (reversa)    → cargo  (restaura la deuda, aparece en columna Saldo Adeudado)
+   *
+   * El saldo de cada fila es el balance acumulado hasta ese momento — igual al
+   * extracto de un banco, no el saldo restante del documento individual.
+   */
   const ledger = useMemo((): LedgerItem[] => {
-    const facs = ((facRaw ?? []) as RawDoc[]).map((r) => ({
+    const facs = ((facLedgerRaw ?? []) as LedgerRawDoc[]).map((r) => ({
       id: `fac-${r.id}`,
       tipo: 'Factura',
       referencia: r.ref,
       fecha: r.fecha?.slice(0, 10) ?? '',
       cargo: new Decimal(r.monto || '0').toNumber(),
       abono: 0,
-      saldo: new Decimal(r.saldo_doc || '0').toNumber(),
+      saldo: 0, // se calcula abajo
     }))
-    const gtos = ((gtoRaw ?? []) as RawDoc[]).map((r) => ({
+
+    const gtos = ((gtoLedgerRaw ?? []) as LedgerRawDoc[]).map((r) => ({
       id: `gto-${r.id}`,
       tipo: 'Gasto',
       referencia: r.ref,
       fecha: r.fecha?.slice(0, 10) ?? '',
       cargo: new Decimal(r.monto || '0').toNumber(),
       abono: 0,
-      saldo: new Decimal(r.saldo_doc || '0').toNumber(),
-    }))
-    const pags = pagMovs.map((m) => ({
-      id: `pag-${m.id}`,
-      tipo: m.tipo === 'DEV' ? 'Devol.' : 'Abono',
-      referencia: m.referencia,
-      fecha: m.fecha.slice(0, 10),
-      cargo: 0,
-      abono: new Decimal(m.monto || '0').toNumber(),
-      saldo: new Decimal(m.saldo_nuevo || '0').toNumber(),
+      saldo: 0,
     }))
 
-    return [...facs, ...gtos, ...pags].sort((a, b) => a.fecha.localeCompare(b.fecha))
-  }, [facRaw, gtoRaw, pagMovs])
+    const pags = allMovs.map((m) => {
+      const isReversal = m.tipo === 'DEV'
+      return {
+        id: `pag-${m.id}`,
+        tipo: isReversal ? 'Reversa' : 'Abono',
+        referencia: m.referencia,
+        fecha: m.fecha.slice(0, 10),
+        // DEV restaura la deuda → va en cargo, no en abono
+        cargo: isReversal ? new Decimal(m.monto || '0').toNumber() : 0,
+        abono: isReversal ? 0 : new Decimal(m.monto || '0').toNumber(),
+        saldo: 0,
+      }
+    })
+
+    // Orden cronologico; mismo dia: cargos antes que abonos
+    const sorted = [...facs, ...gtos, ...pags].sort((a, b) => {
+      const d = a.fecha.localeCompare(b.fecha)
+      if (d !== 0) return d
+      if (a.cargo > 0 && b.abono > 0) return -1
+      if (a.abono > 0 && b.cargo > 0) return 1
+      return 0
+    })
+
+    // Balance corriente acumulado desde cero
+    let running = 0
+    return sorted.map((item) => {
+      running += item.cargo - item.abono
+      return { ...item, saldo: Math.max(0, running) }
+    })
+  }, [facLedgerRaw, gtoLedgerRaw, allMovs])
 
   // ── Datos para tab Facturas (TODAS, con filtro fecha) ────────
 
@@ -269,13 +295,6 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
 
             {/* ── Tab: Movimientos ─── */}
             <TabsContent value="movimientos" className="space-y-3">
-              <DateFilter
-                desde={fechaDesde}
-                hasta={fechaHasta}
-                onDesde={setFechaDesde}
-                onHasta={setFechaHasta}
-                onReset={resetFechas}
-              />
               {ledger.length === 0 ? (
                 <div className="py-10 text-center text-muted-foreground text-sm">
                   Sin movimientos en el periodo seleccionado
@@ -301,10 +320,12 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
                           </td>
                           <td className="px-4 py-2.5">
                             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
-                              item.tipo === 'Abono' || item.tipo === 'Devol.'
+                              item.tipo === 'Abono'
                                 ? 'bg-green-50 text-green-700 ring-green-600/20'
                                 : item.tipo === 'Factura'
                                 ? 'bg-blue-50 text-blue-700 ring-blue-600/20'
+                                : item.tipo === 'Reversa'
+                                ? 'bg-orange-50 text-orange-700 ring-orange-600/20'
                                 : 'bg-purple-50 text-purple-700 ring-purple-600/20'
                             }`}>
                               {item.tipo}
@@ -328,7 +349,7 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
                     <tfoot>
                       <tr className="border-t-2 border-border bg-muted/30">
                         <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
-                          Totales del periodo
+                          Totales historicos
                         </td>
                         <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
                           {formatUsd(ledger.reduce((s, i) => s + i.cargo, 0))}

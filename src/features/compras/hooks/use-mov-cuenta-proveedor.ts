@@ -36,8 +36,7 @@ export function useMovCuentaProveedor(proveedorId: string, empresaIdOverride?: s
     proveedorId
       ? `SELECT * FROM movimientos_cuenta_proveedor
          WHERE empresa_id = ? AND proveedor_id = ?
-         ORDER BY fecha DESC
-         LIMIT 100`
+         ORDER BY fecha ASC, created_at ASC`
       : '',
     proveedorId ? [empresaId, proveedorId] : []
   )
