@@ -276,6 +276,42 @@ export async function crearGasto(data: {
       ]
     )
 
+    // Crear movimiento de deuda (FAC) cuando el gasto queda con saldo pendiente y tiene proveedor.
+    // Equivalente al step 5b de crearCompra — registra la obligación inicial en el libro del proveedor.
+    if (data.proveedor_id && saldoPendiente.gt(new Decimal('0.01'))) {
+      try {
+        const sumRes = await tx.execute(
+          `SELECT
+             COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+             + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+             AS saldo`,
+          [data.proveedor_id, data.empresa_id, data.proveedor_id, data.empresa_id]
+        )
+        const saldoPost = new Decimal((sumRes.rows?.item(0) as { saldo: string }).saldo || '0')
+        const saldoAntes = Decimal.max(new Decimal(0), saldoPost.minus(saldoPendiente))
+        await tx.execute(
+          `INSERT INTO movimientos_cuenta_proveedor
+             (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+              observacion, factura_compra_id, doc_origen_id, doc_origen_tipo, fecha, created_at, created_by)
+           VALUES (?, ?, ?, 'FAC', ?, ?, ?, ?, ?, NULL, ?, 'GASTO', ?, ?, ?)`,
+          [
+            uuidv4(), data.empresa_id, data.proveedor_id,
+            `GTO-${nroGasto}`,
+            toStorageString(saldoPendiente),
+            toStorageString(saldoAntes),
+            toStorageString(saldoPost),
+            `Gasto a credito ${nroGasto}`,
+            gastoId,
+            data.fecha,
+            now,
+            data.created_by ?? null,
+          ]
+        )
+      } catch {
+        // No bloquear el gasto si falla el movimiento del proveedor
+      }
+    }
+
     // Insertar filas en gasto_pagos para cada pago (backward compat)
     for (const pago of data.pagos) {
       const pagoId = uuidv4()

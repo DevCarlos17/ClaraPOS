@@ -211,9 +211,9 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Fecha</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Tipo</th>
                       <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Referencia</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Debe</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Haber</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo</th>
+                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo Adeudado</th>
+                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Abonos</th>
+                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo Restante</th>
                     </tr>
                   </thead>
                   <tbody>
