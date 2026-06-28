@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react'
 import { useQuery } from '@powersync/react'
+import Decimal from 'decimal.js'
 import { formatUsd } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { startOfMonth, todayStr } from '@/lib/dates'
 import { useMovCuentaProveedor } from '@/features/compras/hooks/use-mov-cuenta-proveedor'
-import { useFacturasCompraPendientes } from '@/features/compras/hooks/use-cxp'
-import { useGastosPendientesProveedor } from '@/features/contabilidad/hooks/use-gastos'
+import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import {
   Dialog,
   DialogContent,
@@ -37,7 +37,14 @@ interface Props {
   onClose: () => void
 }
 
-interface RawDoc { id: string; ref: string; fecha: string; monto: string; saldo_doc: string }
+interface RawDoc {
+  id: string
+  ref: string
+  fecha: string
+  monto: string
+  saldo_doc: string
+}
+
 interface LedgerItem {
   id: string
   tipo: string
@@ -45,25 +52,86 @@ interface LedgerItem {
   fecha: string
   cargo: number
   abono: number
-  saldo: number  // saldo pendiente actual del documento, o saldo_nuevo tras el abono
+  saldo: number
+}
+
+interface DocRow {
+  id: string
+  tipo_doc: 'COMPRA' | 'GASTO'
+  nro: string
+  fecha: string
+  total_usd: string
+  saldo_pend: string
+}
+
+// ─── Filtro de fechas compartido ─────────────────────────────
+
+function DateFilter({
+  desde,
+  hasta,
+  onDesde,
+  onHasta,
+  onReset,
+}: {
+  desde: string
+  hasta: string
+  onDesde: (v: string) => void
+  onHasta: (v: string) => void
+  onReset: () => void
+}) {
+  return (
+    <div className="flex flex-wrap items-end gap-3 rounded-xl bg-muted/30 border border-border px-4 py-3">
+      <div>
+        <label className="block text-xs font-medium text-muted-foreground mb-1">Desde</label>
+        <input
+          type="date"
+          value={desde}
+          onChange={(e) => onDesde(e.target.value)}
+          className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <div>
+        <label className="block text-xs font-medium text-muted-foreground mb-1">Hasta</label>
+        <input
+          type="date"
+          value={hasta}
+          min={desde}
+          onChange={(e) => onHasta(e.target.value)}
+          className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={onReset}
+        className="px-3 py-1.5 text-xs font-medium rounded-md border border-border text-muted-foreground hover:bg-muted transition-colors cursor-pointer"
+      >
+        Mes actual
+      </button>
+    </div>
+  )
 }
 
 // ─── Componente principal ────────────────────────────────────
 
 export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props) {
   const today = todayStr()
-  const [fechaDesde, setFechaDesde] = useState(startOfMonth())
+  const defaultDesde = startOfMonth()
+
+  // Rango de fechas compartido por ambas pestañas
+  const [fechaDesde, setFechaDesde] = useState(defaultDesde)
   const [fechaHasta, setFechaHasta] = useState(today)
+
+  // Modal de detalle de factura/gasto
+  const [detalleDoc, setDetalleDoc] = useState<{ id: string; tipo: 'COMPRA' | 'GASTO' } | null>(null)
 
   const pid = proveedor.id
   const eid = proveedor.empresa_id
 
   // ── Datos para tab Movimientos ───────────────────────────────
 
-  // Facturas de compra en el período (fuente de deuda)
   const { data: facRaw } = useQuery(
-    pid ? `SELECT id, nro_factura as ref, fecha_factura as fecha,
-                  total_usd as monto, saldo_pend_usd as saldo_doc
+    pid ? `SELECT id, nro_factura AS ref, fecha_factura AS fecha,
+                  total_usd AS monto, saldo_pend_usd AS saldo_doc
            FROM facturas_compra
            WHERE proveedor_id = ? AND empresa_id = ?
              AND DATE(fecha_factura) >= ? AND DATE(fecha_factura) <= ?
@@ -71,10 +139,9 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
     pid ? [pid, eid, fechaDesde, fechaHasta] : [],
   )
 
-  // Gastos a crédito en el período (fuente de deuda)
   const { data: gtoRaw } = useQuery(
-    pid ? `SELECT id, nro_gasto as ref, fecha,
-                  monto_usd as monto, saldo_pendiente_usd as saldo_doc
+    pid ? `SELECT id, nro_gasto AS ref, fecha,
+                  monto_usd AS monto, saldo_pendiente_usd AS saldo_doc
            FROM gastos
            WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'
              AND DATE(fecha) >= ? AND DATE(fecha) <= ?
@@ -82,8 +149,8 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
     pid ? [pid, eid, fechaDesde, fechaHasta] : [],
   )
 
-  // Abonos (PAG/DEV) desde movimientos_cuenta_proveedor, filtrados en JS
   const { movimientos: todosMovs } = useMovCuentaProveedor(pid, eid)
+
   const pagMovs = useMemo(
     () => todosMovs.filter((m) => {
       const f = m.fecha.slice(0, 10)
@@ -92,27 +159,24 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
     [todosMovs, fechaDesde, fechaHasta],
   )
 
-  // Construir ledger: deudas + abonos, ordenados por fecha, con saldo acumulado
   const ledger = useMemo((): LedgerItem[] => {
     const facs = ((facRaw ?? []) as RawDoc[]).map((r) => ({
       id: `fac-${r.id}`,
       tipo: 'Factura',
       referencia: r.ref,
       fecha: r.fecha?.slice(0, 10) ?? '',
-      cargo: parseFloat(r.monto) || 0,
+      cargo: new Decimal(r.monto || '0').toNumber(),
       abono: 0,
-      // saldo_doc = saldo pendiente ACTUAL de esta factura
-      saldo: parseFloat(r.saldo_doc) || 0,
+      saldo: new Decimal(r.saldo_doc || '0').toNumber(),
     }))
     const gtos = ((gtoRaw ?? []) as RawDoc[]).map((r) => ({
       id: `gto-${r.id}`,
       tipo: 'Gasto',
       referencia: r.ref,
       fecha: r.fecha?.slice(0, 10) ?? '',
-      cargo: parseFloat(r.monto) || 0,
+      cargo: new Decimal(r.monto || '0').toNumber(),
       abono: 0,
-      // saldo_doc = saldo pendiente ACTUAL de este gasto
-      saldo: parseFloat(r.saldo_doc) || 0,
+      saldo: new Decimal(r.saldo_doc || '0').toNumber(),
     }))
     const pags = pagMovs.map((m) => ({
       id: `pag-${m.id}`,
@@ -120,253 +184,269 @@ export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props
       referencia: m.referencia,
       fecha: m.fecha.slice(0, 10),
       cargo: 0,
-      abono: parseFloat(m.monto) || 0,
-      // saldo_nuevo = balance total del proveedor tras este abono
-      saldo: parseFloat(m.saldo_nuevo) || 0,
+      abono: new Decimal(m.monto || '0').toNumber(),
+      saldo: new Decimal(m.saldo_nuevo || '0').toNumber(),
     }))
 
     return [...facs, ...gtos, ...pags].sort((a, b) => a.fecha.localeCompare(b.fecha))
   }, [facRaw, gtoRaw, pagMovs])
 
-  // ── Datos para tab Documentos (mismas fuentes que CxP) ──────
+  // ── Datos para tab Facturas (TODAS, con filtro fecha) ────────
 
-  const { facturas: facturasPendientes, isLoading: loadingFacs } = useFacturasCompraPendientes(pid)
-  const { gastosPendientes, isLoading: loadingGtos } = useGastosPendientesProveedor(pid)
-  const loadingDocs = loadingFacs || loadingGtos
-
-  const totalDeuda = useMemo(() => {
-    const tf = facturasPendientes.reduce((s, f) => s + (parseFloat(f.saldo_pend_usd) || 0), 0)
-    const tg = gastosPendientes.reduce((s, g) => s + (parseFloat(g.saldo_pendiente_usd) || 0), 0)
-    return tf + tg
-  }, [facturasPendientes, gastosPendientes])
-
-  const saldoProveedor = parseFloat(proveedor.saldo_actual) || 0
-
-  // ─── Filtro de fechas ────────────────────────────────────────
-
-  const DateFilter = (
-    <div className="flex flex-wrap items-end gap-3 rounded-xl bg-muted/30 border border-border px-4 py-3">
-      <div>
-        <label className="block text-xs font-medium text-muted-foreground mb-1">Desde</label>
-        <input
-          type="date"
-          value={fechaDesde}
-          onChange={(e) => setFechaDesde(e.target.value)}
-          className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-      <div>
-        <label className="block text-xs font-medium text-muted-foreground mb-1">Hasta</label>
-        <input
-          type="date"
-          value={fechaHasta}
-          min={fechaDesde}
-          onChange={(e) => setFechaHasta(e.target.value)}
-          className="rounded-md border border-input px-3 py-1.5 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-      </div>
-      <button
-        type="button"
-        onClick={() => { setFechaDesde(startOfMonth()); setFechaHasta(today) }}
-        className="px-3 py-1.5 text-xs font-medium rounded-md border border-border text-muted-foreground hover:bg-muted transition-colors cursor-pointer"
-      >
-        Mes actual
-      </button>
-    </div>
+  const { data: facAllRaw } = useQuery(
+    pid ? `SELECT id, 'COMPRA' AS tipo_doc, nro_factura AS nro, fecha_factura AS fecha,
+                  total_usd, saldo_pend_usd AS saldo_pend
+           FROM facturas_compra
+           WHERE proveedor_id = ? AND empresa_id = ?
+             AND DATE(fecha_factura) >= ? AND DATE(fecha_factura) <= ?
+           ORDER BY fecha_factura DESC` : '',
+    pid ? [pid, eid, fechaDesde, fechaHasta] : [],
   )
 
+  const { data: gtoAllRaw } = useQuery(
+    pid ? `SELECT id, 'GASTO' AS tipo_doc, nro_gasto AS nro, fecha,
+                  monto_usd AS total_usd, saldo_pendiente_usd AS saldo_pend
+           FROM gastos
+           WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'
+             AND DATE(fecha) >= ? AND DATE(fecha) <= ?
+           ORDER BY fecha DESC` : '',
+    pid ? [pid, eid, fechaDesde, fechaHasta] : [],
+  )
+
+  const docsAll = useMemo((): DocRow[] => {
+    const facs = ((facAllRaw ?? []) as DocRow[])
+    const gtos = ((gtoAllRaw ?? []) as DocRow[])
+    return [...facs, ...gtos].sort((a, b) => b.fecha.localeCompare(a.fecha))
+  }, [facAllRaw, gtoAllRaw])
+
+  const totalPendiente = useMemo(
+    () => docsAll.reduce((s, d) => s.plus(new Decimal(d.saldo_pend || '0')), new Decimal(0)).toNumber(),
+    [docsAll],
+  )
+
+  const saldoProveedor = new Decimal(proveedor.saldo_actual || '0').toNumber()
+
+  function resetFechas() {
+    setFechaDesde(defaultDesde)
+    setFechaHasta(today)
+  }
+
   return (
-    <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Estado de Cuenta — {proveedor.razon_social}</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={isOpen} onOpenChange={(v) => !v && onClose()}>
+        <DialogContent className="sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Estado de Cuenta — {proveedor.razon_social}</DialogTitle>
+          </DialogHeader>
 
-        {/* Header card */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-xl bg-muted/40 border border-border p-4 text-sm">
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-0.5">RIF</p>
-            <p className="font-mono font-medium">{proveedor.rif}</p>
+          {/* Header card */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 rounded-xl bg-muted/40 border border-border p-4 text-sm">
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-0.5">RIF</p>
+              <p className="font-mono font-medium">{proveedor.rif}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-0.5">Ciudad</p>
+              <p>{proveedor.ciudad ?? '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-0.5">Telefono</p>
+              <p>{proveedor.telefono ?? '—'}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground mb-0.5">Saldo Actual</p>
+              <p className={`font-bold tabular-nums ${saldoProveedor > 0 ? 'text-destructive' : 'text-foreground'}`}>
+                {formatUsd(saldoProveedor)}
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-0.5">Ciudad</p>
-            <p>{proveedor.ciudad ?? '—'}</p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-0.5">Telefono</p>
-            <p>{proveedor.telefono ?? '—'}</p>
-          </div>
-          <div>
-            <p className="text-xs font-medium text-muted-foreground mb-0.5">Saldo Actual</p>
-            <p className={`font-bold tabular-nums ${saldoProveedor > 0 ? 'text-destructive' : 'text-foreground'}`}>
-              {formatUsd(proveedor.saldo_actual)}
-            </p>
-          </div>
-        </div>
 
-        <Tabs defaultValue="movimientos">
-          <TabsList>
-            <TabsTrigger value="movimientos">Movimientos</TabsTrigger>
-            <TabsTrigger value="documentos">Documentos pendientes</TabsTrigger>
-          </TabsList>
+          <Tabs defaultValue="movimientos">
+            <TabsList>
+              <TabsTrigger value="movimientos">Movimientos</TabsTrigger>
+              <TabsTrigger value="facturas">Facturas</TabsTrigger>
+            </TabsList>
 
-          {/* ── Tab: Movimientos (ledger cronológico) ─── */}
-          <TabsContent value="movimientos" className="space-y-3">
-            {DateFilter}
-            {ledger.length === 0 ? (
-              <div className="py-10 text-center text-muted-foreground text-sm">
-                Sin movimientos en el periodo seleccionado
-              </div>
-            ) : (
-              <div className="overflow-x-auto border border-border rounded-lg">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted">
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Fecha</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Tipo</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Referencia</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo Adeudado</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Abonos</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo Restante</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ledger.map((item) => (
-                      <tr key={item.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
-                          {formatDate(item.fecha)}
+            {/* ── Tab: Movimientos ─── */}
+            <TabsContent value="movimientos" className="space-y-3">
+              <DateFilter
+                desde={fechaDesde}
+                hasta={fechaHasta}
+                onDesde={setFechaDesde}
+                onHasta={setFechaHasta}
+                onReset={resetFechas}
+              />
+              {ledger.length === 0 ? (
+                <div className="py-10 text-center text-muted-foreground text-sm">
+                  Sin movimientos en el periodo seleccionado
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-border rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted">
+                        <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Fecha</th>
+                        <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Tipo</th>
+                        <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Referencia</th>
+                        <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo Adeudado</th>
+                        <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Abonos</th>
+                        <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo Restante</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ledger.map((item) => (
+                        <tr key={item.id} className="border-b border-border last:border-0 hover:bg-muted/30">
+                          <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
+                            {formatDate(item.fecha)}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+                              item.tipo === 'Abono' || item.tipo === 'Devol.'
+                                ? 'bg-green-50 text-green-700 ring-green-600/20'
+                                : item.tipo === 'Factura'
+                                ? 'bg-blue-50 text-blue-700 ring-blue-600/20'
+                                : 'bg-purple-50 text-purple-700 ring-purple-600/20'
+                            }`}>
+                              {item.tipo}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground max-w-[160px] truncate">
+                            {item.referencia}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-destructive text-sm">
+                            {item.cargo > 0 ? formatUsd(item.cargo) : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums text-green-700 text-sm">
+                            {item.abono > 0 ? formatUsd(item.abono) : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-sm">
+                            {formatUsd(item.saldo)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-border bg-muted/30">
+                        <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
+                          Totales del periodo
                         </td>
-                        <td className="px-4 py-2.5">
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
-                            item.tipo === 'Abono' || item.tipo === 'Devol.'
-                              ? 'bg-green-50 text-green-700 ring-green-600/20'
-                              : item.tipo === 'Factura'
-                              ? 'bg-blue-50 text-blue-700 ring-blue-600/20'
-                              : 'bg-purple-50 text-purple-700 ring-purple-600/20'
-                          }`}>
-                            {item.tipo}
-                          </span>
+                        <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
+                          {formatUsd(ledger.reduce((s, i) => s + i.cargo, 0))}
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground max-w-[160px] truncate">
-                          {item.referencia}
+                        <td className="px-4 py-2.5 text-right tabular-nums font-bold text-green-700 text-sm">
+                          {formatUsd(ledger.reduce((s, i) => s + i.abono, 0))}
                         </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-destructive text-sm">
-                          {item.cargo > 0 ? formatUsd(item.cargo) : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums text-green-700 text-sm">
-                          {item.abono > 0 ? formatUsd(item.abono) : '—'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-sm">
-                          {formatUsd(item.saldo)}
+                        <td className="px-4 py-2.5 text-right tabular-nums font-bold text-sm">
+                          {formatUsd(ledger.at(-1)?.saldo ?? 0)}
                         </td>
                       </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/30">
-                      <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
-                        Totales del periodo
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
-                        {formatUsd(ledger.reduce((s, i) => s + i.cargo, 0))}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums font-bold text-green-700 text-sm">
-                        {formatUsd(ledger.reduce((s, i) => s + i.abono, 0))}
-                      </td>
-                      <td className="px-4 py-2.5 text-right tabular-nums font-bold text-sm">
-                        {formatUsd(ledger.at(-1)?.saldo ?? 0)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </TabsContent>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </TabsContent>
 
-          {/* ── Tab: Documentos pendientes (igual que CxP) ── */}
-          <TabsContent value="documentos" className="space-y-3">
-            {loadingDocs ? (
-              <div className="space-y-2 py-4">
-                {[0, 1, 2].map((i) => <div key={i} className="h-10 bg-muted rounded animate-pulse" />)}
-              </div>
-            ) : (facturasPendientes.length === 0 && gastosPendientes.length === 0) ? (
-              <div className="py-10 text-center text-muted-foreground text-sm">
-                Sin documentos pendientes con este proveedor
-              </div>
-            ) : (
-              <div className="overflow-x-auto border border-border rounded-lg">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted">
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Tipo</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Nro</th>
-                      <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Fecha</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Total</th>
-                      <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Saldo Pendiente</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {facturasPendientes.map((f) => (
-                      <tr key={f.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                        <td className="px-4 py-2.5">
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-blue-50 text-blue-700 ring-blue-600/20">
-                            Factura
-                          </span>
+            {/* ── Tab: Facturas (todas, con filtro fecha) ── */}
+            <TabsContent value="facturas" className="space-y-3">
+              <DateFilter
+                desde={fechaDesde}
+                hasta={fechaHasta}
+                onDesde={setFechaDesde}
+                onHasta={setFechaHasta}
+                onReset={resetFechas}
+              />
+              {docsAll.length === 0 ? (
+                <div className="py-10 text-center text-muted-foreground text-sm">
+                  Sin facturas ni gastos en el periodo seleccionado
+                </div>
+              ) : (
+                <div className="overflow-x-auto border border-border rounded-lg">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border bg-muted">
+                        <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Tipo</th>
+                        <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Nro</th>
+                        <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs">Fecha</th>
+                        <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Total</th>
+                        <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Abonado</th>
+                        <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs">Pendiente</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {docsAll.map((doc) => {
+                        const total = new Decimal(doc.total_usd || '0')
+                        const pend = new Decimal(doc.saldo_pend || '0')
+                        const abonado = Decimal.max(new Decimal(0), total.minus(pend))
+                        const isPending = pend.gt(new Decimal('0.001'))
+                        return (
+                          <tr
+                            key={`${doc.tipo_doc}-${doc.id}`}
+                            onClick={() => setDetalleDoc({ id: doc.id, tipo: doc.tipo_doc })}
+                            className="border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer transition-colors"
+                          >
+                            <td className="px-4 py-2.5">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+                                doc.tipo_doc === 'COMPRA'
+                                  ? 'bg-blue-50 text-blue-700 ring-blue-600/20'
+                                  : 'bg-purple-50 text-purple-700 ring-purple-600/20'
+                              }`}>
+                                {doc.tipo_doc === 'COMPRA' ? 'Factura' : 'Gasto'}
+                              </span>
+                            </td>
+                            <td className="px-4 py-2.5 font-mono text-xs">{doc.nro}</td>
+                            <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
+                              {formatDate(doc.fecha)}
+                            </td>
+                            <td className="px-4 py-2.5 text-right tabular-nums">
+                              {formatUsd(total.toNumber())}
+                            </td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-green-700">
+                              {formatUsd(abonado.toNumber())}
+                            </td>
+                            <td className={`px-4 py-2.5 text-right tabular-nums font-semibold ${isPending ? 'text-destructive' : 'text-muted-foreground'}`}>
+                              {formatUsd(pend.toNumber())}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t-2 border-border bg-muted/30">
+                        <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
+                          Total pendiente en periodo
                         </td>
-                        <td className="px-4 py-2.5 font-mono text-xs">{f.nro_factura}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
-                          {formatDate(f.fecha_factura)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{formatUsd(parseFloat(f.total_usd))}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-destructive">
-                          {formatUsd(parseFloat(f.saldo_pend_usd))}
+                        <td className="px-4 py-2.5 text-right font-bold tabular-nums text-destructive">
+                          {formatUsd(totalPendiente)}
                         </td>
                       </tr>
-                    ))}
-                    {gastosPendientes.map((g) => (
-                      <tr key={g.id} className="border-b border-border last:border-0 hover:bg-muted/30">
-                        <td className="px-4 py-2.5">
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-purple-50 text-purple-700 ring-purple-600/20">
-                            Gasto
-                          </span>
-                        </td>
-                        <td className="px-4 py-2.5 font-mono text-xs">{g.nro_gasto}</td>
-                        <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
-                          {formatDate(g.fecha)}
-                        </td>
-                        <td className="px-4 py-2.5 text-right tabular-nums">{formatUsd(parseFloat(g.monto_usd))}</td>
-                        <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-destructive">
-                          {formatUsd(parseFloat(g.saldo_pendiente_usd))}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/30">
-                      <td colSpan={4} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
-                        Total pendiente
-                      </td>
-                      <td className="px-4 py-2.5 text-right font-bold tabular-nums text-destructive">
-                        {formatUsd(totalDeuda)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-border pt-3 mt-1">
-          <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-            Saldo Total con Proveedor
-          </span>
-          <span className={`text-lg font-bold tabular-nums ${saldoProveedor > 0 ? 'text-destructive' : 'text-foreground'}`}>
-            {formatUsd(proveedor.saldo_actual)}
-          </span>
-        </div>
-      </DialogContent>
-    </Dialog>
+          {/* Footer */}
+          <div className="flex items-center justify-between border-t border-border pt-3 mt-1">
+            <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+              Saldo Total con Proveedor
+            </span>
+            <span className={`text-lg font-bold tabular-nums ${saldoProveedor > 0 ? 'text-destructive' : 'text-foreground'}`}>
+              {formatUsd(saldoProveedor)}
+            </span>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de detalle: se renderiza fuera del Dialog para evitar apilamiento */}
+      {detalleDoc && (
+        <FacturaProveedorModal
+          tipo={detalleDoc.tipo}
+          id={detalleDoc.id}
+          isOpen={true}
+          onClose={() => setDetalleDoc(null)}
+        />
+      )}
+    </>
   )
 }
