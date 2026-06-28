@@ -80,7 +80,7 @@ export function useMovimientosCliente(clienteId: string | undefined) {
 
   const { data, isLoading } = useQuery(
     clienteId
-      ? 'SELECT * FROM movimientos_cuenta WHERE empresa_id = ? AND cliente_id = ? ORDER BY fecha DESC'
+      ? 'SELECT * FROM movimientos_cuenta WHERE empresa_id = ? AND cliente_id = ? ORDER BY fecha DESC, created_at DESC'
       : '',
     clienteId ? [empresaId, clienteId] : []
   )
@@ -117,7 +117,7 @@ export function useMovimientosClienteFiltrados(
       sql += ' AND fecha <= ?'
       params.push(`${fechaHasta}T23:59:59`)
     }
-    sql += ' ORDER BY fecha DESC'
+    sql += ' ORDER BY fecha DESC, created_at DESC'
     if (!hasFilter) sql += ' LIMIT 5'
   }
 
