@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Plus, BookOpen, CaretDown, CaretUp, Printer } from '@phosphor-icons/react'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
 import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -517,6 +518,16 @@ export function GastosDashboard() {
 
       </div>
 
+      {/* ── Pestañas ─────────────────────────────────────────── */}
+      <Tabs defaultValue="dashboard" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="libro">Libro de gastos</TabsTrigger>
+        </TabsList>
+
+        {/* ── Tab: Dashboard ─────────────────────────────────── */}
+        <TabsContent value="dashboard" className="space-y-4">
+
       {/* ── Placeholder cuando GRUPO sin selección ───────────── */}
       {!isLoading && criterio === 'GRUPO' && !grupoId && (
         <div className="rounded-2xl bg-card shadow-lg p-12 text-center text-muted-foreground">
@@ -599,7 +610,7 @@ export function GastosDashboard() {
           </div>
 
           {/* Gráfica de barras — ocupa toda la altura de la card de estadísticas */}
-          <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4 flex flex-col">
+          <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4 flex flex-col h-full">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 shrink-0">
               Gastos por {intervalo === 'MENSUAL' ? 'mes' : 'día'} (USD)
             </p>
@@ -774,6 +785,112 @@ export function GastosDashboard() {
           )}
         </div>
       )}
+
+        </TabsContent>
+
+        {/* ── Tab: Libro de gastos ──────────────────────────── */}
+        <TabsContent value="libro" className="space-y-4">
+
+          {/* Botones de acción */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setCuentaModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors"
+            >
+              <BookOpen className="h-4 w-4" />
+              Crear cuenta
+            </button>
+            <button
+              type="button"
+              onClick={handleImprimir}
+              disabled={gastosFiltrados.length === 0 || isLoading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors disabled:opacity-40"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimir
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Agregar gasto
+            </button>
+          </div>
+
+          {/* Tabla plana cronológica */}
+          <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+            {isLoading ? (
+              <div className="p-4 space-y-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-10 bg-muted/50 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : gastosFiltrados.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p className="text-sm font-medium">Sin gastos en el periodo</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 sticky top-0 z-[1]">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Factura</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Observaciones</th>
+                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto</th>
+                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...gastosFiltrados]
+                      .sort((a, b) => a.fecha.localeCompare(b.fecha))
+                      .map((g) => {
+                        const anulado = g.status === 'ANULADO'
+                        const montoUsd = parseFloat(g.monto_usd)
+                        const tasaGasto = parseFloat(g.tasa) || 1
+                        const montoBs = montoUsd * tasaGasto
+                        return (
+                          <tr
+                            key={g.id}
+                            onClick={() => setDetalleId(g.id)}
+                            className={`border-t border-border hover:bg-muted/30 cursor-pointer transition-colors ${anulado ? 'opacity-50' : ''}`}
+                          >
+                            <td className={`px-4 py-2 font-mono text-xs ${anulado ? 'line-through' : 'text-foreground'}`}>{g.nro_gasto}</td>
+                            <td className={`px-4 py-2 text-xs text-muted-foreground whitespace-nowrap ${anulado ? 'line-through' : ''}`}>{formatDate(g.fecha)}</td>
+                            <td className={`px-4 py-2 text-xs text-foreground max-w-[160px] truncate ${anulado ? 'line-through' : ''}`}>{(g as { cuenta_nombre: string }).cuenta_nombre}</td>
+                            <td className={`px-4 py-2 font-mono text-xs text-muted-foreground ${anulado ? 'line-through' : ''}`}>{g.nro_factura ?? '—'}</td>
+                            <td className="px-4 py-2 text-xs text-muted-foreground">{(g as { proveedor_nombre: string | null }).proveedor_nombre ?? '—'}</td>
+                            <td className="px-4 py-2 text-xs text-muted-foreground max-w-[200px] truncate">{(g as { observaciones: string | null }).observaciones ?? '—'}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">
+                              <div className={`text-sm font-semibold ${anulado ? 'line-through' : 'text-foreground'}`}>{formatUsd(montoUsd)}</div>
+                              <div className="text-[10px] text-muted-foreground">{formatBs(montoBs)}</div>
+                            </td>
+                            <td className="px-4 py-2 text-center"><StatusBadge status={g.status} /></td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30">
+                      <td colSpan={6} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total</td>
+                      <td className="px-4 py-2.5 text-right text-sm font-bold tabular-nums">
+                        {formatUsd(gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0))}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
 
       {/* ── Modales ───────────────────────────────────────────── */}
       <FacturaProveedorModal
