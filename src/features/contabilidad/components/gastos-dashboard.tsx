@@ -849,7 +849,7 @@ export function GastosDashboard() {
                   </thead>
                   <tbody>
                     {[...gastosFiltrados]
-                      .sort((a, b) => a.fecha.localeCompare(b.fecha))
+                      .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.created_at.localeCompare(a.created_at))
                       .map((g) => {
                         const anulado = g.status === 'ANULADO'
                         const montoUsd = parseFloat(g.monto_usd)

@@ -1004,10 +1004,21 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                WHERE empresa_id = ? AND clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO' LIMIT 1`,
               [empresa_id]
             )
-            const cuentaDiffId = (
+            let cuentaDiffId = (
               cuentaDiffRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
             )?.cuenta_contable_id ?? ''
-            // Only insert if account is configured — empty cuenta_id violates FK in Supabase
+            // Fallback: si PERDIDA_DIFERENCIAL_CAMBIARIO no está configurado, usar gastos_generales
+            if (!cuentaDiffId) {
+              const fallbackRes = await tx.execute(
+                `SELECT cuenta_contable_id FROM cuentas_config
+                 WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
+                [empresa_id]
+              )
+              cuentaDiffId = (
+                fallbackRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+              )?.cuenta_contable_id ?? ''
+            }
+            // Only insert if some account is configured — empty cuenta_id violates FK in Supabase
             if (!cuentaDiffId) throw new Error('sin-cuenta')
 
             // Cajero nombre y fecha sesión para observacion legible (no UUIDs)
