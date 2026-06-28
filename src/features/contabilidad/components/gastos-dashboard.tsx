@@ -77,20 +77,31 @@ export function GastosDashboard() {
     return d.toISOString().slice(0, 10)
   }, [today])
 
-  // Collapsible detail groups
+  // Collapsible detail groups — grupos expandidos por defecto
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
   function toggleGroup(id: string) {
     setCollapsedGroups((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
+      const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next
     })
   }
+
+  // Cuentas colapsadas por defecto — se expanden on-demand
+  const [expandedCuentas, setExpandedCuentas] = useState<Set<string>>(new Set())
+  function toggleCuenta(id: string) {
+    setExpandedCuentas((prev) => {
+      const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next
+    })
+  }
+
   function colapsarTodo() {
     setCollapsedGroups(new Set(grupos.map((g) => g.id)))
+    setExpandedCuentas(new Set())
   }
   function expandirTodo() {
     setCollapsedGroups(new Set())
+    // Expandir todas las cuentas conocidas
+    const allCuentaIds = grupos.flatMap((g) => g.subcuentas.map((s) => s.id))
+    setExpandedCuentas(new Set(allCuentaIds))
   }
 
   // ── Modales
@@ -445,51 +456,81 @@ export function GastosDashboard() {
                 <tbody>
                   {/* Group by: group separator when TODAS or GRUPO */}
                   {criterio === 'TODAS' ? (
+                    // Nivel 1: Grupo → Nivel 2: Cuenta → Nivel 3: Registros (orden ASC)
                     grupos.map((grupo) => {
                       const ids = new Set(grupo.subcuentas.map((s) => s.id))
-                      const rows = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
-                      if (rows.length === 0) return null
-                      const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
-                      const collapsed = collapsedGroups.has(grupo.id)
+                      const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
+                      if (rowsGrupo.length === 0) return null
+                      const subtotalGrupo = rowsGrupo.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+                      const grupoCollapsed = collapsedGroups.has(grupo.id)
                       return [
+                        // ── Fila de grupo ─────────────────────────────
                         <tr key={`grp-${grupo.id}`}
                           className="bg-muted/40 border-t-2 border-border cursor-pointer select-none"
                           onClick={() => toggleGroup(grupo.id)}
                         >
                           <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-foreground uppercase tracking-wide">
                             <span className="inline-flex items-center gap-1.5">
-                              {collapsed
-                                ? <CaretDown className="h-3 w-3 text-muted-foreground" />
-                                : <CaretUp className="h-3 w-3 text-muted-foreground" />}
+                              {grupoCollapsed ? <CaretDown className="h-3 w-3 text-muted-foreground" /> : <CaretUp className="h-3 w-3 text-muted-foreground" />}
                               <span className="font-mono text-muted-foreground/60 mr-1">{grupo.codigo}</span>
                               {grupo.nombre}
-                              <span className="text-muted-foreground/50 font-normal ml-1">({rows.length})</span>
+                              <span className="text-muted-foreground/50 font-normal ml-1">({rowsGrupo.length})</span>
                             </span>
                           </td>
-                          <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-foreground">
-                            {formatUsd(subtotal)}
-                          </td>
+                          <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-foreground">{formatUsd(subtotalGrupo)}</td>
                           <td />
                         </tr>,
-                        ...(!collapsed ? rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />) : []),
+                        // ── Nivel de cuenta (solo si grupo expandido) ─
+                        ...(!grupoCollapsed ? grupo.subcuentas.flatMap((sub) => {
+                          const rowsCuenta = gastosFiltrados
+                            .filter((g) => g.cuenta_id === sub.id)
+                            .sort((a, b) => a.fecha.localeCompare(b.fecha))  // ASC cronológico
+                          if (rowsCuenta.length === 0) return []
+                          const subtotalCuenta = rowsCuenta.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+                          const cuentaExpanded = expandedCuentas.has(sub.id)
+                          return [
+                            // Fila de cuenta (colapsada por defecto)
+                            <tr key={`acc-${sub.id}`}
+                              className="bg-muted/20 border-t border-border/60 cursor-pointer select-none"
+                              onClick={() => toggleCuenta(sub.id)}
+                            >
+                              <td colSpan={5} className="px-6 py-1.5 text-xs font-medium text-muted-foreground">
+                                <span className="inline-flex items-center gap-1.5">
+                                  {cuentaExpanded ? <CaretUp className="h-3 w-3" /> : <CaretDown className="h-3 w-3" />}
+                                  <span className="font-mono text-muted-foreground/50 mr-1">{sub.codigo}</span>
+                                  {sub.nombre}
+                                  <span className="opacity-50 font-normal ml-1">({rowsCuenta.length})</span>
+                                </span>
+                              </td>
+                              <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotalCuenta)}</td>
+                              <td />
+                            </tr>,
+                            // Registros (solo si cuenta expandida)
+                            ...(cuentaExpanded ? rowsCuenta.map((g) => (
+                              <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} indent />
+                            )) : []),
+                          ]
+                        }) : []),
                       ]
                     })
                   ) : criterio === 'GRUPO' ? (
                     grupos.map((grupo) => {
                       if (grupoId && grupo.id !== grupoId) return null
                       return grupo.subcuentas.map((sub) => {
-                        const rows = gastosFiltrados.filter((g) => g.cuenta_id === sub.id)
+                        const rows = gastosFiltrados
+                          .filter((g) => g.cuenta_id === sub.id)
+                          .sort((a, b) => a.fecha.localeCompare(b.fecha))
                         if (rows.length === 0) return null
                         const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
-                        const collapsed = collapsedGroups.has(sub.id)
+                        const cuentaExpanded = expandedCuentas.has(sub.id)
                         return [
                           <tr key={`sub-${sub.id}`}
                             className="bg-muted/20 border-t border-border cursor-pointer select-none"
-                            onClick={() => toggleGroup(sub.id)}
+                            onClick={() => toggleCuenta(sub.id)}
                           >
                             <td colSpan={5} className="px-4 py-1.5 text-xs font-medium text-muted-foreground">
                               <span className="inline-flex items-center gap-1.5">
-                                {collapsed ? <CaretDown className="h-3 w-3" /> : <CaretUp className="h-3 w-3" />}
+                                {cuentaExpanded ? <CaretUp className="h-3 w-3" /> : <CaretDown className="h-3 w-3" />}
                                 <span className="font-mono mr-1">{sub.codigo}</span>{sub.nombre}
                                 <span className="opacity-50 font-normal">({rows.length})</span>
                               </span>
@@ -497,7 +538,7 @@ export function GastosDashboard() {
                             <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotal)}</td>
                             <td />
                           </tr>,
-                          ...(!collapsed ? rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />) : []),
+                          ...(cuentaExpanded ? rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />) : []),
                         ]
                       })
                     })
@@ -545,7 +586,7 @@ type GastoConJoins = {
   created_by_nombre?: string | null
 }
 
-function GastoRow({ g, onClick }: { g: GastoConJoins; onClick: () => void }) {
+function GastoRow({ g, onClick, indent = false }: { g: GastoConJoins; onClick: () => void; indent?: boolean }) {
   const anulado = g.status === 'ANULADO'
   const montoUsd = parseFloat(g.monto_usd)
   const tasaGasto = parseFloat(g.tasa) || 1
@@ -555,7 +596,7 @@ function GastoRow({ g, onClick }: { g: GastoConJoins; onClick: () => void }) {
       onClick={onClick}
       className={`border-t border-border hover:bg-muted/30 cursor-pointer transition-colors ${anulado ? 'opacity-50' : ''}`}
     >
-      <td className={`px-4 py-2.5 font-mono text-xs text-foreground ${anulado ? 'line-through' : ''}`}>
+      <td className={`${indent ? 'pl-10 pr-4' : 'px-4'} py-2.5 font-mono text-xs text-foreground ${anulado ? 'line-through' : ''}`}>
         {g.nro_gasto}
       </td>
       <td className={`px-4 py-2.5 font-mono text-xs text-muted-foreground ${anulado ? 'line-through' : ''}`}>
