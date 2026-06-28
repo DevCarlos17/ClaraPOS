@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
-import { Plus, BookOpen } from '@phosphor-icons/react'
+import { Plus, BookOpen, CaretDown, CaretUp } from '@phosphor-icons/react'
 import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
 import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { todayStr, startOfMonth } from '@/lib/dates'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
-import { GastosKpis } from './gastos-kpis'
 import { GastoForm } from './gasto-form'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
@@ -16,7 +15,7 @@ import {
 // ─── Tipos ───────────────────────────────────────────────────
 
 type Criterio = 'TODAS' | 'GRUPO' | 'CUENTA'
-type Intervalo = 'DIARIO' | 'SEMANAL' | 'MENSUAL'
+type Intervalo = 'DIARIO' | 'ULTIMOS_7' | 'MENSUAL'
 
 // ─── Helpers de fecha ────────────────────────────────────────
 
@@ -34,28 +33,16 @@ function dayLabel(dateStr: string): string {
 }
 
 function getXKey(dateStr: string, intervalo: Intervalo): string {
-  if (intervalo === 'DIARIO') return dateStr.slice(0, 10)
-  if (intervalo === 'SEMANAL') {
-    const d = new Date(dateStr + 'T00:00:00')
-    const thu = new Date(d)
-    thu.setDate(d.getDate() + 3 - (d.getDay() + 6) % 7)
-    const yearStart = new Date(thu.getFullYear(), 0, 4)
-    const week = 1 + Math.round(
-      ((thu.getTime() - yearStart.getTime()) / 86400000 - 3 + (yearStart.getDay() + 6) % 7) / 7
-    )
-    return `${thu.getFullYear()}-W${String(week).padStart(2, '0')}`
-  }
-  return dateStr.slice(0, 7)
+  if (intervalo === 'MENSUAL') return dateStr.slice(0, 7)
+  return dateStr.slice(0, 10)  // DIARIO y ULTIMOS_7 → por día
 }
 
 function xKeyToLabel(key: string, intervalo: Intervalo): string {
-  if (intervalo === 'DIARIO') return dayLabel(key)
-  if (intervalo === 'SEMANAL') {
-    const w = key.split('-W')[1]
-    return `S${parseInt(w)}`
+  if (intervalo === 'MENSUAL') {
+    const month = parseInt(key.slice(5, 7)) - 1
+    return MESES_CORTOS[month] ?? key
   }
-  const month = parseInt(key.slice(5, 7)) - 1
-  return MESES_CORTOS[month] ?? key
+  return dayLabel(key)  // DIARIO y ULTIMOS_7
 }
 
 // Badge status reutilizable
@@ -75,13 +62,36 @@ export function GastosDashboard() {
   const [criterio, setCriterio]       = useState<Criterio>('TODAS')
   const [grupoId, setGrupoId]         = useState<string>('')
   const [cuentaId, setCuentaId]       = useState<string>('')
-  const [intervalo, setIntervalo]     = useState<Intervalo>('MENSUAL')
+  const [intervalo, setIntervalo]     = useState<Intervalo>('DIARIO')
 
-  // Dates per interval type — preserves selection when switching
+  // Dates preserves per interval
   const [dailyDesde, setDailyDesde]   = useState(startOfMonth())
   const [dailyHasta, setDailyHasta]   = useState(today)
   const [mesDesde, setMesDesde]       = useState(defaultMesDesde)
   const [mesHasta, setMesHasta]       = useState(defaultMesDesde)
+
+  // Últimos 7 días: auto-computed, no pickers
+  const ultimos7Desde = useMemo(() => {
+    const d = new Date(today + 'T00:00:00')
+    d.setDate(d.getDate() - 7)
+    return d.toISOString().slice(0, 10)
+  }, [today])
+
+  // Collapsible detail groups
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  function toggleGroup(id: string) {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  function colapsarTodo() {
+    setCollapsedGroups(new Set(grupos.map((g) => g.id)))
+  }
+  function expandirTodo() {
+    setCollapsedGroups(new Set())
+  }
 
   // ── Modales
   const [formOpen, setFormOpen]               = useState(false)
@@ -93,15 +103,10 @@ export function GastosDashboard() {
 
   // Compute actual desde/hasta for query
   const { queryDesde, queryHasta } = useMemo(() => {
-    if (intervalo === 'MENSUAL') {
-      return {
-        queryDesde: `${mesDesde}-01`,
-        queryHasta: lastDayOfMonth(mesHasta),
-      }
-    }
-    // DIARIO and SEMANAL both use date pickers
+    if (intervalo === 'MENSUAL') return { queryDesde: `${mesDesde}-01`, queryHasta: lastDayOfMonth(mesHasta) }
+    if (intervalo === 'ULTIMOS_7') return { queryDesde: ultimos7Desde, queryHasta: today }
     return { queryDesde: dailyDesde, queryHasta: dailyHasta }
-  }, [intervalo, mesDesde, mesHasta, dailyDesde, dailyHasta])
+  }, [intervalo, mesDesde, mesHasta, dailyDesde, dailyHasta, ultimos7Desde, today])
 
   const { gastos, isLoading } = useGastos(queryDesde, queryHasta)
 
@@ -171,16 +176,8 @@ export function GastosDashboard() {
     [grupos]
   )
 
-  // When interval changes, keep daily dates consistent
   function handleIntervaloChange(newIntervalo: Intervalo) {
     setIntervalo(newIntervalo)
-    if (newIntervalo !== 'MENSUAL') {
-      // If switching to daily/weekly and dates are still month format, reset
-      if (!dailyDesde) {
-        setDailyDesde(startOfMonth())
-        setDailyHasta(today)
-      }
-    }
   }
 
   if (formOpen) {
@@ -246,7 +243,7 @@ export function GastosDashboard() {
           <div className="flex-shrink-0">
             <label className="block text-xs font-medium text-muted-foreground mb-1">Intervalo</label>
             <div className="flex rounded-md border border-input overflow-hidden text-sm">
-              {(['DIARIO', 'SEMANAL', 'MENSUAL'] as Intervalo[]).map((iv) => (
+              {(['DIARIO', 'ULTIMOS_7', 'MENSUAL'] as Intervalo[]).map((iv) => (
                 <button
                   key={iv}
                   type="button"
@@ -257,7 +254,7 @@ export function GastosDashboard() {
                       : 'bg-background text-muted-foreground hover:bg-muted'
                   }`}
                 >
-                  {iv === 'DIARIO' ? 'Diario' : iv === 'SEMANAL' ? 'Semanal' : 'Mensual'}
+                  {iv === 'DIARIO' ? 'Diario' : iv === 'ULTIMOS_7' ? 'Últ. 7 días' : 'Mensual'}
                 </button>
               ))}
             </div>
@@ -286,12 +283,10 @@ export function GastosDashboard() {
                 />
               </div>
             </>
-          ) : (
+          ) : intervalo === 'DIARIO' ? (
             <>
               <div className="flex-shrink-0">
-                <label className="block text-xs font-medium text-muted-foreground mb-1">
-                  {intervalo === 'SEMANAL' ? 'Semana inicio' : 'Fecha inicio'}
-                </label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Fecha inicio</label>
                 <input
                   type="date"
                   value={dailyDesde}
@@ -300,9 +295,7 @@ export function GastosDashboard() {
                 />
               </div>
               <div className="flex-shrink-0">
-                <label className="block text-xs font-medium text-muted-foreground mb-1">
-                  {intervalo === 'SEMANAL' ? 'Semana fin' : 'Fecha fin'}
-                </label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Fecha fin</label>
                 <input
                   type="date"
                   value={dailyHasta}
@@ -312,6 +305,13 @@ export function GastosDashboard() {
                 />
               </div>
             </>
+          ) : (
+            /* ULTIMOS_7: auto-computed, solo informativo */
+            <div className="flex-shrink-0 self-end">
+              <p className="text-xs text-muted-foreground pb-2.5">
+                {ultimos7Desde} → {today}
+              </p>
+            </div>
           )}
 
           {/* Separador + acciones */}
@@ -336,21 +336,7 @@ export function GastosDashboard() {
           </div>
         </div>
 
-        {/* Estado de carga */}
-        {isLoading && (
-          <p className="text-xs text-muted-foreground mt-3">Cargando...</p>
-        )}
-        {!isLoading && (
-          <p className="text-xs text-muted-foreground mt-2">
-            {gastosFiltrados.length} gasto{gastosFiltrados.length !== 1 ? 's' : ''} registrado{gastosFiltrados.length !== 1 ? 's' : ''}
-            {' · '}
-            {queryDesde} al {queryHasta}
-          </p>
-        )}
       </div>
-
-      {/* ── KPIs ─────────────────────────────────────────────── */}
-      {!isLoading && <GastosKpis gastos={gastosFiltrados} />}
 
       {/* ── Resumen + Gráfica ─────────────────────────────────── */}
       {!isLoading && gastosFiltrados.length > 0 && (
@@ -394,7 +380,7 @@ export function GastosDashboard() {
           {/* Gráfica de barras */}
           <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              Gastos por {intervalo === 'DIARIO' ? 'día' : intervalo === 'SEMANAL' ? 'semana' : 'mes'} (USD)
+              Gastos por {intervalo === 'MENSUAL' ? 'mes' : 'día'} (USD)
             </p>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
@@ -422,10 +408,19 @@ export function GastosDashboard() {
       {/* ── Tabla de detalle ──────────────────────────────────── */}
       {!isLoading && (
         <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
-          <div className="px-4 py-3 border-b border-border bg-muted/40">
+          <div className="px-4 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Detalle de registros
             </p>
+            {gastosFiltrados.length > 0 && criterio !== 'CUENTA' && (
+              <div className="flex gap-2">
+                <button type="button" onClick={expandirTodo}
+                  className="text-xs text-primary hover:underline">Expandir todo</button>
+                <span className="text-muted-foreground/40">·</span>
+                <button type="button" onClick={colapsarTodo}
+                  className="text-xs text-primary hover:underline">Colapsar todo</button>
+              </div>
+            )}
           </div>
 
           {gastosFiltrados.length === 0 ? (
@@ -455,18 +450,28 @@ export function GastosDashboard() {
                       const rows = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
                       if (rows.length === 0) return null
                       const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+                      const collapsed = collapsedGroups.has(grupo.id)
                       return [
-                        <tr key={`grp-${grupo.id}`} className="bg-muted/40 border-t-2 border-border">
+                        <tr key={`grp-${grupo.id}`}
+                          className="bg-muted/40 border-t-2 border-border cursor-pointer select-none"
+                          onClick={() => toggleGroup(grupo.id)}
+                        >
                           <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-foreground uppercase tracking-wide">
-                            <span className="font-mono text-muted-foreground/60 mr-2">{grupo.codigo}</span>
-                            {grupo.nombre}
+                            <span className="inline-flex items-center gap-1.5">
+                              {collapsed
+                                ? <CaretDown className="h-3 w-3 text-muted-foreground" />
+                                : <CaretUp className="h-3 w-3 text-muted-foreground" />}
+                              <span className="font-mono text-muted-foreground/60 mr-1">{grupo.codigo}</span>
+                              {grupo.nombre}
+                              <span className="text-muted-foreground/50 font-normal ml-1">({rows.length})</span>
+                            </span>
                           </td>
                           <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-foreground">
                             {formatUsd(subtotal)}
                           </td>
                           <td />
                         </tr>,
-                        ...rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />),
+                        ...(!collapsed ? rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />) : []),
                       ]
                     })
                   ) : criterio === 'GRUPO' ? (
@@ -476,15 +481,23 @@ export function GastosDashboard() {
                         const rows = gastosFiltrados.filter((g) => g.cuenta_id === sub.id)
                         if (rows.length === 0) return null
                         const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+                        const collapsed = collapsedGroups.has(sub.id)
                         return [
-                          <tr key={`sub-${sub.id}`} className="bg-muted/20 border-t border-border">
+                          <tr key={`sub-${sub.id}`}
+                            className="bg-muted/20 border-t border-border cursor-pointer select-none"
+                            onClick={() => toggleGroup(sub.id)}
+                          >
                             <td colSpan={5} className="px-4 py-1.5 text-xs font-medium text-muted-foreground">
-                              <span className="font-mono mr-2">{sub.codigo}</span>{sub.nombre}
+                              <span className="inline-flex items-center gap-1.5">
+                                {collapsed ? <CaretDown className="h-3 w-3" /> : <CaretUp className="h-3 w-3" />}
+                                <span className="font-mono mr-1">{sub.codigo}</span>{sub.nombre}
+                                <span className="opacity-50 font-normal">({rows.length})</span>
+                              </span>
                             </td>
                             <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotal)}</td>
                             <td />
                           </tr>,
-                          ...rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />),
+                          ...(!collapsed ? rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />) : []),
                         ]
                       })
                     })
@@ -558,10 +571,10 @@ function GastoRow({ g, onClick }: { g: GastoConJoins; onClick: () => void }) {
         {g.proveedor_nombre ?? '—'}
       </td>
       <td className="px-4 py-2.5 text-right tabular-nums">
-        <div className={`text-sm font-medium ${anulado ? 'line-through' : 'text-foreground'}`}>
-          {formatBs(montoBs)}
+        <div className={`text-sm font-semibold ${anulado ? 'line-through' : 'text-foreground'}`}>
+          {formatUsd(montoUsd)}
         </div>
-        <div className="text-[10px] text-muted-foreground">{formatUsd(montoUsd)} @ {tasaGasto.toFixed(2)}</div>
+        <div className="text-[10px] text-muted-foreground">{formatBs(montoBs)}</div>
       </td>
       <td className="px-4 py-2.5 text-center">
         <StatusBadge status={g.status} />
