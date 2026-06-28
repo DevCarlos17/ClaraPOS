@@ -396,9 +396,9 @@ export function GastosDashboard() {
                     const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
                     return [`$${num.toFixed(4)}`, 'Total USD']
                   }}
-                  cursor={{ fill: 'hsl(var(--muted))' }}
+                  cursor={{ fill: 'rgba(0,0,0,0.04)' }}
                 />
-                <Bar dataKey="total" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="total" fill="#2563eb" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
