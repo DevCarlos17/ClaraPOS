@@ -77,31 +77,15 @@ export function GastosDashboard() {
     return d.toISOString().slice(0, 10)
   }, [today])
 
-  // Collapsible detail groups — grupos expandidos por defecto
+  // Collapsible: grupos expandidos por defecto, cuentas colapsadas por defecto
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-  function toggleGroup(id: string) {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next
-    })
-  }
-
-  // Cuentas colapsadas por defecto — se expanden on-demand
   const [expandedCuentas, setExpandedCuentas] = useState<Set<string>>(new Set())
-  function toggleCuenta(id: string) {
-    setExpandedCuentas((prev) => {
-      const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next
-    })
-  }
 
-  function colapsarTodo() {
-    setCollapsedGroups(new Set(grupos.map((g) => g.id)))
-    setExpandedCuentas(new Set())
+  function toggleGroup(id: string) {
+    setCollapsedGroups((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
-  function expandirTodo() {
-    setCollapsedGroups(new Set())
-    // Expandir todas las cuentas conocidas
-    const allCuentaIds = grupos.flatMap((g) => g.subcuentas.map((s) => s.id))
-    setExpandedCuentas(new Set(allCuentaIds))
+  function toggleCuenta(id: string) {
+    setExpandedCuentas((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   }
 
   // ── Modales
@@ -109,8 +93,18 @@ export function GastosDashboard() {
   const [cuentaModalOpen, setCuentaModalOpen] = useState(false)
   const [detalleId, setDetalleId]             = useState<string | null>(null)
 
-  // ── Datos
+  // ── Datos — declarados ANTES de expandir/colapsar todo para que los capture correctamente
   const { grupos } = useGruposGastoConSubcuentas()
+
+  // Expandir / colapsar todo — definidos DESPUÉS de grupos para tener la referencia correcta
+  function colapsarTodo() {
+    setCollapsedGroups(new Set(grupos.map((g) => g.id)))  // colapsa nivel grupo (TODAS)
+    setExpandedCuentas(new Set())                          // colapsa nivel cuenta (TODAS + GRUPO)
+  }
+  function expandirTodo() {
+    setCollapsedGroups(new Set())                          // expande nivel grupo (TODAS)
+    setExpandedCuentas(new Set(grupos.flatMap((g) => g.subcuentas.map((s) => s.id))))  // expande cuentas
+  }
 
   // Compute actual desde/hasta for query
   const { queryDesde, queryHasta } = useMemo(() => {
