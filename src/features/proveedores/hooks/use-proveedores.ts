@@ -6,6 +6,7 @@ import { localNow } from '@/lib/dates'
 
 export interface Proveedor {
   id: string
+  empresa_id: string
   razon_social: string
   nombre_comercial: string | null
   rif: string

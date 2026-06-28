@@ -3,7 +3,6 @@ import { useQuery } from '@powersync/react'
 import { formatUsd } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useMovCuentaProveedor } from '@/features/compras/hooks/use-mov-cuenta-proveedor'
-import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   Dialog,
   DialogContent,
@@ -21,6 +20,7 @@ import {
 
 export interface ProveedorEstadoCuentaProps {
   id: string
+  empresa_id: string
   razon_social: string
   rif: string
   ciudad: string | null
@@ -65,19 +65,18 @@ function StatusBadge({ status }: { status: string }) {
 // ─── Componente principal ────────────────────────────────────
 
 export function ProveedorEstadoCuentaModal({ proveedor, isOpen, onClose }: Props) {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
+  const { movimientos, isLoading: loadingMovs } = useMovCuentaProveedor(proveedor.id, proveedor.empresa_id)
 
-  const { movimientos, isLoading: loadingMovs } = useMovCuentaProveedor(proveedor.id)
-
+  // Siempre ejecutar la query cuando tenemos proveedor.id — no condicionar en empresa_id
+  // para evitar que PowerSync no re-ejecute cuando empresa_id cambia de '' a UUID.
   const { data: facturasData, isLoading: loadingFacturas } = useQuery(
-    proveedor.id && empresaId
+    proveedor.id
       ? `SELECT id, nro_factura, fecha_factura, total_usd, saldo_pend_usd, status
          FROM facturas_compra
          WHERE proveedor_id = ? AND empresa_id = ?
          ORDER BY fecha_factura ASC`
       : '',
-    proveedor.id && empresaId ? [proveedor.id, empresaId] : []
+    proveedor.id ? [proveedor.id, proveedor.empresa_id] : []
   )
 
   const facturas = useMemo(() => (facturasData ?? []) as FacturaResumen[], [facturasData])
