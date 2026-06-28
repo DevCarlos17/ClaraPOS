@@ -487,8 +487,16 @@ export function GastosDashboard() {
 
       </div>
 
+      {/* ── Placeholder cuando GRUPO sin selección ───────────── */}
+      {!isLoading && criterio === 'GRUPO' && !grupoId && (
+        <div className="rounded-2xl bg-card shadow-lg p-12 text-center text-muted-foreground">
+          <p className="text-base font-medium">Selecciona un grupo para ver los datos</p>
+          <p className="text-sm mt-1">Elige un grupo en el selector de criterio para cargar la gráfica y el detalle</p>
+        </div>
+      )}
+
       {/* ── Resumen + Gráfica ─────────────────────────────────── */}
-      {!isLoading && gastosFiltrados.length > 0 && (
+      {!isLoading && gastosFiltrados.length > 0 && !(criterio === 'GRUPO' && !grupoId) && (
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
 
           {/* Card grupos/cuentas (scroll) */}
@@ -555,7 +563,7 @@ export function GastosDashboard() {
       )}
 
       {/* ── Tabla de detalle ──────────────────────────────────── */}
-      {!isLoading && (
+      {!isLoading && !(criterio === 'GRUPO' && !grupoId) && (
         <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
