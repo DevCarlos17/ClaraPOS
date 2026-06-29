@@ -380,6 +380,8 @@ const movimientos_inventario = new Table(
     usuario_id: column.text,
     fecha: column.text,
     created_at: column.text,
+    // 0068: tipo de salida tipificada (MERMA, EXTRAVIO, CONSUMO_INTERNO)
+    tipo_salida: column.text,
   },
   { indexes: {} }
 )
@@ -1230,6 +1232,9 @@ const gastos = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+    // 0068: trazabilidad inversa hacia el documento que generó el gasto
+    doc_origen_id: column.text,
+    doc_origen_tipo: column.text,
   },
   { indexes: {} }
 )

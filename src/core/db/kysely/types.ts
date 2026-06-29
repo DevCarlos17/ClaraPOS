@@ -356,6 +356,8 @@ export interface MovimientosInventario {
   usuario_id: string
   fecha: string
   created_at: string
+  // 0068: tipo de salida tipificada
+  tipo_salida: string | null
 }
 
 export interface Recetas {
@@ -977,6 +979,9 @@ export interface Gastos {
   created_at: string
   updated_at: string
   created_by: string | null
+  // 0068: trazabilidad inversa hacia el documento que generó el gasto
+  doc_origen_id: string | null
+  doc_origen_tipo: string | null
 }
 
 export interface CuentasConfig {
