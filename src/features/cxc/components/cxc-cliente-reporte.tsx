@@ -302,7 +302,7 @@ export function CxcClienteReporte({ cliente, facturas }: CxcClienteReporteProps)
         `SELECT tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, fecha
          FROM movimientos_cuenta
          WHERE cliente_id = ?
-         ORDER BY fecha ASC, created_at ASC`,
+         ORDER BY fecha ASC, created_at ASC, rowid ASC`,
         [cliente.id]
       )
 

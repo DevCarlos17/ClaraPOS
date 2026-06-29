@@ -196,7 +196,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
       ? `SELECT id, referencia, monto, fecha, saf_origen_refs
          FROM movimientos_cuenta
          WHERE venta_id = ? AND tipo = 'SAF'
-         ORDER BY fecha ASC, created_at ASC`
+         ORDER BY fecha ASC, created_at ASC, rowid ASC`
       : '',
     factura ? [factura.id] : []
   )
