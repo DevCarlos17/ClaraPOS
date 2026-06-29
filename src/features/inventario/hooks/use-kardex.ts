@@ -74,6 +74,12 @@ export function useMovimientosPorProducto(productoId: string) {
   return { movimientos: (data ?? []) as MovimientoInventario[], isLoading }
 }
 
+const TIPO_SALIDA_CLAVE: Record<string, string> = {
+  MERMA: 'MERMA_INVENTARIO',
+  EXTRAVIO: 'EXTRAVIO_INVENTARIO',
+  CONSUMO_INTERNO: 'CONSUMO_INTERNO',
+}
+
 export async function registrarMovimiento(params: {
   producto_id: string
   tipo: 'E' | 'S'
@@ -89,11 +95,15 @@ export async function registrarMovimiento(params: {
   lote_nro?: string
   lote_fecha_fab?: string
   lote_fecha_venc?: string
-}) {
-  const { producto_id, tipo, cantidad, motivo, usuario_id, empresa_id } = params
+  /** Tipo de salida tipificada (solo para tipo='S') */
+  tipoSalida?: 'MERMA' | 'EXTRAVIO' | 'CONSUMO_INTERNO'
+}): Promise<{ gastoCreado: boolean }> {
+  const { producto_id, tipo, cantidad, motivo, usuario_id, empresa_id, tipoSalida } = params
 
+  let gastoCreado = false
   await db.writeTransaction(async (tx) => {
     const now = localNow()
+    const fechaHoy = now.split('T')[0] ?? now.substring(0, 10)
 
     // 0. Resolver deposito
     let depositoId: string
@@ -118,12 +128,18 @@ export async function registrarMovimiento(params: {
       }
     }
 
-    // 1. Leer stock actual
-    const result = await tx.execute('SELECT stock FROM productos WHERE id = ?', [producto_id])
+    // 1. Leer stock, costo y nombre del producto
+    const result = await tx.execute(
+      'SELECT stock, costo_usd, nombre FROM productos WHERE id = ?',
+      [producto_id]
+    )
     if (!result.rows || result.rows.length === 0) {
       throw new Error('Producto no encontrado')
     }
-    const stockActual = parseFloat((result.rows.item(0) as { stock: string }).stock)
+    const prodRow = result.rows.item(0) as { stock: string; costo_usd: string; nombre: string }
+    const stockActual = parseFloat(prodRow.stock)
+    const costoUsd = parseFloat(prodRow.costo_usd ?? '0')
+    const productoNombre = prodRow.nombre ?? ''
 
     // 2. Calcular nuevo stock
     const stockNuevo = tipo === 'E' ? stockActual + cantidad : stockActual - cantidad
@@ -133,7 +149,22 @@ export async function registrarMovimiento(params: {
       throw new Error(`Stock insuficiente. Stock actual: ${stockActual}, intentando sacar: ${cantidad}`)
     }
 
-    // 4. Manejar lote (atomico dentro de la transaccion)
+    // 4. Datos de costo para salidas tipificadas
+    let tasaCambio = 0
+    let totalUsd = 0
+
+    if (tipo === 'S' && tipoSalida) {
+      const tasaRes = await tx.execute(
+        'SELECT valor FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC, created_at DESC LIMIT 1',
+        [empresa_id]
+      )
+      tasaCambio = parseFloat(
+        (tasaRes.rows?.item(0) as { valor: string } | undefined)?.valor ?? '0'
+      )
+      totalUsd = parseFloat((cantidad * costoUsd).toFixed(2))
+    }
+
+    // 5. Manejar lote (atomico dentro de la transaccion)
     let loteIdMovimiento: string | null = params.lote_id ?? null
 
     if (tipo === 'S' && params.lote_id) {
@@ -193,14 +224,19 @@ export async function registrarMovimiento(params: {
       )
     }
 
-    // 5. Crear movimiento de inventario
+    // 6. Crear movimiento de inventario
     const id = uuidv4()
+    const costoUsdParaMovimiento = tipo === 'S' && tipoSalida ? costoUsd.toFixed(2) : null
+    const tasaCambioParaMovimiento = tipo === 'S' && tipoSalida && tasaCambio > 0
+      ? tasaCambio.toFixed(4)
+      : null
 
     await tx.execute(
       `INSERT INTO movimientos_inventario
          (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
-          lote_id, motivo, usuario_id, fecha, empresa_id, created_at)
-       VALUES (?, ?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          lote_id, motivo, usuario_id, fecha, empresa_id, created_at,
+          tipo_salida, costo_unitario, tasa_cambio)
+       VALUES (?, ?, ?, ?, 'MAN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         producto_id,
@@ -215,14 +251,84 @@ export async function registrarMovimiento(params: {
         now,
         empresa_id,
         now,
+        tipoSalida ?? null,
+        costoUsdParaMovimiento,
+        tasaCambioParaMovimiento,
       ]
     )
 
-    // 6. Actualizar stock del producto
+    // 7. Actualizar stock del producto
     await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
       stockNuevo.toFixed(3),
       now,
       producto_id,
     ])
+
+    // 8. Gasto contable automatico para salidas tipificadas
+    if (tipo === 'S' && tipoSalida && totalUsd > 0) {
+      try {
+        const cuentasClave = TIPO_SALIDA_CLAVE[tipoSalida]
+
+        const cuentaRes = await tx.execute(
+          'SELECT cuenta_contable_id FROM cuentas_config WHERE empresa_id = ? AND clave = ? LIMIT 1',
+          [empresa_id, cuentasClave]
+        )
+        const cuentaId = (cuentaRes.rows?.item(0) as { cuenta_contable_id: string } | undefined)
+          ?.cuenta_contable_id ?? null
+
+        const monedaRes = await tx.execute(
+          "SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1",
+          []
+        )
+        const monedaUsdId = (monedaRes.rows?.item(0) as { id: string } | undefined)?.id ?? ''
+
+        if (cuentaId && monedaUsdId) {
+          const gastoId = uuidv4()
+          const totalUsdStr = totalUsd.toFixed(2)
+          const tasaStr = tasaCambio > 0 ? tasaCambio.toFixed(4) : '0'
+          const concepto = `Salida por ${tipoSalida}: ${productoNombre}`
+
+          await tx.execute(
+            `INSERT INTO gastos
+               (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
+                moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+                tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+                saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by,
+                doc_origen_id, doc_origen_tipo)
+             VALUES (?, ?, ?, ?, ?, ?, ?,
+                     ?, 'USD', 0, ?, ?, ?,
+                     'Exento', '0.00', ?, '0.00',
+                     '0.00', ?, 'PAGADO', ?, ?, ?,
+                     ?, ?)`,
+            [
+              gastoId,
+              empresa_id,
+              `KAR-${id.substring(0, 8).toUpperCase()}`,
+              id,
+              cuentaId,
+              concepto,
+              fechaHoy,
+              monedaUsdId,
+              tasaStr,
+              totalUsdStr,
+              totalUsdStr,
+              totalUsdStr,
+              `Generado automaticamente por salida de inventario ${id.substring(0, 8).toUpperCase()}`,
+              now,
+              now,
+              usuario_id,
+              id,
+              'MOVIMIENTO_INVENTARIO',
+            ]
+          )
+          gastoCreado = true
+        }
+      } catch (err) {
+        // El gasto es critico segun spec SC-07: si falla, el tx.execute lanza y
+        // PowerSync revierte todo el writeTransaction automaticamente.
+        throw err
+      }
+    }
   })
+  return { gastoCreado }
 }
