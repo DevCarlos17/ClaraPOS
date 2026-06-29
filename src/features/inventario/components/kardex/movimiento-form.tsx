@@ -7,6 +7,8 @@ import { useLotesPorProducto } from '@/features/inventario/hooks/use-lotes'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useUnidades } from '@/features/inventario/hooks/use-unidades'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { formatUsd, formatBs } from '@/lib/currency'
 
 interface MovimientoFormProps {
   isOpen: boolean
@@ -18,6 +20,8 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
   const { productos, isLoading: loadingProductos } = useProductosTipo('P')
   const { user } = useCurrentUser()
 
+  const { tasaValor } = useTasaActual()
+
   const [productoId, setProductoId] = useState('')
   const [tipo, setTipo] = useState<'E' | 'S'>('E')
   const [cantidad, setCantidad] = useState('')
@@ -26,6 +30,7 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+  const [tipoSalida, setTipoSalida] = useState<'MERMA' | 'EXTRAVIO' | 'CONSUMO_INTERNO' | ''>('')
 
   // Estado para manejo de lotes
   const [loteId, setLoteId] = useState('')
@@ -70,6 +75,7 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
       setLoteFechaFab('')
       setLoteFechaVenc('')
       setDepositoId('')
+      setTipoSalida('')
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
@@ -104,8 +110,19 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
   function handleTipoChange(nuevoTipo: 'E' | 'S') {
     setTipo(nuevoTipo)
     setLoteId('')
+    setTipoSalida('')
     setErrors({})
   }
+
+  // Preview de costo estimado para salidas tipificadas
+  const cantidadNum = parseFloat(cantidad)
+  const costoUsdProducto = parseFloat(productoSeleccionado?.costo_usd ?? '0')
+  const previewTotalUsd = !isNaN(cantidadNum) && cantidadNum > 0
+    ? parseFloat((cantidadNum * costoUsdProducto).toFixed(2))
+    : 0
+  const previewTotalBs = tasaValor > 0
+    ? parseFloat((previewTotalUsd * tasaValor).toFixed(2))
+    : 0
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -115,12 +132,13 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
       return
     }
 
-    const cantidadNum = parseFloat(cantidad)
+    const cantidadParseada = parseFloat(cantidad)
     const parsed = kardexSchema.safeParse({
       producto_id: productoId,
       tipo,
-      cantidad: isNaN(cantidadNum) ? 0 : cantidadNum,
+      cantidad: isNaN(cantidadParseada) ? 0 : cantidadParseada,
       motivo: motivo.trim() || undefined,
+      tipo_salida: tipoSalida || undefined,
     })
 
     const newErrors: Record<string, string> = {}
@@ -133,7 +151,7 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
     }
 
     // Validar decimales segun unidad del producto
-    if (!isNaN(cantidadNum) && !esDecimal && cantidadNum !== Math.floor(cantidadNum)) {
+    if (!isNaN(cantidadParseada) && !esDecimal && cantidadParseada !== Math.floor(cantidadParseada)) {
       newErrors.cantidad = `Este producto se maneja por ${unidadBase?.abreviatura ?? 'unidades'} enteras`
     }
 
@@ -168,7 +186,7 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
       // Deposito: viene del lote seleccionado o del selector (lote nuevo)
       const movDepositoId = loteSeleccionado?.deposito_id ?? (loteModo === 'nuevo' ? depositoId : undefined)
 
-      await registrarMovimiento({
+      const { gastoCreado } = await registrarMovimiento({
         producto_id: parsed.data!.producto_id,
         tipo: parsed.data!.tipo,
         cantidad: parsed.data!.cantidad,
@@ -186,11 +204,19 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
         ...(manejaLotes && tipo === 'E' && loteModo === 'nuevo' && loteFechaVenc
           ? { lote_fecha_venc: loteFechaVenc }
           : {}),
+        ...(tipo === 'S' && parsed.data!.tipo_salida
+          ? { tipoSalida: parsed.data!.tipo_salida }
+          : {}),
       })
+      const tipoSalidaFinal = parsed.data!.tipo_salida
       toast.success(
         tipo === 'E'
           ? `Entrada de ${parsed.data!.cantidad} registrada`
-          : `Salida de ${parsed.data!.cantidad} registrada`
+          : tipoSalidaFinal
+            ? gastoCreado
+              ? 'Salida registrada. Gasto generado automáticamente.'
+              : 'Salida registrada.'
+            : `Salida de ${parsed.data!.cantidad} registrada`
       )
       onClose()
     } catch (error) {
@@ -487,6 +513,45 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Tipo de salida (solo para SALIDA) */}
+          {tipo === 'S' && (
+            <div>
+              <label htmlFor="mov-tipo-salida" className="block text-sm font-medium text-gray-700 mb-1">
+                Tipo de salida <span className="text-red-500">*</span>
+              </label>
+              <select
+                id="mov-tipo-salida"
+                value={tipoSalida}
+                onChange={(e) => setTipoSalida(e.target.value as 'MERMA' | 'EXTRAVIO' | 'CONSUMO_INTERNO' | '')}
+                className={`w-full rounded-md border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  errors.tipo_salida ? 'border-red-500' : 'border-gray-300'
+                }`}
+              >
+                <option value="">Seleccionar tipo...</option>
+                <option value="MERMA">Merma</option>
+                <option value="EXTRAVIO">Extravío</option>
+                <option value="CONSUMO_INTERNO">Consumo Interno</option>
+              </select>
+              {errors.tipo_salida && (
+                <p className="text-red-500 text-xs mt-1">{errors.tipo_salida}</p>
+              )}
+
+              {/* Preview de costo estimado */}
+              {tipoSalida && productoSeleccionado && previewTotalUsd > 0 && (
+                <div className="mt-2 rounded-md border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                  <span className="font-medium">Costo total estimado:</span>{' '}
+                  {formatUsd(previewTotalUsd)}
+                  {tasaValor > 0 && (
+                    <span className="ml-1.5 text-blue-600">/ {formatBs(previewTotalBs)}</span>
+                  )}
+                  <span className="ml-1.5 text-blue-500">
+                    (costo unitario: {formatUsd(costoUsdProducto)})
+                  </span>
                 </div>
               )}
             </div>
