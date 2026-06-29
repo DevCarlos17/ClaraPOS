@@ -3,6 +3,8 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import Decimal from 'decimal.js'
+import { toStorageString } from '@/lib/currency'
 
 export interface MovimientoInventario {
   id: string
@@ -138,7 +140,8 @@ export async function registrarMovimiento(params: {
     }
     const prodRow = result.rows.item(0) as { stock: string; costo_usd: string; nombre: string }
     const stockActual = parseFloat(prodRow.stock)
-    const costoUsd = parseFloat(prodRow.costo_usd ?? '0')
+    const costoUsdStr = prodRow.costo_usd ?? '0'
+    const costoUsd = parseFloat(costoUsdStr)
     const productoNombre = prodRow.nombre ?? ''
 
     // 2. Calcular nuevo stock
@@ -152,6 +155,7 @@ export async function registrarMovimiento(params: {
     // 4. Datos de costo para salidas tipificadas
     let tasaCambio = 0
     let totalUsd = 0
+    let totalUsdStr = '0.00000000'
 
     if (tipo === 'S' && tipoSalida) {
       const tasaRes = await tx.execute(
@@ -161,7 +165,9 @@ export async function registrarMovimiento(params: {
       tasaCambio = parseFloat(
         (tasaRes.rows?.item(0) as { valor: string } | undefined)?.valor ?? '0'
       )
-      totalUsd = parseFloat((cantidad * costoUsd).toFixed(2))
+      const totalUsdDecimal = new Decimal(cantidad).times(new Decimal(costoUsdStr))
+      totalUsd = totalUsdDecimal.toNumber()
+      totalUsdStr = toStorageString(totalUsdDecimal)
     }
 
     // 5. Manejar lote (atomico dentro de la transaccion)
@@ -226,7 +232,7 @@ export async function registrarMovimiento(params: {
 
     // 6. Crear movimiento de inventario
     const id = uuidv4()
-    const costoUsdParaMovimiento = tipo === 'S' && tipoSalida ? costoUsd.toFixed(2) : null
+    const costoUsdParaMovimiento = tipo === 'S' && tipoSalida ? costoUsdStr : null
     const tasaCambioParaMovimiento = tipo === 'S' && tipoSalida && tasaCambio > 0
       ? tasaCambio.toFixed(4)
       : null
@@ -284,7 +290,6 @@ export async function registrarMovimiento(params: {
 
         if (cuentaId && monedaUsdId) {
           const gastoId = uuidv4()
-          const totalUsdStr = totalUsd.toFixed(2)
           const tasaStr = tasaCambio > 0 ? tasaCambio.toFixed(4) : '0'
           const concepto = `Salida por ${tipoSalida}: ${productoNombre}`
 
