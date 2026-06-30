@@ -15,6 +15,7 @@ export function KardexList() {
   const [busqueda, setBusqueda] = useState('')
   const [filtroDepto, setFiltroDepto] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<'E' | 'S' | ''>('')
+  const [filtroTipoSalida, setFiltroTipoSalida] = useState('')
 
   // Filtros aplicados (se fijan al presionar Consultar)
   const [aplicado, setAplicado] = useState(false)
@@ -24,6 +25,7 @@ export function KardexList() {
     busqueda: '',
     depto: '',
     tipo: '' as 'E' | 'S' | '',
+    tipoSalida: '',
   })
 
   const [formOpen, setFormOpen] = useState(false)
@@ -37,6 +39,7 @@ export function KardexList() {
     if (!aplicado) return []
     return movimientos.filter((m) => {
       if (filtrosAplicados.tipo && m.tipo !== filtrosAplicados.tipo) return false
+      if (filtrosAplicados.tipoSalida && m.tipo_salida !== filtrosAplicados.tipoSalida) return false
       if (filtrosAplicados.depto && m.departamento_id !== filtrosAplicados.depto) return false
       if (filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*') {
         const b = filtrosAplicados.busqueda.toLowerCase()
@@ -55,6 +58,7 @@ export function KardexList() {
       busqueda,
       depto: filtroDepto,
       tipo: filtroTipo,
+      tipoSalida: filtroTipoSalida,
     })
     setAplicado(true)
   }
@@ -68,6 +72,22 @@ export function KardexList() {
       case 'AJU': return 'Ajuste'
       default: return origen
     }
+  }
+
+  function tipoSalidaBadge(tipoSalida: string | null) {
+    if (!tipoSalida) return null
+    const map: Record<string, { label: string; className: string }> = {
+      MERMA:           { label: 'Merma',          className: 'bg-orange-50 text-orange-700 ring-orange-600/20' },
+      EXTRAVIO:        { label: 'Extravío',        className: 'bg-red-50 text-red-700 ring-red-600/20' },
+      CONSUMO_INTERNO: { label: 'Consumo Interno', className: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
+    }
+    const cfg = map[tipoSalida]
+    if (!cfg) return <span className="text-xs text-muted-foreground">{tipoSalida}</span>
+    return (
+      <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${cfg.className}`}>
+        {cfg.label}
+      </span>
+    )
   }
 
   return (
@@ -122,17 +142,32 @@ export function KardexList() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <label className="text-xs font-medium text-muted-foreground">Tipo:</label>
-            <select
-              value={filtroTipo}
-              onChange={(e) => setFiltroTipo(e.target.value as 'E' | 'S' | '')}
-              className="rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Todos</option>
-              <option value="E">Entradas</option>
-              <option value="S">Salidas</option>
-            </select>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-muted-foreground">Tipo:</label>
+              <select
+                value={filtroTipo}
+                onChange={(e) => setFiltroTipo(e.target.value as 'E' | 'S' | '')}
+                className="rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Todos</option>
+                <option value="E">Entradas</option>
+                <option value="S">Salidas</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-medium text-muted-foreground">Causa:</label>
+              <select
+                value={filtroTipoSalida}
+                onChange={(e) => setFiltroTipoSalida(e.target.value)}
+                className="rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Todas</option>
+                <option value="MERMA">Merma</option>
+                <option value="EXTRAVIO">Extravío</option>
+                <option value="CONSUMO_INTERNO">Consumo Interno</option>
+              </select>
+            </div>
           </div>
 
           <div className="flex gap-2">
@@ -188,6 +223,7 @@ export function KardexList() {
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Producto</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Tipo</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Origen</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Causa</th>
                   <th className="text-right px-4 py-3 font-medium text-muted-foreground">Cantidad</th>
                   <th className="text-right px-4 py-3 font-medium text-muted-foreground">Stock</th>
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">Motivo</th>
@@ -215,6 +251,7 @@ export function KardexList() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{origenLabel(mov.origen)}</td>
+                    <td className="px-4 py-3">{tipoSalidaBadge(mov.tipo_salida) ?? <span className="text-muted-foreground">—</span>}</td>
                     <td className="px-4 py-3 text-right font-medium">
                       {parseFloat(mov.cantidad).toFixed(3)}
                     </td>

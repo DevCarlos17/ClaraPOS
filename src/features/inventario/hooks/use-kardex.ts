@@ -15,6 +15,7 @@ export interface MovimientoInventario {
   stock_anterior: string
   stock_nuevo: string
   motivo: string | null
+  tipo_salida: string | null
   usuario_id: string
   fecha: string
   venta_id: string | null
@@ -141,7 +142,6 @@ export async function registrarMovimiento(params: {
     const prodRow = result.rows.item(0) as { stock: string; costo_usd: string; nombre: string }
     const stockActual = parseFloat(prodRow.stock)
     const costoUsdStr = prodRow.costo_usd ?? '0'
-    const costoUsd = parseFloat(costoUsdStr)
     const productoNombre = prodRow.nombre ?? ''
 
     // 2. Calcular nuevo stock
