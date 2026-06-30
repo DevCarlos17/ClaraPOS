@@ -9,6 +9,7 @@ import { useUnidades } from '@/features/inventario/hooks/use-unidades'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs } from '@/lib/currency'
+import Decimal from 'decimal.js'
 
 interface MovimientoFormProps {
   isOpen: boolean
@@ -116,12 +117,13 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
 
   // Preview de costo estimado para salidas tipificadas
   const cantidadNum = parseFloat(cantidad)
-  const costoUsdProducto = parseFloat(productoSeleccionado?.costo_usd ?? '0')
+  const costoUsdStr = productoSeleccionado?.costo_usd ?? '0'
+  const costoUsdProducto = parseFloat(costoUsdStr)
   const previewTotalUsd = !isNaN(cantidadNum) && cantidadNum > 0
-    ? parseFloat((cantidadNum * costoUsdProducto).toFixed(2))
+    ? new Decimal(cantidadNum).times(new Decimal(costoUsdStr)).toNumber()
     : 0
-  const previewTotalBs = tasaValor > 0
-    ? parseFloat((previewTotalUsd * tasaValor).toFixed(2))
+  const previewTotalBs = previewTotalUsd > 0 && tasaValor > 0
+    ? new Decimal(previewTotalUsd).times(new Decimal(tasaValor)).toNumber()
     : 0
 
   async function handleSubmit(e: React.FormEvent) {
