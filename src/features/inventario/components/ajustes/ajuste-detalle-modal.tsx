@@ -209,8 +209,9 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                 <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="text-left px-4 py-3 font-medium text-gray-700">Producto</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-700">Deposito</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-700">Cantidad</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-700">Costo Unit.</th>
+                   <th className="text-right px-4 py-3 font-medium text-gray-700">Cantidad</th>
+                   <th className="text-right px-4 py-3 font-medium text-gray-700">Costo Unit.</th>
+                   <th className="text-right px-4 py-3 font-medium text-gray-700">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -225,12 +226,17 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                     <td className="px-4 py-3 text-right tabular-nums text-gray-900">
                       {parseFloat(linea.cantidad).toFixed(3)}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-700">
-                      {linea.costo_unitario != null
-                        ? `$${parseFloat(linea.costo_unitario).toFixed(4)}`
-                        : '-'}
-                    </td>
-                  </tr>
+                     <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                       {linea.costo_unitario != null
+                         ? `$${parseFloat(linea.costo_unitario).toFixed(4)}`
+                         : '-'}
+                     </td>
+                     <td className="px-4 py-3 text-right tabular-nums text-gray-900 font-medium">
+                       {linea.costo_unitario != null
+                         ? `$${(parseFloat(linea.cantidad) * parseFloat(linea.costo_unitario)).toFixed(4)}`
+                         : '-'}
+                     </td>
+                   </tr>
                 ))}
               </tbody>
             </table>
