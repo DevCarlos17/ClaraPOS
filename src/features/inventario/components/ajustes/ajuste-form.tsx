@@ -18,6 +18,7 @@ const CLAVES_SALIDA = ['MERMA_INVENTARIO', 'EXTRAVIO_INVENTARIO', 'CONSUMO_INTER
 interface AjusteFormProps {
   isOpen: boolean
   onClose: () => void
+  inline?: boolean
 }
 
 interface LineaItem {
@@ -121,7 +122,7 @@ function ProductoBuscador({
           className="w-full h-8 pl-6 pr-2 text-sm border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary"
         />
       </div>
-      {open && sugerencias.length > 0 && portalTarget && createPortal(
+      {open && sugerencias.length > 0 && createPortal(
         <div
           style={dropdownStyle}
           className="rounded-md border border-border bg-white shadow-xl"
@@ -138,13 +139,13 @@ function ProductoBuscador({
             </button>
           ))}
         </div>,
-        portalTarget
+        portalTarget ?? document.body
       )}
     </div>
   )
 }
 
-export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
+export function AjusteForm({ isOpen, onClose, inline = false }: AjusteFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { motivos } = useAjusteMotivosActivos()
   const { productos } = useProductos()
@@ -205,13 +206,14 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   }
 
   useEffect(() => {
+    if (inline) { reset(); return }
     if (isOpen) {
       reset()
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
     }
-  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isOpen, inline]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     setMotivoId('')
@@ -302,24 +304,9 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
     [productos]
   )
 
-  return (
-    <dialog
-      ref={dialogRef}
-      onClose={onClose}
-      onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-xl p-0 w-full max-w-2xl shadow-2xl border-0"
-    >
-      <div className="flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
-          <h2 className="text-lg font-semibold">Ajuste Individual de Inventario</h2>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
-          <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
+  const formContent = (
+    <form onSubmit={handleSubmit} className={inline ? 'space-y-4' : 'flex flex-col flex-1 overflow-hidden'}>
+          <div className={inline ? 'space-y-4' : 'px-6 py-4 space-y-4 overflow-y-auto flex-1'}>
 
             {/* Tipo + Causa + Depósito */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -487,14 +474,17 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
           </div>
 
           {/* Footer */}
-          <div className="flex justify-end gap-3 px-6 py-4 border-t border-border bg-muted/20">
+          <div className={inline
+            ? 'flex justify-end gap-3 pt-2'
+            : 'flex justify-end gap-3 px-6 py-4 border-t border-border bg-muted/20'
+          }>
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => { reset(); if (!inline) onClose() }}
               disabled={submitting}
               className="px-4 py-2 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 transition-colors disabled:opacity-50"
             >
-              Cancelar
+              {inline ? 'Limpiar' : 'Cancelar'}
             </button>
             <button
               type="submit"
@@ -505,6 +495,31 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
             </button>
           </div>
         </form>
+  )
+
+  if (inline) {
+    return (
+      <div className="rounded-b-xl rounded-tr-xl border border-t-0 bg-card p-6 space-y-0">
+        {formContent}
+      </div>
+    )
+  }
+
+  return (
+    <dialog
+      ref={dialogRef}
+      onClose={onClose}
+      onClick={handleBackdropClick}
+      className="backdrop:bg-black/50 rounded-xl p-0 w-full max-w-2xl shadow-2xl border-0"
+    >
+      <div className="flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-lg font-semibold">Ajuste Individual de Inventario</h2>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-muted text-muted-foreground">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        {formContent}
       </div>
     </dialog>
   )

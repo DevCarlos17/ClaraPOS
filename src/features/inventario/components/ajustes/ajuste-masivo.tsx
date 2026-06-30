@@ -58,7 +58,7 @@ export function AjusteMasivo() {
 
   const [vista, setVista] = useState<Vista>('conteo')
   const [prevVista, setPrevVista] = useState<Vista>('conteo')
-  const [individualOpen, setIndividualOpen] = useState(false)
+
   const [depositoId, setDepositoId] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [filtroDepto, setFiltroDepto] = useState('')
@@ -252,10 +252,6 @@ export function AjusteMasivo() {
   }
 
   function handleVistaChange(key: Vista) {
-    if (key === 'individual') {
-      setIndividualOpen(true)
-      return // no cambia el tab visual
-    }
     setPrevVista(vista)
     setVista(key)
   }
@@ -432,6 +428,15 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
               <div className="rounded-b-xl rounded-tr-xl border border-t-0 bg-card p-4">
                 <AjusteList ocultarNuevo />
               </div>
+            )}
+
+            {/* ── AJUSTE INDIVIDUAL ── */}
+            {vista === 'individual' && (
+              <AjusteForm
+                isOpen={false}
+                onClose={() => setVista('conteo')}
+                inline
+              />
             )}
 
             {/* ── CONTEO ── */}
@@ -901,10 +906,7 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
         </div>
       </dialog>
 
-      <AjusteForm
-        isOpen={individualOpen}
-        onClose={() => setIndividualOpen(false)}
-      />
+
     </div>
   )
 }
