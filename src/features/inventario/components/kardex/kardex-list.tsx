@@ -1,13 +1,16 @@
-import { useState, useMemo } from 'react'
-import { Plus, MagnifyingGlass } from '@phosphor-icons/react'
+import { useState, useMemo, useEffect } from 'react'
+import { Plus, MagnifyingGlass, Printer } from '@phosphor-icons/react'
 import { useMovimientosFiltrados } from '@/features/inventario/hooks/use-kardex'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
+import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { formatDateTime } from '@/lib/format'
 import { startOfMonth, todayStr } from '@/lib/dates'
 import { MovimientoForm } from './movimiento-form'
+import { KardexProductoBuscador } from './kardex-producto-buscador'
 
 export function KardexList() {
   const { departamentos } = useDepartamentos()
+  const { company } = useCompany()
 
   // Filtros en edicion (draft)
   const [fechaDesde, setFechaDesde] = useState(() => startOfMonth())
@@ -18,7 +21,7 @@ export function KardexList() {
   const [filtroTipoSalida, setFiltroTipoSalida] = useState('')
 
   // Filtros aplicados (se fijan al presionar Consultar)
-  const [aplicado, setAplicado] = useState(false)
+  const [aplicado, setAplicado] = useState(true)
   const [filtrosAplicados, setFiltrosAplicados] = useState({
     desde: startOfMonth(),
     hasta: todayStr(),
@@ -30,6 +33,10 @@ export function KardexList() {
 
   const [formOpen, setFormOpen] = useState(false)
 
+  useEffect(() => {
+    if (filtroTipo === 'E') setFiltroTipoSalida('')
+  }, [filtroTipo])
+
   const { movimientos, isLoading } = useMovimientosFiltrados(
     filtrosAplicados.desde,
     filtrosAplicados.hasta
@@ -39,7 +46,13 @@ export function KardexList() {
     if (!aplicado) return []
     return movimientos.filter((m) => {
       if (filtrosAplicados.tipo && m.tipo !== filtrosAplicados.tipo) return false
-      if (filtrosAplicados.tipoSalida && m.tipo_salida !== filtrosAplicados.tipoSalida) return false
+      if (filtrosAplicados.tipoSalida) {
+        if (filtrosAplicados.tipoSalida === 'FACTURACION') {
+          if (m.origen !== 'VEN') return false
+        } else {
+          if (m.tipo_salida !== filtrosAplicados.tipoSalida) return false
+        }
+      }
       if (filtrosAplicados.depto && m.departamento_id !== filtrosAplicados.depto) return false
       if (filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*') {
         const b = filtrosAplicados.busqueda.toLowerCase()
@@ -90,6 +103,68 @@ export function KardexList() {
     )
   }
 
+  function handlePrint() {
+    const win = window.open('', '_blank', 'width=900,height=700')
+    if (!win) return
+
+    const tipoLabel = filtrosAplicados.tipo === 'E' ? 'Entradas' : filtrosAplicados.tipo === 'S' ? 'Salidas' : 'Todos'
+    const causaLabel = filtrosAplicados.tipoSalida
+      ? ({ MERMA: 'Merma', EXTRAVIO: 'Extravío', CONSUMO_INTERNO: 'Consumo Interno', FACTURACION: 'Facturación' } as Record<string, string>)[filtrosAplicados.tipoSalida] ?? filtrosAplicados.tipoSalida
+      : 'Todas'
+    const deptoNombre = filtrosAplicados.depto
+      ? (departamentos.find((d) => d.id === filtrosAplicados.depto)?.nombre ?? filtrosAplicados.depto)
+      : 'Todos'
+
+    const rows = movimientosFiltrados.map((mov) => `
+      <tr>
+        <td>${mov.fecha}</td>
+        <td>${mov.prod_codigo ?? ''} ${mov.prod_nombre ?? mov.producto_id}</td>
+        <td>${mov.tipo === 'E' ? 'ENTRADA' : 'SALIDA'}</td>
+        <td>${origenLabel(mov.origen)}</td>
+        <td>${mov.tipo_salida ? (({ MERMA: 'Merma', EXTRAVIO: 'Extravío', CONSUMO_INTERNO: 'Consumo Interno' } as Record<string, string>)[mov.tipo_salida] ?? mov.tipo_salida) : (mov.origen === 'VEN' ? 'Facturación' : '—')}</td>
+        <td style="text-align:right">${parseFloat(mov.cantidad).toFixed(3)}</td>
+        <td style="text-align:right">${parseFloat(mov.stock_anterior).toFixed(3)} → ${parseFloat(mov.stock_nuevo).toFixed(3)}</td>
+        <td>${mov.motivo ?? '—'}</td>
+      </tr>
+    `).join('')
+
+    win.document.write(`<!DOCTYPE html><html><head>
+      <title>Kardex de Movimientos</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 12px; padding: 20px; }
+        h2 { margin-bottom: 4px; }
+        .filtros { font-size: 11px; color: #666; margin-bottom: 12px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #f3f4f6; text-align: left; padding: 6px 8px; border-bottom: 2px solid #e5e7eb; font-size: 11px; }
+        td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; }
+        tr:nth-child(even) td { background: #f9fafb; }
+        @media print { button { display: none; } }
+      </style>
+    </head><body>
+      ${company?.nombre ? `<h3 style="margin:0 0 2px 0;font-size:14px">${company.nombre}</h3>` : ''}
+      <h2 style="margin:0 0 8px 0">Kardex de Movimientos</h2>
+      <div class="filtros">
+        Período: ${filtrosAplicados.desde} al ${filtrosAplicados.hasta} |
+        Tipo: ${tipoLabel} |
+        Causa: ${causaLabel} |
+        Departamento: ${deptoNombre} |
+        ${filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*' ? `Producto: ${filtrosAplicados.busqueda} |` : ''}
+        Total: ${movimientosFiltrados.length} movimiento(s) |
+        Generado: ${new Date().toLocaleString('es-VE')}
+      </div>
+      <table>
+        <thead><tr>
+          <th>Fecha</th><th>Producto</th><th>Tipo</th><th>Origen</th>
+          <th>Causa</th><th style="text-align:right">Cantidad</th>
+          <th style="text-align:right">Stock</th><th>Motivo</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <script>window.print(); window.onafterprint = () => window.close();</script>
+    </body></html>`)
+    win.document.close()
+  }
+
   return (
     <div className="space-y-4">
       {/* Barra de filtros */}
@@ -117,12 +192,11 @@ export function KardexList() {
             <label className="block text-xs font-medium text-muted-foreground mb-1">
               Producto / Codigo <span className="text-muted-foreground">(* para todos)</span>
             </label>
-            <input
-              type="text"
+            <KardexProductoBuscador
               value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar o *"
+              onChange={setBusqueda}
               onKeyDown={(e) => e.key === 'Enter' && handleConsultar()}
+              placeholder="Buscar o *"
               className="w-full rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
@@ -155,19 +229,22 @@ export function KardexList() {
                 <option value="S">Salidas</option>
               </select>
             </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-medium text-muted-foreground">Causa:</label>
-              <select
-                value={filtroTipoSalida}
-                onChange={(e) => setFiltroTipoSalida(e.target.value)}
-                className="rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Todas</option>
-                <option value="MERMA">Merma</option>
-                <option value="EXTRAVIO">Extravío</option>
-                <option value="CONSUMO_INTERNO">Consumo Interno</option>
-              </select>
-            </div>
+            {filtroTipo !== 'E' && (
+              <div className="flex items-center gap-2">
+                <label className="text-xs font-medium text-muted-foreground">Causa:</label>
+                <select
+                  value={filtroTipoSalida}
+                  onChange={(e) => setFiltroTipoSalida(e.target.value)}
+                  className="rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Todas</option>
+                  <option value="MERMA">Merma</option>
+                  <option value="EXTRAVIO">Extravío</option>
+                  <option value="CONSUMO_INTERNO">Consumo Interno</option>
+                  <option value="FACTURACION">Facturación</option>
+                </select>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-2">
@@ -177,6 +254,14 @@ export function KardexList() {
             >
               <Plus className="h-4 w-4" />
               Nuevo Movimiento
+            </button>
+            <button
+              onClick={handlePrint}
+              disabled={!aplicado || movimientosFiltrados.length === 0}
+              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimir
             </button>
             <button
               onClick={handleConsultar}
