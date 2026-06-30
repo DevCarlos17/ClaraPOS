@@ -59,6 +59,7 @@ export function AjusteMasivo() {
   const [depositoId, setDepositoId] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [filtroDepto, setFiltroDepto] = useState('')
+  const [tipoRegistro, setTipoRegistro] = useState<'S' | 'E' | ''>('')
   const [soloConCambios, setSoloConCambios] = useState(false)
   const [tablaMostrada, setTablaMostrada] = useState(false)
   const [conteos, setConteos] = useState<Record<string, string>>({})
@@ -74,7 +75,8 @@ export function AjusteMasivo() {
   useEffect(() => {
     setTablaMostrada(false)
     setConteoAplicado(false)
-  }, [depositoId, filtroDepto, motivoRestaId])
+    setMotivoRestaId('')
+  }, [depositoId, filtroDepto, tipoRegistro])
 
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -116,8 +118,12 @@ export function AjusteMasivo() {
     return Array.from(set.entries()).sort((a, b) => a[1].localeCompare(b[1]))
   }, [productos])
 
+  const CLAVES_SALIDA = ['MERMA_INVENTARIO', 'EXTRAVIO_INVENTARIO', 'CONSUMO_INTERNO']
   const motivosSuma  = useMemo(() => motivos.filter((m) => m.operacion_base === 'SUMA'),  [motivos])
-  const motivosResta = useMemo(() => motivos.filter((m) => m.operacion_base === 'RESTA'), [motivos])
+  const motivosResta = useMemo(
+    () => motivos.filter((m) => m.operacion_base === 'RESTA' && CLAVES_SALIDA.includes(m.cuentas_config_clave ?? '')),
+    [motivos] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   const productosFiltrados = useMemo(() => {
     let lista = productos
@@ -180,10 +186,27 @@ export function AjusteMasivo() {
   )
   const mostrarColumnaLotes = hayProductosConLotes && !!depositoId && depositoId !== '__ALL__'
 
+  // Invalidos: filas cuya dirección contradice el tipo de registro seleccionado
+  const invalidos = useMemo(() => {
+    const set = new Set<string>()
+    if (!tipoRegistro || !tablaMostrada) return set
+    for (const p of productosFiltrados) {
+      const val = conteos[p.id]
+      if (!val || val === '') continue
+      const fisico = parseFloat(val)
+      if (isNaN(fisico)) continue
+      const actual = parseFloat(p.stock)
+      if (tipoRegistro === 'S' && fisico > actual) set.add(p.id) // salida pero aumenta = inválido
+      if (tipoRegistro === 'E' && fisico < actual) set.add(p.id) // entrada pero disminuye = inválido
+    }
+    return set
+  }, [conteos, productosFiltrados, tipoRegistro, tablaMostrada])
+
   const cambios = useMemo(() => {
     const sumas: CambioItem[] = []
     const restas: CambioItem[] = []
     for (const p of productos) {
+      if (invalidos.has(p.id)) continue // excluir filas inválidas del cálculo
       const val = conteos[p.id]
       if (!val || val === '') continue
       const nuevo = parseFloat(val)
@@ -231,6 +254,7 @@ export function AjusteMasivo() {
   }
 
   function abrirConfirmacion() {
+    if (invalidos.size > 0) { toast.error(`${invalidos.size} producto(s) con dirección incorrecta para el tipo seleccionado. Revisá las filas marcadas en rojo.`); return }
     if (cambios.total === 0) { toast.error('No hay cambios de stock para aplicar'); return }
     if (!depositoId) { toast.error('Selecciona un deposito antes de aplicar el conteo'); return }
     if (depositoId === '__ALL__') { toast.error('Selecciona un deposito especifico (no "Todos") para aplicar el conteo'); return }
@@ -262,7 +286,7 @@ export function AjusteMasivo() {
       const fechaHoy = todayStr()
       const ajusteIds: string[] = []
 
-      if (cambios.sumas.length > 0) {
+      if (tipoRegistro !== 'S' && cambios.sumas.length > 0) {
         const lineas = cambios.sumas.map((c) => ({
           producto_id: c.id,
           deposito_id: depositoId,
@@ -281,7 +305,7 @@ export function AjusteMasivo() {
         await aplicarAjuste(ajusteId, empresaId, user?.id ?? '')
       }
 
-      if (cambios.restas.length > 0) {
+      if (tipoRegistro !== 'E' && cambios.restas.length > 0) {
         const lineas = cambios.restas.map((c) => ({
           producto_id: c.id,
           deposito_id: depositoId,
@@ -441,23 +465,42 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     </select>
                   </div>
 
-                  {/* Motivo de salida (causa del ajuste) */}
+                  {/* Tipo de registro */}
                   <div className="flex flex-col gap-1">
                     <label className="text-xs font-medium text-muted-foreground">
-                      Causa <span className="text-destructive">*</span>
+                      Tipo <span className="text-destructive">*</span>
                     </label>
                     <select
-                      value={motivoRestaId}
-                      onChange={(e) => setMotivoRestaId(e.target.value)}
+                      value={tipoRegistro}
+                      onChange={(e) => setTipoRegistro(e.target.value as 'S' | 'E' | '')}
                       disabled={tablaMostrada}
-                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px] disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[140px] disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      <option value="">Seleccionar causa...</option>
-                      {motivosResta.map((m) => (
-                        <option key={m.id} value={m.id}>{m.nombre}</option>
-                      ))}
+                      <option value="">Seleccionar tipo...</option>
+                      <option value="S">Salida</option>
+                      <option value="E">Entrada</option>
                     </select>
                   </div>
+
+                  {/* Causa — solo para Salidas */}
+                  {tipoRegistro === 'S' && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Causa <span className="text-destructive">*</span>
+                      </label>
+                      <select
+                        value={motivoRestaId}
+                        onChange={(e) => setMotivoRestaId(e.target.value)}
+                        disabled={tablaMostrada}
+                        className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px] disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <option value="">Seleccionar causa...</option>
+                        {motivosResta.map((m) => (
+                          <option key={m.id} value={m.id}>{m.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Busqueda */}
                   <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
@@ -597,15 +640,18 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                               const nuevoVal = nuevoStr !== '' ? parseFloat(nuevoStr) : null
                               const diff = nuevoVal !== null && !isNaN(nuevoVal) ? nuevoVal - actual : null
                               const hayCambio = diff !== null && Math.abs(diff) > 0.0001
+                              const esInvalido = invalidos.has(p.id)
 
                               return (
                                 <tr
                                   key={p.id}
                                   className={cn(
                                     'transition-colors duration-150',
-                                    hayCambio
-                                      ? 'bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30'
-                                      : 'hover:bg-muted/30',
+                                    esInvalido
+                                      ? 'bg-red-50/80 dark:bg-red-950/30 hover:bg-red-50 dark:hover:bg-red-950/40'
+                                      : hayCambio
+                                        ? 'bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                                        : 'hover:bg-muted/30',
                                   )}
                                 >
                                   <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground whitespace-nowrap">
@@ -626,22 +672,34 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                                     {actual.toFixed(3)}
                                   </td>
                                   <td className="px-4 py-2.5">
-                                    <input
-                                      type="number"
-                                      step="0.001"
-                                      min="0"
-                                      value={nuevoStr}
-                                      onChange={(e) => handleCambioConteo(p.id, e.target.value)}
-                                      placeholder={actual.toFixed(3)}
-                                      className={cn(
-                                        'w-28 h-8 px-2 text-sm text-right tabular-nums border rounded focus:outline-none focus:ring-2',
-                                        hayCambio
-                                          ? diff! > 0
-                                            ? 'border-green-400 bg-green-50 dark:bg-green-950/30 focus:ring-green-500'
-                                            : 'border-red-400 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
-                                          : 'border-input bg-white dark:bg-card focus:ring-primary',
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="number"
+                                        step="0.001"
+                                        min="0"
+                                        value={nuevoStr}
+                                        onChange={(e) => handleCambioConteo(p.id, e.target.value)}
+                                        placeholder={actual.toFixed(3)}
+                                        className={cn(
+                                          'w-28 h-8 px-2 text-sm text-right tabular-nums border rounded focus:outline-none focus:ring-2',
+                                          esInvalido
+                                            ? 'border-red-500 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
+                                            : hayCambio
+                                              ? diff! > 0
+                                                ? 'border-green-400 bg-green-50 dark:bg-green-950/30 focus:ring-green-500'
+                                                : 'border-red-400 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
+                                              : 'border-input bg-white dark:bg-card focus:ring-primary',
+                                        )}
+                                      />
+                                      {esInvalido && (
+                                        <span
+                                          className="text-red-600 text-xs font-medium whitespace-nowrap"
+                                          title={tipoRegistro === 'S' ? 'La cantidad física es mayor al stock actual — esto sería una entrada, no una salida.' : 'La cantidad física es menor al stock actual — esto sería una salida, no una entrada.'}
+                                        >
+                                          ⚠ {tipoRegistro === 'S' ? 'No es salida' : 'No es entrada'}
+                                        </span>
                                       )}
-                                    />
+                                    </div>
                                   </td>
                                   <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
                                     {diff === null ? (
@@ -721,7 +779,7 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     </p>
                     <button
                       onClick={() => setTablaMostrada(true)}
-                      disabled={!filtroDepto || !depositoId || !motivoRestaId}
+                      disabled={!filtroDepto || !depositoId || !tipoRegistro || (tipoRegistro === 'S' && !motivoRestaId)}
                       className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <ClipboardText size={16} />
