@@ -66,6 +66,21 @@ export function useMovimientosFiltrados(fechaDesde: string, fechaHasta: string) 
   return { movimientos: (data ?? []) as MovimientoConProducto[], isLoading }
 }
 
+export function useUltimosMovimientosKardex(limit = 10) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `SELECT mi.*, p.codigo as prod_codigo, p.nombre as prod_nombre, p.departamento_id
+     FROM movimientos_inventario mi
+     LEFT JOIN productos p ON p.id = mi.producto_id
+     WHERE mi.empresa_id = ?
+     ORDER BY mi.fecha DESC, mi.created_at DESC LIMIT ${limit}`,
+    [empresaId]
+  )
+  return { movimientos: (data ?? []) as MovimientoConProducto[], isLoading }
+}
+
 export function useMovimientosPorProducto(productoId: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''

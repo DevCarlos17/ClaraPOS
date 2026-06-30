@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { Plus, MagnifyingGlass, Printer } from '@phosphor-icons/react'
-import { useMovimientosFiltrados } from '@/features/inventario/hooks/use-kardex'
+import { useMovimientosFiltrados, useUltimosMovimientosKardex } from '@/features/inventario/hooks/use-kardex'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { formatDateTime } from '@/lib/format'
@@ -21,7 +21,7 @@ export function KardexList() {
   const [filtroTipoSalida, setFiltroTipoSalida] = useState('')
 
   // Filtros aplicados (se fijan al presionar Consultar)
-  const [aplicado, setAplicado] = useState(true)
+  const [aplicado, setAplicado] = useState(false)
   const [filtrosAplicados, setFiltrosAplicados] = useState({
     desde: startOfMonth(),
     hasta: todayStr(),
@@ -37,13 +37,15 @@ export function KardexList() {
     if (filtroTipo === 'E') setFiltroTipoSalida('')
   }, [filtroTipo])
 
-  const { movimientos, isLoading } = useMovimientosFiltrados(
+  const { movimientos: ultimosMovimientos, isLoading: isLoadingUltimos } = useUltimosMovimientosKardex(10)
+  const { movimientos, isLoading: isLoadingFiltrados } = useMovimientosFiltrados(
     filtrosAplicados.desde,
     filtrosAplicados.hasta
   )
+  const isLoading = aplicado ? isLoadingFiltrados : isLoadingUltimos
 
   const movimientosFiltrados = useMemo(() => {
-    if (!aplicado) return []
+    if (!aplicado) return ultimosMovimientos
     return movimientos.filter((m) => {
       if (filtrosAplicados.tipo && m.tipo !== filtrosAplicados.tipo) return false
       if (filtrosAplicados.tipoSalida) {
@@ -87,15 +89,17 @@ export function KardexList() {
     }
   }
 
-  function tipoSalidaBadge(tipoSalida: string | null) {
-    if (!tipoSalida) return null
+  function tipoSalidaBadge(tipoSalida: string | null, origen: string) {
     const map: Record<string, { label: string; className: string }> = {
       MERMA:           { label: 'Merma',          className: 'bg-orange-50 text-orange-700 ring-orange-600/20' },
       EXTRAVIO:        { label: 'Extravío',        className: 'bg-red-50 text-red-700 ring-red-600/20' },
       CONSUMO_INTERNO: { label: 'Consumo Interno', className: 'bg-blue-50 text-blue-700 ring-blue-600/20' },
+      FACTURACION:     { label: 'Facturación',     className: 'bg-purple-50 text-purple-700 ring-purple-600/20' },
     }
-    const cfg = map[tipoSalida]
-    if (!cfg) return <span className="text-xs text-muted-foreground">{tipoSalida}</span>
+    const key = tipoSalida ?? (origen === 'VEN' ? 'FACTURACION' : null)
+    if (!key) return null
+    const cfg = map[key]
+    if (!cfg) return <span className="text-xs text-muted-foreground">{key}</span>
     return (
       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset ${cfg.className}`}>
         {cfg.label}
@@ -275,13 +279,7 @@ export function KardexList() {
       </div>
 
       {/* Resultados */}
-      {!aplicado ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <MagnifyingGlass className="h-10 w-10 mx-auto mb-3 opacity-40" />
-          <p className="text-base font-medium text-muted-foreground">Seleccione el rango de fechas y presione Consultar</p>
-          <p className="text-sm mt-1">Puede buscar por nombre o codigo de producto. Use * para ver todos.</p>
-        </div>
-      ) : isLoading ? (
+      {isLoading ? (
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="h-12 bg-muted rounded animate-pulse" />
@@ -295,8 +293,10 @@ export function KardexList() {
       ) : (
         <div className="rounded-2xl bg-card shadow-lg p-4">
           <p className="text-xs text-muted-foreground mb-2">
-            {movimientosFiltrados.length} movimiento(s) encontrado(s)
-            {filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*'
+            {!aplicado
+              ? `Últimos ${movimientosFiltrados.length} movimiento(s) — usá los filtros para consultar un rango específico`
+              : `${movimientosFiltrados.length} movimiento(s) encontrado(s)`}
+            {aplicado && filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*'
               ? ` para "${filtrosAplicados.busqueda}"`
               : ''}
           </p>
@@ -336,7 +336,7 @@ export function KardexList() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{origenLabel(mov.origen)}</td>
-                    <td className="px-4 py-3">{tipoSalidaBadge(mov.tipo_salida) ?? <span className="text-muted-foreground">—</span>}</td>
+                    <td className="px-4 py-3">{tipoSalidaBadge(mov.tipo_salida, mov.origen) ?? <span className="text-muted-foreground">—</span>}</td>
                     <td className="px-4 py-3 text-right font-medium">
                       {parseFloat(mov.cantidad).toFixed(3)}
                     </td>
