@@ -4,6 +4,8 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import Decimal from 'decimal.js'
+import { toStorageString } from '@/lib/currency'
 
 export interface Ajuste {
   id: string
@@ -53,10 +55,12 @@ export function useAjustes() {
 
   const { data, isLoading } = useQuery(
     `SELECT a.*, m.nombre AS nombre_motivo, m.operacion_base,
+            u.nombre AS nombre_usuario,
             (SELECT COUNT(*) FROM ajustes_det ad WHERE ad.ajuste_id = a.id) AS items_count,
             (SELECT COALESCE(SUM(CAST(ad.cantidad AS REAL) * CASE WHEN ad.costo_unitario IS NOT NULL THEN CAST(ad.costo_unitario AS REAL) ELSE 0 END), 0) FROM ajustes_det ad WHERE ad.ajuste_id = a.id) AS total_usd
      FROM ajustes a
      LEFT JOIN ajuste_motivos m ON m.id = a.motivo_id
+     LEFT JOIN usuarios u ON u.id = a.created_by
      WHERE a.empresa_id = ?
      ORDER BY a.fecha DESC, a.num_ajuste DESC`,
     [empresaId]
@@ -65,6 +69,7 @@ export function useAjustes() {
     ajustes: (data ?? []) as (Ajuste & {
       nombre_motivo: string | null
       operacion_base: string | null
+      nombre_usuario: string | null
       items_count: number
       total_usd: number
     })[],
@@ -167,7 +172,7 @@ export async function crearAjuste(data: {
           linea.producto_id,
           linea.deposito_id,
           linea.cantidad.toFixed(3),
-          linea.costo_unitario !== undefined ? linea.costo_unitario.toFixed(2) : null,
+          linea.costo_unitario !== undefined ? toStorageString(new Decimal(linea.costo_unitario)) : null,
           linea.lote_id ?? null,
           linea.lote_nro ? linea.lote_nro.trim().toUpperCase() : null,
           linea.lote_fecha_fab ?? null,
@@ -248,8 +253,8 @@ export async function aplicarAjuste(
           .select('costo_usd')
           .where('id', '=', linea.producto_id)
           .executeTakeFirst()
-        const costoFallback = parseFloat(prod?.costo_usd ?? '0')
-        costosEfectivos[linea.producto_id] = costoFallback > 0 ? costoFallback.toFixed(2) : '0'
+        const costoStr = prod?.costo_usd ?? '0'
+        costosEfectivos[linea.producto_id] = parseFloat(costoStr) > 0 ? costoStr : '0'
       }
     }
   }
@@ -338,7 +343,7 @@ export async function aplicarAjuste(
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
             linea.costo_unitario ?? null, loteIdParaMovimiento,
             ajusteId, ajuste.num_ajuste,
-            userId, fechaHoy, now,
+            userId, now, now,
           ]
         )
         await tx.execute(
@@ -410,6 +415,12 @@ export async function aplicarAjuste(
         }
 
         const costoParaMovimiento = costosEfectivos[linea.producto_id] ?? linea.costo_unitario ?? null
+        if (costoParaMovimiento && costoParaMovimiento !== '0') {
+          await tx.execute(
+            'UPDATE ajustes_det SET costo_unitario = ? WHERE ajuste_id = ? AND producto_id = ?',
+            [costoParaMovimiento, ajusteId, linea.producto_id]
+          )
+        }
         await tx.execute(
           `INSERT INTO movimientos_inventario
            (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
@@ -421,7 +432,7 @@ export async function aplicarAjuste(
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
             costoParaMovimiento, loteIdMovimiento,
             ajusteId, ajuste.num_ajuste,
-            userId, fechaHoy, now,
+            userId, now, now,
             tipoSalidaAjuste,
           ]
         )
@@ -432,10 +443,8 @@ export async function aplicarAjuste(
 
         // Per-line gasto contable (W-02: un gasto por linea, no agregado; W-03: sin try/catch — fallo revierte todo el tx)
         if (tipoSalidaAjuste && cuentaIdPorLinea && monedaUsdIdPorLinea) {
-          const costoLinea = parseFloat(costosEfectivos[linea.producto_id] ?? '0')
-          const cantLinea = parseFloat(linea.cantidad)
-          const totalLineaUsd = costoLinea * cantLinea
-          if (totalLineaUsd > 0) {
+          const totalLineaD = new Decimal(costosEfectivos[linea.producto_id] ?? '0').times(new Decimal(linea.cantidad))
+          if (totalLineaD.gt(0)) {
             gastoLineaIdx++
             const prodNombreRes = await tx.execute(
               'SELECT nombre FROM productos WHERE id = ?',
@@ -449,7 +458,7 @@ export async function aplicarAjuste(
             }
             const concepto = `${TIPO_SALIDA_LABELS[tipoSalidaAjuste] ?? tipoSalidaAjuste}: ${prodNombre}`
             const gastoId = uuidv4()
-            const totalLineaStr = totalLineaUsd.toFixed(2)
+            const totalLineaStr = toStorageString(totalLineaD)
             const tasaStr = tasaActualPorLinea > 0 ? tasaActualPorLinea.toFixed(4) : '0'
             const nroGasto = `AJU-${ajuste.num_ajuste}-L${String(gastoLineaIdx).padStart(2, '0')}`
             await tx.execute(
@@ -536,7 +545,6 @@ export async function anularAjuste(
     .execute()
 
   const now = localNow()
-  const fechaHoy = now.split('T')[0] ?? now.substring(0, 10)
   const operacion = ajuste.operacion_base as string
   const obsAnulacion = motivoAnulacion
     ? `[ANULADO: ${motivoAnulacion}]${ajuste.observaciones ? ' | ' + ajuste.observaciones : ''}`
@@ -616,7 +624,7 @@ export async function anularAjuste(
           tipoInverso, linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
           linea.costo_unitario ?? null, loteId,
           ajusteId, ajuste.num_ajuste,
-          userId, fechaHoy, now,
+          userId, now, now,
         ]
       )
       await tx.execute(

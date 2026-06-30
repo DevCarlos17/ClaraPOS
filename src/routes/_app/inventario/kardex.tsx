@@ -5,7 +5,7 @@ import { Plus } from '@phosphor-icons/react'
 import { KardexList } from '@/features/inventario/components/kardex/kardex-list'
 import { AjusteMasivo } from '@/features/inventario/components/ajustes/ajuste-masivo'
 import { AjusteMotivoList } from '@/features/inventario/components/ajuste-motivos/ajuste-motivo-list'
-import { MovimientoForm } from '@/features/inventario/components/kardex/movimiento-form'
+import { AjusteForm } from '@/features/inventario/components/ajustes/ajuste-form'
 import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
@@ -52,7 +52,7 @@ function KardexPage() {
             </button>
           )}
         </PageHeader>
-        <MovimientoForm isOpen={formOpen} onClose={() => setFormOpen(false)} />
+        <AjusteForm isOpen={formOpen} onClose={() => setFormOpen(false)} />
 
         <div className="space-y-0">
           <SegmentedTabs tabs={TABS} active={tabActiva} onChange={handleTabChange} />

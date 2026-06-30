@@ -227,7 +227,7 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-gray-700">
                       {linea.costo_unitario != null
-                        ? `$${parseFloat(linea.costo_unitario).toFixed(2)}`
+                        ? `$${parseFloat(linea.costo_unitario).toFixed(4)}`
                         : '-'}
                     </td>
                   </tr>

@@ -96,6 +96,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
         <td style="text-align:center">${a.status}</td>
         <td style="text-align:center">${a.items_count ?? 0}</td>
         <td style="text-align:right">${formatUsd(a.total_usd ?? 0)}</td>
+        <td>${a.nombre_usuario ?? '-'}</td>
       </tr>`)
       .join('')
 
@@ -128,6 +129,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
         <th style="text-align:center">Status</th>
         <th style="text-align:center">Items</th>
         <th style="text-align:right">Total (USD)</th>
+        <th>Usuario</th>
       </tr>
     </thead>
     <tbody>${filas}</tbody>
@@ -247,6 +249,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
                 <th className="text-center px-4 py-3 font-medium text-muted-foreground">Items</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Total (USD)</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Usuario</th>
               </tr>
             </thead>
             <tbody>
@@ -274,6 +277,9 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={ajuste.status} />
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-sm">
+                    {ajuste.nombre_usuario ?? '-'}
                   </td>
                 </tr>
               ))}
