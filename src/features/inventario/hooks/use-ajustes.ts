@@ -462,7 +462,7 @@ export async function aplicarAjuste(
                VALUES (?, ?, ?, ?, ?, ?, ?,
                        ?, 'USD', 0, ?, ?, ?,
                        'Exento', '0.00', ?, '0.00',
-                       '0.00', ?, 'PAGADO', ?, ?, ?,
+                        '0.00', ?, 'REGISTRADO', ?, ?, ?,
                        ?, ?)`,
               [
                 gastoId,
