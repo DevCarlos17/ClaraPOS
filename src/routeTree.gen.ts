@@ -21,6 +21,7 @@ import { Route as AppClientesRouteImport } from './routes/_app/clientes'
 import { Route as authRegisterRouteImport } from './routes/(auth)/register'
 import { Route as authLoginRouteImport } from './routes/(auth)/login'
 import { Route as AppCitasRouteRouteImport } from './routes/_app/citas/route'
+import { Route as AppTesoreriaIndexRouteImport } from './routes/_app/tesoreria/index'
 import { Route as AppClientesIndexRouteImport } from './routes/_app/clientes/index'
 import { Route as AppCitasIndexRouteImport } from './routes/_app/citas/index'
 import { Route as AppVentasReportesRouteImport } from './routes/_app/ventas/reportes'
@@ -132,6 +133,11 @@ const authLoginRoute = authLoginRouteImport.update({
 const AppCitasRouteRoute = AppCitasRouteRouteImport.update({
   id: '/citas',
   path: '/citas',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppTesoreriaIndexRoute = AppTesoreriaIndexRouteImport.update({
+  id: '/tesoreria/',
+  path: '/tesoreria/',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppClientesIndexRoute = AppClientesIndexRouteImport.update({
@@ -485,6 +491,7 @@ export interface FileRoutesByFullPath {
   '/ventas/reportes': typeof AppVentasReportesRoute
   '/citas/': typeof AppCitasIndexRoute
   '/clientes/': typeof AppClientesIndexRoute
+  '/tesoreria/': typeof AppTesoreriaIndexRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
   '/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
   '/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
@@ -548,6 +555,7 @@ export interface FileRoutesByTo {
   '/ventas/reportes': typeof AppVentasReportesRoute
   '/citas': typeof AppCitasIndexRoute
   '/clientes': typeof AppClientesIndexRoute
+  '/tesoreria': typeof AppTesoreriaIndexRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosIndexRoute
   '/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
@@ -617,6 +625,7 @@ export interface FileRoutesById {
   '/_app/ventas/reportes': typeof AppVentasReportesRoute
   '/_app/citas/': typeof AppCitasIndexRoute
   '/_app/clientes/': typeof AppClientesIndexRoute
+  '/_app/tesoreria/': typeof AppTesoreriaIndexRoute
   '/_app/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
   '/_app/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
   '/_app/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
@@ -685,6 +694,7 @@ export interface FileRouteTypes {
     | '/ventas/reportes'
     | '/citas/'
     | '/clientes/'
+    | '/tesoreria/'
     | '/configuracion/usuarios/nuevo'
     | '/configuracion/usuarios/'
     | '/configuracion/usuarios/$usuarioId/editar'
@@ -748,6 +758,7 @@ export interface FileRouteTypes {
     | '/ventas/reportes'
     | '/citas'
     | '/clientes'
+    | '/tesoreria'
     | '/configuracion/usuarios/nuevo'
     | '/configuracion/usuarios'
     | '/configuracion/usuarios/$usuarioId/editar'
@@ -816,6 +827,7 @@ export interface FileRouteTypes {
     | '/_app/ventas/reportes'
     | '/_app/citas/'
     | '/_app/clientes/'
+    | '/_app/tesoreria/'
     | '/_app/configuracion/usuarios/nuevo'
     | '/_app/configuracion/usuarios/'
     | '/_app/configuracion/usuarios/$usuarioId/editar'
@@ -911,6 +923,13 @@ declare module '@tanstack/react-router' {
       path: '/citas'
       fullPath: '/citas'
       preLoaderRoute: typeof AppCitasRouteRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/tesoreria/': {
+      id: '/_app/tesoreria/'
+      path: '/tesoreria'
+      fullPath: '/tesoreria/'
+      preLoaderRoute: typeof AppTesoreriaIndexRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/clientes/': {
@@ -1415,6 +1434,7 @@ interface AppRouteRouteChildren {
   AppVentasNuevaRoute: typeof AppVentasNuevaRoute
   AppVentasPrestamosRoute: typeof AppVentasPrestamosRoute
   AppVentasReportesRoute: typeof AppVentasReportesRoute
+  AppTesoreriaIndexRoute: typeof AppTesoreriaIndexRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -1468,6 +1488,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppVentasNuevaRoute: AppVentasNuevaRoute,
   AppVentasPrestamosRoute: AppVentasPrestamosRoute,
   AppVentasReportesRoute: AppVentasReportesRoute,
+  AppTesoreriaIndexRoute: AppTesoreriaIndexRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(

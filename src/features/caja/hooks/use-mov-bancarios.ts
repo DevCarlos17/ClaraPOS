@@ -19,6 +19,9 @@ export interface MovBancario {
   validado_por: string | null
   validado_at: string | null
   observacion: string | null
+  reversado: number
+  reverso_de: string | null
+  descripcion: string | null
   fecha: string
   created_at: string
   created_by: string | null
@@ -97,4 +100,104 @@ export function useMovBancarios(
   const { data, isLoading } = useQuery(query, params)
 
   return { movimientos: (data ?? []) as MovBancario[], isLoading }
+}
+
+// ─── Hook filtrado con paginacion (READ-ONLY) ─────────────────
+
+export interface MovBancariosFiltradosResult {
+  data: MovBancario[]
+  total: number
+  page: number
+  totalPages: number
+  isLoading: boolean
+}
+
+/**
+ * Retorna movimientos bancarios filtrados por estado y parametros opcionales.
+ * pendiente = validado=0 AND reversado=0
+ * historico = validado=1 OR reversado=1 (con filtros opcionales de fecha/tipo/busqueda)
+ * Soporta paginacion con LIMIT/OFFSET.
+ */
+export function useMovBancariosFiltrados({
+  bancoId,
+  estado,
+  desde,
+  hasta,
+  tipo = '',
+  search = '',
+  page = 1,
+  pageSize = 50,
+}: {
+  bancoId: string
+  estado: 'pendiente' | 'historico'
+  desde?: string
+  hasta?: string
+  tipo?: 'INGRESO' | 'EGRESO' | ''
+  search?: string
+  page?: number
+  pageSize?: number
+}): MovBancariosFiltradosResult {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const enabled = bancoId !== '' && empresaId !== ''
+
+  const estadoClause =
+    estado === 'pendiente'
+      ? 'validado = 0 AND reversado = 0'
+      : '(validado = 1 OR reversado = 1)'
+
+  const extraClauses: string[] = []
+  const extraParams: (string | number)[] = []
+
+  if (estado === 'historico' && desde) {
+    extraClauses.push("SUBSTR(fecha, 1, 10) >= ?")
+    extraParams.push(desde)
+  }
+  if (estado === 'historico' && hasta) {
+    extraClauses.push("SUBSTR(fecha, 1, 10) <= ?")
+    extraParams.push(hasta)
+  }
+  if (tipo) {
+    extraClauses.push('tipo = ?')
+    extraParams.push(tipo)
+  }
+  if (search && search.trim() !== '') {
+    extraClauses.push('(referencia LIKE ? OR descripcion LIKE ?)')
+    extraParams.push(`%${search.trim()}%`, `%${search.trim()}%`)
+  }
+
+  const allClauses = [
+    'empresa_id = ?',
+    'banco_empresa_id = ?',
+    estadoClause,
+    ...extraClauses,
+  ].join(' AND ')
+
+  const baseParams: (string | number)[] = [empresaId, bancoId]
+  const allParams = [...baseParams, ...extraParams]
+  const offset = (page - 1) * pageSize
+
+  const dataQuery = enabled
+    ? `SELECT * FROM movimientos_bancarios WHERE ${allClauses} ORDER BY fecha ASC, created_at ASC LIMIT ? OFFSET ?`
+    : ''
+  const countQuery = enabled
+    ? `SELECT COUNT(*) as total FROM movimientos_bancarios WHERE ${allClauses}`
+    : ''
+
+  const dataParams = enabled ? ([...allParams, pageSize, offset] as unknown[]) : []
+  const countParams = enabled ? (allParams as unknown[]) : []
+
+  const { data: rawData, isLoading: dataLoading } = useQuery(dataQuery, dataParams)
+  const { data: countData, isLoading: countLoading } = useQuery(countQuery, countParams)
+
+  const total = ((countData?.[0] as Record<string, unknown> | undefined)?.total as number | undefined) ?? 0
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+
+  return {
+    data: (rawData ?? []) as MovBancario[],
+    total,
+    page,
+    totalPages,
+    isLoading: dataLoading || countLoading,
+  }
 }

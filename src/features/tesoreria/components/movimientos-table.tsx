@@ -1,21 +1,39 @@
-import { CheckCircle, Clock, X, ArrowDown, ArrowUp } from '@phosphor-icons/react'
+import { CheckCircle, Clock, X, CaretLeft, CaretRight } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 import { formatUsd } from '@/lib/currency'
 import { Button } from '@/components/ui/button'
 import type { MovBancario } from '@/features/caja/hooks/use-mov-bancarios'
 import type { MovCajaFuerte } from '../hooks/use-mov-caja-fuerte'
 
-// ─── Tipo unificado ──────────────────────────────────────────
+// ─── Tipo legado (mantenido para retrocompatibilidad con ReversoModal) ──────
 
 export type MovimientoTesoreria =
-  | (MovBancario & { _source: 'BANCO'; reversado?: number; reverso_de?: string | null; descripcion?: string | null })
+  | (MovBancario & { _source: 'BANCO' })
   | (MovCajaFuerte & { _source: 'CAJA_FUERTE' })
 
-// ─── Labels ─────────────────────────────────────────────────
+// ─── Tipo de fila para la tabla nueva ────────────────────────
+
+export interface MovimientoTableRow {
+  id: string
+  tipo: string           // INGRESO | EGRESO
+  origen: string
+  referencia: string | null
+  descripcion: string | null
+  monto: string
+  saldo_nuevo: string
+  fecha: string
+  created_at: string
+  validado: number
+  reversado: number
+  onValidar?: (id: string) => void
+  onReversar?: (id: string) => void
+}
+
+// ─── Labels de origen ────────────────────────────────────────
 
 const ORIGEN_LABELS: Record<string, string> = {
   DEPOSITO_CAJA: 'Deposito caja',
-  DEPOSITO_CIERRE: 'Cierre caja',
+  DEPOSITO_CIERRE: 'Cierre de caja',
   TRANSFERENCIA_CLIENTE: 'Cobro cliente',
   PAGO_PROVEEDOR: 'Pago proveedor',
   GASTO: 'Gasto',
@@ -35,58 +53,60 @@ const ORIGEN_COLORS: Record<string, string> = {
   MANUAL: 'bg-yellow-100 text-yellow-700',
 }
 
-// ─── Tipos suma (para footer) ────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────
 
-interface SummaryData {
-  totalIngresos: number
-  totalEgresos: number
-}
-
-function calcSummary(movimientos: MovimientoTesoreria[]): SummaryData {
-  return movimientos.reduce(
-    (acc, m) => {
-      if (m.reversado === 1) return acc
-      const monto = parseFloat(m.monto)
-      if (m.tipo === 'INGRESO') acc.totalIngresos += monto
-      else acc.totalEgresos += monto
-      return acc
-    },
-    { totalIngresos: 0, totalEgresos: 0 }
-  )
+function formatFechaHora(fecha: string, createdAt: string): string {
+  const datePart = String(fecha).slice(0, 10)   // "YYYY-MM-DD"
+  const timePart = String(createdAt).slice(11, 16) // "HH:mm"
+  const parts = datePart.split('-')
+  if (parts.length === 3) {
+    return `${parts[2]}/${parts[1]}/${parts[0]} ${timePart}`
+  }
+  return `${datePart} ${timePart}`
 }
 
 // ─── Props ────────────────────────────────────────────────────
 
 interface Props {
-  movimientos: MovimientoTesoreria[]
-  isLoading: boolean
-  monedaSimbolo: string
-  onValidar: (mov: MovimientoTesoreria) => void
-  onReversar: (mov: MovimientoTesoreria) => void
+  movimientos: MovimientoTableRow[]
+  modo: 'pendiente' | 'historico'
+  pagination?: {
+    page: number
+    totalPages: number
+    total: number
+    onPageChange: (page: number) => void
+  }
+  loading?: boolean
+  monedaSimbolo?: string
 }
+
+// ─── Componente principal ─────────────────────────────────────
 
 export function MovimientosTable({
   movimientos,
-  isLoading,
-  monedaSimbolo,
-  onValidar,
-  onReversar,
+  modo,
+  pagination,
+  loading = false,
+  monedaSimbolo = '$',
 }: Props) {
-  const { totalIngresos, totalEgresos } = calcSummary(movimientos)
-
-  if (isLoading) {
+  if (loading) {
     return (
-      <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-        Cargando movimientos...
+      <div className="flex items-center justify-center py-16 text-muted-foreground text-sm gap-2">
+        <Clock size={20} className="opacity-40 animate-pulse" />
+        <span>Cargando movimientos...</span>
       </div>
     )
   }
 
   if (movimientos.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground text-sm gap-2">
+      <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm gap-2">
         <Clock size={32} className="opacity-30" />
-        <p>No hay movimientos para el periodo seleccionado</p>
+        <p>
+          {modo === 'pendiente'
+            ? 'No hay movimientos pendientes'
+            : 'No hay movimientos para el periodo seleccionado'}
+        </p>
       </div>
     )
   }
@@ -98,14 +118,34 @@ export function MovimientosTable({
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left py-3 px-4 font-medium text-muted-foreground">Fecha</th>
-                <th className="text-left py-3 px-4 font-medium text-muted-foreground">Origen</th>
-                <th className="text-left py-3 px-4 font-medium text-muted-foreground">Descripcion</th>
-                <th className="text-center py-3 px-4 font-medium text-muted-foreground">Tipo</th>
-                <th className="text-right py-3 px-4 font-medium text-muted-foreground">Monto</th>
-                <th className="text-right py-3 px-4 font-medium text-muted-foreground">Saldo post</th>
-                <th className="text-center py-3 px-4 font-medium text-muted-foreground">Estado</th>
-                <th className="text-right py-3 px-4 font-medium text-muted-foreground">Acciones</th>
+                <th className="text-left py-3 px-4 font-medium text-muted-foreground whitespace-nowrap">
+                  Fecha / Hora
+                </th>
+                <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+                  Referencia
+                </th>
+                <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+                  Modulo origen
+                </th>
+                <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                  Ingreso
+                </th>
+                <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                  Egreso
+                </th>
+                <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                  Saldo
+                </th>
+                {modo === 'historico' && (
+                  <th className="text-center py-3 px-4 font-medium text-muted-foreground">
+                    Estado
+                  </th>
+                )}
+                {modo === 'pendiente' && (
+                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                    Acciones
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -113,9 +153,8 @@ export function MovimientosTable({
                 <MovRow
                   key={mov.id}
                   mov={mov}
+                  modo={modo}
                   monedaSimbolo={monedaSimbolo}
-                  onValidar={onValidar}
-                  onReversar={onReversar}
                 />
               ))}
             </tbody>
@@ -123,124 +162,153 @@ export function MovimientosTable({
         </div>
       </div>
 
-      {/* Summary footer */}
-      <div className="grid grid-cols-3 gap-3 text-sm">
-        <div className="rounded-lg border bg-green-50 p-3">
-          <p className="text-xs text-muted-foreground mb-1">Total ingresos</p>
-          <p className="font-semibold text-green-700">
-            {monedaSimbolo} {formatUsd(totalIngresos)}
-          </p>
+      {pagination && (
+        <div className="flex items-center justify-between text-sm text-muted-foreground px-1">
+          <span>{pagination.total} registros</span>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2"
+              disabled={pagination.page <= 1}
+              onClick={() => pagination.onPageChange(pagination.page - 1)}
+            >
+              <CaretLeft size={14} />
+              Anterior
+            </Button>
+            <span className="tabular-nums">
+              Pagina {pagination.page} de {pagination.totalPages}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2"
+              disabled={pagination.page >= pagination.totalPages}
+              onClick={() => pagination.onPageChange(pagination.page + 1)}
+            >
+              Siguiente
+              <CaretRight size={14} />
+            </Button>
+          </div>
         </div>
-        <div className="rounded-lg border bg-red-50 p-3">
-          <p className="text-xs text-muted-foreground mb-1">Total egresos</p>
-          <p className="font-semibold text-red-700">
-            {monedaSimbolo} {formatUsd(totalEgresos)}
-          </p>
-        </div>
-        <div className="rounded-lg border bg-muted/50 p-3">
-          <p className="text-xs text-muted-foreground mb-1">Neto</p>
-          <p
-            className={cn(
-              'font-semibold tabular-nums',
-              totalIngresos - totalEgresos >= 0 ? 'text-foreground' : 'text-destructive'
-            )}
-          >
-            {monedaSimbolo} {formatUsd(totalIngresos - totalEgresos)}
-          </p>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
 
+// ─── Fila de movimiento ───────────────────────────────────────
+
 function MovRow({
   mov,
+  modo,
   monedaSimbolo,
-  onValidar,
-  onReversar,
 }: {
-  mov: MovimientoTesoreria
+  mov: MovimientoTableRow
+  modo: 'pendiente' | 'historico'
   monedaSimbolo: string
-  onValidar: (m: MovimientoTesoreria) => void
-  onReversar: (m: MovimientoTesoreria) => void
 }) {
   const isReversado = mov.reversado === 1
   const isValidado = mov.validado === 1
-
-  const descripcion =
-    ('descripcion' in mov && mov.descripcion) ||
-    ('observacion' in mov && (mov as MovBancario).observacion) ||
-    '—'
+  const monto = parseFloat(mov.monto)
 
   return (
-    <tr className={cn('hover:bg-muted/30 transition-colors', isReversado && 'opacity-50')}>
+    <tr
+      className={cn(
+        'hover:bg-muted/30 transition-colors',
+        isReversado && 'opacity-50'
+      )}
+    >
+      {/* Fecha / Hora */}
       <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
-        {String(mov.fecha).slice(0, 10)}
+        {formatFechaHora(mov.fecha, mov.created_at)}
       </td>
+
+      {/* Referencia */}
+      <td className="py-3 px-4 text-xs text-muted-foreground max-w-[120px] truncate">
+        {mov.referencia ?? '-'}
+      </td>
+
+      {/* Modulo origen */}
       <td className="py-3 px-4">
-        <span
-          className={cn(
-            'text-xs px-2 py-0.5 rounded-full font-medium',
-            ORIGEN_COLORS[mov.origen] ?? 'bg-gray-100 text-gray-600'
-          )}
-        >
-          {ORIGEN_LABELS[mov.origen] ?? mov.origen}
-        </span>
-      </td>
-      <td className="py-3 px-4 max-w-[200px]">
-        <p className="text-xs text-muted-foreground truncate">{descripcion}</p>
-      </td>
-      <td className="py-3 px-4 text-center">
-        {mov.tipo === 'INGRESO' ? (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
-            <ArrowDown size={12} weight="bold" />
-            IN
+        <div className="flex flex-col gap-0.5">
+          <span
+            className={cn(
+              'text-xs px-2 py-0.5 rounded-full font-medium w-fit',
+              ORIGEN_COLORS[mov.origen] ?? 'bg-gray-100 text-gray-600'
+            )}
+          >
+            {ORIGEN_LABELS[mov.origen] ?? mov.origen}
           </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-red-600">
-            <ArrowUp size={12} weight="bold" />
-            OUT
-          </span>
-        )}
-      </td>
-      <td className="py-3 px-4 text-right tabular-nums font-medium text-sm">
-        <span className={mov.tipo === 'INGRESO' ? 'text-green-700' : 'text-red-700'}>
-          {monedaSimbolo} {formatUsd(parseFloat(mov.monto))}
-        </span>
-      </td>
-      <td className="py-3 px-4 text-right tabular-nums text-xs text-muted-foreground">
-        {monedaSimbolo} {formatUsd(parseFloat(mov.saldo_nuevo))}
-      </td>
-      <td className="py-3 px-4 text-center">
-        <EstadoBadge validado={isValidado} reversado={isReversado} />
-      </td>
-      <td className="py-3 px-4 text-right">
-        <div className="flex items-center justify-end gap-1">
-          {!isReversado && !isValidado && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs text-green-700 hover:bg-green-50"
-              onClick={() => onValidar(mov)}
-            >
-              Validar
-            </Button>
-          )}
-          {!isReversado && (
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
-              onClick={() => onReversar(mov)}
-            >
-              Reversar
-            </Button>
+          {mov.descripcion && (
+            <span className="text-xs text-muted-foreground truncate max-w-[160px]">
+              {mov.descripcion}
+            </span>
           )}
         </div>
       </td>
+
+      {/* Ingreso */}
+      <td className="py-3 px-4 text-right tabular-nums">
+        {mov.tipo === 'INGRESO' ? (
+          <span className="text-green-700 font-medium text-sm">
+            {monedaSimbolo} {formatUsd(monto)}
+          </span>
+        ) : null}
+      </td>
+
+      {/* Egreso */}
+      <td className="py-3 px-4 text-right tabular-nums">
+        {mov.tipo === 'EGRESO' ? (
+          <span className="text-red-700 font-medium text-sm">
+            {monedaSimbolo} {formatUsd(monto)}
+          </span>
+        ) : null}
+      </td>
+
+      {/* Saldo */}
+      <td className="py-3 px-4 text-right tabular-nums text-xs text-muted-foreground">
+        {monedaSimbolo} {formatUsd(parseFloat(mov.saldo_nuevo))}
+      </td>
+
+      {/* Estado (solo historico) */}
+      {modo === 'historico' && (
+        <td className="py-3 px-4 text-center">
+          <EstadoBadge validado={isValidado} reversado={isReversado} />
+        </td>
+      )}
+
+      {/* Acciones (solo pendiente) */}
+      {modo === 'pendiente' && (
+        <td className="py-3 px-4 text-right">
+          <div className="flex items-center justify-end gap-1">
+            {!isReversado && !isValidado && mov.onValidar && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-green-700 hover:bg-green-50"
+                onClick={() => mov.onValidar!(mov.id)}
+              >
+                Validar
+              </Button>
+            )}
+            {!isReversado && mov.onReversar && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+                onClick={() => mov.onReversar!(mov.id)}
+              >
+                Reversar
+              </Button>
+            )}
+          </div>
+        </td>
+      )}
     </tr>
   )
 }
+
+// ─── Badge de estado ──────────────────────────────────────────
 
 function EstadoBadge({
   validado,

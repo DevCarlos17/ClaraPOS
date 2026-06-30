@@ -17,16 +17,50 @@ import { formatUsd } from '@/lib/currency'
 import { todayStr, daysAgo } from '@/lib/dates'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCuentasTesoreria, type CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
-import { useMovBancarios } from '@/features/caja/hooks/use-mov-bancarios'
-import { useMovCajaFuerte } from '../hooks/use-mov-caja-fuerte'
+import {
+  useMovBancariosFiltrados,
+  type MovBancario,
+} from '@/features/caja/hooks/use-mov-bancarios'
+import {
+  useMovCajaFuerteFiltrados,
+  type MovCajaFuerte,
+} from '../hooks/use-mov-caja-fuerte'
 import { useTraspasos, reversarTraspaso, type TraspasoEnriquecido } from '../hooks/use-traspasos'
+import {
+  validarMovBancario,
+  validarMovCajaFuerte,
+} from '../hooks/use-conciliacion-tesoreria'
 import { CuentasOverview } from './cuentas-overview'
-import { MovimientosTable, type MovimientoTesoreria } from './movimientos-table'
+import { MovimientosTable, type MovimientoTesoreria, type MovimientoTableRow } from './movimientos-table'
 import { CajaFuerteModal } from './caja-fuerte-modal'
 import { MovimientoManualModal } from './movimiento-manual-modal'
 import { TraspasoModal } from './traspaso-modal'
 import { ReversoModal } from './reverso-modal'
 import type { CajaFuerte } from '../hooks/use-caja-fuerte'
+
+// ─── Helper: convertir movimiento a fila de tabla ────────────
+
+function toMovRow(
+  mov: MovBancario | MovCajaFuerte,
+  onValidar?: (id: string) => void,
+  onReversar?: (id: string) => void,
+): MovimientoTableRow {
+  return {
+    id: mov.id,
+    tipo: mov.tipo,
+    origen: mov.origen,
+    referencia: mov.referencia,
+    descripcion: mov.descripcion,
+    monto: mov.monto,
+    saldo_nuevo: mov.saldo_nuevo,
+    fecha: mov.fecha,
+    created_at: mov.created_at,
+    validado: mov.validado,
+    reversado: mov.reversado,
+    onValidar,
+    onReversar,
+  }
+}
 
 // ─── Tabla de traspasos ──────────────────────────────────────
 
@@ -61,12 +95,13 @@ function TraspasoRow({
       <td className="py-3 px-4 text-right tabular-nums text-sm">
         {traspaso.moneda_destino_codigo} {formatUsd(parseFloat(traspaso.monto_destino))}
       </td>
-      {traspaso.tasa_cambio && (
+      {traspaso.tasa_cambio ? (
         <td className="py-3 px-4 text-right text-xs text-muted-foreground">
           {parseFloat(traspaso.tasa_cambio).toFixed(4)}
         </td>
+      ) : (
+        <td className="py-3 px-4" />
       )}
-      {!traspaso.tasa_cambio && <td className="py-3 px-4" />}
       <td className="py-3 px-4 text-center">
         {traspaso.reversado === 1 ? (
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
@@ -96,19 +131,31 @@ function TraspasoRow({
   )
 }
 
-// ─── Pagina principal ────────────────────────────────────────
+// ─── Componente principal ────────────────────────────────────
 
 export function ConciliacionTesoreria() {
   const { user } = useCurrentUser()
 
-  // Estado de UI
+  // Seleccion de cuenta
   const [selectedCuenta, setSelectedCuenta] = useState<CuentaTesoreria | null>(null)
-  const [fechaDesde, setFechaDesde] = useState(daysAgo(30))
-  const [fechaHasta, setFechaHasta] = useState(todayStr())
-  const [queryParams, setQueryParams] = useState<{ desde: string; hasta: string }>({
-    desde: daysAgo(30),
-    hasta: todayStr(),
-  })
+
+  // Tabs
+  const [activeTab, setActiveTab] = useState<'pendiente' | 'historico' | 'traspasos'>('pendiente')
+
+  // Filtros de historico (inputs — no aplicados hasta "Consultar")
+  const [filterDesde, setFilterDesde] = useState(daysAgo(30))
+  const [filterHasta, setFilterHasta] = useState(todayStr())
+  const [filterTipo, setFilterTipo] = useState<'INGRESO' | 'EGRESO' | ''>('')
+  const [filterSearch, setFilterSearch] = useState('')
+
+  // Filtros aplicados (se actualizan al hacer clic en "Consultar")
+  const [appliedDesde, setAppliedDesde] = useState(daysAgo(30))
+  const [appliedHasta, setAppliedHasta] = useState(todayStr())
+  const [appliedTipo, setAppliedTipo] = useState<'INGRESO' | 'EGRESO' | ''>('')
+  const [appliedSearch, setAppliedSearch] = useState('')
+
+  // Paginacion historico
+  const [histPage, setHistPage] = useState(1)
 
   // Modales
   const [showCajaFuerteModal, setShowCajaFuerteModal] = useState(false)
@@ -120,42 +167,80 @@ export function ConciliacionTesoreria() {
   // Datos
   const { cuentas, isLoading: loadingCuentas } = useCuentasTesoreria()
 
-  // Movimientos bancarios (solo si cuenta es BANCO)
-  const { movimientos: movBancarios, isLoading: loadingBancarios } = useMovBancarios(
-    selectedCuenta?.tipo === 'BANCO' ? selectedCuenta.id : null,
-    queryParams.desde,
-    queryParams.hasta
-  )
+  const bancoId = selectedCuenta?.tipo === 'BANCO' ? selectedCuenta.id : ''
+  const cajaId = selectedCuenta?.tipo === 'CAJA_FUERTE' ? selectedCuenta.id : ''
 
-  // Movimientos caja fuerte (solo si cuenta es CAJA_FUERTE)
-  const { movimientos: movCaja, isLoading: loadingCaja } = useMovCajaFuerte(
-    selectedCuenta?.tipo === 'CAJA_FUERTE' ? selectedCuenta.id : null,
-    queryParams.desde,
-    queryParams.hasta
-  )
+  // Pendientes
+  const pendienteBancoResult = useMovBancariosFiltrados({ bancoId, estado: 'pendiente' })
+  const pendienteCajaResult = useMovCajaFuerteFiltrados({ cajaId, estado: 'pendiente' })
 
-  // Traspasos
-  const { traspasos, isLoading: loadingTraspasos } = useTraspasos(
-    queryParams.desde,
-    queryParams.hasta
-  )
+  // Historico
+  const historicoBancoResult = useMovBancariosFiltrados({
+    bancoId,
+    estado: 'historico',
+    desde: appliedDesde,
+    hasta: appliedHasta,
+    tipo: appliedTipo || undefined,
+    search: appliedSearch || undefined,
+    page: histPage,
+  })
+  const historicoCajaResult = useMovCajaFuerteFiltrados({
+    cajaId,
+    estado: 'historico',
+    desde: appliedDesde,
+    hasta: appliedHasta,
+    tipo: appliedTipo || undefined,
+    search: appliedSearch || undefined,
+    page: histPage,
+  })
 
-  // Unificar movimientos segun cuenta seleccionada
-  const movimientos: MovimientoTesoreria[] = selectedCuenta
-    ? selectedCuenta.tipo === 'BANCO'
-      ? movBancarios.map((m) => ({ ...m, _source: 'BANCO' as const }))
-      : movCaja.map((m) => ({ ...m, _source: 'CAJA_FUERTE' as const }))
-    : []
+  // Traspasos (sin filtro de fecha — muestra todos hasta 200)
+  const { traspasos, isLoading: loadingTraspasos } = useTraspasos()
 
-  const isLoadingMovs =
-    selectedCuenta?.tipo === 'BANCO' ? loadingBancarios : loadingCaja
+  // Resultados activos segun tipo de cuenta
+  const pendienteResult =
+    selectedCuenta?.tipo === 'BANCO' ? pendienteBancoResult : pendienteCajaResult
+  const historicoResult =
+    selectedCuenta?.tipo === 'BANCO' ? historicoBancoResult : historicoCajaResult
 
-  function handleConsultar() {
-    if (!fechaDesde || !fechaHasta) {
-      toast.error('Seleccione rango de fechas')
-      return
+  // ─── Handlers ────────────────────────────────────────────────
+
+  function handleSelectCuenta(cuenta: CuentaTesoreria) {
+    setSelectedCuenta(cuenta)
+    setHistPage(1)
+  }
+
+  function handleConsultarHistorico() {
+    setAppliedDesde(filterDesde)
+    setAppliedHasta(filterHasta)
+    setAppliedTipo(filterTipo)
+    setAppliedSearch(filterSearch)
+    setHistPage(1)
+  }
+
+  async function handleValidarMov(id: string) {
+    if (!user?.id) return
+    try {
+      if (selectedCuenta?.tipo === 'BANCO') {
+        await validarMovBancario(id, user.id)
+      } else {
+        await validarMovCajaFuerte(id, user.id)
+      }
+      toast.success('Movimiento validado')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al validar')
     }
-    setQueryParams({ desde: fechaDesde, hasta: fechaHasta })
+  }
+
+  function handleReversarMov(id: string) {
+    if (!selectedCuenta) return
+    if (selectedCuenta.tipo === 'BANCO') {
+      const mov = pendienteBancoResult.data.find((m) => m.id === id)
+      if (mov) setMovParaReversar({ ...mov, _source: 'BANCO' as const })
+    } else {
+      const mov = pendienteCajaResult.data.find((m) => m.id === id)
+      if (mov) setMovParaReversar({ ...mov, _source: 'CAJA_FUERTE' as const })
+    }
   }
 
   async function handleReversarTraspaso(traspaso: TraspasoEnriquecido) {
@@ -177,6 +262,18 @@ export function ConciliacionTesoreria() {
       toast.error(err instanceof Error ? err.message : 'Error al reversar traspaso')
     }
   }
+
+  // ─── Filas de tabla ──────────────────────────────────────────
+
+  const pendienteMovRows: MovimientoTableRow[] = pendienteResult.data.map((mov) =>
+    toMovRow(mov, handleValidarMov, handleReversarMov)
+  )
+
+  const historicoMovRows: MovimientoTableRow[] = historicoResult.data.map((mov) =>
+    toMovRow(mov)
+  )
+
+  // ─── Render ──────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
@@ -219,117 +316,174 @@ export function ConciliacionTesoreria() {
         <CuentasOverview
           cuentas={cuentas}
           selectedId={selectedCuenta?.id ?? null}
-          onSelect={setSelectedCuenta}
+          onSelect={handleSelectCuenta}
         />
       )}
 
-      {/* Filtros de fecha */}
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
-          <Label className="text-xs">Desde</Label>
-          <Input
-            type="date"
-            value={fechaDesde}
-            onChange={(e) => setFechaDesde(e.target.value)}
-            className="h-8 text-sm w-36"
-          />
+      {/* Contenido principal */}
+      {!selectedCuenta ? (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm gap-2">
+          <ArrowsLeftRight size={32} className="opacity-30" />
+          <p>Seleccione una cuenta para ver sus movimientos</p>
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs">Hasta</Label>
-          <Input
-            type="date"
-            value={fechaHasta}
-            onChange={(e) => setFechaHasta(e.target.value)}
-            className="h-8 text-sm w-36"
-          />
-        </div>
-        <Button size="sm" variant="outline" onClick={handleConsultar}>
-          <ArrowsClockwise size={14} className="mr-1.5" />
-          Consultar
-        </Button>
-      </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Encabezado de cuenta */}
+          <div>
+            <h3 className="font-semibold text-base">{selectedCuenta.nombre}</h3>
+            <p className="text-xs text-muted-foreground">
+              {selectedCuenta.moneda_codigo}
+              {' · '}
+              {selectedCuenta.tipo === 'BANCO' ? 'Cuenta bancaria' : 'Caja fuerte'}
+            </p>
+          </div>
 
-      {/* Tabs */}
-      <Tabs defaultValue="movimientos">
-        <TabsList>
-          <TabsTrigger value="movimientos">Movimientos</TabsTrigger>
-          <TabsTrigger value="traspasos">Traspasos</TabsTrigger>
-        </TabsList>
+          {/* Tabs */}
+          <Tabs
+            value={activeTab}
+            onValueChange={(v) => setActiveTab(v as typeof activeTab)}
+          >
+            <TabsList>
+              <TabsTrigger value="pendiente">Pendientes</TabsTrigger>
+              <TabsTrigger value="historico">Historico</TabsTrigger>
+              <TabsTrigger value="traspasos">Traspasos</TabsTrigger>
+            </TabsList>
 
-        <TabsContent value="movimientos" className="mt-4">
-          {!selectedCuenta ? (
-            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm gap-2">
-              <ArrowsLeftRight size={32} className="opacity-30" />
-              <p>Seleccione una cuenta para ver sus movimientos</p>
-            </div>
-          ) : (
-            <MovimientosTable
-              movimientos={movimientos}
-              isLoading={isLoadingMovs}
-              monedaSimbolo={selectedCuenta.moneda_simbolo}
-              onValidar={(mov) => {
-                // Validar directamente sin modal
-                import('../hooks/use-conciliacion-tesoreria').then(
-                  ({ validarMovBancario, validarMovCajaFuerte }) => {
-                    if (!user?.id) return
-                    const fn =
-                      mov._source === 'BANCO' ? validarMovBancario : validarMovCajaFuerte
-                    fn(mov.id, user.id)
-                      .then(() => toast.success('Movimiento validado'))
-                      .catch((err: unknown) =>
-                        toast.error(
-                          err instanceof Error ? err.message : 'Error al validar'
-                        )
-                      )
-                  }
-                )
-              }}
-              onReversar={(mov) => setMovParaReversar(mov)}
-            />
-          )}
-        </TabsContent>
+            {/* Tab: Pendientes */}
+            <TabsContent value="pendiente" className="mt-4">
+              <MovimientosTable
+                movimientos={pendienteMovRows}
+                modo="pendiente"
+                loading={pendienteResult.isLoading}
+                monedaSimbolo={selectedCuenta.moneda_simbolo}
+              />
+            </TabsContent>
 
-        <TabsContent value="traspasos" className="mt-4">
-          {loadingTraspasos ? (
-            <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
-              Cargando traspasos...
-            </div>
-          ) : traspasos.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm gap-2">
-              <ArrowsLeftRight size={32} className="opacity-30" />
-              <p>No hay traspasos para el periodo seleccionado</p>
-            </div>
-          ) : (
-            <div className="rounded-lg border overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b bg-muted/50">
-                      <th className="text-left py-3 px-4 font-medium text-muted-foreground">Fecha</th>
-                      <th className="text-left py-3 px-4 font-medium text-muted-foreground">Origen</th>
-                      <th className="text-left py-3 px-4 font-medium text-muted-foreground">Destino</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">Monto origen</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">Monto destino</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">Tasa</th>
-                      <th className="text-center py-3 px-4 font-medium text-muted-foreground">Estado</th>
-                      <th className="text-right py-3 px-4 font-medium text-muted-foreground">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {traspasos.map((t) => (
-                      <TraspasoRow
-                        key={t.id}
-                        traspaso={t}
-                        onReversar={handleReversarTraspaso}
-                      />
-                    ))}
-                  </tbody>
-                </table>
+            {/* Tab: Historico */}
+            <TabsContent value="historico" className="mt-4">
+              {/* Barra de filtros */}
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div className="space-y-1">
+                  <Label className="text-xs">Desde</Label>
+                  <Input
+                    type="date"
+                    value={filterDesde}
+                    onChange={(e) => setFilterDesde(e.target.value)}
+                    className="h-8 text-sm w-36"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Hasta</Label>
+                  <Input
+                    type="date"
+                    value={filterHasta}
+                    onChange={(e) => setFilterHasta(e.target.value)}
+                    className="h-8 text-sm w-36"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Tipo</Label>
+                  <select
+                    value={filterTipo}
+                    onChange={(e) =>
+                      setFilterTipo(e.target.value as '' | 'INGRESO' | 'EGRESO')
+                    }
+                    className="flex h-8 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  >
+                    <option value="">Todos</option>
+                    <option value="INGRESO">Ingreso</option>
+                    <option value="EGRESO">Egreso</option>
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Buscar</Label>
+                  <Input
+                    value={filterSearch}
+                    onChange={(e) => setFilterSearch(e.target.value)}
+                    placeholder="Referencia o descripcion"
+                    className="h-8 text-sm w-44"
+                  />
+                </div>
+                <Button size="sm" variant="outline" onClick={handleConsultarHistorico}>
+                  <ArrowsClockwise size={14} className="mr-1.5" />
+                  Consultar
+                </Button>
               </div>
-            </div>
-          )}
-        </TabsContent>
-      </Tabs>
+
+              <MovimientosTable
+                movimientos={historicoMovRows}
+                modo="historico"
+                loading={historicoResult.isLoading}
+                monedaSimbolo={selectedCuenta.moneda_simbolo}
+                pagination={{
+                  page: histPage,
+                  totalPages: historicoResult.totalPages,
+                  total: historicoResult.total,
+                  onPageChange: setHistPage,
+                }}
+              />
+            </TabsContent>
+
+            {/* Tab: Traspasos */}
+            <TabsContent value="traspasos" className="mt-4">
+              {loadingTraspasos ? (
+                <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
+                  Cargando traspasos...
+                </div>
+              ) : traspasos.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-muted-foreground text-sm gap-2">
+                  <ArrowsLeftRight size={32} className="opacity-30" />
+                  <p>No hay traspasos registrados</p>
+                </div>
+              ) : (
+                <div className="rounded-lg border overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+                            Fecha
+                          </th>
+                          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+                            Origen
+                          </th>
+                          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+                            Destino
+                          </th>
+                          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                            Monto origen
+                          </th>
+                          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                            Monto destino
+                          </th>
+                          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                            Tasa
+                          </th>
+                          <th className="text-center py-3 px-4 font-medium text-muted-foreground">
+                            Estado
+                          </th>
+                          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+                            Acciones
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {traspasos.map((t) => (
+                          <TraspasoRow
+                            key={t.id}
+                            traspaso={t}
+                            onReversar={handleReversarTraspaso}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </div>
+      )}
 
       {/* Modales */}
       <CajaFuerteModal

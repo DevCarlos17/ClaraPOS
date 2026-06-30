@@ -692,6 +692,69 @@ export interface MovimientosBancarios {
   validado_por: string | null
   validado_at: string | null
   observacion: string | null
+  reversado: number
+  reverso_de: string | null
+  descripcion: string | null
+  fecha: string
+  created_at: string
+  created_by: string | null
+}
+
+export interface CajaFuerte {
+  id: string
+  empresa_id: string
+  nombre: string
+  moneda_id: string
+  saldo_actual: string      // NUMERIC stored as text
+  descripcion: string | null
+  is_active: number
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export interface MovCajaFuerte {
+  id: string
+  empresa_id: string
+  caja_fuerte_id: string
+  tipo: string              // INGRESO | EGRESO
+  origen: string            // DEPOSITO_CIERRE | GASTO | TRASPASO | MANUAL | REVERSO
+  monto: string
+  saldo_anterior: string
+  saldo_nuevo: string
+  doc_origen_id: string | null
+  doc_origen_tipo: string | null
+  referencia: string | null
+  descripcion: string | null
+  validado: number
+  validado_por: string | null
+  validado_at: string | null
+  reversado: number
+  reverso_de: string | null
+  fecha: string
+  created_at: string
+  created_by: string | null
+}
+
+export interface TraspasoTesoreria {
+  id: string
+  empresa_id: string
+  cuenta_origen_tipo: string
+  cuenta_origen_id: string
+  mov_origen_id: string | null
+  cuenta_destino_tipo: string
+  cuenta_destino_id: string
+  mov_destino_id: string | null
+  monto_origen: string
+  moneda_origen_id: string
+  monto_destino: string
+  moneda_destino_id: string
+  tasa_cambio: string | null
+  reversado: number
+  reversado_at: string | null
+  reversado_por: string | null
+  observacion: string | null
   fecha: string
   created_at: string
   created_by: string | null
@@ -1204,6 +1267,9 @@ export interface DB {
   sesiones_caja_detalle: SesionesCajaDetalle
   movimientos_metodo_cobro: MovimientosMetodoCobro
   movimientos_bancarios: MovimientosBancarios
+  caja_fuerte: CajaFuerte
+  mov_caja_fuerte: MovCajaFuerte
+  traspasos_tesoreria: TraspasoTesoreria
   // Retenciones ventas
   retenciones_iva_ventas: RetencionesIvaVentas
   retenciones_islr_ventas: RetencionesIslrVentas
