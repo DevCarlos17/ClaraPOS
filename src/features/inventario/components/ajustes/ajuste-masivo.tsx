@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   CheckCircle, CaretDown, CaretUp, ClipboardText,
@@ -60,6 +60,7 @@ export function AjusteMasivo() {
   const [busqueda, setBusqueda] = useState('')
   const [filtroDepto, setFiltroDepto] = useState('')
   const [soloConCambios, setSoloConCambios] = useState(false)
+  const [tablaMostrada, setTablaMostrada] = useState(false)
   const [conteos, setConteos] = useState<Record<string, string>>({})
   const [lotesSeleccionados, setLotesSeleccionados] = useState<Record<string, string>>({})
   const [, setConfirmando] = useState(false)
@@ -68,6 +69,10 @@ export function AjusteMasivo() {
   const [observaciones, setObservaciones] = useState('')
   const [aplicando, setAplicando] = useState(false)
   const [orden, setOrden] = useState<{ col: OrdenCol; dir: OrdenDir }>({ col: 'nombre', dir: 'asc' })
+
+  useEffect(() => {
+    setTablaMostrada(false)
+  }, [depositoId, filtroDepto])
 
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -502,170 +507,182 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                 )}
 
                 {/* Tabla / estados */}
-                {depositoId === '' || filtroDepto === '' ? (
+                {tablaMostrada ? (
+                  isLoading ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={i} className="h-10 bg-muted rounded-lg animate-pulse" />
+                      ))}
+                    </div>
+                  ) : productosFiltrados.length === 0 ? (
+                    <div className="text-center py-16 border border-dashed border-border rounded-2xl">
+                      <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        {productos.length === 0
+                          ? 'No hay productos de inventario'
+                          : 'No hay productos que coincidan con los filtros'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-border overflow-hidden shadow-sm">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/40">
+                              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                Codigo
+                              </th>
+                              <ThSort col="departamento" label="Departamento" />
+                              <ThSort col="nombre" label="Nombre" />
+                              <ThSort col="stock" label="Stock Actual" />
+                              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                Nuevo Stock
+                              </th>
+                              <ThSort col="diferencia" label="Diferencia" />
+                              {mostrarColumnaLotes && (
+                                <th className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                                  Lote
+                                </th>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/50">
+                            {productosFiltrados.map((p) => {
+                              const actual = parseFloat(p.stock)
+                              const nuevoStr = conteos[p.id] ?? ''
+                              const nuevoVal = nuevoStr !== '' ? parseFloat(nuevoStr) : null
+                              const diff = nuevoVal !== null && !isNaN(nuevoVal) ? nuevoVal - actual : null
+                              const hayCambio = diff !== null && Math.abs(diff) > 0.0001
+
+                              return (
+                                <tr
+                                  key={p.id}
+                                  className={cn(
+                                    'transition-colors duration-150',
+                                    hayCambio
+                                      ? 'bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                                      : 'hover:bg-muted/30',
+                                  )}
+                                >
+                                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground whitespace-nowrap">
+                                    {p.codigo}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
+                                    {p.nombre_departamento ?? '-'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-foreground">
+                                    <span className="flex items-center gap-1.5">
+                                      {p.nombre}
+                                      {p.maneja_lotes === 1 && (
+                                        <span title="Maneja lotes"><Package size={13} className="text-primary/60 shrink-0" /></span>
+                                      )}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground whitespace-nowrap">
+                                    {actual.toFixed(3)}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <input
+                                      type="number"
+                                      step="0.001"
+                                      min="0"
+                                      value={nuevoStr}
+                                      onChange={(e) => handleCambioConteo(p.id, e.target.value)}
+                                      placeholder={actual.toFixed(3)}
+                                      className={cn(
+                                        'w-28 h-8 px-2 text-sm text-right tabular-nums border rounded focus:outline-none focus:ring-2',
+                                        hayCambio
+                                          ? diff! > 0
+                                            ? 'border-green-400 bg-green-50 dark:bg-green-950/30 focus:ring-green-500'
+                                            : 'border-red-400 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
+                                          : 'border-input bg-white dark:bg-card focus:ring-primary',
+                                      )}
+                                    />
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
+                                    {diff === null ? (
+                                      <span className="text-muted-foreground/30">—</span>
+                                    ) : Math.abs(diff) < 0.0001 ? (
+                                      <span className="text-muted-foreground text-xs">sin cambio</span>
+                                    ) : diff > 0 ? (
+                                      <span className="font-semibold text-green-700 dark:text-green-400">+{diff.toFixed(3)}</span>
+                                    ) : (
+                                      <span className="font-semibold text-red-700 dark:text-red-400">{diff.toFixed(3)}</span>
+                                    )}
+                                  </td>
+                                  {mostrarColumnaLotes && (
+                                    <td className="px-3 py-2.5">
+                                      {p.maneja_lotes === 1 && hayCambio ? (
+                                        (() => {
+                                          const lotes = getLotesParaProducto(p.id)
+                                          if (lotes.length === 0) {
+                                            return (
+                                              <span className="text-xs text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                                                Sin lotes activos
+                                              </span>
+                                            )
+                                          }
+                                          const loteSeleccionado = lotesSeleccionados[p.id] ?? ''
+                                          return (
+                                            <select
+                                              value={loteSeleccionado}
+                                              onChange={(e) =>
+                                                setLotesSeleccionados((prev) => ({
+                                                  ...prev,
+                                                  [p.id]: e.target.value,
+                                                }))
+                                              }
+                                              className={cn(
+                                                'h-8 px-2 text-xs border rounded focus:outline-none focus:ring-2 focus:ring-primary min-w-[150px]',
+                                                loteSeleccionado
+                                                  ? 'border-green-400 bg-green-50 dark:bg-green-950/30'
+                                                  : 'border-amber-400 bg-amber-50 dark:bg-amber-950/30',
+                                              )}
+                                            >
+                                              <option value="">Seleccionar lote...</option>
+                                              {lotes.map((l) => (
+                                                <option key={l.id} value={l.id}>
+                                                  {l.nro_lote} — {parseFloat(l.cantidad_actual).toFixed(3)} uds
+                                                  {l.fecha_vencimiento ? ` (venc: ${l.fecha_vencimiento})` : ''}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          )
+                                        })()
+                                      ) : (
+                                        <span className="text-muted-foreground/30 text-xs">—</span>
+                                      )}
+                                    </td>
+                                  )}
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="px-4 py-2 bg-muted/40 border-t border-border text-xs text-muted-foreground">
+                        {productosFiltrados.length} producto(s) mostrado(s) de {productos.length} total
+                      </div>
+                    </div>
+                  )
+                ) : (
                   <div className="text-center py-16 border border-dashed border-border rounded-2xl">
                     <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
                     <p className="text-sm font-medium text-muted-foreground">
                       {depositoId === ''
                         ? 'Selecciona un deposito para comenzar el conteo'
-                        : 'Selecciona un departamento para ver los productos'}
+                        : filtroDepto === ''
+                        ? 'Selecciona un departamento para ver los productos'
+                        : 'Confirma la selección para generar la planilla de conteo'}
                     </p>
-                  </div>
-                ) : isLoading ? (
-                  <div className="space-y-2">
-                    {Array.from({ length: 8 }).map((_, i) => (
-                      <div key={i} className="h-10 bg-muted rounded-lg animate-pulse" />
-                    ))}
-                  </div>
-                ) : productosFiltrados.length === 0 ? (
-                  <div className="text-center py-16 border border-dashed border-border rounded-2xl">
-                    <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
-                    <p className="text-sm font-medium text-muted-foreground">
-                      {productos.length === 0
-                        ? 'No hay productos de inventario'
-                        : 'No hay productos que coincidan con los filtros'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-border overflow-hidden shadow-sm">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/40">
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                              Codigo
-                            </th>
-                            <ThSort col="departamento" label="Departamento" />
-                            <ThSort col="nombre" label="Nombre" />
-                            <ThSort col="stock" label="Stock Actual" />
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                              Nuevo Stock
-                            </th>
-                            <ThSort col="diferencia" label="Diferencia" />
-                            {mostrarColumnaLotes && (
-                              <th className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                                Lote
-                              </th>
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border/50">
-                          {productosFiltrados.map((p) => {
-                            const actual = parseFloat(p.stock)
-                            const nuevoStr = conteos[p.id] ?? ''
-                            const nuevoVal = nuevoStr !== '' ? parseFloat(nuevoStr) : null
-                            const diff = nuevoVal !== null && !isNaN(nuevoVal) ? nuevoVal - actual : null
-                            const hayCambio = diff !== null && Math.abs(diff) > 0.0001
-
-                            return (
-                              <tr
-                                key={p.id}
-                                className={cn(
-                                  'transition-colors duration-150',
-                                  hayCambio
-                                    ? 'bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30'
-                                    : 'hover:bg-muted/30',
-                                )}
-                              >
-                                <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground whitespace-nowrap">
-                                  {p.codigo}
-                                </td>
-                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
-                                  {p.nombre_departamento ?? '-'}
-                                </td>
-                                <td className="px-4 py-2.5 text-foreground">
-                                  <span className="flex items-center gap-1.5">
-                                    {p.nombre}
-                                    {p.maneja_lotes === 1 && (
-                                      <span title="Maneja lotes"><Package size={13} className="text-primary/60 shrink-0" /></span>
-                                    )}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground whitespace-nowrap">
-                                  {actual.toFixed(3)}
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  <input
-                                    type="number"
-                                    step="0.001"
-                                    min="0"
-                                    value={nuevoStr}
-                                    onChange={(e) => handleCambioConteo(p.id, e.target.value)}
-                                    placeholder={actual.toFixed(3)}
-                                    className={cn(
-                                      'w-28 h-8 px-2 text-sm text-right tabular-nums border rounded focus:outline-none focus:ring-2',
-                                      hayCambio
-                                        ? diff! > 0
-                                          ? 'border-green-400 bg-green-50 dark:bg-green-950/30 focus:ring-green-500'
-                                          : 'border-red-400 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
-                                        : 'border-input bg-white dark:bg-card focus:ring-primary',
-                                    )}
-                                  />
-                                </td>
-                                <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
-                                  {diff === null ? (
-                                    <span className="text-muted-foreground/30">—</span>
-                                  ) : Math.abs(diff) < 0.0001 ? (
-                                    <span className="text-muted-foreground text-xs">sin cambio</span>
-                                  ) : diff > 0 ? (
-                                    <span className="font-semibold text-green-700 dark:text-green-400">+{diff.toFixed(3)}</span>
-                                  ) : (
-                                    <span className="font-semibold text-red-700 dark:text-red-400">{diff.toFixed(3)}</span>
-                                  )}
-                                </td>
-                                {mostrarColumnaLotes && (
-                                  <td className="px-3 py-2.5">
-                                    {p.maneja_lotes === 1 && hayCambio ? (
-                                      (() => {
-                                        const lotes = getLotesParaProducto(p.id)
-                                        if (lotes.length === 0) {
-                                          return (
-                                            <span className="text-xs text-amber-600 dark:text-amber-400 whitespace-nowrap">
-                                              Sin lotes activos
-                                            </span>
-                                          )
-                                        }
-                                        const loteSeleccionado = lotesSeleccionados[p.id] ?? ''
-                                        return (
-                                          <select
-                                            value={loteSeleccionado}
-                                            onChange={(e) =>
-                                              setLotesSeleccionados((prev) => ({
-                                                ...prev,
-                                                [p.id]: e.target.value,
-                                              }))
-                                            }
-                                            className={cn(
-                                              'h-8 px-2 text-xs border rounded focus:outline-none focus:ring-2 focus:ring-primary min-w-[150px]',
-                                              loteSeleccionado
-                                                ? 'border-green-400 bg-green-50 dark:bg-green-950/30'
-                                                : 'border-amber-400 bg-amber-50 dark:bg-amber-950/30',
-                                            )}
-                                          >
-                                            <option value="">Seleccionar lote...</option>
-                                            {lotes.map((l) => (
-                                              <option key={l.id} value={l.id}>
-                                                {l.nro_lote} — {parseFloat(l.cantidad_actual).toFixed(3)} uds
-                                                {l.fecha_vencimiento ? ` (venc: ${l.fecha_vencimiento})` : ''}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        )
-                                      })()
-                                    ) : (
-                                      <span className="text-muted-foreground/30 text-xs">—</span>
-                                    )}
-                                  </td>
-                                )}
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="px-4 py-2 bg-muted/40 border-t border-border text-xs text-muted-foreground">
-                      {productosFiltrados.length} producto(s) mostrado(s) de {productos.length} total
-                    </div>
+                    <button
+                      onClick={() => setTablaMostrada(true)}
+                      disabled={!filtroDepto || !depositoId || depositoId === '__ALL__'}
+                      className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ClipboardText size={16} />
+                      Generar Planilla de Conteo
+                    </button>
                   </div>
                 )}
               </div>
