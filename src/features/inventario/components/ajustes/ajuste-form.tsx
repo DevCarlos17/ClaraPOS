@@ -209,9 +209,7 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
     setLineas((prev) => prev.map((l, i) => i !== index ? l : { ...l, cantidad: valor }))
   }, [])
 
-  const actualizarCosto = useCallback((index: number, valor: string) => {
-    setLineas((prev) => prev.map((l, i) => i !== index ? l : { ...l, costo_usd: valor }))
-  }, [])
+
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -358,71 +356,59 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
               </div>
 
               {lineas.length > 0 && (
-                <div className="border border-border rounded-lg overflow-hidden mb-3">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/60">
-                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Artículo</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground w-24">Cantidad</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground w-28">Costo USD</th>
-                        <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground w-24">Subtotal</th>
-                        <th className="w-8 px-2" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border/50">
-                      {lineas.map((linea, index) => {
-                        const cant = parseFloat(linea.cantidad)
-                        const costo = linea.costo_usd ? new Decimal(linea.costo_usd) : new Decimal(0)
-                        const subtotal = !isNaN(cant) && cant > 0 ? costo.times(cant) : new Decimal(0)
+                <div className="space-y-2 mb-3">
+                  {/* Cabecera */}
+                  <div className="grid grid-cols-[1fr_80px_100px_80px_32px] gap-2 px-3 py-1.5 bg-muted/60 rounded-lg text-xs font-medium text-muted-foreground">
+                    <span>Artículo</span>
+                    <span className="text-right">Cantidad</span>
+                    <span className="text-right">Costo USD</span>
+                    <span className="text-right">Subtotal</span>
+                    <span />
+                  </div>
 
-                        return (
-                          <tr key={index} className="hover:bg-muted/30">
-                            <td className="px-3 py-2">
-                              <ProductoBuscador
-                                value={linea.producto_id ? { id: linea.producto_id, nombre: linea.producto_nombre, codigo: linea.producto_codigo } : null}
-                                onSelect={(p) => actualizarProducto(index, p)}
-                                productos={productosActivos as any}
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="number"
-                                step="0.001"
-                                min="0.001"
-                                value={linea.cantidad}
-                                onChange={(e) => actualizarCantidad(index, e.target.value)}
-                                placeholder="0.000"
-                                className="w-full h-8 px-2 text-sm text-right border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary"
-                              />
-                            </td>
-                            <td className="px-3 py-2">
-                              <input
-                                type="number"
-                                step="0.00001"
-                                min="0"
-                                value={linea.costo_usd === '0' ? '' : linea.costo_usd}
-                                onChange={(e) => actualizarCosto(index, e.target.value || '0')}
-                                placeholder="auto"
-                                className="w-full h-8 px-2 text-sm text-right border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary"
-                              />
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-sm text-muted-foreground whitespace-nowrap">
-                              {subtotal.gt(0) ? formatUsd(subtotal.toNumber()) : '—'}
-                            </td>
-                            <td className="px-2 py-2 text-center">
-                              <button
-                                type="button"
-                                onClick={() => removerLinea(index)}
-                                className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
+                  {lineas.map((linea, index) => {
+                    const cant = parseFloat(linea.cantidad)
+                    const costo = linea.costo_usd && linea.costo_usd !== '0'
+                      ? new Decimal(linea.costo_usd)
+                      : new Decimal(0)
+                    const subtotal = !isNaN(cant) && cant > 0 && costo.gt(0)
+                      ? costo.times(new Decimal(linea.cantidad))
+                      : new Decimal(0)
+
+                    return (
+                      <div key={index} className="grid grid-cols-[1fr_80px_100px_80px_32px] gap-2 items-center px-3 py-2 border border-border rounded-lg bg-white hover:bg-muted/20">
+                        <ProductoBuscador
+                          value={linea.producto_id ? { id: linea.producto_id, nombre: linea.producto_nombre, codigo: linea.producto_codigo } : null}
+                          onSelect={(p) => actualizarProducto(index, p)}
+                          productos={productosActivos as any}
+                        />
+                        <input
+                          type="number"
+                          step="0.001"
+                          min="0.001"
+                          value={linea.cantidad}
+                          onChange={(e) => actualizarCantidad(index, e.target.value)}
+                          placeholder="0.000"
+                          className="h-8 px-2 text-sm text-right border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary w-full"
+                        />
+                        <div className="h-8 px-2 text-sm text-right flex items-center justify-end tabular-nums text-muted-foreground bg-muted/40 rounded border border-border/50">
+                          {linea.costo_usd && linea.costo_usd !== '0'
+                            ? `$${parseFloat(linea.costo_usd).toFixed(4)}`
+                            : <span className="text-muted-foreground/50 text-xs italic">sin costo</span>}
+                        </div>
+                        <div className="text-right tabular-nums text-sm text-muted-foreground whitespace-nowrap">
+                          {subtotal.gt(0) ? formatUsd(subtotal.toNumber()) : '—'}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removerLinea(index)}
+                          className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors justify-self-center"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
 
