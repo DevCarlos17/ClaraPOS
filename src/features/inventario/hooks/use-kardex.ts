@@ -337,3 +337,30 @@ export async function registrarMovimiento(params: {
   })
   return { gastoCreado }
 }
+
+export function useBuscarProductosKardex(query: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const isWildcard = query.trim() === '*'
+  const isBuscando = query.trim().length > 0
+  const like = `%${query.trim()}%`
+
+  const { data, isLoading } = useQuery<{ id: string; nombre: string; codigo: string }>(
+    isWildcard
+      ? 'SELECT id, nombre, codigo FROM productos WHERE empresa_id = ? ORDER BY nombre LIMIT 50'
+      : isBuscando
+        ? 'SELECT id, nombre, codigo FROM productos WHERE empresa_id = ? AND (nombre LIKE ? OR codigo LIKE ?) ORDER BY nombre LIMIT 15'
+        : '',
+    isWildcard
+      ? [empresaId]
+      : isBuscando
+        ? [empresaId, like, like]
+        : []
+  )
+
+  return {
+    productos: isBuscando ? (data ?? []) : [],
+    isLoading,
+  }
+}
