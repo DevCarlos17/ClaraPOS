@@ -22,7 +22,7 @@ const TAB_ORDER: TabActiva[] = ['movimientos', 'ajustes', 'motivos']
 
 const TABS = [
   { key: 'movimientos' as const, label: 'Movimientos' },
-  { key: 'ajustes'     as const, label: 'Ajuste Masivo' },
+  { key: 'ajustes'     as const, label: 'Ajustes' },
   { key: 'motivos'     as const, label: 'Motivos de Ajuste' },
 ]
 

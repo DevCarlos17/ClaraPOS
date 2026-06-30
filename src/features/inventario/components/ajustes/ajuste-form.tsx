@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Plus, X, MagnifyingGlass } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import Decimal from 'decimal.js'
@@ -6,6 +7,7 @@ import { crearAjuste, aplicarAjuste } from '@/features/inventario/hooks/use-ajus
 import { useAjusteMotivosActivos } from '@/features/inventario/hooks/use-ajuste-motivos'
 import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
+import { useUnidades } from '@/features/inventario/hooks/use-unidades'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -24,9 +26,10 @@ interface LineaItem {
   producto_codigo: string
   costo_usd: string        // string preservando precisión completa del DB
   cantidad: string
+  es_decimal: boolean      // true = acepta decimales, false = solo enteros
 }
 
-// Buscador inline de productos por línea
+// Buscador inline de productos por línea — usa portal para evitar clipping
 function ProductoBuscador({
   value,
   onSelect,
@@ -38,6 +41,8 @@ function ProductoBuscador({
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
+  const inputRef = useRef<HTMLInputElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   const sugerencias = useMemo(() => {
@@ -50,6 +55,21 @@ function ProductoBuscador({
       (p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q)
     ).slice(0, 15)
   }, [query, productos])
+
+  function calcularPosicion() {
+    if (inputRef.current) {
+      const rect = inputRef.current.getBoundingClientRect()
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 2,
+        left: rect.left,
+        width: Math.max(rect.width, 260),
+        zIndex: 9999,
+        maxHeight: 208,
+        overflowY: 'auto' as const,
+      })
+    }
+  }
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -84,21 +104,25 @@ function ProductoBuscador({
   }
 
   return (
-    <div ref={wrapperRef} className="relative">
+    <div ref={wrapperRef}>
       <div className="relative">
         <MagnifyingGlass className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50 pointer-events-none" />
         <input
+          ref={inputRef}
           type="text"
           value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true) }}
-          onFocus={() => setOpen(true)}
+          onChange={(e) => { setQuery(e.target.value); calcularPosicion(); setOpen(true) }}
+          onFocus={() => { calcularPosicion(); setOpen(true) }}
           onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
           placeholder="Buscar (* = todos)"
           className="w-full h-8 pl-6 pr-2 text-sm border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary"
         />
       </div>
-      {open && sugerencias.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-white shadow-lg max-h-52 overflow-auto">
+      {open && sugerencias.length > 0 && createPortal(
+        <div
+          style={dropdownStyle}
+          className="rounded-md border border-border bg-white shadow-xl"
+        >
           {sugerencias.map((p) => (
             <button
               key={p.id}
@@ -110,7 +134,8 @@ function ProductoBuscador({
               <span className="truncate">{p.nombre}</span>
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
@@ -121,8 +146,18 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   const { motivos } = useAjusteMotivosActivos()
   const { productos } = useProductos()
   const { depositos } = useDepositosActivos()
+  const { unidades } = useUnidades()
   const { user } = useCurrentUser()
   const { tasa: tasaActual } = useTasaActual()
+
+  const unidadMap = useMemo(
+    () => new Map(unidades.map((u) => [u.id, u])),
+    [unidades]
+  )
+  const productoMap = useMemo(
+    () => new Map(productos.map((p) => [p.id, p])),
+    [productos]
+  )
 
   const [tipoRegistro, setTipoRegistro] = useState<'S' | 'E' | ''>('')
   const [motivoId, setMotivoId] = useState('')
@@ -186,7 +221,7 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
   const agregarLinea = useCallback(() => {
     setLineas((prev) => [
       ...prev,
-      { producto_id: '', producto_nombre: '', producto_codigo: '', costo_usd: '0', cantidad: '' },
+      { producto_id: '', producto_nombre: '', producto_codigo: '', costo_usd: '0', cantidad: '', es_decimal: true },
     ])
   }, [])
 
@@ -198,12 +233,16 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
     index: number,
     p: { id: string; nombre: string; codigo: string; costo_usd: string }
   ) => {
+    const prod = productoMap.get(p.id) as Record<string, unknown> | undefined
+    const unidadId = prod?.unidad_id as string | undefined
+    const unidad = unidadId ? unidadMap.get(unidadId) : undefined
+    const esDecimal = unidad ? unidad.es_decimal === 1 : true
     setLineas((prev) => prev.map((l, i) =>
       i !== index
         ? l
-        : { ...l, producto_id: p.id, producto_nombre: p.nombre, producto_codigo: p.codigo, costo_usd: p.costo_usd || '0' }
+        : { ...l, producto_id: p.id, producto_nombre: p.nombre, producto_codigo: p.codigo, costo_usd: p.costo_usd || '0', es_decimal: esDecimal, cantidad: '' }
     ))
-  }, [])
+  }, [productoMap, unidadMap])
 
   const actualizarCantidad = useCallback((index: number, valor: string) => {
     setLineas((prev) => prev.map((l, i) => i !== index ? l : { ...l, cantidad: valor }))
@@ -384,16 +423,23 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
                         />
                         <input
                           type="number"
-                          step="0.001"
-                          min="0.001"
+                          step={linea.es_decimal ? '0.001' : '1'}
+                          min={linea.es_decimal ? '0.001' : '1'}
                           value={linea.cantidad}
-                          onChange={(e) => actualizarCantidad(index, e.target.value)}
-                          placeholder="0.000"
+                          onChange={(e) => {
+                            let val = e.target.value
+                            if (!linea.es_decimal && val !== '') {
+                              val = String(Math.max(1, Math.floor(parseFloat(val) || 0)))
+                            }
+                            actualizarCantidad(index, val)
+                          }}
+                          onWheel={(e) => e.currentTarget.blur()}
+                          placeholder={linea.es_decimal ? '0.000' : '0'}
                           className="h-8 px-2 text-sm text-right border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary w-full"
                         />
                         <div className="h-8 px-2 text-sm text-right flex items-center justify-end tabular-nums text-muted-foreground bg-muted/40 rounded border border-border/50">
                           {linea.costo_usd && linea.costo_usd !== '0'
-                            ? `$${parseFloat(linea.costo_usd).toFixed(4)}`
+                            ? `$${linea.costo_usd}`
                             : <span className="text-muted-foreground/50 text-xs italic">sin costo</span>}
                         </div>
                         <div className="text-right tabular-nums text-sm text-muted-foreground whitespace-nowrap">
