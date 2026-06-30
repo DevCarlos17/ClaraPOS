@@ -68,11 +68,13 @@ export function AjusteMasivo() {
   const [motivoRestaId, setMotivoRestaId] = useState('')
   const [observaciones, setObservaciones] = useState('')
   const [aplicando, setAplicando] = useState(false)
+  const [conteoAplicado, setConteoAplicado] = useState(false)
   const [orden, setOrden] = useState<{ col: OrdenCol; dir: OrdenDir }>({ col: 'nombre', dir: 'asc' })
 
   useEffect(() => {
     setTablaMostrada(false)
-  }, [depositoId, filtroDepto])
+    setConteoAplicado(false)
+  }, [depositoId, filtroDepto, motivoRestaId])
 
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -206,6 +208,15 @@ export function AjusteMasivo() {
     setSoloConCambios(false)
   }
 
+  function handleCancelarPlanilla() {
+    setTablaMostrada(false)
+    setConteoAplicado(false)
+    setConteos({})
+    setLotesSeleccionados({})
+    setSoloConCambios(false)
+    setObservaciones('')
+  }
+
   function handleOrden(col: OrdenCol) {
     setOrden((prev) =>
       prev.col === col
@@ -295,6 +306,8 @@ export function AjusteMasivo() {
       setLotesSeleccionados({})
       setSoloConCambios(false)
       setObservaciones('')
+      setConteoAplicado(true)
+      setTablaMostrada(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al aplicar conteo')
     } finally {
@@ -401,7 +414,8 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     <select
                       value={depositoId}
                       onChange={(e) => setDepositoId(e.target.value)}
-                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px]"
+                      disabled={tablaMostrada}
+                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px] disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <option value="">Seleccionar deposito...</option>
                       <option value="__ALL__">Todos los depositos</option>
@@ -417,12 +431,31 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     <select
                       value={filtroDepto}
                       onChange={(e) => setFiltroDepto(e.target.value)}
-                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px]"
+                      disabled={tablaMostrada}
+                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px] disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <option value="">Seleccionar departamento...</option>
                       <option value="__ALL__">Todos los departamentos</option>
                       {deptoOpciones.map(([id, nombre]) => (
                         <option key={id} value={id}>{nombre}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Motivo de salida (causa del ajuste) */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Causa <span className="text-destructive">*</span>
+                    </label>
+                    <select
+                      value={motivoRestaId}
+                      onChange={(e) => setMotivoRestaId(e.target.value)}
+                      disabled={tablaMostrada}
+                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px] disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Seleccionar causa...</option>
+                      {motivosResta.map((m) => (
+                        <option key={m.id} value={m.id}>{m.nombre}</option>
                       ))}
                     </select>
                   </div>
@@ -454,8 +487,17 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                   </label>
 
                   {/* Botones */}
-                  <div className="flex gap-2 ml-auto self-end">
-                    {cambios.total > 0 && (
+                  <div className="flex gap-2 ml-auto self-end flex-wrap">
+                    {tablaMostrada && (
+                      <button
+                        onClick={handleCancelarPlanilla}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive bg-white dark:bg-muted border border-destructive/40 rounded-md hover:bg-destructive/10 transition-colors"
+                      >
+                        <ArrowCounterClockwise size={15} />
+                        Cancelar Planilla
+                      </button>
+                    )}
+                    {tablaMostrada && cambios.total > 0 && (
                       <button
                         onClick={handleLimpiar}
                         className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground bg-white dark:bg-muted border border-border rounded-md hover:bg-muted/50 transition-colors"
@@ -466,24 +508,27 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     )}
                     <button
                       onClick={handleReporte}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-foreground bg-white dark:bg-muted border border-border rounded-md hover:bg-muted/50 transition-colors"
+                      disabled={!conteoAplicado}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-foreground bg-white dark:bg-muted border border-border rounded-md hover:bg-muted/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Printer size={15} />
                       Reporte
                     </button>
-                    <button
-                      onClick={abrirConfirmacion}
-                      disabled={cambios.total === 0 || !depositoId || depositoId === '__ALL__'}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <CheckCircle size={15} />
-                      Aplicar Conteo
-                      {cambios.total > 0 && (
-                        <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-bold bg-white/20 rounded-full">
-                          {cambios.total}
-                        </span>
-                      )}
-                    </button>
+                    {tablaMostrada && (
+                      <button
+                        onClick={abrirConfirmacion}
+                        disabled={cambios.total === 0 || !depositoId || depositoId === '__ALL__'}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <CheckCircle size={15} />
+                        Aplicar Conteo
+                        {cambios.total > 0 && (
+                          <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-bold bg-white/20 rounded-full">
+                            {cambios.total}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -677,7 +722,7 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     </p>
                     <button
                       onClick={() => setTablaMostrada(true)}
-                      disabled={!filtroDepto || !depositoId || depositoId === '__ALL__'}
+                      disabled={!filtroDepto || !depositoId || !motivoRestaId}
                       className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <ClipboardText size={16} />
@@ -743,24 +788,8 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
           )}
 
           {cambios.restas.length > 0 && (
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">
-                Motivo de salida (RESTA)<span className="text-destructive ml-1">*</span>
-              </label>
-              {motivosResta.length === 0 ? (
-                <p className="text-sm text-amber-700 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 rounded-md px-3 py-2">
-                  No hay motivos de tipo RESTA activos. Crea uno en "Motivos de Ajuste".
-                </p>
-              ) : (
-                <select
-                  value={motivoRestaId}
-                  onChange={(e) => setMotivoRestaId(e.target.value)}
-                  className="w-full h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="">Seleccionar motivo...</option>
-                  {motivosResta.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
-                </select>
-              )}
+            <div className="px-3 py-2 bg-muted/40 rounded-lg text-sm text-muted-foreground">
+              Causa de salida: <span className="font-medium text-foreground">{motivosResta.find((m) => m.id === motivoRestaId)?.nombre ?? '—'}</span>
             </div>
           )}
 
