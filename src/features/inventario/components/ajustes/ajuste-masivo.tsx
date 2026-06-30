@@ -475,15 +475,15 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     </div>
                   </div>
 
-                  {/* Solo con cambios */}
-                  <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer h-9 self-end">
+                  {/* Solo con cambios — filtro visual, no borra datos */}
+                  <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer h-9 self-end" title="Oculta los productos sin cambios. Los datos ingresados se conservan.">
                     <input
                       type="checkbox"
                       checked={soloConCambios}
                       onChange={(e) => setSoloConCambios(e.target.checked)}
                       className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
                     />
-                    Solo con cambios
+                    Ver solo con cambios
                   </label>
 
                   {/* Botones */}
@@ -517,7 +517,7 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     {tablaMostrada && (
                       <button
                         onClick={abrirConfirmacion}
-                        disabled={cambios.total === 0 || !depositoId || depositoId === '__ALL__'}
+                        disabled={cambios.total === 0 || !depositoId}
                         className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       >
                         <CheckCircle size={15} />
