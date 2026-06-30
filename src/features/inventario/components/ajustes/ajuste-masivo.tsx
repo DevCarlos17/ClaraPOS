@@ -16,6 +16,7 @@ import { todayStr } from '@/lib/dates'
 import { cn } from '@/lib/utils'
 import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
 import { AjusteList } from './ajuste-list'
+import { AjusteForm } from './ajuste-form'
 
 interface ProductoConteo {
   id: string
@@ -41,11 +42,12 @@ interface LoteDisponible {
 
 type CambioItem = { id: string; stockActual: number; stockNuevo: number; lote_id?: string }
 
-type Vista = 'conteo' | 'historial'
+type Vista = 'conteo' | 'historial' | 'individual'
 
 const VISTA_TABS = [
-  { key: 'conteo'    as const, label: 'Conteo Fisico' },
-  { key: 'historial' as const, label: 'Historial de Ajustes' },
+  { key: 'conteo'      as const, label: 'Ajuste Masivo' },
+  { key: 'individual'  as const, label: 'Ajuste Individual' },
+  { key: 'historial'   as const, label: 'Historial de Ajustes' },
 ]
 
 export function AjusteMasivo() {
@@ -56,6 +58,7 @@ export function AjusteMasivo() {
 
   const [vista, setVista] = useState<Vista>('conteo')
   const [prevVista, setPrevVista] = useState<Vista>('conteo')
+  const [individualOpen, setIndividualOpen] = useState(false)
   const [depositoId, setDepositoId] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [filtroDepto, setFiltroDepto] = useState('')
@@ -249,6 +252,10 @@ export function AjusteMasivo() {
   }
 
   function handleVistaChange(key: Vista) {
+    if (key === 'individual') {
+      setIndividualOpen(true)
+      return // no cambia el tab visual
+    }
     setPrevVista(vista)
     setVista(key)
   }
@@ -893,6 +900,11 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
           </div>
         </div>
       </dialog>
+
+      <AjusteForm
+        isOpen={individualOpen}
+        onClose={() => setIndividualOpen(false)}
+      />
     </div>
   )
 }
