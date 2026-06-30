@@ -359,6 +359,107 @@ serve(async (req) => {
       p_created_by: null,
     });
 
+    // 9. Seed cajas fuertes de efectivo y sus metodos de cobro
+    // No-critico: si falla el usuario puede configurarlo manualmente
+    const monedaBsResult = await supabaseAdmin
+      .from("monedas")
+      .select("id")
+      .eq("codigo_iso", "VES")
+      .single();
+
+    const monedaUsdResult = await supabaseAdmin
+      .from("monedas")
+      .select("id")
+      .eq("codigo_iso", "USD")
+      .single();
+
+    const monedaBsId = monedaBsResult.data?.id;
+    const monedaUsdId = monedaUsdResult.data?.id;
+
+    if (monedaBsId && monedaUsdId) {
+      // Caja fuerte para efectivo en bolivares
+      const { data: cajaBS } = await supabaseAdmin
+        .from("caja_fuerte")
+        .insert({
+          id: crypto.randomUUID(),
+          empresa_id: empresa.id,
+          nombre: "EFECTIVO BS",
+          moneda_id: monedaBsId,
+          saldo_actual: "0.00000000",
+          descripcion: "Efectivo en bolivares",
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          created_by: authData.user.id,
+        })
+        .select("id")
+        .single();
+
+      // Caja fuerte para efectivo en dolares
+      const { data: cajaUSD } = await supabaseAdmin
+        .from("caja_fuerte")
+        .insert({
+          id: crypto.randomUUID(),
+          empresa_id: empresa.id,
+          nombre: "EFECTIVO $",
+          moneda_id: monedaUsdId,
+          saldo_actual: "0.00000000",
+          descripcion: "Efectivo en dolares",
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          created_by: authData.user.id,
+        })
+        .select("id")
+        .single();
+
+      if (cajaBS?.id) {
+        await supabaseAdmin.from("metodos_cobro").insert({
+          id: crypto.randomUUID(),
+          empresa_id: empresa.id,
+          nombre: "EFECTIVO BS",
+          tipo: "EFECTIVO",
+          moneda_id: monedaBsId,
+          banco_empresa_id: null,
+          caja_fuerte_id: cajaBS.id,
+          deposito_directo: false,
+          comision_pct: "0.00",
+          usa_pos: true,
+          usa_cxc: true,
+          usa_cxp: true,
+          requiere_referencia: false,
+          saldo_actual: "0.00000000",
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          created_by: authData.user.id,
+        });
+      }
+
+      if (cajaUSD?.id) {
+        await supabaseAdmin.from("metodos_cobro").insert({
+          id: crypto.randomUUID(),
+          empresa_id: empresa.id,
+          nombre: "EFECTIVO $",
+          tipo: "EFECTIVO",
+          moneda_id: monedaUsdId,
+          banco_empresa_id: null,
+          caja_fuerte_id: cajaUSD.id,
+          deposito_directo: false,
+          comision_pct: "0.00",
+          usa_pos: true,
+          usa_cxc: true,
+          usa_cxp: true,
+          requiere_referencia: false,
+          saldo_actual: "0.00000000",
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          created_by: authData.user.id,
+        });
+      }
+    }
+
     return jsonResponse(
       {
         success: true,

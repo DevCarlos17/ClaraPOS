@@ -21,6 +21,9 @@ export const bancoSchema = z.object({
     .transform((v) => v?.toUpperCase()),
   active: z.boolean().default(true),
   cuenta_contable_id: z.string().optional(),
+  // 0069: moneda del banco y saldo de apertura (solo en creación)
+  moneda_id: z.enum(['USD', 'BS']).default('USD'),
+  saldo_inicial: z.string().default('0'),
 })
 
 export type BancoFormValues = z.infer<typeof bancoSchema>

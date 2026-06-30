@@ -162,6 +162,13 @@ export interface MetodosCobro {
   created_at: string
   updated_at: string
   created_by: string | null
+  // 0069: nuevos atributos operativos
+  deposito_directo: number    // 0|1
+  comision_pct: string        // NUMERIC(5,2) as string
+  usa_pos: number             // 0|1
+  usa_cxc: number             // 0|1
+  usa_cxp: number             // 0|1
+  caja_fuerte_id: string | null
 }
 
 export interface BancosEmpresa {
@@ -174,6 +181,7 @@ export interface BancosEmpresa {
   titular_documento: string | null
   moneda_id: string
   saldo_actual: string
+  saldo_inicial: string   // 0069: NUMERIC(18,4) stored as string
   cuenta_contable_id: string | null
   is_active: number
   created_at: string

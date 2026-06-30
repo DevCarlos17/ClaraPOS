@@ -192,6 +192,13 @@ const metodos_cobro = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+    // 0069: nuevos atributos operativos
+    deposito_directo: column.integer,  // boolean 0/1
+    comision_pct: column.text,         // NUMERIC(5,2) stored as string
+    usa_pos: column.integer,           // boolean 0/1
+    usa_cxc: column.integer,           // boolean 0/1
+    usa_cxp: column.integer,           // boolean 0/1
+    caja_fuerte_id: column.text,       // UUID nullable
   },
   { indexes: {} }
 )
@@ -206,6 +213,7 @@ const bancos_empresa = new Table(
     titular_documento: column.text,
     moneda_id: column.text,
     saldo_actual: column.text,
+    saldo_inicial: column.text,        // 0069: NUMERIC(18,4) stored as string
     cuenta_contable_id: column.text,
     is_active: column.integer,
     created_at: column.text,

@@ -4,13 +4,168 @@ import { bancoSchema } from '@/features/configuracion/schemas/banco-schema'
 import {
   createBanco,
   updateBanco,
+  useMetodosByBanco,
   type Banco,
+  type BancoMetodo,
 } from '@/features/configuracion/hooks/use-bancos'
+import {
+  createPaymentMethod,
+  updatePaymentMethod,
+} from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCuentasDetalle, crearCuenta } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { db } from '@/core/db/powersync/db'
-import { Plus } from '@phosphor-icons/react'
+import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
+
+// =============================================
+// METODO DRAFT TYPES
+// =============================================
+
+interface MetodoDraft {
+  _key: string
+  id?: string          // set when this is an existing method
+  nombre: string
+  tipo: string
+  deposito_directo: boolean
+  comision_pct: string
+  usa_pos: boolean
+  usa_cxc: boolean
+  usa_cxp: boolean
+  is_active: boolean
+}
+
+const TIPOS_METODO_BANCO = [
+  { value: 'TRANSFERENCIA', label: 'Transferencia' },
+  { value: 'PUNTO', label: 'Punto de Venta' },
+  { value: 'PAGO_MOVIL', label: 'Pago Movil' },
+  { value: 'ZELLE', label: 'Zelle' },
+  { value: 'DIVISA_DIGITAL', label: 'Divisa Digital' },
+  { value: 'OTRO', label: 'Otro' },
+] as const
+
+// =============================================
+// METODO DRAFT ROW
+// =============================================
+
+interface MetodoDraftRowProps {
+  draft: MetodoDraft
+  onChange: (updated: MetodoDraft) => void
+  onRemove: () => void
+}
+
+function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
+  return (
+    <div className="border border-gray-200 rounded-md p-3 space-y-2 bg-gray-50">
+      {/* Row 1: Nombre | Tipo | Action */}
+      <div className="flex gap-2 items-start">
+        <div className="flex-1">
+          <input
+            type="text"
+            value={draft.nombre}
+            onChange={(e) => onChange({ ...draft, nombre: e.target.value.toUpperCase() })}
+            placeholder="Nombre del metodo"
+            className="w-full rounded border border-gray-300 px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div className="w-36">
+          <NativeSelect
+            value={draft.tipo}
+            onChange={(e) => onChange({ ...draft, tipo: e.target.value })}
+            className="text-xs py-1.5"
+          >
+            {TIPOS_METODO_BANCO.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </NativeSelect>
+        </div>
+        {/* Existing methods get active toggle; new drafts get remove button */}
+        {draft.id ? (
+          <div className="flex items-center gap-1 pt-1">
+            <input
+              id={`active-${draft._key}`}
+              type="checkbox"
+              checked={draft.is_active}
+              onChange={(e) => onChange({ ...draft, is_active: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+            />
+            <label htmlFor={`active-${draft._key}`} className="text-xs text-gray-600">Activo</label>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="p-1.5 text-red-500 hover:bg-red-50 rounded transition-colors"
+            title="Eliminar metodo"
+          >
+            <Trash size={14} />
+          </button>
+        )}
+      </div>
+
+      {/* Row 2: Deposito directo | Comision % | Usar en */}
+      <div className="flex flex-wrap gap-3 items-center">
+        <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={draft.deposito_directo}
+            onChange={(e) => onChange({ ...draft, deposito_directo: e.target.checked })}
+            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+          />
+          Deposito directo
+        </label>
+
+        <div className="flex items-center gap-1.5">
+          <label className="text-xs text-gray-600">Comision %</label>
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            max="100"
+            value={draft.comision_pct}
+            onChange={(e) => onChange({ ...draft, comision_pct: e.target.value })}
+            className="w-16 rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-600">Usar en:</span>
+          <label className="flex items-center gap-1 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={draft.usa_pos}
+              onChange={(e) => onChange({ ...draft, usa_pos: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+            />
+            POS
+          </label>
+          <label className="flex items-center gap-1 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={draft.usa_cxc}
+              onChange={(e) => onChange({ ...draft, usa_cxc: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+            />
+            CxC
+          </label>
+          <label className="flex items-center gap-1 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={draft.usa_cxp}
+              onChange={(e) => onChange({ ...draft, usa_cxp: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+            />
+            CxP
+          </label>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// =============================================
+// BANCO FORM
+// =============================================
 
 interface BancoFormProps {
   isOpen: boolean
@@ -24,6 +179,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const { user } = useCurrentUser()
   const { cuentas } = useCuentasDetalle()
 
+  // Basic banco fields
   const [nombreBanco, setNombreBanco] = useState('')
   const [nroCuenta, setNroCuenta] = useState('')
   const [tipoCuenta, setTipoCuenta] = useState<string>('')
@@ -31,10 +187,23 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const [titularDocumento, setTitularDocumento] = useState('')
   const [cuentaContableId, setCuentaContableId] = useState('')
   const [active, setActive] = useState(true)
+
+  // 0069: moneda y saldo inicial
+  const [moneda, setMoneda] = useState<'USD' | 'BS'>('USD')
+  const [saldoInicial, setSaldoInicial] = useState('0')
+
+  // Method drafts
+  const [metodoDrafts, setMetodoDrafts] = useState<MetodoDraft[]>([])
+  const methodsInitializedRef = useRef(false)
+
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [creandoCuenta, setCreandoCuenta] = useState(false)
 
+  // Load existing methods when editing
+  const { data: existingMetodos } = useMetodosByBanco(banco?.id ?? '')
+
+  // Initialize form fields
   useEffect(() => {
     if (isOpen) {
       if (banco) {
@@ -45,6 +214,17 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTitularDocumento(banco.titular_documento ?? '')
         setCuentaContableId(banco.cuenta_contable_id ?? '')
         setActive(banco.is_active === 1)
+        setSaldoInicial('0')
+
+        // Resolve currency code from moneda_id UUID
+        db.execute('SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1', [banco.moneda_id])
+          .then((result) => {
+            if (result.rows?.length) {
+              const iso = (result.rows.item(0) as { codigo_iso: string }).codigo_iso
+              setMoneda(iso === 'VES' ? 'BS' : (iso as 'USD' | 'BS'))
+            }
+          })
+          .catch(() => { /* keep default USD */ })
       } else {
         setNombreBanco('')
         setNroCuenta('')
@@ -53,13 +233,63 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTitularDocumento('')
         setCuentaContableId('')
         setActive(true)
+        setMoneda('USD')
+        setSaldoInicial('0')
       }
       setErrors({})
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
+      methodsInitializedRef.current = false
+      setMetodoDrafts([])
     }
   }, [isOpen, banco])
+
+  // Initialize method drafts when editing and methods load
+  useEffect(() => {
+    if (isOpen && banco && existingMetodos && !methodsInitializedRef.current) {
+      methodsInitializedRef.current = true
+      setMetodoDrafts(
+        existingMetodos.map((m: BancoMetodo) => ({
+          _key: m.id,
+          id: m.id,
+          nombre: m.nombre,
+          tipo: m.tipo,
+          deposito_directo: m.deposito_directo === 1,
+          comision_pct: m.comision_pct ?? '0',
+          usa_pos: m.usa_pos === 1,
+          usa_cxc: m.usa_cxc === 1,
+          usa_cxp: m.usa_cxp === 1,
+          is_active: m.is_active === 1,
+        }))
+      )
+    }
+  }, [isOpen, banco, existingMetodos])
+
+  function handleAgregarMetodo() {
+    setMetodoDrafts((prev) => [
+      ...prev,
+      {
+        _key: crypto.randomUUID(),
+        nombre: '',
+        tipo: 'TRANSFERENCIA',
+        deposito_directo: false,
+        comision_pct: '0',
+        usa_pos: true,
+        usa_cxc: true,
+        usa_cxp: true,
+        is_active: true,
+      },
+    ])
+  }
+
+  function handleUpdateDraft(idx: number, updated: MetodoDraft) {
+    setMetodoDrafts((prev) => prev.map((d, i) => (i === idx ? updated : d)))
+  }
+
+  function handleRemoveDraft(idx: number) {
+    setMetodoDrafts((prev) => prev.filter((_, i) => i !== idx))
+  }
 
   async function handleCrearCuentaContable() {
     if (!nombreBanco.trim()) {
@@ -142,6 +372,8 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       titular_documento: titularDocumento || undefined,
       cuenta_contable_id: cuentaContableId || undefined,
       active,
+      moneda_id: moneda,
+      saldo_inicial: saldoInicial,
     })
 
     if (!parsed.success) {
@@ -156,6 +388,8 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
     setSubmitting(true)
     try {
+      let bancoId: string
+
       if (isEditing && banco) {
         await updateBanco(banco.id, {
           nombre_banco: parsed.data.nombre_banco,
@@ -166,20 +400,58 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           cuenta_contable_id: parsed.data.cuenta_contable_id ?? null,
           is_active: parsed.data.active,
         })
+        bancoId = banco.id
         toast.success('Banco actualizado correctamente')
       } else {
-        await createBanco({
+        bancoId = await createBanco({
           nombre_banco: parsed.data.nombre_banco,
           nro_cuenta: parsed.data.nro_cuenta,
           tipo_cuenta: parsed.data.tipo_cuenta,
           titular: parsed.data.titular,
           titular_documento: parsed.data.titular_documento,
           cuenta_contable_id: parsed.data.cuenta_contable_id,
+          moneda_id: parsed.data.moneda_id,
+          saldo_inicial: parsed.data.saldo_inicial,
           empresa_id: user!.empresa_id!,
           usuario_id: user!.id,
         })
         toast.success('Banco creado correctamente')
       }
+
+      // Save method drafts
+      for (const draft of metodoDrafts) {
+        if (draft.id) {
+          // Update existing method
+          await updatePaymentMethod(draft.id, {
+            nombre: draft.nombre,
+            tipo: draft.tipo,
+            banco_empresa_id: bancoId,
+            is_active: draft.is_active,
+            deposito_directo: draft.deposito_directo,
+            comision_pct: draft.comision_pct,
+            usa_pos: draft.usa_pos,
+            usa_cxc: draft.usa_cxc,
+            usa_cxp: draft.usa_cxp,
+          })
+        } else {
+          // Skip incomplete new drafts
+          if (!draft.nombre.trim() || !draft.tipo) continue
+          await createPaymentMethod({
+            nombre: draft.nombre,
+            moneda,
+            tipo: draft.tipo,
+            banco_empresa_id: bancoId,
+            deposito_directo: draft.deposito_directo,
+            comision_pct: draft.comision_pct,
+            usa_pos: draft.usa_pos,
+            usa_cxc: draft.usa_cxc,
+            usa_cxp: draft.usa_cxp,
+            empresa_id: user!.empresa_id!,
+            usuario_id: user!.id,
+          })
+        }
+      }
+
       onClose()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
@@ -200,9 +472,9 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-md shadow-xl"
+      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-2xl shadow-xl"
     >
-      <div className="p-6">
+      <div className="p-6 max-h-[90vh] overflow-y-auto">
         <h2 className="text-lg font-semibold mb-4">
           {isEditing ? 'Editar Banco' : 'Nuevo Banco'}
         </h2>
@@ -227,6 +499,47 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
               <p className="text-red-500 text-xs mt-1">{errors.nombre_banco}</p>
             )}
           </div>
+
+          {/* Moneda — disabled in edit mode */}
+          <div>
+            <label htmlFor="banco-moneda" className="block text-sm font-medium text-gray-700 mb-1">
+              Moneda
+            </label>
+            <NativeSelect
+              id="banco-moneda"
+              value={moneda}
+              onChange={(e) => setMoneda(e.target.value as 'USD' | 'BS')}
+              disabled={isEditing}
+              className={isEditing ? 'text-gray-500 cursor-not-allowed' : undefined}
+            >
+              <option value="USD">USD - Dolares</option>
+              <option value="BS">BS - Bolivares</option>
+            </NativeSelect>
+            {isEditing && (
+              <p className="text-gray-400 text-xs mt-1">La moneda no puede modificarse</p>
+            )}
+          </div>
+
+          {/* Saldo inicial — only shown in create mode */}
+          {!isEditing && (
+            <div>
+              <label htmlFor="banco-saldo-inicial" className="block text-sm font-medium text-gray-700 mb-1">
+                Saldo inicial
+              </label>
+              <input
+                id="banco-saldo-inicial"
+                type="number"
+                step="0.01"
+                min="0"
+                value={saldoInicial}
+                onChange={(e) => setSaldoInicial(e.target.value)}
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Saldo de la cuenta al momento de registrarla en el sistema
+              </p>
+            </div>
+          )}
 
           {/* Numero de Cuenta */}
           <div>
@@ -347,8 +660,42 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             </label>
           </div>
 
+          {/* ============================================
+              METODOS DE PAGO SECTION
+              ============================================ */}
+          <div className="border-t pt-4 mt-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium text-sm text-gray-800">Metodos de pago</h3>
+              <button
+                type="button"
+                onClick={handleAgregarMetodo}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Agregar metodo
+              </button>
+            </div>
+
+            {metodoDrafts.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No hay metodos de pago configurados para este banco.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {metodoDrafts.map((draft, idx) => (
+                  <MetodoDraftRow
+                    key={draft._key}
+                    draft={draft}
+                    onChange={(updated) => handleUpdateDraft(idx, updated)}
+                    onRemove={() => handleRemoveDraft(idx)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Acciones */}
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex justify-end gap-3 pt-2 border-t">
             <button
               type="button"
               onClick={onClose}

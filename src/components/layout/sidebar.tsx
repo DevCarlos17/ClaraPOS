@@ -156,7 +156,6 @@ const menuItems: MenuItem[] = [
     icon: Bank,
     children: [
       { title: 'Bancos', url: '/configuracion/bancos', icon: Bank, requiredPermission: PERMISSIONS.CONFIG_RATES },
-      { title: 'Metodos de Pago', url: '/configuracion/metodos-pago', icon: Wallet, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Tesoreria', url: '/tesoreria', icon: Vault, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Diferencial Cambiario', url: '/bancos/diferencial-cambiario', icon: TrendUp, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
     ],
