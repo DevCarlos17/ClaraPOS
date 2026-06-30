@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Plus, Printer } from '@phosphor-icons/react'
 import { useAjustes } from '@/features/inventario/hooks/use-ajustes'
 import { formatDate } from '@/lib/format'
 import { formatUsd } from '@/lib/currency'
+import { startOfMonth, todayStr } from '@/lib/dates'
 import { AjusteForm } from './ajuste-form'
 import { AjusteDetalleModal } from './ajuste-detalle-modal'
 
@@ -66,11 +67,27 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
   const [formOpen, setFormOpen] = useState(false)
   const [detalleAjusteId, setDetalleAjusteId] = useState<string | null>(null)
 
+  const [fechaDesde, setFechaDesde] = useState(() => startOfMonth())
+  const [fechaHasta, setFechaHasta] = useState(() => todayStr())
+  const [filtroStatus, setFiltroStatus] = useState('')
+  const [filtroOperacion, setFiltroOperacion] = useState('')
+
+  const ajustesFiltrados = useMemo(() => {
+    return ajustes.filter((a) => {
+      const fecha = a.fecha?.substring(0, 10) ?? ''
+      if (fechaDesde && fecha < fechaDesde) return false
+      if (fechaHasta && fecha > fechaHasta) return false
+      if (filtroStatus && a.status !== filtroStatus) return false
+      if (filtroOperacion && a.operacion_base !== filtroOperacion) return false
+      return true
+    })
+  }, [ajustes, fechaDesde, fechaHasta, filtroStatus, filtroOperacion])
+
   function handleReporte() {
     const w = window.open('', '_blank')
     if (!w) return
 
-    const filas = ajustes
+    const filas = ajustesFiltrados
       .map((a) => `<tr>
         <td style="font-family:monospace">${a.num_ajuste}</td>
         <td>${formatDate(a.fecha)}</td>
@@ -100,7 +117,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
 </head>
 <body>
   <h1>Historial de Ajustes de Inventario</h1>
-  <p>Total: ${ajustes.length} ajustes &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p>Período: ${fechaDesde} al ${fechaHasta} &nbsp;|&nbsp; Total: ${ajustesFiltrados.length} ajuste(s) &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
   <table>
     <thead>
       <tr>
@@ -136,14 +153,14 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
   }
 
   return (
-    <div className="rounded-2xl bg-card shadow-lg p-6">
+    <div className="rounded-2xl bg-card shadow-lg p-6 space-y-4">
       {/* Cabecera */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <h2 className="text-lg font-semibold">Ajustes de Inventario</h2>
         <div className="flex gap-2">
           <button
             onClick={handleReporte}
-            disabled={ajustes.length === 0}
+            disabled={ajustesFiltrados.length === 0}
             className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 disabled:opacity-50 transition-colors cursor-pointer"
           >
             <Printer className="h-4 w-4" />
@@ -161,8 +178,59 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
         </div>
       </div>
 
+      {/* Filtros — siempre visibles */}
+      <div className="flex flex-wrap gap-3 items-end p-3 bg-muted/40 border border-border rounded-lg">
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-muted-foreground">Desde</label>
+          <input
+            type="date"
+            value={fechaDesde}
+            onChange={(e) => setFechaDesde(e.target.value)}
+            className="h-8 px-2 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-muted-foreground">Hasta</label>
+          <input
+            type="date"
+            value={fechaHasta}
+            onChange={(e) => setFechaHasta(e.target.value)}
+            className="h-8 px-2 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-muted-foreground">Status</label>
+          <select
+            value={filtroStatus}
+            onChange={(e) => setFiltroStatus(e.target.value)}
+            className="h-8 px-2 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="">Todos</option>
+            <option value="BORRADOR">Borrador</option>
+            <option value="APLICADO">Aplicado</option>
+            <option value="ANULADO">Anulado</option>
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-muted-foreground">Operación</label>
+          <select
+            value={filtroOperacion}
+            onChange={(e) => setFiltroOperacion(e.target.value)}
+            className="h-8 px-2 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="">Todas</option>
+            <option value="SUMA">Suma (Entrada)</option>
+            <option value="RESTA">Resta (Salida)</option>
+            <option value="NEUTRO">Neutro</option>
+          </select>
+        </div>
+        <span className="text-xs text-muted-foreground self-end pb-1.5">
+          {ajustesFiltrados.length} resultado(s)
+        </span>
+      </div>
+
       {/* Tabla */}
-      {ajustes.length === 0 ? (
+      {ajustesFiltrados.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
           <p className="text-base font-medium">No hay ajustes registrados</p>
           <p className="text-sm mt-1">Crea el primer ajuste para comenzar</p>
@@ -182,7 +250,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
               </tr>
             </thead>
             <tbody>
-              {ajustes.map((ajuste) => (
+              {ajustesFiltrados.map((ajuste) => (
                 <tr
                   key={ajuste.id}
                   onClick={() => setDetalleAjusteId(ajuste.id)}
