@@ -1,11 +1,10 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Plus, MagnifyingGlass, Printer } from '@phosphor-icons/react'
+import { MagnifyingGlass, Printer } from '@phosphor-icons/react'
 import { useMovimientosFiltrados, useUltimosMovimientosKardex } from '@/features/inventario/hooks/use-kardex'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { formatDateTime } from '@/lib/format'
 import { startOfMonth, todayStr } from '@/lib/dates'
-import { MovimientoForm } from './movimiento-form'
 import { KardexProductoBuscador } from './kardex-producto-buscador'
 
 export function KardexList() {
@@ -30,8 +29,6 @@ export function KardexList() {
     tipo: '' as 'E' | 'S' | '',
     tipoSalida: '',
   })
-
-  const [formOpen, setFormOpen] = useState(false)
 
   useEffect(() => {
     if (filtroTipo === 'E') setFiltroTipoSalida('')
@@ -253,13 +250,6 @@ export function KardexList() {
 
           <div className="flex gap-2">
             <button
-              onClick={() => setFormOpen(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 transition-colors cursor-pointer"
-            >
-              <Plus className="h-4 w-4" />
-              Nuevo Movimiento
-            </button>
-            <button
               onClick={handlePrint}
               disabled={!aplicado || movimientosFiltrados.length === 0}
               className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-muted-foreground bg-white border border-border rounded-md hover:bg-muted/50 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
@@ -356,7 +346,6 @@ export function KardexList() {
         </div>
       )}
 
-      <MovimientoForm isOpen={formOpen} onClose={() => setFormOpen(false)} />
     </div>
   )
 }
