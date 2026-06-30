@@ -29,15 +29,18 @@ interface LineaItem {
   es_decimal: boolean      // true = acepta decimales, false = solo enteros
 }
 
-// Buscador inline de productos por línea — usa portal para evitar clipping
+// Buscador inline de productos por línea
+// El portal apunta al <dialog> para quedar en el top-layer correcto
 function ProductoBuscador({
   value,
   onSelect,
   productos,
+  portalTarget,
 }: {
   value: { id: string; nombre: string; codigo: string } | null
   onSelect: (p: { id: string; nombre: string; codigo: string; costo_usd: string }) => void
   productos: Array<{ id: string; nombre: string; codigo: string; costo_usd: string; tipo: string; is_active: number }>
+  portalTarget: HTMLElement | null
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -118,7 +121,7 @@ function ProductoBuscador({
           className="w-full h-8 pl-6 pr-2 text-sm border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary"
         />
       </div>
-      {open && sugerencias.length > 0 && createPortal(
+      {open && sugerencias.length > 0 && portalTarget && createPortal(
         <div
           style={dropdownStyle}
           className="rounded-md border border-border bg-white shadow-xl"
@@ -135,7 +138,7 @@ function ProductoBuscador({
             </button>
           ))}
         </div>,
-        document.body
+        portalTarget
       )}
     </div>
   )
@@ -420,6 +423,7 @@ export function AjusteForm({ isOpen, onClose }: AjusteFormProps) {
                           value={linea.producto_id ? { id: linea.producto_id, nombre: linea.producto_nombre, codigo: linea.producto_codigo } : null}
                           onSelect={(p) => actualizarProducto(index, p)}
                           productos={productosActivos as any}
+                          portalTarget={dialogRef.current}
                         />
                         <input
                           type="number"
