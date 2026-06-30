@@ -418,7 +418,6 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                       className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px] disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <option value="">Seleccionar deposito...</option>
-                      <option value="__ALL__">Todos los depositos</option>
                       {depositos.map((d) => (
                         <option key={d.id} value={d.id}>{d.nombre}</option>
                       ))}
