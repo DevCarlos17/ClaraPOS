@@ -201,7 +201,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const [creandoCuenta, setCreandoCuenta] = useState(false)
 
   // Load existing methods when editing
-  const { data: existingMetodos } = useMetodosByBanco(banco?.id ?? '')
+  const { data: existingMetodos, isLoading: metodosLoading } = useMetodosByBanco(banco?.id ?? '')
 
   // Initialize form fields
   useEffect(() => {
@@ -247,24 +247,31 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
   // Initialize method drafts when editing and methods load
   useEffect(() => {
-    if (isOpen && banco && existingMetodos && !methodsInitializedRef.current) {
-      methodsInitializedRef.current = true
-      setMetodoDrafts(
-        existingMetodos.map((m: BancoMetodo) => ({
-          _key: m.id,
-          id: m.id,
-          nombre: m.nombre,
-          tipo: m.tipo,
-          deposito_directo: m.deposito_directo === 1,
-          comision_pct: m.comision_pct ?? '0',
-          usa_pos: m.usa_pos === 1,
-          usa_cxc: m.usa_cxc === 1,
-          usa_cxp: m.usa_cxp === 1,
-          is_active: m.is_active === 1,
-        }))
-      )
+    if (!isOpen) {
+      setMetodoDrafts([])
+      methodsInitializedRef.current = false
+      return
     }
-  }, [isOpen, banco, existingMetodos])
+    if (methodsInitializedRef.current) return
+    if (metodosLoading) return   // wait for PowerSync to finish loading
+
+    // Data is ready (empty or not) — initialize once
+    setMetodoDrafts(
+      (existingMetodos ?? []).map(m => ({
+        _key: m.id,
+        id: m.id,
+        nombre: m.nombre,
+        tipo: m.tipo,
+        deposito_directo: m.deposito_directo === 1,
+        comision_pct: m.comision_pct ?? '0',
+        usa_pos: m.usa_pos === 1,
+        usa_cxc: m.usa_cxc === 1,
+        usa_cxp: m.usa_cxp === 1,
+        is_active: m.is_active === 1,
+      }))
+    )
+    methodsInitializedRef.current = true
+  }, [isOpen, banco?.id, existingMetodos, metodosLoading])
 
   function handleAgregarMetodo() {
     setMetodoDrafts((prev) => [
