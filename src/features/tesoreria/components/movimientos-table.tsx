@@ -1,6 +1,6 @@
 import { CheckCircle, Clock, X, CaretLeft, CaretRight } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { Button } from '@/components/ui/button'
 import type { MovBancario } from '@/features/caja/hooks/use-mov-bancarios'
 import type { MovCajaFuerte } from '../hooks/use-mov-caja-fuerte'
@@ -89,6 +89,8 @@ export function MovimientosTable({
   loading = false,
   monedaSimbolo = '$',
 }: Props) {
+  const fmt = (val: number) => monedaSimbolo === '$' ? formatUsd(val) : formatBs(val)
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16 text-muted-foreground text-sm gap-2">
@@ -115,50 +117,11 @@ export function MovimientosTable({
     <div className="space-y-3">
       <div className="rounded-lg border overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/50">
-                <th className="text-left py-3 px-4 font-medium text-muted-foreground whitespace-nowrap">
-                  Fecha / Hora
-                </th>
-                <th className="text-left py-3 px-4 font-medium text-muted-foreground">
-                  Referencia
-                </th>
-                <th className="text-left py-3 px-4 font-medium text-muted-foreground">
-                  Modulo origen
-                </th>
-                <th className="text-right py-3 px-4 font-medium text-muted-foreground">
-                  Ingreso
-                </th>
-                <th className="text-right py-3 px-4 font-medium text-muted-foreground">
-                  Egreso
-                </th>
-                <th className="text-right py-3 px-4 font-medium text-muted-foreground">
-                  Saldo
-                </th>
-                {modo === 'historico' && (
-                  <th className="text-center py-3 px-4 font-medium text-muted-foreground">
-                    Estado
-                  </th>
-                )}
-                {modo === 'pendiente' && (
-                  <th className="text-right py-3 px-4 font-medium text-muted-foreground">
-                    Acciones
-                  </th>
-                )}
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {movimientos.map((mov) => (
-                <MovRow
-                  key={mov.id}
-                  mov={mov}
-                  modo={modo}
-                  monedaSimbolo={monedaSimbolo}
-                />
-              ))}
-            </tbody>
-          </table>
+          {modo === 'pendiente' ? (
+            <PendienteTable movimientos={movimientos} fmt={fmt} />
+          ) : (
+            <HistoricoTable movimientos={movimientos} fmt={fmt} />
+          )}
         </div>
       </div>
 
@@ -196,28 +159,187 @@ export function MovimientosTable({
   )
 }
 
-// ─── Fila de movimiento ───────────────────────────────────────
+// ─── Tabla pendientes ─────────────────────────────────────────
 
-function MovRow({
+function PendienteTable({
+  movimientos,
+  fmt,
+}: {
+  movimientos: MovimientoTableRow[]
+  fmt: (val: number) => string
+}) {
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b bg-muted/50">
+          <th className="text-left py-3 px-4 font-medium text-muted-foreground whitespace-nowrap">
+            Fecha / Hora
+          </th>
+          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+            Módulo
+          </th>
+          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+            Referencia
+          </th>
+          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+            Descripción
+          </th>
+          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+            Monto
+          </th>
+          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+            Acciones
+          </th>
+        </tr>
+      </thead>
+      <tbody className="divide-y">
+        {movimientos.map((mov) => (
+          <PendienteRow key={mov.id} mov={mov} fmt={fmt} />
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function PendienteRow({
   mov,
-  modo,
-  monedaSimbolo,
+  fmt,
 }: {
   mov: MovimientoTableRow
-  modo: 'pendiente' | 'historico'
-  monedaSimbolo: string
+  fmt: (val: number) => string
 }) {
   const isReversado = mov.reversado === 1
   const isValidado = mov.validado === 1
   const monto = parseFloat(mov.monto)
 
   return (
-    <tr
-      className={cn(
-        'hover:bg-muted/30 transition-colors',
-        isReversado && 'opacity-50'
-      )}
-    >
+    <tr className={cn('hover:bg-muted/30 transition-colors', isReversado && 'opacity-50')}>
+      {/* Fecha / Hora */}
+      <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
+        {formatFechaHora(mov.fecha, mov.created_at)}
+      </td>
+
+      {/* Módulo */}
+      <td className="py-3 px-4">
+        <span
+          className={cn(
+            'text-xs px-2 py-0.5 rounded-full font-medium',
+            ORIGEN_COLORS[mov.origen] ?? 'bg-gray-100 text-gray-600'
+          )}
+        >
+          {ORIGEN_LABELS[mov.origen] ?? mov.origen}
+        </span>
+      </td>
+
+      {/* Referencia */}
+      <td className="py-3 px-4 text-xs text-muted-foreground max-w-[120px] truncate">
+        {mov.referencia ?? '-'}
+      </td>
+
+      {/* Descripción */}
+      <td className="py-3 px-4 text-xs text-muted-foreground max-w-[200px] truncate">
+        {mov.descripcion ?? '-'}
+      </td>
+
+      {/* Monto con signo y color */}
+      <td className="py-3 px-4 text-right tabular-nums whitespace-nowrap">
+        <span
+          className={cn(
+            'font-medium text-sm',
+            mov.tipo === 'INGRESO' ? 'text-green-700' : 'text-red-700'
+          )}
+        >
+          {mov.tipo === 'INGRESO' ? '+' : '-'} {fmt(monto)}
+        </span>
+      </td>
+
+      {/* Acciones */}
+      <td className="py-3 px-4 text-right">
+        <div className="flex items-center justify-end gap-1">
+          {!isReversado && !isValidado && mov.onValidar && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-green-700 hover:bg-green-50"
+              onClick={() => mov.onValidar!(mov.id)}
+            >
+              Conciliar
+            </Button>
+          )}
+          {!isReversado && mov.onReversar && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
+              onClick={() => mov.onReversar!(mov.id)}
+            >
+              Rechazar
+            </Button>
+          )}
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+// ─── Tabla histórico ──────────────────────────────────────────
+
+function HistoricoTable({
+  movimientos,
+  fmt,
+}: {
+  movimientos: MovimientoTableRow[]
+  fmt: (val: number) => string
+}) {
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b bg-muted/50">
+          <th className="text-left py-3 px-4 font-medium text-muted-foreground whitespace-nowrap">
+            Fecha / Hora
+          </th>
+          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+            Referencia
+          </th>
+          <th className="text-left py-3 px-4 font-medium text-muted-foreground">
+            Módulo origen
+          </th>
+          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+            Ingreso
+          </th>
+          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+            Egreso
+          </th>
+          <th className="text-right py-3 px-4 font-medium text-muted-foreground">
+            Saldo
+          </th>
+          <th className="text-center py-3 px-4 font-medium text-muted-foreground">
+            Estado
+          </th>
+        </tr>
+      </thead>
+      <tbody className="divide-y">
+        {movimientos.map((mov) => (
+          <HistoricoRow key={mov.id} mov={mov} fmt={fmt} />
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+function HistoricoRow({
+  mov,
+  fmt,
+}: {
+  mov: MovimientoTableRow
+  fmt: (val: number) => string
+}) {
+  const isReversado = mov.reversado === 1
+  const isValidado = mov.validado === 1
+  const monto = parseFloat(mov.monto)
+
+  return (
+    <tr className={cn('hover:bg-muted/30 transition-colors', isReversado && 'opacity-50')}>
       {/* Fecha / Hora */}
       <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
         {formatFechaHora(mov.fecha, mov.created_at)}
@@ -228,7 +350,7 @@ function MovRow({
         {mov.referencia ?? '-'}
       </td>
 
-      {/* Modulo origen */}
+      {/* Módulo origen */}
       <td className="py-3 px-4">
         <div className="flex flex-col gap-0.5">
           <span
@@ -250,60 +372,26 @@ function MovRow({
       {/* Ingreso */}
       <td className="py-3 px-4 text-right tabular-nums">
         {mov.tipo === 'INGRESO' ? (
-          <span className="text-green-700 font-medium text-sm">
-            {monedaSimbolo} {formatUsd(monto)}
-          </span>
+          <span className="text-green-700 font-medium text-sm">{fmt(monto)}</span>
         ) : null}
       </td>
 
       {/* Egreso */}
       <td className="py-3 px-4 text-right tabular-nums">
         {mov.tipo === 'EGRESO' ? (
-          <span className="text-red-700 font-medium text-sm">
-            {monedaSimbolo} {formatUsd(monto)}
-          </span>
+          <span className="text-red-700 font-medium text-sm">{fmt(monto)}</span>
         ) : null}
       </td>
 
       {/* Saldo */}
       <td className="py-3 px-4 text-right tabular-nums text-xs text-muted-foreground">
-        {monedaSimbolo} {formatUsd(parseFloat(mov.saldo_nuevo))}
+        {fmt(parseFloat(mov.saldo_nuevo))}
       </td>
 
-      {/* Estado (solo historico) */}
-      {modo === 'historico' && (
-        <td className="py-3 px-4 text-center">
-          <EstadoBadge validado={isValidado} reversado={isReversado} />
-        </td>
-      )}
-
-      {/* Acciones (solo pendiente) */}
-      {modo === 'pendiente' && (
-        <td className="py-3 px-4 text-right">
-          <div className="flex items-center justify-end gap-1">
-            {!isReversado && !isValidado && mov.onValidar && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs text-green-700 hover:bg-green-50"
-                onClick={() => mov.onValidar!(mov.id)}
-              >
-                Validar
-              </Button>
-            )}
-            {!isReversado && mov.onReversar && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs text-destructive hover:bg-destructive/10"
-                onClick={() => mov.onReversar!(mov.id)}
-              >
-                Reversar
-              </Button>
-            )}
-          </div>
-        </td>
-      )}
+      {/* Estado */}
+      <td className="py-3 px-4 text-center">
+        <EstadoBadge validado={isValidado} reversado={isReversado} />
+      </td>
     </tr>
   )
 }
