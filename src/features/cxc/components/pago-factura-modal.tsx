@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxC } from '@/features/configuracion/hooks/use-payment-methods'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import {
@@ -55,7 +55,7 @@ export function PagoFacturaModal({
   vencimientoInicial,
 }: PagoFacturaModalProps) {
   const { user } = useCurrentUser()
-  const { metodos } = useMetodosPagoActivos()
+  const { metodos } = useMetodosCxC()
   const { tasaValor } = useTasaActual()
   const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(clienteId || null)
 

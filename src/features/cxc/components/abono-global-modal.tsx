@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxC } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import {
   registrarAbonoGlobal,
@@ -39,7 +39,7 @@ export function AbonoGlobalModal({
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
-  const { metodos } = useMetodosPagoActivos()
+  const { metodos } = useMetodosCxC()
   const { facturas } = useFacturasPendientes(isOpen ? clienteId : null)
   const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(isOpen ? clienteId : null)
 

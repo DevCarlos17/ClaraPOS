@@ -56,7 +56,7 @@ interface MetodoDraftRowProps {
 
 function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
   return (
-    <div className="border border-gray-200 rounded-md p-3 space-y-2 bg-gray-50">
+    <div className="border border-gray-300 rounded-md p-3 space-y-2 bg-white shadow-sm">
       {/* Row 1: Nombre | Tipo | Action */}
       <div className="flex gap-2 items-start">
         <div className="flex-1">
@@ -69,15 +69,23 @@ function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
           />
         </div>
         <div className="w-36">
-          <NativeSelect
-            value={draft.tipo}
-            onChange={(e) => onChange({ ...draft, tipo: e.target.value })}
-            className="text-xs py-1.5"
-          >
-            {TIPOS_METODO_BANCO.map((t) => (
-              <option key={t.value} value={t.value}>{t.label}</option>
-            ))}
-          </NativeSelect>
+          {draft.id ? (
+            // Existing method: tipo is immutable after creation
+            <span className="inline-block text-xs bg-gray-100 text-gray-700 border border-gray-200 rounded px-2 py-1.5 w-full">
+              {TIPOS_METODO_BANCO.find((t) => t.value === draft.tipo)?.label ?? draft.tipo}
+            </span>
+          ) : (
+            // New draft: tipo is selectable
+            <NativeSelect
+              value={draft.tipo}
+              onChange={(e) => onChange({ ...draft, tipo: e.target.value })}
+              className="text-xs py-1.5"
+            >
+              {TIPOS_METODO_BANCO.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </NativeSelect>
+          )}
         </div>
         {/* Existing methods get active toggle; new drafts get remove button */}
         {draft.id ? (

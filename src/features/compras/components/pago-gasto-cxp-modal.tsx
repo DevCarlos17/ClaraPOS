@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { registrarPagoGasto, type GastoPendiente } from '@/features/contabilidad/hooks/use-gastos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { db } from '@/core/db/powersync/db'
@@ -29,7 +29,7 @@ export function PagoGastoCxpModal({
   open, onClose, gasto, proveedorId, proveedorNombre,
 }: PagoGastoCxpModalProps) {
   const { user } = useCurrentUser()
-  const { metodos } = useMetodosPagoActivos()
+  const { metodos } = useMetodosCxP()
   const { tasaValor } = useTasaActual()
 
   const [fechaPago, setFechaPago] = useState(() => localNow().slice(0, 10))

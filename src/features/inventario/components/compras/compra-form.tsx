@@ -10,7 +10,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useConversiones } from '@/features/inventario/hooks/use-unidades-conversion'
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
 import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import { formatUsd, formatBs } from '@/lib/currency'
@@ -214,7 +214,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const { user } = useCurrentUser()
   const { conversiones } = useConversiones()
   const { unidades } = useUnidadesActivas()
-  const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { metodos, isLoading: loadingMetodos } = useMetodosCxP()
   const { impuestos } = useImpuestosActivos()
   const { niveles: nivelesActivos } = useNivelesPrecioActivos()
 

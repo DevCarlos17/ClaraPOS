@@ -5,7 +5,7 @@ import { gastoSchema } from '@/features/contabilidad/schemas/gasto-schema'
 import { crearGasto, type GastoPago } from '@/features/contabilidad/hooks/use-gastos'
 import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
 import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -331,7 +331,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
 
   const { cuentas, isLoading: loadingCuentas } = useCuentasDetallePorTipo('GASTO')
   const { proveedores, isLoading: loadingProveedores } = useProveedores()
-  const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { metodos, isLoading: loadingMetodos } = useMetodosCxP()
   const { impuestos } = useImpuestosActivos()
   const { tasa: tasaActual } = useTasaActual()
 

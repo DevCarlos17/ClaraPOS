@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosPOS } from '@/features/configuracion/hooks/use-payment-methods'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import Decimal from 'decimal.js'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
@@ -38,7 +38,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 export function PosTerminal() {
   const { tasaValor, isLoading: tasaLoading } = useTasaActual()
   const { user } = useCurrentUser()
-  const { metodos } = useMetodosPagoActivos()
+  const { metodos } = useMetodosPOS()
   const { hasPermission, isOwner } = usePermissions()
   const canMovManualPos = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)
   const canCloseCajaPos = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)

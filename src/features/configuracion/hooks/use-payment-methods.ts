@@ -72,6 +72,39 @@ export function useMetodosPagoActivos() {
   return { metodos: (data ?? []) as PaymentMethod[], isLoading }
 }
 
+export function useMetodosPOS() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND mc.usa_pos = 1 ORDER BY mc.nombre ASC`,
+    [empresaId]
+  )
+  return { metodos: (data ?? []) as PaymentMethod[], isLoading }
+}
+
+export function useMetodosCxC() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND mc.usa_cxc = 1 ORDER BY mc.nombre ASC`,
+    [empresaId]
+  )
+  return { metodos: (data ?? []) as PaymentMethod[], isLoading }
+}
+
+export function useMetodosCxP() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND mc.usa_cxp = 1 ORDER BY mc.nombre ASC`,
+    [empresaId]
+  )
+  return { metodos: (data ?? []) as PaymentMethod[], isLoading }
+}
+
 export async function createPaymentMethod(params: {
   nombre: string
   moneda: 'USD' | 'BS'
