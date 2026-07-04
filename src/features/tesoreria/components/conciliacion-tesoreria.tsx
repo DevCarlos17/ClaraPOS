@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Plus,
   ArrowsLeftRight,
   ArrowsClockwise,
   X,
   Clock,
+  FilePdf,
+  FileXls,
 } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -36,6 +38,15 @@ import { MovimientoManualModal } from './movimiento-manual-modal'
 import { TraspasoModal } from './traspaso-modal'
 import { ReversoModal } from './reverso-modal'
 import type { CajaFuerte } from '../hooks/use-caja-fuerte'
+import { db } from '@/core/db/powersync/db'
+import {
+  exportHistoricoPdf,
+  exportHistoricoExcel,
+  exportPendientesPdf,
+  exportPendientesExcel,
+  exportConsolidadoPendientesPdf,
+  exportConsolidadoPendientesExcel,
+} from '../utils/export-tesoreria'
 
 // ─── Helper: convertir movimiento a fila de tabla ────────────
 
@@ -134,6 +145,18 @@ function TraspasoRow({
 
 export function ConciliacionTesoreria() {
   const { user } = useCurrentUser()
+
+  const [empresaNombre, setEmpresaNombre] = useState('ClaraPOS')
+
+  useEffect(() => {
+    if (!user?.empresa_id) return
+    db.execute('SELECT nombre FROM empresas WHERE id = ? LIMIT 1', [user.empresa_id])
+      .then((res) => {
+        const nombre = (res.rows?.item(0) as { nombre?: string } | undefined)?.nombre
+        if (nombre) setEmpresaNombre(nombre)
+      })
+      .catch(() => {})
+  }, [user?.empresa_id])
 
   // Seleccion de cuenta
   const [selectedCuenta, setSelectedCuenta] = useState<CuentaTesoreria | null>(null)
@@ -309,6 +332,74 @@ export function ConciliacionTesoreria() {
     toMovRow(mov)
   )
 
+  // ─── Helpers de exportación ──────────────────────────────────
+
+  const getLast12Months = (): Array<{ label: string; desde: string; hasta: string }> => {
+    const months: Array<{ label: string; desde: string; hasta: string }> = []
+    const now = new Date()
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const year = d.getFullYear()
+      const month = d.getMonth()
+      const desde = `${year}-${String(month + 1).padStart(2, '0')}-01`
+      const lastDay = new Date(year, month + 1, 0).getDate()
+      const hasta = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+      const label = d.toLocaleDateString('es-VE', { month: 'short', year: '2-digit' })
+      months.push({ label, desde, hasta })
+    }
+    return months
+  }
+
+  function handleExportHistoricoPdf() {
+    if (!selectedCuenta) return
+    exportHistoricoPdf({
+      movimientos: historicoMovRows,
+      cuenta: selectedCuenta,
+      desde: appliedDesde || '—',
+      hasta: appliedHasta || '—',
+      empresaNombre,
+    })
+  }
+
+  function handleExportHistoricoExcel() {
+    if (!selectedCuenta) return
+    exportHistoricoExcel({
+      movimientos: historicoMovRows,
+      cuenta: selectedCuenta,
+      desde: appliedDesde || '—',
+      hasta: appliedHasta || '—',
+      empresaNombre,
+    })
+  }
+
+  function handleExportPendientesPdf() {
+    if (!selectedCuenta) return
+    exportPendientesPdf({
+      movimientos: pendienteMovRows,
+      cuenta: selectedCuenta,
+      empresaNombre,
+    })
+  }
+
+  function handleExportPendientesExcel() {
+    if (!selectedCuenta) return
+    exportPendientesExcel({
+      movimientos: pendienteMovRows,
+      cuenta: selectedCuenta,
+      empresaNombre,
+    })
+  }
+
+  async function handleExportConsolidadoPdf() {
+    if (!user?.empresa_id) return
+    await exportConsolidadoPendientesPdf({ empresaId: user.empresa_id, empresaNombre, cuentas })
+  }
+
+  async function handleExportConsolidadoExcel() {
+    if (!user?.empresa_id) return
+    await exportConsolidadoPendientesExcel({ empresaId: user.empresa_id, empresaNombre, cuentas })
+  }
+
   // ─── Render ──────────────────────────────────────────────────
 
   return (
@@ -398,6 +489,44 @@ export function ConciliacionTesoreria() {
                   </div>
                 )
               })()}
+              <div className="flex justify-end gap-2 mb-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportPendientesPdf}
+                  disabled={pendienteMovRows.length === 0}
+                >
+                  <FilePdf size={14} className="mr-1.5" />
+                  Exportar PDF
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportPendientesExcel}
+                  disabled={pendienteMovRows.length === 0}
+                >
+                  <FileXls size={14} className="mr-1.5" />
+                  Exportar Excel
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportConsolidadoPdf}
+                  disabled={cuentas.length === 0}
+                >
+                  <FilePdf size={14} className="mr-1.5" />
+                  Todos los bancos (PDF)
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportConsolidadoExcel}
+                  disabled={cuentas.length === 0}
+                >
+                  <FileXls size={14} className="mr-1.5" />
+                  Todos los bancos (Excel)
+                </Button>
+              </div>
               <MovimientosTable
                 movimientos={pendienteMovRows}
                 modo="pendiente"
@@ -408,6 +537,33 @@ export function ConciliacionTesoreria() {
 
             {/* Tab: Historico */}
             <TabsContent value="historico" className="mt-4">
+              {/* Selección rápida de mes */}
+              <div className="flex flex-wrap gap-1.5 pb-2">
+                {getLast12Months().map((m) => (
+                  <button
+                    key={m.desde}
+                    type="button"
+                    onClick={() => {
+                      setFilterDesde(m.desde)
+                      setFilterHasta(m.hasta)
+                      setAppliedDesde(m.desde)
+                      setAppliedHasta(m.hasta)
+                      setAppliedTipo('')
+                      setAppliedSearch('')
+                      setHistPage(1)
+                    }}
+                    className={cn(
+                      'px-2.5 py-1 text-xs rounded-full border transition-colors',
+                      appliedDesde === m.desde && appliedHasta === m.hasta
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-background border-border hover:border-primary/50 text-muted-foreground hover:text-foreground'
+                    )}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+
               {/* Barra de filtros */}
               <div className="flex flex-wrap items-end gap-3 mb-4">
                 <div className="space-y-1">
@@ -454,6 +610,27 @@ export function ConciliacionTesoreria() {
                 <Button size="sm" variant="outline" onClick={handleConsultarHistorico}>
                   <ArrowsClockwise size={14} className="mr-1.5" />
                   Consultar
+                </Button>
+              </div>
+
+              <div className="flex justify-end gap-2 mb-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportHistoricoPdf}
+                  disabled={historicoMovRows.length === 0}
+                >
+                  <FilePdf size={14} className="mr-1.5" />
+                  PDF
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleExportHistoricoExcel}
+                  disabled={historicoMovRows.length === 0}
+                >
+                  <FileXls size={14} className="mr-1.5" />
+                  Excel
                 </Button>
               </div>
 
