@@ -45,6 +45,18 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
     cuentaDestinoResolved &&
     cuentaOrigenResolved.moneda_id !== cuentaDestinoResolved.moneda_id
 
+  const isOrigenUSD = cuentaOrigenResolved?.moneda_codigo === 'USD'
+
+  // Direction-aware calculators
+  const calcDestino = (m: number, t: number): number =>
+    isOrigenUSD ? m * t : m / t
+
+  const calcOrigen = (d: number, t: number): number =>
+    isOrigenUSD ? d / t : d * t
+
+  const calcTasa = (m: number, d: number): number =>
+    isOrigenUSD ? d / m : m / d
+
   function handleMontoOrigenChange(value: string) {
     setMontoOrigen(value)
     const m = parseFloat(value)
@@ -52,9 +64,9 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
     const d = parseFloat(montoDestino)
     if (isNaN(m) || m <= 0) return
     if (!isNaN(t) && t > 0) {
-      setMontoDestino((m * t).toFixed(2))
+      setMontoDestino(calcDestino(m, t).toFixed(2))
     } else if (!isNaN(d) && d > 0) {
-      setTasaCambio((d / m).toFixed(4))
+      setTasaCambio(calcTasa(m, d).toFixed(4))
     }
   }
 
@@ -65,9 +77,9 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
     const d = parseFloat(montoDestino)
     if (isNaN(t) || t <= 0) return
     if (!isNaN(m) && m > 0) {
-      setMontoDestino((m * t).toFixed(2))
+      setMontoDestino(calcDestino(m, t).toFixed(2))
     } else if (!isNaN(d) && d > 0) {
-      setMontoOrigen((d / t).toFixed(2))
+      setMontoOrigen(calcOrigen(d, t).toFixed(2))
     }
   }
 
@@ -78,9 +90,9 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
     const m = parseFloat(montoOrigen)
     if (isNaN(d) || d <= 0) return
     if (!isNaN(t) && t > 0) {
-      setMontoOrigen((d / t).toFixed(2))
+      setMontoOrigen(calcOrigen(d, t).toFixed(2))
     } else if (!isNaN(m) && m > 0) {
-      setTasaCambio((d / m).toFixed(4))
+      setTasaCambio(calcTasa(m, d).toFixed(4))
     }
   }
 

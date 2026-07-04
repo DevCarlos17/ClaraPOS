@@ -24,7 +24,7 @@ import {
   useMovCajaFuerteFiltrados,
   type MovCajaFuerte,
 } from '../hooks/use-mov-caja-fuerte'
-import { useTraspasos, reversarTraspaso, findTraspasoByMovId, type TraspasoEnriquecido } from '../hooks/use-traspasos'
+import { useTraspasos, reversarTraspaso, findTraspasoByMovId, validarTraspaso, type TraspasoEnriquecido } from '../hooks/use-traspasos'
 import {
   validarMovBancario,
   validarMovCajaFuerte,
@@ -223,16 +223,33 @@ export function ConciliacionTesoreria() {
   }
 
   async function handleValidarMov(id: string) {
-    if (!user?.id) return
+    if (!user?.id || !user?.empresa_id) return
     try {
+      // Check if this movement is part of a traspaso
+      const mov =
+        selectedCuenta?.tipo === 'BANCO'
+          ? pendienteBancoResult.data.find((m) => m.id === id)
+          : pendienteCajaResult.data.find((m) => m.id === id)
+
+      if (mov?.origen === 'TRASPASO') {
+        // Auto-conciliate both sides
+        const traspasoId = await findTraspasoByMovId(id, user.empresa_id)
+        if (traspasoId) {
+          await validarTraspaso(traspasoId, user.id, user.empresa_id)
+          toast.success('Traspaso conciliado en ambas cuentas')
+          return
+        }
+      }
+
+      // Normal single-movement validation
       if (selectedCuenta?.tipo === 'BANCO') {
         await validarMovBancario(id, user.id)
       } else {
         await validarMovCajaFuerte(id, user.id)
       }
-      toast.success('Movimiento validado')
+      toast.success('Movimiento conciliado')
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al validar')
+      toast.error(err instanceof Error ? err.message : 'Error al conciliar')
     }
   }
 

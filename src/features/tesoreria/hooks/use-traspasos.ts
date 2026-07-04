@@ -484,3 +484,51 @@ export async function findTraspasoByMovId(
   )
   return (result.rows?.item(0) as { id: string } | undefined)?.id ?? null
 }
+
+// ─── Validar traspaso (ambos lados) ─────────────────────────
+
+export async function validarTraspaso(
+  traspasoId: string,
+  userId: string,
+  empresaId: string
+): Promise<void> {
+  const now = localNow()
+
+  await db.writeTransaction(async (tx) => {
+    const result = await tx.execute(
+      'SELECT * FROM traspasos_tesoreria WHERE id = ? AND empresa_id = ? LIMIT 1',
+      [traspasoId, empresaId]
+    )
+    if (!result.rows?.length) throw new Error('Traspaso no encontrado')
+
+    const t = result.rows.item(0) as {
+      cuenta_origen_tipo: string
+      mov_origen_id: string | null
+      cuenta_destino_tipo: string
+      mov_destino_id: string | null
+      reversado: number
+    }
+
+    if (t.reversado === 1) throw new Error('Este traspaso ya fue reversado')
+
+    // Validate origin movement
+    if (t.mov_origen_id) {
+      const table =
+        t.cuenta_origen_tipo === 'BANCO' ? 'movimientos_bancarios' : 'mov_caja_fuerte'
+      await tx.execute(
+        `UPDATE ${table} SET validado = 1, validado_por = ?, validado_at = ? WHERE id = ?`,
+        [userId, now, t.mov_origen_id]
+      )
+    }
+
+    // Validate destination movement
+    if (t.mov_destino_id) {
+      const table =
+        t.cuenta_destino_tipo === 'BANCO' ? 'movimientos_bancarios' : 'mov_caja_fuerte'
+      await tx.execute(
+        `UPDATE ${table} SET validado = 1, validado_por = ?, validado_at = ? WHERE id = ?`,
+        [userId, now, t.mov_destino_id]
+      )
+    }
+  })
+}
