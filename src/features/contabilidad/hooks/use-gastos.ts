@@ -3,7 +3,7 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import Decimal from 'decimal.js'
-import { toStorageString } from '@/lib/currency'
+import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosGasto, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
@@ -387,19 +387,49 @@ export async function crearGasto(data: {
       for (const pago of data.pagos) {
         if (pago.banco_empresa_id && pago.monto_usd > 0) {
           const movBancoId = uuidv4()
+
+          const _bancoRow = await tx.execute(
+            'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+            [pago.banco_empresa_id]
+          )
+          const _bancoData = _bancoRow.rows?.item(0) as
+            | { saldo_actual: string; moneda_id: string }
+            | undefined
+          const _monedaRow = await tx.execute(
+            'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+            [_bancoData?.moneda_id ?? '']
+          )
+          const _bancoMonedaCodigo =
+            (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+          const _esBancoBS = _bancoMonedaCodigo === 'VES'
+          const _montoNativo = _esBancoBS
+            ? (pago.moneda === 'BS' ? pago.monto_moneda : usdToBs(pago.monto_usd, pago.tasa_pago).toNumber())
+            : (pago.moneda === 'BS' ? bsToUsd(pago.monto_moneda, pago.tasa_pago).toNumber() : pago.monto_usd)
+
+          const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+          const _saldoNuevo = _saldoAnt - _montoNativo
+
           await tx.execute(
             `INSERT INTO movimientos_bancarios
                (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
                 doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-             VALUES (?, ?, ?, 'EGRESO', 'GASTO', ?, 0, 0, ?, 'GASTO', ?, 0, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, 'EGRESO', 'GASTO', ?, ?, ?, ?, 'GASTO', ?, 0, ?, ?, ?, ?)`,
             [
               movBancoId, data.empresa_id, pago.banco_empresa_id,
-              toStorageString(pago.monto_usd),
+              toStorageString(_montoNativo),
+              toStorageString(_saldoAnt),
+              toStorageString(_saldoNuevo),
               gastoId,
               pago.referencia ?? null,
               `Gasto ${nroGasto}`,
               now, now, data.created_by ?? null,
             ]
+          )
+
+          await tx.execute(
+            'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(_saldoNuevo), now, pago.banco_empresa_id]
           )
         }
       }
@@ -690,19 +720,49 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
     try {
       if (banco_empresa_id && montoUsd.greaterThan(0)) {
         const movBancoId = uuidv4()
+
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [banco_empresa_id]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (moneda === 'BS' ? monto : usdToBs(montoUsd, tasa).toNumber())
+          : (moneda === 'BS' ? bsToUsd(monto, tasa).toNumber() : montoUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt - _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'EGRESO', 'PAGO_GASTO', ?, 0, 0, ?, 'GASTO', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'EGRESO', 'PAGO_GASTO', ?, ?, ?, ?, 'GASTO', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoId, empresa_id, banco_empresa_id,
-            toStorageString(montoUsd),
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
             gasto_id,
             referencia ?? null,
             `Pago gasto ${gasto.nro_gasto}`,
             fechaPago, now, usuario_id,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, banco_empresa_id]
         )
       }
     } catch {

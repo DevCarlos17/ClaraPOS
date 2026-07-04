@@ -4,7 +4,7 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
-import { toStorageString } from '@/lib/currency'
+import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxP, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 
@@ -226,19 +226,49 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
     try {
       if (banco_empresa_id && montoUsd.gt(0)) {
         const movBancoId = uuidv4()
+
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [banco_empresa_id]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (moneda === 'BS' ? monto : usdToBs(montoUsd, dTasa).toNumber())
+          : (moneda === 'BS' ? bsToUsd(monto, dTasa).toNumber() : montoUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt - _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, ?, ?, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoId, empresa_id, banco_empresa_id,
-            toStorageString(montoUsd),
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
             factura_compra_id,
             referencia ?? null,
             `Pago CxP ${factura.nro_factura}`,
             fechaPago, now, usuario_id,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, banco_empresa_id]
         )
       }
 

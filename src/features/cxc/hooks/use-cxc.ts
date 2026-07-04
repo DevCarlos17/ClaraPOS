@@ -7,7 +7,7 @@ import { localNow, todayStr } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import Decimal from 'decimal.js'
-import { bsToUsd, toStorageString } from '@/lib/currency'
+import { bsToUsd, usdToBs, toStorageString } from '@/lib/currency'
 
 export interface VentaPendiente {
   id: string
@@ -457,24 +457,56 @@ export async function aplicarPagoFacturaEnTx(
   if (!skipBankAndAccounting) {
     try {
       const metodoCxCResult = await tx.execute(
-        'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+        'SELECT banco_empresa_id, deposito_directo FROM metodos_cobro WHERE id = ? LIMIT 1',
         [metodo_cobro_id]
       )
-      const bancoCxCId =
-        (metodoCxCResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
-          ?.banco_empresa_id ?? null
+      const _metodoCxCRow = metodoCxCResult.rows?.item(0) as
+        | { banco_empresa_id: string | null; deposito_directo: number | null }
+        | undefined
+      const bancoCxCId = _metodoCxCRow?.banco_empresa_id ?? null
+      const _depositoDirecto = _metodoCxCRow?.deposito_directo ?? 0
 
-      if (bancoCxCId && montoUsd.gt(0)) {
+      if (bancoCxCId && montoUsd.gt(0) && _depositoDirecto === 1) {
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [bancoCxCId]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (moneda === 'BS' ? monto : usdToBs(montoUsd, tasaD).toNumber())
+          : (moneda === 'BS' ? bsToUsd(monto, tasaD).toNumber() : montoUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt + _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, ?, ?, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
           [
             uuidv4(), empresa_id, bancoCxCId,
-            toStorageString(montoUsd), venta_id, referencia ?? null,
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
+            venta_id, referencia ?? null,
             `Cobro CxC fac.${venta.nro_factura}`, now, now, procesado_por,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, bancoCxCId]
         )
       }
 
@@ -900,28 +932,60 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     // 7. Resolver banco + movimiento bancario + asientos contables (abono global CxC)
     try {
       const metodoAbonoResult = await tx.execute(
-        'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+        'SELECT banco_empresa_id, deposito_directo FROM metodos_cobro WHERE id = ? LIMIT 1',
         [metodo_cobro_id]
       )
-      const bancoAbonoId =
-        (metodoAbonoResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
-          ?.banco_empresa_id ?? null
+      const _metodoAbonoRow = metodoAbonoResult.rows?.item(0) as
+        | { banco_empresa_id: string | null; deposito_directo: number | null }
+        | undefined
+      const bancoAbonoId = _metodoAbonoRow?.banco_empresa_id ?? null
+      const _depositoDirectoAbono = _metodoAbonoRow?.deposito_directo ?? 0
 
-      if (bancoAbonoId && montoTotalUsd.gt(0)) {
+      if (bancoAbonoId && montoTotalUsd.gt(0) && _depositoDirectoAbono === 1) {
         const movBancoAbonoId = uuidv4()
+
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [bancoAbonoId]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (moneda === 'BS' ? monto : usdToBs(montoTotalUsd, tasaD).toNumber())
+          : (moneda === 'BS' ? bsToUsd(monto, tasaD).toNumber() : montoTotalUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt + _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, ?, ?, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoAbonoId, empresa_id, bancoAbonoId,
-            toStorageString(montoTotalUsd),
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
             movId,
             referencia ?? null,
             `Abono global cliente`,
             now, now, procesado_por,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, bancoAbonoId]
         )
       }
 
