@@ -24,7 +24,7 @@ import {
   useMovCajaFuerteFiltrados,
   type MovCajaFuerte,
 } from '../hooks/use-mov-caja-fuerte'
-import { useTraspasos, reversarTraspaso, type TraspasoEnriquecido } from '../hooks/use-traspasos'
+import { useTraspasos, reversarTraspaso, findTraspasoByMovId, type TraspasoEnriquecido } from '../hooks/use-traspasos'
 import {
   validarMovBancario,
   validarMovCajaFuerte,
@@ -162,6 +162,7 @@ export function ConciliacionTesoreria() {
   const [showManualModal, setShowManualModal] = useState(false)
   const [showTraspasoModal, setShowTraspasoModal] = useState(false)
   const [movParaReversar, setMovParaReversar] = useState<MovimientoTesoreria | null>(null)
+  const [traspasoIdParaReversar, setTraspasoIdParaReversar] = useState<string | null>(null)
 
   // Datos
   const { cuentas, isLoading: loadingCuentas } = useCuentasTesoreria()
@@ -235,14 +236,29 @@ export function ConciliacionTesoreria() {
     }
   }
 
-  function handleReversarMov(id: string) {
-    if (!selectedCuenta) return
+  async function handleReversarMov(id: string) {
+    if (!selectedCuenta || !user?.empresa_id) return
+
     if (selectedCuenta.tipo === 'BANCO') {
       const mov = pendienteBancoResult.data.find((m) => m.id === id)
-      if (mov) setMovParaReversar({ ...mov, _source: 'BANCO' as const })
+      if (!mov) return
+      setMovParaReversar({ ...mov, _source: 'BANCO' as const })
+      if (mov.origen === 'TRASPASO') {
+        const traspasoId = await findTraspasoByMovId(id, user.empresa_id)
+        setTraspasoIdParaReversar(traspasoId)
+      } else {
+        setTraspasoIdParaReversar(null)
+      }
     } else {
       const mov = pendienteCajaResult.data.find((m) => m.id === id)
-      if (mov) setMovParaReversar({ ...mov, _source: 'CAJA_FUERTE' as const })
+      if (!mov) return
+      setMovParaReversar({ ...mov, _source: 'CAJA_FUERTE' as const })
+      if (mov.origen === 'TRASPASO') {
+        const traspasoId = await findTraspasoByMovId(id, user.empresa_id)
+        setTraspasoIdParaReversar(traspasoId)
+      } else {
+        setTraspasoIdParaReversar(null)
+      }
     }
   }
 
@@ -504,10 +520,14 @@ export function ConciliacionTesoreria() {
       />
 
       <ReversoModal
-        isOpen={movParaReversar !== null}
-        onClose={() => setMovParaReversar(null)}
+        isOpen={!!movParaReversar}
+        onClose={() => {
+          setMovParaReversar(null)
+          setTraspasoIdParaReversar(null)
+        }}
         movimiento={movParaReversar}
         monedaSimbolo={selectedCuenta?.moneda_simbolo ?? '$'}
+        traspasoId={traspasoIdParaReversar ?? undefined}
       />
     </div>
   )

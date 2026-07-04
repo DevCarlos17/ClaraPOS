@@ -469,3 +469,18 @@ export async function reversarTraspaso(params: {
     )
   })
 }
+
+// ─── Buscar traspaso por movimiento ─────────────────────────
+
+export async function findTraspasoByMovId(
+  movId: string,
+  empresaId: string
+): Promise<string | null> {
+  const result = await db.execute(
+    `SELECT id FROM traspasos_tesoreria
+     WHERE (mov_origen_id = ? OR mov_destino_id = ?)
+       AND empresa_id = ? LIMIT 1`,
+    [movId, movId, empresaId]
+  )
+  return (result.rows?.item(0) as { id: string } | undefined)?.id ?? null
+}
