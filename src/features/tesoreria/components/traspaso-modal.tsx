@@ -15,7 +15,7 @@ import { todayStr } from '@/lib/dates'
 import { crearTraspaso } from '../hooks/use-traspasos'
 import { traspasoSchema } from '../schemas/tesoreria-schemas'
 import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 
 interface Props {
   isOpen: boolean
@@ -33,6 +33,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
   const [destinoId, setDestinoId] = useState('')
   const [montoOrigen, setMontoOrigen] = useState('')
   const [tasaCambio, setTasaCambio] = useState('')
+  const [montoDestino, setMontoDestino] = useState('')
   const [fecha, setFecha] = useState(todayStr())
   const [observacion, setObservacion] = useState('')
   const [referencia, setReferencia] = useState('')
@@ -44,15 +45,44 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
     cuentaDestinoResolved &&
     cuentaOrigenResolved.moneda_id !== cuentaDestinoResolved.moneda_id
 
-  const montoDestinoCalc: number = (() => {
-    const m = parseFloat(montoOrigen)
-    if (isNaN(m)) return 0
-    if (isCrossCurrency) {
-      const t = parseFloat(tasaCambio)
-      return isNaN(t) ? 0 : m * t
+  function handleMontoOrigenChange(value: string) {
+    setMontoOrigen(value)
+    const m = parseFloat(value)
+    const t = parseFloat(tasaCambio)
+    const d = parseFloat(montoDestino)
+    if (isNaN(m) || m <= 0) return
+    if (!isNaN(t) && t > 0) {
+      setMontoDestino((m * t).toFixed(2))
+    } else if (!isNaN(d) && d > 0) {
+      setTasaCambio((d / m).toFixed(4))
     }
-    return m
-  })()
+  }
+
+  function handleTasaChange(value: string) {
+    setTasaCambio(value)
+    const t = parseFloat(value)
+    const m = parseFloat(montoOrigen)
+    const d = parseFloat(montoDestino)
+    if (isNaN(t) || t <= 0) return
+    if (!isNaN(m) && m > 0) {
+      setMontoDestino((m * t).toFixed(2))
+    } else if (!isNaN(d) && d > 0) {
+      setMontoOrigen((d / t).toFixed(2))
+    }
+  }
+
+  function handleMontoDestinoChange(value: string) {
+    setMontoDestino(value)
+    const d = parseFloat(value)
+    const t = parseFloat(tasaCambio)
+    const m = parseFloat(montoOrigen)
+    if (isNaN(d) || d <= 0) return
+    if (!isNaN(t) && t > 0) {
+      setMontoOrigen((d / t).toFixed(2))
+    } else if (!isNaN(m) && m > 0) {
+      setTasaCambio((d / m).toFixed(4))
+    }
+  }
 
   useEffect(() => {
     if (isOpen) {
@@ -61,6 +91,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
       setDestinoId('')
       setMontoOrigen('')
       setTasaCambio('')
+      setMontoDestino('')
       setFecha(todayStr())
       setObservacion('')
       setReferencia('')
@@ -93,9 +124,15 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
 
     if (!cuentaOrigenResolved || !cuentaDestinoResolved) return
 
-    if (isCrossCurrency && (!tasaCambio || parseFloat(tasaCambio) <= 0)) {
-      setErrors({ tasa_cambio: 'Ingrese la tasa de cambio' })
-      return
+    if (isCrossCurrency) {
+      if (!tasaCambio || parseFloat(tasaCambio) <= 0) {
+        setErrors({ tasa_cambio: 'Ingrese la tasa de cambio' })
+        return
+      }
+      if (!montoDestino || parseFloat(montoDestino) <= 0) {
+        setErrors({ monto_destino: 'Ingrese el monto a recibir' })
+        return
+      }
     }
 
     if (!user?.id || !user?.empresa_id) return
@@ -105,7 +142,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
         origen: cuentaOrigenResolved,
         destino: cuentaDestinoResolved,
         monto_origen: parsed.data.monto_origen,
-        monto_destino: montoDestinoCalc,
+        monto_destino: isCrossCurrency ? parseFloat(montoDestino) : parseFloat(montoOrigen),
         tasa_cambio: isCrossCurrency ? (parsed.data.tasa_cambio ?? undefined) : undefined,
         fecha: parsed.data.fecha,
         observacion: parsed.data.observacion,
@@ -194,7 +231,8 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
               step="0.01"
               min="0.01"
               value={montoOrigen}
-              onChange={(e) => setMontoOrigen(e.target.value)}
+              onChange={(e) => handleMontoOrigenChange(e.target.value)}
+              onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
               disabled={!cuentaOrigenResolved}
             />
@@ -216,10 +254,10 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
 
           {isCrossCurrency && (
             <>
+              {/* Tasa de cambio */}
               <div className="space-y-1.5">
                 <Label htmlFor="tasaCambio">
-                  Tasa de cambio ({cuentaOrigenResolved?.moneda_codigo} →{' '}
-                  {cuentaDestinoResolved?.moneda_codigo}) *
+                  Tasa ({cuentaOrigenResolved?.moneda_codigo} → {cuentaDestinoResolved?.moneda_codigo}) *
                 </Label>
                 <Input
                   id="tasaCambio"
@@ -227,7 +265,8 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
                   step="0.0001"
                   min="0.0001"
                   value={tasaCambio}
-                  onChange={(e) => setTasaCambio(e.target.value)}
+                  onChange={(e) => handleTasaChange(e.target.value)}
+                  onWheel={(e) => e.currentTarget.blur()}
                   placeholder="0.0000"
                 />
                 {errors.tasa_cambio && (
@@ -235,11 +274,32 @@ export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props)
                 )}
               </div>
 
-              <div className="rounded-lg bg-muted/50 p-3 text-sm">
-                <p className="text-muted-foreground text-xs">Monto a recibir</p>
-                <p className="font-semibold mt-0.5">
-                  {cuentaDestinoResolved?.moneda_codigo} {formatUsd(montoDestinoCalc)}
-                </p>
+              {/* Monto destino */}
+              <div className="space-y-1.5">
+                <Label htmlFor="montoDestino">
+                  Monto a recibir ({cuentaDestinoResolved?.moneda_codigo}) *
+                </Label>
+                <Input
+                  id="montoDestino"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  value={montoDestino}
+                  onChange={(e) => handleMontoDestinoChange(e.target.value)}
+                  onWheel={(e) => e.currentTarget.blur()}
+                  placeholder="0.00"
+                  disabled={!cuentaDestinoResolved}
+                />
+                {/* Hint: equivalence in origin currency */}
+                {montoDestino && montoOrigen && cuentaOrigenResolved && (
+                  <p className="text-xs text-muted-foreground">
+                    Equivale a{' '}
+                    {cuentaOrigenResolved.moneda_codigo === 'USD'
+                      ? formatUsd(parseFloat(montoOrigen))
+                      : formatBs(parseFloat(montoOrigen))}{' '}
+                    {cuentaOrigenResolved.moneda_codigo}
+                  </p>
+                )}
               </div>
             </>
           )}
