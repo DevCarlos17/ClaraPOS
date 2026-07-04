@@ -2,7 +2,6 @@ import { useState } from 'react'
 import {
   Plus,
   ArrowsLeftRight,
-  Vault,
   ArrowsClockwise,
   X,
   Clock,
@@ -210,6 +209,10 @@ export function ConciliacionTesoreria() {
     setHistPage(1)
   }
 
+  function handleDeselectCuenta() {
+    setSelectedCuenta(null)
+  }
+
   function handleConsultarHistorico() {
     setAppliedDesde(filterDesde)
     setAppliedHasta(filterHasta)
@@ -282,17 +285,6 @@ export function ConciliacionTesoreria() {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => {
-            setEditandoCaja(null)
-            setShowCajaFuerteModal(true)
-          }}
-        >
-          <Vault size={16} className="mr-1.5" />
-          Nueva caja fuerte
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
           onClick={() => setShowTraspasoModal(true)}
           disabled={cuentas.length < 2}
         >
@@ -317,6 +309,7 @@ export function ConciliacionTesoreria() {
           cuentas={cuentas}
           selectedId={selectedCuenta?.id ?? null}
           onSelect={handleSelectCuenta}
+          onDeselect={handleDeselectCuenta}
         />
       )}
 

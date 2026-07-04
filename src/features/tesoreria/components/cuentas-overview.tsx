@@ -1,4 +1,4 @@
-import { Bank, Vault } from '@phosphor-icons/react'
+import { Bank, Vault, X } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 import { formatBs, formatUsd } from '@/lib/currency'
 import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
@@ -7,16 +7,34 @@ interface Props {
   cuentas: CuentaTesoreria[]
   selectedId: string | null
   onSelect: (cuenta: CuentaTesoreria) => void
+  onDeselect?: () => void
 }
 
-export function CuentasOverview({ cuentas, selectedId, onSelect }: Props) {
+export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect }: Props) {
+  // If a card is selected, show ONLY that card (no section headers, no other cards)
+  if (selectedId) {
+    const seleccionada = cuentas.find((c) => c.id === selectedId)
+    if (!seleccionada) return null
+    return (
+      <div className="py-1">
+        <CuentaCard
+          cuenta={seleccionada}
+          selected
+          onSelect={onSelect}
+          onDeselect={onDeselect}
+        />
+      </div>
+    )
+  }
+
+  // No selection: show all cards grouped by type (existing behavior)
   const bancos = cuentas.filter((c) => c.tipo === 'BANCO')
   const cajas = cuentas.filter((c) => c.tipo === 'CAJA_FUERTE')
 
   if (cuentas.length === 0) {
     return (
       <div className="text-sm text-muted-foreground py-4 text-center">
-        No hay cuentas configuradas. Cree un banco o una caja fuerte para comenzar.
+        No hay cuentas configuradas. Cree un banco para comenzar.
       </div>
     )
   }
@@ -33,14 +51,13 @@ export function CuentasOverview({ cuentas, selectedId, onSelect }: Props) {
               <CuentaCard
                 key={cuenta.id}
                 cuenta={cuenta}
-                selected={selectedId === cuenta.id}
+                selected={false}
                 onSelect={onSelect}
               />
             ))}
           </div>
         </div>
       )}
-
       {cajas.length > 0 && (
         <div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
@@ -51,7 +68,7 @@ export function CuentasOverview({ cuentas, selectedId, onSelect }: Props) {
               <CuentaCard
                 key={cuenta.id}
                 cuenta={cuenta}
-                selected={selectedId === cuenta.id}
+                selected={false}
                 onSelect={onSelect}
               />
             ))}
@@ -66,10 +83,12 @@ function CuentaCard({
   cuenta,
   selected,
   onSelect,
+  onDeselect,
 }: {
   cuenta: CuentaTesoreria
   selected: boolean
   onSelect: (c: CuentaTesoreria) => void
+  onDeselect?: () => void
 }) {
   const Icon = cuenta.tipo === 'BANCO' ? Bank : Vault
   const saldo = parseFloat(cuenta.saldo_actual ?? '0')
@@ -78,13 +97,28 @@ function CuentaCard({
     <button
       onClick={() => onSelect(cuenta)}
       className={cn(
-        'flex-shrink-0 w-52 rounded-xl border p-4 text-left transition-all',
+        'relative flex-shrink-0 w-52 rounded-xl border p-4 text-left transition-all',
         'hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
         selected
           ? 'border-primary bg-primary/5 shadow-sm'
           : 'border-border bg-card hover:border-primary/40'
       )}
     >
+      {/* X button to deselect — only when selected */}
+      {selected && onDeselect && (
+        <span
+          role="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDeselect()
+          }}
+          className="absolute top-2 right-2 p-0.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+          title="Deseleccionar"
+        >
+          <X size={13} />
+        </span>
+      )}
+
       <div className="flex items-center gap-2 mb-3">
         <div
           className={cn(
