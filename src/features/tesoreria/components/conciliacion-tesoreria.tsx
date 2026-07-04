@@ -17,7 +17,7 @@ import { cn } from '@/lib/utils'
 import { formatUsd, formatBs } from '@/lib/currency'
 
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useCuentasTesoreria, type CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
+import { useCuentasTesoreria, usePendingCounts, type CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 import {
   useMovBancariosFiltrados,
   type MovBancario,
@@ -194,6 +194,7 @@ export function ConciliacionTesoreria() {
 
   // Datos
   const { cuentas, isLoading: loadingCuentas } = useCuentasTesoreria()
+  const pendingCounts = usePendingCounts()
 
   const bancoId = selectedCuenta?.tipo === 'BANCO' ? selectedCuenta.id : ''
   const cajaId = selectedCuenta?.tipo === 'CAJA_FUERTE' ? selectedCuenta.id : ''
@@ -411,6 +412,73 @@ export function ConciliacionTesoreria() {
     <div className="space-y-6">
       {/* Barra de acciones */}
       <div className="flex flex-wrap items-center gap-2 justify-end">
+        {/* Report buttons — left side, context-aware */}
+        {!selectedCuenta ? (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportConsolidadoPdf}
+              disabled={cuentas.length === 0}
+            >
+              <FilePdf size={14} className="mr-1.5" />
+              Consolidado PDF
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportConsolidadoExcel}
+              disabled={cuentas.length === 0}
+            >
+              <FileXls size={14} className="mr-1.5" />
+              Consolidado Excel
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportPendientesPdf}
+              disabled={pendienteMovRows.length === 0}
+            >
+              <FilePdf size={14} className="mr-1.5" />
+              Pendientes PDF
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportPendientesExcel}
+              disabled={pendienteMovRows.length === 0}
+            >
+              <FileXls size={14} className="mr-1.5" />
+              Pendientes Excel
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportHistoricoPdf}
+              disabled={historicoMovRows.length === 0}
+            >
+              <FilePdf size={14} className="mr-1.5" />
+              Histórico PDF
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleExportHistoricoExcel}
+              disabled={historicoMovRows.length === 0}
+            >
+              <FileXls size={14} className="mr-1.5" />
+              Histórico Excel
+            </Button>
+          </>
+        )}
+
+        {/* Separator */}
+        <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
+
+        {/* Traspaso + Manual — right side, unchanged */}
         <Button
           variant="outline"
           size="sm"
@@ -439,6 +507,7 @@ export function ConciliacionTesoreria() {
           selectedId={selectedCuenta?.id ?? null}
           onSelect={handleSelectCuenta}
           onDeselect={handleDeselectCuenta}
+          pendingCounts={pendingCounts}
         />
       )}
 
@@ -494,44 +563,6 @@ export function ConciliacionTesoreria() {
                   </div>
                 )
               })()}
-              <div className="flex justify-end gap-2 mb-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleExportPendientesPdf}
-                  disabled={pendienteMovRows.length === 0}
-                >
-                  <FilePdf size={14} className="mr-1.5" />
-                  Exportar PDF
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleExportPendientesExcel}
-                  disabled={pendienteMovRows.length === 0}
-                >
-                  <FileXls size={14} className="mr-1.5" />
-                  Exportar Excel
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleExportConsolidadoPdf}
-                  disabled={cuentas.length === 0}
-                >
-                  <FilePdf size={14} className="mr-1.5" />
-                  Todos los bancos (PDF)
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleExportConsolidadoExcel}
-                  disabled={cuentas.length === 0}
-                >
-                  <FileXls size={14} className="mr-1.5" />
-                  Todos los bancos (Excel)
-                </Button>
-              </div>
               <MovimientosTable
                 movimientos={pendienteMovRows}
                 modo="pendiente"
@@ -542,35 +573,38 @@ export function ConciliacionTesoreria() {
 
             {/* Tab: Historico */}
             <TabsContent value="historico" className="mt-4">
-              {/* Selección rápida de mes */}
-              <div className="flex flex-wrap gap-1.5 pb-2">
-                {getLast12Months().map((m) => (
-                  <button
-                    key={m.desde}
-                    type="button"
-                    onClick={() => {
-                      setFilterDesde(m.desde)
-                      setFilterHasta(m.hasta)
-                      setAppliedDesde(m.desde)
-                      setAppliedHasta(m.hasta)
+              {/* Filtros — mes + rango + tipo + buscar en una sola fila */}
+              <div className="flex flex-wrap items-end gap-3 mb-4">
+                <div className="space-y-1">
+                  <Label className="text-xs">Mes</Label>
+                  <select
+                    value={(() => {
+                      const m = getLast12Months().find(
+                        (m) => m.desde === appliedDesde && m.hasta === appliedHasta
+                      )
+                      return m ? `${m.desde}|${m.hasta}` : ''
+                    })()}
+                    onChange={(e) => {
+                      if (!e.target.value) return
+                      const [desde, hasta] = e.target.value.split('|')
+                      setFilterDesde(desde)
+                      setFilterHasta(hasta)
+                      setAppliedDesde(desde)
+                      setAppliedHasta(hasta)
                       setAppliedTipo('')
                       setAppliedSearch('')
                       setHistPage(1)
                     }}
-                    className={cn(
-                      'px-2.5 py-1 text-xs rounded-full border transition-colors',
-                      appliedDesde === m.desde && appliedHasta === m.hasta
-                        ? 'bg-primary text-primary-foreground border-primary'
-                        : 'bg-background border-border hover:border-primary/50 text-muted-foreground hover:text-foreground'
-                    )}
+                    className="flex h-8 rounded-md border border-input bg-background px-2 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* Barra de filtros */}
-              <div className="flex flex-wrap items-end gap-3 mb-4">
+                    <option value="">-- Mes --</option>
+                    {getLast12Months().map((m) => (
+                      <option key={m.desde} value={`${m.desde}|${m.hasta}`}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Desde</Label>
                   <Input
@@ -615,27 +649,6 @@ export function ConciliacionTesoreria() {
                 <Button size="sm" variant="outline" onClick={handleConsultarHistorico}>
                   <ArrowsClockwise size={14} className="mr-1.5" />
                   Consultar
-                </Button>
-              </div>
-
-              <div className="flex justify-end gap-2 mb-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleExportHistoricoPdf}
-                  disabled={historicoMovRows.length === 0}
-                >
-                  <FilePdf size={14} className="mr-1.5" />
-                  PDF
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleExportHistoricoExcel}
-                  disabled={historicoMovRows.length === 0}
-                >
-                  <FileXls size={14} className="mr-1.5" />
-                  Excel
                 </Button>
               </div>
 

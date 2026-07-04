@@ -93,3 +93,39 @@ export function useCuentasTesoreria(): {
     isLoading: loadingBancos || loadingCajas || loadingMonedas,
   }
 }
+
+// ─── Hook de conteos pendientes ──────────────────────────────
+
+/**
+ * Returns a Map<cuentaId, pendingCount> for all accounts in the empresa.
+ * Uses aggregated COUNT queries — one for banks, one for cajitas.
+ */
+export function usePendingCounts(): Map<string, number> {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data: bancosCount } = useQuery(
+    `SELECT banco_empresa_id AS cuenta_id, COUNT(*) AS cnt
+     FROM movimientos_bancarios
+     WHERE empresa_id = ? AND validado = 0 AND reversado = 0
+     GROUP BY banco_empresa_id`,
+    [empresaId]
+  )
+
+  const { data: cajasCount } = useQuery(
+    `SELECT caja_fuerte_id AS cuenta_id, COUNT(*) AS cnt
+     FROM mov_caja_fuerte
+     WHERE empresa_id = ? AND validado = 0 AND reversado = 0
+     GROUP BY caja_fuerte_id`,
+    [empresaId]
+  )
+
+  const map = new Map<string, number>()
+  ;((bancosCount ?? []) as { cuenta_id: string; cnt: number }[]).forEach((r) => {
+    if (r.cnt > 0) map.set(r.cuenta_id, r.cnt)
+  })
+  ;((cajasCount ?? []) as { cuenta_id: string; cnt: number }[]).forEach((r) => {
+    if (r.cnt > 0) map.set(r.cuenta_id, r.cnt)
+  })
+  return map
+}

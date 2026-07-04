@@ -8,9 +8,10 @@ interface Props {
   selectedId: string | null
   onSelect: (cuenta: CuentaTesoreria) => void
   onDeselect?: () => void
+  pendingCounts?: Map<string, number>
 }
 
-export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect }: Props) {
+export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect, pendingCounts }: Props) {
   // If a card is selected, show ONLY that card (no section headers, no other cards)
   if (selectedId) {
     const seleccionada = cuentas.find((c) => c.id === selectedId)
@@ -22,6 +23,7 @@ export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect }: P
           selected
           onSelect={onSelect}
           onDeselect={onDeselect}
+          pendingCount={pendingCounts?.get(seleccionada.id) ?? 0}
         />
       </div>
     )
@@ -53,6 +55,7 @@ export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect }: P
                 cuenta={cuenta}
                 selected={false}
                 onSelect={onSelect}
+                pendingCount={pendingCounts?.get(cuenta.id) ?? 0}
               />
             ))}
           </div>
@@ -70,6 +73,7 @@ export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect }: P
                 cuenta={cuenta}
                 selected={false}
                 onSelect={onSelect}
+                pendingCount={pendingCounts?.get(cuenta.id) ?? 0}
               />
             ))}
           </div>
@@ -84,11 +88,13 @@ function CuentaCard({
   selected,
   onSelect,
   onDeselect,
+  pendingCount,
 }: {
   cuenta: CuentaTesoreria
   selected: boolean
   onSelect: (c: CuentaTesoreria) => void
   onDeselect?: () => void
+  pendingCount?: number
 }) {
   const Icon = cuenta.tipo === 'BANCO' ? Bank : Vault
   const saldo = parseFloat(cuenta.saldo_actual ?? '0')
@@ -104,6 +110,13 @@ function CuentaCard({
           : 'border-border bg-card hover:border-primary/40'
       )}
     >
+      {/* Pending badge */}
+      {pendingCount !== undefined && pendingCount > 0 && (
+        <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1 shadow-sm z-10">
+          {pendingCount > 99 ? '99+' : pendingCount}
+        </span>
+      )}
+
       {/* X button to deselect — only when selected */}
       {selected && onDeselect && (
         <span
