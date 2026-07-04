@@ -30,6 +30,7 @@ import { AperturaSesionPosModal } from '@/features/caja/components/apertura-sesi
 import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
 import { IngresoRetiroModal } from '@/features/caja/components/ingreso-retiro-modal'
 import { AvanceModal, type AvanceAplicado } from '@/features/caja/components/avance-modal'
+import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
 import { PrestamoModal, type PrestamoAplicado } from '@/features/caja/components/prestamo-modal'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
 import { CobroModal } from './cobro-modal'
@@ -44,6 +45,7 @@ export function PosTerminal() {
   const canCloseCajaPos = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
   const esperaStore = useFacturasEsperaStore()
   const { sesion, isLoading: sesionLoading } = useSesionActiva()
+  const { cuentas: cuentasTesoreria } = useCuentasTesoreria()
   const navigate = useNavigate()
 
   // Datos de contexto para la barra de caja
@@ -1313,6 +1315,7 @@ export function PosTerminal() {
             onAplicado={handleAvanceAplicado}
             pendingCajaUsd={pendingCajaUsd}
             pendingCajaBs={pendingCajaBs}
+            cuentas={cuentasTesoreria}
           />
           <PrestamoModal
             isOpen={showPrestamoModal}
