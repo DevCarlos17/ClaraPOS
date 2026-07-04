@@ -6,8 +6,13 @@ import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
-import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs, bsToUsd, toStorageString } from '@/lib/currency'
 import Decimal from 'decimal.js'
+import { v4 as uuidv4 } from 'uuid'
+import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { todayStr, localNow } from '@/lib/dates'
+import type { CuentaTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -41,6 +46,7 @@ interface PrestamoModalProps {
   /** Egresos de caja ya comprometidos en esta factura (aun no debitados) */
   pendingCajaUsd?: number
   pendingCajaBs?: number
+  cuentas?: CuentaTesoreria[]
 }
 
 // ─── Constantes por defecto (en el futuro vendran de configuracion) ──
@@ -58,6 +64,7 @@ function FormPrestamo({
   onAplicado,
   pendingCajaUsd = 0,
   pendingCajaBs = 0,
+  cuentas,
 }: {
   onClose: () => void
   sesionCajaId?: string
@@ -66,7 +73,9 @@ function FormPrestamo({
   onAplicado?: (prestamo: PrestamoAplicado) => void
   pendingCajaUsd?: number
   pendingCajaBs?: number
+  cuentas?: CuentaTesoreria[]
 }) {
+  const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
   const { isOwner, hasPermission } = usePermissions()
   const { saldoUsd: sesionSaldoUsd, saldoBs: sesionSaldoBs } = useSaldoSesionCaja(sesionCajaId)
@@ -84,7 +93,12 @@ function FormPrestamo({
 
   const [concepto, setConcepto] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const submitting = false
+  const [submitting, setSubmitting] = useState(false)
+  const [selectedCuentaId, setSelectedCuentaId] = useState('')
+
+  const selectedCuenta = selectedCuentaId
+    ? (cuentas ?? []).find((c) => c.id === selectedCuentaId)
+    : undefined
 
   // Solo pueden modificar dias quienes tengan permiso
   const puedeModificarDias = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)
@@ -138,9 +152,10 @@ function FormPrestamo({
     setDiasPlazo(String(DEFAULT_DIAS_PLAZO))
     setConcepto('')
     setErrors({})
+    setSelectedCuentaId('')
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
 
@@ -176,6 +191,20 @@ function FormPrestamo({
         }
       }
     }
+    if (origenFondos !== 'CAJA') {
+      if (!selectedCuentaId) {
+        newErrors.general = 'Selecciona una cuenta de origen'
+      } else if (selectedCuenta) {
+        const saldoDisp = parseFloat(selectedCuenta.saldo_actual ?? '0')
+        const esUSD = selectedCuenta.moneda_codigo === 'USD'
+        const montoSolicitado = esUSD ? usd : bs
+        if (montoSolicitado <= 0) {
+          newErrors.general = `Ingresa el monto en ${esUSD ? 'USD' : 'Bs'}`
+        } else if (montoSolicitado > saldoDisp) {
+          newErrors.general = `Saldo insuficiente. Disponible: ${esUSD ? formatUsd(saldoDisp) : formatBs(saldoDisp)}`
+        }
+      }
+    }
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
@@ -184,6 +213,66 @@ function FormPrestamo({
 
     const conceptoFinal = concepto.trim() ||
       `Prestamo${clienteNombre ? ` - ${clienteNombre}` : ''} - ${dias} dias`
+
+    if (origenFondos !== 'CAJA' && selectedCuenta && user?.id && user?.empresa_id) {
+      setSubmitting(true)
+      try {
+        const movId = uuidv4()
+        const now = localNow()
+        const fecha = todayStr()
+        const esUSD = selectedCuenta.moneda_codigo === 'USD'
+        const montoNativo = esUSD ? usd : bs
+        const saldoAnt = parseFloat(selectedCuenta.saldo_actual ?? '0')
+        const saldoNuevo = saldoAnt - montoNativo
+
+        await db.writeTransaction(async (tx) => {
+          if (selectedCuenta.tipo === 'BANCO') {
+            await tx.execute(
+              `INSERT INTO movimientos_bancarios
+                 (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                  descripcion, validado, reversado, fecha, created_at, created_by)
+               VALUES (?, ?, ?, 'EGRESO', 'MANUAL', ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+              [
+                movId, user.empresa_id, selectedCuenta.id,
+                toStorageString(montoNativo),
+                toStorageString(saldoAnt),
+                toStorageString(saldoNuevo),
+                conceptoFinal,
+                fecha, now, user.id,
+              ]
+            )
+            await tx.execute(
+              'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+              [toStorageString(saldoNuevo), now, selectedCuenta.id]
+            )
+          } else {
+            await tx.execute(
+              `INSERT INTO mov_caja_fuerte
+                 (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                  descripcion, validado, reversado, fecha, created_at, created_by)
+               VALUES (?, ?, ?, 'EGRESO', 'MANUAL', ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+              [
+                movId, user.empresa_id, selectedCuenta.id,
+                toStorageString(montoNativo),
+                toStorageString(saldoAnt),
+                toStorageString(saldoNuevo),
+                conceptoFinal,
+                fecha, now, user.id,
+              ]
+            )
+            await tx.execute(
+              'UPDATE caja_fuerte SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+              [toStorageString(saldoNuevo), now, selectedCuenta.id]
+            )
+          }
+        })
+      } catch (err) {
+        setErrors({ general: err instanceof Error ? err.message : 'Error al registrar el préstamo en tesorería' })
+        setSubmitting(false)
+        return
+      }
+      setSubmitting(false)
+    }
 
     const egresosCaja: Array<{ metodo_cobro_id: string; monto: number }> = []
     if (origenFondos === 'CAJA') {
@@ -257,9 +346,31 @@ function FormPrestamo({
           ))}
         </div>
         {origenFondos !== 'CAJA' && (
-          <p className="mt-2 text-xs text-amber-700 bg-amber-50/80 border border-amber-200/60 rounded-xl px-3 py-2">
-            Los fondos no se descontaran de la caja activa. El modulo bancario esta pendiente de implementacion.
-          </p>
+          <div className="mt-2 space-y-2">
+            <select
+              value={selectedCuentaId}
+              onChange={(e) => { setSelectedCuentaId(e.target.value); setErrors({}) }}
+              className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">-- Selecciona una cuenta --</option>
+              {(cuentas ?? [])
+                .filter((c) =>
+                  origenFondos === 'EFECTIVO_EMPRESA'
+                    ? c.tipo === 'CAJA_FUERTE'
+                    : c.tipo === 'BANCO'
+                )
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    [{c.moneda_codigo}] {c.nombre} — {c.moneda_codigo === 'USD' ? formatUsd(parseFloat(c.saldo_actual ?? '0')) : formatBs(parseFloat(c.saldo_actual ?? '0'))}
+                  </option>
+                ))}
+            </select>
+            {selectedCuenta && (
+              <p className="text-xs text-muted-foreground px-1">
+                Solo puedes prestar en {selectedCuenta.moneda_codigo === 'USD' ? 'dólares (USD)' : 'bolívares (Bs)'} desde esta cuenta.
+              </p>
+            )}
+          </div>
         )}
       </div>
 
@@ -277,6 +388,11 @@ function FormPrestamo({
                   Disp: {formatUsd(dispUsd)}
                 </span>
               )}
+              {origenFondos !== 'CAJA' && selectedCuenta?.moneda_codigo === 'USD' && (
+                <span className="text-xs text-muted-foreground">
+                  Disp: {formatUsd(parseFloat(selectedCuenta.saldo_actual ?? '0'))}
+                </span>
+              )}
             </div>
             <input
               type="number"
@@ -287,7 +403,7 @@ function FormPrestamo({
               onChange={(e) => setMontoUsd(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={origenFondos === 'CAJA' && (!efectivoUsd || loadingMetodos)}
+              disabled={(origenFondos === 'CAJA' && (!efectivoUsd || loadingMetodos)) || (origenFondos !== 'CAJA' && selectedCuenta?.moneda_codigo !== 'USD')}
               className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos && (
@@ -303,6 +419,11 @@ function FormPrestamo({
                   Disp: {formatBs(dispBs)}
                 </span>
               )}
+              {origenFondos !== 'CAJA' && selectedCuenta && selectedCuenta.moneda_codigo !== 'USD' && (
+                <span className="text-xs text-muted-foreground">
+                  Disp: {formatBs(parseFloat(selectedCuenta.saldo_actual ?? '0'))}
+                </span>
+              )}
             </div>
             <input
               type="number"
@@ -313,7 +434,7 @@ function FormPrestamo({
               onChange={(e) => setMontoBs(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={origenFondos === 'CAJA' && (!efectivoBs || loadingMetodos)}
+              disabled={(origenFondos === 'CAJA' && (!efectivoBs || loadingMetodos)) || (origenFondos !== 'CAJA' && selectedCuenta?.moneda_codigo === 'USD')}
               className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos && (
@@ -454,6 +575,7 @@ export function PrestamoModal({
   onAplicado,
   pendingCajaUsd,
   pendingCajaBs,
+  cuentas,
 }: PrestamoModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -500,6 +622,7 @@ export function PrestamoModal({
           onAplicado={onAplicado}
           pendingCajaUsd={pendingCajaUsd}
           pendingCajaBs={pendingCajaBs}
+          cuentas={cuentas}
         />
       </div>
     </dialog>

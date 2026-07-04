@@ -1326,6 +1326,7 @@ export function PosTerminal() {
             onAplicado={handlePrestamoAplicado}
             pendingCajaUsd={pendingCajaUsd}
             pendingCajaBs={pendingCajaBs}
+            cuentas={cuentasTesoreria}
           />
         </>
       )}
