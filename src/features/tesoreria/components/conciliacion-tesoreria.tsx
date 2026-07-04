@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { todayStr, daysAgo } from '@/lib/dates'
+
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCuentasTesoreria, type CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 import {
@@ -165,14 +165,19 @@ export function ConciliacionTesoreria() {
   const [activeTab, setActiveTab] = useState<'pendiente' | 'historico' | 'traspasos'>('pendiente')
 
   // Filtros de historico (inputs — no aplicados hasta "Consultar")
-  const [filterDesde, setFilterDesde] = useState(daysAgo(30))
-  const [filterHasta, setFilterHasta] = useState(todayStr())
+  const _now = new Date()
+  const _firstDay = new Date(_now.getFullYear(), _now.getMonth(), 1)
+  const DESDE_DEFAULT = _firstDay.toISOString().slice(0, 10)
+  const HASTA_DEFAULT = _now.toISOString().slice(0, 10)
+
+  const [filterDesde,  setFilterDesde]  = useState(DESDE_DEFAULT)
+  const [filterHasta,  setFilterHasta]  = useState(HASTA_DEFAULT)
   const [filterTipo, setFilterTipo] = useState<'INGRESO' | 'EGRESO' | ''>('')
   const [filterSearch, setFilterSearch] = useState('')
 
   // Filtros aplicados (se actualizan al hacer clic en "Consultar")
-  const [appliedDesde, setAppliedDesde] = useState(daysAgo(30))
-  const [appliedHasta, setAppliedHasta] = useState(todayStr())
+  const [appliedDesde, setAppliedDesde] = useState(DESDE_DEFAULT)
+  const [appliedHasta, setAppliedHasta] = useState(HASTA_DEFAULT)
   const [appliedTipo, setAppliedTipo] = useState<'INGRESO' | 'EGRESO' | ''>('')
   const [appliedSearch, setAppliedSearch] = useState('')
 
