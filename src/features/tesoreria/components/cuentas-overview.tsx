@@ -1,6 +1,6 @@
 import { Bank, Vault } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
-import { formatUsd } from '@/lib/currency'
+import { formatBs, formatUsd } from '@/lib/currency'
 import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 
 interface Props {
@@ -113,7 +113,7 @@ function CuentaCard({
           saldo < 0 ? 'text-destructive' : selected ? 'text-primary' : 'text-foreground'
         )}
       >
-        {cuenta.moneda_simbolo} {formatUsd(saldo)}
+        {cuenta.moneda_codigo === 'USD' ? formatUsd(saldo) : formatBs(saldo)}
       </p>
     </button>
   )
