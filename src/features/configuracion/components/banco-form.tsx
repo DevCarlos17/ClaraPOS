@@ -194,7 +194,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
   // Method drafts
   const [metodoDrafts, setMetodoDrafts] = useState<MetodoDraft[]>([])
-  const methodsInitializedRef = useRef(false)
+  const [userEdited, setUserEdited] = useState(false)
 
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -240,24 +240,14 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
-      methodsInitializedRef.current = false
-      setMetodoDrafts([])
     }
   }, [isOpen, banco])
 
-  // Initialize method drafts when editing and methods load
+  // Sync drafts from PowerSync reactively — until the user makes a manual edit
   useEffect(() => {
-    if (!isOpen) {
-      setMetodoDrafts([])
-      methodsInitializedRef.current = false
-      return
-    }
-    if (methodsInitializedRef.current) return
-    if (metodosLoading) return   // wait for PowerSync to finish loading
-
-    // Data is ready (empty or not) — initialize once
+    if (!isOpen || userEdited || metodosLoading) return
     setMetodoDrafts(
-      (existingMetodos ?? []).map(m => ({
+      (existingMetodos ?? []).map((m) => ({
         _key: m.id,
         id: m.id,
         nombre: m.nombre,
@@ -270,10 +260,18 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         is_active: m.is_active === 1,
       }))
     )
-    methodsInitializedRef.current = true
-  }, [isOpen, banco?.id, existingMetodos, metodosLoading])
+  }, [isOpen, existingMetodos, metodosLoading, userEdited])
+
+  // Reset on close
+  useEffect(() => {
+    if (!isOpen) {
+      setMetodoDrafts([])
+      setUserEdited(false)
+    }
+  }, [isOpen])
 
   function handleAgregarMetodo() {
+    setUserEdited(true)
     setMetodoDrafts((prev) => [
       ...prev,
       {
@@ -291,10 +289,12 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   }
 
   function handleUpdateDraft(idx: number, updated: MetodoDraft) {
+    setUserEdited(true)
     setMetodoDrafts((prev) => prev.map((d, i) => (i === idx ? updated : d)))
   }
 
   function handleRemoveDraft(idx: number) {
+    setUserEdited(true)
     setMetodoDrafts((prev) => prev.filter((_, i) => i !== idx))
   }
 
