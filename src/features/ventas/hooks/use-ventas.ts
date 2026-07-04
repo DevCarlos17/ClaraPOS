@@ -1396,31 +1396,75 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       const pagosContadoContab: Array<{ monto_usd: number; banco_empresa_id: string | null }> = []
       for (const pago of pagos) {
         const montoUsd = pago.moneda === 'BS' ? bsToUsd(pago.monto, tasa).toNumber() : pago.monto
+
+        // Fetch metodo: banco_empresa_id + deposito_directo
         const metodoResult = await tx.execute(
-          'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+          'SELECT banco_empresa_id, deposito_directo FROM metodos_cobro WHERE id = ? LIMIT 1',
           [pago.metodo_cobro_id]
         )
-        const bancoId =
-          (metodoResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
-            ?.banco_empresa_id ?? null
+        const metodoRow = metodoResult.rows?.item(0) as
+          | { banco_empresa_id: string | null; deposito_directo: number }
+          | undefined
+        const bancoId = metodoRow?.banco_empresa_id ?? null
+        const depositoDirecto = metodoRow?.deposito_directo === 1
+
         pagosContadoContab.push({ monto_usd: montoUsd, banco_empresa_id: bancoId })
 
-        // Crear movimiento bancario para pagos que usan cuenta bancaria
-        if (bancoId && montoUsd > 0) {
+        // Solo crear movimiento bancario si el metodo es de deposito directo
+        if (bancoId && depositoDirecto && montoUsd > 0) {
+          // Obtener moneda del banco para calcular el monto correcto
+          const bancoRow = await tx.execute(
+            'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+            [bancoId]
+          )
+          const bancoData = bancoRow.rows?.item(0) as
+            | { saldo_actual: string; moneda_id: string }
+            | undefined
+          const bancoMonedaId = bancoData?.moneda_id ?? ''
+
+          const monedaRow = await tx.execute(
+            'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+            [bancoMonedaId]
+          )
+          const monedaCodigo =
+            (monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+          // Monto en la moneda nativa del banco
+          const esBS = monedaCodigo === 'VES'
+          const montoNativo = esBS
+            ? pago.moneda === 'BS'
+              ? pago.monto
+              : usdToBs(pago.monto, tasa).toNumber()
+            : pago.moneda === 'BS'
+              ? bsToUsd(pago.monto, tasa).toNumber()
+              : pago.monto
+
+          // Saldo anterior y nuevo del banco
+          const saldoAnt = parseFloat(bancoData?.saldo_actual ?? '0')
+          const saldoNuevo = saldoAnt + montoNativo
+
           const movBancoId = uuidv4()
           await tx.execute(
             `INSERT INTO movimientos_bancarios
                (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
                 doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-             VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'VENTA', ?, 0, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, ?, ?, ?, 'VENTA', ?, 0, ?, ?, ?, ?)`,
             [
               movBancoId, empresa_id, bancoId,
-              toStorageString(montoUsd),
+              toStorageString(montoNativo),
+              toStorageString(saldoAnt),
+              toStorageString(saldoNuevo),
               ventaId,
               pago.referencia ?? null,
               `Venta ${nroFactura}`,
               now, now, usuario_id,
             ]
+          )
+
+          // Actualizar saldo del banco
+          await tx.execute(
+            'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(saldoNuevo), now, bancoId]
           )
         }
       }
