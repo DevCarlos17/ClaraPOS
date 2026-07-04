@@ -106,7 +106,7 @@ export interface MovCajaFuerteFiltradosResult {
 /**
  * Retorna movimientos de caja fuerte filtrados por estado y parametros opcionales.
  * pendiente = validado=0 AND reversado=0
- * historico = validado=1 OR reversado=1 (con filtros opcionales)
+ * historico = todos los registros (sin filtro de estado)
  * Soporta paginacion con LIMIT/OFFSET.
  */
 export function useMovCajaFuerteFiltrados({
@@ -135,7 +135,7 @@ export function useMovCajaFuerteFiltrados({
   const estadoClause =
     estado === 'pendiente'
       ? 'validado = 0 AND reversado = 0'
-      : '(validado = 1 OR reversado = 1)'
+      : null   // historico shows ALL records — no status filter
 
   const extraClauses: string[] = []
   const extraParams: (string | number)[] = []
@@ -160,7 +160,7 @@ export function useMovCajaFuerteFiltrados({
   const allClauses = [
     'empresa_id = ?',
     'caja_fuerte_id = ?',
-    estadoClause,
+    ...(estadoClause ? [estadoClause] : []),   // only add if not null
     ...extraClauses,
   ].join(' AND ')
 

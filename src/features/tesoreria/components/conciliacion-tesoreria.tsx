@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { todayStr, daysAgo } from '@/lib/dates'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCuentasTesoreria, type CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
@@ -360,6 +360,27 @@ export function ConciliacionTesoreria() {
 
             {/* Tab: Pendientes */}
             <TabsContent value="pendiente" className="mt-4">
+              {/* Resumen de pendientes */}
+              {pendienteMovRows.length > 0 && (() => {
+                const totalPorConciliar = pendienteResult.data.reduce((acc, mov) => {
+                  const m = parseFloat(mov.monto ?? '0')
+                  return mov.tipo === 'INGRESO' ? acc + m : acc - m
+                }, 0)
+                const moneda = selectedCuenta?.moneda_codigo ?? 'USD'
+                const formatted = moneda === 'USD'
+                  ? formatUsd(Math.abs(totalPorConciliar))
+                  : formatBs(Math.abs(totalPorConciliar))
+                return (
+                  <div className="flex items-center justify-between rounded-lg border border-dashed border-muted-foreground/30 bg-muted/20 px-4 py-2 text-sm mb-3">
+                    <span className="text-muted-foreground">
+                      {pendienteResult.data.length} registro{pendienteResult.data.length !== 1 ? 's' : ''} pendiente{pendienteResult.data.length !== 1 ? 's' : ''} de conciliación
+                    </span>
+                    <span className="font-semibold">
+                      Por conciliar: {formatted}
+                    </span>
+                  </div>
+                )
+              })()}
               <MovimientosTable
                 movimientos={pendienteMovRows}
                 modo="pendiente"

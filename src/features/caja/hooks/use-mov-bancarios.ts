@@ -115,7 +115,7 @@ export interface MovBancariosFiltradosResult {
 /**
  * Retorna movimientos bancarios filtrados por estado y parametros opcionales.
  * pendiente = validado=0 AND reversado=0
- * historico = validado=1 OR reversado=1 (con filtros opcionales de fecha/tipo/busqueda)
+ * historico = todos los registros (sin filtro de estado)
  * Soporta paginacion con LIMIT/OFFSET.
  */
 export function useMovBancariosFiltrados({
@@ -144,7 +144,7 @@ export function useMovBancariosFiltrados({
   const estadoClause =
     estado === 'pendiente'
       ? 'validado = 0 AND reversado = 0'
-      : '(validado = 1 OR reversado = 1)'
+      : null   // historico shows ALL records — no status filter
 
   const extraClauses: string[] = []
   const extraParams: (string | number)[] = []
@@ -169,7 +169,7 @@ export function useMovBancariosFiltrados({
   const allClauses = [
     'empresa_id = ?',
     'banco_empresa_id = ?',
-    estadoClause,
+    ...(estadoClause ? [estadoClause] : []),   // only add if not null
     ...extraClauses,
   ].join(' AND ')
 
