@@ -110,8 +110,8 @@ function CuentaCard({
           : 'border-border bg-card hover:border-primary/40'
       )}
     >
-      {/* Pending badge — inside card to avoid overflow-x-auto clipping */}
-      {pendingCount !== undefined && pendingCount > 0 && (
+      {/* Pending badge — hidden when selected (X button occupies same corner) */}
+      {!selected && pendingCount !== undefined && pendingCount > 0 && (
         <span className="absolute top-2 right-2 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1 shadow-sm z-10">
           {pendingCount > 99 ? '99+' : pendingCount}
         </span>
