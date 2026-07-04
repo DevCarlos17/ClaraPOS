@@ -132,6 +132,7 @@ export async function crearTraspaso(params: {
   tasa_cambio?: number
   fecha: string
   observacion?: string
+  referencia?: string
   empresa_id: string
   usuario_id: string
 }): Promise<void> {
@@ -155,13 +156,14 @@ export async function crearTraspaso(params: {
       await tx.execute(
         `INSERT INTO movimientos_bancarios
            (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-            descripcion, validado, reversado, fecha, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            referencia, descripcion, validado, reversado, fecha, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movOrigenId, params.empresa_id, params.origen.id,
           'EGRESO', 'TRASPASO',
           params.monto_origen.toFixed(4),
           saldoAnt.toFixed(4), saldoNuevo.toFixed(4),
+          params.referencia ?? null,
           params.observacion ?? 'Traspaso',
           0, 0, params.fecha, now, params.usuario_id,
         ]
@@ -183,13 +185,14 @@ export async function crearTraspaso(params: {
       await tx.execute(
         `INSERT INTO mov_caja_fuerte
            (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-            descripcion, validado, reversado, fecha, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            referencia, descripcion, validado, reversado, fecha, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movOrigenId, params.empresa_id, params.origen.id,
           'EGRESO', 'TRASPASO',
           params.monto_origen.toFixed(4),
           saldoAnt.toFixed(4), saldoNuevo.toFixed(4),
+          params.referencia ?? null,
           params.observacion ?? 'Traspaso',
           0, 0, params.fecha, now, params.usuario_id,
         ]
@@ -214,13 +217,14 @@ export async function crearTraspaso(params: {
       await tx.execute(
         `INSERT INTO movimientos_bancarios
            (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-            descripcion, validado, reversado, fecha, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            referencia, descripcion, validado, reversado, fecha, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movDestinoId, params.empresa_id, params.destino.id,
           'INGRESO', 'TRASPASO',
           params.monto_destino.toFixed(4),
           saldoAnt.toFixed(4), saldoNuevo.toFixed(4),
+          params.referencia ?? null,
           params.observacion ?? 'Traspaso',
           0, 0, params.fecha, now, params.usuario_id,
         ]
@@ -242,13 +246,14 @@ export async function crearTraspaso(params: {
       await tx.execute(
         `INSERT INTO mov_caja_fuerte
            (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-            descripcion, validado, reversado, fecha, created_at, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            referencia, descripcion, validado, reversado, fecha, created_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movDestinoId, params.empresa_id, params.destino.id,
           'INGRESO', 'TRASPASO',
           params.monto_destino.toFixed(4),
           saldoAnt.toFixed(4), saldoNuevo.toFixed(4),
+          params.referencia ?? null,
           params.observacion ?? 'Traspaso',
           0, 0, params.fecha, now, params.usuario_id,
         ]

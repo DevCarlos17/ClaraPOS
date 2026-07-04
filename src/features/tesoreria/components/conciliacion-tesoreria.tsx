@@ -286,7 +286,7 @@ export function ConciliacionTesoreria() {
           variant="outline"
           size="sm"
           onClick={() => setShowTraspasoModal(true)}
-          disabled={cuentas.length < 2}
+          disabled={!selectedCuenta}
         >
           <ArrowsLeftRight size={16} className="mr-1.5" />
           Traspaso
@@ -500,6 +500,7 @@ export function ConciliacionTesoreria() {
         isOpen={showTraspasoModal}
         onClose={() => setShowTraspasoModal(false)}
         cuentas={cuentas}
+        cuentaOrigen={selectedCuenta ?? undefined}
       />
 
       <ReversoModal

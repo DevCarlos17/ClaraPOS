@@ -21,9 +21,10 @@ interface Props {
   isOpen: boolean
   onClose: () => void
   cuentas: CuentaTesoreria[]
+  cuentaOrigen?: CuentaTesoreria
 }
 
-export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
+export function TraspasoModal({ isOpen, onClose, cuentas, cuentaOrigen }: Props) {
   const { user } = useCurrentUser()
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -34,11 +35,14 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
   const [tasaCambio, setTasaCambio] = useState('')
   const [fecha, setFecha] = useState(todayStr())
   const [observacion, setObservacion] = useState('')
+  const [referencia, setReferencia] = useState('')
 
-  const cuentaOrigen = cuentas.find((c) => c.id === origenId)
-  const cuentaDestino = cuentas.find((c) => c.id === destinoId)
+  const cuentaOrigenResolved = cuentaOrigen ?? cuentas.find((c) => c.id === origenId)
+  const cuentaDestinoResolved = cuentas.find((c) => c.id === destinoId)
   const isCrossCurrency =
-    cuentaOrigen && cuentaDestino && cuentaOrigen.moneda_id !== cuentaDestino.moneda_id
+    cuentaOrigenResolved &&
+    cuentaDestinoResolved &&
+    cuentaOrigenResolved.moneda_id !== cuentaDestinoResolved.moneda_id
 
   const montoDestinoCalc: number = (() => {
     const m = parseFloat(montoOrigen)
@@ -53,26 +57,28 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
   useEffect(() => {
     if (isOpen) {
       setErrors({})
-      setOrigenId('')
+      setOrigenId(cuentaOrigen?.id ?? '')
       setDestinoId('')
       setMontoOrigen('')
       setTasaCambio('')
       setFecha(todayStr())
       setObservacion('')
+      setReferencia('')
     }
-  }, [isOpen])
+  }, [isOpen, cuentaOrigen?.id])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErrors({})
 
     const parsed = traspasoSchema.safeParse({
-      cuenta_origen_id: origenId,
+      cuenta_origen_id: cuentaOrigen ? cuentaOrigen.id : origenId,
       cuenta_destino_id: destinoId,
       monto_origen: parseFloat(montoOrigen),
       tasa_cambio: tasaCambio ? parseFloat(tasaCambio) : null,
       fecha,
       observacion: observacion || undefined,
+      referencia: referencia || undefined,
     })
 
     if (!parsed.success) {
@@ -85,7 +91,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
       return
     }
 
-    if (!cuentaOrigen || !cuentaDestino) return
+    if (!cuentaOrigenResolved || !cuentaDestinoResolved) return
 
     if (isCrossCurrency && (!tasaCambio || parseFloat(tasaCambio) <= 0)) {
       setErrors({ tasa_cambio: 'Ingrese la tasa de cambio' })
@@ -96,13 +102,14 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
     setSaving(true)
     try {
       await crearTraspaso({
-        origen: cuentaOrigen,
-        destino: cuentaDestino,
+        origen: cuentaOrigenResolved,
+        destino: cuentaDestinoResolved,
         monto_origen: parsed.data.monto_origen,
         monto_destino: montoDestinoCalc,
         tasa_cambio: isCrossCurrency ? (parsed.data.tasa_cambio ?? undefined) : undefined,
         fecha: parsed.data.fecha,
         observacion: parsed.data.observacion,
+        referencia: parsed.data.referencia,
         empresa_id: user.empresa_id,
         usuario_id: user.id,
       })
@@ -115,7 +122,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
     }
   }
 
-  const cuentasDestino = cuentas.filter((c) => c.id !== origenId)
+  const cuentasDestino = cuentas.filter((c) => c.id !== (cuentaOrigen?.id ?? origenId))
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -126,23 +133,31 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
 
         <form onSubmit={handleSubmit} className="space-y-4 py-2">
           <div className="space-y-1.5">
-            <Label htmlFor="origenId">Cuenta origen *</Label>
-            <select
-              id="origenId"
-              value={origenId}
-              onChange={(e) => {
-                setOrigenId(e.target.value)
-                setDestinoId('')
-              }}
-              className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            >
-              <option value="">Seleccione cuenta origen</option>
-              {cuentas.map((c) => (
-                <option key={c.id} value={c.id}>
-                  [{c.moneda_codigo}] {c.nombre}
-                </option>
-              ))}
-            </select>
+            <Label>Cuenta origen *</Label>
+            {cuentaOrigen ? (
+              // Pre-loaded from selected account — read-only display
+              <div className="flex h-9 w-full items-center rounded-md border border-input bg-muted/40 px-3 text-sm text-muted-foreground">
+                [{cuentaOrigen.moneda_codigo}] {cuentaOrigen.nombre}
+              </div>
+            ) : (
+              // Manual selection when no account pre-selected
+              <select
+                id="origenId"
+                value={origenId}
+                onChange={(e) => {
+                  setOrigenId(e.target.value)
+                  setDestinoId('')
+                }}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                <option value="">Seleccione cuenta origen</option>
+                {cuentas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    [{c.moneda_codigo}] {c.nombre}
+                  </option>
+                ))}
+              </select>
+            )}
             {errors.cuenta_origen_id && (
               <p className="text-xs text-destructive">{errors.cuenta_origen_id}</p>
             )}
@@ -154,7 +169,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
               id="destinoId"
               value={destinoId}
               onChange={(e) => setDestinoId(e.target.value)}
-              disabled={!origenId}
+              disabled={!cuentaOrigenResolved}
               className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
             >
               <option value="">Seleccione cuenta destino</option>
@@ -171,7 +186,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
 
           <div className="space-y-1.5">
             <Label htmlFor="montoOrigen">
-              Monto a transferir ({cuentaOrigen?.moneda_codigo ?? '—'}) *
+              Monto a transferir ({cuentaOrigenResolved?.moneda_codigo ?? '—'}) *
             </Label>
             <Input
               id="montoOrigen"
@@ -181,18 +196,30 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
               value={montoOrigen}
               onChange={(e) => setMontoOrigen(e.target.value)}
               placeholder="0.00"
-              disabled={!origenId}
+              disabled={!cuentaOrigenResolved}
             />
             {errors.monto_origen && (
               <p className="text-xs text-destructive">{errors.monto_origen}</p>
             )}
           </div>
 
+          <div className="space-y-1.5">
+            <Label htmlFor="referencia">Referencia</Label>
+            <Input
+              id="referencia"
+              value={referencia}
+              onChange={(e) => setReferencia(e.target.value)}
+              placeholder="Nro. de comprobante, transferencia, etc."
+              maxLength={100}
+            />
+          </div>
+
           {isCrossCurrency && (
             <>
               <div className="space-y-1.5">
                 <Label htmlFor="tasaCambio">
-                  Tasa de cambio ({cuentaOrigen?.moneda_codigo} → {cuentaDestino?.moneda_codigo}) *
+                  Tasa de cambio ({cuentaOrigenResolved?.moneda_codigo} →{' '}
+                  {cuentaDestinoResolved?.moneda_codigo}) *
                 </Label>
                 <Input
                   id="tasaCambio"
@@ -211,7 +238,7 @@ export function TraspasoModal({ isOpen, onClose, cuentas }: Props) {
               <div className="rounded-lg bg-muted/50 p-3 text-sm">
                 <p className="text-muted-foreground text-xs">Monto a recibir</p>
                 <p className="font-semibold mt-0.5">
-                  {cuentaDestino?.moneda_codigo} {formatUsd(montoDestinoCalc)}
+                  {cuentaDestinoResolved?.moneda_codigo} {formatUsd(montoDestinoCalc)}
                 </p>
               </div>
             </>
