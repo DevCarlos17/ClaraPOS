@@ -217,7 +217,8 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id = ?
            AND mc.tipo = 'EFECTIVO'
-           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO',
+                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          GROUP BY mmc.origen`
       : '',
     id ? [id] : []
@@ -241,23 +242,42 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
     movsMap.set(row.origen, { usd: new Decimal(row.total_usd), bs: new Decimal(row.total_bs) })
   }
 
-  const ingManualUsd = movsMap.get('INGRESO_MANUAL')?.usd ?? new Decimal(0)
-  const ingManualBs  = movsMap.get('INGRESO_MANUAL')?.bs  ?? new Decimal(0)
-  const egrManualUsd = movsMap.get('EGRESO_MANUAL')?.usd  ?? new Decimal(0)
-  const egrManualBs  = movsMap.get('EGRESO_MANUAL')?.bs   ?? new Decimal(0)
-  const avancesUsd   = movsMap.get('AVANCE')?.usd ?? new Decimal(0)
-  const avancesBs    = movsMap.get('AVANCE')?.bs  ?? new Decimal(0)
-  const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? new Decimal(0)
-  const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? new Decimal(0)
+  const ingManualUsd    = movsMap.get('INGRESO_MANUAL')?.usd    ?? new Decimal(0)
+  const ingManualBs     = movsMap.get('INGRESO_MANUAL')?.bs     ?? new Decimal(0)
+  const egrManualUsd    = movsMap.get('EGRESO_MANUAL')?.usd     ?? new Decimal(0)
+  const egrManualBs     = movsMap.get('EGRESO_MANUAL')?.bs      ?? new Decimal(0)
+  const avancesUsd      = movsMap.get('AVANCE')?.usd            ?? new Decimal(0)
+  const avancesBs       = movsMap.get('AVANCE')?.bs             ?? new Decimal(0)
+  const prestamosUsd    = movsMap.get('PRESTAMO')?.usd          ?? new Decimal(0)
+  const prestamosBs     = movsMap.get('PRESTAMO')?.bs           ?? new Decimal(0)
+  // pos-tesoreria-integration: include POS↔Treasury transfers in session balance
+  const ingTesoreriaUsd = movsMap.get('INGRESO_TESORERIA')?.usd ?? new Decimal(0)
+  const ingTesoBs       = movsMap.get('INGRESO_TESORERIA')?.bs  ?? new Decimal(0)
+  const egrTesoreriaUsd = movsMap.get('EGRESO_TESORERIA')?.usd  ?? new Decimal(0)
+  const egrTesoBs       = movsMap.get('EGRESO_TESORERIA')?.bs   ?? new Decimal(0)
 
   const saldoUsdD = Decimal.max(
     new Decimal(0),
-    aperturaUsd.plus(ventasUsd).plus(ingManualUsd).minus(egrManualUsd).minus(avancesUsd).minus(prestamosUsd)
+    aperturaUsd
+      .plus(ventasUsd)
+      .plus(ingManualUsd)
+      .plus(ingTesoreriaUsd)
+      .minus(egrManualUsd)
+      .minus(avancesUsd)
+      .minus(prestamosUsd)
+      .minus(egrTesoreriaUsd)
   )
 
   const saldoBsD = Decimal.max(
     new Decimal(0),
-    aperturaBs.plus(ventasBs).plus(ingManualBs).minus(egrManualBs).minus(avancesBs).minus(prestamosBs)
+    aperturaBs
+      .plus(ventasBs)
+      .plus(ingManualBs)
+      .plus(ingTesoBs)
+      .minus(egrManualBs)
+      .minus(avancesBs)
+      .minus(prestamosBs)
+      .minus(egrTesoBs)
   )
 
   return { saldoUsd: saldoUsdD.toNumber(), saldoBs: saldoBsD.toNumber(), isLoading: l1 || l2 || l3 }
@@ -385,7 +405,8 @@ export function useSesionesActivasDashboard() {
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${inPh})
            AND mc.tipo = 'EFECTIVO'
-           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO',
+                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          GROUP BY mmc.sesion_caja_id, mmc.origen`
       : '',
     hasIds ? sesionIds : []
@@ -431,25 +452,44 @@ export function useSesionesActivasDashboard() {
     const aperturaUsd  = new Decimal(s.monto_apertura_usd ?? '0')
     const aperturaBs   = new Decimal(s.monto_apertura_bs  ?? '0')
 
-    const ingManualUsd = new Decimal(movs.get('INGRESO_MANUAL')?.usd ?? 0)
-    const ingManualBs  = new Decimal(movs.get('INGRESO_MANUAL')?.bs  ?? 0)
-    const egrManualUsd = new Decimal(movs.get('EGRESO_MANUAL')?.usd  ?? 0)
-    const egrManualBs  = new Decimal(movs.get('EGRESO_MANUAL')?.bs   ?? 0)
-    const avancesUsd   = new Decimal(movs.get('AVANCE')?.usd ?? 0)
-    const avancesBs    = new Decimal(movs.get('AVANCE')?.bs  ?? 0)
-    const prestamosUsd = new Decimal(movs.get('PRESTAMO')?.usd ?? 0)
-    const prestamosBs  = new Decimal(movs.get('PRESTAMO')?.bs  ?? 0)
-    const pagosUsd     = new Decimal(pagos.usd)
-    const pagosBs      = new Decimal(pagos.bs)
+    const ingManualUsd    = new Decimal(movs.get('INGRESO_MANUAL')?.usd    ?? 0)
+    const ingManualBs     = new Decimal(movs.get('INGRESO_MANUAL')?.bs     ?? 0)
+    const egrManualUsd    = new Decimal(movs.get('EGRESO_MANUAL')?.usd     ?? 0)
+    const egrManualBs     = new Decimal(movs.get('EGRESO_MANUAL')?.bs      ?? 0)
+    const avancesUsd      = new Decimal(movs.get('AVANCE')?.usd            ?? 0)
+    const avancesBs       = new Decimal(movs.get('AVANCE')?.bs             ?? 0)
+    const prestamosUsd    = new Decimal(movs.get('PRESTAMO')?.usd          ?? 0)
+    const prestamosBs     = new Decimal(movs.get('PRESTAMO')?.bs           ?? 0)
+    // pos-tesoreria-integration: include POS↔Treasury transfers in session balance
+    const ingTesoreriaUsd = new Decimal(movs.get('INGRESO_TESORERIA')?.usd ?? 0)
+    const ingTesoBs       = new Decimal(movs.get('INGRESO_TESORERIA')?.bs  ?? 0)
+    const egrTesoreriaUsd = new Decimal(movs.get('EGRESO_TESORERIA')?.usd  ?? 0)
+    const egrTesoBs       = new Decimal(movs.get('EGRESO_TESORERIA')?.bs   ?? 0)
+    const pagosUsd        = new Decimal(pagos.usd)
+    const pagosBs         = new Decimal(pagos.bs)
 
     const saldoUsd = Decimal.max(
       new Decimal(0),
-      aperturaUsd.plus(pagosUsd).plus(ingManualUsd).minus(egrManualUsd).minus(avancesUsd).minus(prestamosUsd)
+      aperturaUsd
+        .plus(pagosUsd)
+        .plus(ingManualUsd)
+        .plus(ingTesoreriaUsd)
+        .minus(egrManualUsd)
+        .minus(avancesUsd)
+        .minus(prestamosUsd)
+        .minus(egrTesoreriaUsd)
     ).toNumber()
 
     const saldoBs = Decimal.max(
       new Decimal(0),
-      aperturaBs.plus(pagosBs).plus(ingManualBs).minus(egrManualBs).minus(avancesBs).minus(prestamosBs)
+      aperturaBs
+        .plus(pagosBs)
+        .plus(ingManualBs)
+        .plus(ingTesoBs)
+        .minus(egrManualBs)
+        .minus(avancesBs)
+        .minus(prestamosBs)
+        .minus(egrTesoBs)
     ).toNumber()
 
     const horasTranscurridas = Math.max(0.1, (now - new Date(s.fecha_apertura).getTime()) / 3_600_000)
@@ -687,14 +727,15 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       (pagosEfectivoBsResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
     )
 
-    // 3a. Movimientos manuales en USD (INGRESO_MANUAL, EGRESO_MANUAL, AVANCE, PRESTAMO, VUELTO)
+    // 3a. Movimientos manuales en USD (incluye orígenes POS↔Tesorería)
     const movsManualUsdResult = await tx.execute(
       `SELECT mmc.origen, COALESCE(SUM(CAST(mmc.monto AS REAL)), 0) as total
        FROM movimientos_metodo_cobro mmc
        JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
        JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE mmc.sesion_caja_id = ?
-         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
+                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          AND mo.codigo_iso = 'USD'
        GROUP BY mmc.origen`,
       [id]
@@ -705,23 +746,24 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     if (movsManualUsdResult.rows) {
       for (let i = 0; i < movsManualUsdResult.rows.length; i++) {
         const row = movsManualUsdResult.rows.item(i) as { origen: string; total: number }
-        if (row.origen === 'INGRESO_MANUAL') {
+        if (row.origen === 'INGRESO_MANUAL' || row.origen === 'INGRESO_TESORERIA') {
           ingresosManualUsd = ingresosManualUsd.plus(new Decimal(row.total))
         } else {
-          // EGRESO_MANUAL, AVANCE, PRESTAMO y VUELTO son salidas de efectivo
+          // EGRESO_MANUAL, AVANCE, PRESTAMO, VUELTO y EGRESO_TESORERIA son salidas de efectivo
           egresosManualUsd = egresosManualUsd.plus(new Decimal(row.total))
         }
       }
     }
 
-    // 3b. Movimientos manuales en VES
+    // 3b. Movimientos manuales en VES (incluye orígenes POS↔Tesorería)
     const movsManualBsResult = await tx.execute(
       `SELECT mmc.origen, COALESCE(SUM(CAST(mmc.monto AS REAL)), 0) as total
        FROM movimientos_metodo_cobro mmc
        JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
        JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE mmc.sesion_caja_id = ?
-         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
+                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          AND mo.codigo_iso = 'VES'
        GROUP BY mmc.origen`,
       [id]
@@ -732,7 +774,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     if (movsManualBsResult.rows) {
       for (let i = 0; i < movsManualBsResult.rows.length; i++) {
         const row = movsManualBsResult.rows.item(i) as { origen: string; total: number }
-        if (row.origen === 'INGRESO_MANUAL') {
+        if (row.origen === 'INGRESO_MANUAL' || row.origen === 'INGRESO_TESORERIA') {
           ingresosManualBs = ingresosManualBs.plus(new Decimal(row.total))
         } else {
           egresosManualBs = egresosManualBs.plus(new Decimal(row.total))
@@ -812,7 +854,8 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
               SUM(CASE WHEN tipo = 'EGRESO' THEN CAST(monto AS REAL) ELSE 0 END) as total_egreso
        FROM movimientos_metodo_cobro
        WHERE sesion_caja_id = ?
-         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
+                       'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
        GROUP BY metodo_cobro_id`,
       [id]
     )

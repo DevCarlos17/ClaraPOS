@@ -766,6 +766,8 @@ export interface TraspasoTesoreria {
   fecha: string
   created_at: string
   created_by: string | null
+  // pos-tesoreria-integration: link traspaso back to its originating session
+  sesion_caja_id: string | null
 }
 
 // =============================================
