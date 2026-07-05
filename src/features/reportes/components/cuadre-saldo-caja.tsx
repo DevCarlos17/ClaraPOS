@@ -42,10 +42,10 @@ export function CuadreSaldoCaja({ filters }: CuadreSaldoCajaProps) {
     .filter((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
     .reduce((s, m) => s + m.totalOriginal, 0)
 
-  const ingManUsd = sumMovs(['INGRESO_MANUAL'], 'USD')
-  const ingManBs  = sumMovs(['INGRESO_MANUAL'], 'BS')
-  const retManUsd = sumMovs(['EGRESO_MANUAL'], 'USD')
-  const retManBs  = sumMovs(['EGRESO_MANUAL'], 'BS')
+  const ingManUsd = sumMovs(['INGRESO_MANUAL', 'INGRESO_TESORERIA'], 'USD')
+  const ingManBs  = sumMovs(['INGRESO_MANUAL', 'INGRESO_TESORERIA'], 'BS')
+  const retManUsd = sumMovs(['EGRESO_MANUAL', 'EGRESO_TESORERIA'], 'USD')
+  const retManBs  = sumMovs(['EGRESO_MANUAL', 'EGRESO_TESORERIA'], 'BS')
   const vueltosUsd = sumMovs(['VUELTO'], 'USD')
   const vueltosBs  = sumMovs(['VUELTO'], 'BS')
   const avancesUsd = sumMovs(['AVANCE', 'PRESTAMO'], 'USD')
@@ -124,7 +124,7 @@ export function CuadreSaldoCaja({ filters }: CuadreSaldoCajaProps) {
             {expanded === 'ingresos' && (
               <DetailPanel>
                 {movsDetalle
-                  .filter((m) => m.origen === 'INGRESO_MANUAL')
+                  .filter((m) => m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA')
                   .map((m) => (
                     <DetailRow
                       key={m.id}
@@ -135,6 +135,8 @@ export function CuadreSaldoCaja({ filters }: CuadreSaldoCajaProps) {
                           : formatUsd(parseFloat(m.monto))
                       }
                       fecha={m.fecha}
+                      badge={m.origen === 'INGRESO_TESORERIA' ? 'Tesorería' : undefined}
+                      badgeColor="blue"
                     />
                   ))}
               </DetailPanel>
@@ -164,7 +166,7 @@ export function CuadreSaldoCaja({ filters }: CuadreSaldoCajaProps) {
             {expanded === 'retiros' && (
               <DetailPanel>
                 {movsDetalle
-                  .filter((m) => m.origen === 'EGRESO_MANUAL')
+                  .filter((m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA')
                   .map((m) => (
                     <DetailRow
                       key={m.id}
@@ -359,18 +361,24 @@ function DetailRow({
   value,
   fecha,
   badge,
+  badgeColor = 'amber',
 }: {
   label: string
   value: string
   fecha: string
   badge?: string
+  badgeColor?: 'amber' | 'blue'
 }) {
   const hora = fecha.length >= 16 ? fecha.substring(11, 16) : ''
+  const badgeClass =
+    badgeColor === 'blue'
+      ? 'bg-blue-100 text-blue-700'
+      : 'bg-amber-100 text-amber-700'
   return (
     <div className="flex items-center justify-between gap-2 py-0.5 text-xs">
       <div className="flex items-center gap-1.5 min-w-0">
         {badge && (
-          <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-amber-100 text-amber-700 font-medium">
+          <span className={`shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] ${badgeClass} font-medium`}>
             {badge}
           </span>
         )}

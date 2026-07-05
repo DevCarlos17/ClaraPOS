@@ -899,6 +899,8 @@ const traspasos_tesoreria = new Table(
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,
+    // pos-tesoreria-integration: link traspaso back to its originating session
+    sesion_caja_id: column.text,
   },
   { indexes: {} }
 )

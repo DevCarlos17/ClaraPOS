@@ -281,7 +281,8 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          WHERE mmc.sesion_caja_id = ?
            AND mc.tipo = 'EFECTIVO'
-           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO',
+                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          GROUP BY mmc.origen`
       : '',
     sesionId ? [sesionId] : []
@@ -323,14 +324,19 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
     movsMap.set(row.origen, { usd: row.total_usd, bs: row.total_bs })
   }
 
-  const ingManualUsd = movsMap.get('INGRESO_MANUAL')?.usd ?? 0
-  const ingManualBs  = movsMap.get('INGRESO_MANUAL')?.bs  ?? 0
-  const egrManualUsd = movsMap.get('EGRESO_MANUAL')?.usd  ?? 0
-  const egrManualBs  = movsMap.get('EGRESO_MANUAL')?.bs   ?? 0
-  const avancesUsd   = movsMap.get('AVANCE')?.usd ?? 0
-  const avancesBs    = movsMap.get('AVANCE')?.bs  ?? 0
-  const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? 0
-  const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? 0
+  const ingManualUsd    = movsMap.get('INGRESO_MANUAL')?.usd    ?? 0
+  const ingManualBs     = movsMap.get('INGRESO_MANUAL')?.bs     ?? 0
+  const egrManualUsd    = movsMap.get('EGRESO_MANUAL')?.usd     ?? 0
+  const egrManualBs     = movsMap.get('EGRESO_MANUAL')?.bs      ?? 0
+  const avancesUsd      = movsMap.get('AVANCE')?.usd            ?? 0
+  const avancesBs       = movsMap.get('AVANCE')?.bs             ?? 0
+  const prestamosUsd    = movsMap.get('PRESTAMO')?.usd          ?? 0
+  const prestamosBs     = movsMap.get('PRESTAMO')?.bs           ?? 0
+  // pos-tesoreria-integration: include POS↔Treasury transfers in session totals
+  const ingTesoreriaUsd = movsMap.get('INGRESO_TESORERIA')?.usd ?? 0
+  const ingTesoBs       = movsMap.get('INGRESO_TESORERIA')?.bs  ?? 0
+  const egrTesoreriaUsd = movsMap.get('EGRESO_TESORERIA')?.usd  ?? 0
+  const egrTesoBs       = movsMap.get('EGRESO_TESORERIA')?.bs   ?? 0
 
   const cobrosRow = (cobrosEfectivoData ?? [])[0] as
     | { cobros_usd: number; cobros_bs: number }
@@ -340,10 +346,12 @@ function ResumenSesion({ sesionId }: { sesionId: string }) {
   const hayCobrosEf = cobrosEfUsd > 0.005 || cobrosEfBs > 0.005
 
   const totalUsd = Number((
-    aperturaUsd + ventasUsd + cobrosEfUsd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
+    aperturaUsd + ventasUsd + cobrosEfUsd + ingManualUsd + ingTesoreriaUsd
+    - egrManualUsd - avancesUsd - prestamosUsd - egrTesoreriaUsd
   ).toFixed(2))
   const totalBs = Number((
-    aperturaBs + ventasBs + cobrosEfBs + ingManualBs - egrManualBs - avancesBs - prestamosBs
+    aperturaBs + ventasBs + cobrosEfBs + ingManualBs + ingTesoBs
+    - egrManualBs - avancesBs - prestamosBs - egrTesoBs
   ).toFixed(2))
 
   const hayEgresos =
@@ -473,6 +481,7 @@ function FormCierre({
         usuario_cierre_id: user.id,
       })
       toast.success('Sesion de caja cerrada exitosamente')
+      toast.info('El efectivo reportado debe ser depositado a la cuenta de Tesoreria correspondiente.')
       resetFields()
       onClose()
       // Navegar al cuadre con la sesion pre-cargada para que el supervisor complete el cuadre formal
