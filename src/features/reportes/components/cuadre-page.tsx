@@ -156,7 +156,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
 
   // Data for CuadreArqueoTeorico
-  const { aperturaUsd: fondoAperturaUsd } = useSesionApertura(activeFilters)
+  const { aperturaUsd: fondoAperturaUsd, aperturaBs: fondoAperturaBs } = useSesionApertura(activeFilters)
   const { metodos: todosMetodos } = usePagosPorMetodo(activeFilters)
   const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
@@ -180,7 +180,17 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const diferencialCambiarioUsd = tasaPromedio > 0
     ? Number((diferencialBs / tasaPromedio).toFixed(2))
     : 0
-  const totalNeto = saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
+  // Fondo apertura en Bs. nativos convertido a USD equivalente (para el total neto USD)
+  const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
+  // totalNeto incluye: efectivo USD esperado (apertura_usd + ventas + movimientos)
+  //                  + Bs. nativos de apertura convertidos a USD
+  //                  + cobros anteriores CxC
+  //                  + diferencial cambiario
+  const totalNeto = saldoContadoUsd + fondoAperturaBsEnUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
+  // Para display en Bs.: sumar los Bs. nativos de apertura directamente (sin re-convertir)
+  const totalNetoBs = tasaPromedio > 0
+    ? (saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd) * tasaPromedio + fondoAperturaBs
+    : 0
 
   // Determine if exactly one ABIERTA session is selected (enables finalizar cuadre)
   const sesionAbiertaId = useMemo(() => {
@@ -582,7 +592,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 <div className="flex justify-between items-center">
                   <span className="text-sm font-semibold">Total Caja Neto Esperado</span>
                   <span className={`text-2xl font-bold ${totalNeto >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {tasaPromedio > 0 ? formatBs(totalNeto * tasaPromedio) : formatUsd(totalNeto)}
+                    {tasaPromedio > 0 ? formatBs(totalNetoBs) : formatUsd(totalNeto)}
                   </span>
                 </div>
                 <div className="text-xs text-muted-foreground text-right mt-0.5">
@@ -616,6 +626,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             />
             <CuadreArqueoTeorico
               fondoAperturaUsd={fondoAperturaUsd}
+              fondoAperturaBs={fondoAperturaBs}
               ventasEfectivoUsd={ventasEfectivoUsd}
               ingresosEfectivoUsd={ingresosEfectivoUsd}
               egresosUsd={egresosEfectivoUsd}

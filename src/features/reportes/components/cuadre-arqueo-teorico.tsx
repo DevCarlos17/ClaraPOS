@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 
 export interface CuadreArqueoTeoricoProps {
   fondoAperturaUsd: number    // fondo con que abrió la caja (useSesionApertura → aperturaUsd)
+  fondoAperturaBs: number     // fondo inicial en Bs. nativos (useSesionApertura → aperturaBs)
   ventasEfectivoUsd: number   // ventas cobradas en efectivo del día (usePagosPorMetodo, tipo=EFECTIVO)
   ingresosEfectivoUsd: number // ingresos manuales en efectivo (useMovimientosManualesDia, origen=INGRESO_MANUAL)
   egresosUsd: number          // egresos/retiros de la sesión (useMovimientosManualesDia, tipo=EGRESO, EFECTIVO)
@@ -13,6 +14,7 @@ export interface CuadreArqueoTeoricoProps {
 
 export function CuadreArqueoTeorico({
   fondoAperturaUsd,
+  fondoAperturaBs,
   ventasEfectivoUsd,
   ingresosEfectivoUsd,
   egresosUsd,
@@ -24,7 +26,7 @@ export function CuadreArqueoTeorico({
 
   const teoricoBs = usdToBs(teoricoUsd, tasaCambio).toNumber()
   const diferenciaBs = usdToBs(Math.abs(diferenciaUsd), tasaCambio).toNumber()
-  const fondoAperturaBs = usdToBs(fondoAperturaUsd, tasaCambio).toNumber()
+  const fondoAperturaUsdBs = usdToBs(fondoAperturaUsd, tasaCambio).toNumber()
   const ventasEfectivoBs = usdToBs(ventasEfectivoUsd, tasaCambio).toNumber()
   const ingresosEfectivoBs = usdToBs(ingresosEfectivoUsd, tasaCambio).toNumber()
   const egresosUsdBs = usdToBs(egresosUsd, tasaCambio).toNumber()
@@ -50,21 +52,39 @@ export function CuadreArqueoTeorico({
 
       {/* Formula line items */}
       <div className="space-y-2">
-        {/* Fondo Apertura */}
+        {/* Fondo Apertura USD */}
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center gap-2">
             <span className="w-4 text-center font-mono text-xs text-muted-foreground">=</span>
-            <span className="text-muted-foreground">Fondo Apertura</span>
+            <span className="text-muted-foreground">Fondo Apertura (USD)</span>
           </div>
           <div className="text-right">
             <span className="font-medium tabular-nums">{formatUsd(fondoAperturaUsd)}</span>
             {tasaCambio > 0 && (
               <p className="text-xs text-muted-foreground tabular-nums">
-                {formatBs(fondoAperturaBs)}
+                {formatBs(fondoAperturaUsdBs)}
               </p>
             )}
           </div>
         </div>
+
+        {/* Fondo Apertura Bs. nativos */}
+        {fondoAperturaBs > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-muted-foreground">+</span>
+              <span className="text-muted-foreground">Fondo Apertura (Bs.)</span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums">{formatBs(fondoAperturaBs)}</span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatUsd(tasaCambio > 0 ? fondoAperturaBs / tasaCambio : 0)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Ventas Efectivo */}
         <div className="flex items-center justify-between text-sm">

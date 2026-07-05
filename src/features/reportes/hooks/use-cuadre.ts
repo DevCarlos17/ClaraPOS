@@ -344,6 +344,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
   )
 
   // Query principal: metodos con pagos de ventas
+  // GROUP BY solo por mp.id para evitar filas duplicadas cuando moneda es NULL en algunos pagos
   const { data, isLoading } = useQuery(
     `SELECT
        mp.id as metodo_cobro_id,
@@ -358,7 +359,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      LEFT JOIN ventas v ON pg.venta_id = v.id
      WHERE ${where}
-     GROUP BY mp.id, mp.nombre, mp.tipo, moneda
+     GROUP BY mp.id
      ORDER BY total_usd DESC`,
     params
   )
