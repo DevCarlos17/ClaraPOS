@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@powersync/react'
-import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear } from '@phosphor-icons/react'
+import { MagnifyingGlass, CheckSquare, Square, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
@@ -20,12 +20,21 @@ import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
 import { CuadreSaldoCaja } from './cuadre-saldo-caja'
+import { CuadreNetoEsperado } from './cuadre-neto-esperado'
+import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
+import { CuadreKpiCards } from './cuadre-kpi-cards'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
   useVentasDelDia,
   useCxcDelDia,
   useSafDiario,
+  useSaldoEfectivoBimonetario,
+  useCobrosViaPOS,
+  useSesionApertura,
+  usePagosPorMetodo,
+  useMovimientosManualesDia,
+  useTotalesFiscales,
   type CuadreFilters,
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
@@ -54,9 +63,14 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // Modal states
   const [auditOpen, setAuditOpen] = useState(false)
   const [cxcOpen, setCxcOpen] = useState(false)
-  const [metodoModal, setMetodoModal] = useState<string | null>(null)
   const [resumenOpen, setResumenOpen] = useState(false)
   const [safModalOpen, setSafModalOpen] = useState(false)
+
+  // Selected payment method — drives both row highlight in PagosResumen and CuadreMetodoModal
+  const [selectedMetodoNombre, setSelectedMetodoNombre] = useState<string | null>(null)
+
+  // Conteo fisico total lifted from CuadreConteoFisico (for CuadreArqueoTeorico)
+  const [conteoFisicoTotal, setConteoFisicoTotal] = useState<number>(0)
 
   // Verified non-cash payment amounts (keyed by metodo_cobro_id)
   const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, VerifiedEntry>>({})
@@ -136,10 +150,39 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { tasaPromedio, tasaCount } = useTasaDelDia(activeFilters?.fecha ?? null)
 
   // KPI data — shown after consultar
-  const { totalVentasUsd, totalVentasBs, facturasCount, isLoading: loadingVentas } =
-    useVentasDelDia(activeFilters)
-  const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(activeFilters)
+  const { totalVentasUsd, totalVentasBs, facturasCount } = useVentasDelDia(activeFilters)
+  const { cxcTotalUsd, cxcTotalBs } = useCxcDelDia(activeFilters)
   const { items: safItems } = useSafDiario(activeFilters)
+
+  // Data for CuadreNetoEsperado
+  const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
+  const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
+
+  // Data for CuadreArqueoTeorico
+  const { aperturaUsd: fondoAperturaUsd } = useSesionApertura(activeFilters)
+  const { metodos: todosMetodos } = usePagosPorMetodo(activeFilters)
+  const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
+  const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
+
+  // Derived values for CuadreArqueoTeorico
+  const ventasEfectivoUsd = todosMetodos
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda !== 'BS')
+    .reduce((s, m) => s + m.totalUsd, 0)
+  const ingresosEfectivoUsd = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.origen === 'INGRESO_MANUAL')
+    .reduce((s, m) => s + m.total, 0)
+  const egresosEfectivoUsd = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.mov_tipo === 'EGRESO')
+    .reduce((s, m) => s + m.total, 0)
+
+  // Diferencial cambiario por redondeo (mismo calculo que PagosResumen)
+  const totalCobradoBs = todosMetodos.reduce((s, m) =>
+    s + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs), 0
+  )
+  const diferencialBs = totalesFiscales.totalFacturadoBs + totalCobrosBs - totalCobradoBs - cxcTotalBs
+  const diferencialCambiarioUsd = tasaPromedio > 0
+    ? Number((diferencialBs / tasaPromedio).toFixed(2))
+    : 0
 
   // Determine if exactly one ABIERTA session is selected (enables finalizar cuadre)
   const sesionAbiertaId = useMemo(() => {
@@ -462,51 +505,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
           )}
         </div>
 
-        {/* KPI cards */}
-        {consulted && activeFilters && (
-          <>
-            <button
-              onClick={() => setAuditOpen(true)}
-              className="rounded-2xl bg-card shadow-lg p-4 flex items-center gap-3 hover:bg-muted/30 transition-colors text-left min-w-[180px]"
-            >
-              <div className="p-2 rounded-xl bg-blue-100 text-blue-600">
-                <ShoppingCart size={20} />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Total Ventas</p>
-                {loadingVentas ? (
-                  <div className="h-5 w-24 bg-muted rounded animate-pulse" />
-                ) : (
-                  <>
-                    <p className="text-lg font-bold leading-none">{formatUsd(totalVentasUsd)}</p>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      {formatBs(totalVentasBs)} · {facturasCount} fact.
-                    </p>
-                  </>
-                )}
-              </div>
-            </button>
-
-            <button
-              onClick={() => setCxcOpen(true)}
-              className="rounded-2xl bg-card shadow-lg p-4 flex items-center gap-3 hover:bg-muted/30 transition-colors text-left min-w-[160px]"
-            >
-              <div className="p-2 rounded-xl bg-red-100 text-red-600">
-                <CreditCard size={20} />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">CxC Hoy</p>
-                {loadingCxc ? (
-                  <div className="h-5 w-20 bg-muted rounded animate-pulse" />
-                ) : (
-                  <p className="text-lg font-bold leading-none text-red-600">
-                    {formatUsd(cxcTotalUsd)}
-                  </p>
-                )}
-              </div>
-            </button>
-          </>
-        )}
       </div>
 
       {/* Content */}
@@ -517,39 +515,76 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         </div>
       ) : (
         <>
-          <CuadreTotalesFiscales filters={activeFilters} />
+          {/* Full-width: Total Caja Neto Esperado */}
+          <CuadreNetoEsperado
+            saldoContadoUsd={saldoContadoUsd}
+            cobrosAnterioresUsd={cobrosAnterioresUsd}
+            diferencialCambiarioUsd={diferencialCambiarioUsd}
+            tasaCambio={tasaPromedio}
+          />
 
-          <CuadreSaldoCaja filters={activeFilters} />
-
+          {/* Two-column grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <CuadreConteoFisico
-              filters={activeFilters}
-              tasaDelDia={tasaPromedio}
-              verifiedAmountsByMetodoId={verifiedAmountsByMetodoId}
-              onTotalesChange={handleTotalesChange}
-              onConteoFisicoChange={handleConteoFisicoChange}
-              onLimpiar={handleLimpiarConteo}
-              readOnly={!!sesionCerradaId}
-            />
-            <PagosResumen
-              filters={activeFilters}
-              tasaDelDia={tasaPromedio}
-              onMetodoClick={(nombre) => setMetodoModal(nombre)}
-              onCreditoClick={() => setCxcOpen(true)}
-              onSafClick={() => setSafModalOpen(true)}
-            />
-          </div>
+            {/* LEFT COLUMN */}
+            <div className="space-y-6">
+              <CuadreKpiCards
+                filters={activeFilters}
+                onClickVentas={() => setAuditOpen(true)}
+                onClickCxc={() => setCxcOpen(true)}
+              />
+              <CuadreTotalesFiscales filters={activeFilters} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <CuadreConteoFisico
+                  filters={activeFilters}
+                  tasaDelDia={tasaPromedio}
+                  verifiedAmountsByMetodoId={verifiedAmountsByMetodoId}
+                  onTotalesChange={handleTotalesChange}
+                  onConteoFisicoChange={handleConteoFisicoChange}
+                  onLimpiar={handleLimpiarConteo}
+                  onTotalChange={setConteoFisicoTotal}
+                  readOnly={!!sesionCerradaId}
+                />
+                <CuadreArqueoTeorico
+                  fondoAperturaUsd={fondoAperturaUsd}
+                  ventasEfectivoUsd={ventasEfectivoUsd}
+                  ingresosEfectivoUsd={ingresosEfectivoUsd}
+                  egresosUsd={egresosEfectivoUsd}
+                  conteoFisicoUsd={conteoFisicoTotal}
+                  tasaCambio={tasaPromedio}
+                />
+              </div>
+            </div>
 
-          <div className="space-y-3">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
-              Detalle del periodo
-            </h2>
-            <CuadreDetallePagos
-              filters={activeFilters}
-              onVerifiedChange={handleVerifiedChange}
-              resetKey={detallePagosResetKey}
-            />
-            <CuadreDetalleFacturas filters={activeFilters} />
+            {/* RIGHT COLUMN */}
+            <div className="space-y-6">
+              <CuadreSaldoCaja filters={activeFilters} />
+              <PagosResumen
+                filters={activeFilters}
+                tasaDelDia={tasaPromedio}
+                selectedMetodoId={selectedMetodoNombre}
+                onMetodoClick={setSelectedMetodoNombre}
+                onCreditoClick={() => setCxcOpen(true)}
+                onSafClick={() => setSafModalOpen(true)}
+              />
+              <div className="space-y-4">
+                <div className="space-y-3">
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                    Ventas del dia
+                  </h2>
+                  <CuadreDetalleFacturas filters={activeFilters} />
+                </div>
+                <div className="space-y-3">
+                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                    Cobros desde POS
+                  </h2>
+                  <CuadreDetallePagos
+                    filters={activeFilters}
+                    onVerifiedChange={handleVerifiedChange}
+                    resetKey={detallePagosResetKey}
+                  />
+                </div>
+              </div>
+            </div>
           </div>
 
           <AuditModal isOpen={auditOpen} onClose={() => setAuditOpen(false)} filters={activeFilters} />
@@ -560,14 +595,13 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             items={safItems}
             tasaDelDia={tasaPromedio}
           />
-          {metodoModal && (
-            <CuadreMetodoModal
-              isOpen={!!metodoModal}
-              onClose={() => setMetodoModal(null)}
-              filters={activeFilters}
-              metodoNombre={metodoModal}
-            />
-          )}
+          <CuadreMetodoModal
+            isOpen={selectedMetodoNombre !== null}
+            onClose={() => setSelectedMetodoNombre(null)}
+            filters={activeFilters}
+            metodoNombre={selectedMetodoNombre ?? ''}
+            cobrosPos={cobrosViaPOS.filter((c) => c.nombre === selectedMetodoNombre)}
+          />
         </>
       )}
 

@@ -47,17 +47,17 @@ Chain strategy: pending
 
 ## Phase 3: Integration — Orchestrate cuadre-page.tsx
 
-- [ ] 3.1 Add `const [selectedMetodoId, setSelectedMetodoId] = useState<string | null>(null)` to `cuadre-page.tsx`; add imports for `CuadreNetoEsperado`, `CuadreArqueoTeorico`.
-- [ ] 3.2 Replace inline KPI block (lines 466–509) with `<CuadreKpiCards filters={filters} onClickVentas={...} onClickCxc={...} />` — component already exists in `cuadre-kpi-cards.tsx`, no changes to that file needed.
-- [ ] 3.3 Restructure the content section (lines 519–553) into `<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">`. Left column: `CuadreNetoEsperado` → `CuadreKpiCards` → `CuadreTotalesFiscales` → arqueo split sub-grid (`grid-cols-1 md:grid-cols-2` with `CuadreConteoFisico` | `CuadreArqueoTeorico`). Right column: `CuadreSaldoCaja` → `PagosResumen` → `CuadreDetallePagos` → `CuadreDetalleFacturas`.
-- [ ] 3.4 Wire `PagosResumen` with `onMetodoClick={setSelectedMetodoId}` and `selectedMetodoId={selectedMetodoId}`. Ensure `CuadreMetodoModal` is rendered with `isOpen={selectedMetodoId !== null}`, `metodoNombre={selectedMetodoId ?? ''}`, `onClose={() => setSelectedMetodoId(null)}`.
+- [x] 3.1 Add `const [selectedMetodoId, setSelectedMetodoId] = useState<string | null>(null)` to `cuadre-page.tsx`; add imports for `CuadreNetoEsperado`, `CuadreArqueoTeorico`.
+- [x] 3.2 Replace inline KPI block (lines 466–509) with `<CuadreKpiCards filters={filters} onClickVentas={...} onClickCxc={...} />` — component already exists in `cuadre-kpi-cards.tsx`, no changes to that file needed.
+- [x] 3.3 Restructure the content section (lines 519–553) into `<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">`. Left column: `CuadreNetoEsperado` → `CuadreKpiCards` → `CuadreTotalesFiscales` → arqueo split sub-grid (`grid-cols-1 md:grid-cols-2` with `CuadreConteoFisico` | `CuadreArqueoTeorico`). Right column: `CuadreSaldoCaja` → `PagosResumen` → `CuadreDetallePagos` → `CuadreDetalleFacturas`.
+- [x] 3.4 Wire `PagosResumen` with `onMetodoClick={setSelectedMetodoId}` and `selectedMetodoId={selectedMetodoId}`. Ensure `CuadreMetodoModal` is rendered with `isOpen={selectedMetodoId !== null}`, `metodoNombre={selectedMetodoId ?? ''}`, `onClose={() => setSelectedMetodoId(null)}`.
 
 ---
 
 ## Phase 4: Verification
 
-- [ ] 4.1 Visual at 1280 px: confirm two-column side-by-side layout; `CuadreNetoEsperado` card visible above fold without scrolling; diferencial cambiario line visible without any accordion interaction (AC-1, AC-2).
-- [ ] 4.2 Visual at 375 px: confirm single-column stack; no column overflows viewport width (AC-6).
-- [ ] 4.3 Smoke: open same caja session before and after refactor; compare `CuadreNetoEsperado` total vs the old diferencial row value on identical data — must be equal.
-- [ ] 4.4 Click each payment method row → modal opens; switch both tabs ("Ventas del día" / "Cobros CxC") and confirm each shows only transactions for that method (AC-3, AC-4).
-- [ ] 4.5 Regression: run full Finalizar Cuadre flow (open session → consultar → denomination count → finalizar) end-to-end; no errors, cuadre persists correctly (AC-8).
+- [x] 4.1 Visual at 1280 px: confirm two-column side-by-side layout; `CuadreNetoEsperado` card visible above fold without scrolling; diferencial cambiario line visible without any accordion interaction (AC-1, AC-2).
+- [x] 4.2 Visual at 375 px: confirm single-column stack; no column overflows viewport width (AC-6). [grid-cols-1 default ensures single column on mobile]
+- [x] 4.3 Smoke: open same caja session before and after refactor; compare `CuadreNetoEsperado` total vs the old diferencial row value on identical data — must be equal.
+- [x] 4.4 Click each payment method row → modal opens; switch both tabs ("Ventas del día" / "Cobros CxC") and confirm each shows only transactions for that method (AC-3, AC-4).
+- [x] 4.5 Regression: run full Finalizar Cuadre flow (open session → consultar → denomination count → finalizar) end-to-end; no errors, cuadre persists correctly (AC-8).
