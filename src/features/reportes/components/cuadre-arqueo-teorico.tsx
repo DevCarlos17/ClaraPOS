@@ -21,16 +21,19 @@ export function CuadreArqueoTeorico({
   conteoFisicoUsd,
   tasaCambio,
 }: CuadreArqueoTeoricoProps) {
+  // Track USD: solo componentes en USD (sin convertir Bs nativos)
   const teoricoUsd = fondoAperturaUsd + ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd
+  // Track Bs: apertura nativa en Bs + componentes USD convertidos
+  const teoricoBs = fondoAperturaBs + usdToBs(ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd, tasaCambio).toNumber()
+
   const diferenciaUsd = conteoFisicoUsd - teoricoUsd
 
-  const teoricoBs = usdToBs(teoricoUsd, tasaCambio).toNumber()
-  const diferenciaBs = usdToBs(Math.abs(diferenciaUsd), tasaCambio).toNumber()
   const fondoAperturaUsdBs = usdToBs(fondoAperturaUsd, tasaCambio).toNumber()
   const ventasEfectivoBs = usdToBs(ventasEfectivoUsd, tasaCambio).toNumber()
   const ingresosEfectivoBs = usdToBs(ingresosEfectivoUsd, tasaCambio).toNumber()
   const egresosUsdBs = usdToBs(egresosUsd, tasaCambio).toNumber()
   const conteoFisicoBs = usdToBs(conteoFisicoUsd, tasaCambio).toNumber()
+  const diferenciaBs = usdToBs(Math.abs(diferenciaUsd), tasaCambio).toNumber()
 
   const isExact = Math.abs(diferenciaUsd) <= 0.01
   const isSurplus = diferenciaUsd > 0.01   // conteo > teórico → sobran
@@ -150,9 +153,18 @@ export function CuadreArqueoTeorico({
           Total Teórico
         </p>
         <div className="text-right">
-          <p className="text-xl font-bold tabular-nums">{formatUsd(teoricoUsd)}</p>
-          {tasaCambio > 0 && (
-            <p className="text-xs text-muted-foreground tabular-nums">{formatBs(teoricoBs)}</p>
+          {tasaCambio > 0 && fondoAperturaBs > 0.001 ? (
+            <>
+              <p className="text-xl font-bold tabular-nums">{formatBs(teoricoBs)}</p>
+              <p className="text-xs text-muted-foreground tabular-nums">{formatUsd(teoricoUsd)}</p>
+            </>
+          ) : (
+            <>
+              <p className="text-xl font-bold tabular-nums">{formatUsd(teoricoUsd)}</p>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">{formatBs(teoricoBs)}</p>
+              )}
+            </>
           )}
         </div>
       </div>

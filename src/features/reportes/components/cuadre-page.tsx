@@ -589,14 +589,18 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
               {/* Separador + Total Neto Esperado */}
               <div className="border-t pt-3">
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-start">
                   <span className="text-sm font-semibold">Total Caja Neto Esperado</span>
-                  <span className={`text-2xl font-bold ${totalNeto >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {tasaPromedio > 0 ? formatBs(totalNetoBs) : formatUsd(totalNeto)}
-                  </span>
-                </div>
-                <div className="text-xs text-muted-foreground text-right mt-0.5">
-                  {formatUsd(totalNeto)}
+                  <div className="text-right">
+                    <p className={`text-2xl font-bold tabular-nums ${totalNeto >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {tasaPromedio > 0 ? formatBs(totalNetoBs) : formatUsd(totalNeto)}
+                    </p>
+                    {tasaPromedio > 0 && (
+                      <p className="text-xs text-muted-foreground tabular-nums mt-0.5">
+                        {formatUsd(totalNeto)}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
