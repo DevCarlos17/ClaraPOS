@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Wallet, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
+import { Wallet, Info, CashRegister, Vault } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
@@ -14,7 +14,7 @@ import type { CuentaTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tes
 
 // ─── Types ────────────────────────────────────────────────────
 
-export type OrigenFondos = 'CAJA' | 'EFECTIVO_EMPRESA' | 'BANCO'
+export type OrigenFondos = 'CAJA' | 'EFECTIVO_EMPRESA'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -207,45 +207,24 @@ function FormAvance({
         const saldoNuevo = saldoAnt - montoNativo
 
         await db.writeTransaction(async (tx) => {
-          if (selectedCuenta.tipo === 'BANCO') {
-            await tx.execute(
-              `INSERT INTO movimientos_bancarios
-                 (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-                  descripcion, validado, reversado, fecha, created_at, created_by)
-               VALUES (?, ?, ?, 'EGRESO', 'MANUAL', ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-              [
-                movId, user.empresa_id, selectedCuenta.id,
-                toStorageString(montoNativo),
-                toStorageString(saldoAnt),
-                toStorageString(saldoNuevo),
-                conceptoFinal,
-                fecha, now, user.id,
-              ]
-            )
-            await tx.execute(
-              'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-              [toStorageString(saldoNuevo), now, selectedCuenta.id]
-            )
-          } else {
-            await tx.execute(
-              `INSERT INTO mov_caja_fuerte
-                 (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-                  descripcion, validado, reversado, fecha, created_at, created_by)
-               VALUES (?, ?, ?, 'EGRESO', 'MANUAL', ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-              [
-                movId, user.empresa_id, selectedCuenta.id,
-                toStorageString(montoNativo),
-                toStorageString(saldoAnt),
-                toStorageString(saldoNuevo),
-                conceptoFinal,
-                fecha, now, user.id,
-              ]
-            )
-            await tx.execute(
-              'UPDATE caja_fuerte SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-              [toStorageString(saldoNuevo), now, selectedCuenta.id]
-            )
-          }
+          await tx.execute(
+            `INSERT INTO mov_caja_fuerte
+               (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                descripcion, validado, reversado, fecha, created_at, created_by)
+             VALUES (?, ?, ?, 'EGRESO', 'MANUAL', ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+            [
+              movId, user.empresa_id, selectedCuenta.id,
+              toStorageString(montoNativo),
+              toStorageString(saldoAnt),
+              toStorageString(saldoNuevo),
+              conceptoFinal,
+              fecha, now, user.id,
+            ]
+          )
+          await tx.execute(
+            'UPDATE caja_fuerte SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(saldoNuevo), now, selectedCuenta.id]
+          )
         })
       } catch (err) {
         setErrors({ general: err instanceof Error ? err.message : 'Error al registrar el avance en tesorería' })
@@ -299,7 +278,6 @@ function FormAvance({
           {([
             { key: 'CAJA' as OrigenFondos, label: 'Caja', Icon: CashRegister },
             { key: 'EFECTIVO_EMPRESA' as OrigenFondos, label: 'Efectivo empresa', Icon: Vault },
-            { key: 'BANCO' as OrigenFondos, label: 'Banco', Icon: Bank },
           ] as const).map(({ key, label, Icon }) => (
             <button
               key={key}
@@ -334,11 +312,7 @@ function FormAvance({
             >
               <option value="">-- Selecciona una cuenta --</option>
               {(cuentas ?? [])
-                .filter((c) =>
-                  origenFondos === 'EFECTIVO_EMPRESA'
-                    ? c.tipo === 'CAJA_FUERTE'
-                    : c.tipo === 'BANCO'
-                )
+                .filter((c) => c.tipo === 'CAJA_FUERTE')
                 .map((c) => (
                   <option key={c.id} value={c.id}>
                     [{c.moneda_codigo}] {c.nombre} — {c.moneda_codigo === 'USD' ? formatUsd(parseFloat(c.saldo_actual ?? '0')) : formatBs(parseFloat(c.saldo_actual ?? '0'))}

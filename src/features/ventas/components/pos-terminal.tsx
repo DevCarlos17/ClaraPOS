@@ -31,6 +31,7 @@ import { SesionCajaForm } from '@/features/caja/components/sesion-caja-form'
 import { IngresoRetiroModal } from '@/features/caja/components/ingreso-retiro-modal'
 import { AvanceModal, type AvanceAplicado } from '@/features/caja/components/avance-modal'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
+import { useCajasFuerteActivas } from '@/features/tesoreria/hooks/use-caja-fuerte'
 import { PrestamoModal, type PrestamoAplicado } from '@/features/caja/components/prestamo-modal'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
 import { CobroModal } from './cobro-modal'
@@ -46,6 +47,7 @@ export function PosTerminal() {
   const esperaStore = useFacturasEsperaStore()
   const { sesion, isLoading: sesionLoading } = useSesionActiva()
   const { cuentas: cuentasTesoreria } = useCuentasTesoreria()
+  const { cajas: cajasFuerteActivas } = useCajasFuerteActivas()
   const navigate = useNavigate()
 
   // Datos de contexto para la barra de caja
@@ -1305,6 +1307,7 @@ export function PosTerminal() {
             modo="RETIRO"
             pendingCajaUsd={pendingCajaUsd}
             pendingCajaBs={pendingCajaBs}
+            cajasFuerteActivas={cajasFuerteActivas}
           />
           <AvanceModal
             isOpen={showAvanceModal}
