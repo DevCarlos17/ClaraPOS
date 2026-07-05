@@ -19,10 +19,7 @@ import { CuadreConteoFisico } from './cuadre-conteo-fisico'
 import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
-import { CuadreSaldoCaja } from './cuadre-saldo-caja'
-import { CuadreNetoEsperado } from './cuadre-neto-esperado'
 import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
-import { CuadreKpiCards } from './cuadre-kpi-cards'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
@@ -183,6 +180,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const diferencialCambiarioUsd = tasaPromedio > 0
     ? Number((diferencialBs / tasaPromedio).toFixed(2))
     : 0
+  const totalNeto = saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
 
   // Determine if exactly one ABIERTA session is selected (enables finalizar cuadre)
   const sesionAbiertaId = useMemo(() => {
@@ -515,75 +513,138 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         </div>
       ) : (
         <>
-          {/* Full-width: Total Caja Neto Esperado */}
-          <CuadreNetoEsperado
-            saldoContadoUsd={saldoContadoUsd}
-            cobrosAnterioresUsd={cobrosAnterioresUsd}
-            diferencialCambiarioUsd={diferencialCambiarioUsd}
-            tasaCambio={tasaPromedio}
-          />
-
-          {/* Two-column grid */}
+          {/* Two-column grid: LEFT = resumen financiero, RIGHT = métodos de pago */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* LEFT COLUMN */}
-            <div className="space-y-6">
-              <CuadreKpiCards
-                filters={activeFilters}
-                onClickVentas={() => setAuditOpen(true)}
-                onClickCxc={() => setCxcOpen(true)}
-              />
-              <CuadreTotalesFiscales filters={activeFilters} />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <CuadreConteoFisico
-                  filters={activeFilters}
-                  tasaDelDia={tasaPromedio}
-                  verifiedAmountsByMetodoId={verifiedAmountsByMetodoId}
-                  onTotalesChange={handleTotalesChange}
-                  onConteoFisicoChange={handleConteoFisicoChange}
-                  onLimpiar={handleLimpiarConteo}
-                  onTotalChange={setConteoFisicoTotal}
-                  readOnly={!!sesionCerradaId}
-                />
-                <CuadreArqueoTeorico
-                  fondoAperturaUsd={fondoAperturaUsd}
-                  ventasEfectivoUsd={ventasEfectivoUsd}
-                  ingresosEfectivoUsd={ingresosEfectivoUsd}
-                  egresosUsd={egresosEfectivoUsd}
-                  conteoFisicoUsd={conteoFisicoTotal}
-                  tasaCambio={tasaPromedio}
-                />
+            {/* LEFT COLUMN — Resumen financiero */}
+            <div className="rounded-2xl bg-card shadow-lg p-5 space-y-3">
+              <h3 className="text-sm font-semibold">Resumen de Caja</h3>
+
+              {/* Total Facturado */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Facturado</span>
+                <div className="text-right">
+                  <div>{formatUsd(totalesFiscales.totalFacturadoUsd)}</div>
+                  <div className="text-xs text-muted-foreground">{formatBs(totalesFiscales.totalFacturadoBs)}</div>
+                </div>
+              </div>
+
+              {/* Total Contado */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Contado</span>
+                <div className="text-right">
+                  <div>{formatUsd(saldoContadoUsd)}</div>
+                  {tasaPromedio > 0 && (
+                    <div className="text-xs text-muted-foreground">{formatBs(saldoContadoUsd * tasaPromedio)}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Total Credito (CxC) */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Credito (CxC)</span>
+                <div className="text-right">
+                  <div>{formatUsd(cxcTotalUsd)}</div>
+                  {cxcTotalBs > 0 && (
+                    <div className="text-xs text-muted-foreground">{formatBs(cxcTotalBs)}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Cobros Anteriores (CxC) */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Cobros Anteriores (CxC)</span>
+                <div className="text-right">
+                  <div className="text-blue-600">{formatUsd(cobrosAnterioresUsd)}</div>
+                  {tasaPromedio > 0 && (
+                    <div className="text-xs text-muted-foreground">{formatBs(cobrosAnterioresUsd * tasaPromedio)}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Diferencial Cambiario */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Diferencial Cambiario</span>
+                <div className="text-right">
+                  <div className={diferencialCambiarioUsd >= 0 ? 'text-green-600' : 'text-orange-600'}>
+                    {diferencialCambiarioUsd >= 0 ? '+' : ''}{formatUsd(diferencialCambiarioUsd)}
+                  </div>
+                  {tasaPromedio > 0 && (
+                    <div className="text-xs text-muted-foreground">
+                      {diferencialCambiarioUsd >= 0 ? '+' : ''}{formatBs(Math.abs(diferencialCambiarioUsd) * tasaPromedio)}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Separador + Total Neto Esperado */}
+              <div className="border-t pt-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-semibold">Total Caja Neto Esperado</span>
+                  <span className={`text-2xl font-bold ${totalNeto >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {formatUsd(totalNeto)}
+                  </span>
+                </div>
+                {tasaPromedio > 0 && (
+                  <div className="text-xs text-muted-foreground text-right mt-0.5">
+                    {formatBs(totalNeto * tasaPromedio)}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* RIGHT COLUMN */}
-            <div className="space-y-6">
-              <CuadreSaldoCaja filters={activeFilters} />
-              <PagosResumen
+            {/* RIGHT COLUMN — Métodos de pago */}
+            <PagosResumen
+              filters={activeFilters}
+              tasaDelDia={tasaPromedio}
+              selectedMetodoId={selectedMetodoNombre}
+              onMetodoClick={setSelectedMetodoNombre}
+              onCreditoClick={() => setCxcOpen(true)}
+              onSafClick={() => setSafModalOpen(true)}
+            />
+          </div>
+
+          {/* Arqueo de caja */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <CuadreConteoFisico
+              filters={activeFilters}
+              tasaDelDia={tasaPromedio}
+              verifiedAmountsByMetodoId={verifiedAmountsByMetodoId}
+              onTotalesChange={handleTotalesChange}
+              onConteoFisicoChange={handleConteoFisicoChange}
+              onLimpiar={handleLimpiarConteo}
+              onTotalChange={setConteoFisicoTotal}
+              readOnly={!!sesionCerradaId}
+            />
+            <CuadreArqueoTeorico
+              fondoAperturaUsd={fondoAperturaUsd}
+              ventasEfectivoUsd={ventasEfectivoUsd}
+              ingresosEfectivoUsd={ingresosEfectivoUsd}
+              egresosUsd={egresosEfectivoUsd}
+              conteoFisicoUsd={conteoFisicoTotal}
+              tasaCambio={tasaPromedio}
+            />
+          </div>
+
+          {/* Resumen fiscal — full width */}
+          <CuadreTotalesFiscales filters={activeFilters} />
+
+          {/* Ventas del dia + Cobros desde POS — full width */}
+          <div className="space-y-4">
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Ventas del dia
+              </h2>
+              <CuadreDetalleFacturas filters={activeFilters} />
+            </div>
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Cobros desde POS
+              </h2>
+              <CuadreDetallePagos
                 filters={activeFilters}
-                tasaDelDia={tasaPromedio}
-                selectedMetodoId={selectedMetodoNombre}
-                onMetodoClick={setSelectedMetodoNombre}
-                onCreditoClick={() => setCxcOpen(true)}
-                onSafClick={() => setSafModalOpen(true)}
+                onVerifiedChange={handleVerifiedChange}
+                resetKey={detallePagosResetKey}
               />
-              <div className="space-y-4">
-                <div className="space-y-3">
-                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
-                    Ventas del dia
-                  </h2>
-                  <CuadreDetalleFacturas filters={activeFilters} />
-                </div>
-                <div className="space-y-3">
-                  <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
-                    Cobros desde POS
-                  </h2>
-                  <CuadreDetallePagos
-                    filters={activeFilters}
-                    onVerifiedChange={handleVerifiedChange}
-                    resetKey={detallePagosResetKey}
-                  />
-                </div>
-              </div>
             </div>
           </div>
 
