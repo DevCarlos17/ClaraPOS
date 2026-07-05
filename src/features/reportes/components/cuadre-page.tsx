@@ -166,7 +166,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     .filter((m) => m.tipo === 'EFECTIVO' && m.moneda !== 'BS')
     .reduce((s, m) => s + m.totalUsd, 0)
   const ingresosEfectivoUsd = movManualesCaja
-    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.origen === 'INGRESO_MANUAL')
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && (m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'))
     .reduce((s, m) => s + m.total, 0)
   const egresosEfectivoUsd = movManualesCaja
     .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.mov_tipo === 'EGRESO')
@@ -513,6 +513,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         </div>
       ) : (
         <>
+          {/* Resumen fiscal — full width, encabeza el contenido */}
+          <CuadreTotalesFiscales filters={activeFilters} />
+
           {/* Two-column grid: LEFT = resumen financiero, RIGHT = métodos de pago */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* LEFT COLUMN — Resumen financiero */}
@@ -523,8 +526,8 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Facturado</span>
                 <div className="text-right">
-                  <div>{formatUsd(totalesFiscales.totalFacturadoUsd)}</div>
-                  <div className="text-xs text-muted-foreground">{formatBs(totalesFiscales.totalFacturadoBs)}</div>
+                  <div>{formatBs(totalesFiscales.totalFacturadoBs)}</div>
+                  <div className="text-xs text-muted-foreground">{formatUsd(totalesFiscales.totalFacturadoUsd)}</div>
                 </div>
               </div>
 
@@ -532,10 +535,10 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Contado</span>
                 <div className="text-right">
-                  <div>{formatUsd(saldoContadoUsd)}</div>
                   {tasaPromedio > 0 && (
-                    <div className="text-xs text-muted-foreground">{formatBs(saldoContadoUsd * tasaPromedio)}</div>
+                    <div>{formatBs(saldoContadoUsd * tasaPromedio)}</div>
                   )}
+                  <div className="text-xs text-muted-foreground">{formatUsd(saldoContadoUsd)}</div>
                 </div>
               </div>
 
@@ -543,10 +546,8 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Credito (CxC)</span>
                 <div className="text-right">
-                  <div>{formatUsd(cxcTotalUsd)}</div>
-                  {cxcTotalBs > 0 && (
-                    <div className="text-xs text-muted-foreground">{formatBs(cxcTotalBs)}</div>
-                  )}
+                  <div>{formatBs(cxcTotalBs)}</div>
+                  <div className="text-xs text-muted-foreground">{formatUsd(cxcTotalUsd)}</div>
                 </div>
               </div>
 
@@ -554,10 +555,10 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Cobros Anteriores (CxC)</span>
                 <div className="text-right">
-                  <div className="text-blue-600">{formatUsd(cobrosAnterioresUsd)}</div>
-                  {tasaPromedio > 0 && (
-                    <div className="text-xs text-muted-foreground">{formatBs(cobrosAnterioresUsd * tasaPromedio)}</div>
-                  )}
+                  <div className="text-blue-600">
+                    {formatBs(totalCobrosBs > 0 ? totalCobrosBs : cobrosAnterioresUsd * tasaPromedio)}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
                 </div>
               </div>
 
@@ -565,14 +566,14 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Diferencial Cambiario</span>
                 <div className="text-right">
-                  <div className={diferencialCambiarioUsd >= 0 ? 'text-green-600' : 'text-orange-600'}>
-                    {diferencialCambiarioUsd >= 0 ? '+' : ''}{formatUsd(diferencialCambiarioUsd)}
-                  </div>
                   {tasaPromedio > 0 && (
-                    <div className="text-xs text-muted-foreground">
+                    <div className={diferencialCambiarioUsd >= 0 ? 'text-green-600' : 'text-orange-600'}>
                       {diferencialCambiarioUsd >= 0 ? '+' : ''}{formatBs(Math.abs(diferencialCambiarioUsd) * tasaPromedio)}
                     </div>
                   )}
+                  <div className="text-xs text-muted-foreground">
+                    {diferencialCambiarioUsd >= 0 ? '+' : ''}{formatUsd(diferencialCambiarioUsd)}
+                  </div>
                 </div>
               </div>
 
@@ -581,14 +582,12 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 <div className="flex justify-between items-center">
                   <span className="text-sm font-semibold">Total Caja Neto Esperado</span>
                   <span className={`text-2xl font-bold ${totalNeto >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {formatUsd(totalNeto)}
+                    {tasaPromedio > 0 ? formatBs(totalNeto * tasaPromedio) : formatUsd(totalNeto)}
                   </span>
                 </div>
-                {tasaPromedio > 0 && (
-                  <div className="text-xs text-muted-foreground text-right mt-0.5">
-                    {formatBs(totalNeto * tasaPromedio)}
-                  </div>
-                )}
+                <div className="text-xs text-muted-foreground text-right mt-0.5">
+                  {formatUsd(totalNeto)}
+                </div>
               </div>
             </div>
 
@@ -624,9 +623,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               tasaCambio={tasaPromedio}
             />
           </div>
-
-          {/* Resumen fiscal — full width */}
-          <CuadreTotalesFiscales filters={activeFilters} />
 
           {/* Ventas del dia + Cobros desde POS — full width */}
           <div className="space-y-4">

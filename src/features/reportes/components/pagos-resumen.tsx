@@ -76,10 +76,19 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                   <p className="text-sm font-medium">{m.nombre}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {hasBs && (
-                    <span className="text-xs text-muted-foreground">{formatBs(bsAmount)}</span>
+                  {m.moneda === 'BS' ? (
+                    <>
+                      <span className="text-xs text-muted-foreground">{formatUsd(m.totalUsd)}</span>
+                      <span className="text-sm font-bold">{formatBs(bsAmount)}</span>
+                    </>
+                  ) : (
+                    <>
+                      {hasBs && (
+                        <span className="text-xs text-muted-foreground">{formatBs(bsAmount)}</span>
+                      )}
+                      <span className="text-sm font-bold">{formatUsd(m.totalUsd)}</span>
+                    </>
                   )}
-                  <span className="text-sm font-bold">{formatUsd(m.totalUsd)}</span>
                 </div>
               </button>
             )
@@ -93,30 +102,31 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                 <p className="text-xs font-semibold text-blue-700">Cobros CxC via POS</p>
               </div>
               {cobrosViaPOS.map((c) => (
-                <div key={c.metodo_cobro_id} className="flex items-center justify-between pl-5">
+                  <div key={c.metodo_cobro_id} className="flex items-center justify-between pl-5">
                   <span className="text-xs text-blue-600">{c.nombre}</span>
                   <div className="flex items-center gap-2">
-                    {c.moneda === 'BS' && c.cobrosNativo > 0 && (
-                      <span className="text-xs text-blue-400">{formatBs(c.cobrosNativo)}</span>
+                    {c.moneda === 'BS' ? (
+                      <>
+                        <span className="text-xs text-blue-400">{formatUsd(tasaDelDia > 0 ? c.cobrosNativo / tasaDelDia : 0)}</span>
+                        <span className="text-xs font-semibold text-blue-700">{formatBs(c.cobrosNativo)}</span>
+                      </>
+                    ) : (
+                      <span className="text-xs font-semibold text-blue-700">{formatUsd(c.cobrosUsd)}</span>
                     )}
-                    <span className="text-xs font-semibold text-blue-700">
-                      {c.moneda === 'BS'
-                        ? formatUsd(tasaDelDia > 0 ? c.cobrosNativo / tasaDelDia : 0)
-                        : formatUsd(c.cobrosUsd)
-                      }
-                    </span>
                   </div>
                 </div>
               ))}
               <div className="flex justify-between items-center border-t border-blue-200 pt-1 pl-5">
                 <span className="text-xs font-semibold text-blue-700">Total cobros CxC</span>
                 <div className="flex items-center gap-2">
-                  {totalCobrosBs > 0 && (
-                    <span className="text-xs text-blue-400">{formatBs(totalCobrosBs)}</span>
+                  {totalCobrosBs > 0 ? (
+                    <>
+                      <span className="text-xs text-blue-400">{formatUsd(tasaDelDia > 0 ? totalCobrosBs / tasaDelDia : totalCobrosUsd)}</span>
+                      <span className="text-xs font-bold text-blue-700">{formatBs(totalCobrosBs)}</span>
+                    </>
+                  ) : (
+                    <span className="text-xs font-bold text-blue-700">{formatUsd(totalCobrosUsd)}</span>
                   )}
-                  <span className="text-xs font-bold text-blue-700">
-                    {formatUsd(tasaDelDia > 0 && totalCobrosBs > 0 ? totalCobrosBs / tasaDelDia : totalCobrosUsd)}
-                  </span>
                 </div>
               </div>
             </div>
@@ -162,10 +172,8 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {cxcTotalBs > 0 && (
-                  <span className="text-xs text-red-400">{formatBs(cxcTotalBs)}</span>
-                )}
-                <span className="text-sm font-bold text-red-600">{formatUsd(cxcTotalUsd)}</span>
+                <span className="text-xs text-red-400">{formatUsd(cxcTotalUsd)}</span>
+                <span className="text-sm font-bold text-red-600">{formatBs(cxcTotalBs)}</span>
               </div>
             </button>
           )}
@@ -176,10 +184,8 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
             <div className="flex justify-between items-center text-sm text-muted-foreground">
               <span>Total facturado</span>
               <div className="flex items-center gap-2">
-                {(totalCobradoBs + cxcTotalBs) > 0 && (
-                  <span className="text-xs">{formatBs(totalCobradoBs + cxcTotalBs)}</span>
-                )}
-                <span className="font-semibold">{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
+                <span className="text-xs">{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
+                <span className="font-semibold">{formatBs(totalCobradoBs + cxcTotalBs)}</span>
               </div>
             </div>
 
@@ -190,12 +196,14 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                   <span className="text-blue-400">+</span> Cobros CxC via POS
                 </span>
                 <div className="flex items-center gap-2">
-                  {totalCobrosBs > 0 && (
-                    <span className="text-xs text-blue-400">{formatBs(totalCobrosBs)}</span>
+                  {totalCobrosBs > 0 ? (
+                    <>
+                      <span className="text-xs text-blue-400">{formatUsd(tasaDelDia > 0 ? totalCobrosBs / tasaDelDia : totalCobrosUsd)}</span>
+                      <span className="font-bold">{formatBs(totalCobrosBs)}</span>
+                    </>
+                  ) : (
+                    <span className="font-bold">{formatUsd(totalCobrosUsd)}</span>
                   )}
-                  <span className="font-bold">
-                    {formatUsd(tasaDelDia > 0 && totalCobrosBs > 0 ? totalCobrosBs / tasaDelDia : totalCobrosUsd)}
-                  </span>
                 </div>
               </div>
             )}
@@ -207,10 +215,8 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                   <span className="text-red-400">–</span> A credito (CxC)
                 </span>
                 <div className="flex items-center gap-2">
-                  {cxcTotalBs > 0 && (
-                    <span className="text-xs text-red-400">{formatBs(cxcTotalBs)}</span>
-                  )}
-                  <span className="font-bold">{formatUsd(cxcTotalUsd)}</span>
+                  <span className="text-xs text-red-400">{formatUsd(cxcTotalUsd)}</span>
+                  <span className="font-bold">{formatBs(cxcTotalBs)}</span>
                 </div>
               </div>
             )}
@@ -219,10 +225,8 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
             <div className="flex justify-between items-center text-sm font-bold pt-1.5 border-t">
               <span>Total cobrado</span>
               <div className="flex items-center gap-2">
-                {totalCobradoBs > 0 && (
-                  <span className="text-xs font-normal text-muted-foreground">{formatBs(totalCobradoBs)}</span>
-                )}
-                <span className="text-base">{formatUsd(totalCobradoUsd)}</span>
+                <span className="text-xs font-normal text-muted-foreground">{formatUsd(totalCobradoUsd)}</span>
+                <span className="text-base">{formatBs(totalCobradoBs)}</span>
               </div>
             </div>
 
