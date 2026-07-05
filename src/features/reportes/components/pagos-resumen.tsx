@@ -8,9 +8,11 @@ interface PagosResumenProps {
   onMetodoClick?: (metodoNombre: string) => void
   onCreditoClick?: () => void
   onSafClick?: () => void
+  /** Nombre del metodo actualmente seleccionado — resalta la fila correspondiente */
+  selectedMetodoId?: string | null
 }
 
-export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick, onSafClick }: PagosResumenProps) {
+export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick, onSafClick, selectedMetodoId }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
   const { totales, isLoading: loadingTotales } = useTotalesFiscales(filters)
@@ -63,6 +65,7 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
           {/* Payment method rows */}
           {metodosMostrar.map((m) => {
             const clickable = !!onMetodoClick
+            const isSelected = selectedMetodoId != null && m.nombre === selectedMetodoId
             const bsAmount = m.moneda === 'BS' ? m.totalOriginal : m.totalBs
             const hasBs = bsAmount > 0
             return (
@@ -71,7 +74,13 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                 type="button"
                 disabled={!clickable}
                 onClick={() => onMetodoClick?.(m.nombre)}
-                className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 text-left ${clickable ? 'hover:bg-muted/50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
+                className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-all ${
+                  isSelected
+                    ? 'bg-primary/10 border-l-2 border-primary shadow-sm'
+                    : clickable
+                    ? 'hover:bg-muted/50 hover:shadow-sm cursor-pointer'
+                    : ''
+                }`}
               >
                 <div className="flex items-center gap-2">
                   <Money size={16} className="text-muted-foreground" />

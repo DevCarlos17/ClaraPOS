@@ -39,9 +39,9 @@ Chain strategy: pending
 
 ## Phase 2: Modify Supporting Components
 
-- [ ] 2.1 Modify `src/features/reportes/components/cuadre-conteo-fisico.tsx`: delete the summary-row block (lines 342–393 — total sistema / total físico / diferencia). Keep denomination inputs and per-method diff display. Verify the file compiles with no totals section remaining.
-- [ ] 2.2 Modify `src/features/reportes/components/cuadre-metodo-modal.tsx`: import shadcn `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent`. Wrap existing invoices table inside `<TabsContent value="ventas">` labeled "Ventas del día". Add `<TabsContent value="cobros">` labeled "Cobros CxC" that renders `useCobrosViaPOS` filtered by `metodoNombre`. `CuadreMetodoModalProps` interface is unchanged (`isOpen`, `onClose`, `filters`, `metodoNombre`).
-- [ ] 2.3 Modify `src/features/reportes/components/pagos-resumen.tsx`: add `onMetodoClick: (nombre: string) => void` and `selectedMetodoId: string | null` to props. Make each method row trigger `onMetodoClick(metodo.nombre)` on click; apply selected visual state (e.g. `ring-2 ring-primary`) when `metodo.nombre === selectedMetodoId`. Delete the diferencial cambiario section (lines 231–258) — that data moves to `CuadreNetoEsperado`.
+- [x] 2.1 Modify `src/features/reportes/components/cuadre-conteo-fisico.tsx`: added `onTotalChange?: (totalUsd: number) => void` prop and `useEffect` that calls it whenever `totals.totalFisico` changes. Visual output unchanged.
+- [x] 2.2 Modify `src/features/reportes/components/cuadre-metodo-modal.tsx`: imported shadcn `Tabs`, `TabsList`, `TabsTrigger`, `TabsContent`. Added `cobrosPos?: CobroViaPOS[]` prop. Wrapped existing invoices table inside `<TabsContent value="ventas">`. Added `<TabsContent value="cobros">` rendering cobros filtered by `metodoNombre`. Default tab: "ventas".
+- [x] 2.3 Modify `src/features/reportes/components/pagos-resumen.tsx`: added `onMetodoClick?: (metodoNombre: string) => void` and `selectedMetodoId?: string | null` to props. Each method row triggers `onMetodoClick?.(m.nombre)` on click; selected visual state `bg-primary/10 border-l-2 border-primary shadow-sm` applied when `m.nombre === selectedMetodoId`.
 
 ---
 
