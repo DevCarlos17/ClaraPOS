@@ -8,12 +8,14 @@ interface PagosResumenProps {
   onMetodoClick?: (metodoNombre: string) => void
   onCreditoClick?: () => void
   onSafClick?: () => void
+  /** Nombre del metodo actualmente seleccionado — resalta la fila correspondiente */
+  selectedMetodoId?: string | null
 }
 
-export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick, onSafClick }: PagosResumenProps) {
+export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick, onSafClick, selectedMetodoId }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
-  const { totales, isLoading: loadingTotales } = useTotalesFiscales(filters)
+  const { isLoading: loadingTotales } = useTotalesFiscales(filters)
   const { porMetodo: cobrosViaPOS, totalCobrosUsd, totalCobrosBs, isLoading: loadingCobros } = useCobrosViaPOS(filters)
   const { totalUsd: safTotalUsd, isLoading: loadingSaf } = useSafDiario(filters)
 
@@ -27,17 +29,6 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
 
   const hayCobrosViaPOS = totalCobrosUsd > 0.005 || totalCobrosBs > 0.005
 
-  // Diferencial cambiario por redondeo.
-  // Formula: Total Facturado + Cobros CxC vía POS = Total Cobrado + CxC Pendiente ± Diferencial
-  // Los cobros vía POS son ingresos reales que reducen CxC pero no están en las ventas del día.
-  // Positivo = faltan Bs en caja | Negativo = sobran Bs en caja
-  const diferencial = Number((
-    totales.totalFacturadoBs + totalCobrosBs - totalCobradoBs - cxcTotalBs
-  ).toFixed(2))
-  const toleranciaBs = tasaDelDia > 0 ? tasaDelDia * 0.01 : 1.0 // equivalente a $0.01 USD
-  const diferencialAbs = Math.abs(diferencial)
-  const hasDiferencial = diferencialAbs > 0.005
-  const dentroTolerancia = diferencialAbs <= toleranciaBs
 
   const haySaf = safTotalUsd > 0.001
   const safBs = tasaDelDia > 0 ? safTotalUsd * tasaDelDia : 0
@@ -63,6 +54,7 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
           {/* Payment method rows */}
           {metodosMostrar.map((m) => {
             const clickable = !!onMetodoClick
+            const isSelected = selectedMetodoId != null && m.nombre === selectedMetodoId
             const bsAmount = m.moneda === 'BS' ? m.totalOriginal : m.totalBs
             const hasBs = bsAmount > 0
             return (
@@ -71,7 +63,13 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                 type="button"
                 disabled={!clickable}
                 onClick={() => onMetodoClick?.(m.nombre)}
-                className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 text-left ${clickable ? 'hover:bg-muted/50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
+                className={`w-full flex items-center justify-between rounded-lg border px-3 py-2.5 text-left transition-all ${
+                  isSelected
+                    ? 'bg-primary/10 border-l-2 border-primary shadow-sm'
+                    : clickable
+                    ? 'hover:bg-muted/50 hover:shadow-sm cursor-pointer'
+                    : ''
+                }`}
               >
                 <div className="flex items-center gap-2">
                   <Money size={16} className="text-muted-foreground" />
@@ -228,34 +226,7 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
               </div>
             </div>
 
-            {/* Diferencial cambiario + Total cuadrado */}
-            {hasDiferencial && (
-              <>
-                <div className={`flex justify-between items-center text-xs rounded-md px-2.5 py-1.5 mt-1 ${
-                  dentroTolerancia
-                    ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                    : 'bg-red-50 text-red-700 border border-red-200'
-                }`}>
-                  <span className="font-medium">
-                    {dentroTolerancia
-                      ? 'Ajuste por redondeo cambiario'
-                      : 'Diferencial sin cuadrar \u2014 revisar cobros'}
-                  </span>
-                  <span className="font-mono font-semibold">
-                    {diferencial > 0 ? '+' : ''}{formatBs(diferencial)}
-                  </span>
-                </div>
-                <div className="flex justify-between items-center pt-1.5 border-t">
-                  <span className="text-sm font-bold">Total cuadrado</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground font-normal">
-                      {formatBs(totales.totalFacturadoBs + totalCobrosBs)}
-                    </span>
-                    <span className="text-sm font-bold">{formatUsd(totales.totalFacturadoUsd + (tasaDelDia > 0 && totalCobrosBs > 0 ? totalCobrosBs / tasaDelDia : totalCobrosUsd))}</span>
-                  </div>
-                </div>
-              </>
-            )}
+
           </div>
         </div>
       )}

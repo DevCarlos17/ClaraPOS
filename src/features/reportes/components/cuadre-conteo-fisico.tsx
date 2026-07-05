@@ -21,6 +21,8 @@ interface ConteoFisicoProps {
   onLimpiar?: () => void
   /** Si true, los inputs se muestran en modo lectura con valores guardados en sesiones_caja_detalle */
   readOnly?: boolean
+  /** Emite el total fisico en USD cada vez que cambia, para que el padre pueda pasarlo a otros componentes */
+  onTotalChange?: (totalUsd: number) => void
 }
 
 export function CuadreConteoFisico({
@@ -31,6 +33,7 @@ export function CuadreConteoFisico({
   onConteoFisicoChange,
   onLimpiar,
   readOnly = false,
+  onTotalChange,
 }: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { saldoEsperadoUsd, saldoEsperadoBs } = useSaldoEfectivoBimonetario(filters)
@@ -149,6 +152,10 @@ export function CuadreConteoFisico({
   useEffect(() => {
     onTotalesChange?.(totals.totalSistema, totals.totalFisico, totals.totalFisicoBs)
   }, [totals.totalSistema, totals.totalFisico, totals.totalFisicoBs, onTotalesChange])
+
+  useEffect(() => {
+    onTotalChange?.(totals.totalFisico)
+  }, [totals.totalFisico, onTotalChange])
 
   // Conteo fisico keyed por metodo_cobro_id (valor nativo) para cerrarSesionCaja
   useEffect(() => {
