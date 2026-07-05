@@ -188,9 +188,11 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   //                  + diferencial cambiario
   const totalNeto = saldoContadoUsd + fondoAperturaBsEnUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
   // Para display en Bs.: sumar los Bs. nativos de apertura directamente (sin re-convertir)
+  // Cuando hay tasa: convierte el track USD a Bs y suma los Bs nativos
+  // Sin tasa: muestra solo los Bs nativos de apertura (sin conversión)
   const totalNetoBs = tasaPromedio > 0
     ? (saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd) * tasaPromedio + fondoAperturaBs
-    : 0
+    : fondoAperturaBs
 
   // Determine if exactly one ABIERTA session is selected (enables finalizar cuadre)
   const sesionAbiertaId = useMemo(() => {
@@ -593,9 +595,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   <span className="text-sm font-semibold">Total Caja Neto Esperado</span>
                   <div className="text-right">
                     <p className={`text-2xl font-bold tabular-nums ${totalNeto >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {tasaPromedio > 0 ? formatBs(totalNetoBs) : formatUsd(totalNeto)}
+                      {fondoAperturaBs > 0 || tasaPromedio > 0 ? formatBs(totalNetoBs) : formatUsd(totalNeto)}
                     </p>
-                    {tasaPromedio > 0 && (
+                    {(fondoAperturaBs > 0 || tasaPromedio > 0) && (
                       <p className="text-xs text-muted-foreground tabular-nums mt-0.5">
                         {formatUsd(totalNeto)}
                       </p>

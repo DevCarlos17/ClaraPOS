@@ -153,7 +153,7 @@ export function CuadreArqueoTeorico({
           Total Teórico
         </p>
         <div className="text-right">
-          {tasaCambio > 0 && fondoAperturaBs > 0.001 ? (
+          {fondoAperturaBs > 0.001 ? (
             <>
               <p className="text-xl font-bold tabular-nums">{formatBs(teoricoBs)}</p>
               <p className="text-xs text-muted-foreground tabular-nums">{formatUsd(teoricoUsd)}</p>
@@ -161,7 +161,7 @@ export function CuadreArqueoTeorico({
           ) : (
             <>
               <p className="text-xl font-bold tabular-nums">{formatUsd(teoricoUsd)}</p>
-              {tasaCambio > 0 && (
+              {tasaCambio > 0 && teoricoBs > 0.001 && (
                 <p className="text-xs text-muted-foreground tabular-nums">{formatBs(teoricoBs)}</p>
               )}
             </>
