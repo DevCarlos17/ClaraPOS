@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ArrowCircleDown, ArrowCircleUp } from '@phosphor-icons/react'
+import { ArrowCircleDown, ArrowCircleUp, Vault } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
@@ -7,6 +7,8 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { createMovimientoManualMulti } from '@/features/caja/hooks/use-movimientos-manual'
 import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { crearTraspasoSesionATesoreria } from '@/features/tesoreria/hooks/use-traspasos'
+import type { CajaFuerte } from '@/features/tesoreria/hooks/use-caja-fuerte'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -18,6 +20,8 @@ interface IngresoRetiroModalProps {
   /** Egresos de caja ya comprometidos en facturas pendientes (aun no debitados) */
   pendingCajaUsd?: number
   pendingCajaBs?: number
+  /** Cajas fuertes activas para traspaso a Tesorería (solo visible en RETIRO) */
+  cajasFuerteActivas?: CajaFuerte[]
 }
 
 // ─── Form ─────────────────────────────────────────────────────
@@ -28,12 +32,14 @@ function FormIngresoRetiro({
   modo,
   pendingCajaUsd = 0,
   pendingCajaBs = 0,
+  cajasFuerteActivas = [],
 }: {
   onClose: () => void
   sesionCajaId: string
   modo: 'INGRESO' | 'RETIRO'
   pendingCajaUsd?: number
   pendingCajaBs?: number
+  cajasFuerteActivas?: CajaFuerte[]
 }) {
   const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
@@ -49,6 +55,10 @@ function FormIngresoRetiro({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
+  // Traspaso a Tesorería (solo en RETIRO)
+  const [origenTipo, setOrigenTipo] = useState<'NORMAL' | 'TRASPASO_TESORERIA'>('NORMAL')
+  const [cajaFuerteSeleccionada, setCajaFuerteSeleccionada] = useState('')
+
   // Auto-seleccionar metodos de efectivo por moneda
   const efectivoUsd = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
   const efectivoBs = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
@@ -58,6 +68,8 @@ function FormIngresoRetiro({
     setMontoBs('')
     setConcepto('')
     setErrors({})
+    setOrigenTipo('NORMAL')
+    setCajaFuerteSeleccionada('')
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -73,14 +85,22 @@ function FormIngresoRetiro({
     if (!concepto.trim() || concepto.trim().length < 3) {
       newErrors.concepto = 'El concepto debe tener al menos 3 caracteres'
     }
-    if (usd > 0 && !efectivoUsd) {
-      newErrors.general = 'No hay un metodo EFECTIVO en USD configurado'
-    }
-    if (bs > 0 && !efectivoBs) {
-      newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
-        'No hay un metodo EFECTIVO en Bs configurado'
-    }
-    if (modo === 'RETIRO') {
+
+    if (modo === 'RETIRO' && origenTipo === 'TRASPASO_TESORERIA') {
+      // Traspaso a Tesorería: una sola moneda por traspaso
+      if (usd > 0 && bs > 0) {
+        newErrors.general = 'Para traspaso a Tesoreria, ingresa solo un monto (USD o Bs)'
+      }
+      if (!cajaFuerteSeleccionada) {
+        newErrors.cajaFuerte = 'Selecciona una caja fuerte destino'
+      }
+      if (usd > 0 && !efectivoUsd) {
+        newErrors.general = 'No hay un metodo EFECTIVO en USD configurado'
+      }
+      if (bs > 0 && !efectivoBs) {
+        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+          'No hay un metodo EFECTIVO en Bs configurado'
+      }
       if (usd > 0 && usd > saldoUsd + 0.01) {
         newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
           `Saldo insuficiente en USD. Disponible: ${formatUsd(saldoUsd)}`
@@ -88,6 +108,25 @@ function FormIngresoRetiro({
       if (bs > 0 && bs > saldoBs + 0.01) {
         newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
           `Saldo insuficiente en Bs. Disponible: ${formatBs(saldoBs)}`
+      }
+    } else {
+      // Flujo normal
+      if (usd > 0 && !efectivoUsd) {
+        newErrors.general = 'No hay un metodo EFECTIVO en USD configurado'
+      }
+      if (bs > 0 && !efectivoBs) {
+        newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+          'No hay un metodo EFECTIVO en Bs configurado'
+      }
+      if (modo === 'RETIRO') {
+        if (usd > 0 && usd > saldoUsd + 0.01) {
+          newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+            `Saldo insuficiente en USD. Disponible: ${formatUsd(saldoUsd)}`
+        }
+        if (bs > 0 && bs > saldoBs + 0.01) {
+          newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
+            `Saldo insuficiente en Bs. Disponible: ${formatBs(saldoBs)}`
+        }
       }
     }
 
@@ -98,21 +137,53 @@ function FormIngresoRetiro({
 
     if (!user) return
 
-    const entradas: Array<{ metodo_cobro_id: string; monto: number }> = []
-    if (usd > 0 && efectivoUsd) entradas.push({ metodo_cobro_id: efectivoUsd.id, monto: usd })
-    if (bs > 0 && efectivoBs) entradas.push({ metodo_cobro_id: efectivoBs.id, monto: bs })
-
     setSubmitting(true)
     try {
-      await createMovimientoManualMulti({
-        entradas,
-        origen: modo === 'INGRESO' ? 'INGRESO_MANUAL' : 'EGRESO_MANUAL',
-        concepto: concepto.trim(),
-        sesion_caja_id: sesionCajaId,
-        empresa_id: user.empresa_id!,
-        usuario_id: user.id,
-      })
-      toast.success(`${modo === 'INGRESO' ? 'Ingreso' : 'Retiro'} registrado exitosamente`)
+      if (modo === 'RETIRO' && origenTipo === 'TRASPASO_TESORERIA' && cajaFuerteSeleccionada) {
+        // Traspaso a Tesorería
+        const usdNum = parseFloat(montoUsd) || 0
+        const bsNum = parseFloat(montoBs) || 0
+        if (usdNum > 0 && efectivoUsd) {
+          await crearTraspasoSesionATesoreria({
+            sesionCajaId,
+            metodoCobroid: efectivoUsd.id,
+            cajaFuerteId: cajaFuerteSeleccionada,
+            monto: usdNum.toFixed(4),
+            monedaId: efectivoUsd.moneda_id,
+            empresaId: user.empresa_id!,
+            userId: user.id,
+            descripcion: concepto.trim() || 'Traspaso a Tesoreria',
+          })
+        } else if (bsNum > 0 && efectivoBs) {
+          await crearTraspasoSesionATesoreria({
+            sesionCajaId,
+            metodoCobroid: efectivoBs.id,
+            cajaFuerteId: cajaFuerteSeleccionada,
+            monto: bsNum.toFixed(4),
+            monedaId: efectivoBs.moneda_id,
+            empresaId: user.empresa_id!,
+            userId: user.id,
+            descripcion: concepto.trim() || 'Traspaso a Tesoreria',
+          })
+        }
+        toast.success('Efectivo enviado a Tesoreria exitosamente')
+      } else {
+        // Flujo normal (ingreso o retiro manual)
+        const usdNum = parseFloat(montoUsd) || 0
+        const bsNum = parseFloat(montoBs) || 0
+        const entradas: Array<{ metodo_cobro_id: string; monto: number }> = []
+        if (usdNum > 0 && efectivoUsd) entradas.push({ metodo_cobro_id: efectivoUsd.id, monto: usdNum })
+        if (bsNum > 0 && efectivoBs) entradas.push({ metodo_cobro_id: efectivoBs.id, monto: bsNum })
+        await createMovimientoManualMulti({
+          entradas,
+          origen: modo === 'INGRESO' ? 'INGRESO_MANUAL' : 'EGRESO_MANUAL',
+          concepto: concepto.trim(),
+          sesion_caja_id: sesionCajaId,
+          empresa_id: user.empresa_id!,
+          usuario_id: user.id,
+        })
+        toast.success(`${modo === 'INGRESO' ? 'Ingreso' : 'Retiro'} registrado exitosamente`)
+      }
       reset()
       onClose()
     } catch (error) {
@@ -184,6 +255,62 @@ function FormIngresoRetiro({
         />
       </div>
 
+      {/* Toggle Traspaso a Tesorería — solo en RETIRO */}
+      {modo === 'RETIRO' && cajasFuerteActivas.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Destino del retiro</p>
+          <div className="flex rounded-xl border bg-muted/30 overflow-hidden text-xs p-0.5 gap-0.5">
+            {(
+              [
+                { key: 'NORMAL' as const, label: 'Salida normal' },
+                { key: 'TRASPASO_TESORERIA' as const, label: 'Traspaso a Tesorería' },
+              ]
+            ).map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => {
+                  setOrigenTipo(key)
+                  setCajaFuerteSeleccionada('')
+                  setErrors({})
+                }}
+                className={`relative flex-1 flex items-center justify-center gap-1.5 py-1.5 font-medium transition-colors rounded-lg ${
+                  origenTipo === key
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {key === 'TRASPASO_TESORERIA' && (
+                  <Vault size={12} weight={origenTipo === key ? 'fill' : 'regular'} />
+                )}
+                {label}
+              </button>
+            ))}
+          </div>
+          {origenTipo === 'TRASPASO_TESORERIA' && (
+            <div className="space-y-1.5">
+              <select
+                value={cajaFuerteSeleccionada}
+                onChange={(e) => { setCajaFuerteSeleccionada(e.target.value); setErrors({}) }}
+                className={`flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+                  errors.cajaFuerte ? 'border-destructive' : ''
+                }`}
+              >
+                <option value="">-- Selecciona caja fuerte destino --</option>
+                {cajasFuerteActivas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre} — Saldo: {c.saldo_actual}
+                  </option>
+                ))}
+              </select>
+              {errors.cajaFuerte && (
+                <p className="text-destructive text-xs">{errors.cajaFuerte}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Concepto */}
       <div>
         <label className="block text-sm font-medium mb-1">
@@ -220,11 +347,15 @@ function FormIngresoRetiro({
           className={
             modo === 'INGRESO'
               ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              : origenTipo === 'TRASPASO_TESORERIA'
+              ? 'bg-blue-600 hover:bg-blue-700 text-white'
               : 'bg-red-600 hover:bg-red-700 text-white'
           }
         >
           {submitting
             ? 'Registrando...'
+            : modo === 'RETIRO' && origenTipo === 'TRASPASO_TESORERIA'
+            ? 'Enviar a Tesoreria'
             : `Registrar ${modo === 'INGRESO' ? 'Ingreso' : 'Retiro'}`}
         </Button>
       </div>
@@ -241,6 +372,7 @@ export function IngresoRetiroModal({
   modo,
   pendingCajaUsd,
   pendingCajaBs,
+  cajasFuerteActivas,
 }: IngresoRetiroModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -303,6 +435,7 @@ export function IngresoRetiroModal({
           modo={modo}
           pendingCajaUsd={pendingCajaUsd}
           pendingCajaBs={pendingCajaBs}
+          cajasFuerteActivas={cajasFuerteActivas}
         />
       </div>
     </dialog>

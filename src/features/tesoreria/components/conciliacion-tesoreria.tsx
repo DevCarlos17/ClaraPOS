@@ -7,6 +7,7 @@ import {
   Clock,
   FilePdf,
   FileXls,
+  PaperPlaneTilt,
 } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -37,6 +38,7 @@ import { CajaFuerteModal } from './caja-fuerte-modal'
 import { MovimientoManualModal } from './movimiento-manual-modal'
 import { TraspasoModal } from './traspaso-modal'
 import { ReversoModal } from './reverso-modal'
+import { EnviarEfectivoACajaModal } from './enviar-efectivo-a-caja-modal'
 import type { CajaFuerte } from '../hooks/use-caja-fuerte'
 import { db } from '@/core/db/powersync/db'
 import {
@@ -189,6 +191,7 @@ export function ConciliacionTesoreria() {
   const [editandoCaja, setEditandoCaja] = useState<CajaFuerte | null>(null)
   const [showManualModal, setShowManualModal] = useState(false)
   const [showTraspasoModal, setShowTraspasoModal] = useState(false)
+  const [showEnviarEfectivoModal, setShowEnviarEfectivoModal] = useState(false)
   const [movParaReversar, setMovParaReversar] = useState<MovimientoTesoreria | null>(null)
   const [traspasoIdParaReversar, setTraspasoIdParaReversar] = useState<string | null>(null)
 
@@ -478,6 +481,16 @@ export function ConciliacionTesoreria() {
         {/* Separator */}
         <div className="w-px h-6 bg-border mx-1 hidden sm:block" />
 
+        {/* Enviar efectivo a caja */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowEnviarEfectivoModal(true)}
+        >
+          <PaperPlaneTilt size={16} className="mr-1.5" />
+          Enviar efectivo a caja
+        </Button>
+
         {/* Traspaso + Manual — right side, unchanged */}
         <Button
           variant="outline"
@@ -761,6 +774,14 @@ export function ConciliacionTesoreria() {
         movimiento={movParaReversar}
         monedaSimbolo={selectedCuenta?.moneda_simbolo ?? '$'}
         traspasoId={traspasoIdParaReversar ?? undefined}
+      />
+
+      <EnviarEfectivoACajaModal
+        open={showEnviarEfectivoModal}
+        onClose={() => setShowEnviarEfectivoModal(false)}
+        cajasFuerteActivas={cuentas.filter((c) => c.tipo === 'CAJA_FUERTE' && c.detalle != null).map((c) => c.detalle as CajaFuerte)}
+        empresaId={user?.empresa_id ?? ''}
+        userId={user?.id ?? ''}
       />
     </div>
   )
