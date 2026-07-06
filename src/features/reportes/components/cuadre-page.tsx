@@ -637,6 +637,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               ingresosEfectivoUsd={ingresosEfectivoUsd}
               egresosUsd={egresosEfectivoUsd}
               conteoFisicoUsd={conteoFisicoTotal}
+              conteoFisicoBs={totalFisicoBs}
               tasaCambio={tasaPromedio}
             />
           </div>

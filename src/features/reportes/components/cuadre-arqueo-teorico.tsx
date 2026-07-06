@@ -8,7 +8,8 @@ export interface CuadreArqueoTeoricoProps {
   ventasEfectivoUsd: number   // ventas cobradas en efectivo del día (usePagosPorMetodo, tipo=EFECTIVO)
   ingresosEfectivoUsd: number // ingresos manuales en efectivo (useMovimientosManualesDia, origen=INGRESO_MANUAL)
   egresosUsd: number          // egresos/retiros de la sesión (useMovimientosManualesDia, tipo=EGRESO, EFECTIVO)
-  conteoFisicoUsd: number     // total del conteo físico (from cuadre-conteo-fisico)
+  conteoFisicoUsd: number     // total del conteo físico en USD (from cuadre-conteo-fisico)
+  conteoFisicoBs: number      // total del conteo físico en Bs. nativos (from cuadre-conteo-fisico)
   tasaCambio: number
 }
 
@@ -19,6 +20,7 @@ export function CuadreArqueoTeorico({
   ingresosEfectivoUsd,
   egresosUsd,
   conteoFisicoUsd,
+  conteoFisicoBs,
   tasaCambio,
 }: CuadreArqueoTeoricoProps) {
   // Track USD: solo componentes en USD (sin convertir Bs nativos)
@@ -26,17 +28,20 @@ export function CuadreArqueoTeorico({
   // Track Bs: apertura nativa en Bs + componentes USD convertidos
   const teoricoBs = fondoAperturaBs + usdToBs(ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd, tasaCambio).toNumber()
 
+  // Diferencias independientes por moneda
   const diferenciaUsd = conteoFisicoUsd - teoricoUsd
+  const diferenciaBs  = conteoFisicoBs  - teoricoBs   // comparación nativa Bs
 
   const fondoAperturaUsdBs = usdToBs(fondoAperturaUsd, tasaCambio).toNumber()
   const ventasEfectivoBs = usdToBs(ventasEfectivoUsd, tasaCambio).toNumber()
   const ingresosEfectivoBs = usdToBs(ingresosEfectivoUsd, tasaCambio).toNumber()
   const egresosUsdBs = usdToBs(egresosUsd, tasaCambio).toNumber()
-  const conteoFisicoBs = usdToBs(conteoFisicoUsd, tasaCambio).toNumber()
-  const diferenciaBs = usdToBs(Math.abs(diferenciaUsd), tasaCambio).toNumber()
 
-  const isExact = Math.abs(diferenciaUsd) <= 0.01
-  const isSurplus = diferenciaUsd > 0.01   // conteo > teórico → sobran
+
+  // Exacto cuando ambas monedas cuadran
+  const isExact = Math.abs(diferenciaUsd) <= 0.01 && Math.abs(diferenciaBs) <= 0.01
+  // Sobrante cuando hay excedente en AMBAS monedas
+  const isSurplus = diferenciaUsd > 0.01 && diferenciaBs > 0.01
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5 flex flex-col gap-4">
@@ -179,7 +184,7 @@ export function CuadreArqueoTeorico({
           <span className="text-muted-foreground">Conteo Físico</span>
           <div className="text-right">
             <span className="font-medium tabular-nums">{formatUsd(conteoFisicoUsd)}</span>
-            {tasaCambio > 0 && (
+            {(fondoAperturaBs > 0.001 || conteoFisicoBs > 0.001) && (
               <p className="text-xs text-muted-foreground tabular-nums">
                 {formatBs(conteoFisicoBs)}
               </p>
@@ -205,17 +210,17 @@ export function CuadreArqueoTeorico({
             <span className="tabular-nums">
               {isExact
                 ? formatUsd(0)
-                : isSurplus
+                : diferenciaUsd > 0.01
                   ? `+${formatUsd(diferenciaUsd)}`
                   : formatUsd(diferenciaUsd)}
             </span>
-            {tasaCambio > 0 && (
+            {(fondoAperturaBs > 0.001 || Math.abs(diferenciaBs) > 0.01) && (
               <p className="text-xs font-normal opacity-80 tabular-nums">
                 {isExact
                   ? formatBs(0)
-                  : isSurplus
+                  : diferenciaBs > 0.01
                     ? `+${formatBs(diferenciaBs)}`
-                    : `−${formatBs(diferenciaBs)}`}
+                    : formatBs(diferenciaBs)}
               </p>
             )}
           </div>

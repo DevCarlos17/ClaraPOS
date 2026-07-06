@@ -383,12 +383,13 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
            AND mc.id NOT IN (
              SELECT DISTINCT pg2.metodo_cobro_id FROM pagos pg2 WHERE ${whereNotIn}
            )
-           AND mc.id IN (
-             SELECT DISTINCT mmc.metodo_cobro_id
-             FROM movimientos_metodo_cobro mmc
-             WHERE ${whereMmc}
-           )`
-      : '',
+             AND mc.id IN (
+              SELECT DISTINCT mmc.metodo_cobro_id
+              FROM movimientos_metodo_cobro mmc
+              WHERE ${whereMmc}
+            )
+          GROUP BY mc.id`
+       : '',
     filters ? [empresaId, ...paramsNotIn, ...paramsMmc] : []
   )
 
@@ -427,12 +428,13 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
                  AND CAST(COALESCE(sc.monto_apertura_usd, '0') AS REAL) > 0.001
              ))
              OR (mon.codigo_iso = 'VES' AND EXISTS (
-               SELECT 1 FROM sesiones_caja sc
-               WHERE sc.id IN (${aperturaPlaceholders})
-                 AND CAST(COALESCE(sc.monto_apertura_bs, '0') AS REAL) > 0.001
-             ))
-           )`
-      : '',
+                SELECT 1 FROM sesiones_caja sc
+                WHERE sc.id IN (${aperturaPlaceholders})
+                  AND CAST(COALESCE(sc.monto_apertura_bs, '0') AS REAL) > 0.001
+              ))
+            )
+          GROUP BY mc.id`
+       : '',
     hasSessionForApertura
       ? [empresaId, ...paramsNotIn, ...paramsMmc, ...filters!.sesionCajaIds, ...filters!.sesionCajaIds]
       : []
