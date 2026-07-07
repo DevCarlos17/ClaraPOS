@@ -3,13 +3,16 @@ import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 
 export interface CuadreArqueoTeoricoProps {
-  fondoAperturaUsd: number    // fondo con que abrió la caja (useSesionApertura → aperturaUsd)
-  fondoAperturaBs: number     // fondo inicial en Bs. nativos (useSesionApertura → aperturaBs)
-  ventasEfectivoUsd: number   // ventas cobradas en efectivo del día (usePagosPorMetodo, tipo=EFECTIVO)
-  ingresosEfectivoUsd: number // ingresos manuales en efectivo (useMovimientosManualesDia, origen=INGRESO_MANUAL)
-  egresosUsd: number          // egresos/retiros de la sesión (useMovimientosManualesDia, tipo=EGRESO, EFECTIVO)
-  conteoFisicoUsd: number     // total del conteo físico en USD (from cuadre-conteo-fisico)
-  conteoFisicoBs: number      // total del conteo físico en Bs. nativos (from cuadre-conteo-fisico)
+  fondoAperturaUsd: number        // fondo con que abrió la caja (useSesionApertura → aperturaUsd)
+  fondoAperturaBs: number         // fondo inicial en Bs. nativos (useSesionApertura → aperturaBs)
+  ventasEfectivoUsd: number       // ventas cobradas en efectivo USD (usePagosPorMetodo, tipo=EFECTIVO, moneda!=BS)
+  ventasEfectivoBsNativo: number  // ventas cobradas en efectivo Bs nativos (tipo=EFECTIVO, moneda=BS)
+  ingresosEfectivoUsd: number     // ingresos manuales en efectivo USD
+  ingresosEfectivoBsNativo: number // ingresos manuales en efectivo Bs nativos
+  egresosUsd: number              // egresos/retiros en USD
+  egresosBsNativo: number         // egresos/retiros en Bs nativos
+  conteoFisicoUsd: number         // total del conteo físico en USD (from cuadre-conteo-fisico)
+  conteoFisicoBs: number          // total del conteo físico en Bs. nativos (from cuadre-conteo-fisico)
   tasaCambio: number
 }
 
@@ -17,16 +20,23 @@ export function CuadreArqueoTeorico({
   fondoAperturaUsd,
   fondoAperturaBs,
   ventasEfectivoUsd,
+  ventasEfectivoBsNativo,
   ingresosEfectivoUsd,
+  ingresosEfectivoBsNativo,
   egresosUsd,
+  egresosBsNativo,
   conteoFisicoUsd,
   conteoFisicoBs,
   tasaCambio,
 }: CuadreArqueoTeoricoProps) {
   // Track USD: solo componentes en USD (sin convertir Bs nativos)
   const teoricoUsd = fondoAperturaUsd + ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd
-  // Track Bs: apertura nativa en Bs + componentes USD convertidos
-  const teoricoBs = fondoAperturaBs + usdToBs(ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd, tasaCambio).toNumber()
+  // Track Bs: apertura nativa + ventas/ingresos/egresos Bs nativos + conversión del track USD
+  const teoricoBs = fondoAperturaBs
+    + ventasEfectivoBsNativo
+    + ingresosEfectivoBsNativo
+    - egresosBsNativo
+    + usdToBs(ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd, tasaCambio).toNumber()
 
   // Diferencias independientes por moneda
   const diferenciaUsd = conteoFisicoUsd - teoricoUsd
@@ -94,59 +104,131 @@ export function CuadreArqueoTeorico({
           </div>
         )}
 
-        {/* Ventas Efectivo */}
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <span className="w-4 text-center font-mono text-xs text-green-500">+</span>
-            <span className="text-muted-foreground">Ventas Efectivo</span>
+        {/* Ventas Efectivo USD — solo si hay ventas en USD */}
+        {(ventasEfectivoUsd > 0.001 || ventasEfectivoBsNativo <= 0.001) && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-green-500">+</span>
+              <span className="text-muted-foreground">
+                Ventas Efectivo{ventasEfectivoBsNativo > 0.001 ? ' ($)' : ''}
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-green-600 dark:text-green-400">
+                {formatUsd(ventasEfectivoUsd)}
+              </span>
+              {tasaCambio > 0 && ventasEfectivoBs > 0.001 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatBs(ventasEfectivoBs)}
+                </p>
+              )}
+            </div>
           </div>
-          <div className="text-right">
-            <span className="font-medium tabular-nums text-green-600 dark:text-green-400">
-              {formatUsd(ventasEfectivoUsd)}
-            </span>
-            {tasaCambio > 0 && (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {formatBs(ventasEfectivoBs)}
-              </p>
-            )}
-          </div>
-        </div>
+        )}
 
-        {/* Ingresos Manuales */}
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <span className="w-4 text-center font-mono text-xs text-green-500">+</span>
-            <span className="text-muted-foreground">Ingresos Manuales</span>
+        {/* Ventas Efectivo Bs nativos — solo si hay ventas en Bs */}
+        {ventasEfectivoBsNativo > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-green-500">+</span>
+              <span className="text-muted-foreground">Ventas Efectivo (Bs.)</span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-green-600 dark:text-green-400">
+                {formatBs(ventasEfectivoBsNativo)}
+              </span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatUsd(ventasEfectivoBsNativo / tasaCambio)}
+                </p>
+              )}
+            </div>
           </div>
-          <div className="text-right">
-            <span className="font-medium tabular-nums text-green-600 dark:text-green-400">
-              {formatUsd(ingresosEfectivoUsd)}
-            </span>
-            {tasaCambio > 0 && (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {formatBs(ingresosEfectivoBs)}
-              </p>
-            )}
-          </div>
-        </div>
+        )}
 
-        {/* Egresos */}
-        <div className="flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <span className="w-4 text-center font-mono text-xs text-red-500">−</span>
-            <span className="text-muted-foreground">Egresos / Retiros</span>
+        {/* Ingresos Manuales USD */}
+        {(ingresosEfectivoUsd > 0.001 || ingresosEfectivoBsNativo <= 0.001) && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-green-500">+</span>
+              <span className="text-muted-foreground">
+                Ingresos Manuales{ingresosEfectivoBsNativo > 0.001 ? ' ($)' : ''}
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-green-600 dark:text-green-400">
+                {formatUsd(ingresosEfectivoUsd)}
+              </span>
+              {tasaCambio > 0 && ingresosEfectivoBs > 0.001 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatBs(ingresosEfectivoBs)}
+                </p>
+              )}
+            </div>
           </div>
-          <div className="text-right">
-            <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
-              {formatUsd(egresosUsd)}
-            </span>
-            {tasaCambio > 0 && (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {formatBs(egresosUsdBs)}
-              </p>
-            )}
+        )}
+
+        {/* Ingresos Manuales Bs nativos */}
+        {ingresosEfectivoBsNativo > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-green-500">+</span>
+              <span className="text-muted-foreground">Ingresos Manuales (Bs.)</span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-green-600 dark:text-green-400">
+                {formatBs(ingresosEfectivoBsNativo)}
+              </span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatUsd(ingresosEfectivoBsNativo / tasaCambio)}
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* Egresos USD */}
+        {(egresosUsd > 0.001 || egresosBsNativo <= 0.001) && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-red-500">−</span>
+              <span className="text-muted-foreground">
+                Egresos / Retiros{egresosBsNativo > 0.001 ? ' ($)' : ''}
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
+                {formatUsd(egresosUsd)}
+              </span>
+              {tasaCambio > 0 && egresosUsdBs > 0.001 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatBs(egresosUsdBs)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Egresos Bs nativos */}
+        {egresosBsNativo > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-red-500">−</span>
+              <span className="text-muted-foreground">Egresos / Retiros (Bs.)</span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
+                {formatBs(egresosBsNativo)}
+              </span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatUsd(egresosBsNativo / tasaCambio)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Divider */}

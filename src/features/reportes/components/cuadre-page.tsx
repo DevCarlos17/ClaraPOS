@@ -161,7 +161,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
 
-  // Derived values for CuadreArqueoTeorico
+  // Derived values for CuadreArqueoTeorico — track USD (moneda != BS)
   const ventasEfectivoUsd = todosMetodos
     .filter((m) => m.tipo === 'EFECTIVO' && m.moneda !== 'BS')
     .reduce((s, m) => s + m.totalUsd, 0)
@@ -170,6 +170,16 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     .reduce((s, m) => s + m.total, 0)
   const egresosEfectivoUsd = movManualesCaja
     .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.mov_tipo === 'EGRESO')
+    .reduce((s, m) => s + m.total, 0)
+  // Track Bs nativo (moneda == BS) — ventas, ingresos y egresos en bolívares
+  const ventasEfectivoBsNativo = todosMetodos
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
+    .reduce((s, m) => s + m.totalOriginal, 0)
+  const ingresosEfectivoBsNativo = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && (m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'))
+    .reduce((s, m) => s + m.total, 0)
+  const egresosEfectivoBsNativo = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.mov_tipo === 'EGRESO')
     .reduce((s, m) => s + m.total, 0)
 
   // Diferencial cambiario por redondeo (mismo calculo que PagosResumen)
@@ -648,8 +658,11 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               fondoAperturaUsd={fondoAperturaUsd}
               fondoAperturaBs={fondoAperturaBs}
               ventasEfectivoUsd={ventasEfectivoUsd}
+              ventasEfectivoBsNativo={ventasEfectivoBsNativo}
               ingresosEfectivoUsd={ingresosEfectivoUsd}
+              ingresosEfectivoBsNativo={ingresosEfectivoBsNativo}
               egresosUsd={egresosEfectivoUsd}
+              egresosBsNativo={egresosEfectivoBsNativo}
               conteoFisicoUsd={conteoFisicoTotal}
               conteoFisicoBs={totalFisicoBs}
               tasaCambio={tasaPromedio}
