@@ -112,9 +112,14 @@ export function CuadreConteoFisico({
   // Totales en USD para el resumen y callback del padre; fisicoBs en Bs. nativos
   const totals = useMemo(() => {
     // totalSistema viene del hook directamente, no de iterar los rows del UI.
-    // Esto evita que métodos EFECTIVO duplicados en la configuración dupliquen el total.
-    // Efectivo USD + Bs convertido + métodos no-efectivo
-    const efectivaTasa = tasaDelDia > 0 ? tasaDelDia : 0
+    // Efectivo USD + Bs convertido (usando tasaDelDia o la tasa implícita en los pagos) + no-efectivo
+    // Fallback de tasa: derivar de los datos de la transacción cuando tasaDelDia = 0
+    const bsEfectivoMethod = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
+    const efectivaTasa = tasaDelDia > 0
+      ? tasaDelDia
+      : bsEfectivoMethod && bsEfectivoMethod.totalOriginal > 0 && bsEfectivoMethod.totalUsd > 0
+        ? bsEfectivoMethod.totalOriginal / bsEfectivoMethod.totalUsd
+        : 0
     const sistemaEfectivoUsd = saldoEsperadoUsd
       + (efectivaTasa > 0 ? saldoEsperadoBs / efectivaTasa : 0)
     const sistemaNoCash = metodos
