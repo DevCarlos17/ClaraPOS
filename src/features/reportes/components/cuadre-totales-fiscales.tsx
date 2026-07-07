@@ -105,24 +105,34 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
             />
           ))}
 
-          {/* IGTF */}
-          {totales.totalIgtfUsd > 0 && (
-            <Row
-              label="IGTF"
-              usd={totales.totalIgtfUsd}
-              bs={totales.totalIgtfBs}
-            />
-          )}
-
           <div className="my-1 border-t" />
 
-          {/* Total facturado */}
+          {/* Total facturado (sin IGTF) */}
           <Row
             label="Total facturado"
             usd={totales.totalFacturadoUsd}
             bs={totales.totalFacturadoBs}
             destacado
           />
+
+          {/* IGTF — después del total facturado */}
+          {totales.totalIgtfUsd > 0 && (
+            <>
+              <Row
+                label="IGTF"
+                usd={totales.totalIgtfUsd}
+                bs={totales.totalIgtfBs}
+              />
+              <div className="my-1 border-t" />
+              {/* Total General = Facturado + IGTF */}
+              <Row
+                label="Total General (c/IGTF)"
+                usd={totales.totalFacturadoUsd + totales.totalIgtfUsd}
+                bs={totales.totalFacturadoBs + totales.totalIgtfBs}
+                destacado
+              />
+            </>
+          )}
         </div>
       )}
     </div>
