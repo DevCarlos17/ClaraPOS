@@ -452,14 +452,23 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
 
   // Deduplicar los tres conjuntos: pagos > extra > apertura — memoizado para referencia estable
   const metodos = useMemo(() => {
-    const seen = new Set<string>()
+    const seenId = new Set<string>()
+    const seenEfectivoCurrency = new Set<string>()
     return [
       ...(data ?? []).map(toItem),
       ...(extraData ?? []).map(toItem),
       ...(aperturaData ?? []).map(toItem),
     ].filter((m) => {
-      if (seen.has(m.metodo_cobro_id)) return false
-      seen.add(m.metodo_cobro_id)
+      // Dedup primario: por metodo_cobro_id
+      if (seenId.has(m.metodo_cobro_id)) return false
+      seenId.add(m.metodo_cobro_id)
+      // Dedup secundario: para EFECTIVO, solo un método por moneda
+      // Evita filas duplicadas cuando la empresa tiene múltiples métodos efectivo por divisa
+      if (m.tipo === 'EFECTIVO') {
+        const currencyKey = `EFECTIVO_${m.moneda}`
+        if (seenEfectivoCurrency.has(currencyKey)) return false
+        seenEfectivoCurrency.add(currencyKey)
+      }
       return true
     })
   }, [data, extraData, aperturaData])

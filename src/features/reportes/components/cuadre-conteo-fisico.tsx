@@ -111,31 +111,30 @@ export function CuadreConteoFisico({
 
   // Totales en USD para el resumen y callback del padre; fisicoBs en Bs. nativos
   const totals = useMemo(() => {
-    let sistema = 0
+    // totalSistema viene del hook directamente, no de iterar los rows del UI.
+    // Esto evita que métodos EFECTIVO duplicados en la configuración dupliquen el total.
+    // Efectivo USD + Bs convertido + métodos no-efectivo
+    const efectivaTasa = tasaDelDia > 0 ? tasaDelDia : 0
+    const sistemaEfectivoUsd = saldoEsperadoUsd
+      + (efectivaTasa > 0 ? saldoEsperadoBs / efectivaTasa : 0)
+    const sistemaNoCash = metodos
+      .filter((m) => m.tipo !== 'EFECTIVO')
+      .reduce((acc, m) => acc + m.totalUsd, 0)
+    const sistema = sistemaEfectivoUsd + sistemaNoCash
+
     let fisicoTotal = 0
     let fisicoBs = 0
     for (const m of metodos) {
-      const esEfectivo = m.tipo === 'EFECTIVO'
-      const efectivaTasa = tasaDelDia > 0
+      const mEfectivaTasa = tasaDelDia > 0
         ? tasaDelDia
         : m.totalOriginal > 0 && m.totalUsd > 0
         ? m.totalOriginal / m.totalUsd
         : 0
-      // Usa la misma logica que el display por metodo:
-      // EFECTIVO: saldoEsperado (apertura + ventas + movimientos manuales) / tasa
-      // Otros metodos: totalUsd de ventas unicamente
-      const sistemaUsd = esEfectivo
-        ? (m.moneda === 'BS'
-            ? (efectivaTasa > 0 ? saldoEsperadoBs / efectivaTasa : 0)
-            : saldoEsperadoUsd)
-        : m.totalUsd
-      sistema += sistemaUsd
-
       const raw = parseFloat(fisico[m.nombre] ?? '') || 0
       const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
       if (has) {
         if (m.moneda === 'BS') {
-          fisicoTotal += efectivaTasa > 0 ? raw / efectivaTasa : 0
+          fisicoTotal += mEfectivaTasa > 0 ? raw / mEfectivaTasa : 0
           fisicoBs += raw
         } else {
           fisicoTotal += raw
