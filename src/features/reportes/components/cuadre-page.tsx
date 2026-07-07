@@ -191,8 +191,16 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // Fondo apertura en Bs. nativos convertido a USD equivalente (para el total neto USD)
   const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
   // "Total Contado" solo refleja ventas cobradas + movimientos; excluye el fondo de apertura
-  const totalContadoUsd = Number((saldoContadoUsd - fondoAperturaUsd).toFixed(2))
-  const totalContadoBs  = Number((saldoContadoBs  - fondoAperturaBs).toFixed(2))
+  // Total Contado = solo pagos de clientes en facturas (pagos tabla)
+  // Excluir: apertura (fondo inicial) + movimientos manuales (ingreso/egreso del modal POS)
+  // saldoContadoUsd/Bs = apertura + pagos + ingresos_manuales - egresos_manuales
+  // → restamos apertura y movimientos manuales → quedan solo los pagos de facturas
+  const totalContadoUsd = Number(Math.max(0,
+    saldoContadoUsd - fondoAperturaUsd - ingresosEfectivoUsd + egresosEfectivoUsd
+  ).toFixed(2))
+  const totalContadoBs  = Number(Math.max(0,
+    saldoContadoBs - fondoAperturaBs - ingresosEfectivoBsNativo + egresosEfectivoBsNativo
+  ).toFixed(2))
   // totalNeto incluye: efectivo USD esperado (apertura_usd + ventas + movimientos)
   //                  + Bs. nativos de apertura convertidos a USD
   //                  + cobros anteriores CxC
