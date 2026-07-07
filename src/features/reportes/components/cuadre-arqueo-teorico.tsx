@@ -29,14 +29,14 @@ export function CuadreArqueoTeorico({
   conteoFisicoBs,
   tasaCambio,
 }: CuadreArqueoTeoricoProps) {
-  // Track USD: solo componentes en USD (sin convertir Bs nativos)
+  // Track USD: solo montos nativos en USD — nunca mezclar con Bs
   const teoricoUsd = fondoAperturaUsd + ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd
-  // Track Bs: apertura nativa + ventas/ingresos/egresos Bs nativos + conversión del track USD
+  // Track Bs: solo montos nativos en Bs — nunca mezclar con USD
+  // Cada divisa se compara contra su propio conteo físico de forma independiente
   const teoricoBs = fondoAperturaBs
     + ventasEfectivoBsNativo
     + ingresosEfectivoBsNativo
     - egresosBsNativo
-    + usdToBs(ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd, tasaCambio).toNumber()
 
   // Diferencias independientes por moneda
   const diferenciaUsd = conteoFisicoUsd - teoricoUsd
@@ -240,18 +240,25 @@ export function CuadreArqueoTeorico({
           Total Teórico
         </p>
         <div className="text-right">
-          {fondoAperturaBs > 0.001 ? (
-            <>
-              <p className="text-xl font-bold tabular-nums">{formatBs(teoricoBs)}</p>
-              <p className="text-xs text-muted-foreground tabular-nums">{formatUsd(teoricoUsd)}</p>
-            </>
-          ) : (
-            <>
-              <p className="text-xl font-bold tabular-nums">{formatUsd(teoricoUsd)}</p>
-              {tasaCambio > 0 && teoricoBs > 0.001 && (
-                <p className="text-xs text-muted-foreground tabular-nums">{formatBs(teoricoBs)}</p>
-              )}
-            </>
+          {/* Mostrar cada track en su moneda nativa — sin conversiones entre ellas */}
+          {teoricoBs > 0.001 && (
+            <p className={cn(
+              'tabular-nums',
+              teoricoUsd > 0.001 ? 'text-sm font-semibold' : 'text-xl font-bold'
+            )}>
+              {formatBs(teoricoBs)}
+            </p>
+          )}
+          {teoricoUsd > 0.001 && (
+            <p className={cn(
+              'tabular-nums',
+              teoricoBs > 0.001 ? 'text-sm font-semibold' : 'text-xl font-bold'
+            )}>
+              {formatUsd(teoricoUsd)}
+            </p>
+          )}
+          {teoricoBs <= 0.001 && teoricoUsd <= 0.001 && (
+            <p className="text-xl font-bold tabular-nums">{formatUsd(0)}</p>
           )}
         </div>
       </div>
