@@ -123,8 +123,13 @@ export function CuadreConteoFisico({
     const sistema = sistemaEfectivoUsd + sistemaNoCash
 
     let fisicoTotal = 0
-    let fisicoBs = 0
+    // Tracks EFECTIVO-only para comparación con arqueo teórico
+    // (el arqueo teórico solo maneja efectivo — no incluir pago móvil, transferencias, etc.)
+    let efectivoFisicoUsd = 0
+    let efectivoFisicoBs = 0
+
     for (const m of metodos) {
+      const esEfectivo = m.tipo === 'EFECTIVO'
       const mEfectivaTasa = tasaDelDia > 0
         ? tasaDelDia
         : m.totalOriginal > 0 && m.totalUsd > 0
@@ -134,27 +139,38 @@ export function CuadreConteoFisico({
       const has = fisico[m.nombre] !== undefined && fisico[m.nombre] !== ''
       if (has) {
         if (m.moneda === 'BS') {
-          fisicoTotal += mEfectivaTasa > 0 ? raw / mEfectivaTasa : 0
-          fisicoBs += raw
+          const rawUsd = mEfectivaTasa > 0 ? raw / mEfectivaTasa : 0
+          fisicoTotal += rawUsd
+          if (esEfectivo) {
+            efectivoFisicoUsd += rawUsd
+            efectivoFisicoBs += raw
+          }
         } else {
           fisicoTotal += raw
+          if (esEfectivo) {
+            efectivoFisicoUsd += raw
+          }
         }
       }
     }
     return {
       totalSistema: Number(sistema.toFixed(2)),
       totalFisico: Number(fisicoTotal.toFixed(2)),
-      totalFisicoBs: Number(fisicoBs.toFixed(2)),
+      // Tracks efectivo-only para el arqueo teórico
+      efectivoFisicoUsd: Number(efectivoFisicoUsd.toFixed(2)),
+      efectivoFisicoBs: Number(efectivoFisicoBs.toFixed(2)),
     }
   }, [metodos, fisico, tasaDelDia, saldoEsperadoUsd, saldoEsperadoBs])
 
   useEffect(() => {
-    onTotalesChange?.(totals.totalSistema, totals.totalFisico, totals.totalFisicoBs)
-  }, [totals.totalSistema, totals.totalFisico, totals.totalFisicoBs, onTotalesChange])
+    onTotalesChange?.(totals.totalSistema, totals.totalFisico, totals.efectivoFisicoBs)
+  }, [totals.totalSistema, totals.totalFisico, totals.efectivoFisicoBs, onTotalesChange])
 
   useEffect(() => {
-    onTotalChange?.(totals.totalFisico)
-  }, [totals.totalFisico, onTotalChange])
+    // Emite el total EFECTIVO USD (no el global) para que el arqueo teórico
+    // compare solo efectivo vs efectivo
+    onTotalChange?.(totals.efectivoFisicoUsd)
+  }, [totals.efectivoFisicoUsd, onTotalChange])
 
   // Conteo fisico keyed por metodo_cobro_id (valor nativo) para cerrarSesionCaja
   useEffect(() => {
