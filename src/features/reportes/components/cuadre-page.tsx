@@ -556,6 +556,30 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 </div>
               </div>
 
+              {/* IGTF Cobrado — solo si hay IGTF en la sesión */}
+              {totalesFiscales.totalIgtfBs > 0.001 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">IGTF Cobrado</span>
+                  <div className="text-right">
+                    <div className="text-amber-600 dark:text-amber-400">{formatBs(totalesFiscales.totalIgtfBs)}</div>
+                    <div className="text-xs text-muted-foreground">{formatUsd(totalesFiscales.totalIgtfUsd)}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Total General (Facturado + IGTF) — solo si hay IGTF */}
+              {totalesFiscales.totalIgtfBs > 0.001 && (
+                <div className="flex justify-between text-sm font-semibold border-t pt-2">
+                  <span>Total General (c/IGTF)</span>
+                  <div className="text-right">
+                    <div>{formatBs(totalesFiscales.totalFacturadoBs + totalesFiscales.totalIgtfBs)}</div>
+                    <div className="text-xs text-muted-foreground font-normal">
+                      {formatUsd(totalesFiscales.totalFacturadoUsd + totalesFiscales.totalIgtfUsd)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Total Contado — solo ventas cobradas en efectivo, sin fondo de apertura */}
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Contado</span>
