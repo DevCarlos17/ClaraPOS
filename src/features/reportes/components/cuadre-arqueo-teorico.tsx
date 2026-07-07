@@ -11,8 +11,6 @@ export interface CuadreArqueoTeoricoProps {
   ingresosEfectivoBsNativo: number // ingresos manuales en efectivo Bs nativos
   egresosUsd: number              // egresos/retiros en USD
   egresosBsNativo: number         // egresos/retiros en Bs nativos
-  conteoFisicoUsd: number         // total del conteo físico en USD (from cuadre-conteo-fisico)
-  conteoFisicoBs: number          // total del conteo físico en Bs. nativos (from cuadre-conteo-fisico)
   tasaCambio: number
 }
 
@@ -25,33 +23,21 @@ export function CuadreArqueoTeorico({
   ingresosEfectivoBsNativo,
   egresosUsd,
   egresosBsNativo,
-  conteoFisicoUsd,
-  conteoFisicoBs,
   tasaCambio,
 }: CuadreArqueoTeoricoProps) {
-  // Track USD: solo montos nativos en USD — nunca mezclar con Bs
+  // Track USD: solo montos nativos en USD
   const teoricoUsd = fondoAperturaUsd + ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd
-  // Track Bs: solo montos nativos en Bs — nunca mezclar con USD
-  // Cada divisa se compara contra su propio conteo físico de forma independiente
+  // Track Bs: solo montos nativos en Bs
   const teoricoBs = fondoAperturaBs
     + ventasEfectivoBsNativo
     + ingresosEfectivoBsNativo
     - egresosBsNativo
 
-  // Diferencias independientes por moneda
-  const diferenciaUsd = conteoFisicoUsd - teoricoUsd
-  const diferenciaBs  = conteoFisicoBs  - teoricoBs   // comparación nativa Bs
-
+  // Conversiones para display secundario (informativas, no para comparación)
   const fondoAperturaUsdBs = usdToBs(fondoAperturaUsd, tasaCambio).toNumber()
   const ventasEfectivoBs = usdToBs(ventasEfectivoUsd, tasaCambio).toNumber()
   const ingresosEfectivoBs = usdToBs(ingresosEfectivoUsd, tasaCambio).toNumber()
   const egresosUsdBs = usdToBs(egresosUsd, tasaCambio).toNumber()
-
-
-  // Exacto cuando ambas monedas cuadran
-  const isExact = Math.abs(diferenciaUsd) <= 0.01 && Math.abs(diferenciaBs) <= 0.01
-  // Sobrante cuando hay excedente en AMBAS monedas
-  const isSurplus = diferenciaUsd > 0.01 && diferenciaBs > 0.01
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5 flex flex-col gap-4">
@@ -263,58 +249,6 @@ export function CuadreArqueoTeorico({
         </div>
       </div>
 
-      {/* Divider */}
-      <div className="border-t border-dashed border-border" />
-
-      {/* Conteo físico vs Teórico */}
-      <div className="space-y-2">
-        {/* Conteo Físico */}
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Conteo Físico</span>
-          <div className="text-right">
-            <span className="font-medium tabular-nums">{formatUsd(conteoFisicoUsd)}</span>
-            {(fondoAperturaBs > 0.001 || conteoFisicoBs > 0.001) && (
-              <p className="text-xs text-muted-foreground tabular-nums">
-                {formatBs(conteoFisicoBs)}
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Diferencia */}
-        <div
-          className={cn(
-            'flex items-center justify-between rounded-lg px-3 py-2 text-sm font-semibold',
-            isExact
-              ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-400'
-              : isSurplus
-                ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400'
-                : 'bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-400'
-          )}
-        >
-          <span>
-            {isExact ? 'Cuadrado' : isSurplus ? 'Sobrante' : 'Faltante'}
-          </span>
-          <div className="text-right">
-            <span className="tabular-nums">
-              {isExact
-                ? formatUsd(0)
-                : diferenciaUsd > 0.01
-                  ? `+${formatUsd(diferenciaUsd)}`
-                  : formatUsd(diferenciaUsd)}
-            </span>
-            {(fondoAperturaBs > 0.001 || Math.abs(diferenciaBs) > 0.01) && (
-              <p className="text-xs font-normal opacity-80 tabular-nums">
-                {isExact
-                  ? formatBs(0)
-                  : diferenciaBs > 0.01
-                    ? `+${formatBs(diferenciaBs)}`
-                    : formatBs(diferenciaBs)}
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

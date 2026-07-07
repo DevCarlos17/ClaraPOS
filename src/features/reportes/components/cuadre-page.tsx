@@ -66,8 +66,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // Selected payment method — drives both row highlight in PagosResumen and CuadreMetodoModal
   const [selectedMetodoNombre, setSelectedMetodoNombre] = useState<string | null>(null)
 
-  // Conteo fisico total lifted from CuadreConteoFisico (for CuadreArqueoTeorico)
-  const [conteoFisicoTotal, setConteoFisicoTotal] = useState<number>(0)
 
   // Verified non-cash payment amounts (keyed by metodo_cobro_id)
   const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, VerifiedEntry>>({})
@@ -655,7 +653,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               onTotalesChange={handleTotalesChange}
               onConteoFisicoChange={handleConteoFisicoChange}
               onLimpiar={handleLimpiarConteo}
-              onTotalChange={setConteoFisicoTotal}
+
               readOnly={!!sesionCerradaId}
             />
             <CuadreArqueoTeorico
@@ -667,8 +665,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               ingresosEfectivoBsNativo={ingresosEfectivoBsNativo}
               egresosUsd={egresosEfectivoUsd}
               egresosBsNativo={egresosEfectivoBsNativo}
-              conteoFisicoUsd={conteoFisicoTotal}
-              conteoFisicoBs={totalFisicoBs}
               tasaCambio={tasaPromedio}
             />
           </div>
