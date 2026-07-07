@@ -152,7 +152,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { items: safItems } = useSafDiario(activeFilters)
 
   // Data for CuadreNetoEsperado
-  const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
+  const { saldoEsperadoUsd: saldoContadoUsd, saldoEsperadoBs: saldoContadoBs } = useSaldoEfectivoBimonetario(activeFilters)
   const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
 
   // Data for CuadreArqueoTeorico
@@ -182,6 +182,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     : 0
   // Fondo apertura en Bs. nativos convertido a USD equivalente (para el total neto USD)
   const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
+  // "Total Contado" solo refleja ventas cobradas + movimientos; excluye el fondo de apertura
+  const totalContadoUsd = Number((saldoContadoUsd - fondoAperturaUsd).toFixed(2))
+  const totalContadoBs  = Number((saldoContadoBs  - fondoAperturaBs).toFixed(2))
   // totalNeto incluye: efectivo USD esperado (apertura_usd + ventas + movimientos)
   //                  + Bs. nativos de apertura convertidos a USD
   //                  + cobros anteriores CxC
@@ -543,14 +546,25 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 </div>
               </div>
 
-              {/* Total Contado */}
+              {/* Total Contado — solo ventas cobradas en efectivo, sin fondo de apertura */}
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Contado</span>
                 <div className="text-right">
-                  {tasaPromedio > 0 && (
-                    <div>{formatBs(saldoContadoUsd * tasaPromedio)}</div>
+                  {totalContadoBs > 0.001 || (tasaPromedio > 0 && totalContadoUsd > 0.001) ? (
+                    <>
+                      {totalContadoBs > 0.001 && (
+                        <div>{formatBs(totalContadoBs)}</div>
+                      )}
+                      {tasaPromedio > 0 && totalContadoUsd > 0.001 && (
+                        <div className="text-xs text-muted-foreground">{formatUsd(totalContadoUsd)}</div>
+                      )}
+                      {totalContadoBs <= 0.001 && totalContadoUsd > 0.001 && (
+                        <div>{formatUsd(totalContadoUsd)}</div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">{formatBs(0)}</div>
                   )}
-                  <div className="text-xs text-muted-foreground">{formatUsd(saldoContadoUsd)}</div>
                 </div>
               </div>
 
