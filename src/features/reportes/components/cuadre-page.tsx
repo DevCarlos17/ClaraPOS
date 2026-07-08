@@ -152,7 +152,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { items: safItems } = useSafDiario(activeFilters)
 
   // Data for CuadreNetoEsperado
-  const { saldoEsperadoUsd: saldoContadoUsd, saldoEsperadoBs: saldoContadoBs } = useSaldoEfectivoBimonetario(activeFilters)
+  const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
   const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
 
   // Data for CuadreArqueoTeorico
@@ -192,24 +192,23 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     : 0
   // Fondo apertura en Bs. nativos convertido a USD equivalente (para el total neto USD)
   const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
-  // "Total Contado" solo refleja ventas cobradas + movimientos; excluye el fondo de apertura
-  // Total Contado = solo pagos de clientes en facturas (pagos tabla)
-  // Excluir: apertura (fondo inicial) + movimientos manuales (ingreso/egreso del modal POS)
-  // saldoContadoUsd/Bs = apertura + pagos + ingresos_manuales - egresos_manuales
-  // → restamos apertura y movimientos manuales → quedan solo los pagos de facturas
+  // "Total Contado" = facturas cobradas al momento (sin importar metodo de pago).
+  // Formula: Total General facturado - pendiente de cobro (CxC)
+  // Incluye avances/prestamos ya que tambien son parte de lo cobrado en el dia.
   const totalContadoUsd = Number(Math.max(0,
-    saldoContadoUsd - fondoAperturaUsd - ingresosEfectivoUsd + egresosEfectivoUsd
+    totalesFiscales.totalFacturadoUsd + totalesFiscales.totalIgtfUsd - cxcTotalUsd
   ).toFixed(2))
   const totalContadoBs  = Number(Math.max(0,
-    saldoContadoBs - fondoAperturaBs - ingresosEfectivoBsNativo + egresosEfectivoBsNativo
+    totalesFiscales.totalFacturadoBs  + totalesFiscales.totalIgtfBs  - cxcTotalBs
   ).toFixed(2))
+
   // totalNeto incluye: efectivo USD esperado (apertura_usd + ventas + movimientos)
   //                  + Bs. nativos de apertura convertidos a USD
   //                  + cobros anteriores CxC
   //                  + diferencial cambiario
   const totalNeto = saldoContadoUsd + fondoAperturaBsEnUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
   // Para display en Bs.: sumar los Bs. nativos de apertura directamente (sin re-convertir)
-  // Cuando hay tasa: convierte el track USD a Bs y suma los Bs nativos
+  // Cuando hay tasa: convierte el track USD a Bs y suma los Bs nativos de apertura
   // Sin tasa: muestra solo los Bs nativos de apertura (sin conversión)
   const totalNetoBs = tasaPromedio > 0
     ? (saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd) * tasaPromedio + fondoAperturaBs

@@ -1660,14 +1660,14 @@ export function useVentasFinancieras(filters: CuadreFilters | null) {
        v.nro_factura,
        v.fecha,
        c.nombre as cliente_nombre,
-       MAX(0,
+       (
          CAST(v.total_usd AS REAL)
          - CAST(v.total_base_usd AS REAL)
          - CAST(v.total_exento_usd AS REAL)
          - CAST(v.total_iva_usd AS REAL)
          + CAST(COALESCE(v.descuento_usd, '0') AS REAL)
        ) as cargo_financiero_usd,
-       MAX(0,
+       (
          CAST(v.total_usd AS REAL)
          - CAST(v.total_base_usd AS REAL)
          - CAST(v.total_exento_usd AS REAL)
@@ -1677,7 +1677,13 @@ export function useVentasFinancieras(filters: CuadreFilters | null) {
      FROM ventas v
      JOIN clientes c ON v.cliente_id = c.id
      WHERE ${where}
-     HAVING cargo_financiero_usd > 0.001
+       AND (
+         CAST(v.total_usd AS REAL)
+         - CAST(v.total_base_usd AS REAL)
+         - CAST(v.total_exento_usd AS REAL)
+         - CAST(v.total_iva_usd AS REAL)
+         + CAST(COALESCE(v.descuento_usd, '0') AS REAL)
+       ) > 0.001
      ORDER BY v.fecha DESC`,
     params
   )
