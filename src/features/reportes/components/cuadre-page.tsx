@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@powersync/react'
-import { MagnifyingGlass, CheckSquare, Square, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear, HandCoins } from '@phosphor-icons/react'
+import { MagnifyingGlass, CheckSquare, Square, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear, HandCoins, CaretDown, CaretRight, ArrowFatLineUp, ArrowFatLineDown } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
@@ -33,6 +33,8 @@ import {
   useMovimientosManualesDia,
   useTotalesFiscales,
   useVentasFinancieras,
+  useMovimientosEfectivoCaja,
+  type MovimientoEfectivoDetalle,
   type CuadreFilters,
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
@@ -64,6 +66,10 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [resumenOpen, setResumenOpen] = useState(false)
   const [safModalOpen, setSafModalOpen] = useState(false)
   const [financieroOpen, setFinancieroOpen] = useState(false)
+
+  // Movimientos manuales — tablas opcionales al final del cuadre
+  const [showIngresos, setShowIngresos] = useState(false)
+  const [showEgresos, setShowEgresos] = useState(false)
 
   // Selected payment method — drives both row highlight in PagosResumen and CuadreMetodoModal
   const [selectedMetodoNombre, setSelectedMetodoNombre] = useState<string | null>(null)
@@ -160,6 +166,8 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { metodos: todosMetodos } = usePagosPorMetodo(activeFilters)
   const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
+  // Detalle individual de movimientos para las tablas al pie del cuadre
+  const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
 
   // Derived values for CuadreArqueoTeorico — track USD (moneda != BS)
   const ventasEfectivoUsd = todosMetodos
@@ -181,6 +189,14 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const egresosEfectivoBsNativo = movManualesCaja
     .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.mov_tipo === 'EGRESO')
     .reduce((s, m) => s + m.total, 0)
+
+  // Detalle de movimientos manuales para tablas opcionales
+  const ingresosDetalle = movsEfectivoDetalle.filter(
+    (m) => m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'
+  )
+  const egresosDetalle = movsEfectivoDetalle.filter(
+    (m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA'
+  )
 
   // Diferencial cambiario por redondeo (mismo calculo que PagosResumen)
   const totalCobradoBs = todosMetodos.reduce((s, m) =>
@@ -732,6 +748,62 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             </div>
           </div>
 
+          {/* Movimientos manuales de caja — tablas opcionales colapsables */}
+          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0) && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Movimientos Manuales de Caja
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Ingresos */}
+                {ingresosDetalle.length > 0 && (
+                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowIngresos((v) => !v)}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ArrowFatLineUp size={15} weight="fill" className="text-green-600" />
+                        <span className="text-sm font-semibold">Ingresos Manuales</span>
+                        <span className="text-xs text-muted-foreground">({ingresosDetalle.length})</span>
+                      </div>
+                      {showIngresos
+                        ? <CaretDown size={13} className="text-muted-foreground" />
+                        : <CaretRight size={13} className="text-muted-foreground" />}
+                    </button>
+                    {showIngresos && (
+                      <MovimientosManualesTable items={ingresosDetalle} />
+                    )}
+                  </div>
+                )}
+
+                {/* Egresos */}
+                {egresosDetalle.length > 0 && (
+                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowEgresos((v) => !v)}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ArrowFatLineDown size={15} weight="fill" className="text-red-600" />
+                        <span className="text-sm font-semibold">Egresos Manuales</span>
+                        <span className="text-xs text-muted-foreground">({egresosDetalle.length})</span>
+                      </div>
+                      {showEgresos
+                        ? <CaretDown size={13} className="text-muted-foreground" />
+                        : <CaretRight size={13} className="text-muted-foreground" />}
+                    </button>
+                    {showEgresos && (
+                      <MovimientosManualesTable items={egresosDetalle} />
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           <AuditModal isOpen={auditOpen} onClose={() => setAuditOpen(false)} filters={activeFilters} />
           <CxcModal isOpen={cxcOpen} onClose={() => setCxcOpen(false)} filters={activeFilters} />
           {financieroOpen && (
@@ -978,6 +1050,54 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
       />
     )}
     </>
+  )
+}
+
+// ─── Tabla de movimientos manuales (ingresos o egresos) ──────
+
+function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[] }) {
+  return (
+    <div className="border-t overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-muted/50 text-muted-foreground">
+            <th className="text-left px-4 py-2 font-medium">Concepto</th>
+            <th className="text-left px-3 py-2 font-medium">Método</th>
+            <th className="text-right px-4 py-2 font-medium">Monto</th>
+            <th className="text-right px-4 py-2 font-medium">Hora</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((m) => {
+            const hora = m.fecha.length >= 16 ? m.fecha.substring(11, 16) : '—'
+            const label = m.concepto ?? m.destinatario ?? m.metodo_nombre
+            const monto = m.metodo_moneda === 'BS'
+              ? formatBs(parseFloat(m.monto))
+              : formatUsd(parseFloat(m.monto))
+            const isTesoreria = m.origen === 'INGRESO_TESORERIA' || m.origen === 'EGRESO_TESORERIA'
+            return (
+              <tr key={m.id} className="border-b last:border-0 hover:bg-muted/20">
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-1.5">
+                    {isTesoreria && (
+                      <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
+                        Tesorería
+                      </span>
+                    )}
+                    <span className="truncate max-w-[180px]">{label}</span>
+                  </div>
+                </td>
+                <td className="px-3 py-2.5 text-muted-foreground">{m.metodo_nombre}</td>
+                <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
+                  {monto}
+                </td>
+                <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
   )
 }
 
