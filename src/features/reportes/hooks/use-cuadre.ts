@@ -1650,7 +1650,7 @@ export function useVentasFinancieras(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
   const [where, params] = useMemo(
-    () => filters ? buildCuadreWhere(filters, empresaId) : ['1=0', [] as unknown[]],
+    () => filters ? buildCuadreWhere(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
 
