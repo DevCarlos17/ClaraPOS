@@ -59,9 +59,13 @@ function calcularAvance(
   // Calcular cargo en moneda nativa de cada campo para evitar errores de redondeo.
   // Si se convirtiera Bs→USD→%→Bs, los toFixed(2) intermedios introducen desvíos.
   const totalCargoUsdNativo = Number((montoUsd * multiplier).toFixed(2))
-  const totalCargoBs        = Number((montoBs  * multiplier).toFixed(2))
-  const totalCargoUsdFromBs = tasa > 0 ? Number((totalCargoBs / tasa).toFixed(2)) : 0
+  const totalCargoBsNativo  = Number((montoBs  * multiplier).toFixed(2))
+  const totalCargoUsdFromBs = tasa > 0 ? Number((totalCargoBsNativo / tasa).toFixed(2)) : 0
   const totalCargoUsd       = Number((totalCargoUsdNativo + totalCargoUsdFromBs).toFixed(2))
+  // Equivalente completo en Bs: porción nativa + porción USD convertida a Bs.
+  // Sigue el mismo patrón que prestamo-modal para evitar la reconversión posterior.
+  const totalCargoBsFromUsd = Number((totalCargoUsdNativo * tasa).toFixed(2))
+  const totalCargoBs        = Number((totalCargoBsNativo + totalCargoBsFromUsd).toFixed(2))
 
   // Desglose para el resumen (solo display)
   const avanceBsEnUsd  = tasa > 0 ? Number((montoBs / tasa).toFixed(2)) : 0
