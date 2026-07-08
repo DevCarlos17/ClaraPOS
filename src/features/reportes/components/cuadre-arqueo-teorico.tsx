@@ -9,8 +9,14 @@ export interface CuadreArqueoTeoricoProps {
   ventasEfectivoBsNativo: number  // ventas cobradas en efectivo Bs nativos (tipo=EFECTIVO, moneda=BS)
   ingresosEfectivoUsd: number     // ingresos manuales en efectivo USD
   ingresosEfectivoBsNativo: number // ingresos manuales en efectivo Bs nativos
-  egresosUsd: number              // egresos/retiros en USD
-  egresosBsNativo: number         // egresos/retiros en Bs nativos
+  egresosUsd: number              // total egresos USD (retiros + vueltos + avances) — para el calculo
+  egresosBsNativo: number         // total egresos Bs nativos — para el calculo
+  /** Solo retiros manuales (EGRESO_MANUAL + EGRESO_TESORERIA + AVANCE + PRESTAMO). Display. */
+  retirosManualesUsd: number
+  retirosManualesBsNativo: number
+  /** Vueltos entregados a clientes. Display. */
+  vueltosUsd: number
+  vueltosBsNativo: number
   tasaCambio: number
 }
 
@@ -23,6 +29,10 @@ export function CuadreArqueoTeorico({
   ingresosEfectivoBsNativo,
   egresosUsd,
   egresosBsNativo,
+  retirosManualesUsd,
+  retirosManualesBsNativo,
+  vueltosUsd,
+  vueltosBsNativo,
   tasaCambio,
 }: CuadreArqueoTeoricoProps) {
   // Track USD: solo montos nativos en USD
@@ -34,10 +44,11 @@ export function CuadreArqueoTeorico({
     - egresosBsNativo
 
   // Conversiones para display secundario (informativas, no para comparación)
-  const fondoAperturaUsdBs = usdToBs(fondoAperturaUsd, tasaCambio).toNumber()
-  const ventasEfectivoBs = usdToBs(ventasEfectivoUsd, tasaCambio).toNumber()
-  const ingresosEfectivoBs = usdToBs(ingresosEfectivoUsd, tasaCambio).toNumber()
-  const egresosUsdBs = usdToBs(egresosUsd, tasaCambio).toNumber()
+  const fondoAperturaUsdBs     = usdToBs(fondoAperturaUsd,      tasaCambio).toNumber()
+  const ventasEfectivoBs       = usdToBs(ventasEfectivoUsd,     tasaCambio).toNumber()
+  const ingresosEfectivoBs     = usdToBs(ingresosEfectivoUsd,   tasaCambio).toNumber()
+  const retirosManualesUsdBs   = usdToBs(retirosManualesUsd,    tasaCambio).toNumber()
+  const vueltosUsdBs           = usdToBs(vueltosUsd,            tasaCambio).toNumber()
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5 flex flex-col gap-4">
@@ -174,42 +185,84 @@ export function CuadreArqueoTeorico({
           </div>
         )}
 
-        {/* Egresos USD */}
-        {(egresosUsd > 0.001 || egresosBsNativo <= 0.001) && (
+        {/* Retiros manuales USD */}
+        {retirosManualesUsd > 0.001 && (
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
               <span className="w-4 text-center font-mono text-xs text-red-500">−</span>
               <span className="text-muted-foreground">
-                Egresos / Retiros{egresosBsNativo > 0.001 ? ' ($)' : ''}
+                Retiros{retirosManualesBsNativo > 0.001 ? ' ($)' : ''}
               </span>
             </div>
             <div className="text-right">
               <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
-                {formatUsd(egresosUsd)}
+                {formatUsd(retirosManualesUsd)}
               </span>
-              {tasaCambio > 0 && egresosUsdBs > 0.001 && (
+              {tasaCambio > 0 && retirosManualesUsdBs > 0.001 && (
                 <p className="text-xs text-muted-foreground tabular-nums">
-                  {formatBs(egresosUsdBs)}
+                  {formatBs(retirosManualesUsdBs)}
                 </p>
               )}
             </div>
           </div>
         )}
 
-        {/* Egresos Bs nativos */}
-        {egresosBsNativo > 0.001 && (
+        {/* Retiros manuales Bs nativos */}
+        {retirosManualesBsNativo > 0.001 && (
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
               <span className="w-4 text-center font-mono text-xs text-red-500">−</span>
-              <span className="text-muted-foreground">Egresos / Retiros (Bs.)</span>
+              <span className="text-muted-foreground">Retiros (Bs.)</span>
             </div>
             <div className="text-right">
               <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
-                {formatBs(egresosBsNativo)}
+                {formatBs(retirosManualesBsNativo)}
               </span>
               {tasaCambio > 0 && (
                 <p className="text-xs text-muted-foreground tabular-nums">
-                  {formatUsd(egresosBsNativo / tasaCambio)}
+                  {formatUsd(retirosManualesBsNativo / tasaCambio)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Vueltos entregados USD */}
+        {vueltosUsd > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-orange-500">−</span>
+              <span className="text-muted-foreground">
+                Vueltos{vueltosBsNativo > 0.001 ? ' ($)' : ''}
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-orange-600 dark:text-orange-400">
+                {formatUsd(vueltosUsd)}
+              </span>
+              {tasaCambio > 0 && vueltosUsdBs > 0.001 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatBs(vueltosUsdBs)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Vueltos entregados Bs nativos */}
+        {vueltosBsNativo > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-orange-500">−</span>
+              <span className="text-muted-foreground">Vueltos (Bs.)</span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-orange-600 dark:text-orange-400">
+                {formatBs(vueltosBsNativo)}
+              </span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatUsd(vueltosBsNativo / tasaCambio)}
                 </p>
               )}
             </div>

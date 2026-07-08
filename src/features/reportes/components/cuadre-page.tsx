@@ -70,6 +70,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // Movimientos manuales — tablas opcionales al final del cuadre
   const [showIngresos, setShowIngresos] = useState(false)
   const [showEgresos, setShowEgresos] = useState(false)
+  const [showVueltos, setShowVueltos] = useState(false)
 
   // Selected payment method — drives both row highlight in PagosResumen and CuadreMetodoModal
   const [selectedMetodoNombre, setSelectedMetodoNombre] = useState<string | null>(null)
@@ -190,12 +191,25 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.mov_tipo === 'EGRESO')
     .reduce((s, m) => s + m.total, 0)
 
+  // Separación vueltos vs retiros para el Arqueo Teórico (display)
+  const vueltosEfectivoUsd = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.origen === 'VUELTO')
+    .reduce((s, m) => s + m.total, 0)
+  const vueltosEfectivoBsNativo = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.origen === 'VUELTO')
+    .reduce((s, m) => s + m.total, 0)
+  const retirosManualesUsd      = egresosEfectivoUsd      - vueltosEfectivoUsd
+  const retirosManualesBsNativo = egresosEfectivoBsNativo - vueltosEfectivoBsNativo
+
   // Detalle de movimientos manuales para tablas opcionales
   const ingresosDetalle = movsEfectivoDetalle.filter(
     (m) => m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'
   )
   const egresosDetalle = movsEfectivoDetalle.filter(
     (m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA'
+  )
+  const vueltosDetalle = movsEfectivoDetalle.filter(
+    (m) => m.origen === 'VUELTO'
   )
 
   // Diferencial cambiario por redondeo (mismo calculo que PagosResumen)
@@ -724,6 +738,10 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               ingresosEfectivoBsNativo={ingresosEfectivoBsNativo}
               egresosUsd={egresosEfectivoUsd}
               egresosBsNativo={egresosEfectivoBsNativo}
+              retirosManualesUsd={retirosManualesUsd}
+              retirosManualesBsNativo={retirosManualesBsNativo}
+              vueltosUsd={vueltosEfectivoUsd}
+              vueltosBsNativo={vueltosEfectivoBsNativo}
               tasaCambio={tasaPromedio}
             />
           </div>
@@ -749,12 +767,12 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
           </div>
 
           {/* Movimientos manuales de caja — tablas opcionales colapsables */}
-          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0) && (
+          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0 || vueltosDetalle.length > 0) && (
             <div className="space-y-3">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
                 Movimientos Manuales de Caja
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {/* Ingresos */}
                 {ingresosDetalle.length > 0 && (
                   <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
@@ -778,7 +796,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   </div>
                 )}
 
-                {/* Egresos */}
+                {/* Egresos manuales */}
                 {egresosDetalle.length > 0 && (
                   <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
                     <button
@@ -797,6 +815,29 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                     </button>
                     {showEgresos && (
                       <MovimientosManualesTable items={egresosDetalle} />
+                    )}
+                  </div>
+                )}
+
+                {/* Vueltos entregados */}
+                {vueltosDetalle.length > 0 && (
+                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowVueltos((v) => !v)}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ArrowFatLineDown size={15} weight="fill" className="text-orange-500" />
+                        <span className="text-sm font-semibold">Vueltos Entregados</span>
+                        <span className="text-xs text-muted-foreground">({vueltosDetalle.length})</span>
+                      </div>
+                      {showVueltos
+                        ? <CaretDown size={13} className="text-muted-foreground" />
+                        : <CaretRight size={13} className="text-muted-foreground" />}
+                    </button>
+                    {showVueltos && (
+                      <MovimientosManualesTable items={vueltosDetalle} />
                     )}
                   </div>
                 )}
