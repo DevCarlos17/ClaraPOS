@@ -1029,6 +1029,12 @@ export interface TotalesFiscales {
   totalDescuentoBs: number
   totalNcrUsd: number
   totalNcrBs: number
+  /** Solo productos/servicios (sin avances ni préstamos). Uso: Resumen Fiscal. */
+  totalVentasUsd: number
+  totalVentasBs: number
+  /** Porción financiera: avances + préstamos cobrados al cliente. */
+  totalFinancieroUsd: number
+  totalFinancieroBs: number
 }
 
 export function useTotalesFiscales(filters: CuadreFilters | null) {
@@ -1052,7 +1058,35 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_facturado,
        COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_facturado_bs,
        COALESCE(SUM(CAST(COALESCE(descuento_usd, '0') AS REAL)), 0) as total_descuento,
-       COALESCE(SUM(CAST(COALESCE(descuento_bs, '0') AS REAL)), 0) as total_descuento_bs
+       COALESCE(SUM(CAST(COALESCE(descuento_bs, '0') AS REAL)), 0) as total_descuento_bs,
+       -- Ventas puras: solo productos/servicios (sin avances ni préstamos)
+       COALESCE(SUM(
+         CAST(total_base_usd AS REAL) + CAST(total_exento_usd AS REAL) + CAST(total_iva_usd AS REAL)
+         - CAST(COALESCE(descuento_usd, '0') AS REAL)
+       ), 0) as total_ventas_puras,
+       COALESCE(SUM(
+         (CAST(total_base_usd AS REAL) + CAST(total_exento_usd AS REAL) + CAST(total_iva_usd AS REAL)
+         - CAST(COALESCE(descuento_usd, '0') AS REAL)) * CAST(tasa AS REAL)
+       ), 0) as total_ventas_puras_bs,
+       -- Financiero: avances y préstamos = diferencia entre total facturado y ventas puras
+       COALESCE(SUM(
+         MAX(0,
+           CAST(total_usd AS REAL)
+           - CAST(total_base_usd AS REAL)
+           - CAST(total_exento_usd AS REAL)
+           - CAST(total_iva_usd AS REAL)
+           + CAST(COALESCE(descuento_usd, '0') AS REAL)
+         )
+       ), 0) as total_financiero,
+       COALESCE(SUM(
+         MAX(0,
+           CAST(total_usd AS REAL)
+           - CAST(total_base_usd AS REAL)
+           - CAST(total_exento_usd AS REAL)
+           - CAST(total_iva_usd AS REAL)
+           + CAST(COALESCE(descuento_usd, '0') AS REAL)
+         ) * CAST(tasa AS REAL)
+       ), 0) as total_financiero_bs
      FROM ventas
      WHERE ${whereV}`,
     paramsV
@@ -1071,6 +1105,10 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
     total_facturado_bs: number
     total_descuento: number
     total_descuento_bs: number
+    total_ventas_puras: number
+    total_ventas_puras_bs: number
+    total_financiero: number
+    total_financiero_bs: number
   }
 
   // NCR del mismo dia/sesion — usando fecha y empresa_id
@@ -1103,6 +1141,10 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
       totalDescuentoBs: Number(Number(row.total_descuento_bs ?? 0).toFixed(2)),
       totalNcrUsd: Number(Number(ncrRow.total_ncr ?? 0).toFixed(2)),
       totalNcrBs: Number(Number(ncrRow.total_ncr_bs ?? 0).toFixed(2)),
+      totalVentasUsd: Number(Number(row.total_ventas_puras ?? 0).toFixed(2)),
+      totalVentasBs: Number(Number(row.total_ventas_puras_bs ?? 0).toFixed(2)),
+      totalFinancieroUsd: Number(Number(row.total_financiero ?? 0).toFixed(2)),
+      totalFinancieroBs: Number(Number(row.total_financiero_bs ?? 0).toFixed(2)),
     } as TotalesFiscales,
     isLoading: loadingVentas || loadingNcr,
   }
@@ -1587,4 +1629,67 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
     .reduce((s, m) => s + m.cobrosNativo, 0)
 
   return { porMetodo, totalCobrosUsd, totalCobrosBs, isLoading }
+}
+
+// ─── Ventas con cargos financieros (avances/préstamos) ────────
+
+export interface VentaFinancieraItem {
+  id: string
+  nroFactura: string
+  clienteNombre: string
+  fecha: string
+  cargoFinancieroUsd: number
+  cargoFinancieroBs: number
+}
+
+/**
+ * Retorna las ventas del periodo que contienen avances o préstamos,
+ * con el monto financiero desglosado (total_usd − ventas_puras).
+ */
+export function useVentasFinancieras(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId) : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    `SELECT
+       v.id,
+       v.nro_factura,
+       v.fecha,
+       c.nombre as cliente_nombre,
+       MAX(0,
+         CAST(v.total_usd AS REAL)
+         - CAST(v.total_base_usd AS REAL)
+         - CAST(v.total_exento_usd AS REAL)
+         - CAST(v.total_iva_usd AS REAL)
+         + CAST(COALESCE(v.descuento_usd, '0') AS REAL)
+       ) as cargo_financiero_usd,
+       MAX(0,
+         CAST(v.total_usd AS REAL)
+         - CAST(v.total_base_usd AS REAL)
+         - CAST(v.total_exento_usd AS REAL)
+         - CAST(v.total_iva_usd AS REAL)
+         + CAST(COALESCE(v.descuento_usd, '0') AS REAL)
+       ) * CAST(v.tasa AS REAL) as cargo_financiero_bs
+     FROM ventas v
+     JOIN clientes c ON v.cliente_id = c.id
+     WHERE ${where}
+     HAVING cargo_financiero_usd > 0.001
+     ORDER BY v.fecha DESC`,
+    params
+  )
+
+  const items: VentaFinancieraItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id ?? ''),
+    nroFactura: String(row.nro_factura ?? ''),
+    clienteNombre: String(row.cliente_nombre ?? ''),
+    fecha: String(row.fecha ?? ''),
+    cargoFinancieroUsd: Number(Number(row.cargo_financiero_usd ?? 0).toFixed(2)),
+    cargoFinancieroBs: Number(Number(row.cargo_financiero_bs ?? 0).toFixed(2)),
+  }))
+
+  return { items, isLoading }
 }
