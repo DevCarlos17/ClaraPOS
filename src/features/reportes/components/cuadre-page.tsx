@@ -163,7 +163,15 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
   // Data for CuadreNetoEsperado
   const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
-  const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
+  const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, totalCobrosBsEquiv, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
+
+  // Cobros CxC por tipo de moneda — para el Arqueo Teórico
+  const cobrosUsdEnArqueo = cobrosViaPOS
+    .filter((m) => m.moneda !== 'BS')
+    .reduce((s, m) => s + m.cobrosUsd, 0)
+  const cobrosBsNativoEnArqueo = cobrosViaPOS
+    .filter((m) => m.moneda === 'BS')
+    .reduce((s, m) => s + m.cobrosNativo, 0)
 
   // Data for CuadreArqueoTeorico
   const { aperturaUsd: fondoAperturaUsd, aperturaBs: fondoAperturaBs } = useSesionApertura(activeFilters)
@@ -671,7 +679,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 <span className="text-muted-foreground">Cobros Anteriores (CxC)</span>
                 <div className="text-right">
                   <div className="text-blue-600">
-                    {formatBs(totalCobrosBs > 0 ? totalCobrosBs : cobrosAnterioresUsd * tasaPromedio)}
+                    {formatBs(totalCobrosBsEquiv > 0.001 ? totalCobrosBsEquiv : cobrosAnterioresUsd * tasaPromedio)}
                   </div>
                   <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
                 </div>
@@ -736,8 +744,10 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             <CuadreArqueoTeorico
               fondoAperturaUsd={fondoAperturaUsd}
               fondoAperturaBs={fondoAperturaBs}
-              ventasEfectivoUsd={ventasEfectivoUsd}
-              ventasEfectivoBsNativo={ventasEfectivoBsNativo}
+              ventasEfectivoUsd={Math.max(0, ventasEfectivoUsd - cobrosUsdEnArqueo)}
+              ventasEfectivoBsNativo={Math.max(0, ventasEfectivoBsNativo - cobrosBsNativoEnArqueo)}
+              cobrosUsd={cobrosUsdEnArqueo}
+              cobrosBsNativo={cobrosBsNativoEnArqueo}
               ingresosEfectivoUsd={ingresosEfectivoUsd}
               ingresosEfectivoBsNativo={ingresosEfectivoBsNativo}
               egresosUsd={egresosEfectivoUsd}
@@ -894,7 +904,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             onClose={() => setSelectedMetodoNombre(null)}
             filters={activeFilters}
             metodoNombre={selectedMetodoNombre ?? ''}
-            cobrosPos={cobrosViaPOS.filter((c) => c.nombre === selectedMetodoNombre)}
           />
         </>
       )}
@@ -1184,7 +1193,8 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
           item.nroFactura?.toLowerCase().includes(q) ||
           item.clienteNombre?.toLowerCase().includes(q) ||
           item.metodoNombre.toLowerCase().includes(q) ||
-          item.concepto?.toLowerCase().includes(q)
+          item.concepto?.toLowerCase().includes(q) ||
+          item.referencia?.toLowerCase().includes(q)
         )
       })
     : items
@@ -1197,7 +1207,7 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar por factura, cliente, método..."
+          placeholder="Buscar por factura, cliente, método, referencia..."
           className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         />
       </div>
@@ -1207,14 +1217,18 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
             <tr className="bg-blue-50/60 text-muted-foreground">
               <th className="text-left px-4 py-2 font-medium">Factura / Cliente</th>
               <th className="text-left px-3 py-2 font-medium">Método</th>
+              <th className="text-right px-3 py-2 font-medium">Tasa</th>
               <th className="text-right px-4 py-2 font-medium">Monto</th>
+              <th className="text-right px-4 py-2 font-medium">Bs.</th>
+              <th className="text-left px-3 py-2 font-medium">Ref.</th>
+              <th className="text-right px-4 py-2 font-medium">Fecha</th>
               <th className="text-right px-4 py-2 font-medium">Hora</th>
             </tr>
           </thead>
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-4 text-center text-muted-foreground">
+                <td colSpan={8} className="px-4 py-4 text-center text-muted-foreground">
                   Sin resultados
                 </td>
               </tr>
@@ -1226,16 +1240,31 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
                     const d = new Date(s)
                     if (isNaN(d.getTime())) return '—'
                     return d.toLocaleTimeString('es-VE', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false,
+                      hour: '2-digit', minute: '2-digit', hour12: false,
                       timeZone: 'America/Caracas',
                     })
                   } catch { return '—' }
                 })()
-                const monto = item.metodoMoneda === 'BS'
-                  ? formatBs(parseFloat(item.monto))
-                  : formatUsd(parseFloat(item.monto))
+                const fecha = (() => {
+                  const s = item.fecha
+                  try {
+                    const d = new Date(s)
+                    if (isNaN(d.getTime())) return '—'
+                    return d.toLocaleDateString('es-VE', {
+                      day: '2-digit', month: '2-digit', year: '2-digit',
+                      timeZone: 'America/Caracas',
+                    })
+                  } catch { return '—' }
+                })()
+                const tasa = parseFloat(item.tasa ?? '0')
+                const montoNum = parseFloat(item.monto)
+                const montoBs = (() => {
+                  if (item.metodoMoneda === 'BS') return montoNum
+                  return tasa > 0 ? montoNum * tasa : 0
+                })()
+                const montoDisplay = item.metodoMoneda === 'BS'
+                  ? formatBs(montoNum)
+                  : formatUsd(montoNum)
                 return (
                   <tr key={item.id} className="border-b last:border-0 hover:bg-blue-50/30">
                     <td className="px-4 py-2.5">
@@ -1257,9 +1286,19 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
                       </div>
                     </td>
                     <td className="px-3 py-2.5 text-muted-foreground">{item.metodoNombre}</td>
-                    <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">
-                      {monto}
+                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
+                      {tasa > 0 ? tasa.toFixed(2) : '—'}
                     </td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">
+                      {montoDisplay}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted-foreground">
+                      {montoBs > 0 ? formatBs(montoBs) : '—'}
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[80px]">
+                      {item.referencia ?? '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{fecha}</td>
                     <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
                   </tr>
                 )

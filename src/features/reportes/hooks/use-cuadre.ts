@@ -1576,6 +1576,7 @@ export interface CobroViaPOS {
   moneda: string
   cobrosUsd: number
   cobrosNativo: number
+  cobsBsEquiv: number
 }
 
 /**
@@ -1601,7 +1602,10 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
              THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(p.monto_usd AS REAL)
-             ELSE CAST(mmc.monto AS REAL) END), 0) AS cobros_usd
+             ELSE CAST(mmc.monto AS REAL) END), 0) AS cobros_usd,
+           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
+             THEN CAST(mmc.monto AS REAL)
+             ELSE CAST(mmc.monto AS REAL) * CAST(COALESCE(p.tasa, '0') AS REAL) END), 0) AS cobros_bs_equiv
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
@@ -1628,6 +1632,7 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
       moneda,
       cobrosUsd: Number(Number(row.cobros_usd ?? 0).toFixed(2)),
       cobrosNativo,
+      cobsBsEquiv: Number(Number(row.cobros_bs_equiv ?? 0).toFixed(2)),
     }
   })
 
@@ -1635,8 +1640,9 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
   const totalCobrosBs  = porMetodo
     .filter(m => m.moneda === 'BS')
     .reduce((s, m) => s + m.cobrosNativo, 0)
+  const totalCobrosBsEquiv = porMetodo.reduce((s, m) => s + m.cobsBsEquiv, 0)
 
-  return { porMetodo, totalCobrosUsd, totalCobrosBs, isLoading }
+  return { porMetodo, totalCobrosUsd, totalCobrosBs, totalCobrosBsEquiv, isLoading }
 }
 
 // ─── Cobranzas CxC dirigidas a la sesión de caja ─────────────
@@ -1651,6 +1657,9 @@ export interface CobranzaCxCItem {
   fecha: string
   concepto: string | null
   createdAt: string
+  tasa: string
+  referencia: string | null
+  montoNativoPago: string
 }
 
 /**
@@ -1677,12 +1686,20 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
            mc.nombre as metodo_nombre,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
            v.nro_factura,
-           c.nombre as cliente_nombre
+           c.nombre as cliente_nombre,
+           COALESCE(p.tasa, '0') as tasa,
+           p.referencia,
+           COALESCE(p.monto, mmc.monto) as monto_nativo_pago
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
          LEFT JOIN ventas v ON mmc.doc_origen_id = v.id
          LEFT JOIN clientes c ON v.cliente_id = c.id
+         LEFT JOIN pagos p ON p.venta_id = mmc.doc_origen_id
+           AND p.metodo_cobro_id = mmc.metodo_cobro_id
+           AND p.sesion_caja_id = mmc.sesion_caja_id
+           AND p.empresa_id = mmc.empresa_id
+           AND (p.is_reversed IS NULL OR p.is_reversed = 0)
          WHERE mmc.origen = 'COBRO' AND ${whereMmc}
          ORDER BY mmc.fecha DESC`
       : '',
@@ -1699,6 +1716,9 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
     fecha: String(row.fecha ?? ''),
     concepto: row.concepto ? String(row.concepto) : null,
     createdAt: String(row.created_at ?? ''),
+    tasa: String(row.tasa ?? '0'),
+    referencia: row.referencia ? String(row.referencia) : null,
+    montoNativoPago: String(row.monto_nativo_pago ?? row.monto ?? '0'),
   }))
 
   return { items, isLoading }

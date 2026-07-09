@@ -18,6 +18,10 @@ export interface CuadreArqueoTeoricoProps {
   vueltosUsd: number
   vueltosBsNativo: number
   tasaCambio: number
+  /** Cobros CxC USD que ingresaron a caja (moneda != BS) */
+  cobrosUsd?: number
+  /** Cobros CxC Bs nativos que ingresaron a caja (moneda == BS) */
+  cobrosBsNativo?: number
 }
 
 export function CuadreArqueoTeorico({
@@ -34,12 +38,15 @@ export function CuadreArqueoTeorico({
   vueltosUsd,
   vueltosBsNativo,
   tasaCambio,
+  cobrosUsd = 0,
+  cobrosBsNativo = 0,
 }: CuadreArqueoTeoricoProps) {
   // Track USD: solo montos nativos en USD
-  const teoricoUsd = fondoAperturaUsd + ventasEfectivoUsd + ingresosEfectivoUsd - egresosUsd
+  const teoricoUsd = fondoAperturaUsd + ventasEfectivoUsd + (cobrosUsd ?? 0) + ingresosEfectivoUsd - egresosUsd
   // Track Bs: solo montos nativos en Bs
   const teoricoBs = fondoAperturaBs
     + ventasEfectivoBsNativo
+    + (cobrosBsNativo ?? 0)
     + ingresosEfectivoBsNativo
     - egresosBsNativo
 
@@ -60,7 +67,7 @@ export function CuadreArqueoTeorico({
         <div>
           <p className="text-sm font-semibold">Arqueo Teórico</p>
           <p className="text-xs text-muted-foreground font-mono">
-            FONDO + VENTA + INGRESOS − EGRESOS
+            FONDO + VENTA + COBRANZAS + INGRESOS − EGRESOS
           </p>
         </div>
       </div>
@@ -137,6 +144,48 @@ export function CuadreArqueoTeorico({
               {tasaCambio > 0 && (
                 <p className="text-xs text-muted-foreground tabular-nums">
                   {formatUsd(ventasEfectivoBsNativo / tasaCambio)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Cobranzas CxC USD */}
+        {(cobrosUsd ?? 0) > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-blue-500">+</span>
+              <span className="text-muted-foreground">
+                Cobranzas CxC{(cobrosBsNativo ?? 0) > 0.001 ? ' ($)' : ''}
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-blue-600 dark:text-blue-400">
+                {formatUsd(cobrosUsd ?? 0)}
+              </span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatBs(usdToBs(cobrosUsd ?? 0, tasaCambio).toNumber())}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Cobranzas CxC Bs nativos */}
+        {(cobrosBsNativo ?? 0) > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-blue-500">+</span>
+              <span className="text-muted-foreground">Cobranzas CxC (Bs.)</span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-blue-600 dark:text-blue-400">
+                {formatBs(cobrosBsNativo ?? 0)}
+              </span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatUsd((cobrosBsNativo ?? 0) / tasaCambio)}
                 </p>
               )}
             </div>
