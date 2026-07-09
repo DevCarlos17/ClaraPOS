@@ -147,10 +147,18 @@ export function CuadreMetodoModal({ isOpen, onClose, filters, metodoNombre }: Cu
                         </tbody>
                       </table>
                     </div>
-                    <div className="flex justify-between text-xs font-semibold text-blue-600 mt-1 px-1">
-                      <span>Subtotal cobranzas</span>
-                      <span>{formatUsd(totalCxCUsd)}</span>
-                    </div>
+                    {(() => {
+                      const totalCxCBs = cxc.reduce((s, f) => s + (f.moneda === 'BS' ? parseFloat(f.monto) : 0), 0)
+                      return (
+                        <div className="flex justify-between text-xs font-semibold text-blue-600 mt-1 px-1">
+                          <span>Subtotal cobranzas</span>
+                          <div className="flex items-center gap-2">
+                            {totalCxCBs > 0.001 && <span className="text-muted-foreground font-normal">{formatBs(totalCxCBs)}</span>}
+                            <span>{formatUsd(totalCxCUsd)}</span>
+                          </div>
+                        </div>
+                      )
+                    })()}
                   </div>
                 ) : null
               })()}
@@ -158,7 +166,15 @@ export function CuadreMetodoModal({ isOpen, onClose, filters, metodoNombre }: Cu
               {/* Total general */}
               <div className="border-t pt-3 flex justify-between items-center">
                 <span className="text-sm font-semibold">Total</span>
-                <span className="text-sm font-bold">{formatUsd(totalUsd)}</span>
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const totalBs = facturas.reduce((s, f) => s + (f.moneda === 'BS' ? parseFloat(f.monto) : 0), 0)
+                    return totalBs > 0.001 ? (
+                      <span className="text-sm text-muted-foreground font-normal">{formatBs(totalBs)}</span>
+                    ) : null
+                  })()}
+                  <span className="text-sm font-bold">{formatUsd(totalUsd)}</span>
+                </div>
               </div>
             </>
           )}

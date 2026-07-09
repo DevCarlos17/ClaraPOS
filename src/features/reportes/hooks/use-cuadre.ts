@@ -1601,7 +1601,7 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
-             THEN CAST(p.monto_usd AS REAL)
+             THEN COALESCE(CAST(p.monto_usd AS REAL), CAST(mmc.saldo_nuevo AS REAL))
              ELSE CAST(mmc.monto AS REAL) END), 0) AS cobros_usd,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(mmc.monto AS REAL)
@@ -1648,62 +1648,56 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
 // ─── Cobranzas CxC dirigidas a la sesión de caja ─────────────
 
 export interface CobranzaCxCItem {
-  id: string
+  id: string           // pagos.id
   nroFactura: string | null
   clienteNombre: string | null
   metodoNombre: string
   metodoMoneda: string
-  monto: string
-  fecha: string
-  concepto: string | null
-  createdAt: string
-  tasa: string
+  monto: string        // pagos.monto = monto nativo por factura (Bs o USD)
+  montoUsd: string     // pagos.monto_usd
+  tasa: string         // pagos.tasa
   referencia: string | null
-  montoNativoPago: string
+  fecha: string
+  createdAt: string
 }
 
 /**
- * Retorna los movimientos_metodo_cobro con origen='COBRO' vinculados
- * a la sesión de caja activa. Son los cobros CxC que ingresaron en caja
- * y que la cajera debe tener en su poder.
+ * Retorna los pagos de facturas a crédito (CxC) que entraron en la sesión de caja.
+ * Expande a una fila por factura (en abono global muestra cada factura afectada).
  */
 export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [whereMmc, paramsMmc] = useMemo(
-    () => filters ? buildMovsWhere(filters, empresaId, 'mmc') : ['1=0', [] as unknown[]],
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'p') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
 
   const { data, isLoading } = useQuery(
     filters
       ? `SELECT
-           mmc.id,
-           mmc.monto,
-           mmc.fecha,
-           mmc.created_at,
-           mmc.concepto,
+           p.id,
+           p.monto,
+           p.monto_usd,
+           COALESCE(p.tasa, '0') as tasa,
+           p.referencia,
+           p.fecha,
+           p.created_at,
            mc.nombre as metodo_nombre,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
            v.nro_factura,
-           c.nombre as cliente_nombre,
-           COALESCE(p.tasa, '0') as tasa,
-           p.referencia,
-           COALESCE(p.monto, mmc.monto) as monto_nativo_pago
-         FROM movimientos_metodo_cobro mmc
-         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+           c.nombre as cliente_nombre
+         FROM pagos p
+         JOIN ventas v ON p.venta_id = v.id
+         JOIN clientes c ON v.cliente_id = c.id
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
-         LEFT JOIN ventas v ON mmc.doc_origen_id = v.id
-         LEFT JOIN clientes c ON v.cliente_id = c.id
-         LEFT JOIN pagos p ON p.venta_id = mmc.doc_origen_id
-           AND p.metodo_cobro_id = mmc.metodo_cobro_id
-           AND p.sesion_caja_id = mmc.sesion_caja_id
-           AND p.empresa_id = mmc.empresa_id
+         WHERE v.tipo = 'CREDITO'
            AND (p.is_reversed IS NULL OR p.is_reversed = 0)
-         WHERE mmc.origen = 'COBRO' AND ${whereMmc}
-         ORDER BY mmc.fecha DESC`
+           AND ${where}
+         ORDER BY p.fecha ASC`
       : '',
-    filters ? paramsMmc : []
+    filters ? params : []
   )
 
   const items: CobranzaCxCItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -1713,12 +1707,11 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
     metodoNombre: String(row.metodo_nombre ?? ''),
     metodoMoneda: String(row.metodo_moneda ?? 'USD'),
     monto: String(row.monto ?? '0'),
-    fecha: String(row.fecha ?? ''),
-    concepto: row.concepto ? String(row.concepto) : null,
-    createdAt: String(row.created_at ?? ''),
+    montoUsd: String(row.monto_usd ?? '0'),
     tasa: String(row.tasa ?? '0'),
     referencia: row.referencia ? String(row.referencia) : null,
-    montoNativoPago: String(row.monto_nativo_pago ?? row.monto ?? '0'),
+    fecha: String(row.fecha ?? ''),
+    createdAt: String(row.created_at ?? ''),
   }))
 
   return { items, isLoading }

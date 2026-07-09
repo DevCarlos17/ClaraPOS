@@ -913,12 +913,13 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         `INSERT INTO movimientos_metodo_cobro
            (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
             doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-         VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movMetodoAbonoId,
           empresa_id,
           metodo_cobro_id,
-          toStorageString(montoTotalUsd),
+          toStorageString(montoD),         // monto = nativo (Bs 10.300 o $20.60)
+          toStorageString(montoTotalUsd),  // saldo_nuevo = USD equivalente (para lookup)
           movId,
           'ABONO-GLOBAL',
           `Abono global cliente (${facturasAfectadas} fac.)`,

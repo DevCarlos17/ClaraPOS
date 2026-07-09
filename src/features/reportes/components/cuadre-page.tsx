@@ -1193,7 +1193,6 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
           item.nroFactura?.toLowerCase().includes(q) ||
           item.clienteNombre?.toLowerCase().includes(q) ||
           item.metodoNombre.toLowerCase().includes(q) ||
-          item.concepto?.toLowerCase().includes(q) ||
           item.referencia?.toLowerCase().includes(q)
         )
       })
@@ -1278,9 +1277,6 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
                           )}
                           {item.clienteNombre && (
                             <span className="text-muted-foreground ml-1.5 truncate">{item.clienteNombre}</span>
-                          )}
-                          {!item.nroFactura && !item.clienteNombre && (
-                            <span className="text-muted-foreground">{item.concepto ?? '—'}</span>
                           )}
                         </div>
                       </div>
