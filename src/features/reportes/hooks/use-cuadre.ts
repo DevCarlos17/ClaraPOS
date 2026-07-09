@@ -896,8 +896,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
-           AND mmc.origen != 'VENTA'`
+            AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+            AND mmc.origen NOT IN ('VENTA', 'COBRO')`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -913,8 +913,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
-           AND mmc.origen != 'VENTA'`
+            AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+            AND mmc.origen NOT IN ('VENTA', 'COBRO')`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -1599,10 +1599,17 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
-           COALESCE(SUM(CAST(mmc.saldo_nuevo AS REAL)), 0) AS cobros_usd
+           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
+             THEN CAST(p.monto_usd AS REAL)
+             ELSE CAST(mmc.monto AS REAL) END), 0) AS cobros_usd
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         LEFT JOIN pagos p ON p.venta_id = mmc.doc_origen_id
+           AND p.metodo_cobro_id = mmc.metodo_cobro_id
+           AND p.sesion_caja_id = mmc.sesion_caja_id
+           AND p.empresa_id = mmc.empresa_id
+           AND (p.is_reversed IS NULL OR p.is_reversed = 0)
          WHERE mmc.origen = 'COBRO' AND ${whereMmc}
          GROUP BY mmc.metodo_cobro_id, mc.nombre, moneda
          ORDER BY cobros_bs DESC, cobros_usd DESC`
@@ -1643,6 +1650,7 @@ export interface CobranzaCxCItem {
   monto: string
   fecha: string
   concepto: string | null
+  createdAt: string
 }
 
 /**
@@ -1664,6 +1672,7 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
            mmc.id,
            mmc.monto,
            mmc.fecha,
+           mmc.created_at,
            mmc.concepto,
            mc.nombre as metodo_nombre,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
@@ -1689,6 +1698,7 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
     monto: String(row.monto ?? '0'),
     fecha: String(row.fecha ?? ''),
     concepto: row.concepto ? String(row.concepto) : null,
+    createdAt: String(row.created_at ?? ''),
   }))
 
   return { items, isLoading }

@@ -1175,53 +1175,99 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
 // ─── Tabla de cobranzas CxC ──────────────────────────────────
 
 function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
+  const [search, setSearch] = useState('')
+
+  const filtered = search.trim()
+    ? items.filter((item) => {
+        const q = search.toLowerCase()
+        return (
+          item.nroFactura?.toLowerCase().includes(q) ||
+          item.clienteNombre?.toLowerCase().includes(q) ||
+          item.metodoNombre.toLowerCase().includes(q) ||
+          item.concepto?.toLowerCase().includes(q)
+        )
+      })
+    : items
+
   return (
-    <div className="border-t overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="bg-blue-50/60 text-muted-foreground">
-            <th className="text-left px-4 py-2 font-medium">Factura / Cliente</th>
-            <th className="text-left px-3 py-2 font-medium">Método</th>
-            <th className="text-right px-4 py-2 font-medium">Monto</th>
-            <th className="text-right px-4 py-2 font-medium">Hora</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((item) => {
-            const hora = item.fecha.length >= 16 ? item.fecha.substring(11, 16) : '—'
-            const monto = item.metodoMoneda === 'BS'
-              ? formatBs(parseFloat(item.monto))
-              : formatUsd(parseFloat(item.monto))
-            return (
-              <tr key={item.id} className="border-b last:border-0 hover:bg-blue-50/30">
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-1.5">
-                    <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
-                      CxC
-                    </span>
-                    <div className="min-w-0">
-                      {item.nroFactura && (
-                        <span className="font-medium font-mono">#{item.nroFactura}</span>
-                      )}
-                      {item.clienteNombre && (
-                        <span className="text-muted-foreground ml-1.5 truncate">{item.clienteNombre}</span>
-                      )}
-                      {!item.nroFactura && !item.clienteNombre && (
-                        <span className="text-muted-foreground">{item.concepto ?? '—'}</span>
-                      )}
-                    </div>
-                  </div>
+    <div className="border-t">
+      {/* Search bar */}
+      <div className="px-4 py-2 border-b bg-muted/20">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar por factura, cliente, método..."
+          className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-blue-50/60 text-muted-foreground">
+              <th className="text-left px-4 py-2 font-medium">Factura / Cliente</th>
+              <th className="text-left px-3 py-2 font-medium">Método</th>
+              <th className="text-right px-4 py-2 font-medium">Monto</th>
+              <th className="text-right px-4 py-2 font-medium">Hora</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-4 py-4 text-center text-muted-foreground">
+                  Sin resultados
                 </td>
-                <td className="px-3 py-2.5 text-muted-foreground">{item.metodoNombre}</td>
-                <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">
-                  {monto}
-                </td>
-                <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
               </tr>
-            )
-          })}
-        </tbody>
-      </table>
+            ) : (
+              filtered.map((item) => {
+                const hora = (() => {
+                  const s = item.createdAt || item.fecha
+                  try {
+                    const d = new Date(s)
+                    if (isNaN(d.getTime())) return '—'
+                    return d.toLocaleTimeString('es-VE', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      hour12: false,
+                      timeZone: 'America/Caracas',
+                    })
+                  } catch { return '—' }
+                })()
+                const monto = item.metodoMoneda === 'BS'
+                  ? formatBs(parseFloat(item.monto))
+                  : formatUsd(parseFloat(item.monto))
+                return (
+                  <tr key={item.id} className="border-b last:border-0 hover:bg-blue-50/30">
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
+                          CxC
+                        </span>
+                        <div className="min-w-0">
+                          {item.nroFactura && (
+                            <span className="font-medium font-mono">#{item.nroFactura}</span>
+                          )}
+                          {item.clienteNombre && (
+                            <span className="text-muted-foreground ml-1.5 truncate">{item.clienteNombre}</span>
+                          )}
+                          {!item.nroFactura && !item.clienteNombre && (
+                            <span className="text-muted-foreground">{item.concepto ?? '—'}</span>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 text-muted-foreground">{item.metodoNombre}</td>
+                    <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">
+                      {monto}
+                    </td>
+                    <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
