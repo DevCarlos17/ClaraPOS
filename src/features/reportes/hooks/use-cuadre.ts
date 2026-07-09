@@ -167,6 +167,7 @@ export interface FacturaMetodoItem {
   referencia: string | null
   fecha: string
   moneda: string
+  venta_tipo: string
 }
 
 export interface ProductoDeptoItem {
@@ -959,7 +960,8 @@ export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre
            pg.monto_usd,
            pg.referencia,
            pg.fecha,
-           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
+           v.tipo as venta_tipo
          FROM pagos pg
          JOIN ventas v ON pg.venta_id = v.id
          JOIN clientes c ON v.cliente_id = c.id
@@ -1597,8 +1599,7 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
-           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') != 'VES'
-             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_usd
+           COALESCE(SUM(CAST(mmc.saldo_nuevo AS REAL)), 0) AS cobros_usd
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id

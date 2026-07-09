@@ -770,8 +770,33 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             </div>
           </div>
 
+          {/* Cobranzas CxC ingresadas a caja */}
+          {cobranzasCxC.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Cobranzas CxC
+              </h2>
+              <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                <label className="flex items-center gap-3 px-5 py-3.5 cursor-pointer hover:bg-muted/40 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={showCobranzasCxC}
+                    onChange={(e) => setShowCobranzasCxC(e.target.checked)}
+                    className="h-4 w-4 rounded border accent-blue-600"
+                  />
+                  <div className="flex items-center gap-2">
+                    <ArrowFatLineUp size={15} weight="fill" className="text-blue-600" />
+                    <span className="text-sm font-semibold">Cobranzas CxC</span>
+                    <span className="text-xs text-muted-foreground">({cobranzasCxC.length})</span>
+                  </div>
+                </label>
+                {showCobranzasCxC && <CobranzasCxCTable items={cobranzasCxC} />}
+              </div>
+            </div>
+          )}
+
           {/* Movimientos manuales de caja — tablas opcionales colapsables */}
-          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0 || vueltosDetalle.length > 0 || cobranzasCxC.length > 0) && (
+          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0 || vueltosDetalle.length > 0) && (
             <div className="space-y-3">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
                 Movimientos Manuales de Caja
@@ -846,28 +871,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   </div>
                 )}
 
-                {/* Cobranzas CxC ingresadas a caja */}
-                {cobranzasCxC.length > 0 && (
-                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => setShowCobranzasCxC((v) => !v)}
-                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <ArrowFatLineUp size={15} weight="fill" className="text-blue-600" />
-                        <span className="text-sm font-semibold">Cobranzas CxC</span>
-                        <span className="text-xs text-muted-foreground">({cobranzasCxC.length})</span>
-                      </div>
-                      {showCobranzasCxC
-                        ? <CaretDown size={13} className="text-muted-foreground" />
-                        : <CaretRight size={13} className="text-muted-foreground" />}
-                    </button>
-                    {showCobranzasCxC && (
-                      <CobranzasCxCTable items={cobranzasCxC} />
-                    )}
-                  </div>
-                )}
               </div>
             </div>
           )}

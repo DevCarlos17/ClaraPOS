@@ -1,6 +1,6 @@
-import { Money, CreditCard, ArrowsClockwise, Coins } from '@phosphor-icons/react'
+import { Money, CreditCard, Coins } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, useCxcDelDia, useTotalesFiscales, useCobrosViaPOS, useSafDiario, type CuadreFilters } from '../hooks/use-cuadre'
+import { usePagosPorMetodo, useCxcDelDia, useTotalesFiscales, useSafDiario, type CuadreFilters } from '../hooks/use-cuadre'
 
 interface PagosResumenProps {
   filters: CuadreFilters
@@ -16,7 +16,6 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
   const { isLoading: loadingTotales } = useTotalesFiscales(filters)
-  const { porMetodo: cobrosViaPOS, totalCobrosUsd, totalCobrosBs, isLoading: loadingCobros } = useCobrosViaPOS(filters)
   const { totalUsd: safTotalUsd, isLoading: loadingSaf } = useSafDiario(filters)
 
   // Excluir metodos EFECTIVO con saldo $0 (fondo inicial sin ventas en efectivo)
@@ -27,13 +26,10 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
     return sum + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs)
   }, 0)
 
-  const hayCobrosViaPOS = totalCobrosUsd > 0.005 || totalCobrosBs > 0.005
-
-
   const haySaf = safTotalUsd > 0.001
   const safBs = tasaDelDia > 0 ? safTotalUsd * tasaDelDia : 0
 
-  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingCobros || loadingSaf
+  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingSaf
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -94,44 +90,6 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
             )
           })}
 
-          {/* Cobros CxC via POS (SAF) — agrupados por metodo */}
-          {hayCobrosViaPOS && (
-            <div className="rounded-lg border border-blue-200 bg-blue-50/40 px-3 py-2 space-y-1.5">
-              <div className="flex items-center gap-2 pb-0.5">
-                <ArrowsClockwise size={14} className="text-blue-500 shrink-0" />
-                <p className="text-xs font-semibold text-blue-700">Cobros CxC via POS</p>
-              </div>
-              {cobrosViaPOS.map((c) => (
-                  <div key={c.metodo_cobro_id} className="flex items-center justify-between pl-5">
-                  <span className="text-xs text-blue-600">{c.nombre}</span>
-                  <div className="flex items-center gap-2">
-                    {c.moneda === 'BS' ? (
-                      <>
-                        <span className="text-xs text-blue-400">{formatUsd(tasaDelDia > 0 ? c.cobrosNativo / tasaDelDia : 0)}</span>
-                        <span className="text-xs font-semibold text-blue-700">{formatBs(c.cobrosNativo)}</span>
-                      </>
-                    ) : (
-                      <span className="text-xs font-semibold text-blue-700">{formatUsd(c.cobrosUsd)}</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-              <div className="flex justify-between items-center border-t border-blue-200 pt-1 pl-5">
-                <span className="text-xs font-semibold text-blue-700">Total cobros CxC</span>
-                <div className="flex items-center gap-2">
-                  {totalCobrosBs > 0 ? (
-                    <>
-                      <span className="text-xs text-blue-400">{formatUsd(tasaDelDia > 0 ? totalCobrosBs / tasaDelDia : totalCobrosUsd)}</span>
-                      <span className="text-xs font-bold text-blue-700">{formatBs(totalCobrosBs)}</span>
-                    </>
-                  ) : (
-                    <span className="text-xs font-bold text-blue-700">{formatUsd(totalCobrosUsd)}</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* Saldo a favor aplicado como pago directo en POS */}
           {haySaf && (
             <button
@@ -188,25 +146,6 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                 <span className="font-semibold">{formatBs(totalCobradoBs + cxcTotalBs)}</span>
               </div>
             </div>
-
-            {/* Cobros CxC via POS total (suma al total esperado) */}
-            {hayCobrosViaPOS && (
-              <div className="flex justify-between items-center text-sm text-blue-600">
-                <span className="flex items-center gap-1">
-                  <span className="text-blue-400">+</span> Cobros CxC via POS
-                </span>
-                <div className="flex items-center gap-2">
-                  {totalCobrosBs > 0 ? (
-                    <>
-                      <span className="text-xs text-blue-400">{formatUsd(tasaDelDia > 0 ? totalCobrosBs / tasaDelDia : totalCobrosUsd)}</span>
-                      <span className="font-bold">{formatBs(totalCobrosBs)}</span>
-                    </>
-                  ) : (
-                    <span className="font-bold">{formatUsd(totalCobrosUsd)}</span>
-                  )}
-                </div>
-              </div>
-            )}
 
             {/* Restar CxC si existe */}
             {cxcTotalUsd > 0.005 && (

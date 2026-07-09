@@ -91,7 +91,14 @@ export function CuadreMetodoModal({ isOpen, onClose, filters, metodoNombre, cobr
                       {facturas.map((f, i) => (
                         <tr key={`${f.venta_id}-${i}`} className="border-b border-muted">
                           <td className="px-3 py-2">
-                            <span className="font-mono text-xs">#{f.nro_factura}</span>
+                            <div className="flex items-center gap-1.5">
+                              {f.venta_tipo === 'CREDITO' && (
+                                <span className="inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium shrink-0">
+                                  CxC
+                                </span>
+                              )}
+                              <span className="font-mono text-xs">#{f.nro_factura}</span>
+                            </div>
                           </td>
                           <td className="px-3 py-2 text-xs truncate max-w-[150px]">
                             {f.cliente_nombre}
