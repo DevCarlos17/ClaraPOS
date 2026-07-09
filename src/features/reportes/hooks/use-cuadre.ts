@@ -1574,6 +1574,7 @@ export interface CobroViaPOS {
   metodo_cobro_id: string
   nombre: string
   moneda: string
+  tipo: string        // mc.tipo: 'EFECTIVO' | 'TRANSFERENCIA' | 'PUNTO' | etc.
   cobrosUsd: number
   cobrosNativo: number
   cobsBsEquiv: number
@@ -1597,6 +1598,7 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
       ? `SELECT
            mmc.metodo_cobro_id,
            mc.nombre,
+           mc.tipo,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
@@ -1630,6 +1632,7 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
       metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
       nombre: String(row.nombre ?? ''),
       moneda,
+      tipo: String(row.tipo ?? ''),
       cobrosUsd: Number(Number(row.cobros_usd ?? 0).toFixed(2)),
       cobrosNativo,
       cobsBsEquiv: Number(Number(row.cobros_bs_equiv ?? 0).toFixed(2)),

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@powersync/react'
 import { MagnifyingGlass, CheckSquare, Square, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear, HandCoins, CaretDown, CaretRight, ArrowFatLineUp, ArrowFatLineDown } from '@phosphor-icons/react'
 import { toast } from 'sonner'
@@ -165,12 +165,13 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
   const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, totalCobrosBsEquiv, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
 
-  // Cobros CxC por tipo de moneda — para el Arqueo Teórico
+  // Cobros CxC por tipo de moneda — para el Arqueo Teórico.
+  // Solo métodos EFECTIVO: las transferencias no afectan el efectivo físico en caja.
   const cobrosUsdEnArqueo = cobrosViaPOS
-    .filter((m) => m.moneda !== 'BS')
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda !== 'BS')
     .reduce((s, m) => s + m.cobrosUsd, 0)
   const cobrosBsNativoEnArqueo = cobrosViaPOS
-    .filter((m) => m.moneda === 'BS')
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
     .reduce((s, m) => s + m.cobrosNativo, 0)
 
   // Data for CuadreArqueoTeorico
@@ -1198,9 +1199,45 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
       })
     : items
 
+  // Agrupar por (createdAt + metodo) — todos los pagos de un mismo abono global
+  // comparten el mismo created_at (misma writeTransaction) y método.
+  const groups: { key: string; rows: CobranzaCxCItem[] }[] = []
+  for (const item of filtered) {
+    const key = `${item.createdAt}|${item.metodoNombre}`
+    const last = groups[groups.length - 1]
+    if (last && last.key === key) {
+      last.rows.push(item)
+    } else {
+      groups.push({ key, rows: [item] })
+    }
+  }
+
+  function renderCell(item: CobranzaCxCItem) {
+    const hora = (() => {
+      const s = item.createdAt || item.fecha
+      try {
+        const d = new Date(s)
+        if (isNaN(d.getTime())) return '—'
+        return d.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Caracas' })
+      } catch { return '—' }
+    })()
+    const fecha = (() => {
+      const s = item.fecha
+      try {
+        const d = new Date(s)
+        if (isNaN(d.getTime())) return '—'
+        return d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'America/Caracas' })
+      } catch { return '—' }
+    })()
+    const tasa = parseFloat(item.tasa ?? '0')
+    const montoNum = parseFloat(item.monto)
+    const montoBs = item.metodoMoneda === 'BS' ? montoNum : (tasa > 0 ? montoNum * tasa : 0)
+    const montoDisplay = item.metodoMoneda === 'BS' ? formatBs(montoNum) : formatUsd(montoNum)
+    return { hora, fecha, tasa, montoNum, montoBs, montoDisplay }
+  }
+
   return (
     <div className="border-t">
-      {/* Search bar */}
       <div className="px-4 py-2 border-b bg-muted/20">
         <input
           type="text"
@@ -1225,81 +1262,66 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 ? (
+            {groups.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-4 py-4 text-center text-muted-foreground">
-                  Sin resultados
-                </td>
+                <td colSpan={8} className="px-4 py-4 text-center text-muted-foreground">Sin resultados</td>
               </tr>
-            ) : (
-              filtered.map((item) => {
-                const hora = (() => {
-                  const s = item.createdAt || item.fecha
-                  try {
-                    const d = new Date(s)
-                    if (isNaN(d.getTime())) return '—'
-                    return d.toLocaleTimeString('es-VE', {
-                      hour: '2-digit', minute: '2-digit', hour12: false,
-                      timeZone: 'America/Caracas',
-                    })
-                  } catch { return '—' }
-                })()
-                const fecha = (() => {
-                  const s = item.fecha
-                  try {
-                    const d = new Date(s)
-                    if (isNaN(d.getTime())) return '—'
-                    return d.toLocaleDateString('es-VE', {
-                      day: '2-digit', month: '2-digit', year: '2-digit',
-                      timeZone: 'America/Caracas',
-                    })
-                  } catch { return '—' }
-                })()
-                const tasa = parseFloat(item.tasa ?? '0')
-                const montoNum = parseFloat(item.monto)
-                const montoBs = (() => {
-                  if (item.metodoMoneda === 'BS') return montoNum
-                  return tasa > 0 ? montoNum * tasa : 0
-                })()
-                const montoDisplay = item.metodoMoneda === 'BS'
-                  ? formatBs(montoNum)
-                  : formatUsd(montoNum)
+            ) : groups.map((group) => {
+              const multi = group.rows.length > 1
+              return group.rows.map((item, idx) => {
+                const { hora, fecha, tasa, montoNum, montoBs, montoDisplay } = renderCell(item)
+                const isLast = idx === group.rows.length - 1
+
+                // Subtotal para grupos de 2+ facturas (después de la última fila del grupo)
+                const subtotalRow = multi && isLast ? (() => {
+                  const totalMonto = group.rows.reduce((s, r) => s + parseFloat(r.monto), 0)
+                  const totalBs   = group.rows.reduce((s, r) => {
+                    const t = parseFloat(r.tasa ?? '0')
+                    const m = parseFloat(r.monto)
+                    return s + (r.metodoMoneda === 'BS' ? m : (t > 0 ? m * t : 0))
+                  }, 0)
+                  const isBs = item.metodoMoneda === 'BS'
+                  return (
+                    <tr key={`${group.key}-subtotal`} className="bg-blue-50/40 border-t border-blue-200">
+                      <td colSpan={3} className="px-4 py-1.5 text-xs font-semibold text-blue-700">
+                        Subtotal ({group.rows.length} facturas)
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono font-bold text-blue-700 tabular-nums">
+                        {isBs ? formatBs(totalMonto) : formatUsd(totalMonto)}
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono font-bold text-blue-700 tabular-nums">
+                        {totalBs > 0 ? formatBs(totalBs) : '—'}
+                      </td>
+                      <td colSpan={3} />
+                    </tr>
+                  )
+                })() : null
+
                 return (
-                  <tr key={item.id} className="border-b last:border-0 hover:bg-blue-50/30">
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-1.5">
-                        <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
-                          CxC
-                        </span>
-                        <div className="min-w-0">
-                          {item.nroFactura && (
-                            <span className="font-medium font-mono">#{item.nroFactura}</span>
-                          )}
-                          {item.clienteNombre && (
-                            <span className="text-muted-foreground ml-1.5 truncate">{item.clienteNombre}</span>
-                          )}
+                  <React.Fragment key={item.id}>
+                    <tr className={`border-b hover:bg-blue-50/30 ${multi ? 'bg-blue-50/10' : ''}`}>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">CxC</span>
+                          <div className="min-w-0">
+                            {item.nroFactura && <span className="font-medium font-mono">#{item.nroFactura}</span>}
+                            {item.clienteNombre && <span className="text-muted-foreground ml-1.5 truncate">{item.clienteNombre}</span>}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5 text-muted-foreground">{item.metodoNombre}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">
-                      {tasa > 0 ? tasa.toFixed(2) : '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">
-                      {montoDisplay}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted-foreground">
-                      {montoBs > 0 ? formatBs(montoBs) : '—'}
-                    </td>
-                    <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[80px]">
-                      {item.referencia ?? '—'}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{fecha}</td>
-                    <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
-                  </tr>
+                      </td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{item.metodoNombre}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{tasa > 0 ? tasa.toFixed(2) : '—'}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">{montoDisplay}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted-foreground">{montoBs > 0 ? formatBs(montoBs) : '—'}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[80px]">{item.referencia ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{fecha}</td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
+                    </tr>
+                    {subtotalRow}
+                  </React.Fragment>
                 )
               })
-            )}
+            })}
           </tbody>
         </table>
       </div>
