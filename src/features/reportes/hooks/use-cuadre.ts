@@ -1631,6 +1631,68 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
   return { porMetodo, totalCobrosUsd, totalCobrosBs, isLoading }
 }
 
+// ─── Cobranzas CxC dirigidas a la sesión de caja ─────────────
+
+export interface CobranzaCxCItem {
+  id: string
+  nroFactura: string | null
+  clienteNombre: string | null
+  metodoNombre: string
+  metodoMoneda: string
+  monto: string
+  fecha: string
+  concepto: string | null
+}
+
+/**
+ * Retorna los movimientos_metodo_cobro con origen='COBRO' vinculados
+ * a la sesión de caja activa. Son los cobros CxC que ingresaron en caja
+ * y que la cajera debe tener en su poder.
+ */
+export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [whereMmc, paramsMmc] = useMemo(
+    () => filters ? buildMovsWhere(filters, empresaId, 'mmc') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    filters
+      ? `SELECT
+           mmc.id,
+           mmc.monto,
+           mmc.fecha,
+           mmc.concepto,
+           mc.nombre as metodo_nombre,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
+           v.nro_factura,
+           c.nombre as cliente_nombre
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         LEFT JOIN ventas v ON mmc.doc_origen_id = v.id
+         LEFT JOIN clientes c ON v.cliente_id = c.id
+         WHERE mmc.origen = 'COBRO' AND ${whereMmc}
+         ORDER BY mmc.fecha DESC`
+      : '',
+    filters ? paramsMmc : []
+  )
+
+  const items: CobranzaCxCItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id ?? ''),
+    nroFactura: row.nro_factura ? String(row.nro_factura) : null,
+    clienteNombre: row.cliente_nombre ? String(row.cliente_nombre) : null,
+    metodoNombre: String(row.metodo_nombre ?? ''),
+    metodoMoneda: String(row.metodo_moneda ?? 'USD'),
+    monto: String(row.monto ?? '0'),
+    fecha: String(row.fecha ?? ''),
+    concepto: row.concepto ? String(row.concepto) : null,
+  }))
+
+  return { items, isLoading }
+}
+
 // ─── Ventas con cargos financieros (avances/préstamos) ────────
 
 export interface VentaFinancieraItem {

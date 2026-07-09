@@ -368,13 +368,13 @@ export async function aplicarPagoFacturaEnTx(
     ]
   )
 
-  // Crear movimiento_metodo_cobro (origen PAGO_CXC: registra el ingreso en cuadre de caja)
+  // Crear movimiento_metodo_cobro (origen COBRO: registra el ingreso en cuadre de caja)
   if (montoUsd.gt(0)) {
     await tx.execute(
       `INSERT INTO movimientos_metodo_cobro
          (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
           doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
       [
         uuidv4(), empresa_id, metodo_cobro_id,
         toStorageString(montoUsd), venta_id,
@@ -912,7 +912,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         `INSERT INTO movimientos_metodo_cobro
            (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
             doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-         VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movMetodoAbonoId,
           empresa_id,

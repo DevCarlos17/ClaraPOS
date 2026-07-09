@@ -34,7 +34,9 @@ import {
   useTotalesFiscales,
   useVentasFinancieras,
   useMovimientosEfectivoCaja,
+  useCobranzasCxCCaja,
   type MovimientoEfectivoDetalle,
+  type CobranzaCxCItem,
   type CuadreFilters,
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
@@ -71,6 +73,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [showIngresos, setShowIngresos] = useState(false)
   const [showEgresos, setShowEgresos] = useState(false)
   const [showVueltos, setShowVueltos] = useState(false)
+  const [showCobranzasCxC, setShowCobranzasCxC] = useState(false)
 
   // Selected payment method — drives both row highlight in PagosResumen and CuadreMetodoModal
   const [selectedMetodoNombre, setSelectedMetodoNombre] = useState<string | null>(null)
@@ -169,6 +172,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
   // Detalle individual de movimientos para las tablas al pie del cuadre
   const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
+  const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
 
   // Derived values for CuadreArqueoTeorico — track USD (moneda != BS)
   const ventasEfectivoUsd = todosMetodos
@@ -767,7 +771,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
           </div>
 
           {/* Movimientos manuales de caja — tablas opcionales colapsables */}
-          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0 || vueltosDetalle.length > 0) && (
+          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0 || vueltosDetalle.length > 0 || cobranzasCxC.length > 0) && (
             <div className="space-y-3">
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
                 Movimientos Manuales de Caja
@@ -838,6 +842,29 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                     </button>
                     {showVueltos && (
                       <MovimientosManualesTable items={vueltosDetalle} />
+                    )}
+                  </div>
+                )}
+
+                {/* Cobranzas CxC ingresadas a caja */}
+                {cobranzasCxC.length > 0 && (
+                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowCobranzasCxC((v) => !v)}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ArrowFatLineUp size={15} weight="fill" className="text-blue-600" />
+                        <span className="text-sm font-semibold">Cobranzas CxC</span>
+                        <span className="text-xs text-muted-foreground">({cobranzasCxC.length})</span>
+                      </div>
+                      {showCobranzasCxC
+                        ? <CaretDown size={13} className="text-muted-foreground" />
+                        : <CaretRight size={13} className="text-muted-foreground" />}
+                    </button>
+                    {showCobranzasCxC && (
+                      <CobranzasCxCTable items={cobranzasCxC} />
                     )}
                   </div>
                 )}
@@ -1130,6 +1157,60 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
                 </td>
                 <td className="px-3 py-2.5 text-muted-foreground">{m.metodo_nombre}</td>
                 <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
+                  {monto}
+                </td>
+                <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── Tabla de cobranzas CxC ──────────────────────────────────
+
+function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
+  return (
+    <div className="border-t overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-blue-50/60 text-muted-foreground">
+            <th className="text-left px-4 py-2 font-medium">Factura / Cliente</th>
+            <th className="text-left px-3 py-2 font-medium">Método</th>
+            <th className="text-right px-4 py-2 font-medium">Monto</th>
+            <th className="text-right px-4 py-2 font-medium">Hora</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => {
+            const hora = item.fecha.length >= 16 ? item.fecha.substring(11, 16) : '—'
+            const monto = item.metodoMoneda === 'BS'
+              ? formatBs(parseFloat(item.monto))
+              : formatUsd(parseFloat(item.monto))
+            return (
+              <tr key={item.id} className="border-b last:border-0 hover:bg-blue-50/30">
+                <td className="px-4 py-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
+                      CxC
+                    </span>
+                    <div className="min-w-0">
+                      {item.nroFactura && (
+                        <span className="font-medium font-mono">#{item.nroFactura}</span>
+                      )}
+                      {item.clienteNombre && (
+                        <span className="text-muted-foreground ml-1.5 truncate">{item.clienteNombre}</span>
+                      )}
+                      {!item.nroFactura && !item.clienteNombre && (
+                        <span className="text-muted-foreground">{item.concepto ?? '—'}</span>
+                      )}
+                    </div>
+                  </div>
+                </td>
+                <td className="px-3 py-2.5 text-muted-foreground">{item.metodoNombre}</td>
+                <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">
                   {monto}
                 </td>
                 <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>

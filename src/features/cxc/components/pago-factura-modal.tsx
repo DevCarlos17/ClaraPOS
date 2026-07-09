@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
+import { CashRegister, Vault } from '@phosphor-icons/react'
 import {
   Dialog,
   DialogContent,
@@ -81,6 +82,30 @@ export function PagoFacturaModal({
   // Overpayment
   const [overpayMode, setOverpayMode] = useState<OverpayMode>(null)
 
+  // Destino del cobro
+  const [destinoCobro, setDestinoCobro] = useState<'CAJA' | 'TESORERIA'>('CAJA')
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null)
+  const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isOpen || !user?.empresa_id) return
+    db.execute(
+      "SELECT id, fecha_apertura FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura DESC LIMIT 1",
+      [user.empresa_id]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
+      if (row) {
+        setSesionActivaId(row.id)
+        const h = row.fecha_apertura.length >= 16 ? row.fecha_apertura.substring(11, 16) : ''
+        setSesionActivaHora(h || null)
+      } else {
+        setSesionActivaId(null)
+        setSesionActivaHora(null)
+        setDestinoCobro('TESORERIA')
+      }
+    }).catch(() => { setSesionActivaId(null); setSesionActivaHora(null) })
+  }, [isOpen, user?.empresa_id])
+
   // Préstamos con saldo pendiente — incluye vencimientoInicial si no está en vencimientos
   const effectiveVencimientos: VencimientoVenta[] = vencimientoInicial && !vencimientos.some((v) => v.id === vencimientoInicial.id)
     ? [...vencimientos, vencimientoInicial]
@@ -147,6 +172,9 @@ export function PagoFacturaModal({
     setMontoSafStr('')
     setMicroBalance(null)
     setLoadingDiferencial(false)
+    setDestinoCobro('CAJA')
+    setSesionActivaId(null)
+    setSesionActivaHora(null)
     onClose()
   }
 
@@ -326,6 +354,7 @@ export function PagoFacturaModal({
               empresa_id: user.empresa_id,
               procesado_por: user.id,
               procesado_por_nombre: user.nombre,
+              sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
               aplicarSaf: usarSaf && montoSafNum > 0,
               montoSaf: usarSaf ? montoSafNum : undefined,
               safOrigenRefs: usarSaf ? [`PAG-${factura.nro_factura}`] : undefined,
@@ -356,6 +385,7 @@ export function PagoFacturaModal({
               empresa_id: user.empresa_id,
               procesado_por: user.id,
               procesado_por_nombre: user.nombre,
+              sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
               aplicarSaf: usarSaf && montoSafNum > 0,
               montoSaf: usarSaf ? montoSafNum : undefined,
               safOrigenRefs: usarSaf ? [`PAG-${factura.nro_factura}`] : undefined,
@@ -390,6 +420,7 @@ export function PagoFacturaModal({
             empresa_id: user.empresa_id,
             procesado_por: user.id,
             procesado_por_nombre: user.nombre,
+            sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
             aplicarSaf: usarSaf && montoSafNum > 0,
             montoSaf: usarSaf ? montoSafNum : undefined,
             safOrigenRefs: usarSaf ? [`PAG-${factura.nro_factura}`] : undefined,
@@ -604,6 +635,47 @@ export function PagoFacturaModal({
           </div>
         ) : null}
 
+        {/* Selector destino del cobro */}
+        <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">¿Dónde ingresa este cobro?</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setDestinoCobro('CAJA')}
+              disabled={!sesionActivaId}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                destinoCobro === 'CAJA'
+                  ? 'bg-green-600 text-white border-green-600'
+                  : 'bg-background text-muted-foreground border-input hover:bg-muted'
+              }`}
+            >
+              <CashRegister size={13} weight="fill" />
+              Sesión de caja
+            </button>
+            <button
+              type="button"
+              onClick={() => setDestinoCobro('TESORERIA')}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium border transition-colors ${
+                destinoCobro === 'TESORERIA'
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-background text-muted-foreground border-input hover:bg-muted'
+              }`}
+            >
+              <Vault size={13} weight="fill" />
+              Tesorería
+            </button>
+          </div>
+          {destinoCobro === 'CAJA' && sesionActivaId && sesionActivaHora && (
+            <p className="text-xs text-green-700">✓ Sesión activa desde las {sesionActivaHora}</p>
+          )}
+          {!sesionActivaId && (
+            <p className="text-xs text-amber-600">Sin sesión de caja abierta — el cobro irá a Tesorería.</p>
+          )}
+          {destinoCobro === 'TESORERIA' && sesionActivaId && (
+            <p className="text-xs text-muted-foreground">Este cobro no afectará la sesión de caja activa.</p>
+          )}
+        </div>
+
         <form onSubmit={handleSubmit} className="space-y-4">
 
           {/* Fecha del abono */}
@@ -685,14 +757,7 @@ export function PagoFacturaModal({
               ))}
             </NativeSelect>
 
-            {/* Aviso efectivo */}
-            {metodoSeleccionado?.tipo === 'EFECTIVO' && (
-              <div className="p-2 rounded-md bg-blue-50 border border-blue-200">
-                <p className="text-xs text-blue-700">
-                  Este cobro es en efectivo. Si querés registrarlo en caja, hacelo desde el módulo POS con "Ingreso de efectivo".
-                </p>
-              </div>
-            )}
+
           </div>
 
           {/* Monto */}
