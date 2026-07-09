@@ -3,7 +3,7 @@ import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
-import { localNow, todayStr } from '@/lib/dates'
+import { localNow, todayStr, VE_OFFSET } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import Decimal from 'decimal.js'
@@ -318,7 +318,7 @@ export async function aplicarPagoFacturaEnTx(
   if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto debe ser mayor a 0')
 
-  const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
+  const fechaDoc = fechaPago ? `${fechaPago}T00:00:00${VE_OFFSET}` : now
 
   // 0. Obtener UUID de moneda
   const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
@@ -552,7 +552,7 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
   await db.writeTransaction(async (tx) => {
     const now = localNow()
     const { venta_id, cliente_id, empresa_id, procesado_por, tasa } = params
-    const fechaDoc = params.fechaPago ? `${params.fechaPago}T00:00:00` : now
+    const fechaDoc = params.fechaPago ? `${params.fechaPago}T00:00:00${VE_OFFSET}` : now
     const tasaD = new Decimal(tasa)
 
     if (params.aplicarSaf && params.montoSaf && params.montoSaf > 0) {
@@ -1051,7 +1051,7 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
-    const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
+    const fechaDoc = fechaPago ? `${fechaPago}T00:00:00${VE_OFFSET}` : now
 
     // 1. Leer el vencimiento
     const vencResult = await tx.execute(
