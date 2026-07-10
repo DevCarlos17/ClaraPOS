@@ -680,7 +680,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 <span className="text-muted-foreground">Cobros Anteriores (CxC)</span>
                 <div className="text-right">
                   <div className="text-blue-600">
-                    {formatBs(totalCobrosBsEquiv > 0.001 ? totalCobrosBsEquiv : cobrosAnterioresUsd * tasaPromedio)}
+                    {formatBs(tasaPromedio > 0 ? cobrosAnterioresUsd * tasaPromedio : totalCobrosBsEquiv)}
                   </div>
                   <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
                 </div>
