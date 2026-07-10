@@ -293,6 +293,14 @@ export interface AplicarPagoEnTxParams extends Omit<PagoFacturaParams, 'procesad
    * Default: false (comportamiento normal de CxC standalone).
    */
   skipBankAndAccounting?: boolean
+  /**
+   * true cuando el pago es una asignación interna del excedente POS (SAF aplicado
+   * a facturas crédito). Marca el registro en pagos con is_pos_saf_allocation = 1
+   * y omite el movimiento_metodo_cobro (COBRO) para evitar doble conteo en el
+   * cuadre de caja — el efectivo ya fue contabilizado en el pago de la venta original.
+   * Default: false.
+   */
+  isPosAllocation?: boolean
 }
 
 /**
@@ -313,6 +321,7 @@ export async function aplicarPagoFacturaEnTx(
     fechaPago, referencia, empresa_id, procesado_por,
     procesado_por_nombre = null, sesion_caja_id,
     skipBankAndAccounting = false,
+    isPosAllocation = false,
   } = params
 
   if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
@@ -356,20 +365,26 @@ export async function aplicarPagoFacturaEnTx(
   }
 
   // 4. INSERT pago
+  // is_pos_saf_allocation = 1 indica que este pago es una asignación interna del
+  // excedente POS — el efectivo ya entró con la venta original y NO debe sumarse
+  // al total del método de pago ni al saldo esperado de caja.
   const pagoId = uuidv4()
   await tx.execute(
-    `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre, is_pos_saf_allocation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       pagoId, venta_id, cliente_id, metodo_cobro_id, monedaId,
       toStorageString(tasaD), toStorageString(montoD), toStorageString(montoUsd),
       referencia ?? null, sesion_caja_id ?? null, fechaDoc,
       empresa_id, now, procesado_por, procesado_por_nombre ?? null,
+      isPosAllocation ? 1 : 0,
     ]
   )
 
-  // Crear movimiento_metodo_cobro (origen COBRO: registra el ingreso en cuadre de caja)
-  if (montoUsd.gt(0)) {
+  // Crear movimiento_metodo_cobro (origen COBRO) solo para cobros CxC standalone.
+  // Cuando isPosAllocation=true el efectivo ya ingresó con la venta original;
+  // omitir el movimiento evita doble conteo en el cuadre de caja.
+  if (montoUsd.gt(0) && !isPosAllocation) {
     await tx.execute(
       `INSERT INTO movimientos_metodo_cobro
          (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,

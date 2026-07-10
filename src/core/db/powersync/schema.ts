@@ -657,6 +657,7 @@ const pagos = new Table(
     reversed_by: column.text,
     reversed_reason: column.text,
     procesado_por_nombre: column.text,
+    is_pos_saf_allocation: column.integer,
   },
   { indexes: {} }
 )

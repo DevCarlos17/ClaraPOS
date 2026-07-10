@@ -360,6 +360,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      LEFT JOIN ventas v ON pg.venta_id = v.id
      WHERE ${where}
+       AND (pg.is_pos_saf_allocation IS NULL OR pg.is_pos_saf_allocation = 0)
      GROUP BY mp.id
      ORDER BY total_usd DESC`,
     params
@@ -859,7 +860,9 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
     hasSession ? filters!.sesionCajaIds : []
   )
 
-  // Pagos efectivo USD (monto_usd = valor en USD)
+  // Pagos efectivo USD (monto_usd = valor en USD).
+  // Excluye asignaciones internas de excedente POS (is_pos_saf_allocation = 1)
+  // porque ese efectivo ya se contabilizó en el pago de la venta original.
   const { data: dataPagosUsd } = useQuery(
     hasSession
       ? `SELECT COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total
@@ -867,12 +870,14 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+           AND (p.is_pos_saf_allocation IS NULL OR p.is_pos_saf_allocation = 0)`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
 
-  // Pagos efectivo VES (monto = valor nativo en Bs.)
+  // Pagos efectivo VES (monto = valor nativo en Bs.).
+  // Excluye asignaciones internas de excedente POS (is_pos_saf_allocation = 1).
   const { data: dataPagosVes } = useQuery(
     hasSession
       ? `SELECT COALESCE(SUM(CAST(p.monto AS REAL)), 0) as total
@@ -880,7 +885,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+           AND (p.is_pos_saf_allocation IS NULL OR p.is_pos_saf_allocation = 0)`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -968,6 +974,7 @@ export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre
          JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
          LEFT JOIN monedas mon ON mp.moneda_id = mon.id
          WHERE ${where} AND mp.nombre = ?
+           AND (pg.is_pos_saf_allocation IS NULL OR pg.is_pos_saf_allocation = 0)
          ORDER BY pg.fecha DESC`
       : '',
     filters && metodoNombre ? [...params, metodoNombre] : []

@@ -845,6 +845,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                     // El efectivo ya ingresó en la venta; omitir banco/contabilidad
                     // para evitar doble conteo en movimientos_bancarios y libro_contable
                     skipBankAndAccounting: true,
+                    // Marcar como asignación interna de excedente POS: el registro en
+                    // pagos queda para el historial de la factura pero se excluye del
+                    // total de método de pago y saldo esperado de caja.
+                    isPosAllocation: true,
                   },
                   now
                 )
