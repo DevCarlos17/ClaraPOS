@@ -1588,32 +1588,36 @@ export interface CobroViaPOS {
 export function useCobrosViaPOS(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [whereMmc, paramsMmc] = useMemo(
-    () => filters ? buildMovsWhere(filters, empresaId, 'mmc') : ['1=0', [] as unknown[]],
+  // Usa buildCuadreWhere (filtra por p.sesion_caja_id / p.fecha) en lugar de
+  // buildMovsWhere (mmc) para evitar acumulación de registros históricos en mmc.
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'p') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
 
   const { data, isLoading } = useQuery(
     filters
-      ?        `SELECT
-           mmc.metodo_cobro_id,
+      ? `SELECT
+           p.metodo_cobro_id,
            mc.nombre,
            mc.tipo,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
-             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
-           COALESCE(SUM(CAST(mmc.saldo_nuevo AS REAL)), 0) AS cobros_usd,
+             THEN CAST(p.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
+           COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) AS cobros_usd,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
-             THEN CAST(mmc.monto AS REAL)
-             ELSE 0 END), 0) AS cobros_bs_equiv
-         FROM movimientos_metodo_cobro mmc
-         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+             THEN CAST(p.monto AS REAL) ELSE 0 END), 0) AS cobros_bs_equiv
+         FROM pagos p
+         JOIN ventas v ON p.venta_id = v.id
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
-         WHERE mmc.origen = 'COBRO' AND ${whereMmc}
-         GROUP BY mmc.metodo_cobro_id, mc.nombre, moneda
+         WHERE v.tipo = 'CREDITO'
+           AND (p.is_reversed IS NULL OR p.is_reversed = 0)
+           AND ${where}
+         GROUP BY p.metodo_cobro_id, mc.nombre, mc.tipo, moneda
          ORDER BY cobros_bs DESC, cobros_usd DESC`
       : '',
-    filters ? paramsMmc : []
+    filters ? params : []
   )
 
   const porMetodo: CobroViaPOS[] = (data ?? []).map((row: Record<string, unknown>) => {
@@ -1668,7 +1672,6 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
     () => filters ? buildCuadreWhere(filters, empresaId, 'p') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
-
   const { data, isLoading } = useQuery(
     filters
       ? `SELECT
