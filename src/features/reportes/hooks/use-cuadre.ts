@@ -1605,8 +1605,11 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(p.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
            COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) AS cobros_usd,
-           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
-             THEN CAST(p.monto AS REAL) ELSE 0 END), 0) AS cobros_bs_equiv
+           COALESCE(SUM(CASE
+             WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
+               THEN CAST(p.monto AS REAL)
+               ELSE CAST(p.monto_usd AS REAL) * CAST(COALESCE(p.tasa, '0') AS REAL)
+           END), 0) AS cobros_bs_equiv
          FROM pagos p
          JOIN ventas v ON p.venta_id = v.id
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
