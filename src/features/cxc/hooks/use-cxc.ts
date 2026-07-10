@@ -374,10 +374,11 @@ export async function aplicarPagoFacturaEnTx(
       `INSERT INTO movimientos_metodo_cobro
          (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
           doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         uuidv4(), empresa_id, metodo_cobro_id,
         toStorageString(montoD),    // monto = nativo (Bs para pagos BS, USD para pagos USD)
+        toStorageString(montoUsd),  // saldo_nuevo = USD equivalente (para lookup sin JOIN a pagos)
         venta_id,
         `PAG-${venta.nro_factura}`, `Pago CxC fac. ${venta.nro_factura}`,
         sesion_caja_id ?? null, fechaDoc, now, procesado_por,

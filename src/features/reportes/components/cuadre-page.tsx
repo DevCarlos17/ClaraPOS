@@ -1233,7 +1233,7 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
     const montoNum = parseFloat(item.monto)
     const montoBs = item.metodoMoneda === 'BS' ? montoNum : (tasa > 0 ? montoNum * tasa : 0)
     const montoDisplay = item.metodoMoneda === 'BS' ? formatBs(montoNum) : formatUsd(montoNum)
-    return { hora, fecha, tasa, montoNum, montoBs, montoDisplay }
+    return { hora, fecha, tasa, montoBs, montoDisplay }
   }
 
   return (
@@ -1269,7 +1269,7 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
             ) : groups.map((group) => {
               const multi = group.rows.length > 1
               return group.rows.map((item, idx) => {
-                const { hora, fecha, tasa, montoNum, montoBs, montoDisplay } = renderCell(item)
+                const { hora, fecha, tasa, montoBs, montoDisplay } = renderCell(item)
                 const isLast = idx === group.rows.length - 1
 
                 // Subtotal para grupos de 2+ facturas (después de la última fila del grupo)

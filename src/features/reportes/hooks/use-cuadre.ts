@@ -1595,27 +1595,20 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
 
   const { data, isLoading } = useQuery(
     filters
-      ? `SELECT
+      ?        `SELECT
            mmc.metodo_cobro_id,
            mc.nombre,
            mc.tipo,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
-           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
-             THEN COALESCE(CAST(p.monto_usd AS REAL), CAST(mmc.saldo_nuevo AS REAL))
-             ELSE CAST(mmc.monto AS REAL) END), 0) AS cobros_usd,
+           COALESCE(SUM(CAST(mmc.saldo_nuevo AS REAL)), 0) AS cobros_usd,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
              THEN CAST(mmc.monto AS REAL)
-             ELSE CAST(mmc.monto AS REAL) * CAST(COALESCE(p.tasa, '0') AS REAL) END), 0) AS cobros_bs_equiv
+             ELSE 0 END), 0) AS cobros_bs_equiv
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
-         LEFT JOIN pagos p ON p.venta_id = mmc.doc_origen_id
-           AND p.metodo_cobro_id = mmc.metodo_cobro_id
-           AND p.sesion_caja_id = mmc.sesion_caja_id
-           AND p.empresa_id = mmc.empresa_id
-           AND (p.is_reversed IS NULL OR p.is_reversed = 0)
          WHERE mmc.origen = 'COBRO' AND ${whereMmc}
          GROUP BY mmc.metodo_cobro_id, mc.nombre, moneda
          ORDER BY cobros_bs DESC, cobros_usd DESC`
