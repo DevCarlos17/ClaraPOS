@@ -360,7 +360,6 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      LEFT JOIN ventas v ON pg.venta_id = v.id
      WHERE ${where}
-       AND (pg.is_pos_saf_allocation IS NULL OR pg.is_pos_saf_allocation = 0)
      GROUP BY mp.id
      ORDER BY total_usd DESC`,
     params
@@ -870,8 +869,7 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
-           AND (p.is_pos_saf_allocation IS NULL OR p.is_pos_saf_allocation = 0)`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -885,8 +883,7 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
-           AND (p.is_pos_saf_allocation IS NULL OR p.is_pos_saf_allocation = 0)`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -974,7 +971,6 @@ export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre
          JOIN metodos_cobro mp ON pg.metodo_cobro_id = mp.id
          LEFT JOIN monedas mon ON mp.moneda_id = mon.id
          WHERE ${where} AND mp.nombre = ?
-           AND (pg.is_pos_saf_allocation IS NULL OR pg.is_pos_saf_allocation = 0)
          ORDER BY pg.fecha DESC`
       : '',
     filters && metodoNombre ? [...params, metodoNombre] : []
@@ -1793,4 +1789,50 @@ export function useVentasFinancieras(filters: CuadreFilters | null) {
   }))
 
   return { items, isLoading }
+}
+
+// ─── Resumen por tipo de venta (preserva naturaleza original) ──
+/**
+ * Calcula el total facturado separado por tipo ORIGINAL de la factura.
+ * A diferencia de totalContado = totalFacturado - cxcPendiente (que cambia
+ * cuando se cobra una factura crédito), este hook usa ventas.tipo directamente
+ * para que el Total Crédito siempre refleje las facturas emitidas a crédito,
+ * independientemente de si ya fueron cobradas en esta sesión.
+ */
+export function useResumenTiposVenta(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId) : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    `SELECT
+       COALESCE(SUM(CASE WHEN tipo = 'CONTADO'
+         THEN CAST(total_usd AS REAL) + CAST(COALESCE(total_igtf_usd, '0') AS REAL)
+         ELSE 0 END), 0) as contado_usd,
+       COALESCE(SUM(CASE WHEN tipo = 'CONTADO'
+         THEN CAST(total_bs AS REAL) + CAST(COALESCE(total_igtf_bs, '0') AS REAL)
+         ELSE 0 END), 0) as contado_bs,
+       COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
+         THEN CAST(total_usd AS REAL) ELSE 0 END), 0) as credito_usd,
+       COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
+         THEN CAST(total_bs AS REAL) ELSE 0 END), 0) as credito_bs
+     FROM ventas
+     WHERE ${where}`,
+    params
+  )
+
+  const row = (data?.[0] ?? {}) as {
+    contado_usd: number; contado_bs: number
+    credito_usd: number; credito_bs: number
+  }
+  return {
+    contadoUsd: Number(Number(row.contado_usd ?? 0).toFixed(2)),
+    contadoBs:  Number(Number(row.contado_bs  ?? 0).toFixed(2)),
+    creditoUsd: Number(Number(row.credito_usd ?? 0).toFixed(2)),
+    creditoBs:  Number(Number(row.credito_bs  ?? 0).toFixed(2)),
+    isLoading,
+  }
 }

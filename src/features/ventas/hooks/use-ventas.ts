@@ -650,10 +650,30 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
     // 5. Por cada pago: calcular monto_usd e insertar
     let totalAbonadoUsd = new Decimal(0)
+    const isSafWithAssignments = discrepancy?.mode === 'SAF' && !!discrepancy.invoiceAssignments?.length
     for (const pago of pagos) {
       const pagoId = uuidv4()
       const montoUsd = pago.moneda === 'BS' ? bsToUsd(pago.monto, tasa) : new Decimal(pago.monto)
       const pagoMonedaId = pago.moneda === 'BS' ? monedaBsId : monedaUsdId
+
+      // Cuando el excedente SAF se aplica a facturas pendientes, capear el monto de
+      // este pagos al monto de la factura actual (no al pago completo del cliente).
+      // Esto evita doble conteo: el pago de la factura de contado queda en su monto
+      // exacto, y el excedente se registra por separado con is_pos_saf_allocation = 1.
+      const montoMovVenta = (discrepancy?.mode === 'SAF')
+        ? Decimal.min(montoUsd, Decimal.max(new Decimal(0), totalUsd.minus(totalAbonadoUsd)))
+        : montoUsd
+      // monto nativo del pagos: capeado al monto de la factura en modo SAF-FACTURAS
+      const pagoMontoUsd = isSafWithAssignments ? montoMovVenta : montoUsd
+      const pagoMonto = isSafWithAssignments
+        ? (pago.moneda === 'BS' ? usdToBs(pagoMontoUsd, tasa) : pagoMontoUsd)
+        : new Decimal(pago.monto)
+
+      // No insertar si el monto capeado es cero (factura ya cubierta por pagos anteriores)
+      if (pagoMonto.lte(new Decimal('0.001'))) {
+        totalAbonadoUsd = totalAbonadoUsd.plus(isSafWithAssignments ? pagoMontoUsd : montoUsd)
+        continue
+      }
 
       await tx.execute(
         `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, is_reversed)
@@ -665,8 +685,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           pago.metodo_cobro_id,
           pagoMonedaId,
           toStorageString(tasa),
-          toStorageString(pago.monto),
-          toStorageString(montoUsd),
+          toStorageString(pagoMonto),
+          toStorageString(pagoMontoUsd),
           pago.referencia ?? null,
           sesion_caja_id ?? null,
           now,
@@ -676,13 +696,6 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         ]
       )
 
-      // Crear movimiento_metodo_cobro por cada pago.
-      // En modo SAF el pago cubre venta + cobranza: solo registrar la porción de la
-      // venta aquí (cap en totalUsd). La parte de cobranza se registra en el SAF-APL
-      // loop con origen='COBRO' para evitar double-counting en el cuadre de caja.
-      const montoMovVenta = discrepancy?.mode === 'SAF'
-        ? Decimal.min(montoUsd, Decimal.max(new Decimal(0), totalUsd.minus(totalAbonadoUsd)))
-        : montoUsd
       if (montoMovVenta.gt(0)) {
         const movMetodoId = uuidv4()
         await tx.execute(
@@ -706,7 +719,9 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         )
       }
 
-      totalAbonadoUsd = totalAbonadoUsd.plus(montoUsd)
+      // Acumular el monto capeado (no el pago completo) para que el próximo método
+      // de pago sepa cuánto queda del monto de la factura por cubrir.
+      totalAbonadoUsd = totalAbonadoUsd.plus(isSafWithAssignments ? pagoMontoUsd : montoUsd)
     }
 
     // 5b. VUELTO: registrar el cambio entregado al cliente como EGRESO inmutable.

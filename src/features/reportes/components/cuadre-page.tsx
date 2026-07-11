@@ -35,6 +35,7 @@ import {
   useVentasFinancieras,
   useMovimientosEfectivoCaja,
   useCobranzasCxCCaja,
+  useResumenTiposVenta,
   type MovimientoEfectivoDetalle,
   type CobranzaCxCItem,
   type CuadreFilters,
@@ -179,6 +180,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { metodos: todosMetodos } = usePagosPorMetodo(activeFilters)
   const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
+  const { contadoUsd, contadoBs, creditoUsd, creditoBs } = useResumenTiposVenta(activeFilters)
   // Detalle individual de movimientos para las tablas al pie del cuadre
   const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
   const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
@@ -235,15 +237,11 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     : 0
   // Fondo apertura en Bs. nativos convertido a USD equivalente (para el total neto USD)
   const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
-  // "Total Contado" = facturas cobradas al momento (sin importar metodo de pago).
-  // Formula: Total General facturado - pendiente de cobro (CxC)
-  // Incluye avances/prestamos ya que tambien son parte de lo cobrado en el dia.
-  const totalContadoUsd = Number(Math.max(0,
-    totalesFiscales.totalFacturadoUsd + totalesFiscales.totalIgtfUsd - cxcTotalUsd
-  ).toFixed(2))
-  const totalContadoBs  = Number(Math.max(0,
-    totalesFiscales.totalFacturadoBs  + totalesFiscales.totalIgtfBs  - cxcTotalBs
-  ).toFixed(2))
+  // "Total Contado" = facturas emitidas originalmente como CONTADO (tipo='CONTADO').
+  // Usa el tipo original de la factura en lugar de la fórmula totalFacturado - cxcPendiente,
+  // que distorsionaba el resultado cuando una factura crédito se cobraba en la misma sesión.
+  const totalContadoUsd = contadoUsd
+  const totalContadoBs  = contadoBs
 
   // totalNeto incluye: efectivo USD esperado (apertura_usd + ventas + movimientos)
   //                  + Bs. nativos de apertura convertidos a USD
@@ -666,12 +664,12 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 </div>
               </div>
 
-              {/* Total Credito (CxC) */}
+              {/* Total Credito (CxC) — muestra el total emitido a crédito (tipo original) */}
               <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Total Credito (CxC)</span>
                 <div className="text-right">
-                  <div>{formatBs(cxcTotalBs)}</div>
-                  <div className="text-xs text-muted-foreground">{formatUsd(cxcTotalUsd)}</div>
+                  <div>{formatBs(creditoBs)}</div>
+                  <div className="text-xs text-muted-foreground">{formatUsd(creditoUsd)}</div>
                 </div>
               </div>
 
