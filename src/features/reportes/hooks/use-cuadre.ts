@@ -1813,7 +1813,8 @@ export function useResumenTiposVenta(filters: CuadreFilters | null) {
          THEN CAST(total_usd AS REAL) + CAST(COALESCE(total_igtf_usd, '0') AS REAL)
          ELSE 0 END), 0) as contado_usd,
        COALESCE(SUM(CASE WHEN tipo = 'CONTADO'
-         THEN CAST(total_bs AS REAL) + CAST(COALESCE(total_igtf_bs, '0') AS REAL)
+         THEN CAST(total_bs AS REAL)
+              + CAST(COALESCE(total_igtf_usd, '0') AS REAL) * CAST(COALESCE(tasa, '0') AS REAL)
          ELSE 0 END), 0) as contado_bs,
        COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
          THEN CAST(total_usd AS REAL) ELSE 0 END), 0) as credito_usd,
