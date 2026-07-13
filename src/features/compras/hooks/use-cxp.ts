@@ -65,6 +65,11 @@ export interface PagoCxPParams {
   referencia?: string
   empresa_id: string
   usuario_id: string
+  /**
+   * ID de la sesión de caja activa donde se registra el pago.
+   * null / undefined = el pago va a Tesorería (no aparece en cuadre de caja).
+   */
+  sesion_caja_id?: string | null
 }
 
 // ─── Hooks de lectura ────────────────────────────────────────
@@ -124,9 +129,10 @@ export function useFacturasCompraPendientes(proveedorId: string | null) {
  */
 export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
   const {
-    factura_compra_id, proveedor_id, banco_empresa_id,
+    factura_compra_id, proveedor_id, metodo_cobro_id, banco_empresa_id,
     moneda, tasa, tasaBcvCompra, tasaInternaPago, monto,
     fechaPago, referencia, empresa_id, usuario_id,
+    sesion_caja_id = null,
   } = params
 
   if (tasa <= 0) throw new Error('La tasa debe ser mayor a 0')
@@ -221,6 +227,25 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
     )
     // NOTA: saldo_actual de proveedores se actualiza via trigger en Supabase.
     // No hacer UPDATE directo aqui — el trigger lo bloquea (P0001).
+
+    // 7b. Movimiento de método de cobro (para cuadre de caja cuando hay sesión activa)
+    // tipo='EGRESO' — el dinero SALE de caja hacia el proveedor.
+    // sesion_caja_id=null → va a Tesorería, no aparece en el cuadre de sesión.
+    await tx.execute(
+      `INSERT INTO movimientos_metodo_cobro
+         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresa_id, metodo_cobro_id,
+        toStorageString(dMonto),   // monto nativo (Bs si moneda='BS', USD si moneda='USD')
+        factura_compra_id,
+        referencia || `PAG-${factura.nro_factura}`,
+        `Pago CxP fac. ${factura.nro_factura}`,
+        sesion_caja_id ?? null,
+        now, now, usuario_id,
+      ]
+    )
 
     // 8. Movimiento bancario + asientos contables
     try {
