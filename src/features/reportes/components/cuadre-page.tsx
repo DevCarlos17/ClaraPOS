@@ -221,7 +221,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     (m) => m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'
   )
   const egresosDetalle = movsEfectivoDetalle.filter(
-    (m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA'
+    (m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA' || m.origen === 'PAGO_PROVEEDOR'
   )
   const vueltosDetalle = movsEfectivoDetalle.filter(
     (m) => m.origen === 'VUELTO'
@@ -810,7 +810,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
                 Movimientos Manuales de Caja
               </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Ingresos */}
                 {ingresosDetalle.length > 0 && (
                   <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
@@ -834,7 +834,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   </div>
                 )}
 
-                {/* Egresos manuales */}
+                {/* Salidas de caja: egresos manuales + pagos a proveedores */}
                 {egresosDetalle.length > 0 && (
                   <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
                     <button
@@ -844,7 +844,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                     >
                       <div className="flex items-center gap-2">
                         <ArrowFatLineDown size={15} weight="fill" className="text-red-600" />
-                        <span className="text-sm font-semibold">Egresos Manuales</span>
+                        <span className="text-sm font-semibold">Salidas de Caja</span>
                         <span className="text-xs text-muted-foreground">({egresosDetalle.length})</span>
                       </div>
                       {showEgresos
@@ -1153,19 +1153,25 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
             const monto = m.metodo_moneda === 'BS'
               ? formatBs(parseFloat(m.monto))
               : formatUsd(parseFloat(m.monto))
-            const isTesoreria = m.origen === 'INGRESO_TESORERIA' || m.origen === 'EGRESO_TESORERIA'
-            return (
-              <tr key={m.id} className="border-b last:border-0 hover:bg-muted/20">
-                <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-1.5">
-                    {isTesoreria && (
-                      <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
-                        Tesorería
-                      </span>
-                    )}
-                    <span className="truncate max-w-[180px]">{label}</span>
-                  </div>
-                </td>
+                    const isTesoreria = m.origen === 'INGRESO_TESORERIA' || m.origen === 'EGRESO_TESORERIA'
+                    const isCxP = m.origen === 'PAGO_PROVEEDOR'
+                    return (
+                      <tr key={m.id} className="border-b last:border-0 hover:bg-muted/20">
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1.5">
+                            {isTesoreria && (
+                              <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
+                                Tesorería
+                              </span>
+                            )}
+                            {isCxP && (
+                              <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-orange-100 text-orange-700 font-medium">
+                                CxP
+                              </span>
+                            )}
+                            <span className="truncate max-w-[180px]">{label}</span>
+                          </div>
+                        </td>
                 <td className="px-3 py-2.5 text-muted-foreground">{m.metodo_nombre}</td>
                 <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
                   {monto}
