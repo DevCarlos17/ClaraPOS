@@ -569,6 +569,8 @@ export interface PagoGastoParams {
   referencia?: string
   empresa_id: string
   usuario_id: string
+  /** ID de la sesión de caja activa. null = va a Tesorería (no aparece en cuadre). */
+  sesion_caja_id?: string | null
 }
 
 export interface ReversarPagoGastoParams {
@@ -624,9 +626,10 @@ export function useAbonosGasto(gastoId: string) {
  */
 export async function registrarPagoGasto(params: PagoGastoParams): Promise<void> {
   const {
-    gasto_id, proveedor_id, banco_empresa_id,
+    gasto_id, proveedor_id, metodo_cobro_id, banco_empresa_id,
     moneda, tasa, tasaInternaPago, monto,
     fechaPago, referencia, empresa_id, usuario_id,
+    sesion_caja_id = null,
   } = params
 
   if (tasa <= 0) throw new Error('La tasa debe ser mayor a 0')
@@ -714,6 +717,23 @@ export async function registrarPagoGasto(params: PagoGastoParams): Promise<void>
         toStorageString(montoUsdInterno),
         fechaPago,
         now, usuario_id,
+      ]
+    )
+
+    // Movimiento de método de cobro (para cuadre de caja si hay sesión activa)
+    await tx.execute(
+      `INSERT INTO movimientos_metodo_cobro
+         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresa_id, metodo_cobro_id,
+        toStorageString(new Decimal(monto)),
+        gasto_id,
+        ref,
+        `Pago gasto ${gasto.nro_gasto}`,
+        sesion_caja_id ?? null,
+        now, now, usuario_id,
       ]
     )
 

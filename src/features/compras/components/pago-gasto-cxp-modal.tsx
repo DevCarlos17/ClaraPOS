@@ -8,6 +8,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { CashRegister, Vault } from '@phosphor-icons/react'
 import { registrarPagoGasto, type GastoPendiente } from '@/features/contabilidad/hooks/use-gastos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
@@ -40,6 +41,37 @@ export function PagoGastoCxpModal({
   const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
 
+  // ── Destino del pago: sesión de caja activa o Tesorería ──────────────────
+  const [destinoCobro, setDestinoCobro] = useState<'CAJA' | 'TESORERIA'>('TESORERIA')
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null)
+  const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open || !user?.empresa_id) return
+    db.execute(
+      "SELECT id, fecha_apertura FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura DESC LIMIT 1",
+      [user.empresa_id]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
+      if (row) {
+        setSesionActivaId(row.id)
+        const hora = new Date(row.fecha_apertura).toLocaleTimeString('es', {
+          hour: '2-digit', minute: '2-digit',
+        })
+        setSesionActivaHora(hora)
+        setDestinoCobro('CAJA')
+      } else {
+        setSesionActivaId(null)
+        setSesionActivaHora(null)
+        setDestinoCobro('TESORERIA')
+      }
+    }).catch(() => {
+      setSesionActivaId(null)
+      setSesionActivaHora(null)
+      setDestinoCobro('TESORERIA')
+    })
+  }, [open, user?.empresa_id])
+
   useEffect(() => {
     if (!user?.empresa_id || !fechaPago) return
     // DATE(fecha) strips the time component so that tasas creadas hoy (stored as
@@ -66,6 +98,9 @@ export function PagoGastoCxpModal({
     setReferencia('')
     setTasaPagoStr('')
     setTasaInternaNum(0)
+    setDestinoCobro('TESORERIA')
+    setSesionActivaId(null)
+    setSesionActivaHora(null)
     onClose()
   }
 
@@ -121,6 +156,7 @@ export function PagoGastoCxpModal({
         referencia: referencia || undefined,
         empresa_id: user.empresa_id,
         usuario_id: user.id,
+        sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
       })
       toast.success(`Pago de ${formatUsd(montoUsd)} registrado al gasto ${gasto!.nro_gasto}`)
       handleClose()
@@ -165,6 +201,47 @@ export function PagoGastoCxpModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+
+          {/* ── ¿Dónde sale este pago? ── */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground">¿Dónde sale este pago?</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={!sesionActivaId}
+                onClick={() => setDestinoCobro('CAJA')}
+                className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-sm font-medium transition-colors
+                  ${destinoCobro === 'CAJA'
+                    ? 'bg-green-600 text-white border-green-600'
+                    : 'bg-background border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed'}`}
+              >
+                <CashRegister size={15} />
+                Sesión de caja
+              </button>
+              <button
+                type="button"
+                onClick={() => setDestinoCobro('TESORERIA')}
+                className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-sm font-medium transition-colors
+                  ${destinoCobro === 'TESORERIA'
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-background border-border hover:bg-muted'}`}
+              >
+                <Vault size={15} />
+                Tesorería
+              </button>
+            </div>
+            {destinoCobro === 'CAJA' && sesionActivaHora && (
+              <p className="text-xs text-green-600">
+                ✓ Sesión activa desde las {sesionActivaHora}
+              </p>
+            )}
+            {!sesionActivaId && (
+              <p className="text-xs text-amber-600">
+                Sin sesión de caja abierta — el pago irá a Tesorería.
+              </p>
+            )}
+          </div>
+
           {/* Fecha del abono */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground">Fecha del abono</label>
