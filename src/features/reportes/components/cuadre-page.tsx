@@ -687,19 +687,23 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               </div>
 
               {/* Propinas — solo si hay */}
-              {(propinaBs > 0.001 || propinaUsd > 0.001) && (
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">Propinas</span>
-                  <div className="text-right">
-                    {propinaBs > 0.001 && (
-                      <div className="text-purple-600">{formatBs(propinaBs)}</div>
-                    )}
-                    {propinaUsd > 0.001 && (
-                      <div className="text-xs text-muted-foreground">{formatUsd(propinaUsd)}</div>
-                    )}
+              {(propinaBs > 0.001 || propinaUsd > 0.001) && (() => {
+                // Calcular el total en Bs y en USD para mostrar ambos.
+                // propinaBs = suma nativa de propinas en métodos VES
+                // propinaUsd = suma nativa de propinas en métodos USD
+                // Equivalente total: convertir cada porción con tasaPromedio
+                const totalPropinaBs = propinaBs + (tasaPromedio > 0 ? propinaUsd * tasaPromedio : 0)
+                const totalPropinaUsd = propinaUsd + (tasaPromedio > 0 ? propinaBs / tasaPromedio : 0)
+                return (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Propinas</span>
+                    <div className="text-right">
+                      <div className="text-purple-600">{formatBs(totalPropinaBs)}</div>
+                      <div className="text-xs text-muted-foreground">{formatUsd(totalPropinaUsd)}</div>
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
 
               {/* Diferencial Cambiario */}
               <div className="flex justify-between text-sm">
