@@ -349,6 +349,7 @@ export function CuadreConteoFisico({
               {/* Conversion + difference */}
               {hasFisico && (
                 <div className="flex items-center justify-between text-xs pt-1 border-t">
+                  {/* Equivalente en la otra moneda */}
                   {m.moneda === 'BS' && efectivaTasa > 0 ? (
                     <span className="text-muted-foreground">{formatUsd(fisicoUsd)} equiv.</span>
                   ) : m.moneda !== 'BS' && tasaParaEquiv > 0 ? (
@@ -356,10 +357,28 @@ export function CuadreConteoFisico({
                   ) : (
                     <span />
                   )}
-                  <span className={`font-semibold tabular-nums ${difColor}`}>
-                    {difUsd > 0.001 ? '+' : ''}
-                    {formatUsd(difUsd)} dif.
-                  </span>
+                  {/* Diferencia: primaria en la moneda del método, secundaria en la otra */}
+                  <div className={`text-right font-semibold tabular-nums ${difColor}`}>
+                    {m.moneda === 'BS' ? (
+                      <>
+                        <div>{fisicoRaw - sistemaBs > 0.001 ? '+' : ''}{formatBs(fisicoRaw - sistemaBs)} dif.</div>
+                        {efectivaTasa > 0 && (
+                          <div className="font-normal text-[10px] opacity-75">
+                            {difUsd > 0.001 ? '+' : ''}{formatUsd(difUsd)}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <div>{difUsd > 0.001 ? '+' : ''}{formatUsd(difUsd)} dif.</div>
+                        {tasaParaEquiv > 0 && (
+                          <div className="font-normal text-[10px] opacity-75">
+                            {difUsd > 0.001 ? '+' : ''}{formatBs(difUsd * tasaParaEquiv)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -390,21 +409,25 @@ export function CuadreConteoFisico({
                 <span className="font-semibold">Total fisico ingresado</span>
                 <span className="font-bold tabular-nums">{formatUsd(totals.totalFisico)}</span>
               </div>
-              <div className="flex items-center justify-between text-sm mt-1 pt-1 border-t">
-                <span className="font-semibold">Diferencia total</span>
-                <span
-                  className={`font-bold tabular-nums ${
-                    totals.totalFisico - totals.totalSistema > 0.001
-                      ? 'text-green-600'
-                      : totals.totalFisico - totals.totalSistema < -0.001
-                      ? 'text-red-600'
-                      : 'text-green-600'
-                  }`}
-                >
-                  {totals.totalFisico - totals.totalSistema > 0 ? '+' : ''}
-                  {formatUsd(totals.totalFisico - totals.totalSistema)}
-                </span>
-              </div>
+              {(() => {
+                const difTotal = totals.totalFisico - totals.totalSistema
+                const difColor = difTotal > 0.001 ? 'text-green-600' : difTotal < -0.001 ? 'text-red-600' : 'text-green-600'
+                const sign = difTotal > 0 ? '+' : ''
+                const difTotalBs = tasaDelDia > 0 ? difTotal * tasaDelDia : null
+                return (
+                  <div className="flex items-center justify-between text-sm mt-1 pt-1 border-t">
+                    <span className="font-semibold">Diferencia total</span>
+                    <div className={`text-right font-bold tabular-nums ${difColor}`}>
+                      <div>{sign}{formatUsd(difTotal)}</div>
+                      {difTotalBs !== null && (
+                        <div className="font-normal text-xs opacity-75">
+                          {sign}{formatBs(difTotalBs)}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
             </>
           )}
           {!readOnly && (
