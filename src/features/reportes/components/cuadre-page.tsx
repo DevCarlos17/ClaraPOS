@@ -161,7 +161,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // KPI data — shown after consultar
   const { totalVentasUsd, totalVentasBs, facturasCount } = useVentasDelDia(activeFilters)
   const { cxcTotalUsd, cxcTotalBs } = useCxcDelDia(activeFilters)
-  const { items: safItems } = useSafDiario(activeFilters)
+  const { items: safItems, totalUsd: safTotalUsd } = useSafDiario(activeFilters)
 
   // Data for CuadreNetoEsperado
   const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
@@ -685,6 +685,19 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
                 </div>
               </div>
+
+              {/* Cobros por Adelantado (SAF directo) — solo si hay */}
+              {safTotalUsd > 0.001 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Cobros por Adelantado (SAF)</span>
+                  <div className="text-right">
+                    {tasaPromedio > 0 && (
+                      <div className="text-indigo-600">{formatBs(safTotalUsd * tasaPromedio)}</div>
+                    )}
+                    <div className="text-xs text-muted-foreground">{formatUsd(safTotalUsd)}</div>
+                  </div>
+                </div>
+              )}
 
               {/* Propinas — solo si hay */}
               {(propinaBs > 0.001 || propinaUsd > 0.001) && (() => {

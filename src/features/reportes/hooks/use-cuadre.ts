@@ -360,6 +360,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      LEFT JOIN ventas v ON pg.venta_id = v.id
      WHERE ${where}
+       AND pg.venta_id IS NOT NULL
      GROUP BY mp.id
      ORDER BY total_usd DESC`,
     params
@@ -869,7 +870,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+           AND p.venta_id IS NOT NULL`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -883,7 +885,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+           AND p.venta_id IS NOT NULL`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
