@@ -37,6 +37,7 @@ import {
   useCobranzasCxCCaja,
   useResumenTiposVenta,
   usePropinasDelDia,
+  useAnticiposDelDia,
   type MovimientoEfectivoDetalle,
   type CobranzaCxCItem,
   type CuadreFilters,
@@ -183,6 +184,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
   const { contadoUsd, contadoBs, creditoUsd, creditoBs } = useResumenTiposVenta(activeFilters)
   const { propinaBs, propinaUsd } = usePropinasDelDia(activeFilters)
+  const { anticipoUsd, anticipoBsNativo } = useAnticiposDelDia(activeFilters)
   // Detalle individual de movimientos para las tablas al pie del cuadre
   const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
   const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
@@ -685,6 +687,23 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
                 </div>
               </div>
+
+              {/* Cobros por Adelantado (anticipos sin factura) */}
+              {(anticipoUsd > 0.001 || anticipoBsNativo > 0.001) && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Cobros por Adelantado</span>
+                  <div className="text-right">
+                    {anticipoBsNativo > 0.001 && (
+                      <div className="text-indigo-600">{formatBs(anticipoBsNativo)}</div>
+                    )}
+                    {anticipoUsd > 0.001 && (
+                      <div className={anticipoBsNativo > 0.001 ? 'text-xs text-muted-foreground' : 'text-indigo-600'}>
+                        {formatUsd(anticipoUsd)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Cobros por Adelantado (SAF directo) — solo si hay */}
               {safTotalUsd > 0.001 && (

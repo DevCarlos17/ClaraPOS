@@ -1842,6 +1842,45 @@ export function useResumenTiposVenta(filters: CuadreFilters | null) {
   }
 }
 
+// ─── Cobros por adelantado (SAF directo desde POS) ────────────
+/**
+ * Suma los anticipos / saldos a favor registrados en la sesión.
+ * Se identifican como pagos con venta_id IS NULL y cliente_id IS NOT NULL:
+ * el cliente pagó más de lo que debe y el excedente queda a su favor.
+ * El monto está en la moneda nativa del método de pago.
+ */
+export function useAnticiposDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  const { data, isLoading } = useQuery(
+    hasSession
+      ? `SELECT
+           COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total_usd,
+           COALESCE(SUM(CASE WHEN COALESCE(mo.codigo_iso,'USD') = 'VES'
+             THEN CAST(p.monto AS REAL) ELSE 0 END), 0) as total_bs_nativo
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE p.empresa_id = ?
+           AND p.sesion_caja_id IN (${placeholders})
+           AND p.venta_id IS NULL
+           AND p.cliente_id IS NOT NULL
+           AND (p.is_reversed IS NULL OR p.is_reversed = 0)`
+      : '',
+    hasSession ? [empresaId, ...filters!.sesionCajaIds] : []
+  )
+
+  const row = (data?.[0] ?? {}) as { total_usd: number; total_bs_nativo: number }
+  return {
+    anticipoUsd:    Number(Number(row.total_usd       ?? 0).toFixed(2)),
+    anticipoBsNativo: Number(Number(row.total_bs_nativo ?? 0).toFixed(2)),
+    isLoading,
+  }
+}
+
 // ─── Propinas del día ─────────────────────────────────────────
 /**
  * Suma todas las propinas registradas en la sesión.
