@@ -900,13 +900,14 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
             AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
-            AND mmc.origen NOT IN ('VENTA', 'COBRO')`
+            AND mmc.origen NOT IN ('VENTA', 'COBRO', 'PROPINA')`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
 
   // Movimientos manuales efectivo VES (incluye VUELTO como EGRESO).
-  // Excluye origen='VENTA' porque esos pagos ya se cuentan en dataPagosVes.
+  // Excluye: VENTA (ya en dataPagosVes), COBRO (ya en dataPagosVes via CxC),
+  // PROPINA (el excedente ya está en pagos.monto del pago de la venta).
   const { data: dataMovVes } = useQuery(
     hasSession
       ? `SELECT
@@ -917,7 +918,7 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
             AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
-            AND mmc.origen NOT IN ('VENTA', 'COBRO')`
+            AND mmc.origen NOT IN ('VENTA', 'COBRO', 'PROPINA')`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -1834,6 +1835,43 @@ export function useResumenTiposVenta(filters: CuadreFilters | null) {
     contadoBs:  Number(Number(row.contado_bs  ?? 0).toFixed(2)),
     creditoUsd: Number(Number(row.credito_usd ?? 0).toFixed(2)),
     creditoBs:  Number(Number(row.credito_bs  ?? 0).toFixed(2)),
+    isLoading,
+  }
+}
+
+// ─── Propinas del día ─────────────────────────────────────────
+/**
+ * Suma todas las propinas registradas en la sesión.
+ * Las propinas se guardan en movimientos_metodo_cobro con origen='PROPINA'.
+ * El monto es el excedente nativo que el cliente dejó voluntariamente.
+ */
+export function usePropinasDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  const { data, isLoading } = useQuery(
+    hasSession
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mo.codigo_iso = 'VES'
+             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_bs,
+           COALESCE(SUM(CASE WHEN mo.codigo_iso != 'VES'
+             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_usd
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mmc.empresa_id = ?
+           AND mmc.sesion_caja_id IN (${placeholders})
+           AND mmc.origen = 'PROPINA'`
+      : '',
+    hasSession ? [empresaId, ...filters!.sesionCajaIds] : []
+  )
+
+  const row = (data?.[0] ?? {}) as { total_bs: number; total_usd: number }
+  return {
+    propinaBs:  Number(Number(row.total_bs  ?? 0).toFixed(2)),
+    propinaUsd: Number(Number(row.total_usd ?? 0).toFixed(2)),
     isLoading,
   }
 }

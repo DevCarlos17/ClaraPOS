@@ -36,6 +36,7 @@ import {
   useMovimientosEfectivoCaja,
   useCobranzasCxCCaja,
   useResumenTiposVenta,
+  usePropinasDelDia,
   type MovimientoEfectivoDetalle,
   type CobranzaCxCItem,
   type CuadreFilters,
@@ -181,6 +182,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
   const { contadoUsd, contadoBs, creditoUsd, creditoBs } = useResumenTiposVenta(activeFilters)
+  const { propinaBs, propinaUsd } = usePropinasDelDia(activeFilters)
   // Detalle individual de movimientos para las tablas al pie del cuadre
   const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
   const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
@@ -683,6 +685,21 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
                 </div>
               </div>
+
+              {/* Propinas — solo si hay */}
+              {(propinaBs > 0.001 || propinaUsd > 0.001) && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Propinas</span>
+                  <div className="text-right">
+                    {propinaBs > 0.001 && (
+                      <div className="text-purple-600">{formatBs(propinaBs)}</div>
+                    )}
+                    {propinaUsd > 0.001 && (
+                      <div className="text-xs text-muted-foreground">{formatUsd(propinaUsd)}</div>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Diferencial Cambiario */}
               <div className="flex justify-between text-sm">
