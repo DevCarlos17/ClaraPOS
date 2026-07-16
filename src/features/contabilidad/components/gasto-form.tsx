@@ -732,7 +732,10 @@ export function GastoForm({ onClose }: GastoFormProps) {
         porcentaje_iva: payloadConfirmado.porcentaje_iva,
         monto_factura: payloadConfirmado.monto_factura,
         monto_usd: payloadConfirmado.monto_usd ?? 0,
-        pagos: payloadConfirmado.pagos as GastoPago[],
+        pagos: (payloadConfirmado.pagos as GastoPago[]).map((p) => ({
+          ...p,
+          sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
+        })),
         observaciones: payloadConfirmado.observaciones || undefined,
         empresa_id: user.empresa_id!,
         created_by: user.id,

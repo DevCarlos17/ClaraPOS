@@ -1148,7 +1148,7 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
         </thead>
         <tbody>
           {items.map((m) => {
-            const hora = m.fecha.length >= 16 ? m.fecha.substring(11, 16) : '—'
+            const hora = m.fecha ? formatHora(m.fecha) || '—' : '—'
             const label = m.concepto ?? m.destinatario ?? m.metodo_nombre
             const monto = m.metodo_moneda === 'BS'
               ? formatBs(parseFloat(m.monto))
