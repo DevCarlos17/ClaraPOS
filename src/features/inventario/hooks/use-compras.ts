@@ -92,6 +92,8 @@ export interface PagoCompraParam {
   monto: number
   banco_empresa_id: string | null
   referencia?: string
+  /** ID de sesión de caja activa. null = va a Tesorería, no aparece en cuadre. */
+  sesion_caja_id?: string | null
 }
 
 export interface CrearCompraParams {
@@ -833,6 +835,23 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         ]
       )
       saldoProv = nuevoSaldo
+
+      // Movimiento de método de cobro (para cuadre de caja si hay sesión activa)
+      await tx.execute(
+        `INSERT INTO movimientos_metodo_cobro
+           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(), empresa_id, pago.metodo_cobro_id,
+          toStorageString(dMontoPago),
+          compraId,
+          pago.referencia || `PAG-${nro_factura}`,
+          `Pago compra ${nro_factura}`,
+          pago.sesion_caja_id ?? null,
+          now, now, usuario_id,
+        ]
+      )
 
       // Movimiento bancario si tiene banco asociado
       if (pago.banco_empresa_id) {

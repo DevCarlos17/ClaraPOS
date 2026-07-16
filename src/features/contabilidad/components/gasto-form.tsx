@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Trash, UserPlus, ArrowLeft, Warning, Info, FileText } from '@phosphor-icons/react'
+import { Plus, Trash, UserPlus, ArrowLeft, Warning, Info, FileText, CashRegister, Vault } from '@phosphor-icons/react'
 import { gastoSchema } from '@/features/contabilidad/schemas/gasto-schema'
 import { crearGasto, type GastoPago } from '@/features/contabilidad/hooks/use-gastos'
 import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -359,6 +359,36 @@ export function GastoForm({ onClose }: GastoFormProps) {
   // ─── Pagos/Abonos ──────────────────────────────────────────
   const [pagos, setPagos] = useState<PagoRow[]>([])
 
+  // ─── Destino del pago ──────────────────────────────────────
+  const [destinoCobro, setDestinoCobro] = useState<'CAJA' | 'TESORERIA'>('TESORERIA')
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null)
+  const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user?.empresa_id) return
+    db.execute(
+      "SELECT id, fecha_apertura FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura DESC LIMIT 1",
+      [user.empresa_id]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
+      if (row) {
+        setSesionActivaId(row.id)
+        const hora = new Date(row.fecha_apertura).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+        setSesionActivaHora(hora)
+        setDestinoCobro('CAJA')
+      } else {
+        setSesionActivaId(null)
+        setSesionActivaHora(null)
+        setDestinoCobro('TESORERIA')
+      }
+    }).catch(() => {
+      setSesionActivaId(null)
+      setSesionActivaHora(null)
+      setDestinoCobro('TESORERIA')
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.empresa_id])
+
   // ─── UI State ─────────────────────────────────────────────
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
@@ -631,6 +661,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
         monto_usd: abonoPagoProveedorUsd(p),
         monto_usd_interno: abonoPagoInternoUsd(p),
         referencia: p.referencia.trim() || undefined,
+        sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
       }
     })
 
@@ -1236,6 +1267,33 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       <Plus className="h-3.5 w-3.5" />
                       Agregar abono
                     </button>
+                  </div>
+
+                  {/* ── ¿Dónde salen estos pagos? ── */}
+                  <div className="space-y-1.5 mb-3">
+                    <label className="text-xs font-medium text-muted-foreground">¿Dónde salen estos pagos?</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" disabled={!sesionActivaId}
+                        onClick={() => setDestinoCobro('CAJA')}
+                        className={`flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg border text-xs font-medium transition-colors
+                          ${destinoCobro === 'CAJA' ? 'bg-green-600 text-white border-green-600' : 'bg-background border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed'}`}
+                      >
+                        <CashRegister size={13} /> Sesión de caja
+                      </button>
+                      <button type="button"
+                        onClick={() => setDestinoCobro('TESORERIA')}
+                        className={`flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg border text-xs font-medium transition-colors
+                          ${destinoCobro === 'TESORERIA' ? 'bg-primary text-white border-primary' : 'bg-background border-border hover:bg-muted'}`}
+                      >
+                        <Vault size={13} /> Tesorería
+                      </button>
+                    </div>
+                    {destinoCobro === 'CAJA' && sesionActivaHora && (
+                      <p className="text-[11px] text-green-600">✓ Sesión activa desde las {sesionActivaHora}</p>
+                    )}
+                    {!sesionActivaId && (
+                      <p className="text-[11px] text-amber-600">Sin sesión de caja abierta — los pagos irán a Tesorería.</p>
+                    )}
                   </div>
 
                   {errors.pagos && (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import Decimal from 'decimal.js'
 import { toast } from 'sonner'
-import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise } from '@phosphor-icons/react'
+import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise, CashRegister, Vault } from '@phosphor-icons/react'
 import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
@@ -290,6 +290,36 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const [pagoMetodoId, setPagoMetodoId] = useState('')
   const [pagoMonto, setPagoMonto] = useState('')
   const [pagoReferencia, setPagoReferencia] = useState('')
+
+  // Destino del pago: sesión de caja activa o Tesorería
+  const [destinoCobro, setDestinoCobro] = useState<'CAJA' | 'TESORERIA'>('TESORERIA')
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null)
+  const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user?.empresa_id) return
+    db.execute(
+      "SELECT id, fecha_apertura FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura DESC LIMIT 1",
+      [user.empresa_id]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
+      if (row) {
+        setSesionActivaId(row.id)
+        const hora = new Date(row.fecha_apertura).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+        setSesionActivaHora(hora)
+        setDestinoCobro('CAJA')
+      } else {
+        setSesionActivaId(null)
+        setSesionActivaHora(null)
+        setDestinoCobro('TESORERIA')
+      }
+    }).catch(() => {
+      setSesionActivaId(null)
+      setSesionActivaHora(null)
+      setDestinoCobro('TESORERIA')
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.empresa_id])
 
   // Modals
   const [showCrearProducto, setShowCrearProducto] = useState(false)
@@ -1084,6 +1114,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       monto: p.monto,
       banco_empresa_id: p.banco_empresa_id,
       referencia: p.referencia,
+      sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
     }))
 
     // Validar pagos con Zod (segunda barrera — la primera es en handleAddPago)
@@ -1826,6 +1857,33 @@ export function CompraForm({ onClose }: CompraFormProps) {
               <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-orange-50 text-orange-700 ring-1 ring-orange-600/20">
                 CREDITO
               </span>
+            )}
+          </div>
+
+          {/* ── ¿Dónde sale este pago? ── */}
+          <div className="space-y-2">
+            <label className="text-xs font-medium text-muted-foreground">¿Dónde salen estos pagos?</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" disabled={!sesionActivaId}
+                onClick={() => setDestinoCobro('CAJA')}
+                className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-sm font-medium transition-colors
+                  ${destinoCobro === 'CAJA' ? 'bg-green-600 text-white border-green-600' : 'bg-background border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed'}`}
+              >
+                <CashRegister size={15} /> Sesión de caja
+              </button>
+              <button type="button"
+                onClick={() => setDestinoCobro('TESORERIA')}
+                className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg border text-sm font-medium transition-colors
+                  ${destinoCobro === 'TESORERIA' ? 'bg-primary text-white border-primary' : 'bg-background border-border hover:bg-muted'}`}
+              >
+                <Vault size={15} /> Tesorería
+              </button>
+            </div>
+            {destinoCobro === 'CAJA' && sesionActivaHora && (
+              <p className="text-xs text-green-600">✓ Sesión activa desde las {sesionActivaHora}</p>
+            )}
+            {!sesionActivaId && (
+              <p className="text-xs text-amber-600">Sin sesión de caja abierta — los pagos irán a Tesorería.</p>
             )}
           </div>
 

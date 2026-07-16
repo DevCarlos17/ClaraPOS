@@ -51,6 +51,8 @@ export interface GastoPago {
   monto_usd: number          // USD a tasa proveedor (para saldo_pendiente)
   monto_usd_interno: number  // USD a tasa interna (para contabilidad)
   referencia?: string
+  /** ID de sesión de caja activa. null = va a Tesorería, no aparece en cuadre. */
+  sesion_caja_id?: string | null
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -329,6 +331,23 @@ export async function crearGasto(data: {
           toStorageString(pago.monto_usd),
           pago.referencia ?? null,
           now,
+        ]
+      )
+
+      // Movimiento de método de cobro (para cuadre de caja si hay sesión activa)
+      await tx.execute(
+        `INSERT INTO movimientos_metodo_cobro
+           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(), data.empresa_id, pago.metodo_cobro_id,
+          toStorageString(pago.monto_moneda),
+          gastoId,
+          pago.referencia || `PAG-${nroGasto}`,
+          `Pago gasto ${nroGasto}`,
+          pago.sesion_caja_id ?? null,
+          now, now, data.created_by ?? null,
         ]
       )
     }
