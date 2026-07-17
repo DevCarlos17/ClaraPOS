@@ -1918,6 +1918,78 @@ export function usePropinasDelDia(filters: CuadreFilters | null) {
   }
 }
 
+// ─── Absorción de faltante autorizado (Negocio asume) ────────
+/**
+ * Retorna los faltantes de caja que el negocio absorbió (autorizados por supervisor/dueño).
+ * Se identifican en `gastos` con descripcion = 'ABSORCION_DIFERENCIAL_POS'.
+ * Se une con `ventas` para poder filtrar por sesion_caja_id.
+ */
+
+export interface AbsorcionItem {
+  id: string
+  nroFactura: string
+  montoBs: number
+  montoUsd: number
+  observaciones: string | null
+  fecha: string
+}
+
+export function useAbsorcionDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const hasCaja    = !!filters && !!filters.cajaId
+
+  const [query, params] = useMemo(() => {
+    if (!filters) return ['', [] as unknown[]]
+
+    const base = `
+      SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+             CAST(g.monto_usd AS REAL) as monto_usd,
+             CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+             g.observaciones, g.fecha
+      FROM gastos g
+      JOIN ventas v ON v.empresa_id = g.empresa_id AND v.nro_factura = g.nro_factura
+      WHERE g.empresa_id = ?
+        AND g.descripcion = 'ABSORCION_DIFERENCIAL_POS'`
+
+    if (hasSession) {
+      const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+      return [
+        `${base} AND v.sesion_caja_id IN (${ph}) ORDER BY g.fecha DESC`,
+        [empresaId, ...filters.sesionCajaIds] as unknown[],
+      ]
+    } else if (hasCaja) {
+      return [
+        `${base} AND v.sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?) ORDER BY g.fecha DESC`,
+        [empresaId, filters.cajaId!, empresaId] as unknown[],
+      ]
+    } else {
+      return [
+        `${base} AND DATE(g.fecha, 'localtime') = ? ORDER BY g.fecha DESC`,
+        [empresaId, filters.fecha] as unknown[],
+      ]
+    }
+  }, [filters, empresaId, hasSession, hasCaja])
+
+  const { data, isLoading } = useQuery(query, params)
+
+  const items: AbsorcionItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id:           String(row.id ?? ''),
+    nroFactura:   String(row.nro_factura ?? ''),
+    montoBs:      Number(Number(row.monto_bs  ?? 0).toFixed(2)),
+    montoUsd:     Number(Number(row.monto_usd ?? 0).toFixed(2)),
+    observaciones: row.observaciones ? String(row.observaciones) : null,
+    fecha:        String(row.fecha ?? ''),
+  }))
+
+  const totalBs  = Number(items.reduce((s, i) => s + i.montoBs,  0).toFixed(2))
+  const totalUsd = Number(items.reduce((s, i) => s + i.montoUsd, 0).toFixed(2))
+
+  return { items, totalBs, totalUsd, hayAbsorcion: items.length > 0, isLoading }
+}
+
 // ─── Diferencial cambiario del día ────────────────────────────
 /**
  * Retorna el total acumulado de diferenciales cambiarios (faltantes autorizados)

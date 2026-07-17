@@ -21,6 +21,7 @@ import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
 import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
 import { DiferencialCambiarioModal } from './diferencial-cambiario-modal'
+import { AbsorcionModal } from './absorcion-modal'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
@@ -40,6 +41,7 @@ import {
   usePropinasDelDia,
   useAnticiposDelDia,
   useDiferencialCambiarioDelDia,
+  useAbsorcionDelDia,
   type MovimientoEfectivoDetalle,
   type CobranzaCxCItem,
   type CuadreFilters,
@@ -74,6 +76,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [safModalOpen, setSafModalOpen] = useState(false)
   const [financieroOpen, setFinancieroOpen] = useState(false)
   const [diferencialOpen, setDiferencialOpen] = useState(false)
+  const [absorcionOpen, setAbsorcionOpen] = useState(false)
 
   // Movimientos manuales — tablas opcionales al final del cuadre
   const [showIngresos, setShowIngresos] = useState(false)
@@ -189,6 +192,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { propinaBs, propinaUsd } = usePropinasDelDia(activeFilters)
   const { anticipoUsd, anticipoBsNativo } = useAnticiposDelDia(activeFilters)
   const diferencialCambiario = useDiferencialCambiarioDelDia(activeFilters)
+  const absorcion = useAbsorcionDelDia(activeFilters)
   // Detalle individual de movimientos para las tablas al pie del cuadre
   const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
   const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
@@ -783,6 +787,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               onCreditoClick={() => setCxcOpen(true)}
               onSafClick={() => setSafModalOpen(true)}
               onDiferencialClick={() => setDiferencialOpen(true)}
+              onAbsorcionClick={() => setAbsorcionOpen(true)}
             />
           </div>
 
@@ -951,6 +956,14 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             totalFaltanteBs={diferencialCambiario.totalFaltanteBs}
             totalFaltanteUsd={diferencialCambiario.totalFaltanteUsd}
             totalSobranteBs={diferencialCambiario.totalSobranteBs}
+            fecha={activeFilters?.fecha ?? ''}
+          />
+          <AbsorcionModal
+            open={absorcionOpen}
+            onClose={() => setAbsorcionOpen(false)}
+            items={absorcion.items}
+            totalBs={absorcion.totalBs}
+            totalUsd={absorcion.totalUsd}
             fecha={activeFilters?.fecha ?? ''}
           />
           {financieroOpen && (

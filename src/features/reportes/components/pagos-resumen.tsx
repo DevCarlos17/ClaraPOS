@@ -1,4 +1,4 @@
-import { Money, CreditCard, Coins, ArrowsLeftRight } from '@phosphor-icons/react'
+import { Money, CreditCard, Coins, ArrowsLeftRight, HandFist } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import {
   usePagosPorMetodo,
@@ -6,6 +6,7 @@ import {
   useTotalesFiscales,
   useSafDiario,
   useDiferencialCambiarioDelDia,
+  useAbsorcionDelDia,
   type CuadreFilters,
 } from '../hooks/use-cuadre'
 
@@ -16,6 +17,7 @@ interface PagosResumenProps {
   onCreditoClick?: () => void
   onSafClick?: () => void
   onDiferencialClick?: () => void
+  onAbsorcionClick?: () => void
   /** Nombre del metodo actualmente seleccionado — resalta la fila correspondiente */
   selectedMetodoId?: string | null
 }
@@ -27,6 +29,7 @@ export function PagosResumen({
   onCreditoClick,
   onSafClick,
   onDiferencialClick,
+  onAbsorcionClick,
   selectedMetodoId,
 }: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
@@ -39,6 +42,12 @@ export function PagosResumen({
     hayDiferencial,
     isLoading: loadingDiferencial,
   } = useDiferencialCambiarioDelDia(filters)
+  const {
+    totalBs: absorcionBs,
+    totalUsd: absorcionUsd,
+    hayAbsorcion,
+    isLoading: loadingAbsorcion,
+  } = useAbsorcionDelDia(filters)
 
   // Excluir metodos EFECTIVO con saldo $0 (fondo inicial sin ventas en efectivo)
   const metodosMostrar = metodos.filter((m) => m.totalUsd > 0.001 || m.totalOriginal > 0.001)
@@ -53,8 +62,9 @@ export function PagosResumen({
 
   // El diferencial neto en USD necesita la tasa del día para convertir el neto en Bs
   const diferencialNetoUsdCalc = tasaDelDia > 0 ? diferencialNetoBs / tasaDelDia : diferencialNetoUsd
+  const absorcionUsdCalc = tasaDelDia > 0 ? absorcionBs / tasaDelDia : absorcionUsd
 
-  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingSaf || loadingDiferencial
+  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingSaf || loadingDiferencial || loadingAbsorcion
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -198,16 +208,50 @@ export function PagosResumen({
             </button>
           )}
 
-          {/* Total facturado — al final, suma cobrado + CxC + diferencial */}
+          {/* Negocio asume — solo si hay registros */}
+          {hayAbsorcion && (
+            <button
+              type="button"
+              onClick={onAbsorcionClick}
+              disabled={!onAbsorcionClick}
+              className={`w-full flex items-center justify-between rounded-lg border border-orange-200 bg-orange-50/40 px-3 py-2.5 text-left ${onAbsorcionClick ? 'hover:bg-orange-50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
+            >
+              <div className="flex items-center gap-2">
+                <HandFist size={16} className="text-orange-500" />
+                <div>
+                  <p className="text-sm font-medium text-orange-700">Negocio asume</p>
+                  <p className="text-xs text-orange-500">Faltantes autorizados por supervisor</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {formatUsd(absorcionUsdCalc)}
+                </span>
+                <span className="text-sm font-bold text-orange-700">
+                  {formatBs(absorcionBs)}
+                </span>
+              </div>
+            </button>
+          )}
+
+          {/* Total facturado — al final, suma cobrado + CxC + diferencial + absorcion */}
           <div className="border-t pt-2">
             <div className="flex justify-between items-center text-sm text-muted-foreground">
               <span>Total facturado</span>
               <div className="flex items-center gap-2">
                 <span className="text-xs">
-                  {formatUsd(totalCobradoUsd + cxcTotalUsd + (hayDiferencial ? diferencialNetoUsdCalc : 0))}
+                  {formatUsd(
+                    totalCobradoUsd + cxcTotalUsd
+                    + (hayDiferencial ? diferencialNetoUsdCalc : 0)
+                    + (hayAbsorcion ? absorcionUsdCalc : 0)
+                  )}
                 </span>
                 <span className="font-semibold">
-                  {formatBs(totalCobradoBs + cxcTotalBs + (hayDiferencial ? diferencialNetoBs : 0))}
+                  {formatBs(
+                    totalCobradoBs + cxcTotalBs
+                    + (hayDiferencial ? diferencialNetoBs : 0)
+                    + (hayAbsorcion ? absorcionBs : 0)
+                  )}
                 </span>
               </div>
             </div>
