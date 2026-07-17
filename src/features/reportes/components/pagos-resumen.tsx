@@ -1,6 +1,13 @@
-import { Money, CreditCard, Coins } from '@phosphor-icons/react'
+import { Money, CreditCard, Coins, ArrowsLeftRight } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { usePagosPorMetodo, useCxcDelDia, useTotalesFiscales, useSafDiario, type CuadreFilters } from '../hooks/use-cuadre'
+import {
+  usePagosPorMetodo,
+  useCxcDelDia,
+  useTotalesFiscales,
+  useSafDiario,
+  useDiferencialCambiarioDelDia,
+  type CuadreFilters,
+} from '../hooks/use-cuadre'
 
 interface PagosResumenProps {
   filters: CuadreFilters
@@ -8,15 +15,30 @@ interface PagosResumenProps {
   onMetodoClick?: (metodoNombre: string) => void
   onCreditoClick?: () => void
   onSafClick?: () => void
+  onDiferencialClick?: () => void
   /** Nombre del metodo actualmente seleccionado — resalta la fila correspondiente */
   selectedMetodoId?: string | null
 }
 
-export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClick, onSafClick, selectedMetodoId }: PagosResumenProps) {
+export function PagosResumen({
+  filters,
+  tasaDelDia,
+  onMetodoClick,
+  onCreditoClick,
+  onSafClick,
+  onDiferencialClick,
+  selectedMetodoId,
+}: PagosResumenProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { cxcTotalUsd, cxcTotalBs, isLoading: loadingCxc } = useCxcDelDia(filters)
   const { isLoading: loadingTotales } = useTotalesFiscales(filters)
   const { totalUsd: safTotalUsd, isLoading: loadingSaf } = useSafDiario(filters)
+  const {
+    netoBs: diferencialNetoBs,
+    netoUsd: diferencialNetoUsd,
+    hayDiferencial,
+    isLoading: loadingDiferencial,
+  } = useDiferencialCambiarioDelDia(filters)
 
   // Excluir metodos EFECTIVO con saldo $0 (fondo inicial sin ventas en efectivo)
   const metodosMostrar = metodos.filter((m) => m.totalUsd > 0.001 || m.totalOriginal > 0.001)
@@ -29,7 +51,10 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
   const haySaf = safTotalUsd > 0.001
   const safBs = tasaDelDia > 0 ? safTotalUsd * tasaDelDia : 0
 
-  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingSaf
+  // El diferencial neto en USD necesita la tasa del día para convertir el neto en Bs
+  const diferencialNetoUsdCalc = tasaDelDia > 0 ? diferencialNetoBs / tasaDelDia : diferencialNetoUsd
+
+  const isLoadingAll = isLoading || loadingCxc || loadingTotales || loadingSaf || loadingDiferencial
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -136,14 +161,44 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
             </button>
           )}
 
+          {/* Diferencial cambiario — solo si hay registros */}
+          {hayDiferencial && (
+            <button
+              type="button"
+              onClick={onDiferencialClick}
+              disabled={!onDiferencialClick}
+              className={`w-full flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/40 px-3 py-2.5 text-left ${onDiferencialClick ? 'hover:bg-amber-50 hover:shadow-sm transition-all cursor-pointer' : ''}`}
+            >
+              <div className="flex items-center gap-2">
+                <ArrowsLeftRight size={16} className="text-amber-500" />
+                <div>
+                  <p className="text-sm font-medium text-amber-700">Diferencial cambiario</p>
+                  <p className="text-xs text-amber-500">Faltantes autorizados por denominacion</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {formatUsd(diferencialNetoUsdCalc)}
+                </span>
+                <span className="text-sm font-bold text-amber-700">
+                  {formatBs(diferencialNetoBs)}
+                </span>
+              </div>
+            </button>
+          )}
+
           {/* Totales */}
           <div className="pt-3 mt-2 border-t space-y-1">
-            {/* Siempre mostrar Total Facturado primero */}
+            {/* Total facturado = cobrado + CxC + diferencial */}
             <div className="flex justify-between items-center text-sm text-muted-foreground">
               <span>Total facturado</span>
               <div className="flex items-center gap-2">
-                <span className="text-xs">{formatUsd(totalCobradoUsd + cxcTotalUsd)}</span>
-                <span className="font-semibold">{formatBs(totalCobradoBs + cxcTotalBs)}</span>
+                <span className="text-xs">
+                  {formatUsd(totalCobradoUsd + cxcTotalUsd + (hayDiferencial ? diferencialNetoUsdCalc : 0))}
+                </span>
+                <span className="font-semibold">
+                  {formatBs(totalCobradoBs + cxcTotalBs + (hayDiferencial ? diferencialNetoBs : 0))}
+                </span>
               </div>
             </div>
 
@@ -160,6 +215,19 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
               </div>
             )}
 
+            {/* Restar diferencial cambiario */}
+            {hayDiferencial && (
+              <div className="flex justify-between items-center text-sm text-amber-600">
+                <span className="flex items-center gap-1">
+                  <span className="text-amber-400">–</span> Diferencial cambiario
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-amber-400">{formatUsd(diferencialNetoUsdCalc)}</span>
+                  <span className="font-bold">{formatBs(diferencialNetoBs)}</span>
+                </div>
+              </div>
+            )}
+
             {/* Total Cobrado — linea enfatizada para comparar con metodos */}
             <div className="flex justify-between items-center text-sm font-bold pt-1.5 border-t">
               <span>Total cobrado</span>
@@ -168,8 +236,6 @@ export function PagosResumen({ filters, tasaDelDia, onMetodoClick, onCreditoClic
                 <span className="text-base">{formatBs(totalCobradoBs)}</span>
               </div>
             </div>
-
-
           </div>
         </div>
       )}

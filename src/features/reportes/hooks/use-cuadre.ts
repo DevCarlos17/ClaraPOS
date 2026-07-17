@@ -1917,3 +1917,172 @@ export function usePropinasDelDia(filters: CuadreFilters | null) {
     isLoading,
   }
 }
+
+// ─── Diferencial cambiario del día ────────────────────────────
+/**
+ * Retorna el total acumulado de diferenciales cambiarios (faltantes autorizados)
+ * registrados durante la sesión.
+ *
+ * - FALTANTE: cliente paga menos que el total → guardado en `gastos` con
+ *   descripcion='DIFERENCIAL_CAMBIARIO_FALTANTE'. Se une con `ventas` para
+ *   poder filtrar por sesion_caja_id.
+ * - SOBRANTE: cliente paga más → guardado en `movimientos_metodo_cobro` con
+ *   origen='DIFERENCIAL_CAMBIARIO' y tipo='INGRESO'.
+ *
+ * El resultado neto = faltante − sobrante (positivo = caja debería tener menos).
+ */
+
+export interface DiferencialCambioItem {
+  id: string
+  nroFactura: string
+  montoBs: number
+  montoUsd: number
+  tipo: 'FALTANTE' | 'SOBRANTE'
+  fecha: string
+}
+
+export function useDiferencialCambiarioDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const hasCaja    = !!filters && !!filters.cajaId
+
+  // ── FALTANTE: gastos JOIN ventas ────────────────────────────
+  const [faltanteQuery, faltanteParams] = useMemo(() => {
+    if (!filters) return ['', [] as unknown[]]
+    if (hasSession) {
+      const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+      return [
+        `SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+                CAST(g.monto_usd AS REAL) as monto_usd,
+                CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+                g.fecha, 'FALTANTE' as tipo
+         FROM gastos g
+         JOIN ventas v ON v.empresa_id = g.empresa_id AND v.nro_factura = g.nro_factura
+         WHERE g.empresa_id = ?
+           AND g.descripcion = 'DIFERENCIAL_CAMBIARIO_FALTANTE'
+           AND v.sesion_caja_id IN (${ph})
+         ORDER BY g.fecha DESC`,
+        [empresaId, ...filters.sesionCajaIds] as unknown[],
+      ]
+    } else if (hasCaja) {
+      return [
+        `SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+                CAST(g.monto_usd AS REAL) as monto_usd,
+                CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+                g.fecha, 'FALTANTE' as tipo
+         FROM gastos g
+         JOIN ventas v ON v.empresa_id = g.empresa_id AND v.nro_factura = g.nro_factura
+         WHERE g.empresa_id = ?
+           AND g.descripcion = 'DIFERENCIAL_CAMBIARIO_FALTANTE'
+           AND v.sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?)
+         ORDER BY g.fecha DESC`,
+        [empresaId, filters.cajaId!, empresaId] as unknown[],
+      ]
+    } else {
+      return [
+        `SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+                CAST(g.monto_usd AS REAL) as monto_usd,
+                CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+                g.fecha, 'FALTANTE' as tipo
+         FROM gastos g
+         WHERE g.empresa_id = ?
+           AND g.descripcion = 'DIFERENCIAL_CAMBIARIO_FALTANTE'
+           AND DATE(g.fecha, 'localtime') = ?
+         ORDER BY g.fecha DESC`,
+        [empresaId, filters.fecha] as unknown[],
+      ]
+    }
+  }, [filters, empresaId, hasSession, hasCaja])
+
+  const { data: dataFaltante, isLoading: loadingFaltante } = useQuery(
+    faltanteQuery, faltanteParams
+  )
+
+  // ── SOBRANTE: movimientos_metodo_cobro ───────────────────────
+  const [sobraQuery, sobraParams] = useMemo(() => {
+    if (!filters) return ['', [] as unknown[]]
+    if (hasSession) {
+      const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+      return [
+        `SELECT mmc.id, COALESCE(mmc.doc_origen_ref, '') as nro_factura,
+                CAST(mmc.monto AS REAL) as monto_bs,
+                0 as monto_usd,
+                mmc.fecha, 'SOBRANTE' as tipo
+         FROM movimientos_metodo_cobro mmc
+         WHERE mmc.empresa_id = ?
+           AND mmc.origen = 'DIFERENCIAL_CAMBIARIO'
+           AND mmc.tipo = 'INGRESO'
+           AND mmc.sesion_caja_id IN (${ph})
+         ORDER BY mmc.fecha DESC`,
+        [empresaId, ...filters.sesionCajaIds] as unknown[],
+      ]
+    } else if (hasCaja) {
+      return [
+        `SELECT mmc.id, COALESCE(mmc.doc_origen_ref, '') as nro_factura,
+                CAST(mmc.monto AS REAL) as monto_bs,
+                0 as monto_usd,
+                mmc.fecha, 'SOBRANTE' as tipo
+         FROM movimientos_metodo_cobro mmc
+         WHERE mmc.empresa_id = ?
+           AND mmc.origen = 'DIFERENCIAL_CAMBIARIO'
+           AND mmc.tipo = 'INGRESO'
+           AND mmc.sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?)
+         ORDER BY mmc.fecha DESC`,
+        [empresaId, filters.cajaId!, empresaId] as unknown[],
+      ]
+    } else {
+      return [
+        `SELECT mmc.id, COALESCE(mmc.doc_origen_ref, '') as nro_factura,
+                CAST(mmc.monto AS REAL) as monto_bs,
+                0 as monto_usd,
+                mmc.fecha, 'SOBRANTE' as tipo
+         FROM movimientos_metodo_cobro mmc
+         WHERE mmc.empresa_id = ?
+           AND mmc.origen = 'DIFERENCIAL_CAMBIARIO'
+           AND mmc.tipo = 'INGRESO'
+           AND DATE(mmc.fecha, 'localtime') = ?
+         ORDER BY mmc.fecha DESC`,
+        [empresaId, filters.fecha] as unknown[],
+      ]
+    }
+  }, [filters, empresaId, hasSession, hasCaja])
+
+  const { data: dataSobrante, isLoading: loadingSobrante } = useQuery(
+    sobraQuery, sobraParams
+  )
+
+  const toItem = (row: Record<string, unknown>): DiferencialCambioItem => ({
+    id:          String(row.id ?? ''),
+    nroFactura:  String(row.nro_factura ?? ''),
+    montoBs:     Number(Number(row.monto_bs  ?? 0).toFixed(2)),
+    montoUsd:    Number(Number(row.monto_usd ?? 0).toFixed(2)),
+    tipo:        String(row.tipo ?? 'FALTANTE') as 'FALTANTE' | 'SOBRANTE',
+    fecha:       String(row.fecha ?? ''),
+  })
+
+  const faltantes: DiferencialCambioItem[] = (dataFaltante ?? []).map(toItem)
+  const sobrantes: DiferencialCambioItem[] = (dataSobrante ?? []).map(toItem)
+  const items = [...faltantes, ...sobrantes].sort((a, b) => a.fecha.localeCompare(b.fecha))
+
+  const totalFaltanteBs  = faltantes.reduce((s, i) => s + i.montoBs,  0)
+  const totalFaltanteUsd = faltantes.reduce((s, i) => s + i.montoUsd, 0)
+  const totalSobranteBs  = sobrantes.reduce((s, i) => s + i.montoBs,  0)
+
+  // Neto desde la perspectiva de caja:
+  // positivo = caja debería recibir este monto pero no lo recibió (FALTANTE > SOBRANTE)
+  const netoBs  = Number((totalFaltanteBs  - totalSobranteBs).toFixed(2))
+  const netoUsd = Number(totalFaltanteUsd.toFixed(2))
+
+  return {
+    items,
+    totalFaltanteBs,
+    totalFaltanteUsd,
+    totalSobranteBs,
+    netoBs,
+    netoUsd,
+    hayDiferencial: items.length > 0,
+    isLoading: loadingFaltante || loadingSobrante,
+  }
+}

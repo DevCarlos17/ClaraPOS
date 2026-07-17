@@ -20,6 +20,7 @@ import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
 import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
+import { DiferencialCambiarioModal } from './diferencial-cambiario-modal'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
@@ -38,6 +39,7 @@ import {
   useResumenTiposVenta,
   usePropinasDelDia,
   useAnticiposDelDia,
+  useDiferencialCambiarioDelDia,
   type MovimientoEfectivoDetalle,
   type CobranzaCxCItem,
   type CuadreFilters,
@@ -71,6 +73,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const [resumenOpen, setResumenOpen] = useState(false)
   const [safModalOpen, setSafModalOpen] = useState(false)
   const [financieroOpen, setFinancieroOpen] = useState(false)
+  const [diferencialOpen, setDiferencialOpen] = useState(false)
 
   // Movimientos manuales — tablas opcionales al final del cuadre
   const [showIngresos, setShowIngresos] = useState(false)
@@ -185,6 +188,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { contadoUsd, contadoBs, creditoUsd, creditoBs } = useResumenTiposVenta(activeFilters)
   const { propinaBs, propinaUsd } = usePropinasDelDia(activeFilters)
   const { anticipoUsd, anticipoBsNativo } = useAnticiposDelDia(activeFilters)
+  const diferencialCambiario = useDiferencialCambiarioDelDia(activeFilters)
   // Detalle individual de movimientos para las tablas al pie del cuadre
   const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
   const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
@@ -778,6 +782,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               onMetodoClick={setSelectedMetodoNombre}
               onCreditoClick={() => setCxcOpen(true)}
               onSafClick={() => setSafModalOpen(true)}
+              onDiferencialClick={() => setDiferencialOpen(true)}
             />
           </div>
 
@@ -939,6 +944,14 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
           <AuditModal isOpen={auditOpen} onClose={() => setAuditOpen(false)} filters={activeFilters} />
           <CxcModal isOpen={cxcOpen} onClose={() => setCxcOpen(false)} filters={activeFilters} />
+          <DiferencialCambiarioModal
+            open={diferencialOpen}
+            onClose={() => setDiferencialOpen(false)}
+            items={diferencialCambiario.items}
+            totalFaltanteBs={diferencialCambiario.totalFaltanteBs}
+            totalFaltanteUsd={diferencialCambiario.totalFaltanteUsd}
+            totalSobranteBs={diferencialCambiario.totalSobranteBs}
+          />
           {financieroOpen && (
             <FinancieroDetalleModal
               filters={activeFilters}
