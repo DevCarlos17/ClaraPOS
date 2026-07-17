@@ -951,6 +951,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
             totalFaltanteBs={diferencialCambiario.totalFaltanteBs}
             totalFaltanteUsd={diferencialCambiario.totalFaltanteUsd}
             totalSobranteBs={diferencialCambiario.totalSobranteBs}
+            fecha={activeFilters?.fecha ?? ''}
           />
           {financieroOpen && (
             <FinancieroDetalleModal

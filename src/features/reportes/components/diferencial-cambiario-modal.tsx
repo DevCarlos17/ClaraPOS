@@ -1,6 +1,6 @@
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { useRef, useEffect } from 'react'
+import { X } from '@phosphor-icons/react'
 import { formatBs, formatUsd } from '@/lib/currency'
-import { formatDateTime } from '@/lib/format'
 import type { DiferencialCambioItem } from '../hooks/use-cuadre'
 
 interface DiferencialCambiarioModalProps {
@@ -10,6 +10,7 @@ interface DiferencialCambiarioModalProps {
   totalFaltanteBs: number
   totalFaltanteUsd: number
   totalSobranteBs: number
+  fecha: string
 }
 
 export function DiferencialCambiarioModal({
@@ -19,132 +20,140 @@ export function DiferencialCambiarioModal({
   totalFaltanteBs,
   totalFaltanteUsd,
   totalSobranteBs,
+  fecha,
 }: DiferencialCambiarioModalProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+
+  useEffect(() => {
+    if (open) {
+      dialogRef.current?.showModal()
+    } else {
+      dialogRef.current?.close()
+    }
+  }, [open])
+
+  function handleBackdropClick(e: React.MouseEvent<HTMLDialogElement>) {
+    if (e.target === dialogRef.current) onClose()
+  }
+
   const faltantes = items.filter((i) => i.tipo === 'FALTANTE')
   const sobrantes = items.filter((i) => i.tipo === 'SOBRANTE')
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose() }}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>Diferenciales Cambiarios</DialogTitle>
-        </DialogHeader>
-
-        {items.length === 0 ? (
-          <div className="py-10 text-center text-sm text-muted-foreground">
-            No hay diferenciales cambiarios registrados en esta sesion
+    <dialog
+      ref={dialogRef}
+      onClose={onClose}
+      onClick={handleBackdropClick}
+      className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-2xl shadow-xl max-h-[85vh]"
+    >
+      <div className="p-6 flex flex-col max-h-[85vh]">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4 shrink-0">
+          <div>
+            <h2 className="text-lg font-semibold">Diferencial Cambiario</h2>
+            <p className="text-sm text-muted-foreground">{fecha}</p>
           </div>
-        ) : (
-          <div className="space-y-5">
-            {/* Resumen */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 p-3">
-                <p className="text-xs text-red-600 dark:text-red-400 font-medium mb-1">
-                  Faltantes autorizados
-                </p>
-                <p className="text-lg font-bold text-red-700 dark:text-red-300 tabular-nums">
-                  {formatBs(totalFaltanteBs)}
-                </p>
-                <p className="text-xs text-red-500 tabular-nums">
-                  {formatUsd(totalFaltanteUsd)}
-                </p>
-              </div>
-              {totalSobranteBs > 0.001 && (
-                <div className="rounded-lg bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 p-3">
-                  <p className="text-xs text-green-600 dark:text-green-400 font-medium mb-1">
-                    Sobrantes registrados
+          <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
+            <X className="h-5 w-5 text-muted-foreground" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 flex flex-col gap-4 overflow-y-auto">
+          {items.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No hay diferenciales cambiarios registrados en esta sesion
+            </p>
+          ) : (
+            <>
+              {/* Faltantes */}
+              {faltantes.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                    Faltantes autorizados ({faltantes.length})
                   </p>
-                  <p className="text-lg font-bold text-green-700 dark:text-green-300 tabular-nums">
-                    {formatBs(totalSobranteBs)}
-                  </p>
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="text-left px-3 py-2 font-medium text-xs">Factura</th>
+                          <th className="text-right px-3 py-2 font-medium text-xs">Monto (Bs.)</th>
+                          <th className="text-right px-3 py-2 font-medium text-xs">Monto (USD)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {faltantes.map((item) => (
+                          <tr key={item.id} className="border-b last:border-0">
+                            <td className="px-3 py-2">
+                              <span className="font-mono text-xs">{item.nroFactura || '—'}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="font-bold text-xs text-amber-700">{formatBs(item.montoBs)}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="text-xs text-muted-foreground">{formatUsd(item.montoUsd)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-between text-xs font-semibold text-muted-foreground mt-1 px-1">
+                    <span>Subtotal faltantes</span>
+                    <div className="flex items-center gap-2">
+                      <span className="font-normal text-muted-foreground">{formatUsd(totalFaltanteUsd)}</span>
+                      <span className="text-amber-700">{formatBs(totalFaltanteBs)}</span>
+                    </div>
+                  </div>
                 </div>
               )}
-            </div>
 
-            {/* Tabla de faltantes */}
-            {faltantes.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Faltantes ({faltantes.length})
-                </p>
-                <div className="overflow-x-auto rounded-lg border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="px-3 py-2 text-left font-medium">Factura</th>
-                        <th className="px-3 py-2 text-right font-medium">Monto (Bs.)</th>
-                        <th className="px-3 py-2 text-right font-medium">Monto (USD)</th>
-                        <th className="px-3 py-2 text-left font-medium">Fecha</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {faltantes.map((item) => (
-                        <tr key={item.id} className="border-b last:border-0 hover:bg-muted/30">
-                          <td className="px-3 py-2 font-mono text-xs">{item.nroFactura || '—'}</td>
-                          <td className="px-3 py-2 text-right tabular-nums font-semibold text-red-600 dark:text-red-400">
-                            {formatBs(item.montoBs)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums text-muted-foreground text-xs">
-                            {formatUsd(item.montoUsd)}
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {formatDateTime(item.fecha)}
-                          </td>
+              {/* Sobrantes */}
+              {sobrantes.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
+                    Sobrantes ({sobrantes.length})
+                  </p>
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/50">
+                          <th className="text-left px-3 py-2 font-medium text-xs">Referencia</th>
+                          <th className="text-right px-3 py-2 font-medium text-xs">Monto (Bs.)</th>
                         </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t bg-muted/30">
-                        <td className="px-3 py-2 text-sm font-semibold">Total</td>
-                        <td className="px-3 py-2 text-right text-sm font-bold tabular-nums text-red-600 dark:text-red-400">
-                          {formatBs(totalFaltanteBs)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-xs tabular-nums text-muted-foreground">
-                          {formatUsd(totalFaltanteUsd)}
-                        </td>
-                        <td />
-                      </tr>
-                    </tfoot>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {sobrantes.map((item) => (
+                          <tr key={item.id} className="border-b last:border-0">
+                            <td className="px-3 py-2">
+                              <span className="font-mono text-xs">{item.nroFactura || '—'}</span>
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="font-bold text-xs text-green-700">{formatBs(item.montoBs)}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-between text-xs font-semibold text-muted-foreground mt-1 px-1">
+                    <span>Subtotal sobrantes</span>
+                    <span className="text-green-700">{formatBs(totalSobranteBs)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Total */}
+              <div className="border-t pt-3 flex justify-between items-center">
+                <span className="text-sm font-semibold">Total diferencial</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground font-normal">{formatUsd(totalFaltanteUsd)}</span>
+                  <span className="text-sm font-bold text-amber-700">{formatBs(totalFaltanteBs - totalSobranteBs)}</span>
                 </div>
               </div>
-            )}
-
-            {/* Tabla de sobrantes */}
-            {sobrantes.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-                  Sobrantes ({sobrantes.length})
-                </p>
-                <div className="overflow-x-auto rounded-lg border">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b bg-muted/50">
-                        <th className="px-3 py-2 text-left font-medium">Referencia</th>
-                        <th className="px-3 py-2 text-right font-medium">Monto (Bs.)</th>
-                        <th className="px-3 py-2 text-left font-medium">Fecha</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sobrantes.map((item) => (
-                        <tr key={item.id} className="border-b last:border-0 hover:bg-muted/30">
-                          <td className="px-3 py-2 font-mono text-xs">{item.nroFactura || '—'}</td>
-                          <td className="px-3 py-2 text-right tabular-nums font-semibold text-green-600 dark:text-green-400">
-                            {formatBs(item.montoBs)}
-                          </td>
-                          <td className="px-3 py-2 text-xs text-muted-foreground">
-                            {formatDateTime(item.fecha)}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
+            </>
+          )}
+        </div>
+      </div>
+    </dialog>
   )
 }
