@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useTotalesFiscales, useIvaPorAlicuota, type CuadreFilters } from '../hooks/use-cuadre'
 
@@ -34,8 +35,15 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
   const { totales, isLoading } = useTotalesFiscales(filters)
   const { alicuotas, isLoading: loadingAlicuotas } = useIvaPorAlicuota(filters)
 
-  const baseNetaUsd = Math.max(0, totales.baseImponibleUsd - totales.totalNcrUsd)
-  const baseNetaBs = Math.max(0, totales.baseImponibleBs - totales.totalNcrBs)
+  const hayDescuento = totales.totalDescuentoUsd > 0.001
+
+  // Bruto comercial = base + exento + descuento (valor antes de cualquier reducción ni impuesto)
+  const totalAntesImpuestosUsd = totales.baseImponibleUsd + totales.totalExentoUsd + totales.totalDescuentoUsd
+  const totalAntesImpuestosBs  = totales.baseImponibleBs  + totales.totalExentoBs  + totales.totalDescuentoBs
+
+  // Sub total = base + exento (neto de descuento, antes de IVA)
+  const subTotalUsd = totales.baseImponibleUsd + totales.totalExentoUsd
+  const subTotalBs  = totales.baseImponibleBs  + totales.totalExentoBs
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -49,15 +57,16 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
         </div>
       ) : (
         <div className="space-y-0.5">
-          {/* Base imponible */}
+
+          {/* 1. Total facturado antes de impuestos */}
           <Row
-            label="Base imponible bruta"
-            usd={totales.baseImponibleUsd}
-            bs={totales.baseImponibleBs}
+            label="Total facturado (antes de impuestos)"
+            usd={totalAntesImpuestosUsd}
+            bs={totalAntesImpuestosBs}
           />
 
-          {/* Descuentos comerciales */}
-          {totales.totalDescuentoUsd > 0 && (
+          {/* 2. Descuentos comerciales — solo si hay */}
+          {hayDescuento && (
             <Row
               label="Descuentos comerciales"
               usd={totales.totalDescuentoUsd}
@@ -66,48 +75,46 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
             />
           )}
 
-          {/* NCR / Devoluciones */}
-          {totales.totalNcrUsd > 0 && (
+          {/* 3. Sub total — solo cuando hay descuento (evita repetir el mismo número) */}
+          {hayDescuento && (
             <Row
-              label="Devoluciones (NCR)"
-              usd={totales.totalNcrUsd}
-              bs={totales.totalNcrBs}
-              negativo
+              label="Sub total"
+              usd={subTotalUsd}
+              bs={subTotalBs}
+              destacado
             />
           )}
 
-          {/* Base neta */}
-          <Row
-            label="Base imponible neta"
-            usd={baseNetaUsd}
-            bs={baseNetaBs}
-            destacado
-          />
-
           <div className="my-1 border-t" />
 
-          {/* Exento */}
-          {totales.totalExentoUsd > 0 && (
+          {/* 4. Exento — solo si hay artículos exentos */}
+          {totales.totalExentoUsd > 0.001 && (
             <Row
-              label="Ventas exentas"
+              label="Exento"
               usd={totales.totalExentoUsd}
               bs={totales.totalExentoBs}
             />
           )}
 
-          {/* IVA por alicuota */}
+          {/* 5+6. Base imponible e IVA por alícuota — dinámico */}
           {alicuotas.map((a) => (
-            <Row
-              key={a.impuestoPct}
-              label={`IVA ${a.impuestoPct}% (s/ ${formatBs(a.baseBs)})`}
-              usd={a.montoIvaUsd}
-              bs={a.montoIvaBs}
-            />
+            <Fragment key={a.impuestoPct}>
+              <Row
+                label={`Base imponible ${a.impuestoPct}%`}
+                usd={a.baseUsd}
+                bs={a.baseBs}
+              />
+              <Row
+                label={`IVA ${a.impuestoPct}%`}
+                usd={a.montoIvaUsd}
+                bs={a.montoIvaBs}
+              />
+            </Fragment>
           ))}
 
           <div className="my-1 border-t" />
 
-          {/* Total facturado (solo productos/servicios, sin avances ni préstamos) */}
+          {/* 7. Total facturado final */}
           <Row
             label="Total facturado"
             usd={totales.totalVentasUsd}
@@ -115,8 +122,8 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
             destacado
           />
 
-          {/* IGTF — después del total facturado */}
-          {totales.totalIgtfUsd > 0 && (
+          {/* IGTF — solo si aplica */}
+          {totales.totalIgtfUsd > 0.001 && (
             <>
               <Row
                 label="IGTF"
@@ -124,7 +131,6 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
                 bs={totales.totalIgtfBs}
               />
               <div className="my-1 border-t" />
-              {/* Total General = Ventas + IGTF (sin avances) */}
               <Row
                 label="Total General (c/IGTF)"
                 usd={totales.totalVentasUsd + totales.totalIgtfUsd}
@@ -133,6 +139,7 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
               />
             </>
           )}
+
         </div>
       )}
     </div>
