@@ -3,6 +3,7 @@ import { ShieldCheck } from '@phosphor-icons/react'
 import { hashPin } from '@/lib/crypto'
 import { usePowerSync } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { connector } from '@/core/db/powersync/connector'
 
 interface SupervisorPinDialogProps {
   isOpen: boolean
@@ -56,10 +57,28 @@ export function SupervisorPinDialog({
     try {
       const hash = await hashPin(pin, user.empresa_id)
 
-      const result = await db.getAll<{ id: string; rol_id: string; level: number }>(
+      // 1. Intentar en SQLite local (funciona offline y es más rápido)
+      let result = await db.getAll<{ id: string; rol_id: string; level: number }>(
         `SELECT id, rol_id, level FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
         [user.empresa_id, hash]
       )
+
+      // 2. Fallback a Supabase si SQLite no tiene el hash (puede pasar justo
+      //    después de configurar el PIN, antes de que PowerSync sincronice)
+      if (!result || result.length === 0) {
+        try {
+          const { data } = await connector.client
+            .from('usuarios')
+            .select('id, rol_id, level')
+            .eq('empresa_id', user.empresa_id)
+            .eq('pin_supervisor_hash', hash)
+            .eq('is_active', true)
+            .limit(1)
+          if (data && data.length > 0) result = data
+        } catch {
+          // Sin conexión — continuar con el resultado local (vacío)
+        }
+      }
 
       if (!result || result.length === 0) {
         setError('PIN incorrecto')
