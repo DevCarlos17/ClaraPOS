@@ -161,6 +161,17 @@ export function PagosResumen({
             </button>
           )}
 
+          {/* Total cobrado — subtotal después de todos los métodos */}
+          <div className="pt-2 mt-1 border-t">
+            <div className="flex justify-between items-center text-sm font-bold">
+              <span>Total cobrado</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-normal text-muted-foreground">{formatUsd(totalCobradoUsd)}</span>
+                <span className="text-base">{formatBs(totalCobradoBs)}</span>
+              </div>
+            </div>
+          </div>
+
           {/* Diferencial cambiario — solo si hay registros */}
           {hayDiferencial && (
             <button
@@ -187,9 +198,8 @@ export function PagosResumen({
             </button>
           )}
 
-          {/* Totales */}
-          <div className="pt-3 mt-2 border-t space-y-1">
-            {/* Total facturado = cobrado + CxC + diferencial */}
+          {/* Total facturado — al final, suma cobrado + CxC + diferencial */}
+          <div className="border-t pt-2">
             <div className="flex justify-between items-center text-sm text-muted-foreground">
               <span>Total facturado</span>
               <div className="flex items-center gap-2">
@@ -199,41 +209,6 @@ export function PagosResumen({
                 <span className="font-semibold">
                   {formatBs(totalCobradoBs + cxcTotalBs + (hayDiferencial ? diferencialNetoBs : 0))}
                 </span>
-              </div>
-            </div>
-
-            {/* Restar CxC si existe */}
-            {cxcTotalUsd > 0.005 && (
-              <div className="flex justify-between items-center text-sm text-red-600">
-                <span className="flex items-center gap-1">
-                  <span className="text-red-400">–</span> A credito (CxC)
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-red-400">{formatUsd(cxcTotalUsd)}</span>
-                  <span className="font-bold">{formatBs(cxcTotalBs)}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Restar diferencial cambiario */}
-            {hayDiferencial && (
-              <div className="flex justify-between items-center text-sm text-amber-600">
-                <span className="flex items-center gap-1">
-                  <span className="text-amber-400">–</span> Diferencial cambiario
-                </span>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-amber-400">{formatUsd(diferencialNetoUsdCalc)}</span>
-                  <span className="font-bold">{formatBs(diferencialNetoBs)}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Total Cobrado — linea enfatizada para comparar con metodos */}
-            <div className="flex justify-between items-center text-sm font-bold pt-1.5 border-t">
-              <span>Total cobrado</span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-normal text-muted-foreground">{formatUsd(totalCobradoUsd)}</span>
-                <span className="text-base">{formatBs(totalCobradoBs)}</span>
               </div>
             </div>
           </div>
