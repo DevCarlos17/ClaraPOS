@@ -1836,15 +1836,37 @@ export function useResumenTiposVenta(filters: CuadreFilters | null) {
     [filters, empresaId]
   )
 
+  // Para facturas CREDITO con pago parcial al momento de venta (ej: Bs 600 contado + Bs 400 crédito):
+  //   original_credit_usd = saldo_pend_usd_actual + SUM(pagos del módulo CxC sobre esa factura)
+  // Esto es invariante: si el cliente paga el crédito luego, saldo baja pero pagos_cxc sube en la misma cantidad.
+  // Así "Total Contado" y "Total Crédito" siempre reflejan la facturación original, sin importar cobros posteriores.
+  const cxcSubquery = `
+    COALESCE((
+      SELECT SUM(CAST(p2.monto_usd AS REAL))
+      FROM pagos p2
+      WHERE p2.venta_id = ventas.id
+        AND (p2.is_reversed IS NULL OR p2.is_reversed = 0)
+        AND EXISTS (
+          SELECT 1
+          FROM movimientos_cuenta mc2
+          JOIN movimientos_metodo_cobro mmc2 ON mmc2.doc_origen_id = mc2.id
+          WHERE mc2.venta_id = p2.venta_id
+            AND mc2.empresa_id = p2.empresa_id
+            AND mmc2.origen = 'COBRO'
+            AND mmc2.metodo_cobro_id = p2.metodo_cobro_id
+            AND mmc2.sesion_caja_id = p2.sesion_caja_id
+        )
+    ), 0)`
+
   const { data, isLoading } = useQuery(
     `SELECT
-       -- Contado = CONTADO completo + porción pagada al momento de venta en facturas CREDITO
-       -- (total_usd − saldo_pend_usd = lo que el cliente pagó en el acto)
+       -- Contado = CONTADO full + porción pagada en venta de CREDITO (no CxC)
        COALESCE(SUM(CASE
          WHEN tipo = 'CONTADO'
            THEN CAST(total_usd AS REAL) + CAST(COALESCE(total_igtf_usd, '0') AS REAL)
          WHEN tipo = 'CREDITO'
-           THEN CAST(total_usd AS REAL) - CAST(COALESCE(saldo_pend_usd, '0') AS REAL)
+           THEN CAST(total_usd AS REAL)
+                - (CAST(COALESCE(saldo_pend_usd, '0') AS REAL) + ${cxcSubquery})
          ELSE 0
        END), 0) as contado_usd,
        COALESCE(SUM(CASE
@@ -1852,15 +1874,18 @@ export function useResumenTiposVenta(filters: CuadreFilters | null) {
            THEN CAST(total_bs AS REAL)
                 + CAST(COALESCE(total_igtf_usd, '0') AS REAL) * CAST(COALESCE(tasa, '0') AS REAL)
          WHEN tipo = 'CREDITO'
-           THEN (CAST(total_usd AS REAL) - CAST(COALESCE(saldo_pend_usd, '0') AS REAL))
+           THEN (CAST(total_usd AS REAL)
+                 - (CAST(COALESCE(saldo_pend_usd, '0') AS REAL) + ${cxcSubquery}))
                 * CAST(COALESCE(tasa, '0') AS REAL)
          ELSE 0
        END), 0) as contado_bs,
-       -- Crédito = solo el saldo pendiente de cobro
+       -- Crédito = monto original enviado a crédito (invariante ante pagos posteriores)
        COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
-         THEN CAST(COALESCE(saldo_pend_usd, '0') AS REAL) ELSE 0 END), 0) as credito_usd,
+         THEN CAST(COALESCE(saldo_pend_usd, '0') AS REAL) + ${cxcSubquery}
+         ELSE 0 END), 0) as credito_usd,
        COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
-         THEN CAST(COALESCE(saldo_pend_usd, '0') AS REAL) * CAST(COALESCE(tasa, '0') AS REAL)
+         THEN (CAST(COALESCE(saldo_pend_usd, '0') AS REAL) + ${cxcSubquery})
+              * CAST(COALESCE(tasa, '0') AS REAL)
          ELSE 0 END), 0) as credito_bs
      FROM ventas
      WHERE ${where}`,
