@@ -1602,18 +1602,6 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
     [filters, empresaId]
   )
 
-  // Excluir pagos cuya factura fue creada en la misma sesión activa:
-  // esos son pagos parciales al momento de la venta, no cobros CxC posteriores.
-  // Solo aplica cuando hay sesionCajaIds específicos — en filtro por fecha no aplica.
-  const [vExcludeClause, vExcludeParams] = useMemo((): [string, unknown[]] => {
-    if (!filters || filters.sesionCajaIds.length === 0) return ['', []]
-    const ph = filters.sesionCajaIds.map(() => '?').join(', ')
-    return [
-      `AND (v.sesion_caja_id IS NULL OR v.sesion_caja_id NOT IN (${ph}))`,
-      filters.sesionCajaIds,
-    ]
-  }, [filters])
-
   const { data, isLoading } = useQuery(
     filters
       ? `SELECT
@@ -1636,11 +1624,23 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
          WHERE v.tipo = 'CREDITO'
            AND (p.is_reversed IS NULL OR p.is_reversed = 0)
            AND ${where}
-           ${vExcludeClause}
+           -- Solo pagos que vinieron del módulo CxC:
+           -- el módulo CxC crea movimientos_metodo_cobro con origen='COBRO',
+           -- los pagos al momento de la venta no crean ese registro.
+           AND EXISTS (
+             SELECT 1
+             FROM movimientos_cuenta mc2
+             JOIN movimientos_metodo_cobro mmc2 ON mmc2.doc_origen_id = mc2.id
+             WHERE mc2.venta_id = p.venta_id
+               AND mc2.empresa_id = p.empresa_id
+               AND mmc2.origen = 'COBRO'
+               AND mmc2.sesion_caja_id = p.sesion_caja_id
+               AND mmc2.metodo_cobro_id = p.metodo_cobro_id
+           )
          GROUP BY p.metodo_cobro_id, mc.nombre, mc.tipo, moneda
          ORDER BY cobros_bs DESC, cobros_usd DESC`
       : '',
-    filters ? [...params, ...vExcludeParams] : []
+    filters ? params : []
   )
 
   const porMetodo: CobroViaPOS[] = (data ?? []).map((row: Record<string, unknown>) => {
@@ -1695,16 +1695,6 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
     () => filters ? buildCuadreWhere(filters, empresaId, 'p') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
-  // Excluir pagos cuya factura fue creada en la misma sesión:
-  // son pagos parciales al momento de la venta, no cobros CxC del módulo CxC.
-  const [cxcExcludeClause, cxcExcludeParams] = useMemo((): [string, unknown[]] => {
-    if (!filters || filters.sesionCajaIds.length === 0) return ['', []]
-    const ph = filters.sesionCajaIds.map(() => '?').join(', ')
-    return [
-      `AND (v.sesion_caja_id IS NULL OR v.sesion_caja_id NOT IN (${ph}))`,
-      filters.sesionCajaIds,
-    ]
-  }, [filters])
   const { data, isLoading } = useQuery(
     filters
       ? `SELECT
@@ -1727,10 +1717,21 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
          WHERE v.tipo = 'CREDITO'
            AND (p.is_reversed IS NULL OR p.is_reversed = 0)
            AND ${where}
-           ${cxcExcludeClause}
+           -- Solo cobros que provienen del módulo CxC (origen='COBRO' en movimientos_metodo_cobro).
+           -- Los pagos al momento de la venta (contado parcial) no crean ese registro.
+           AND EXISTS (
+             SELECT 1
+             FROM movimientos_cuenta mc2
+             JOIN movimientos_metodo_cobro mmc2 ON mmc2.doc_origen_id = mc2.id
+             WHERE mc2.venta_id = p.venta_id
+               AND mc2.empresa_id = p.empresa_id
+               AND mmc2.origen = 'COBRO'
+               AND mmc2.sesion_caja_id = p.sesion_caja_id
+               AND mmc2.metodo_cobro_id = p.metodo_cobro_id
+           )
          ORDER BY p.fecha ASC`
       : '',
-    filters ? [...params, ...cxcExcludeParams] : []
+    filters ? params : []
   )
 
   const items: CobranzaCxCItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
