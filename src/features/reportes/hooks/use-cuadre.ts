@@ -1602,6 +1602,18 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
     [filters, empresaId]
   )
 
+  // Excluir pagos cuya factura fue creada en la misma sesión activa:
+  // esos son pagos parciales al momento de la venta, no cobros CxC posteriores.
+  // Solo aplica cuando hay sesionCajaIds específicos — en filtro por fecha no aplica.
+  const [vExcludeClause, vExcludeParams] = useMemo((): [string, unknown[]] => {
+    if (!filters || filters.sesionCajaIds.length === 0) return ['', []]
+    const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+    return [
+      `AND (v.sesion_caja_id IS NULL OR v.sesion_caja_id NOT IN (${ph}))`,
+      filters.sesionCajaIds,
+    ]
+  }, [filters])
+
   const { data, isLoading } = useQuery(
     filters
       ? `SELECT
@@ -1624,10 +1636,11 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
          WHERE v.tipo = 'CREDITO'
            AND (p.is_reversed IS NULL OR p.is_reversed = 0)
            AND ${where}
+           ${vExcludeClause}
          GROUP BY p.metodo_cobro_id, mc.nombre, mc.tipo, moneda
          ORDER BY cobros_bs DESC, cobros_usd DESC`
       : '',
-    filters ? params : []
+    filters ? [...params, ...vExcludeParams] : []
   )
 
   const porMetodo: CobroViaPOS[] = (data ?? []).map((row: Record<string, unknown>) => {
@@ -1682,6 +1695,16 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
     () => filters ? buildCuadreWhere(filters, empresaId, 'p') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
+  // Excluir pagos cuya factura fue creada en la misma sesión:
+  // son pagos parciales al momento de la venta, no cobros CxC del módulo CxC.
+  const [cxcExcludeClause, cxcExcludeParams] = useMemo((): [string, unknown[]] => {
+    if (!filters || filters.sesionCajaIds.length === 0) return ['', []]
+    const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+    return [
+      `AND (v.sesion_caja_id IS NULL OR v.sesion_caja_id NOT IN (${ph}))`,
+      filters.sesionCajaIds,
+    ]
+  }, [filters])
   const { data, isLoading } = useQuery(
     filters
       ? `SELECT
@@ -1704,9 +1727,10 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
          WHERE v.tipo = 'CREDITO'
            AND (p.is_reversed IS NULL OR p.is_reversed = 0)
            AND ${where}
+           ${cxcExcludeClause}
          ORDER BY p.fecha ASC`
       : '',
-    filters ? params : []
+    filters ? [...params, ...cxcExcludeParams] : []
   )
 
   const items: CobranzaCxCItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -1813,17 +1837,30 @@ export function useResumenTiposVenta(filters: CuadreFilters | null) {
 
   const { data, isLoading } = useQuery(
     `SELECT
-       COALESCE(SUM(CASE WHEN tipo = 'CONTADO'
-         THEN CAST(total_usd AS REAL) + CAST(COALESCE(total_igtf_usd, '0') AS REAL)
-         ELSE 0 END), 0) as contado_usd,
-       COALESCE(SUM(CASE WHEN tipo = 'CONTADO'
-         THEN CAST(total_bs AS REAL)
-              + CAST(COALESCE(total_igtf_usd, '0') AS REAL) * CAST(COALESCE(tasa, '0') AS REAL)
-         ELSE 0 END), 0) as contado_bs,
+       -- Contado = CONTADO completo + porción pagada al momento de venta en facturas CREDITO
+       -- (total_usd − saldo_pend_usd = lo que el cliente pagó en el acto)
+       COALESCE(SUM(CASE
+         WHEN tipo = 'CONTADO'
+           THEN CAST(total_usd AS REAL) + CAST(COALESCE(total_igtf_usd, '0') AS REAL)
+         WHEN tipo = 'CREDITO'
+           THEN CAST(total_usd AS REAL) - CAST(COALESCE(saldo_pend_usd, '0') AS REAL)
+         ELSE 0
+       END), 0) as contado_usd,
+       COALESCE(SUM(CASE
+         WHEN tipo = 'CONTADO'
+           THEN CAST(total_bs AS REAL)
+                + CAST(COALESCE(total_igtf_usd, '0') AS REAL) * CAST(COALESCE(tasa, '0') AS REAL)
+         WHEN tipo = 'CREDITO'
+           THEN (CAST(total_usd AS REAL) - CAST(COALESCE(saldo_pend_usd, '0') AS REAL))
+                * CAST(COALESCE(tasa, '0') AS REAL)
+         ELSE 0
+       END), 0) as contado_bs,
+       -- Crédito = solo el saldo pendiente de cobro
        COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
-         THEN CAST(total_usd AS REAL) ELSE 0 END), 0) as credito_usd,
+         THEN CAST(COALESCE(saldo_pend_usd, '0') AS REAL) ELSE 0 END), 0) as credito_usd,
        COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
-         THEN CAST(total_bs AS REAL) ELSE 0 END), 0) as credito_bs
+         THEN CAST(COALESCE(saldo_pend_usd, '0') AS REAL) * CAST(COALESCE(tasa, '0') AS REAL)
+         ELSE 0 END), 0) as credito_bs
      FROM ventas
      WHERE ${where}`,
     params
