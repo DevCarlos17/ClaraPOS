@@ -1,10 +1,12 @@
 import { useState } from 'react'
-import { Check, CaretDown, CaretRight } from '@phosphor-icons/react'
+import { Check, CaretDown, CaretRight, ShieldCheck } from '@phosphor-icons/react'
 import type { Permiso } from '@/features/configuracion/hooks/use-roles'
 
 interface PermisosReadonlyProps {
   mode: 'readonly'
   permisosAgrupados: Record<string, Permiso[]>
+  /** Si el rol es is_system=true, mostrar badge de acceso completo en lugar de la lista */
+  isSystemRole?: boolean
 }
 
 interface PermisosEditableProps {
@@ -18,7 +20,12 @@ type PermisosDisplayProps = PermisosReadonlyProps | PermisosEditableProps
 
 export function PermisosDisplay(props: PermisosDisplayProps) {
   if (props.mode === 'readonly') {
-    return <PermisosReadonly permisosAgrupados={props.permisosAgrupados} />
+    return (
+      <PermisosReadonly
+        permisosAgrupados={props.permisosAgrupados}
+        isSystemRole={props.isSystemRole}
+      />
+    )
   }
 
   return (
@@ -32,9 +39,26 @@ export function PermisosDisplay(props: PermisosDisplayProps) {
 
 function PermisosReadonly({
   permisosAgrupados,
+  isSystemRole,
 }: {
   permisosAgrupados: Record<string, Permiso[]>
+  isSystemRole?: boolean
 }) {
+  // Roles de sistema tienen acceso implícito a todo — mostrar badge en lugar de lista
+  if (isSystemRole) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg border border-green-200 bg-green-50 px-3 py-2.5">
+        <ShieldCheck className="h-4 w-4 text-green-600 shrink-0" />
+        <div>
+          <p className="text-sm font-semibold text-green-800">Acceso completo</p>
+          <p className="text-xs text-green-600">
+            Este rol tiene permisos sobre todos los modulos del sistema.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   if (Object.keys(permisosAgrupados).length === 0) {
     return <p className="text-sm text-gray-400">Sin permisos asignados</p>
   }

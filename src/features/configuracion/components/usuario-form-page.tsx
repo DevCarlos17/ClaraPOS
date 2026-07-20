@@ -467,7 +467,11 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
                 <div className="rounded-lg border border-gray-200 bg-white p-5">
                   <h3 className="text-sm font-semibold text-gray-700 mb-3">Permisos del rol</h3>
                   <div className="max-h-[32rem] overflow-y-auto pr-1">
-                    <PermisosDisplay mode="readonly" permisosAgrupados={permisosAgrupados} />
+                    <PermisosDisplay
+                      mode="readonly"
+                      permisosAgrupados={permisosAgrupados}
+                      isSystemRole={rolEsSistema}
+                    />
                   </div>
                 </div>
               )}

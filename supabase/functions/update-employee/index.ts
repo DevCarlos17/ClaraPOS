@@ -61,10 +61,10 @@ serve(async (req) => {
       return jsonResponse({ error: "Token invalido" }, 401);
     }
 
-    // Obtener datos del caller
+    // Obtener datos del caller (incluyendo level para detectar Propietario)
     const { data: callerUser, error: callerError } = await supabaseAdmin
       .from("usuarios")
-      .select("empresa_id, rol_id")
+      .select("empresa_id, rol_id, level")
       .eq("id", caller.id)
       .single();
 
@@ -96,8 +96,10 @@ serve(async (req) => {
       );
     }
 
-    // No permitir modificar su propio registro
-    if (userId === caller.id) {
+    // El Propietario (level 1) puede editar su propio perfil.
+    // Otros roles no pueden modificarse a sí mismos para evitar escalada de privilegios.
+    const callerLevel = Number((callerUser as Record<string, unknown>).level ?? 3)
+    if (userId === caller.id && callerLevel !== 1) {
       return jsonResponse(
         { error: "No puedes modificar tu propio perfil desde aqui" },
         400,
