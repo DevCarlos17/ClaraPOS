@@ -993,12 +993,13 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
           <div className="bg-card rounded-2xl shadow-xl w-full max-w-md p-6 space-y-5">
             <h2 className="text-base font-semibold">Finalizar Cuadre de Caja</h2>
 
-            {/* Advertencia si hay metodos sin conteo */}
+            {/* Bloqueo si hay metodos sin conteo — el monto físico es obligatorio */}
             {metodosSinConteo > 0 && (
-              <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800 flex items-start gap-2">
-                <Warning size={14} className="mt-0.5 shrink-0" weight="fill" />
+              <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-800 flex items-start gap-2">
+                <Warning size={14} className="mt-0.5 shrink-0 text-red-600" weight="fill" />
                 <span>
-                  {metodosSinConteo} metodo(s) sin conteo fisico ingresado. El cierre se guardara con diferencia nula para esos metodos.
+                  <strong>No se puede cerrar:</strong> {metodosSinConteo} metodo(s) sin conteo fisico.
+                  Ingresa un valor en cada campo (usa 0 si el cajón está vacío).
                 </span>
               </div>
             )}
@@ -1102,8 +1103,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               <button
                 type="button"
                 onClick={handleCerrarSesion}
-                disabled={isCerrando}
-                className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 transition-colors disabled:opacity-50"
+                disabled={isCerrando || metodosSinConteo > 0}
+                title={metodosSinConteo > 0 ? 'Completa el conteo físico de todos los métodos' : undefined}
+                className="inline-flex items-center gap-2 rounded-md bg-amber-500 px-4 py-2 text-sm font-medium text-white hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <LockKey size={15} />
                 {isCerrando ? 'Cerrando...' : 'Cerrar Sesion'}
