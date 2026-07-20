@@ -55,6 +55,7 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
   const [pinError, setPinError] = useState('')
   const [pinSubmitting, setPinSubmitting] = useState(false)
   const [pinGuardado, setPinGuardado] = useState(false)
+  const [pinResetMode, setPinResetMode] = useState(false)
 
   const { permisos: rolPermisosList, permisosAgrupados, isLoading: rolPermisosLoading } = useRolPermisos(
     !isCustomRole ? rolId : ''
@@ -582,18 +583,38 @@ export function UsuarioFormPage({ mode, usuario }: UsuarioFormPageProps) {
       {/* ── Sección PIN de Supervisor ── */}
       {mostrarSeccionPin && (
         <div className="max-w-lg rounded-lg border border-gray-200 bg-white p-5 mt-2">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 border border-amber-200">
-              <ShieldCheck className="h-4 w-4 text-amber-600" />
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 border border-amber-200">
+                <ShieldCheck className="h-4 w-4 text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900">PIN de Supervisor de Caja</h3>
+                <p className="text-xs text-gray-500">
+                  {usuario?.pin_supervisor_hash && !pinResetMode
+                    ? 'Este usuario ya tiene un PIN configurado.'
+                    : pinResetMode
+                    ? 'Ingresa el nuevo PIN (el anterior quedará reemplazado).'
+                    : 'Este usuario aún no tiene PIN de supervisor configurado.'}
+                </p>
+              </div>
             </div>
-            <div>
-              <h3 className="text-sm font-semibold text-gray-900">PIN de Supervisor de Caja</h3>
-              <p className="text-xs text-gray-500">
-                {usuario?.pin_supervisor_hash
-                  ? 'Este usuario ya tiene un PIN configurado.'
-                  : 'Este usuario aún no tiene PIN de supervisor configurado.'}
-              </p>
-            </div>
+            {/* Botón restablecer — solo cuando ya tiene PIN y no estamos en modo reset */}
+            {usuario?.pin_supervisor_hash && !pinResetMode && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPinResetMode(true)
+                  setNuevoPin('')
+                  setConfirmarPin('')
+                  setPinError('')
+                  setPinGuardado(false)
+                }}
+                className="text-xs text-amber-600 hover:text-amber-800 underline"
+              >
+                Restablecer PIN
+              </button>
+            )}
           </div>
 
           <form onSubmit={handleGuardarPin} className="space-y-3">

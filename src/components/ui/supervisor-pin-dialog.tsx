@@ -58,25 +58,34 @@ export function SupervisorPinDialog({
       const hash = await hashPin(pin, user.empresa_id)
 
       // 1. Intentar en SQLite local (funciona offline y es más rápido)
-      let result = await db.getAll<{ id: string; rol_id: string; level: number }>(
-        `SELECT id, rol_id, level FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
-        [user.empresa_id, hash]
-      )
+      //    Si falla (p.ej. columna pin_supervisor_hash no existe en la caché local),
+      //    se ignora el error y se va directo al fallback de Supabase.
+      let result: { id: string; rol_id: string; level: number }[] = []
+      try {
+        result = await db.getAll<{ id: string; rol_id: string; level: number }>(
+          `SELECT id, rol_id, level FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
+          [user.empresa_id, hash]
+        )
+      } catch {
+        // columna no sincronizada aún — continuar con fallback
+      }
 
-      // 2. Fallback a Supabase si SQLite no tiene el hash (puede pasar justo
-      //    después de configurar el PIN, antes de que PowerSync sincronice)
-      if (!result || result.length === 0) {
+      // 2. Fallback a Supabase si SQLite no tiene el hash (sync delay o columna ausente)
+      if (result.length === 0) {
         try {
-          const { data } = await connector.client
-            .from('usuarios')
-            .select('id, rol_id, level')
-            .eq('empresa_id', user.empresa_id)
-            .eq('pin_supervisor_hash', hash)
-            .eq('is_active', true)
-            .limit(1)
-          if (data && data.length > 0) result = data
+          const { data: { session } } = await connector.client.auth.getSession()
+          if (session) {
+            const { data } = await connector.client
+              .from('usuarios')
+              .select('id, rol_id, level')
+              .eq('empresa_id', user.empresa_id)
+              .eq('pin_supervisor_hash', hash)
+              .eq('is_active', true)
+              .limit(1)
+            if (data && data.length > 0) result = data as typeof result
+          }
         } catch {
-          // Sin conexión — continuar con el resultado local (vacío)
+          // Sin conexión — continuar con resultado vacío
         }
       }
 
