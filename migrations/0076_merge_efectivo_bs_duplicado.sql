@@ -32,15 +32,16 @@
 --   historico valido, simplemente ahora apunta al metodo consolidado).
 --
 -- IMPORTANTE - triggers de inmutabilidad:
---   Las tablas pagos y movimientos_metodo_cobro tienen triggers BEFORE UPDATE
---   que usan prevent_mutation() y RECHAZAN cualquier UPDATE incondicionalmente
---   (trg_pagos_no_update, trg_mov_metodo_cobro_no_update). La tabla gastos
---   tiene un trigger similar (trg_gasto_protect / prevent_gasto_mutation) que
---   rechaza CUALQUIER UPDATE si el gasto ya esta ANULADO. Siguiendo el patron
---   ya usado en 0044_identity_constraints.sql, estos triggers se desactivan
---   temporalmente solo durante esta migracion de datos y se reactivan al
---   finalizar. gasto_pagos y sesiones_caja_detalle NO tienen triggers de
---   inmutabilidad, por lo que no requieren este tratamiento.
+--   Las tablas pagos, gastos y movimientos_metodo_cobro tienen triggers
+--   BEFORE UPDATE que RECHAZAN el cambio de metodo_cobro_id (inmutabilidad
+--   financiera). Los NOMBRES de estos triggers han cambiado a lo largo de las
+--   migraciones (p.ej. 0015 dropeo trg_pagos_no_update y creo
+--   trg_pagos_allow_reversal), por lo que NO se puede depender de nombres
+--   exactos. Siguiendo el patron ya usado en 0023 y 0028
+--   (DISABLE TRIGGER USER), se desactivan TODOS los triggers de usuario de
+--   esas tablas temporalmente durante la reasignacion y se reactivan al
+--   finalizar. gasto_pagos y sesiones_caja_detalle no requieren este
+--   tratamiento pero se incluye pagos/gastos/movimientos por seguridad.
 --
 -- traspasos_tesoreria: NO se toca. Se verifico el schema (0035, 0072) y las
 --   columnas cuenta_origen_tipo / cuenta_destino_tipo solo aceptan los
@@ -61,10 +62,12 @@
 BEGIN;
 
 -- ─── 1. Desactivar triggers de inmutabilidad para la reasignacion ────────────
+-- Se usa DISABLE TRIGGER USER (no nombres especificos) porque los nombres de
+-- los triggers de inmutabilidad cambiaron a lo largo de las migraciones.
 
-ALTER TABLE pagos                    DISABLE TRIGGER trg_pagos_no_update;
-ALTER TABLE gastos                   DISABLE TRIGGER trg_gasto_protect;
-ALTER TABLE movimientos_metodo_cobro DISABLE TRIGGER trg_mov_metodo_cobro_no_update;
+ALTER TABLE pagos                    DISABLE TRIGGER USER;
+ALTER TABLE gastos                   DISABLE TRIGGER USER;
+ALTER TABLE movimientos_metodo_cobro DISABLE TRIGGER USER;
 
 
 -- ─── 2. Reasignar referencias historicas: metodo ANTIGUO -> metodo OFICIAL ───
@@ -98,9 +101,9 @@ WHERE empresa_id = 'f0aba92c-ff8f-4524-8100-eeea14ac4c29'
 
 -- ─── 3. Reactivar triggers de inmutabilidad ───────────────────────────────────
 
-ALTER TABLE pagos                    ENABLE TRIGGER trg_pagos_no_update;
-ALTER TABLE gastos                   ENABLE TRIGGER trg_gasto_protect;
-ALTER TABLE movimientos_metodo_cobro ENABLE TRIGGER trg_mov_metodo_cobro_no_update;
+ALTER TABLE pagos                    ENABLE TRIGGER USER;
+ALTER TABLE gastos                   ENABLE TRIGGER USER;
+ALTER TABLE movimientos_metodo_cobro ENABLE TRIGGER USER;
 
 
 -- ─── 4. Consolidar sesiones_caja_detalle (respeta UNIQUE(sesion_caja_id, metodo_cobro_id)) ──
