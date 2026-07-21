@@ -465,6 +465,7 @@ export function CobroModal({
       const result = await crearVenta({
         cliente_id: clienteId,
         tipo: discrepancyMode === 'ABSORBER' ? 'CONTADO'
+            : discrepancyMode === 'DIFERENCIAL_FALTANTE' ? 'CONTADO'
             : discrepancyMode === 'CREDITO' ? 'CREDITO'
             : tipoDetectado,
         tasa: tasaUsada,
