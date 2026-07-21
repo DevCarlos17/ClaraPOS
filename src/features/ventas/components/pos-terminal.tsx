@@ -40,6 +40,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 export function PosTerminal() {
   const { tasaValor, isLoading: tasaLoading } = useTasaActual()
   const { user } = useCurrentUser()
+  // eslint-disable-next-line no-console
+  console.log('[DEBUG POS] empresa_id en uso:', user?.empresa_id, '| user_id:', user?.id)
   const { metodos } = useMetodosPOS()
   const { hasPermission, isOwner } = usePermissions()
   const canMovManualPos = isOwner || hasPermission(PERMISSIONS.CAJA_MOV_MANUAL)

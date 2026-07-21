@@ -457,7 +457,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
   // (extra y apertura usan NOT IN para no repetir métodos que aparecen en la query principal).
   const metodos = useMemo(() => {
     const seenId = new Set<string>()
-    return [
+    const result = [
       ...(data ?? []).map(toItem),
       ...(extraData ?? []).map(toItem),
       ...(aperturaData ?? []).map(toItem),
@@ -466,7 +466,15 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
       seenId.add(m.metodo_cobro_id)
       return true
     })
-  }, [data, extraData, aperturaData])
+    // eslint-disable-next-line no-console
+    console.log('[DEBUG usePagosPorMetodo] empresaId:', empresaId, {
+      dataQuery: (data ?? []).map((r: Record<string, unknown>) => ({ id: r.metodo_cobro_id, nombre: r.nombre, moneda: r.moneda, total_original: r.total_original })),
+      extraQuery: (extraData ?? []).map((r: Record<string, unknown>) => ({ id: r.metodo_cobro_id, nombre: r.nombre, moneda: r.moneda })),
+      aperturaQuery: (aperturaData ?? []).map((r: Record<string, unknown>) => ({ id: r.metodo_cobro_id, nombre: r.nombre, moneda: r.moneda })),
+      resultado: result.map((m) => ({ id: m.metodo_cobro_id, nombre: m.nombre, moneda: m.moneda, totalUsd: m.totalUsd, totalOriginal: m.totalOriginal })),
+    })
+    return result
+  }, [data, extraData, aperturaData, empresaId])
 
   return { metodos, isLoading: isLoading || extraLoading || aperturaLoading }
 }

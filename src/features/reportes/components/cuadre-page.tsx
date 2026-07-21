@@ -57,6 +57,8 @@ interface CuadrePageProps {
 
 export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: CuadrePageProps = {}) {
   const { user } = useCurrentUser()
+  // eslint-disable-next-line no-console
+  console.log('[DEBUG CUADRE] empresa_id en uso:', user?.empresa_id, '| user_id:', user?.id)
 
   // Funnel state
   const [fecha, setFecha] = useState(initialFecha ?? todayStr)
