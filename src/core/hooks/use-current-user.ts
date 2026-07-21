@@ -42,12 +42,6 @@ export function useCurrentUser(): { user: CurrentUser | null; loading: boolean }
 
   // 1. Prefer local PowerSync data (synced from Supabase)
   if (userRow) {
-    // eslint-disable-next-line no-console
-    console.log('[DEBUG useCurrentUser] source=PowerSync', {
-      user_id: userRow.id,
-      email: userRow.email,
-      empresa_id: userRow.empresa_id,
-    })
     return {
       user: {
         id: userRow.id as string,
@@ -69,13 +63,6 @@ export function useCurrentUser(): { user: CurrentUser | null; loading: boolean }
   const metaRolId = typeof meta?.rol_id === 'string' ? meta.rol_id : null
 
   const metaLevel = typeof meta?.level === 'number' ? meta.level : null
-
-  // eslint-disable-next-line no-console
-  console.log('[DEBUG useCurrentUser] source=JWT_fallback', {
-    user_id: authUser.id,
-    email: authUser.email,
-    empresa_id: empresaId,
-  })
 
   return {
     user: {

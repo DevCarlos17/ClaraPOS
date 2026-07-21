@@ -104,19 +104,6 @@ export function CobroModal({
   // Congelar tasa al abrir el modal; resetear formulario de cobro
   useEffect(() => {
     if (!isOpen) return
-    // eslint-disable-next-line no-console
-    console.table(
-      metodos
-        .filter((m) => m.tipo === 'EFECTIVO')
-        .map((m) => ({
-          id: m.id,
-          nombre: m.nombre,
-          moneda: m.moneda,
-          caja_fuerte_id: m.caja_fuerte_id,
-          caja_nombre: m.caja_nombre,
-          is_active: m.is_active,
-        }))
-    )
     tasaFrozen.current = tasa > 0 ? tasa : 1
     setPagos([])
     setMetodoId('')
@@ -745,18 +732,11 @@ export function CobroModal({
         {/* Formulario de pago */}
         <div className="px-5 py-3 border-t border-b shrink-0 space-y-2">
           <p className="text-xs font-medium text-muted-foreground">Agregar pago</p>
-          <NativeSelect
-            value={metodoId}
-            onChange={(e) => {
-              // eslint-disable-next-line no-console
-              console.log('[DEBUG cobro-modal] metodo seleccionado:', e.target.value, metodos.find((m) => m.id === e.target.value))
-              setMetodoId(e.target.value)
-            }}
-          >
+          <NativeSelect value={metodoId} onChange={(e) => setMetodoId(e.target.value)}>
             <option value="">Seleccionar metodo...</option>
             {metodos.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.nombre} ({m.moneda}) — {m.id.slice(0, 8)}
+                {m.nombre} ({m.moneda})
               </option>
             ))}
           </NativeSelect>
