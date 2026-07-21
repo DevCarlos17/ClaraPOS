@@ -168,6 +168,8 @@ export interface FacturaMetodoItem {
   fecha: string
   moneda: string
   venta_tipo: string
+  /** 1 si el pago fue inicial (contado al emitir), 0 si es cobro CxC posterior */
+  es_pago_inicial: number
 }
 
 export interface ProductoDeptoItem {
@@ -961,7 +963,10 @@ export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre
            pg.referencia,
            pg.fecha,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
-           v.tipo as venta_tipo
+           v.tipo as venta_tipo,
+           -- Un pago es INICIAL (contado al emitir) si comparte created_at con la venta
+           -- (misma writeTransaction). Un cobro CxC posterior tiene created_at distinto.
+           CASE WHEN pg.created_at = v.created_at THEN 1 ELSE 0 END as es_pago_inicial
          FROM pagos pg
          JOIN ventas v ON pg.venta_id = v.id
          JOIN clientes c ON v.cliente_id = c.id
@@ -1616,6 +1621,9 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
          WHERE v.tipo = 'CREDITO'
            AND (p.is_reversed IS NULL OR p.is_reversed = 0)
+           -- Excluir el pago inicial de una factura mixta (mismo created_at que la venta).
+           -- Ver nota en useCobranzasCxCCaja.
+           AND p.created_at != v.created_at
            AND ${where}
          GROUP BY p.metodo_cobro_id, mc.nombre, mc.tipo, moneda
          ORDER BY cobros_bs DESC, cobros_usd DESC`
@@ -1696,6 +1704,11 @@ export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
          WHERE v.tipo = 'CREDITO'
            AND (p.is_reversed IS NULL OR p.is_reversed = 0)
+           -- Excluir el pago inicial de una factura mixta (contado + crédito):
+           -- ese pago se inserta en la misma writeTransaction que la venta y comparte
+           -- created_at. Un cobro CxC posterior corre en otra transacción con timestamp
+           -- distinto, por lo que sí entra. Esto separa Case A (pago inicial) de Case B (cobro posterior).
+           AND p.created_at != v.created_at
            AND ${where}
          ORDER BY p.fecha ASC`
       : '',
@@ -1790,34 +1803,52 @@ export function useVentasFinancieras(filters: CuadreFilters | null) {
 
 // ─── Resumen por tipo de venta (preserva naturaleza original) ──
 /**
- * Calcula el total facturado separado por tipo ORIGINAL de la factura.
- * A diferencia de totalContado = totalFacturado - cxcPendiente (que cambia
- * cuando se cobra una factura crédito), este hook usa ventas.tipo directamente
- * para que el Total Crédito siempre refleje las facturas emitidas a crédito,
- * independientemente de si ya fueron cobradas en esta sesión.
+ * Calcula el total facturado separado en la porción CONTADO (pagada al emitir)
+ * y la porción CRÉDITO (que quedó pendiente en CxC) de cada factura.
+ *
+ * Estas porciones son INVARIABLES una vez emitido el documento y no cambian
+ * cuando la porción a crédito se cobra después. Para obtenerlas se usa la fila
+ * inmutable movimientos_cuenta (tipo='FAC'), que guarda exactamente el saldo
+ * que quedó a crédito al emitir la factura:
+ *   - creditoPortion = monto de la fila FAC de esa venta
+ *   - contadoPortion = total de la venta − creditoPortion
+ *
+ * FACTURAS MIXTAS (ej: total 525, contado 500, crédito 25): la venta se guarda
+ * con tipo='CREDITO' porque quedó saldo, pero solo los 25 son crédito. La fila
+ * FAC guarda 25 → contado = 525 − 25 = 500. Correcto.
+ * CONTADO PURO: no hay fila FAC → credito=0, contado=total.
+ * CRÉDITO PURO: FAC=total → credito=total, contado=0.
+ *
+ * El IGTF siempre se cobra al momento, por lo que se suma a la porción contado.
  */
 export function useResumenTiposVenta(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
   const [where, params] = useMemo(
-    () => filters ? buildCuadreWhere(filters, empresaId) : ['1=0', [] as unknown[]],
+    () => filters ? buildCuadreWhere(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
 
   const { data, isLoading } = useQuery(
     `SELECT
-       COALESCE(SUM(CASE WHEN tipo = 'CONTADO'
-         THEN CAST(total_usd AS REAL) + CAST(COALESCE(total_igtf_usd, '0') AS REAL)
-         ELSE 0 END), 0) as contado_usd,
-       COALESCE(SUM(CASE WHEN tipo = 'CONTADO'
-         THEN CAST(total_bs AS REAL)
-              + CAST(COALESCE(total_igtf_usd, '0') AS REAL) * CAST(COALESCE(tasa, '0') AS REAL)
-         ELSE 0 END), 0) as contado_bs,
-       COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
-         THEN CAST(total_usd AS REAL) ELSE 0 END), 0) as credito_usd,
-       COALESCE(SUM(CASE WHEN tipo = 'CREDITO'
-         THEN CAST(total_bs AS REAL) ELSE 0 END), 0) as credito_bs
-     FROM ventas
+       COALESCE(SUM(
+         (CAST(v.total_usd AS REAL) + CAST(COALESCE(v.total_igtf_usd, '0') AS REAL))
+         - COALESCE(fac.credito_usd, 0)
+       ), 0) as contado_usd,
+       COALESCE(SUM(
+         (CAST(v.total_bs AS REAL)
+           + CAST(COALESCE(v.total_igtf_usd, '0') AS REAL) * CAST(COALESCE(v.tasa, '0') AS REAL))
+         - COALESCE(fac.credito_usd, 0) * CAST(COALESCE(v.tasa, '0') AS REAL)
+       ), 0) as contado_bs,
+       COALESCE(SUM(COALESCE(fac.credito_usd, 0)), 0) as credito_usd,
+       COALESCE(SUM(COALESCE(fac.credito_usd, 0) * CAST(COALESCE(v.tasa, '0') AS REAL)), 0) as credito_bs
+     FROM ventas v
+     LEFT JOIN (
+       SELECT venta_id, SUM(CAST(monto AS REAL)) as credito_usd
+       FROM movimientos_cuenta
+       WHERE tipo = 'FAC'
+       GROUP BY venta_id
+     ) fac ON fac.venta_id = v.id
      WHERE ${where}`,
     params
   )

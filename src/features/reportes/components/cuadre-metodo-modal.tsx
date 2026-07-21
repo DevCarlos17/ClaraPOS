@@ -60,7 +60,7 @@ export function CuadreMetodoModal({ isOpen, onClose, filters, metodoNombre }: Cu
             <>
               {/* Sección 1: Ventas Contado */}
               {(() => {
-                const contado = facturas.filter(f => f.venta_tipo !== 'CREDITO')
+                const contado = facturas.filter(f => f.es_pago_inicial === 1)
                 const totalContadoUsd = contado.reduce((s, f) => s + parseFloat(f.monto_usd), 0)
                 return contado.length > 0 ? (
                   <div>
@@ -107,7 +107,7 @@ export function CuadreMetodoModal({ isOpen, onClose, filters, metodoNombre }: Cu
 
               {/* Sección 2: Cobranzas CxC */}
               {(() => {
-                const cxc = facturas.filter(f => f.venta_tipo === 'CREDITO')
+                const cxc = facturas.filter(f => f.es_pago_inicial === 0)
                 const totalCxCUsd = cxc.reduce((s, f) => s + parseFloat(f.monto_usd), 0)
                 return cxc.length > 0 ? (
                   <div>
