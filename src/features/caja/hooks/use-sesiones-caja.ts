@@ -2,7 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
-import { localNow, todayStr } from '@/lib/dates'
+import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
 import { bsToUsd, toStorageString } from '@/lib/currency'
 
@@ -960,115 +960,6 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         ]
       )
     }
-
-    // 8. Traspasos de cierre: métodos de lote (deposito_directo = 0) con caja_fuerte_id asignada.
-    //    Por cada método, se transfiere el monto FÍSICO reportado por el cajero a la caja fuerte
-    //    correspondiente. Si el monto físico es 0, no se crea traspaso.
-    if (conteoFisicoPorMetodo && Object.keys(conteoFisicoPorMetodo).length > 0) {
-      const fechaCierre = todayStr()
-
-      for (const [metodoCobroid, montoFisico] of Object.entries(conteoFisicoPorMetodo)) {
-        if (montoFisico <= 0) continue // nada que transferir
-
-        // Obtener info del método: tipo de depósito, caja fuerte destino, moneda
-        const metodoInfoRes = await tx.execute(
-          `SELECT deposito_directo, caja_fuerte_id, moneda_id, saldo_actual
-           FROM metodos_cobro WHERE id = ? AND empresa_id = ?`,
-          [metodoCobroid, empresaId]
-        )
-        const metodoInfo = metodoInfoRes.rows?.item(0) as {
-          deposito_directo: number
-          caja_fuerte_id: string | null
-          moneda_id: string
-          saldo_actual: string
-        } | undefined
-
-        // Solo lotes (deposito_directo = 0) con caja fuerte asignada
-        if (!metodoInfo || metodoInfo.deposito_directo === 1 || !metodoInfo.caja_fuerte_id) continue
-
-        const cajaFuerteId = metodoInfo.caja_fuerte_id
-        const monedaId     = metodoInfo.moneda_id
-        const saldoMetodoAnt = parseFloat(metodoInfo.saldo_actual ?? '0')
-        const saldoMetodoNuevo = saldoMetodoAnt - montoFisico
-
-        // Saldo actual de la caja fuerte destino
-        const cajaRes = await tx.execute(
-          'SELECT saldo_actual FROM caja_fuerte WHERE id = ? AND empresa_id = ?',
-          [cajaFuerteId, empresaId]
-        )
-        const saldoCajaAnt = parseFloat(
-          (cajaRes.rows?.item(0) as { saldo_actual: string } | undefined)?.saldo_actual ?? '0'
-        )
-        const saldoCajaNuevo = saldoCajaAnt + montoFisico
-
-        // EGRESO del método de cobro (sale del cajón)
-        const movMetodoId = uuidv4()
-        await tx.execute(
-          `INSERT INTO movimientos_metodo_cobro
-             (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-              doc_origen_id, doc_origen_ref, concepto, sesion_caja_id,
-              autorizado_por_id, destinatario_id, referencia_pago_digital_id,
-              fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'EGRESO', 'EGRESO_TESORERIA', ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
-          [
-            movMetodoId, empresaId, metodoCobroid,
-            montoFisico.toFixed(4),
-            saldoMetodoAnt.toFixed(4), saldoMetodoNuevo.toFixed(4),
-            'Cierre de sesion — traspaso a tesoreria',
-            id,
-            fechaCierre, now, usuario_cierre_id,
-          ]
-        )
-        await tx.execute(
-          'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-          [saldoMetodoNuevo.toFixed(4), now, metodoCobroid]
-        )
-
-        // INGRESO en caja fuerte (validado=0, pendiente de confirmación por tesorería)
-        const movCajaId = uuidv4()
-        await tx.execute(
-          `INSERT INTO mov_caja_fuerte
-             (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-              doc_origen_id, doc_origen_tipo, referencia, descripcion,
-              validado, validado_por, validado_at, reversado, reverso_de,
-              fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'INGRESO', 'TRASPASO', ?, ?, ?, ?, 'MOVIMIENTO_METODO_COBRO', NULL, ?, 0, NULL, NULL, 0, NULL, ?, ?, ?)`,
-          [
-            movCajaId, empresaId, cajaFuerteId,
-            montoFisico.toFixed(4),
-            saldoCajaAnt.toFixed(4), saldoCajaNuevo.toFixed(4),
-            movMetodoId,
-            'Cierre de sesion — monto fisico contado',
-            fechaCierre, now, usuario_cierre_id,
-          ]
-        )
-        await tx.execute(
-          'UPDATE caja_fuerte SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-          [saldoCajaNuevo.toFixed(4), now, cajaFuerteId]
-        )
-
-        // Registro de traspaso para trazabilidad completa
-        await tx.execute(
-          `INSERT INTO traspasos_tesoreria
-             (id, empresa_id,
-              cuenta_origen_tipo, cuenta_origen_id, mov_origen_id,
-              cuenta_destino_tipo, cuenta_destino_id, mov_destino_id,
-              monto_origen, moneda_origen_id, monto_destino, moneda_destino_id,
-              tasa_cambio, reversado, observacion, sesion_caja_id,
-              fecha, created_at, created_by)
-           VALUES (?, ?, 'SESION_CAJA', ?, ?, 'CAJA_FUERTE', ?, ?, ?, ?, ?, ?, '1', 0, ?, ?, ?, ?, ?)`,
-          [
-            uuidv4(), empresaId,
-            id, movMetodoId,
-            cajaFuerteId, movCajaId,
-            montoFisico.toFixed(4), monedaId,
-            montoFisico.toFixed(4), monedaId,
-            'Cierre de sesion — monto fisico contado',
-            id,
-            fechaCierre, now, usuario_cierre_id,
-          ]
-        )
-      }
-    }
   })
+
 }

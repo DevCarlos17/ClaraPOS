@@ -950,25 +950,14 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
           try {
             // UUID-based: unique per venta, immune to multi-device COUNT collisions
             const nroGastoAbs = `POS-ABSORB-${ventaId.slice(0, 8).toUpperCase()}`
-            // Intentar cuenta gastos_generales primero; fallback a PERDIDA_DIFERENCIAL_CAMBIARIO
-            const cuentaAbsRes1 = await tx.execute(
+            const cuentaAbsRes = await tx.execute(
               `SELECT cuenta_contable_id FROM cuentas_config
                WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
               [empresa_id]
             )
-            let cuentaAbsId = (
-              cuentaAbsRes1.rows?.item(0) as { cuenta_contable_id: string } | undefined
+            const cuentaAbsId = (
+              cuentaAbsRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
             )?.cuenta_contable_id ?? ''
-            if (!cuentaAbsId) {
-              const cuentaAbsRes2 = await tx.execute(
-                `SELECT cuenta_contable_id FROM cuentas_config
-                 WHERE empresa_id = ? AND clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO' LIMIT 1`,
-                [empresa_id]
-              )
-              cuentaAbsId = (
-                cuentaAbsRes2.rows?.item(0) as { cuenta_contable_id: string } | undefined
-              )?.cuenta_contable_id ?? ''
-            }
             // Only insert if account is configured — empty cuenta_id violates FK in Supabase
             if (!cuentaAbsId) throw new Error('sin-cuenta')
 
