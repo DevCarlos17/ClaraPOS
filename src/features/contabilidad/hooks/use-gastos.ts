@@ -2,9 +2,10 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import type { Transaction } from '@powersync/common'
 import Decimal from 'decimal.js'
 import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
-import { localNow } from '@/lib/dates'
+import { localNow, todayStr } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosGasto, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 
@@ -485,6 +486,162 @@ export async function crearGasto(data: {
   })
 
   return { gastoId, nroGasto }
+}
+
+/**
+ * Crea un gasto minimo para una comision bancaria detectada al consolidar el
+ * cierre de caja (cierre-consolidacion-tesoreria, PR2), DENTRO de una
+ * transaccion existente provista por el llamador (no abre su propia
+ * writeTransaction — PowerSync no permite anidarlas, y `cerrarSesionCaja`
+ * ya tiene una abierta).
+ *
+ * Deliberadamente NO reutiliza `crearGasto`: esa funcion abre su propia
+ * writeTransaction (no se puede anidar) y su loop de pagos inserta
+ * incondicionalmente un EGRESO en `movimientos_metodo_cobro`, lo que
+ * drenaria dos veces el saldo que `consolidarMetodoATesoreriaEnTx` ya dejo
+ * en cero para ese metodo. Esta funcion inserta un `gasto_pagos` con
+ * `metodo_cobro_id = NULL` a proposito para evitar ese doble drenaje.
+ */
+export async function insertarGastoComisionEnTx(
+  tx: Transaction,
+  p: {
+    empresaId: string
+    metodoCobroId: string
+    bancoEmpresaId: string
+    montoComisionNativo: string
+    monedaCodigo: 'USD' | 'VES'
+    tasa: number
+    cuentaComisionId: string
+    sesionCajaId: string
+    comisionPct: string
+    usuarioId: string
+  }
+): Promise<{ gastoId: string }> {
+  if (p.tasa <= 0) throw new Error('La tasa debe ser mayor a 0 para registrar la comision bancaria')
+
+  const montoNativo = new Decimal(p.montoComisionNativo)
+  if (montoNativo.lessThanOrEqualTo(0)) {
+    throw new Error('El monto de la comision bancaria debe ser mayor a 0')
+  }
+
+  const comisionUsd = p.monedaCodigo === 'VES'
+    ? bsToUsd(montoNativo, p.tasa)
+    : montoNativo
+
+  const now = localNow()
+  const fecha = todayStr()
+  const gastoId = uuidv4()
+
+  // Resolver moneda_id de la comision (codigo_iso: 'USD' | 'VES')
+  const monedaResult = await tx.execute(
+    'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
+    [p.monedaCodigo]
+  )
+  const monedaId = (monedaResult.rows?.item(0) as { id: string } | undefined)?.id
+  if (!monedaId) throw new Error(`Moneda no encontrada: ${p.monedaCodigo}`)
+
+  // Generar nro_gasto secuencial por empresa (formato GTO-XXXX)
+  const countResult = await tx.execute(
+    'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
+    [p.empresaId]
+  )
+  const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
+  const nroGasto = `GTO-${String(count + 1).padStart(4, '0')}`
+  const monedaFactura: 'USD' | 'BS' = p.monedaCodigo === 'VES' ? 'BS' : 'USD'
+
+  await tx.execute(
+    `INSERT INTO gastos (
+       id, empresa_id, nro_gasto, nro_factura, nro_control, cuenta_id, proveedor_id, descripcion,
+       fecha, moneda_id, moneda_factura, usa_tasa_paralela, tasa, tasa_proveedor,
+       tipo_impuesto, porcentaje_iva, monto_factura, base_imponible_usd, monto_iva_usd,
+       monto_usd, saldo_pendiente_usd,
+       metodo_cobro_id, banco_empresa_id, referencia, observaciones,
+       status, created_at, updated_at, created_by
+     ) VALUES (?, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?, ?, 0, ?, NULL, 'Exento', 0, ?, ?, 0, ?, '0.00', ?, ?, NULL, ?, 'REGISTRADO', ?, ?, ?)`,
+    [
+      gastoId,
+      p.empresaId,
+      nroGasto,
+      p.cuentaComisionId,
+      `Comision bancaria ${p.comisionPct}% - consolidacion cierre de caja`,
+      fecha,
+      monedaId,
+      monedaFactura,
+      p.tasa.toFixed(4),
+      toStorageString(montoNativo),
+      toStorageString(comisionUsd),
+      toStorageString(comisionUsd),
+      p.metodoCobroId,
+      p.bancoEmpresaId,
+      `Sesion de caja ${p.sesionCajaId}`,
+      now,
+      now,
+      p.usuarioId,
+    ]
+  )
+
+  // gasto_pagos: metodo_cobro_id=NULL a proposito — el saldo del metodo de cobro
+  // ya fue drenado por consolidarMetodoATesoreriaEnTx, no se debe drenar de nuevo.
+  await tx.execute(
+    `INSERT INTO gasto_pagos (
+       id, empresa_id, gasto_id, metodo_cobro_id, banco_empresa_id,
+       monto_usd, referencia, created_at
+     ) VALUES (?, ?, ?, NULL, ?, ?, NULL, ?)`,
+    [uuidv4(), p.empresaId, gastoId, p.bancoEmpresaId, toStorageString(comisionUsd), now]
+  )
+
+  // EGRESO bancario que neta el deposito bruto ya consolidado
+  const bancoRes = await tx.execute(
+    'SELECT saldo_actual FROM bancos_empresa WHERE id = ? AND empresa_id = ?',
+    [p.bancoEmpresaId, p.empresaId]
+  )
+  if (!bancoRes.rows?.length) throw new Error('Banco no encontrado para la comision bancaria')
+  const saldoBancoAnt = new Decimal(
+    (bancoRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+  )
+  const saldoBancoNuevo = saldoBancoAnt.minus(montoNativo)
+
+  const movBancoId = uuidv4()
+  await tx.execute(
+    `INSERT INTO movimientos_bancarios
+       (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+        doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
+     VALUES (?, ?, ?, 'EGRESO', 'GASTO', ?, ?, ?, ?, 'GASTO', NULL, 0, ?, ?, ?, ?)`,
+    [
+      movBancoId, p.empresaId, p.bancoEmpresaId,
+      toStorageString(montoNativo),
+      toStorageString(saldoBancoAnt),
+      toStorageString(saldoBancoNuevo),
+      gastoId,
+      `Comision bancaria ${nroGasto}`,
+      fecha, now, p.usuarioId,
+    ]
+  )
+
+  await tx.execute(
+    'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+    [toStorageString(saldoBancoNuevo), now, p.bancoEmpresaId]
+  )
+
+  // Asientos contables (DEBE cuenta comision / HABER banco)
+  const [cuentas, monedaContable] = await Promise.all([
+    cargarMapaCuentas(tx, p.empresaId),
+    leerMonedaContable(tx, p.empresaId),
+  ])
+  await generarAsientosGasto(tx, {
+    empresaId: p.empresaId,
+    gastoId,
+    nroGasto,
+    cuentaGastoId: p.cuentaComisionId,
+    monto_usd: comisionUsd.toNumber(),
+    pagos: [{ monto_usd: comisionUsd.toNumber(), banco_empresa_id: p.bancoEmpresaId }],
+    cuentas,
+    usuarioId: p.usuarioId,
+    monedaContable,
+    tasa: p.tasa,
+  })
+
+  return { gastoId }
 }
 
 /**

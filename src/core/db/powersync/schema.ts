@@ -813,6 +813,7 @@ const movimientos_bancarios = new Table(
     empresa_id: column.text,
     banco_empresa_id: column.text,
     tipo: column.text,
+    // DEPOSITO_CAJA | TRANSFERENCIA_CLIENTE | PAGO_PROVEEDOR | GASTO | MANUAL | TRASPASO | REVERSO | CIERRE_CONSOLIDACION
     origen: column.text,
     monto: column.text,
     saldo_anterior: column.text,

@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import type { Transaction } from '@powersync/common'
 import { localNow, todayStr } from '@/lib/dates'
 import type { CuentaTesoreria } from './use-cuentas-tesoreria'
 
@@ -592,12 +593,201 @@ export async function reversarTraspaso(params: {
   })
 }
 
-// ─── Traspaso POS → Tesorería (TASK-005) ────────────────────
+// ─── Traspaso POS → Tesorería (TASK-005 / cierre-consolidacion-tesoreria) ───
+
+/** Destino de una consolidacion desde sesion de caja hacia Tesoreria. */
+export type DestinoConsolidacion =
+  | { tipo: 'CAJA_FUERTE'; id: string }
+  | { tipo: 'BANCO'; id: string }
+
+/**
+ * Consolida el saldo de un metodo de cobro de una sesion de caja hacia Tesoreria
+ * (caja fuerte o banco), DENTRO de una transaccion existente provista por el
+ * llamador. No abre su propia writeTransaction — PowerSync no permite anidarlas,
+ * por lo que esta funcion es la unica forma segura de invocar esta logica desde
+ * dentro de `cerrarSesionCaja` (cierre-consolidacion-tesoreria, PR2).
+ *
+ * Atomico: EGRESO en metodos_cobro (drena saldo_actual, origen='EGRESO_TESORERIA')
+ * + INGRESO PENDIENTE (validado=0) en mov_caja_fuerte o movimientos_bancarios segun
+ * `destino.tipo` + registro en traspasos_tesoreria (cuenta_origen_tipo='SESION_CAJA').
+ *
+ * `origenDestino` acepta 'TRASPASO' ademas de los origenes propios del cierre
+ * automatico para preservar el comportamiento exacto del traspaso manual POS→Tesoreria
+ * (ver `crearTraspasoSesionATesoreria`, que delega aqui).
+ */
+export async function consolidarMetodoATesoreriaEnTx(
+  tx: Transaction,
+  p: {
+    sesionCajaId: string
+    metodoCobroId: string
+    destino: DestinoConsolidacion
+    monto: string
+    monedaId: string
+    empresaId: string
+    userId: string
+    origenDestino: 'DEPOSITO_CIERRE' | 'CIERRE_CONSOLIDACION' | 'TRASPASO'
+    descripcion?: string
+  }
+): Promise<{ traspasoId: string }> {
+  const montoNum = parseFloat(p.monto)
+  if (isNaN(montoNum) || montoNum <= 0) throw new Error('El monto debe ser mayor a 0')
+
+  const now = localNow()
+  const fecha = todayStr()
+
+  // 1. Saldo actual del metodo de cobro en la sesion
+  const metodoRes = await tx.execute(
+    'SELECT saldo_actual FROM metodos_cobro WHERE id = ? AND empresa_id = ?',
+    [p.metodoCobroId, p.empresaId]
+  )
+  if (!metodoRes.rows?.length) throw new Error('Metodo de cobro no encontrado')
+  const saldoMetodoAnt = parseFloat(
+    (metodoRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+  )
+
+  // 2. Validar saldo suficiente
+  if (montoNum > saldoMetodoAnt + 0.001) {
+    throw new Error(
+      `Saldo insuficiente. Disponible: ${saldoMetodoAnt.toFixed(2)}, Solicitado: ${p.monto}`
+    )
+  }
+
+  const saldoMetodoNuevo = saldoMetodoAnt - montoNum
+
+  // 3. Crear movimiento de EGRESO en metodo de cobro (sale de POS)
+  const movMetodoId = uuidv4()
+  await tx.execute(
+    `INSERT INTO movimientos_metodo_cobro
+       (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+        doc_origen_id, doc_origen_ref, concepto, sesion_caja_id,
+        autorizado_por_id, destinatario_id, referencia_pago_digital_id,
+        fecha, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
+    [
+      movMetodoId, p.empresaId, p.metodoCobroId,
+      'EGRESO', 'EGRESO_TESORERIA',
+      montoNum.toFixed(4),
+      saldoMetodoAnt.toFixed(4), saldoMetodoNuevo.toFixed(4),
+      p.descripcion ?? 'Traspaso a Tesoreria',
+      p.sesionCajaId,
+      fecha, now, p.userId,
+    ]
+  )
+
+  // 4. Actualizar saldo del metodo de cobro
+  await tx.execute(
+    'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+    [saldoMetodoNuevo.toFixed(4), now, p.metodoCobroId]
+  )
+
+  // 5. Crear movimiento INGRESO PENDIENTE (validado=0) en el destino
+  const movDestinoId = uuidv4()
+  if (p.destino.tipo === 'CAJA_FUERTE') {
+    const cajaRes = await tx.execute(
+      'SELECT saldo_actual FROM caja_fuerte WHERE id = ? AND empresa_id = ?',
+      [p.destino.id, p.empresaId]
+    )
+    if (!cajaRes.rows?.length) throw new Error('Caja fuerte no encontrada')
+    const saldoCajaAnt = parseFloat(
+      (cajaRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+    )
+    const saldoCajaNuevo = saldoCajaAnt + montoNum
+
+    await tx.execute(
+      `INSERT INTO mov_caja_fuerte
+         (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_tipo, referencia, descripcion,
+          validado, validado_por, validado_at, reversado, reverso_de,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?)`,
+      [
+        movDestinoId, p.empresaId, p.destino.id,
+        'INGRESO', p.origenDestino,
+        montoNum.toFixed(4),
+        saldoCajaAnt.toFixed(4), saldoCajaNuevo.toFixed(4),
+        movMetodoId, 'MOVIMIENTO_METODO_COBRO',
+        p.descripcion ?? 'Traspaso desde Sesion POS',
+        0, // validado=0 (PENDIENTE)
+        0, // reversado=0
+        fecha, now, p.userId,
+      ]
+    )
+
+    await tx.execute(
+      'UPDATE caja_fuerte SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+      [saldoCajaNuevo.toFixed(4), now, p.destino.id]
+    )
+  } else {
+    const bancoRes = await tx.execute(
+      'SELECT saldo_actual FROM bancos_empresa WHERE id = ? AND empresa_id = ?',
+      [p.destino.id, p.empresaId]
+    )
+    if (!bancoRes.rows?.length) throw new Error('Banco no encontrado')
+    const saldoBancoAnt = parseFloat(
+      (bancoRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+    )
+    const saldoBancoNuevo = saldoBancoAnt + montoNum
+
+    await tx.execute(
+      `INSERT INTO movimientos_bancarios
+         (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_tipo, referencia, descripcion,
+          validado, validado_por, validado_at, reversado, reverso_de,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?)`,
+      [
+        movDestinoId, p.empresaId, p.destino.id,
+        'INGRESO', p.origenDestino,
+        montoNum.toFixed(4),
+        saldoBancoAnt.toFixed(4), saldoBancoNuevo.toFixed(4),
+        movMetodoId, 'MOVIMIENTO_METODO_COBRO',
+        p.descripcion ?? 'Traspaso desde Sesion POS',
+        0, // validado=0 (PENDIENTE)
+        0, // reversado=0
+        fecha, now, p.userId,
+      ]
+    )
+
+    await tx.execute(
+      'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+      [saldoBancoNuevo.toFixed(4), now, p.destino.id]
+    )
+  }
+
+  // 6. Crear registro de traspaso
+  const traspasoId = uuidv4()
+  await tx.execute(
+    `INSERT INTO traspasos_tesoreria
+       (id, empresa_id,
+        cuenta_origen_tipo, cuenta_origen_id, mov_origen_id,
+        cuenta_destino_tipo, cuenta_destino_id, mov_destino_id,
+        monto_origen, moneda_origen_id, monto_destino, moneda_destino_id,
+        tasa_cambio, reversado, observacion, sesion_caja_id,
+        fecha, created_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      traspasoId, p.empresaId,
+      'SESION_CAJA', p.sesionCajaId, movMetodoId,
+      p.destino.tipo, p.destino.id, movDestinoId,
+      montoNum.toFixed(4), p.monedaId,
+      montoNum.toFixed(4), p.monedaId,
+      '1', // tasa_cambio=1 (misma moneda)
+      0,
+      p.descripcion ?? null,
+      p.sesionCajaId,
+      fecha, now, p.userId,
+    ]
+  )
+
+  return { traspasoId }
+}
 
 /**
  * Retira efectivo de una sesion de caja activa hacia una caja fuerte.
- * Atomico: movimientos_metodo_cobro + mov_caja_fuerte + traspasos_tesoreria.
- * El mov_caja_fuerte queda PENDIENTE (validado=0) hasta que Tesoreria valide la recepcion.
+ * Wrapper delgado sobre `consolidarMetodoATesoreriaEnTx`: abre su propia
+ * writeTransaction y preserva el comportamiento original (origen='TRASPASO',
+ * destino siempre CAJA_FUERTE). El mov_caja_fuerte queda PENDIENTE (validado=0)
+ * hasta que Tesoreria valide la recepcion.
  */
 export async function crearTraspasoSesionATesoreria(params: {
   sesionCajaId: string
@@ -609,121 +799,18 @@ export async function crearTraspasoSesionATesoreria(params: {
   userId: string
   descripcion?: string
 }): Promise<void> {
-  const montoNum = parseFloat(params.monto)
-  if (isNaN(montoNum) || montoNum <= 0) throw new Error('El monto debe ser mayor a 0')
-
   await db.writeTransaction(async (tx) => {
-    const now = localNow()
-    const fecha = todayStr()
-
-    // 1. Saldo actual del metodo de cobro en la sesion
-    const metodoRes = await tx.execute(
-      'SELECT saldo_actual FROM metodos_cobro WHERE id = ? AND empresa_id = ?',
-      [params.metodoCobroid, params.empresaId]
-    )
-    if (!metodoRes.rows?.length) throw new Error('Metodo de cobro no encontrado')
-    const saldoMetodoAnt = parseFloat(
-      (metodoRes.rows.item(0) as { saldo_actual: string }).saldo_actual
-    )
-
-    // 2. Validar saldo suficiente
-    if (montoNum > saldoMetodoAnt + 0.001) {
-      throw new Error(
-        `Saldo insuficiente. Disponible: ${saldoMetodoAnt.toFixed(2)}, Solicitado: ${params.monto}`
-      )
-    }
-
-    // 3. Saldo actual de la caja fuerte
-    const cajaRes = await tx.execute(
-      'SELECT saldo_actual FROM caja_fuerte WHERE id = ? AND empresa_id = ?',
-      [params.cajaFuerteId, params.empresaId]
-    )
-    if (!cajaRes.rows?.length) throw new Error('Caja fuerte no encontrada')
-    const saldoCajaAnt = parseFloat(
-      (cajaRes.rows.item(0) as { saldo_actual: string }).saldo_actual
-    )
-
-    const saldoMetodoNuevo = saldoMetodoAnt - montoNum
-    const saldoCajaNuevo   = saldoCajaAnt  + montoNum
-
-    // 4. Crear movimiento de EGRESO en metodo de cobro (sale de POS)
-    const movMetodoId = uuidv4()
-    await tx.execute(
-      `INSERT INTO movimientos_metodo_cobro
-         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id,
-          autorizado_por_id, destinatario_id, referencia_pago_digital_id,
-          fecha, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
-      [
-        movMetodoId, params.empresaId, params.metodoCobroid,
-        'EGRESO', 'EGRESO_TESORERIA',
-        montoNum.toFixed(4),
-        saldoMetodoAnt.toFixed(4), saldoMetodoNuevo.toFixed(4),
-        params.descripcion ?? 'Traspaso a Tesoreria',
-        params.sesionCajaId,
-        fecha, now, params.userId,
-      ]
-    )
-
-    // 5. Actualizar saldo del metodo de cobro
-    await tx.execute(
-      'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-      [saldoMetodoNuevo.toFixed(4), now, params.metodoCobroid]
-    )
-
-    // 6. Crear movimiento INGRESO en caja fuerte (PENDIENTE — dinero en transito)
-    const movCajaId = uuidv4()
-    await tx.execute(
-      `INSERT INTO mov_caja_fuerte
-         (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
-          doc_origen_id, doc_origen_tipo, referencia, descripcion,
-          validado, validado_por, validado_at, reversado, reverso_de,
-          fecha, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL, NULL, ?, NULL, ?, ?, ?)`,
-      [
-        movCajaId, params.empresaId, params.cajaFuerteId,
-        'INGRESO', 'TRASPASO',
-        montoNum.toFixed(4),
-        saldoCajaAnt.toFixed(4), saldoCajaNuevo.toFixed(4),
-        movMetodoId, 'MOVIMIENTO_METODO_COBRO',
-        params.descripcion ?? 'Traspaso desde Sesion POS',
-        0, // validado=0 (PENDIENTE)
-        0, // reversado=0
-        fecha, now, params.userId,
-      ]
-    )
-
-    // 7. Actualizar saldo de la caja fuerte
-    await tx.execute(
-      'UPDATE caja_fuerte SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-      [saldoCajaNuevo.toFixed(4), now, params.cajaFuerteId]
-    )
-
-    // 8. Crear registro de traspaso
-    const traspasoId = uuidv4()
-    await tx.execute(
-      `INSERT INTO traspasos_tesoreria
-         (id, empresa_id,
-          cuenta_origen_tipo, cuenta_origen_id, mov_origen_id,
-          cuenta_destino_tipo, cuenta_destino_id, mov_destino_id,
-          monto_origen, moneda_origen_id, monto_destino, moneda_destino_id,
-          tasa_cambio, reversado, observacion, sesion_caja_id,
-          fecha, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        traspasoId, params.empresaId,
-        'SESION_CAJA', params.sesionCajaId, movMetodoId,
-        'CAJA_FUERTE', params.cajaFuerteId, movCajaId,
-        montoNum.toFixed(4), params.monedaId,
-        montoNum.toFixed(4), params.monedaId,
-        '1', // tasa_cambio=1 (misma moneda)
-        0,
-        params.descripcion ?? null,
-        params.sesionCajaId,
-        fecha, now, params.userId,
-      ]
-    )
+    await consolidarMetodoATesoreriaEnTx(tx, {
+      sesionCajaId: params.sesionCajaId,
+      metodoCobroId: params.metodoCobroid,
+      destino: { tipo: 'CAJA_FUERTE', id: params.cajaFuerteId },
+      monto: params.monto,
+      monedaId: params.monedaId,
+      empresaId: params.empresaId,
+      userId: params.userId,
+      origenDestino: 'TRASPASO',
+      descripcion: params.descripcion,
+    })
   })
 }
 

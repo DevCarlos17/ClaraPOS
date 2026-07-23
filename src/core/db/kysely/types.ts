@@ -689,7 +689,7 @@ export interface MovimientosBancarios {
   empresa_id: string
   banco_empresa_id: string
   tipo: string
-  origen: string
+  origen: string             // DEPOSITO_CAJA | TRANSFERENCIA_CLIENTE | PAGO_PROVEEDOR | GASTO | MANUAL | TRASPASO | REVERSO | CIERRE_CONSOLIDACION
   monto: string
   saldo_anterior: string
   saldo_nuevo: string

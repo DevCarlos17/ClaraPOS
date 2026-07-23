@@ -29,6 +29,7 @@ interface Props {
 const ORIGEN_LABELS: Record<string, string> = {
   DEPOSITO_CAJA: 'Deposito caja',
   DEPOSITO_CIERRE: 'Cierre caja',
+  CIERRE_CONSOLIDACION: 'Consolidacion de cierre',
   TRANSFERENCIA_CLIENTE: 'Cobro cliente',
   PAGO_PROVEEDOR: 'Pago proveedor',
   GASTO: 'Gasto',

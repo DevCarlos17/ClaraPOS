@@ -34,6 +34,7 @@ export interface MovimientoTableRow {
 const ORIGEN_LABELS: Record<string, string> = {
   DEPOSITO_CAJA: 'Deposito caja',
   DEPOSITO_CIERRE: 'Cierre de caja',
+  CIERRE_CONSOLIDACION: 'Consolidacion de cierre',
   TRANSFERENCIA_CLIENTE: 'Cobro cliente',
   PAGO_PROVEEDOR: 'Pago proveedor',
   GASTO: 'Gasto',
@@ -45,6 +46,7 @@ const ORIGEN_LABELS: Record<string, string> = {
 const ORIGEN_COLORS: Record<string, string> = {
   DEPOSITO_CAJA: 'bg-green-100 text-green-700',
   DEPOSITO_CIERRE: 'bg-emerald-100 text-emerald-700',
+  CIERRE_CONSOLIDACION: 'bg-emerald-100 text-emerald-700',
   TRANSFERENCIA_CLIENTE: 'bg-blue-100 text-blue-700',
   PAGO_PROVEEDOR: 'bg-orange-100 text-orange-700',
   GASTO: 'bg-red-100 text-red-700',
