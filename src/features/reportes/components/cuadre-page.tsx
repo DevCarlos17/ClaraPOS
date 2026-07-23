@@ -1690,7 +1690,9 @@ function ResumenSesionCerradaModal({
                             <td className={`px-3 py-2 text-right tabular-nums font-medium ${
                               dif === null ? '' : dif > 0.001 ? 'text-green-600' : dif < -0.001 ? 'text-red-600' : 'text-muted-foreground'
                             }`}>
-                              {dif !== null ? `${dif > 0 ? '+' : ''}${formatUsd(dif)}` : '—'}
+                              {dif !== null
+                                ? `${dif > 0 ? '+' : ''}${d.moneda === 'BS' ? formatBs(dif) : formatUsd(dif)}`
+                                : '—'}
                             </td>
                           </tr>
                         )

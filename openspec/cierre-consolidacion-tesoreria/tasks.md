@@ -39,14 +39,18 @@ Chain strategy: pending
 
 ## Phase 2: Wiring cierre + cleanup (PR 2 — activates behavior)
 
-- [ ] 2.1 In `src/features/caja/hooks/use-sesiones-caja.ts` `cerrarSesionCaja`, add step 8 right after step 7 (SAF snapshot, ends ~line 962, before the transaction's closing `})`): batch-SELECT `metodos_cobro` (`banco_empresa_id, caja_fuerte_id, comision_pct, tipo, moneda_id`) for the IDs already present in `metodosUsadosResult` (from step 6, ~line 839).
-- [ ] 2.2 Add step 9: loop `metodosUsadosResult` rows with `totalSistemaD > 0`; skip `metodo_cobro_id IS NULL` (defensive); resolve destino (EFECTIVO → caja fuerte by `moneda_id`, else → `banco_empresa_id`), hard-fail (Spanish error naming the method) if none; call `consolidarMetodoATesoreriaEnTx(tx, {...})` with `origenDestino` = `'DEPOSITO_CIERRE'` (caja fuerte) or `'CIERRE_CONSOLIDACION'` (banco).
-- [ ] 2.3 In the same loop, if `comision_pct > 0`: resolve `COMISION_BANCARIA` via `cargarMapaCuentas`, hard-fail (Spanish error naming the method) if missing; call `insertarGastoComisionEnTx(tx, {...})` with method-native currency, session `tasaDelDia` (hard-fail if Bs method + missing/zero tasa).
-- [ ] 2.4 Remove the "recuerda depositar" toast (`toast.info(...)`, line ~484) in `src/features/caja/components/sesion-caja-form.tsx`.
-- [ ] 2.5 Run `yarn type-check` and `yarn lint`; fix any resulting errors.
+- [x] 2.1 In `src/features/caja/hooks/use-sesiones-caja.ts` `cerrarSesionCaja`, add step 8 right after step 7 (SAF snapshot, ends ~line 962, before the transaction's closing `})`): batch-SELECT `metodos_cobro` (`banco_empresa_id, caja_fuerte_id, comision_pct, tipo, moneda_id`) for the IDs already present in `metodosUsadosResult` (from step 6, ~line 839).
+- [x] 2.2 Add step 9: loop `metodosUsadosResult` rows with `totalSistemaD > 0`; skip `metodo_cobro_id IS NULL` (defensive); resolve destino (EFECTIVO → caja fuerte by `moneda_id`, else → `banco_empresa_id`), hard-fail (Spanish error naming the method) if none; call `consolidarMetodoATesoreriaEnTx(tx, {...})` con `origenDestino` = `'DEPOSITO_CIERRE'` (caja fuerte) o `'CIERRE_CONSOLIDACION'` (banco).
+- [x] 2.3 In the same loop, if `comision_pct > 0`: resolve `COMISION_BANCARIA` via `cargarMapaCuentas`, hard-fail (Spanish error naming the method) if missing; call `insertarGastoComisionEnTx(tx, {...})` with method-native currency, session `tasaDelDia` (hard-fail if Bs method + missing/zero tasa).
+- [x] 2.4 Remove the "recuerda depositar" toast (`toast.info(...)`, line ~484) in `src/features/caja/components/sesion-caja-form.tsx`.
+- [x] 2.5 Run `yarn type-check` and `yarn lint`; fix any resulting errors.
+  - `yarn type-check`: PASS — zero errors in any file touched by this batch (`use-sesiones-caja.ts`, `sesion-caja-form.tsx`); pre-existing unrelated test-file/`factura-detalle-cxc.tsx` errors untouched, identical to PR1 baseline.
+  - `yarn lint`: could not run — `eslint` is not installed in `node_modules` in this environment (pre-existing gap, unrelated to this change, same as PR1).
 - [ ] 2.6 **Manual verification checklist** (no test runner in this project):
   - [ ] Close a session mixing EFECTIVO USD + EFECTIVO Bs + a commission-bearing PUNTO method → confirm `mov_caja_fuerte` rows (`origen='DEPOSITO_CIERRE'`, `validado=0`) per currency, `movimientos_bancarios` INGRESO (`origen='CIERRE_CONSOLIDACION'`, `validado=0`) + EGRESO (`origen='GASTO'`), one `gastos` row against `COMISION_BANCARIA`'s account with correct Bs/USD/tasa, `traspasos_tesoreria` rows tagged `sesion_caja_id`.
   - [ ] Close a session using a used method with no destino configured → confirm the whole cierre throws, `sesiones_caja.status` stays `ABIERTA`, no partial/orphan rows in `sesiones_caja_detalle` or Tesorería tables.
   - [ ] Close a session with a commission-bearing method but no `COMISION_BANCARIA` clave configured → confirm hard-fail, no partial rows.
   - [ ] Confirm the "recuerda depositar" toast no longer renders after a successful cierre.
   - [ ] Confirm migration 0077 applied cleanly in Supabase and a `SESION_CAJA`-origin traspaso now syncs without `23514`.
+
+Item 2.6 is a manual QA checklist against a running app + Supabase — cannot be executed by the apply agent (no test runner, no live environment access). Left unchecked for the user/QA to run post-merge; see "MANUAL VERIFICATION CHECKLIST" in the apply-progress artifact for the full expanded procedure.

@@ -4,7 +4,13 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
-import { bsToUsd, toStorageString } from '@/lib/currency'
+import { toStorageString } from '@/lib/currency'
+import {
+  consolidarMetodoATesoreriaEnTx,
+  type DestinoConsolidacion,
+} from '@/features/tesoreria/hooks/use-traspasos'
+import { insertarGastoComisionEnTx } from '@/features/contabilidad/hooks/use-gastos'
+import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -836,14 +842,22 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
 
     // 6. Poblar sesiones_caja_detalle con desglose por metodo de cobro
     // Obtener todos los metodos usados en pagos de esta sesion
+    // total_pagos se calcula en la MONEDA NATIVA del metodo (USD -> monto_usd,
+    // resto -> monto). Mezclar USD y Bs en una misma suma viola la regla bimonetaria
+    // y subvaluaba los metodos en Bs por un factor de ~tasa (cierre-consolidacion-tesoreria).
     const metodosUsadosResult = await tx.execute(
-      `SELECT p.metodo_cobro_id, mc.moneda_id,
-              COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total_pagos,
+      `SELECT p.metodo_cobro_id, mc.moneda_id, mo.codigo_iso as moneda_codigo,
+              COALESCE(SUM(
+                CASE WHEN mo.codigo_iso = 'USD'
+                     THEN CAST(p.monto_usd AS REAL)
+                     ELSE CAST(p.monto AS REAL) END
+              ), 0) as total_pagos,
               COUNT(*) as num_transacciones
        FROM pagos p
        JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+       JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE p.sesion_caja_id = ? AND COALESCE(p.is_reversed, 0) = 0
-       GROUP BY p.metodo_cobro_id, mc.moneda_id`,
+       GROUP BY p.metodo_cobro_id, mc.moneda_id, mo.codigo_iso`,
       [id]
     )
 
@@ -875,32 +889,39 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       }
     }
 
+    // cierre-consolidacion-tesoreria (PR2): acumula el total_sistema por metodo de cobro
+    // ya calculado en este loop, para reutilizarlo en el step 9 sin recalcular.
+    const consolidacionPorMetodo = new Map<string, { totalSistemaD: Decimal; monedaId: string }>()
+
     if (metodosUsadosResult.rows) {
       for (let i = 0; i < metodosUsadosResult.rows.length; i++) {
         const row = metodosUsadosResult.rows.item(i) as {
           metodo_cobro_id: string
           moneda_id: string
+          moneda_codigo: string
           total_pagos: number
           num_transacciones: number
         }
 
         const manual = movsManualPorMetodo.get(row.metodo_cobro_id) ?? { ingreso: 0, egreso: 0 }
+        // totalSistemaD ahora esta en la MONEDA NATIVA del metodo (ver query arriba).
         const totalSistemaD = new Decimal(row.total_pagos)
           .plus(new Decimal(manual.ingreso))
           .minus(new Decimal(manual.egreso))
 
-        // Calcular total_fisico y diferencia si se recibio conteo del usuario
+        if (row.metodo_cobro_id) {
+          consolidacionPorMetodo.set(row.metodo_cobro_id, { totalSistemaD, monedaId: row.moneda_id })
+        }
+
+        // Calcular total_fisico y diferencia si se recibio conteo del usuario.
+        // conteoFisicoPorMetodo esta en moneda nativa y totalSistemaD tambien:
+        // la diferencia se calcula nativo vs nativo (sin conversion de tasa).
         let totalFisicoNativo: number | null = null
         let diferenciaValor: Decimal | null = null
         if (conteoFisicoPorMetodo && row.metodo_cobro_id in conteoFisicoPorMetodo) {
           totalFisicoNativo = conteoFisicoPorMetodo[row.metodo_cobro_id]
           const totalFisicoD = new Decimal(totalFisicoNativo)
-          // Convertir a USD para calcular diferencia homogenea
-          const fisicoUsd =
-            row.moneda_id !== 'USD' && (tasaDelDia ?? 0) > 0
-              ? bsToUsd(totalFisicoD, new Decimal(tasaDelDia!))
-              : totalFisicoD
-          diferenciaValor = fisicoUsd.minus(totalSistemaD)
+          diferenciaValor = totalFisicoD.minus(totalSistemaD)
         }
 
         const detalleId = uuidv4()
@@ -959,6 +980,168 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
           now,
         ]
       )
+    }
+
+    // 8-9. NEW (cierre-consolidacion-tesoreria, PR2): consolidacion automatica hacia
+    // Tesoreria de cada metodo usado en la sesion con saldo positivo. Se ejecuta DENTRO
+    // de esta misma writeTransaction — cualquier fallo (destino sin configurar, cuenta
+    // de comision sin configurar, tasa faltante) revierte TODO el cierre y la sesion
+    // permanece ABIERTA.
+    const metodosParaConsolidar = Array.from(consolidacionPorMetodo.entries()).filter(
+      ([metodoCobroId, v]) => metodoCobroId && v.totalSistemaD.gt(0)
+    )
+
+    if (metodosParaConsolidar.length > 0) {
+      // 8. Batch SELECT de la configuracion de Tesoreria de los metodos usados
+      const idsConsolidar = metodosParaConsolidar.map(([metodoId]) => metodoId)
+      const inPhConsolidar = idsConsolidar.map(() => '?').join(', ')
+
+      const metodosConfigResult = await tx.execute(
+        `SELECT mc.id AS metodo_cobro_id, mc.nombre, mc.tipo, mc.banco_empresa_id, mc.caja_fuerte_id,
+                mc.comision_pct, mc.moneda_id, mo.codigo_iso AS moneda_codigo
+         FROM metodos_cobro mc
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mc.id IN (${inPhConsolidar}) AND mc.empresa_id = ?`,
+        [...idsConsolidar, empresaId]
+      )
+
+      type MetodoConfigRow = {
+        metodo_cobro_id: string
+        nombre: string
+        tipo: string
+        banco_empresa_id: string | null
+        caja_fuerte_id: string | null
+        comision_pct: string | null
+        moneda_id: string
+        moneda_codigo: string
+      }
+      const metodosConfigMap = new Map<string, MetodoConfigRow>()
+      if (metodosConfigResult.rows) {
+        for (let i = 0; i < metodosConfigResult.rows.length; i++) {
+          const row = metodosConfigResult.rows.item(i) as MetodoConfigRow
+          metodosConfigMap.set(row.metodo_cobro_id, row)
+        }
+      }
+
+      // Cuentas contables de la empresa (para resolver COMISION_BANCARIA una sola vez)
+      const cuentasConfig = await cargarMapaCuentas(tx, empresaId)
+
+      // 9. Consolidar cada metodo con saldo positivo hacia Tesoreria
+      for (const [metodoCobroId, { totalSistemaD, monedaId }] of metodosParaConsolidar) {
+        const config = metodosConfigMap.get(metodoCobroId)
+        if (!config) {
+          throw new Error(
+            `No se encontro la configuracion del metodo de cobro para consolidar el cierre de caja.`
+          )
+        }
+        const nombreMetodo = config.nombre
+
+        // Resolver destino: EFECTIVO -> caja fuerte propia del metodo; otro tipo -> banco.
+        // El origen se DERIVA siempre del tipo de destino (nunca al reves) para que
+        // BANCO siempre use CIERRE_CONSOLIDACION y CAJA_FUERTE siempre use DEPOSITO_CIERRE.
+        let destino: DestinoConsolidacion
+        let destinoMonedaId: string
+        if (config.tipo === 'EFECTIVO') {
+          if (!config.caja_fuerte_id) {
+            throw new Error(
+              `El metodo de cobro "${nombreMetodo}" (EFECTIVO) no tiene una caja fuerte de destino configurada. ` +
+              `Configura la caja fuerte correspondiente en Configuracion > Metodos de Cobro antes de cerrar la sesion.`
+            )
+          }
+          destino = { tipo: 'CAJA_FUERTE', id: config.caja_fuerte_id }
+          const cfRes = await tx.execute(
+            'SELECT moneda_id FROM caja_fuerte WHERE id = ? AND empresa_id = ?',
+            [config.caja_fuerte_id, empresaId]
+          )
+          if (!cfRes.rows?.length) {
+            throw new Error(`No se encontro la caja fuerte de destino del metodo "${nombreMetodo}".`)
+          }
+          destinoMonedaId = String((cfRes.rows.item(0) as { moneda_id: string }).moneda_id)
+        } else {
+          if (!config.banco_empresa_id) {
+            throw new Error(
+              `El metodo de cobro "${nombreMetodo}" no tiene un banco de destino configurado. ` +
+              `Configura el banco correspondiente en Configuracion > Metodos de Cobro antes de cerrar la sesion.`
+            )
+          }
+          destino = { tipo: 'BANCO', id: config.banco_empresa_id }
+          const bcoRes = await tx.execute(
+            'SELECT moneda_id FROM bancos_empresa WHERE id = ? AND empresa_id = ?',
+            [config.banco_empresa_id, empresaId]
+          )
+          if (!bcoRes.rows?.length) {
+            throw new Error(`No se encontro el banco de destino del metodo "${nombreMetodo}".`)
+          }
+          destinoMonedaId = String((bcoRes.rows.item(0) as { moneda_id: string }).moneda_id)
+        }
+
+        // W4: la moneda del destino debe coincidir con la moneda del metodo, si no,
+        // se depositaria un monto en la moneda equivocada. Falla el cierre (rollback).
+        if (destinoMonedaId !== config.moneda_id) {
+          throw new Error(
+            `El destino configurado para el metodo "${nombreMetodo}" tiene una moneda distinta ` +
+            `a la del metodo. Revisa la configuracion de la caja fuerte/banco de destino.`
+          )
+        }
+
+        const origenDestino = destino.tipo === 'CAJA_FUERTE' ? 'DEPOSITO_CIERRE' : 'CIERRE_CONSOLIDACION'
+
+        await consolidarMetodoATesoreriaEnTx(tx, {
+          sesionCajaId: id,
+          metodoCobroId,
+          destino,
+          monto: toStorageString(totalSistemaD),
+          monedaId,
+          empresaId,
+          userId: usuario_cierre_id,
+          origenDestino,
+          skipSaldoCheck: true,
+          descripcion: `Consolidacion cierre de caja - sesion ${id}`,
+        })
+
+        // Comision bancaria: solo aplica a metodos consolidados hacia banco.
+        const comisionPct = new Decimal(config.comision_pct ?? '0')
+        // W5: un metodo EFECTIVO con comision configurada es un error de config; no se
+        // cobra comision sobre efectivo, pero se deja rastro para que sea detectable.
+        if (comisionPct.gt(0) && destino.tipo !== 'BANCO') {
+          console.warn(
+            `[cierre] El metodo EFECTIVO "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision ` +
+            `configurada; se ignora (la comision solo aplica a metodos consolidados hacia banco).`
+          )
+        }
+        if (comisionPct.gt(0) && destino.tipo === 'BANCO') {
+          const cuentaComisionId = cuentasConfig['COMISION_BANCARIA']
+          if (!cuentaComisionId) {
+            throw new Error(
+              `El metodo de cobro "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision pero no hay una cuenta ` +
+              `"Comisiones bancarias" configurada. Configura la clave COMISION_BANCARIA en ` +
+              `Contabilidad > Cuentas de Configuracion antes de cerrar la sesion.`
+            )
+          }
+
+          const monedaCodigo: 'USD' | 'VES' = config.moneda_codigo === 'VES' ? 'VES' : 'USD'
+          if (monedaCodigo === 'VES' && !((tasaDelDia ?? 0) > 0)) {
+            throw new Error(
+              `No se puede registrar la comision bancaria en Bs: falta la tasa del dia para el cierre.`
+            )
+          }
+
+          const montoComisionNativo = totalSistemaD.times(comisionPct).dividedBy(100)
+
+          await insertarGastoComisionEnTx(tx, {
+            empresaId,
+            metodoCobroId,
+            bancoEmpresaId: destino.id,
+            montoComisionNativo: toStorageString(montoComisionNativo),
+            monedaCodigo,
+            tasa: tasaDelDia ?? 0,
+            cuentaComisionId,
+            sesionCajaId: id,
+            comisionPct: comisionPct.toFixed(2),
+            usuarioId: usuario_cierre_id,
+          })
+        }
+      }
     }
   })
 

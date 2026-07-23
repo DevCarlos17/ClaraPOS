@@ -481,7 +481,6 @@ function FormCierre({
         usuario_cierre_id: user.id,
       })
       toast.success('Sesion de caja cerrada exitosamente')
-      toast.info('El efectivo reportado debe ser depositado a la cuenta de Tesoreria correspondiente.')
       resetFields()
       onClose()
       // Navegar al cuadre con la sesion pre-cargada para que el supervisor complete el cuadre formal

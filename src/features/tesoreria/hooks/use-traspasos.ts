@@ -627,6 +627,18 @@ export async function consolidarMetodoATesoreriaEnTx(
     userId: string
     origenDestino: 'DEPOSITO_CIERRE' | 'CIERRE_CONSOLIDACION' | 'TRASPASO'
     descripcion?: string
+    /**
+     * cierre-consolidacion-tesoreria (PR2): en el cierre, el monto a consolidar es el
+     * total de la sesion (incluye ventas), pero `metodos_cobro.saldo_actual` NO incluye
+     * ventas regulares (ver use-ventas.ts: los pagos origen='VENTA' insertan saldo 0/0 y
+     * nunca actualizan saldo_actual). Por eso el guard de "saldo suficiente" es invalido
+     * para este caller. Cuando `skipSaldoCheck` es true, no se valida ni se actualiza
+     * saldo_actual desde este path (restarle el total lo dejaria negativo/inconsistente);
+     * el EGRESO se registra con saldo_anterior=saldo_nuevo=saldo_actual (sin mutarlo).
+     * Los callers manuales (traspaso POS→Tesoreria) NO pasan este flag y conservan el
+     * comportamiento original: validan y drenan saldo_actual como siempre.
+     */
+    skipSaldoCheck?: boolean
   }
 ): Promise<{ traspasoId: string }> {
   const montoNum = parseFloat(p.monto)
@@ -645,14 +657,16 @@ export async function consolidarMetodoATesoreriaEnTx(
     (metodoRes.rows.item(0) as { saldo_actual: string }).saldo_actual
   )
 
-  // 2. Validar saldo suficiente
-  if (montoNum > saldoMetodoAnt + 0.001) {
+  // 2. Validar saldo suficiente (solo callers manuales; ver skipSaldoCheck)
+  if (!p.skipSaldoCheck && montoNum > saldoMetodoAnt + 0.001) {
     throw new Error(
       `Saldo insuficiente. Disponible: ${saldoMetodoAnt.toFixed(2)}, Solicitado: ${p.monto}`
     )
   }
 
-  const saldoMetodoNuevo = saldoMetodoAnt - montoNum
+  // Cuando se salta el check (cierre), no se muta saldo_actual: el EGRESO se registra
+  // con saldo_anterior == saldo_nuevo para no dejar saldo_actual negativo/inconsistente.
+  const saldoMetodoNuevo = p.skipSaldoCheck ? saldoMetodoAnt : saldoMetodoAnt - montoNum
 
   // 3. Crear movimiento de EGRESO en metodo de cobro (sale de POS)
   const movMetodoId = uuidv4()
@@ -674,11 +688,13 @@ export async function consolidarMetodoATesoreriaEnTx(
     ]
   )
 
-  // 4. Actualizar saldo del metodo de cobro
-  await tx.execute(
-    'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-    [saldoMetodoNuevo.toFixed(4), now, p.metodoCobroId]
-  )
+  // 4. Actualizar saldo del metodo de cobro (solo callers manuales)
+  if (!p.skipSaldoCheck) {
+    await tx.execute(
+      'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+      [saldoMetodoNuevo.toFixed(4), now, p.metodoCobroId]
+    )
+  }
 
   // 5. Crear movimiento INGRESO PENDIENTE (validado=0) en el destino
   const movDestinoId = uuidv4()
