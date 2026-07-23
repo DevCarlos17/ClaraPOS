@@ -1531,10 +1531,12 @@ function ResumenSesionCerradaModal({
   )
 
   const { data: detalleData } = useQuery(
-    `SELECT scd.metodo_cobro_id, mc.nombre as metodo_nombre, mc.moneda,
+    `SELECT scd.metodo_cobro_id, mc.nombre as metodo_nombre,
+            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
             scd.total_sistema, scd.total_fisico, scd.diferencia, scd.num_transacciones
      FROM sesiones_caja_detalle scd
      JOIN metodos_cobro mc ON scd.metodo_cobro_id = mc.id
+     LEFT JOIN monedas mon ON mc.moneda_id = mon.id
      WHERE scd.sesion_caja_id = ?
      ORDER BY mc.nombre`,
     [sesionId]
