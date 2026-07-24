@@ -810,35 +810,13 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     const diferenciaUsd = montoFisicoUsdD.minus(montoSistemaUsd)
     const diferenciaBs  = montoFisicoBsD.minus(montoSistemaBs)
 
-    // 5. Actualizar la sesion a CERRADA con saldos por divisa
-    await tx.execute(
-      `UPDATE sesiones_caja SET
-         status = 'CERRADA',
-         usuario_cierre_id = ?,
-         fecha_cierre = ?,
-         monto_sistema_usd = ?,
-         monto_fisico_usd = ?,
-         diferencia_usd = ?,
-         monto_sistema_bs = ?,
-         monto_fisico_bs = ?,
-         diferencia_bs = ?,
-         observaciones_cierre = ?,
-         updated_at = ?
-       WHERE id = ?`,
-      [
-        usuario_cierre_id,
-        now,
-        toStorageString(montoSistemaUsd),
-        toStorageString(montoFisicoUsdD),
-        toStorageString(diferenciaUsd),
-        toStorageString(montoSistemaBs),
-        toStorageString(montoFisicoBsD),
-        toStorageString(diferenciaBs),
-        observaciones_cierre ?? null,
-        now,
-        id,
-      ]
-    )
+    // NOTA (cierre-consolidacion-tesoreria, Opcion 1): el UPDATE status = 'CERRADA'
+    // se hace AL FINAL de esta writeTransaction (paso 10), NO aqui. El trigger Postgres
+    // fn_validate_sesion_abierta (migracion 0041) rechaza cualquier INSERT en
+    // movimientos_metodo_cobro cuyo sesion_caja_id apunte a una sesion que ya NO esta
+    // ABIERTA. La consolidacion a Tesoreria (pasos 8-9) inserta EGRESO en esa tabla, por
+    // lo que debe correr con la sesion todavia ABIERTA. Todo sigue dentro de la misma
+    // writeTransaction: si algo falla, rollback total y la sesion permanece ABIERTA.
 
     // 6. Poblar sesiones_caja_detalle con desglose por metodo de cobro
     // Obtener todos los metodos usados en pagos de esta sesion
@@ -1143,6 +1121,40 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         }
       }
     }
+
+    // 10. Actualizar la sesion a CERRADA con saldos por divisa. Se ejecuta como ULTIMO
+    // write de la writeTransaction (Opcion 1): todos los INSERT en movimientos_metodo_cobro
+    // de la consolidacion (pasos 8-9) ya ocurrieron con la sesion todavia ABIERTA, evitando
+    // el rechazo del trigger fn_validate_sesion_abierta. Si el cierre completo se revierte,
+    // la sesion queda ABIERTA.
+    await tx.execute(
+      `UPDATE sesiones_caja SET
+         status = 'CERRADA',
+         usuario_cierre_id = ?,
+         fecha_cierre = ?,
+         monto_sistema_usd = ?,
+         monto_fisico_usd = ?,
+         diferencia_usd = ?,
+         monto_sistema_bs = ?,
+         monto_fisico_bs = ?,
+         diferencia_bs = ?,
+         observaciones_cierre = ?,
+         updated_at = ?
+       WHERE id = ?`,
+      [
+        usuario_cierre_id,
+        now,
+        toStorageString(montoSistemaUsd),
+        toStorageString(montoFisicoUsdD),
+        toStorageString(diferenciaUsd),
+        toStorageString(montoSistemaBs),
+        toStorageString(montoFisicoBsD),
+        toStorageString(diferenciaBs),
+        observaciones_cierre ?? null,
+        now,
+        id,
+      ]
+    )
   })
 
 }

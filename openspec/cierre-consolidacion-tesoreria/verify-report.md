@@ -201,3 +201,47 @@ All fixes named in the orchestrator brief are present in the committed code with
 **PASS WITH WARNINGS**
 
 Type-check is clean across every file this change touches (zero regressions; all 308 pre-existing errors are in untouched test files and 2 unrelated components). Every spec requirement and scenario across both delta specs has direct, traceable static implementation evidence, and every named adversarial-review fix (C1, C2, W1, W3, W4, W5) is confirmed present with exact file:line citations. W2 (moneda-aware display) is correctly coded but rides on top of a pre-existing, out-of-scope query bug (`mc.moneda` does not exist) that should be fixed separately and will otherwise make manual QA item (b) fail or behave unexpectedly. No runtime scenario has been executed — the manual QA checklist above is mandatory before this change can be considered production-verified, and migration 0077 must be applied to Supabase first.
+
+---
+
+## Addendum: Post-Merge Hotfix — "Opcion 1" (uncommitted at time of this review)
+
+**Trigger**: Live QA on PR2 surfaced exactly the risk the previous verdict flagged as UNTESTED-AT-RUNTIME: `fn_validate_sesion_abierta` (migration 0041) rejected the consolidation's `movimientos_metodo_cobro` EGRESO inserts on Supabase with `P0001`, because the old step order ran `UPDATE sesiones_caja SET status='CERRADA'` (old step 5) *before* the consolidation loop (steps 8-9) in the same `writeTransaction`.
+
+**Fix reviewed**: `src/features/caja/hooks/use-sesiones-caja.ts` — the `UPDATE sesiones_caja` (steps 6-9's former step 5) was moved to be the **last** write of `cerrarSesionCaja`'s single `writeTransaction` (new step 10, lines 1125-1157), executing strictly after the consolidation loop (steps 8-9, lines 963-1123). Diff is uncommitted (`git diff` against `src/features/caja/hooks/use-sesiones-caja.ts`).
+
+### Adversarial checks performed
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Do steps 6-9 (sesiones_caja_detalle populate, SAF snapshot, consolidation) depend on `sesiones_caja.status` already being `CERRADA`? | ✅ No — `status` is read exactly once, at step 1 (line 696-698), guarded by a throw if not `ABIERTA`. No later SELECT/INSERT in steps 6-9 references `sesiones_caja.status`. |
+| 2 | Are `montoSistemaUsd`, `montoFisicoUsdD`, `diferenciaUsd`, `montoSistemaBs`, `montoFisicoBsD`, `diferenciaBs`, `observaciones_cierre`, `usuario_cierre_id`, `now`, `id` still in scope and unmutated at the relocated UPDATE (lines 1130-1157)? | ✅ Yes — all `const`, declared lines 663-675/801-811, never reassigned. |
+| 3 | Is `movimientos_metodo_cobro` the *only* table inserted in steps 6-9 that is guarded by `fn_validate_sesion_abierta`? | ✅ Confirmed. Migration grep across the whole `migrations/` dir shows the trigger is attached ONLY to `movimientos_metodo_cobro` (0041:99-102) and `pagos` (0041:105-108). Every other insert touched by steps 6-9/consolidation (`sesiones_caja_detalle`, `mov_caja_fuerte`, `movimientos_bancarios`, `traspasos_tesoreria`, `gastos`, `gasto_pagos`, `libro_contable` via `use-traspasos.ts:618-799` and `use-gastos.ts:505-644`) has no such trigger. |
+| 4 | Is the flip still inside the same `db.writeTransaction`, with no early return/silent skip between consolidation and the flip? | ✅ Yes — single `writeTransaction` opened at line 677, closed at line 1158; the new step 10 (1125-1157) is the last statement before `})`. Every failure path in steps 8-9 is a synchronous `throw` (rolls back the whole tx per PowerSync semantics), never a silent `continue` past a required write. |
+| 5 | Re-entrancy: does deferring the flip create a double-processing window? | ✅ No new risk — status is validated once per call (step 1); PowerSync/SQLite serializes `writeTransaction`s on a single write connection, so a concurrent second call blocks until the first commits and then correctly sees `CERRADA` and throws at step 1. Unchanged from pre-fix behavior. |
+| 6 | Does `fn_validate_sesion_abierta` also gate `pagos`? Does the reorder touch any `pagos` INSERT? | ✅ Trigger does gate `pagos` (0041:105-108) too, but steps 6-9 only `SELECT` from `pagos`, never `INSERT` — no interaction with the reorder. |
+
+### Critical confirming discovery (not requested, found during review)
+
+The fix is correct not only for local SQLite semantics but for the **actual root cause at the sync layer**. `src/core/db/powersync/connector.ts:328` (`uploadData`) iterates `transaction.crud` **sequentially, in original write order**, issuing one Supabase REST call per op and `throw`-ing on error. `P0001` is in `FATAL_RESPONSE_CODES` (connector.ts:23). On a FATAL error, the catch block at connector.ts:557-570 calls `transaction.complete()` — which **discards the entire remaining batch**, including ops that were never sent (not just the failing one).
+
+This means the pre-fix bug was worse than "the insert gets rejected": the old op order was `[...UPDATE status=CERRADA (early)..., movimientos_metodo_cobro INSERT, mov_caja_fuerte/movimientos_bancarios INSERT, traspasos_tesoreria INSERT, ...]`. The `UPDATE` (op 1, no trigger on `sesiones_caja` itself) succeeded on Supabase first, flipping the row to `CERRADA` server-side; the next op (`movimientos_metodo_cobro` INSERT) then hit the now-`CERRADA` row and got `P0001`-rejected, and `transaction.complete()` discarded everything after — a partial state where Postgres shows the session `CERRADA` with **no** consolidation rows, matching the user's exact report ("Ilega a tesoreria pero se borra").
+
+With the fix, the op order becomes `[...consolidation INSERTs..., UPDATE status=CERRADA (last)]`. Since ops upload strictly in order, every `movimientos_metodo_cobro` INSERT reaches Postgres while the session is still `ABIERTA` there too (the `UPDATE` hasn't been sent yet), so the trigger passes, and the `UPDATE` — which has no trigger dependency of its own — runs last and closes out the batch. This directly and correctly eliminates the reported failure mode, confirmed against the real upload mechanism, not just local transaction semantics.
+
+### Issues Found (Addendum)
+
+**CRITICAL**: None.
+
+**WARNING**:
+1. This fix is **uncommitted and has not yet been re-tested live** against Supabase (the original bug was only caught in manual QA, per `task.md`'s pasted console errors). Given the confirming trace through `connector.ts` above, the fix is expected to resolve it, but a live re-test (close a session mixing efectivo + a bank method with commission, confirm no `P0001` in the browser console and that `traspasos_tesoreria`/`movimientos_bancarios`/`mov_caja_fuerte` rows persist on Supabase after sync) should be run before considering this closed.
+2. Residual, pre-existing (not introduced by this fix): PowerSync's per-op sequential upload + discard-entire-remaining-batch-on-FATAL model (`connector.ts:557-570`) means that if consolidation succeeds for method 1 of 2 in a cierre and then fails for an unrelated reason on method 2 (e.g., a bank record deleted between local write and sync), Postgres could end up with method 1's rows landed but the final `status='CERRADA'` UPDATE discarded — leaving the session `ABIERTA` on Postgres with partial consolidation. This is **strictly no worse than before** (the old order guaranteed the flip landed even on a downstream failure, which was actually a worse inconsistency — `CERRADA` with zero consolidation), but it is a systemic gap in the upload connector worth hardening generally (e.g., true multi-statement atomicity via a Postgres RPC/function for the whole cierre payload), not specific to this diff.
+
+**SUGGESTION**:
+1. Minor documentation-only nit: the step comments now jump from step 4 straight to a `NOTA` block (no step 5) to step 6 — cosmetic, since step 5 (the old flip) was relocated to step 10. Consider renumbering the comments (`4 → 5(consolidation note) → 6...`) for readability, no functional impact.
+
+### Verdict (Addendum)
+
+**PASS**
+
+The reorder is structurally sound: no upstream dependency on the flip existing early, all closed-over variables remain valid, atomicity is preserved (single `writeTransaction`, throw-to-rollback), and — critically — tracing the actual PowerSync upload mechanism (`connector.ts`) confirms the fix addresses the real root cause (sequential, order-preserving op upload where the previously-early `UPDATE` was the first op to reach Postgres and poisoned every subsequent trigger-guarded insert in the same batch). Recommend a live re-test before closing the underlying production incident, but no code defect blocks merging this specific change.
