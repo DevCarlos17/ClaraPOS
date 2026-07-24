@@ -29,6 +29,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
   const [bancoEmpresaId, setBancoEmpresaId] = useState<string>('')
   const [requiereReferencia, setRequiereReferencia] = useState(false)
   const [active, setActive] = useState(true)
+  const [consolidarLotes, setConsolidarLotes] = useState(true)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -43,6 +44,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
         setBancoEmpresaId(method.banco_empresa_id ?? '')
         setRequiereReferencia(method.requiere_referencia === 1)
         setActive(method.is_active === 1)
+        setConsolidarLotes(method.consolidar_lotes !== 0)
       } else {
         setName('')
         setCurrency('USD')
@@ -50,6 +52,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
         setBancoEmpresaId('')
         setRequiereReferencia(false)
         setActive(true)
+        setConsolidarLotes(true)
       }
       setErrors({})
       dialogRef.current?.showModal()
@@ -73,6 +76,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
       banco_empresa_id: bancoEmpresaId || undefined,
       requiere_referencia: requiereReferencia,
       active,
+      consolidar_lotes: consolidarLotes,
     })
 
     if (!parsed.success) {
@@ -98,6 +102,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
           tipo: parsed.data.tipo,
           banco_empresa_id: bancoEmpresaId || null,
           is_active: parsed.data.active,
+          consolidar_lotes: parsed.data.consolidar_lotes,
         })
         toast.success('Metodo de pago actualizado correctamente')
       } else {
@@ -109,6 +114,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
           requiere_referencia: parsed.data.requiere_referencia,
           empresa_id: user!.empresa_id!,
           usuario_id: user!.id,
+          consolidar_lotes: parsed.data.consolidar_lotes,
         })
         toast.success('Metodo de pago creado correctamente')
       }
@@ -250,6 +256,29 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
               Requiere numero de referencia
             </label>
           </div>
+
+          {/* Consolidar lotes (condicional, solo POS) */}
+          {tipo === 'PUNTO' && (
+            <div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="mp-consolidar-lotes"
+                  type="checkbox"
+                  checked={consolidarLotes}
+                  onChange={(e) => setConsolidarLotes(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="mp-consolidar-lotes" className="text-sm font-medium text-gray-700">
+                  Consolidar lotes al cerrar caja
+                </label>
+              </div>
+              <p className="text-gray-400 text-xs mt-1 ml-6">
+                {consolidarLotes
+                  ? 'Los lotes cargados se envian a Tesoreria en UN solo traspaso, con la comision aplicada sobre el total.'
+                  : 'Cada lote se envia a Tesoreria en un traspaso independiente, con su propia comision.'}
+              </p>
+            </div>
+          )}
 
           {/* Activo */}
           <div className="flex items-center gap-2">

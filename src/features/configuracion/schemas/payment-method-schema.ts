@@ -19,6 +19,8 @@ export const paymentMethodSchema = z.object({
   usa_pos: z.boolean().default(true),
   usa_cxc: z.boolean().default(true),
   usa_cxp: z.boolean().default(true),
+  // 0079: consolidar lotes POS en un traspaso (true) o uno por lote (false)
+  consolidar_lotes: z.boolean().default(true),
 })
 
 export type PaymentMethodFormValues = z.infer<typeof paymentMethodSchema>

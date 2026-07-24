@@ -199,6 +199,8 @@ const metodos_cobro = new Table(
     usa_cxc: column.integer,           // boolean 0/1
     usa_cxp: column.integer,           // boolean 0/1
     caja_fuerte_id: column.text,       // UUID nullable
+    // 0079: consolidar lotes POS en un traspaso (1) o uno por lote (0)
+    consolidar_lotes: column.integer,
   },
   { indexes: {} }
 )
@@ -907,6 +909,23 @@ const traspasos_tesoreria = new Table(
   { indexes: {} }
 )
 
+// 0079: lotes de punto de venta cargados por el cajero antes de cerrar la
+// sesión (dato de trabajo pre-cierre, no inmutable — ver migrations/0079).
+const lotes_pos_cuadre = new Table(
+  {
+    empresa_id: column.text,
+    sesion_caja_id: column.text,
+    metodo_cobro_id: column.text,
+    moneda_id: column.text,
+    nro_lote: column.text,
+    monto: column.text,        // NUMERIC(18,4) stored as string
+    created_at: column.text,
+    created_by: column.text,
+    updated_at: column.text,
+  },
+  { indexes: {} }
+)
+
 // =============================================
 // RETENCIONES VENTAS
 // =============================================
@@ -1534,6 +1553,7 @@ export const AppSchema = new Schema({
   caja_fuerte,
   mov_caja_fuerte,
   traspasos_tesoreria,
+  lotes_pos_cuadre,
   // Retenciones ventas
   retenciones_iva_ventas,
   retenciones_islr_ventas,

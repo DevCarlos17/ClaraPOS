@@ -1,7 +1,8 @@
 import { useState, useCallback, useMemo, useEffect } from 'react'
-import { Calculator, ArrowsClockwise, CheckCircle } from '@phosphor-icons/react'
+import { Calculator, ArrowsClockwise, CheckCircle, Plus, PencilSimple, Trash, Check, X } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   usePagosPorMetodo,
   useSaldoEfectivoBimonetario,
@@ -9,6 +10,8 @@ import {
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
 import { CuadreBilletesModal } from './cuadre-billetes-modal'
+import { useLotesPos, agregarLote, actualizarLote, eliminarLote, type LotePos } from '@/features/caja/hooks/use-lotes-pos'
+import { lotePosSchema } from '@/features/caja/schemas/lote-pos-schema'
 
 interface ConteoFisicoProps {
   filters: CuadreFilters
@@ -37,6 +40,31 @@ export function CuadreConteoFisico({
 }: ConteoFisicoProps) {
   const { metodos, isLoading } = usePagosPorMetodo(filters)
   const { saldoEsperadoUsd, saldoEsperadoBs } = useSaldoEfectivoBimonetario(filters)
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  // Lotes POS: solo aplica cuando hay exactamente una sesion seleccionada y
+  // esta activa (no readOnly) — es dato de trabajo pre-cierre editable.
+  const sesionCajaId = !readOnly && filters.sesionCajaIds.length === 1
+    ? filters.sesionCajaIds[0]
+    : null
+  const { lotesPorMetodo } = useLotesPos(sesionCajaId ?? '')
+
+  // moneda_id por metodo tipo='PUNTO' (necesario para insertar en lotes_pos_cuadre)
+  const { data: metodosPuntoData } = useQuery(
+    sesionCajaId && empresaId
+      ? `SELECT id, moneda_id FROM metodos_cobro WHERE empresa_id = ? AND tipo = 'PUNTO'`
+      : '',
+    sesionCajaId && empresaId ? [empresaId] : []
+  )
+  const monedaIdPorMetodo = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const row of (metodosPuntoData ?? []) as { id: string; moneda_id: string }[]) {
+      map[row.id] = row.moneda_id
+    }
+    return map
+  }, [metodosPuntoData])
+
   // keyed por m.nombre
   const [fisico, setFisico] = useState<Record<string, string>>({})
   const [billetesModal, setBilletesModal] = useState<{
@@ -108,6 +136,19 @@ export function CuadreConteoFisico({
     },
     [billetesModal, setFisicoValue]
   )
+
+  // Sincroniza `fisico` con la suma de lotes cargados para metodos tipo='PUNTO'
+  // — reemplaza la entrada manual: la suma de lotes ES el fisico de ese metodo.
+  useEffect(() => {
+    if (!sesionCajaId) return
+    for (const m of metodos) {
+      if (m.tipo !== 'PUNTO') continue
+      const lotes = lotesPorMetodo[m.metodo_cobro_id] ?? []
+      const suma = lotes.reduce((acc, l) => acc + (parseFloat(l.monto) || 0), 0)
+      setFisicoValue(m.nombre, lotes.length > 0 ? suma.toFixed(2) : '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metodos, lotesPorMetodo, sesionCajaId])
 
   // Totales en USD para el resumen y callback del padre; fisicoBs en Bs. nativos
   const totals = useMemo(() => {
@@ -291,59 +332,75 @@ export function CuadreConteoFisico({
                 </div>
               </div>
 
-              {/* Physical count input */}
-              <div className="flex items-center gap-2">
-                <div className="flex-1">
-                  <label className="text-xs text-muted-foreground mb-1 block">
-                    {m.moneda === 'BS' ? 'Fisico (Bs.)' : 'Fisico (USD)'}
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={fisico[m.nombre] ?? ''}
-                    onChange={(e) => !readOnly && setFisicoValue(m.nombre, e.target.value)}
-                    readOnly={readOnly}
-                    placeholder={readOnly ? '—' : '0.00'}
-                    className={`w-full rounded-md border border-input px-3 py-1.5 text-sm tabular-nums ${
-                      readOnly ? 'bg-muted/40 text-muted-foreground cursor-default' : 'bg-white'
-                    }`}
-                  />
-                </div>
+              {/* Lotes POS (tipo='PUNTO' con sesion activa) reemplaza el input unico:
+                  el monto fisico del metodo pasa a ser la suma de sus lotes. */}
+              {m.tipo === 'PUNTO' && sesionCajaId ? (
+                <LotesPosMiniTable
+                  metodoCobroId={m.metodo_cobro_id}
+                  monedaId={monedaIdPorMetodo[m.metodo_cobro_id] ?? ''}
+                  moneda={m.moneda === 'BS' ? 'BS' : 'USD'}
+                  lotes={lotesPorMetodo[m.metodo_cobro_id] ?? []}
+                  sesionCajaId={sesionCajaId}
+                  empresaId={empresaId}
+                  userId={user?.id ?? ''}
+                />
+              ) : (
+                <>
+                  {/* Physical count input */}
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <label className="text-xs text-muted-foreground mb-1 block">
+                        {m.moneda === 'BS' ? 'Fisico (Bs.)' : 'Fisico (USD)'}
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={fisico[m.nombre] ?? ''}
+                        onChange={(e) => !readOnly && setFisicoValue(m.nombre, e.target.value)}
+                        readOnly={readOnly}
+                        placeholder={readOnly ? '—' : '0.00'}
+                        className={`w-full rounded-md border border-input px-3 py-1.5 text-sm tabular-nums ${
+                          readOnly ? 'bg-muted/40 text-muted-foreground cursor-default' : 'bg-white'
+                        }`}
+                      />
+                    </div>
 
-                {/* Bill counter — only for EFECTIVO, not readOnly */}
-                {esEfectivo && !readOnly && (
-                  <button
-                    type="button"
-                    title="Contar billetes"
-                    onClick={() =>
-                      setBilletesModal({ nombre: m.nombre, moneda: m.moneda === 'BS' ? 'BS' : 'USD' })
-                    }
-                    className="mt-5 p-2 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
-                  >
-                    <Calculator size={16} />
-                  </button>
-                )}
+                    {/* Bill counter — only for EFECTIVO, not readOnly */}
+                    {esEfectivo && !readOnly && (
+                      <button
+                        type="button"
+                        title="Contar billetes"
+                        onClick={() =>
+                          setBilletesModal({ nombre: m.nombre, moneda: m.moneda === 'BS' ? 'BS' : 'USD' })
+                        }
+                        className="mt-5 p-2 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+                      >
+                        <Calculator size={16} />
+                      </button>
+                    )}
 
-                {/* Use verified amount — for non-EFECTIVO, not readOnly */}
-                {hasVerified && !readOnly && (
-                  <button
-                    type="button"
-                    onClick={() => setFisicoValue(m.nombre, verifiedEntry.native.toFixed(2))}
-                    className="mt-5 inline-flex items-center gap-1 rounded-md border border-green-300 bg-green-50 hover:bg-green-100 px-2 py-1.5 text-xs font-medium text-green-700 transition-colors whitespace-nowrap"
-                  >
-                    <CheckCircle size={13} weight="fill" />
-                    Usar {verifiedEntry.moneda === 'BS' ? formatBs(verifiedEntry.native) : formatUsd(verifiedEntry.native)}
-                  </button>
-                )}
-              </div>
+                    {/* Use verified amount — for non-EFECTIVO, not readOnly */}
+                    {hasVerified && !readOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setFisicoValue(m.nombre, verifiedEntry.native.toFixed(2))}
+                        className="mt-5 inline-flex items-center gap-1 rounded-md border border-green-300 bg-green-50 hover:bg-green-100 px-2 py-1.5 text-xs font-medium text-green-700 transition-colors whitespace-nowrap"
+                      >
+                        <CheckCircle size={13} weight="fill" />
+                        Usar {verifiedEntry.moneda === 'BS' ? formatBs(verifiedEntry.native) : formatUsd(verifiedEntry.native)}
+                      </button>
+                    )}
+                  </div>
 
-              {/* Verified hint — solo mostrar si hay ajustes de supervisor */}
-              {hasVerified && !readOnly && verifiedEntry.overrideCount > 0 && (
-                <p className="text-xs text-amber-600 flex items-center gap-1">
-                  <CheckCircle size={11} weight="fill" />
-                  {verifiedEntry.overrideCount} monto(s) ajustado(s) por supervisor
-                </p>
+                  {/* Verified hint — solo mostrar si hay ajustes de supervisor */}
+                  {hasVerified && !readOnly && verifiedEntry.overrideCount > 0 && (
+                    <p className="text-xs text-amber-600 flex items-center gap-1">
+                      <CheckCircle size={11} weight="fill" />
+                      {verifiedEntry.overrideCount} monto(s) ajustado(s) por supervisor
+                    </p>
+                  )}
+                </>
               )}
 
               {/* Conversion + difference */}
@@ -452,6 +509,228 @@ export function CuadreConteoFisico({
           titulo={billetesModal.nombre}
           onUseTotal={handleUseBilletes}
         />
+      )}
+    </div>
+  )
+}
+
+// ─── Lotes POS: mini-tabla de captura por metodo tipo='PUNTO' ─────────────
+// Reemplaza el input unico "Fisico" para métodos POS: el cajero carga cada
+// lote del procesador (Banesco/Mercantil) con su numero y monto. La suma de
+// lotes alimenta el conteo fisico del metodo (ver efecto de sincronizacion
+// en CuadreConteoFisico). Persistencia en vivo — cada accion escribe de
+// inmediato en `lotes_pos_cuadre` (no bufferizado hasta el cierre).
+
+interface LotesPosMiniTableProps {
+  metodoCobroId: string
+  monedaId: string
+  moneda: 'USD' | 'BS'
+  lotes: LotePos[]
+  sesionCajaId: string
+  empresaId: string
+  userId: string
+}
+
+function LotesPosMiniTable({
+  metodoCobroId,
+  monedaId,
+  moneda,
+  lotes,
+  sesionCajaId,
+  empresaId,
+  userId,
+}: LotesPosMiniTableProps) {
+  const [nroLote, setNroLote] = useState('')
+  const [monto, setMonto] = useState('')
+  const [error, setError] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editNroLote, setEditNroLote] = useState('')
+  const [editMonto, setEditMonto] = useState('')
+
+  const suma = lotes.reduce((acc, l) => acc + (parseFloat(l.monto) || 0), 0)
+  const formatNativo = moneda === 'BS' ? formatBs : formatUsd
+
+  async function handleAgregar() {
+    setError('')
+    const parsed = lotePosSchema.safeParse({
+      metodo_cobro_id: metodoCobroId,
+      nro_lote: nroLote.trim(),
+      monto: parseFloat(monto),
+      moneda_id: monedaId,
+    })
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? 'Datos invalidos')
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      await agregarLote({
+        sesionCajaId,
+        metodoCobroId,
+        monedaId: parsed.data.moneda_id,
+        nroLote: parsed.data.nro_lote,
+        monto: parsed.data.monto,
+        empresaId,
+        userId,
+      })
+      setNroLote('')
+      setMonto('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al agregar el lote')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function startEdit(lote: LotePos) {
+    setEditingId(lote.id)
+    setEditNroLote(lote.nro_lote)
+    setEditMonto(lote.monto)
+    setError('')
+  }
+
+  async function handleGuardarEdit(id: string) {
+    const montoNum = parseFloat(editMonto)
+    if (!editNroLote.trim() || !(montoNum > 0)) {
+      setError('El lote y el monto deben ser validos')
+      return
+    }
+    setSubmitting(true)
+    try {
+      await actualizarLote(id, { nroLote: editNroLote.trim(), monto: montoNum })
+      setEditingId(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al actualizar el lote')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleEliminar(id: string) {
+    setSubmitting(true)
+    try {
+      await eliminarLote(id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al eliminar el lote')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <label className="text-xs text-muted-foreground block">
+        Lotes ({moneda === 'BS' ? 'Bs.' : 'USD'})
+      </label>
+
+      {lotes.length > 0 && (
+        <div className="space-y-1">
+          {lotes.map((lote) => (
+            <div key={lote.id} className="flex items-center gap-1.5 text-xs">
+              {editingId === lote.id ? (
+                <>
+                  <input
+                    type="text"
+                    value={editNroLote}
+                    onChange={(e) => setEditNroLote(e.target.value)}
+                    placeholder="Lote"
+                    className="w-16 rounded-md border border-input px-1.5 py-1"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={editMonto}
+                    onChange={(e) => setEditMonto(e.target.value)}
+                    className="flex-1 rounded-md border border-input px-1.5 py-1 tabular-nums"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleGuardarEdit(lote.id)}
+                    disabled={submitting}
+                    title="Guardar"
+                    className="text-green-600 hover:text-green-700 px-1 disabled:opacity-40"
+                  >
+                    <Check size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingId(null)}
+                    disabled={submitting}
+                    title="Cancelar"
+                    className="text-muted-foreground hover:text-foreground px-1 disabled:opacity-40"
+                  >
+                    <X size={14} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="w-16 truncate font-medium">Lote {lote.nro_lote}</span>
+                  <span className="flex-1 tabular-nums text-right">
+                    {formatNativo(parseFloat(lote.monto))}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => startEdit(lote)}
+                    disabled={submitting}
+                    title="Editar lote"
+                    className="text-muted-foreground hover:text-foreground px-1 disabled:opacity-40"
+                  >
+                    <PencilSimple size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleEliminar(lote.id)}
+                    disabled={submitting}
+                    title="Eliminar lote"
+                    className="text-red-500 hover:text-red-600 px-1 disabled:opacity-40"
+                  >
+                    <Trash size={14} />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-1.5">
+        <input
+          type="text"
+          value={nroLote}
+          onChange={(e) => setNroLote(e.target.value)}
+          placeholder="N° lote"
+          className="w-16 rounded-md border border-input px-1.5 py-1.5 text-xs"
+        />
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          value={monto}
+          onChange={(e) => setMonto(e.target.value)}
+          placeholder="0.00"
+          className="flex-1 rounded-md border border-input px-1.5 py-1.5 text-xs tabular-nums"
+        />
+        <button
+          type="button"
+          onClick={handleAgregar}
+          disabled={submitting || !nroLote.trim() || !monto || !monedaId}
+          title="Agregar lote"
+          className="p-1.5 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"
+        >
+          <Plus size={14} />
+        </button>
+      </div>
+
+      {error && <p className="text-red-500 text-xs">{error}</p>}
+
+      {lotes.length > 0 && (
+        <div className="flex items-center justify-between text-xs font-semibold pt-1 border-t">
+          <span>Total lotes</span>
+          <span className="tabular-nums">{formatNativo(suma)}</span>
+        </div>
       )}
     </div>
   )

@@ -169,6 +169,8 @@ export interface MetodosCobro {
   usa_cxc: number             // 0|1
   usa_cxp: number             // 0|1
   caja_fuerte_id: string | null
+  // 0079: consolidar lotes POS en un traspaso (1) o uno por lote (0)
+  consolidar_lotes: number
 }
 
 export interface BancosEmpresa {
@@ -770,6 +772,21 @@ export interface TraspasoTesoreria {
   sesion_caja_id: string | null
 }
 
+// 0079: lotes de punto de venta cargados por el cajero antes de cerrar la
+// sesión (dato de trabajo pre-cierre, no inmutable — ver migrations/0079).
+export interface LotesPosCuadre {
+  id: string
+  empresa_id: string
+  sesion_caja_id: string
+  metodo_cobro_id: string
+  moneda_id: string
+  nro_lote: string
+  monto: string              // NUMERIC(18,4) as string
+  created_at: string
+  created_by: string | null
+  updated_at: string
+}
+
 // =============================================
 // RETENCIONES VENTAS
 // =============================================
@@ -1280,6 +1297,7 @@ export interface DB {
   caja_fuerte: CajaFuerte
   mov_caja_fuerte: MovCajaFuerte
   traspasos_tesoreria: TraspasoTesoreria
+  lotes_pos_cuadre: LotesPosCuadre
   // Retenciones ventas
   retenciones_iva_ventas: RetencionesIvaVentas
   retenciones_islr_ventas: RetencionesIslrVentas

@@ -27,6 +27,8 @@ export interface PaymentMethod {
   usa_pos: number            // 0|1
   usa_cxc: number            // 0|1
   usa_cxp: number            // 0|1
+  // 0079: consolidar lotes POS en un traspaso (1) o uno por lote (0)
+  consolidar_lotes: number
 }
 
 export const TIPOS_METODO = [
@@ -120,6 +122,7 @@ export async function createPaymentMethod(params: {
   usa_cxc?: boolean
   usa_cxp?: boolean
   caja_fuerte_id?: string | null
+  consolidar_lotes?: boolean
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -142,8 +145,9 @@ export async function createPaymentMethod(params: {
          (id, empresa_id, nombre, tipo, moneda_id, banco_empresa_id,
           requiere_referencia, saldo_actual, is_active,
           created_at, updated_at, created_by,
-          deposito_directo, comision_pct, usa_pos, usa_cxc, usa_cxp, caja_fuerte_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          deposito_directo, comision_pct, usa_pos, usa_cxc, usa_cxp, caja_fuerte_id,
+          consolidar_lotes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         params.empresa_id,
@@ -163,6 +167,7 @@ export async function createPaymentMethod(params: {
         params.usa_cxc !== false ? 1 : 0,
         params.usa_cxp !== false ? 1 : 0,
         params.caja_fuerte_id ?? null,
+        params.consolidar_lotes !== false ? 1 : 0,
       ]
     )
   })
@@ -184,6 +189,7 @@ export async function updatePaymentMethod(
     usa_cxc?: boolean
     usa_cxp?: boolean
     caja_fuerte_id?: string | null
+    consolidar_lotes?: boolean
   }
 ) {
   const sets: string[] = []
@@ -228,6 +234,10 @@ export async function updatePaymentMethod(
   if (data.caja_fuerte_id !== undefined) {
     sets.push('caja_fuerte_id = ?')
     values.push(data.caja_fuerte_id)
+  }
+  if (data.consolidar_lotes !== undefined) {
+    sets.push('consolidar_lotes = ?')
+    values.push(data.consolidar_lotes ? 1 : 0)
   }
 
   if (sets.length === 0) return
