@@ -42,6 +42,8 @@ export interface BancoMetodo {
   usa_cxc: number            // 0|1
   usa_cxp: number            // 0|1
   created_at: string
+  // 0079: consolidar lotes POS en un traspaso (1) o uno por lote (0)
+  consolidar_lotes: number
 }
 
 export function useBancos() {

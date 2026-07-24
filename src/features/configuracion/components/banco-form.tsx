@@ -33,6 +33,9 @@ interface MetodoDraft {
   usa_cxc: boolean
   usa_cxp: boolean
   is_active: boolean
+  // 0079: solo aplica cuando tipo === 'PUNTO' — consolidar lotes en un
+  // traspaso (true) o enviar uno por lote (false) al cerrar caja.
+  consolidar_lotes: boolean
 }
 
 const TIPOS_METODO_BANCO = [
@@ -167,6 +170,26 @@ function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
           </label>
         </div>
       </div>
+
+      {/* Row 3: Consolidar lotes (solo tipo PUNTO) */}
+      {draft.tipo === 'PUNTO' && (
+        <div className="pt-1 border-t border-gray-100">
+          <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={draft.consolidar_lotes}
+              onChange={(e) => onChange({ ...draft, consolidar_lotes: e.target.checked })}
+              className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600"
+            />
+            Consolidar lotes al cerrar caja
+          </label>
+          <p className="text-gray-400 text-[11px] mt-0.5 ml-5">
+            {draft.consolidar_lotes
+              ? 'Los lotes se envian a Tesoreria en UN solo traspaso.'
+              : 'Cada lote se envia a Tesoreria en un traspaso independiente.'}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
@@ -266,6 +289,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         usa_cxc: m.usa_cxc === 1,
         usa_cxp: m.usa_cxp === 1,
         is_active: m.is_active === 1,
+        consolidar_lotes: m.consolidar_lotes !== 0,
       }))
     )
   }, [isOpen, existingMetodos, metodosLoading, userEdited])
@@ -292,6 +316,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         usa_cxc: true,
         usa_cxp: true,
         is_active: true,
+        consolidar_lotes: true,
       },
     ])
   }
@@ -447,6 +472,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             usa_pos: draft.usa_pos,
             usa_cxc: draft.usa_cxc,
             usa_cxp: draft.usa_cxp,
+            consolidar_lotes: draft.consolidar_lotes,
           })
         } else {
           // Skip incomplete new drafts
@@ -461,6 +487,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             usa_pos: draft.usa_pos,
             usa_cxc: draft.usa_cxc,
             usa_cxp: draft.usa_cxp,
+            consolidar_lotes: draft.consolidar_lotes,
             empresa_id: user!.empresa_id!,
             usuario_id: user!.id,
           })

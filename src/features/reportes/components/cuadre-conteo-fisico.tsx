@@ -358,6 +358,7 @@ export function CuadreConteoFisico({
                         step="0.01"
                         value={fisico[m.nombre] ?? ''}
                         onChange={(e) => !readOnly && setFisicoValue(m.nombre, e.target.value)}
+                        onWheel={(e) => e.currentTarget.blur()}
                         readOnly={readOnly}
                         placeholder={readOnly ? '—' : '0.00'}
                         className={`w-full rounded-md border border-input px-3 py-1.5 text-sm tabular-nums ${
@@ -543,7 +544,12 @@ function LotesPosMiniTable({
   const [nroLote, setNroLote] = useState('')
   const [monto, setMonto] = useState('')
   const [error, setError] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  // Estados de envio separados por accion: un delete/edit en curso de OTRO
+  // lote no debe bloquear el boton "+" de agregar (bug QA: shared boolean
+  // dejaba el "+" deshabilitado mientras un eliminar seguia en vuelo).
+  const [adding, setAdding] = useState(false)
+  const [savingEditId, setSavingEditId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editNroLote, setEditNroLote] = useState('')
   const [editMonto, setEditMonto] = useState('')
@@ -564,7 +570,7 @@ function LotesPosMiniTable({
       return
     }
 
-    setSubmitting(true)
+    setAdding(true)
     try {
       await agregarLote({
         sesionCajaId,
@@ -580,7 +586,7 @@ function LotesPosMiniTable({
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al agregar el lote')
     } finally {
-      setSubmitting(false)
+      setAdding(false)
     }
   }
 
@@ -597,25 +603,25 @@ function LotesPosMiniTable({
       setError('El lote y el monto deben ser validos')
       return
     }
-    setSubmitting(true)
+    setSavingEditId(id)
     try {
       await actualizarLote(id, { nroLote: editNroLote.trim(), monto: montoNum })
       setEditingId(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al actualizar el lote')
     } finally {
-      setSubmitting(false)
+      setSavingEditId(null)
     }
   }
 
   async function handleEliminar(id: string) {
-    setSubmitting(true)
+    setDeletingId(id)
     try {
       await eliminarLote(id)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al eliminar el lote')
     } finally {
-      setSubmitting(false)
+      setDeletingId(null)
     }
   }
 
@@ -644,12 +650,13 @@ function LotesPosMiniTable({
                     step="0.01"
                     value={editMonto}
                     onChange={(e) => setEditMonto(e.target.value)}
+                    onWheel={(e) => e.currentTarget.blur()}
                     className="flex-1 rounded-md border border-input px-1.5 py-1 tabular-nums"
                   />
                   <button
                     type="button"
                     onClick={() => handleGuardarEdit(lote.id)}
-                    disabled={submitting}
+                    disabled={savingEditId === lote.id}
                     title="Guardar"
                     className="text-green-600 hover:text-green-700 px-1 disabled:opacity-40"
                   >
@@ -658,7 +665,7 @@ function LotesPosMiniTable({
                   <button
                     type="button"
                     onClick={() => setEditingId(null)}
-                    disabled={submitting}
+                    disabled={savingEditId === lote.id}
                     title="Cancelar"
                     className="text-muted-foreground hover:text-foreground px-1 disabled:opacity-40"
                   >
@@ -674,7 +681,7 @@ function LotesPosMiniTable({
                   <button
                     type="button"
                     onClick={() => startEdit(lote)}
-                    disabled={submitting}
+                    disabled={deletingId === lote.id}
                     title="Editar lote"
                     className="text-muted-foreground hover:text-foreground px-1 disabled:opacity-40"
                   >
@@ -683,7 +690,7 @@ function LotesPosMiniTable({
                   <button
                     type="button"
                     onClick={() => handleEliminar(lote.id)}
-                    disabled={submitting}
+                    disabled={deletingId === lote.id}
                     title="Eliminar lote"
                     className="text-red-500 hover:text-red-600 px-1 disabled:opacity-40"
                   >
@@ -710,19 +717,26 @@ function LotesPosMiniTable({
           step="0.01"
           value={monto}
           onChange={(e) => setMonto(e.target.value)}
+          onWheel={(e) => e.currentTarget.blur()}
           placeholder="0.00"
           className="flex-1 rounded-md border border-input px-1.5 py-1.5 text-xs tabular-nums"
         />
         <button
           type="button"
           onClick={handleAgregar}
-          disabled={submitting || !nroLote.trim() || !monto || !monedaId}
+          disabled={adding || !nroLote.trim() || !monto || !monedaId}
           title="Agregar lote"
           className="p-1.5 rounded-md border hover:bg-muted transition-colors text-muted-foreground hover:text-foreground disabled:opacity-40"
         >
           <Plus size={14} />
         </button>
       </div>
+
+      {!monedaId && (
+        <p className="text-amber-600 text-xs">
+          No se encontro la moneda de este metodo POS. Verifique la configuracion del metodo de cobro.
+        </p>
+      )}
 
       {error && <p className="text-red-500 text-xs">{error}</p>}
 
