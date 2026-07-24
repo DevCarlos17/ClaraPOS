@@ -31,6 +31,9 @@
 # Tabla de lotes de punto de venta (cierre-consolidacion):
 #   ALTER PUBLICATION powersync ADD TABLE "public"."lotes_pos_cuadre";
 #
+# Tabla system_settings (config de precision decimal; PK es `key`, se aliasa a id):
+#   ALTER PUBLICATION powersync ADD TABLE "public"."system_settings";
+#
 # Para verificar que tablas ya estan en la publicacion:
 #   SELECT tablename FROM pg_publication_tables WHERE pubname = 'powersync';
 # =============================================
@@ -47,7 +50,9 @@ bucket_definitions:
       - SELECT * FROM islr_conceptos_ve
       - SELECT * FROM tipos_movimiento
       - SELECT * FROM permisos
-      - SELECT * FROM system_settings
+      # system_settings usa `key` como PK (no `id`). PowerSync exige una columna
+      # `id` de tipo texto en toda tabla sincronizada, por eso se aliasa `key as id`.
+      - SELECT *, key as id FROM system_settings
 
   # ==========================================
   # BUCKET POR EMPRESA: Datos de negocio
