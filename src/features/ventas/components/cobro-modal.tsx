@@ -305,6 +305,10 @@ export function CobroModal({
   const handleAddPago = () => {
     const montoNum = parseFloat(montoStr)
     if (!metodoId || isNaN(montoNum) || montoNum <= 0 || !monedaMetodo || !selectedMetodo) return
+    if (selectedMetodo.requiere_referencia === 1 && !referencia.trim()) {
+      toast.error(`El metodo "${selectedMetodo.nombre}" requiere numero de referencia`)
+      return
+    }
     setPagos((prev) => [
       ...prev,
       {
@@ -771,7 +775,7 @@ export function CobroModal({
               value={referencia}
               onChange={(e) => setReferencia(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleAddPago() }}
-              placeholder="Ref. (opcional)"
+              placeholder={selectedMetodo?.requiere_referencia === 1 ? 'Ref. (obligatoria)' : 'Ref. (opcional)'}
               className="h-8 text-sm w-28"
             />
             <Button

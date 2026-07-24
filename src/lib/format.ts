@@ -73,6 +73,14 @@ export function formatHora(dateStr: string): string {
   }
 }
 
+/**
+ * Formatea un uuid de sesion de caja como identificador legible SES-XXXXXXXX
+ * (primeros 8 caracteres del uuid en mayusculas). No es correlativo secuencial.
+ */
+export function formatSesionId(id: string): string {
+  return `SES-${id.slice(0, 8).toUpperCase()}`
+}
+
 export function formatNumber(val: number | string, decimals = 2): string {
   const num = typeof val === 'string' ? parseFloat(val) : val
   if (isNaN(num)) return '0'

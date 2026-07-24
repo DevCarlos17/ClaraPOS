@@ -62,7 +62,7 @@ function toMovRow(
     tipo: mov.tipo,
     origen: mov.origen,
     referencia: mov.referencia,
-    descripcion: mov.descripcion,
+    descripcion: 'observacion' in mov ? (mov.descripcion ?? mov.observacion) : mov.descripcion,
     monto: mov.monto,
     saldo_nuevo: mov.saldo_nuevo,
     fecha: mov.fecha,
