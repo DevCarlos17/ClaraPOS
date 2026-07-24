@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
 import { toStorageString } from '@/lib/currency'
+import { formatSesionId } from '@/lib/format'
 import {
   consolidarMetodoATesoreriaEnTx,
   type DestinoConsolidacion,
@@ -965,9 +966,50 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     // de esta misma writeTransaction — cualquier fallo (destino sin configurar, cuenta
     // de comision sin configurar, tasa faltante) revierte TODO el cierre y la sesion
     // permanece ABIERTA.
-    const metodosParaConsolidar = Array.from(consolidacionPorMetodo.entries()).filter(
+    //
+    // conciliacion-lotes-pos (fix WARNING #2, verify-report obs #608): el set de metodos
+    // a consolidar es la UNION de (a) metodos con pagos no-reversados y saldo positivo
+    // (comportamiento original, sin cambios) y (b) metodos con lotes POS capturados en
+    // lotes_pos_cuadre para esta sesion. Sin esta union, un metodo tipo='PUNTO' cuyos
+    // pagos fueron TODOS reversados no aparece en (a) (metodosUsadosResult filtra
+    // is_reversed=0 y no genera fila) pero SI puede tener lotes cargados por el cajero
+    // (usePagosPorMetodo, que dirige el cuadre UI, no filtra is_reversed y deja verlo) —
+    // sin la union esos lotes se descartaban en silencio al cerrar, sin error y sin
+    // traspaso a Tesoreria (perdida de dinero silenciosa).
+    const metodosConLotesResult = await tx.execute(
+      `SELECT DISTINCT metodo_cobro_id FROM lotes_pos_cuadre
+       WHERE empresa_id = ? AND sesion_caja_id = ?`,
+      [empresaId, id]
+    )
+    const metodoIdsConLotes = new Set<string>()
+    if (metodosConLotesResult.rows) {
+      for (let i = 0; i < metodosConLotesResult.rows.length; i++) {
+        const row = metodosConLotesResult.rows.item(i) as { metodo_cobro_id: string }
+        if (row.metodo_cobro_id) metodoIdsConLotes.add(row.metodo_cobro_id)
+      }
+    }
+
+    const metodosParaConsolidarBase = Array.from(consolidacionPorMetodo.entries()).filter(
       ([metodoCobroId, v]) => metodoCobroId && v.totalSistemaD.gt(0)
     )
+    const metodoIdsBase = new Set(metodosParaConsolidarBase.map(([metodoCobroId]) => metodoCobroId))
+    // Metodos que SOLO tienen lotes (sin pagos no-reversados con saldo positivo). Se
+    // agregan con un placeholder de totalSistemaD/monedaId que nunca se usa: mas abajo
+    // (paso 9) todo metodo con lotes SIEMPRE toma la rama `lotesDelMetodo.length > 0`,
+    // que reemplaza totalSistemaD por la suma de lotes y resuelve monedaId desde la
+    // config real del metodo (ver `monedaIdBase || config.moneda_id`).
+    const metodoIdsSoloLotes = Array.from(metodoIdsConLotes).filter((mid) => !metodoIdsBase.has(mid))
+
+    const metodosParaConsolidar: [string, { totalSistemaD: Decimal; monedaId: string }][] = [
+      ...metodosParaConsolidarBase,
+      ...metodoIdsSoloLotes.map(
+        (mid) =>
+          [mid, { totalSistemaD: new Decimal(0), monedaId: '' }] as [
+            string,
+            { totalSistemaD: Decimal; monedaId: string },
+          ]
+      ),
+    ]
 
     if (metodosParaConsolidar.length > 0) {
       // 8. Batch SELECT de la configuracion de Tesoreria de los metodos usados
@@ -976,7 +1018,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
 
       const metodosConfigResult = await tx.execute(
         `SELECT mc.id AS metodo_cobro_id, mc.nombre, mc.tipo, mc.banco_empresa_id, mc.caja_fuerte_id,
-                mc.comision_pct, mc.moneda_id, mo.codigo_iso AS moneda_codigo
+                mc.comision_pct, mc.moneda_id, mo.codigo_iso AS moneda_codigo, mc.consolidar_lotes
          FROM metodos_cobro mc
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mc.id IN (${inPhConsolidar}) AND mc.empresa_id = ?`,
@@ -992,6 +1034,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         comision_pct: string | null
         moneda_id: string
         moneda_codigo: string
+        consolidar_lotes: number
       }
       const metodosConfigMap = new Map<string, MetodoConfigRow>()
       if (metodosConfigResult.rows) {
@@ -1004,8 +1047,29 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       // Cuentas contables de la empresa (para resolver COMISION_BANCARIA una sola vez)
       const cuentasConfig = await cargarMapaCuentas(tx, empresaId)
 
+      // conciliacion-lotes-pos (PR-C): lotes POS cargados para esta sesion (cuadre-conteo-fisico.tsx,
+      // PR-B), agrupados por metodo_cobro_id. Solo metodos tipo='PUNTO' con lotes cargados en el
+      // cuadre tendran entradas aqui; el resto sigue el camino totalSistemaD sin cambios (SC-13).
+      const lotesResult = await tx.execute(
+        `SELECT metodo_cobro_id, nro_lote, monto
+         FROM lotes_pos_cuadre
+         WHERE empresa_id = ? AND sesion_caja_id = ?`,
+        [empresaId, id]
+      )
+      type LoteRow = { metodo_cobro_id: string; nro_lote: string; monto: string }
+      const lotesPorMetodoMap = new Map<string, LoteRow[]>()
+      if (lotesResult.rows) {
+        for (let i = 0; i < lotesResult.rows.length; i++) {
+          const row = lotesResult.rows.item(i) as LoteRow
+          if (!lotesPorMetodoMap.has(row.metodo_cobro_id)) {
+            lotesPorMetodoMap.set(row.metodo_cobro_id, [])
+          }
+          lotesPorMetodoMap.get(row.metodo_cobro_id)!.push(row)
+        }
+      }
+
       // 9. Consolidar cada metodo con saldo positivo hacia Tesoreria
-      for (const [metodoCobroId, { totalSistemaD, monedaId }] of metodosParaConsolidar) {
+      for (const [metodoCobroId, { totalSistemaD, monedaId: monedaIdBase }] of metodosParaConsolidar) {
         const config = metodosConfigMap.get(metodoCobroId)
         if (!config) {
           throw new Error(
@@ -1013,6 +1077,10 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
           )
         }
         const nombreMetodo = config.nombre
+        // conciliacion-lotes-pos (fix WARNING #2): metodos incorporados solo por tener
+        // lotes traen monedaId placeholder (''); se resuelve desde la config real del
+        // metodo (misma fuente que ya usa consolidacionPorMetodo para el resto: mc.moneda_id).
+        const monedaId = monedaIdBase || config.moneda_id
 
         // Resolver destino: EFECTIVO -> caja fuerte propia del metodo; otro tipo -> banco.
         // El origen se DERIVA siempre del tipo de destino (nunca al reves) para que
@@ -1064,60 +1132,120 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
 
         const origenDestino = destino.tipo === 'CAJA_FUERTE' ? 'DEPOSITO_CIERRE' : 'CIERRE_CONSOLIDACION'
 
-        await consolidarMetodoATesoreriaEnTx(tx, {
-          sesionCajaId: id,
-          metodoCobroId,
-          destino,
-          monto: toStorageString(totalSistemaD),
-          monedaId,
-          empresaId,
-          userId: usuario_cierre_id,
-          origenDestino,
-          skipSaldoCheck: true,
-          descripcion: `Consolidacion cierre de caja - sesion ${id}`,
-        })
+        // Comision bancaria: solo aplica a metodos consolidados hacia banco. Factorizada para
+        // reutilizarse sobre el monto correcto (totalSistemaD, suma de lotes, o lote individual)
+        // sin duplicar la logica W5/COMISION_BANCARIA en cada rama (conciliacion-lotes-pos, PR-C).
+        const aplicarComisionSiCorresponde = async (montoBaseD: Decimal): Promise<void> => {
+          const comisionPct = new Decimal(config.comision_pct ?? '0')
+          // W5: un metodo EFECTIVO con comision configurada es un error de config; no se
+          // cobra comision sobre efectivo, pero se deja rastro para que sea detectable.
+          if (comisionPct.gt(0) && destino.tipo !== 'BANCO') {
+            console.warn(
+              `[cierre] El metodo EFECTIVO "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision ` +
+              `configurada; se ignora (la comision solo aplica a metodos consolidados hacia banco).`
+            )
+          }
+          if (comisionPct.gt(0) && destino.tipo === 'BANCO') {
+            const cuentaComisionId = cuentasConfig['COMISION_BANCARIA']
+            if (!cuentaComisionId) {
+              throw new Error(
+                `El metodo de cobro "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision pero no hay una cuenta ` +
+                `"Comisiones bancarias" configurada. Configura la clave COMISION_BANCARIA en ` +
+                `Contabilidad > Cuentas de Configuracion antes de cerrar la sesion.`
+              )
+            }
 
-        // Comision bancaria: solo aplica a metodos consolidados hacia banco.
-        const comisionPct = new Decimal(config.comision_pct ?? '0')
-        // W5: un metodo EFECTIVO con comision configurada es un error de config; no se
-        // cobra comision sobre efectivo, pero se deja rastro para que sea detectable.
-        if (comisionPct.gt(0) && destino.tipo !== 'BANCO') {
-          console.warn(
-            `[cierre] El metodo EFECTIVO "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision ` +
-            `configurada; se ignora (la comision solo aplica a metodos consolidados hacia banco).`
-          )
+            const monedaCodigo: 'USD' | 'VES' = config.moneda_codigo === 'VES' ? 'VES' : 'USD'
+            if (monedaCodigo === 'VES' && !((tasaDelDia ?? 0) > 0)) {
+              throw new Error(
+                `No se puede registrar la comision bancaria en Bs: falta la tasa del dia para el cierre.`
+              )
+            }
+
+            const montoComisionNativo = montoBaseD.times(comisionPct).dividedBy(100)
+
+            await insertarGastoComisionEnTx(tx, {
+              empresaId,
+              metodoCobroId,
+              bancoEmpresaId: destino.id,
+              montoComisionNativo: toStorageString(montoComisionNativo),
+              monedaCodigo,
+              tasa: tasaDelDia ?? 0,
+              cuentaComisionId,
+              sesionCajaId: id,
+              comisionPct: comisionPct.toFixed(2),
+              usuarioId: usuario_cierre_id,
+            })
+          }
         }
-        if (comisionPct.gt(0) && destino.tipo === 'BANCO') {
-          const cuentaComisionId = cuentasConfig['COMISION_BANCARIA']
-          if (!cuentaComisionId) {
-            throw new Error(
-              `El metodo de cobro "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision pero no hay una cuenta ` +
-              `"Comisiones bancarias" configurada. Configura la clave COMISION_BANCARIA en ` +
-              `Contabilidad > Cuentas de Configuracion antes de cerrar la sesion.`
-            )
+
+        // conciliacion-lotes-pos (PR-C): metodos tipo='PUNTO' con lotes cargados en el cuadre
+        // enrutan el monto de la consolidacion segun los lotes, REEMPLAZANDO totalSistemaD —
+        // nunca sumado encima (evita doble conteo, decision de mayor riesgo del design.md).
+        // sesiones_caja_detalle.total_sistema (paso 6) sigue derivado de pagos sin cambios; la
+        // brecha vs. el total de lotes se ve como diferencia normal, no como bloqueante.
+        const lotesDelMetodo = lotesPorMetodoMap.get(metodoCobroId) ?? []
+
+        if (lotesDelMetodo.length > 0) {
+          const sumaLotesD = lotesDelMetodo.reduce(
+            (acc, lote) => acc.plus(new Decimal(lote.monto)),
+            new Decimal(0)
+          )
+
+          if (config.consolidar_lotes === 1) {
+            const nrosLotes = lotesDelMetodo.map((lote) => lote.nro_lote).join(', ')
+            await consolidarMetodoATesoreriaEnTx(tx, {
+              sesionCajaId: id,
+              metodoCobroId,
+              destino,
+              monto: toStorageString(sumaLotesD),
+              monedaId,
+              empresaId,
+              userId: usuario_cierre_id,
+              origenDestino,
+              skipSaldoCheck: true,
+              descripcion: `Consolidacion cierre de caja - sesion ${formatSesionId(id)} - Lotes: ${nrosLotes}`,
+            })
+
+            await aplicarComisionSiCorresponde(sumaLotesD)
+          } else {
+            for (const lote of lotesDelMetodo) {
+              const montoLoteD = new Decimal(lote.monto)
+
+              await consolidarMetodoATesoreriaEnTx(tx, {
+                sesionCajaId: id,
+                metodoCobroId,
+                destino,
+                monto: toStorageString(montoLoteD),
+                monedaId,
+                empresaId,
+                userId: usuario_cierre_id,
+                origenDestino,
+                skipSaldoCheck: true,
+                descripcion: `Consolidacion cierre de caja - sesion ${formatSesionId(id)} - Lote ${lote.nro_lote}`,
+              })
+
+              await aplicarComisionSiCorresponde(montoLoteD)
+            }
           }
-
-          const monedaCodigo: 'USD' | 'VES' = config.moneda_codigo === 'VES' ? 'VES' : 'USD'
-          if (monedaCodigo === 'VES' && !((tasaDelDia ?? 0) > 0)) {
-            throw new Error(
-              `No se puede registrar la comision bancaria en Bs: falta la tasa del dia para el cierre.`
-            )
-          }
-
-          const montoComisionNativo = totalSistemaD.times(comisionPct).dividedBy(100)
-
-          await insertarGastoComisionEnTx(tx, {
-            empresaId,
-            metodoCobroId,
-            bancoEmpresaId: destino.id,
-            montoComisionNativo: toStorageString(montoComisionNativo),
-            monedaCodigo,
-            tasa: tasaDelDia ?? 0,
-            cuentaComisionId,
+        } else {
+          // Camino existente sin cambios: metodo sin lotes cargados (no-POS, o tipo='PUNTO' sin
+          // lotes en este cuadre) consolida por totalSistemaD, identico a antes de este cambio
+          // (SC-13, no-regresion dura).
+          await consolidarMetodoATesoreriaEnTx(tx, {
             sesionCajaId: id,
-            comisionPct: comisionPct.toFixed(2),
-            usuarioId: usuario_cierre_id,
+            metodoCobroId,
+            destino,
+            monto: toStorageString(totalSistemaD),
+            monedaId,
+            empresaId,
+            userId: usuario_cierre_id,
+            origenDestino,
+            skipSaldoCheck: true,
+            descripcion: `Consolidacion cierre de caja - sesion ${formatSesionId(id)}`,
           })
+
+          await aplicarComisionSiCorresponde(totalSistemaD)
         }
       }
     }

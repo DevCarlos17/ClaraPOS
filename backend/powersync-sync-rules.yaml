@@ -28,6 +28,9 @@
 #   ALTER PUBLICATION powersync ADD TABLE "public"."horarios_descansos";
 #   ALTER PUBLICATION powersync ADD TABLE "public"."horarios_excepciones";
 #
+# Tabla de lotes de punto de venta (cierre-consolidacion):
+#   ALTER PUBLICATION powersync ADD TABLE "public"."lotes_pos_cuadre";
+#
 # Para verificar que tablas ya estan en la publicacion:
 #   SELECT tablename FROM pg_publication_tables WHERE pubname = 'powersync';
 # =============================================
@@ -101,6 +104,7 @@ bucket_definitions:
       # --- CAJA / TESORERIA ---
       - SELECT * FROM sesiones_caja WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM sesiones_caja_detalle WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM lotes_pos_cuadre WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_metodo_cobro WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_bancarios WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM caja_fuerte WHERE empresa_id = bucket.empresa_id
