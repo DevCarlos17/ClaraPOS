@@ -652,7 +652,9 @@ export function useSesionesPorCajaYFecha(cajaId: string | null, fecha: string) {
  * real. Si un dia no hay registro de actualizacion, significa que la tasa no
  * vario respecto al dia anterior, por lo que la ultima vigente sigue aplicando.
  * El AVG diario anterior devolvia 0 en dias sin registro y rompia el cierre con
- * comision bancaria en Bs.
+ * comision bancaria en Bs. Ademas apuntaba a columnas inexistentes (`tasa` en
+ * vez de `valor`, `created_at` en vez de `fecha`), enmascarado por el COALESCE.
+ * Se usa el mismo patron de columnas que useTasaActual (fecha DESC, created_at DESC).
  */
 export function useTasaDelDia(fecha: string | null) {
   const { user } = useCurrentUser()
@@ -660,10 +662,10 @@ export function useTasaDelDia(fecha: string | null) {
 
   const { data, isLoading } = useQuery(
     fecha
-      ? `SELECT CAST(tasa AS REAL) as tasa_vigente
+      ? `SELECT CAST(valor AS REAL) as tasa_vigente
          FROM tasas_cambio
-         WHERE empresa_id = ? AND DATE(created_at, 'localtime') <= ?
-         ORDER BY created_at DESC
+         WHERE empresa_id = ? AND fecha <= ?
+         ORDER BY fecha DESC, created_at DESC
          LIMIT 1`
       : '',
     fecha ? [empresaId, fecha] : []
