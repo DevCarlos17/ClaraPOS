@@ -145,7 +145,13 @@ export function CuadreConteoFisico({
       if (m.tipo !== 'PUNTO') continue
       const lotes = lotesPorMetodo[m.metodo_cobro_id] ?? []
       const suma = lotes.reduce((acc, l) => acc + (parseFloat(l.monto) || 0), 0)
-      setFisicoValue(m.nombre, lotes.length > 0 ? suma.toFixed(2) : '')
+      const nextValue = lotes.length > 0 ? suma.toFixed(2) : ''
+      // Defensa: solo escribir si el valor realmente cambia. Evita re-renders
+      // no-op que, combinados con una referencia inestable de lotesPorMetodo,
+      // producian un loop de renders al cerrar caja con Punto de Venta.
+      if ((fisico[m.nombre] ?? '') !== nextValue) {
+        setFisicoValue(m.nombre, nextValue)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [metodos, lotesPorMetodo, sesionCajaId])

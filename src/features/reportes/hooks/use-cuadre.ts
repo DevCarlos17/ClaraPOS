@@ -644,25 +644,38 @@ export function useSesionesPorCajaYFecha(cajaId: string | null, fecha: string) {
 
 // ─── Tasa del Dia ──────────────────────────────────────────
 
+/**
+ * Tasa vigente para el cierre. Devuelve la ULTIMA tasa registrada hasta la fecha
+ * del cierre (inclusive), no un promedio del dia.
+ *
+ * Razon: el BCV publica una sola tasa por dia y el cierre se procesa en tiempo
+ * real. Si un dia no hay registro de actualizacion, significa que la tasa no
+ * vario respecto al dia anterior, por lo que la ultima vigente sigue aplicando.
+ * El AVG diario anterior devolvia 0 en dias sin registro y rompia el cierre con
+ * comision bancaria en Bs.
+ */
 export function useTasaDelDia(fecha: string | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
     fecha
-      ? `SELECT
-           COALESCE(AVG(CAST(tasa AS REAL)), 0) as avg_tasa,
-           COUNT(*) as cnt
+      ? `SELECT CAST(tasa AS REAL) as tasa_vigente
          FROM tasas_cambio
-         WHERE empresa_id = ? AND DATE(created_at, 'localtime') = ?`
+         WHERE empresa_id = ? AND DATE(created_at, 'localtime') <= ?
+         ORDER BY created_at DESC
+         LIMIT 1`
       : '',
     fecha ? [empresaId, fecha] : []
   )
 
-  const row = (data?.[0] ?? {}) as { avg_tasa: number; cnt: number }
+  const row = (data?.[0] ?? {}) as { tasa_vigente: number }
+  const tasaVigente = Number(Number(row.tasa_vigente ?? 0).toFixed(4))
   return {
-    tasaPromedio: Number(Number(row.avg_tasa ?? 0).toFixed(4)),
-    tasaCount: Number(row.cnt ?? 0),
+    tasaPromedio: tasaVigente,
+    // Se conserva el nombre por compatibilidad con los consumidores; ahora es 1
+    // si hay una tasa vigente, 0 si no existe ninguna registrada.
+    tasaCount: tasaVigente > 0 ? 1 : 0,
     isLoading,
   }
 }

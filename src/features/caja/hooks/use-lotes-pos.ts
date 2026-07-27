@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -34,13 +35,17 @@ export function useLotesPos(sesionCajaId: string) {
     enabled ? [empresaId, sesionCajaId] : []
   )
 
-  const lotesPorMetodo = ((data ?? []) as LotePos[]).reduce<Record<string, LotePos[]>>(
-    (acc, lote) => {
-      if (!acc[lote.metodo_cobro_id]) acc[lote.metodo_cobro_id] = []
-      acc[lote.metodo_cobro_id].push(lote)
-      return acc
-    },
-    {}
+  // Memoizado por `data`: sin esto se genera una referencia nueva en cada render,
+  // lo que dispara un loop infinito en los consumidores que lo usan como dep de
+  // useEffect (ej. cuadre-conteo-fisico sincronizando el fisico de metodos POS).
+  const lotesPorMetodo = useMemo(
+    () =>
+      ((data ?? []) as LotePos[]).reduce<Record<string, LotePos[]>>((acc, lote) => {
+        if (!acc[lote.metodo_cobro_id]) acc[lote.metodo_cobro_id] = []
+        acc[lote.metodo_cobro_id].push(lote)
+        return acc
+      }, {}),
+    [data]
   )
 
   return { lotesPorMetodo, isLoading }

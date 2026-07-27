@@ -582,8 +582,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
           {/* Tasa del dia */}
           {consulted && activeFilters && tasaCount > 0 && (
             <div className="text-xs text-muted-foreground border-t pt-2">
-              Tasa del dia: <span className="font-semibold text-foreground">{formatTasa(tasaPromedio)} Bs/$</span>
-              {tasaCount > 1 && <span className="ml-1">(prom. {tasaCount} registros)</span>}
+              Tasa vigente: <span className="font-semibold text-foreground">{formatTasa(tasaPromedio)} Bs/$</span>
             </div>
           )}
         </div>
