@@ -426,6 +426,9 @@ function FormCierre({
 }) {
   const { user } = useCurrentUser()
   const navigate = useNavigate()
+  // Tasa vigente actual para la comision bancaria en Bs. El cierre se procesa en
+  // tiempo real, asi que aplica la ultima tasa registrada (misma regla que el cuadre).
+  const { tasaValor } = useTasaActual()
 
   // Leer caja_id y fecha_apertura para navegar al cuadre tras cerrar
   const { data: sesionMetaData } = useQuery(
@@ -479,6 +482,7 @@ function FormCierre({
         monto_fisico_usd: parsed.data.monto_fisico_usd,
         observaciones_cierre: parsed.data.observaciones_cierre,
         usuario_cierre_id: user.id,
+        tasaDelDia: tasaValor,
       })
       toast.success('Sesion de caja cerrada exitosamente')
       resetFields()
