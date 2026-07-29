@@ -185,11 +185,29 @@ export interface BancosEmpresa {
   saldo_actual: string
   saldo_inicial: string   // 0069: NUMERIC(18,4) stored as string
   cuenta_contable_id: string | null
+  cuenta_gasto_comision_id: string | null  // 0080: default de cuenta de gasto para deducciones
   is_active: number
   created_at: string
   updated_at: string
   created_by: string | null
   updated_by: string | null
+}
+
+// 0080: N conceptos de deducción por método de cobro (comisión bancaria,
+// retención ISLR de tarjetas de crédito, etc.). Reemplaza metodos_cobro.comision_pct.
+export interface MetodoCobroDeducciones {
+  id: string
+  empresa_id: string
+  metodo_cobro_id: string
+  cuenta_gasto_id: string
+  concepto: string
+  tipo: string             // 'COMISION' | 'ISLR' | 'OTRO'
+  porcentaje: string       // NUMERIC(5,2) stored as string
+  orden: number
+  is_active: number
+  created_at: string
+  updated_at: string
+  created_by: string | null
 }
 
 export interface Cajas {
@@ -1260,6 +1278,7 @@ export interface DB {
   tasas_cambio: TasasCambio
   metodos_cobro: MetodosCobro
   bancos_empresa: BancosEmpresa
+  metodo_cobro_deducciones: MetodoCobroDeducciones
   cajas: Cajas
   impuestos_ve: ImpuestosVe
   niveles_precio: NivelesPrecio

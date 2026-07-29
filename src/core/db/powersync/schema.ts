@@ -217,11 +217,33 @@ const bancos_empresa = new Table(
     saldo_actual: column.text,
     saldo_inicial: column.text,        // 0069: NUMERIC(18,4) stored as string
     cuenta_contable_id: column.text,
+    cuenta_gasto_comision_id: column.text,  // 0080: default de cuenta de gasto para deducciones
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
     updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
+// 0080: N conceptos de deducción por método de cobro (comisión bancaria,
+// retención ISLR de tarjetas de crédito, etc.). Reemplaza el campo único
+// metodos_cobro.comision_pct (deprecado). Config editable, no ledger —
+// soft-deactivate vía is_active, sin trigger anti-UPDATE/DELETE.
+const metodo_cobro_deducciones = new Table(
+  {
+    empresa_id: column.text,
+    metodo_cobro_id: column.text,
+    cuenta_gasto_id: column.text,
+    concepto: column.text,
+    tipo: column.text,
+    porcentaje: column.text,     // NUMERIC(5,2) stored as string
+    orden: column.integer,
+    is_active: column.integer,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
   },
   { indexes: {} }
 )
@@ -1516,6 +1538,7 @@ export const AppSchema = new Schema({
   tasas_cambio,
   metodos_cobro,
   bancos_empresa,
+  metodo_cobro_deducciones,
   cajas,
   impuestos_ve,
   niveles_precio,
