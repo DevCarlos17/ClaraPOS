@@ -104,6 +104,25 @@ export function useCuentasDetallePorTipo(tipo: TipoCuenta | TipoCuenta[]) {
 }
 
 /**
+ * Subgrupo `6.2.05 COMISIONES BANCARIAS` de la empresa actual (creado por la
+ * migracion 0080). Fuente de padre para las leaves `6.2.05.NN COMISION BANCO
+ * {nombre}` que se auto-crean al vincular la cuenta de comision de un banco.
+ */
+export function useSubgrupoComisionesBancarias(): { id: string; codigo: '6.2.05'; nivel: 3 } | undefined {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data } = useQuery(
+    `SELECT id, codigo, nivel FROM plan_cuentas WHERE empresa_id = ? AND codigo = '6.2.05' LIMIT 1`,
+    [empresaId]
+  )
+
+  const row = (data ?? [])[0] as { id: string; codigo: string; nivel: number } | undefined
+  if (!row) return undefined
+  return { id: row.id, codigo: '6.2.05', nivel: 3 }
+}
+
+/**
  * Grupos de tipo GASTO con sus subcuentas de movimiento.
  * Usado en el modal de gestion de cuentas de gasto.
  */

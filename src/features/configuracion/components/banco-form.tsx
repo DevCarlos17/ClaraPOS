@@ -13,7 +13,13 @@ import {
   updatePaymentMethod,
 } from '@/features/configuracion/hooks/use-payment-methods'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useCuentasDetalle, crearCuenta } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import {
+  useCuentasDetalle,
+  useCuentasDetallePorTipo,
+  useSubgrupoComisionesBancarias,
+  crearCuenta,
+  agregarSubcuentaAGrupo,
+} from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { db } from '@/core/db/powersync/db'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -209,6 +215,8 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const isEditing = !!banco
   const { user } = useCurrentUser()
   const { cuentas } = useCuentasDetalle()
+  const { cuentas: cuentasGasto } = useCuentasDetallePorTipo('GASTO')
+  const subgrupoComisiones = useSubgrupoComisionesBancarias()
 
   // Basic banco fields
   const [nombreBanco, setNombreBanco] = useState('')
@@ -217,6 +225,8 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const [titular, setTitular] = useState('')
   const [titularDocumento, setTitularDocumento] = useState('')
   const [cuentaContableId, setCuentaContableId] = useState('')
+  // 0080: cuenta de gasto para comisiones bancarias (default de metodo_cobro_deducciones)
+  const [cuentaGastoComisionId, setCuentaGastoComisionId] = useState('')
   const [active, setActive] = useState(true)
 
   // 0069: moneda y saldo inicial
@@ -244,6 +254,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTitular(banco.titular)
         setTitularDocumento(banco.titular_documento ?? '')
         setCuentaContableId(banco.cuenta_contable_id ?? '')
+        setCuentaGastoComisionId(banco.cuenta_gasto_comision_id ?? '')
         setActive(banco.is_active === 1)
         setSaldoInicial('0')
 
@@ -263,6 +274,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTitular('')
         setTitularDocumento('')
         setCuentaContableId('')
+        setCuentaGastoComisionId('')
         setActive(true)
         setMoneda('USD')
         setSaldoInicial('0')
@@ -331,15 +343,25 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     setMetodoDrafts((prev) => prev.filter((_, i) => i !== idx))
   }
 
-  async function handleCrearCuentaContable() {
-    if (!nombreBanco.trim()) {
-      toast.warning('Ingresa el nombre del banco antes de crear la cuenta contable')
-      return
+  /**
+   * 0080 (PR-2 refinado): crea la cuenta de activo (1.1.xx BANCO {nombre}) y/o
+   * la leaf de comision (6.2.05.NN COMISION BANCO {nombre}) segun `opts`.
+   * Reutilizada tanto por el boton manual "Crear Cuenta" como por el
+   * auto-creado silencioso en `handleSubmit` — un banco sin ambas cuentas es
+   * un estado invalido del sistema (decision de usuario, ver apply-progress).
+   * Idempotente por diseño: el llamador decide que falta crear via `opts`,
+   * esta funcion nunca decide por si misma si algo ya existe.
+   */
+  async function crearCuentasDelBanco(
+    nombreBancoInput: string,
+    opts: { crearActivo: boolean; crearComision: boolean }
+  ): Promise<{ cuentaContableId?: string; cuentaGastoComisionId?: string; comisionOmitida: boolean }> {
+    const resultado: { cuentaContableId?: string; cuentaGastoComisionId?: string; comisionOmitida: boolean } = {
+      comisionOmitida: false,
     }
-    if (!user?.empresa_id) return
+    if (!user?.empresa_id) return resultado
 
-    setCreandoCuenta(true)
-    try {
+    if (opts.crearActivo) {
       // Buscar cuenta padre "1.1.01" (EFECTIVO Y EQUIVALENTES) u otro prefijo de activos bancarios
       const result = await db.execute(
         `SELECT id, codigo, nivel FROM plan_cuentas
@@ -376,9 +398,9 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       }
 
       const nuevoCodigo = `${codigoPadre}.${String(siguienteSufijo).padStart(2, '0')}`
-      const nombreCuenta = `BANCO ${nombreBanco.trim().toUpperCase()}`
+      const nombreCuenta = `BANCO ${nombreBancoInput.trim().toUpperCase()}`
 
-      const nuevaId = await crearCuenta({
+      resultado.cuentaContableId = await crearCuenta({
         codigo: nuevoCodigo,
         nombre: nombreCuenta,
         tipo: 'ACTIVO',
@@ -389,9 +411,71 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         empresa_id: user.empresa_id,
         created_by: user.id,
       })
+    }
 
-      setCuentaContableId(nuevaId)
-      toast.success(`Cuenta contable ${nuevoCodigo} creada y vinculada`)
+    if (opts.crearComision) {
+      // 0080: cuenta de comision (6.2.05.NN COMISION BANCO {nombre}) bajo el
+      // subgrupo 6.2.05 de la empresa.
+      if (subgrupoComisiones) {
+        const nombreComision = `COMISION BANCO ${nombreBancoInput.trim().toUpperCase()}`
+        await agregarSubcuentaAGrupo({
+          grupoId: subgrupoComisiones.id,
+          grupoCodigo: subgrupoComisiones.codigo,
+          grupoNivel: subgrupoComisiones.nivel,
+          nombreSubcuenta: nombreComision,
+          empresaId: user.empresa_id,
+          userId: user.id,
+        })
+
+        const leafResult = await db.execute(
+          `SELECT id FROM plan_cuentas
+           WHERE empresa_id = ? AND parent_id = ? AND nombre = ?
+           ORDER BY created_at DESC LIMIT 1`,
+          [user.empresa_id, subgrupoComisiones.id, nombreComision]
+        )
+        if (leafResult.rows && leafResult.rows.length > 0) {
+          resultado.cuentaGastoComisionId = (leafResult.rows.item(0) as { id: string }).id
+        }
+      } else {
+        resultado.comisionOmitida = true
+      }
+    }
+
+    return resultado
+  }
+
+  async function handleCrearCuentaContable() {
+    if (!nombreBanco.trim()) {
+      toast.warning('Ingresa el nombre del banco antes de crear la cuenta contable')
+      return
+    }
+    if (!user?.empresa_id) return
+
+    const necesitaActivo = !cuentaContableId
+    const necesitaComision = !cuentaGastoComisionId
+    if (!necesitaActivo && !necesitaComision) return
+
+    setCreandoCuenta(true)
+    try {
+      const creadas = await crearCuentasDelBanco(nombreBanco, {
+        crearActivo: necesitaActivo,
+        crearComision: necesitaComision,
+      })
+
+      if (creadas.cuentaContableId) setCuentaContableId(creadas.cuentaContableId)
+      if (creadas.cuentaGastoComisionId) setCuentaGastoComisionId(creadas.cuentaGastoComisionId)
+
+      if (creadas.cuentaContableId && creadas.cuentaGastoComisionId) {
+        toast.success('Cuenta contable y cuenta de comision creadas y vinculadas')
+      } else if (creadas.cuentaContableId) {
+        toast.success('Cuenta contable creada y vinculada')
+      } else if (creadas.cuentaGastoComisionId) {
+        toast.success('Cuenta de comision creada y vinculada')
+      }
+
+      if (creadas.comisionOmitida) {
+        toast.warning('No se encontro el subgrupo 6.2.05 COMISIONES BANCARIAS — aplica la migracion 0080')
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error al crear la cuenta contable'
       toast.error(message)
@@ -431,6 +515,22 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       let bancoId: string
 
       if (isEditing && banco) {
+        // Modo edicion: NUNCA auto-crear la cuenta de activo (el banco ya
+        // existe con su propio flujo). Excepcion puntual: si la cuenta de
+        // comision quedo NULL (bancos creados antes de esta feature), se
+        // auto-crea SOLO esa, una vez, sin duplicar si ya existe.
+        let cuentaGastoComisionFinal = cuentaGastoComisionId
+        if (!cuentaGastoComisionFinal) {
+          const creadas = await crearCuentasDelBanco(parsed.data.nombre_banco, {
+            crearActivo: false,
+            crearComision: true,
+          })
+          if (creadas.cuentaGastoComisionId) {
+            cuentaGastoComisionFinal = creadas.cuentaGastoComisionId
+            setCuentaGastoComisionId(creadas.cuentaGastoComisionId)
+          }
+        }
+
         await updateBanco(banco.id, {
           nombre_banco: parsed.data.nombre_banco,
           nro_cuenta: parsed.data.nro_cuenta,
@@ -438,18 +538,40 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           titular: parsed.data.titular,
           titular_documento: parsed.data.titular_documento,
           cuenta_contable_id: parsed.data.cuenta_contable_id ?? null,
+          cuenta_gasto_comision_id: cuentaGastoComisionFinal || null,
           is_active: parsed.data.active,
         })
         bancoId = banco.id
         toast.success('Banco actualizado correctamente')
       } else {
+        // Creacion de banco nuevo: un banco sin cuenta de activo Y cuenta de
+        // comision es un estado invalido del sistema (decision de usuario) —
+        // ambas se auto-crean y vinculan aqui, sin pasos manuales (SC-13).
+        // Idempotente: si el usuario ya uso "Crear Cuenta" o selecciono una
+        // cuenta existente en el select, solo se completa lo que falta.
+        let cuentaContableFinal = cuentaContableId
+        let cuentaGastoComisionFinal = cuentaGastoComisionId
+        if (!cuentaContableFinal || !cuentaGastoComisionFinal) {
+          const creadas = await crearCuentasDelBanco(parsed.data.nombre_banco, {
+            crearActivo: !cuentaContableFinal,
+            crearComision: !cuentaGastoComisionFinal,
+          })
+          if (!cuentaContableFinal && creadas.cuentaContableId) {
+            cuentaContableFinal = creadas.cuentaContableId
+          }
+          if (!cuentaGastoComisionFinal && creadas.cuentaGastoComisionId) {
+            cuentaGastoComisionFinal = creadas.cuentaGastoComisionId
+          }
+        }
+
         bancoId = await createBanco({
           nombre_banco: parsed.data.nombre_banco,
           nro_cuenta: parsed.data.nro_cuenta,
           tipo_cuenta: parsed.data.tipo_cuenta,
           titular: parsed.data.titular,
           titular_documento: parsed.data.titular_documento,
-          cuenta_contable_id: parsed.data.cuenta_contable_id,
+          cuenta_contable_id: cuentaContableFinal || undefined,
+          cuenta_gasto_comision_id: cuentaGastoComisionFinal || undefined,
           moneda_id: parsed.data.moneda_id,
           saldo_inicial: parsed.data.saldo_inicial,
           empresa_id: user!.empresa_id!,
@@ -658,7 +780,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           {/* Cuenta Contable */}
           <div>
             <label htmlFor="banco-cuenta-contable" className="block text-sm font-medium text-gray-700 mb-1">
-              Cuenta Contable <span className="text-gray-400 font-normal">(opcional)</span>
+              Cuenta Contable
             </label>
             <div className="flex gap-2">
               <NativeSelect
@@ -667,7 +789,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
                 onChange={(e) => setCuentaContableId(e.target.value)}
                 className="flex-1"
               >
-                <option value="">-- Sin asignar --</option>
+                <option value="">-- Se creara automaticamente --</option>
                 {cuentas.map((c) => (
                   <option key={c.id} value={c.id}>{c.codigo} - {c.nombre}</option>
                 ))}
@@ -675,8 +797,14 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
               <button
                 type="button"
                 onClick={handleCrearCuentaContable}
-                disabled={creandoCuenta || !nombreBanco.trim()}
-                title={!nombreBanco.trim() ? 'Ingresa el nombre del banco primero' : 'Crear cuenta contable para este banco'}
+                disabled={creandoCuenta || !nombreBanco.trim() || (!!cuentaContableId && !!cuentaGastoComisionId)}
+                title={
+                  !nombreBanco.trim()
+                    ? 'Ingresa el nombre del banco primero'
+                    : cuentaContableId && cuentaGastoComisionId
+                      ? 'Ambas cuentas ya estan vinculadas'
+                      : 'Crear ahora la(s) cuenta(s) faltante(s) para este banco'
+                }
                 className="inline-flex items-center gap-1 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
                 <Plus className="h-3.5 w-3.5" />
@@ -684,7 +812,31 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
               </button>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Vincula este banco a una cuenta del plan contable para automatizar asientos. O usa "Crear Cuenta" para generar una automaticamente.
+              Si no seleccionas una cuenta existente, se crea y vincula automaticamente al guardar el banco.
+              Tambien puedes usar "Crear Cuenta" para generarla antes de guardar.
+            </p>
+          </div>
+
+          {/* Cuenta de Comision Bancaria (0080) */}
+          <div>
+            <label htmlFor="banco-cuenta-comision" className="block text-sm font-medium text-gray-700 mb-1">
+              Cuenta de Comision Bancaria
+            </label>
+            <NativeSelect
+              id="banco-cuenta-comision"
+              value={cuentaGastoComisionId}
+              onChange={(e) => setCuentaGastoComisionId(e.target.value)}
+            >
+              <option value="">-- Se creara automaticamente --</option>
+              {cuentasGasto.map((c) => (
+                <option key={c.id} value={c.id}>{c.codigo} - {c.nombre}</option>
+              ))}
+            </NativeSelect>
+            <p className="text-xs text-gray-500 mt-1">
+              Cuenta de gasto usada por defecto para las deducciones (comisiones, ISLR, etc.) de los metodos
+              de pago de este banco. Si no seleccionas una cuenta existente, se crea y vincula automaticamente
+              al guardar el banco. Puedes reasignarla aqui a otra cuenta de gasto sin afectar deducciones ya
+              configuradas.
             </p>
           </div>
 

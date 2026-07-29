@@ -17,6 +17,8 @@ export interface Banco {
   saldo_actual: string
   saldo_inicial: string   // 0069: NUMERIC(18,4) stored as string
   cuenta_contable_id: string | null
+  // 0080: cuenta de gasto por defecto para deducciones (comisiones bancarias) de este banco
+  cuenta_gasto_comision_id: string | null
   is_active: number
   empresa_id: string
   created_at: string
@@ -87,6 +89,8 @@ export async function createBanco(params: {
   titular: string
   titular_documento?: string
   cuenta_contable_id?: string
+  /** 0080: cuenta de gasto para comisiones bancarias, auto-creada/vinculada desde banco-form. */
+  cuenta_gasto_comision_id?: string
   /** Currency code for this bank account: 'USD' or 'BS' (mapped to VES internally). */
   moneda_id: 'USD' | 'BS'
   /** Initial balance as a string — stored with 8 decimal places. */
@@ -113,9 +117,9 @@ export async function createBanco(params: {
     await tx.execute(
       `INSERT INTO bancos_empresa
          (id, empresa_id, nombre_banco, nro_cuenta, tipo_cuenta, titular, titular_documento,
-          moneda_id, saldo_actual, saldo_inicial, cuenta_contable_id,
+          moneda_id, saldo_actual, saldo_inicial, cuenta_contable_id, cuenta_gasto_comision_id,
           is_active, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         params.empresa_id,
@@ -128,6 +132,7 @@ export async function createBanco(params: {
         saldoStorage,   // saldo_actual starts equal to saldo_inicial
         saldoStorage,   // saldo_inicial
         params.cuenta_contable_id ?? null,
+        params.cuenta_gasto_comision_id ?? null,
         1,
         now,
         now,
@@ -141,7 +146,17 @@ export async function createBanco(params: {
 
 export async function updateBanco(
   id: string,
-  data: { nombre_banco?: string; nro_cuenta?: string; tipo_cuenta?: string; titular?: string; titular_documento?: string; cuenta_contable_id?: string | null; is_active?: boolean }
+  data: {
+    nombre_banco?: string
+    nro_cuenta?: string
+    tipo_cuenta?: string
+    titular?: string
+    titular_documento?: string
+    cuenta_contable_id?: string | null
+    // 0080: reasignable independientemente de las deducciones ya configuradas en metodos existentes
+    cuenta_gasto_comision_id?: string | null
+    is_active?: boolean
+  }
 ) {
   const sets: string[] = []
   const values: unknown[] = []
@@ -169,6 +184,10 @@ export async function updateBanco(
   if (data.cuenta_contable_id !== undefined) {
     sets.push('cuenta_contable_id = ?')
     values.push(data.cuenta_contable_id)
+  }
+  if (data.cuenta_gasto_comision_id !== undefined) {
+    sets.push('cuenta_gasto_comision_id = ?')
+    values.push(data.cuenta_gasto_comision_id)
   }
   if (data.is_active !== undefined) {
     sets.push('is_active = ?')
