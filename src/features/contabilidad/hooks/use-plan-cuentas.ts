@@ -104,9 +104,13 @@ export function useCuentasDetallePorTipo(tipo: TipoCuenta | TipoCuenta[]) {
 }
 
 /**
- * Subgrupo `6.2.05 COMISIONES BANCARIAS` de la empresa actual (creado por la
- * migracion 0080). Fuente de padre para las leaves `6.2.05.NN COMISION BANCO
- * {nombre}` que se auto-crean al vincular la cuenta de comision de un banco.
+ * @deprecated Superado por la migracion 0081 (PR-2b): `6.2.05` queda
+ * desactivado (`is_active = 0`) en favor de la jerarquia de 4 niveles
+ * (`6.1.25.01 COMISIONES DE PASARELAS DE PAGO` / `6.2.06.01 COMISIONES
+ * BANCARIAS`, ver `useGrupoComisionesPasarela`/`useGrupoComisionesBancarias`).
+ * Se conserva sin cambios de comportamiento unicamente porque `banco-form.tsx`
+ * (slice 3b.3, aun no migrado) sigue consumiendola. Sera eliminada cuando ese
+ * archivo se actualice para usar los nuevos resolvers.
  */
 export function useSubgrupoComisionesBancarias(): { id: string; codigo: '6.2.05'; nivel: 3 } | undefined {
   const { user } = useCurrentUser()
@@ -123,8 +127,63 @@ export function useSubgrupoComisionesBancarias(): { id: string; codigo: '6.2.05'
 }
 
 /**
+ * Resuelve un grupo del plan de cuentas por su clave en `cuentas_config`, en
+ * vez de asumir un `codigo` hardcoded. Mecanismo generico compartido por
+ * `useGrupoComisionesBancarias`/`useGrupoComisionesPasarela` (PR-2b).
+ */
+function useGrupoPorClaveConfig(clave: string): { id: string; codigo: string; nivel: number } | undefined {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data } = useQuery(
+    `SELECT pc.id AS id, pc.codigo AS codigo, pc.nivel AS nivel
+     FROM cuentas_config cc
+     JOIN plan_cuentas pc ON pc.id = cc.cuenta_contable_id
+     WHERE cc.empresa_id = ? AND cc.clave = ?
+     LIMIT 1`,
+    [empresaId, clave]
+  )
+
+  const row = (data ?? [])[0] as { id: string; codigo: string; nivel: number } | undefined
+  return row ? { id: row.id, codigo: row.codigo, nivel: row.nivel } : undefined
+}
+
+/**
+ * Grupo `COMISIONES BANCARIAS` (codigo `6.2.06.01` tras la migracion 0081)
+ * resuelto vía `cuentas_config['GRUPO_COMISIONES_BANCARIAS']`. Fuente de
+ * padre para la leaf de comision BANCARIA que se auto-crea por banco.
+ * Reemplaza `useSubgrupoComisionesBancarias` (hardcode `6.2.05`, superado).
+ */
+export function useGrupoComisionesBancarias(): { id: string; codigo: string; nivel: number } | undefined {
+  return useGrupoPorClaveConfig('GRUPO_COMISIONES_BANCARIAS')
+}
+
+/**
+ * Grupo `COMISIONES DE PASARELAS DE PAGO` (codigo `6.1.25.01` tras la
+ * migracion 0081) resuelto vía `cuentas_config['GRUPO_COMISIONES_PASARELA']`.
+ * Fuente de padre para la leaf BASE de comision de PASARELA que se
+ * auto-crea por banco (compartida por los metodos de cobro sin cuenta propia).
+ */
+export function useGrupoComisionesPasarela(): { id: string; codigo: string; nivel: number } | undefined {
+  return useGrupoPorClaveConfig('GRUPO_COMISIONES_PASARELA')
+}
+
+/**
  * Grupos de tipo GASTO con sus subcuentas de movimiento.
- * Usado en el modal de gestion de cuentas de gasto.
+ * Usado en el modal de gestion de cuentas de gasto y en los selectores de
+ * registro manual de gasto (`gastos-dashboard.tsx`, `gasto-list.tsx`,
+ * `cuenta-gasto-modal.tsx`).
+ *
+ * Cada hoja (`es_cuenta_detalle = 1`) se atribuye a su grupo PADRE DIRECTO
+ * (por `parent_id`) — no a niveles superiores. Esto es correcto sin importar
+ * cuantos niveles de anidamiento tenga el arbol: un grupo que organiza
+ * puramente subgrupos (sin hojas propias directas, ej. `6.1.25 GASTOS DE
+ * VENTA` o `6.2.06 GASTOS FINANCIEROS` de la migracion 0081) nunca recibe
+ * hojas y por lo tanto queda EXCLUIDO del resultado — evita que aparezcan
+ * como entradas fantasma vacias en los selectores (ver tasks.md 3b.2.7). Los
+ * grupos que SI son padres directos de hojas (ej. `6.1.25.01`/`6.2.06.01`,
+ * o cualquier grupo de 2 niveles preexistente) se muestran normalmente con
+ * sus hojas, sin duplicacion entre niveles.
  */
 export function useGruposGastoConSubcuentas() {
   const { user } = useCurrentUser()
@@ -139,10 +198,20 @@ export function useGruposGastoConSubcuentas() {
   const grupos = all.filter((c) => c.es_cuenta_detalle === 0)
   const subcuentas = all.filter((c) => c.es_cuenta_detalle === 1)
 
-  const gruposConSubs: GrupoConSubcuentas[] = grupos.map((g) => ({
-    ...g,
-    subcuentas: subcuentas.filter((s) => s.parent_id === g.id),
-  }))
+  const subcuentasPorGrupoId = new Map<string, CuentaContable[]>()
+  for (const sub of subcuentas) {
+    if (!sub.parent_id) continue
+    const arr = subcuentasPorGrupoId.get(sub.parent_id) ?? []
+    arr.push(sub)
+    subcuentasPorGrupoId.set(sub.parent_id, arr)
+  }
+
+  const gruposConSubs: GrupoConSubcuentas[] = grupos
+    .map((g) => ({
+      ...g,
+      subcuentas: subcuentasPorGrupoId.get(g.id) ?? [],
+    }))
+    .filter((g) => g.subcuentas.length > 0)
 
   return { grupos: gruposConSubs, isLoading }
 }
