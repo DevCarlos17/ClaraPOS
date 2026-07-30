@@ -217,7 +217,8 @@ const bancos_empresa = new Table(
     saldo_actual: column.text,
     saldo_inicial: column.text,        // 0069: NUMERIC(18,4) stored as string
     cuenta_contable_id: column.text,
-    cuenta_gasto_comision_id: column.text,  // 0080: default de cuenta de gasto para deducciones
+    cuenta_gasto_comision_id: column.text,  // 0080: default de cuenta de gasto para deducciones (bancaria, 6.2.06.01)
+    cuenta_gasto_pasarela_id: column.text,  // 0081: cuenta base de comisión de pasarela de pago (6.1.25.01)
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,

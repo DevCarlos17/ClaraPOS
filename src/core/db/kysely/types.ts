@@ -185,7 +185,8 @@ export interface BancosEmpresa {
   saldo_actual: string
   saldo_inicial: string   // 0069: NUMERIC(18,4) stored as string
   cuenta_contable_id: string | null
-  cuenta_gasto_comision_id: string | null  // 0080: default de cuenta de gasto para deducciones
+  cuenta_gasto_comision_id: string | null  // 0080: default de cuenta de gasto para deducciones (bancaria, 6.2.06.01)
+  cuenta_gasto_pasarela_id: string | null  // 0081: cuenta base de comisión de pasarela de pago (6.1.25.01)
   is_active: number
   created_at: string
   updated_at: string
