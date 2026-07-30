@@ -41,13 +41,27 @@
 --   Desactivar antes de repuntar dejaría FKs colgando de filas inactivas.
 --   `protect_plan_cuentas` (0065) solo bloquea desactivar cuentas
 --   referenciadas en `cuentas_config` — `6.2.05` nunca tuvo entrada ahí, así
---   que el paso 7 no está bloqueado por ese trigger.
+--   que el paso 7 no está bloqueado por ese trigger. Un guard defensivo
+--   (paso 6b) verifica en seco que nada quedó apuntando a 6.2.05.% antes de
+--   desactivar, por si alguna fila de metodo_cobro_deducciones creada
+--   manualmente durante el desarrollo escapó al repunte del paso 6.
+--
+--   `seed_cuentas_config` (sección 3a) también se actualiza con
+--   CREATE OR REPLACE en esta migración — es la 2da RPC que
+--   `register-owner/index.ts` invoca para TODA empresa NUEVA, junto con
+--   `seed_plan_cuentas`. Sin este update, una empresa registrada DESPUÉS de
+--   aplicar 0081 nunca recibiría las claves `GRUPO_COMISIONES_PASARELA`/
+--   `GRUPO_COMISIONES_BANCARIAS` en su `cuentas_config` (hallazgo de review
+--   adversarial, obs Engram #720 — CRITICAL, corregido en esta versión).
 --
 -- Referencia: openspec/gastos-registro-qol/design.md (líneas 29-147)
 --             obs Engram #706 (diseño final), #703 (rewrite permitido),
---             #705 (zonas prohibidas), #713 (scope PR-2b)
+--             #705 (zonas prohibidas), #713 (scope PR-2b), #720 (review
+--             adversarial que motivó los fixes de seed_cuentas_config y
+--             el guard defensivo del paso 6b)
 -- Depende de: 0080 (seed_plan_cuentas con 6.2.05, metodo_cobro_deducciones,
---             bancos_empresa.cuenta_gasto_comision_id), 0065 (protect_plan_cuentas)
+--             bancos_empresa.cuenta_gasto_comision_id), 0064
+--             (seed_cuentas_config baseline), 0065 (protect_plan_cuentas)
 -- ============================================================
 
 
@@ -410,12 +424,197 @@ SELECT seed_plan_cuentas(id, NULL) FROM empresas;
 
 
 -- ============================================================
--- 3. cuentas_config: 2 claves nuevas que resuelven los grupos-padre por
---    empresa, reemplazando el hardcode de código (`6.2.05`) que usaba
---    useSubgrupoComisionesBancarias (PR-2, superado en 3b.2). Mismo patrón
---    directo que el backfill de COMISION_BANCARIA en 0064 (seed_cuentas_config
---    tiene guard `COUNT>0 RETURN 0`, así que para empresas existentes se
---    hace vía INSERT directo, no a través de la función).
+-- 3a. CREATE OR REPLACE seed_cuentas_config: mismo cuerpo de 0064 (última
+--     vez que se tocó esta función) MÁS 2 bloques nuevos que resuelven los
+--     grupos-padre por empresa, reemplazando el hardcode de código
+--     (`6.2.05`) que usaba useSubgrupoComisionesBancarias (PR-2, superado
+--     en 3b.2). `seed_cuentas_config` es la 2da RPC (junto con
+--     `seed_plan_cuentas`) que `register-owner/index.ts` invoca para TODA
+--     empresa NUEVA (líneas ~353-360) — sin este CREATE OR REPLACE, una
+--     empresa registrada DESPUÉS de aplicar 0081 obtendría los grupos
+--     `6.1.25.01`/`6.2.06.01` en `plan_cuentas` (vía seed_plan_cuentas, ya
+--     actualizado en la sección 1) pero NUNCA las claves
+--     `GRUPO_COMISIONES_PASARELA`/`GRUPO_COMISIONES_BANCARIAS` en
+--     `cuentas_config` — rompiendo en silencio los resolvers de 3b.2 y la
+--     auto-creación de cuentas de 3b.3 para todo tenant futuro (hallazgo de
+--     review, obs Engram #720).
+--     El guard `IF COUNT(*) FROM cuentas_config WHERE empresa_id=p_empresa_id
+--     > 0 THEN RETURN 0` es inofensivo para este fix: `register-owner`
+--     llama `seed_plan_cuentas` y LUEGO `seed_cuentas_config` para la misma
+--     empresa nueva (0 filas en cuentas_config en ese punto), así que el
+--     guard nunca corta el camino de una empresa recién creada. Para
+--     empresas YA EXISTENTES (que sí tienen filas > 0 y por ende el guard
+--     las corta), la sección 3b más abajo hace el INSERT directo — ambos
+--     caminos deben setear las claves (empresas nuevas vía esta función,
+--     empresas existentes vía el backfill directo).
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION seed_cuentas_config(
+  p_empresa_id UUID,
+  p_created_by UUID DEFAULT NULL
+)
+RETURNS INT AS $$
+DECLARE
+  v_now TIMESTAMPTZ := NOW();
+BEGIN
+  IF (SELECT COUNT(*) FROM cuentas_config WHERE empresa_id = p_empresa_id) > 0 THEN
+    RETURN 0;
+  END IF;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'CAJA_EFECTIVO',id,'Efectivo en caja',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.01.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'CAJA_CHICA',id,'Caja chica',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.01.02'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'BANCO_DEFAULT',id,'Bancos (cuenta generica)',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.01.03'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'CXC_CLIENTES',id,'Cuentas por cobrar clientes',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.02.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'INVENTARIO',id,'Inventario de mercancia',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.03.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'IVA_CREDITO',id,'IVA credito fiscal',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.04.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'RET_IVA_SOPORTADA',id,'Retenciones IVA soportadas',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.04.02'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'RET_ISLR_SOPORTADA',id,'Retenciones ISLR soportadas',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='1.1.04.03'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'CXP_PROVEEDORES',id,'Cuentas por pagar proveedores',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='2.1.01.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'IVA_DEBITO',id,'IVA debito fiscal',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='2.1.02.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'RET_IVA_POR_ENTERAR',id,'Retenciones IVA por enterar',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='2.1.02.02'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'RET_ISLR_POR_ENTERAR',id,'Retenciones ISLR por enterar',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='2.1.02.03'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'IGTF_POR_PAGAR',id,'IGTF por pagar',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='2.1.02.04'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'INGRESO_VENTA_PRODUCTO',id,'Ventas de productos',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='4.1.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'INGRESO_VENTA_SERVICIO',id,'Servicios prestados',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='4.1.02'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'DESCUENTO_VENTAS',id,'Descuentos en ventas',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='4.1.03'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'DEVOLUCION_VENTAS',id,'Devoluciones en ventas',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='4.1.04'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'COSTO_VENTA',id,'Costo de mercancia vendida',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='5.1.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'GANANCIA_DIFERENCIAL_CAMBIARIO',id,'Ganancia por diferencial cambiario',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='4.2.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'PERDIDA_DIFERENCIAL_CAMBIARIO',id,'Perdida por diferencial cambiario',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.2.02'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'COMISION_BANCARIA',id,'Comision cobrada por el banco en transferencias',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.2.03'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'CONSUMO_INTERNO',id,'Productos del inventario consumidos internamente (al costo)',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.22'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'MERMA_INVENTARIO',id,'Productos danados, vencidos o deteriorados',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.23'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'EXTRAVIO_INVENTARIO',id,'Productos perdidos por robo o extravio',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.24'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'PERDIDA_EN_VUELTO',id,'Diferencia no cobrable al dar vuelto al cliente',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.2.04'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  -- Nuevas (de 0081, PR-2b) — resuelven los grupos-padre del subárbol de
+  -- comisiones de 4 niveles. Se buscan por empresa_id+codigo dentro de
+  -- ESTA misma empresa (p_empresa_id), no globalmente — `seed_plan_cuentas`
+  -- ya corrió antes que esta función para la empresa nueva (orden fijo en
+  -- register-owner/index.ts), así que 6.1.25.01/6.2.06.01 ya existen.
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'GRUPO_COMISIONES_PASARELA',id,'Grupo de comisiones de pasarelas de pago (gasto de venta, por banco)',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.1.25.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  INSERT INTO cuentas_config (id,empresa_id,clave,cuenta_contable_id,descripcion,created_at,updated_at,created_by)
+  SELECT uuid_generate_v4(),p_empresa_id,'GRUPO_COMISIONES_BANCARIAS',id,'Grupo de comisiones bancarias (gasto financiero, por banco)',v_now,v_now,p_created_by
+  FROM plan_cuentas WHERE empresa_id=p_empresa_id AND codigo='6.2.06.01'
+  ON CONFLICT (empresa_id,clave) DO NOTHING;
+
+  RETURN (SELECT COUNT(*) FROM cuentas_config WHERE empresa_id = p_empresa_id);
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- ============================================================
+-- 3b. BACKFILL: aplicar las 2 claves nuevas a empresas EXISTENTES.
+--     `seed_cuentas_config` (sección 3a) tiene guard `COUNT>0 RETURN 0`, así
+--     que para empresas que ya tenían filas en cuentas_config antes de esta
+--     migración, el INSERT directo (mismo patrón que el backfill de
+--     COMISION_BANCARIA en 0064) es el único camino — la función NUNCA
+--     vuelve a ejecutar su cuerpo para una empresa con cuentas_config no
+--     vacío. Ambos caminos (3a para empresas nuevas, 3b para existentes)
+--     son necesarios y no se solapan.
 -- ============================================================
 
 INSERT INTO cuentas_config (id, empresa_id, clave, cuenta_contable_id, descripcion, created_at, updated_at, created_by)
@@ -551,12 +750,50 @@ WHERE d.metodo_cobro_id = mc.id
 
 
 -- ============================================================
+-- 6b. GUARD DEFENSIVO: verificar que NADA quedó apuntando al subárbol
+--     6.2.05.% antes de desactivarlo. El paso 5 repunta bancos_empresa y el
+--     paso 6 repunta metodo_cobro_deducciones SOLO para filas alcanzables
+--     vía el JOIN metodos_cobro→bancos_empresa (igual que el backfill
+--     original de 0080, que también exigía `banco_empresa_id IS NOT NULL`).
+--     Una fila de metodo_cobro_deducciones creada manualmente durante la
+--     ventana de desarrollo, con `metodo_cobro_id` apuntando a un método
+--     cuyo `banco_empresa_id` haya sido luego anulado, NO sería alcanzada
+--     por el UPDATE del paso 6 y quedaría huérfana sobre una cuenta
+--     desactivada sin aviso. Este guard falla la migración en seco (RAISE
+--     EXCEPTION) en vez de dejar ese caso pasar en silencio — mismo patrón
+--     de precondición que 0071 (RAISE EXCEPTION si falta una fila esperada
+--     antes de continuar). Chequea ambas superficies: filas de
+--     metodo_cobro_deducciones y columnas FK de bancos_empresa.
+-- ============================================================
+
+DO $$
+DECLARE
+  v_deducciones_huerfanas INT;
+  v_bancos_huerfanos INT;
+BEGIN
+  SELECT COUNT(*) INTO v_deducciones_huerfanas
+  FROM metodo_cobro_deducciones d
+  WHERE d.cuenta_gasto_id IN (SELECT id FROM plan_cuentas WHERE codigo = '6.2.05' OR codigo LIKE '6.2.05.%');
+
+  SELECT COUNT(*) INTO v_bancos_huerfanos
+  FROM bancos_empresa be
+  WHERE be.cuenta_gasto_comision_id IN (SELECT id FROM plan_cuentas WHERE codigo = '6.2.05' OR codigo LIKE '6.2.05.%')
+     OR be.cuenta_gasto_pasarela_id IN (SELECT id FROM plan_cuentas WHERE codigo = '6.2.05' OR codigo LIKE '6.2.05.%');
+
+  IF v_deducciones_huerfanas > 0 OR v_bancos_huerfanos > 0 THEN
+    RAISE EXCEPTION 'No se puede desactivar 6.2.05: quedan % fila(s) de metodo_cobro_deducciones y % banco(s) apuntando aun al subarbol 6.2.05.%% (deberian haber sido repuntados en los pasos 5/6). Revisar metodos_cobro sin banco_empresa_id antes de reintentar.',
+      v_deducciones_huerfanas, v_bancos_huerfanos;
+  END IF;
+END $$;
+
+
+-- ============================================================
 -- 7. DESACTIVAR 6.2.05 y sus leaves — ahora seguro, nada referencia ya esas
 --    filas (paso 5 repuntó bancos_empresa, paso 6 repuntó
---    metodo_cobro_deducciones). `6.2.05` nunca tuvo entrada en
---    cuentas_config, así que `protect_plan_cuentas` (0065, Regla 2) no
---    bloquea esta desactivación. Solo desactiva (is_active=FALSE), nunca
---    DELETE — reversible con UPDATE manual si algo sale mal.
+--    metodo_cobro_deducciones, paso 6b lo verificó). `6.2.05` nunca tuvo
+--    entrada en cuentas_config, así que `protect_plan_cuentas` (0065, Regla
+--    2) no bloquea esta desactivación. Solo desactiva (is_active=FALSE),
+--    nunca DELETE — reversible con UPDATE manual si algo sale mal.
 --    `6.2.01`/`6.2.03` (leaves viejas de 0021/0064) NO se tocan aquí — su
 --    desactivación sigue siendo responsabilidad del script de limpieza
 --    manual (Slice 1, cleanup_gastos_cxp_qol.sql, sin cambios).
