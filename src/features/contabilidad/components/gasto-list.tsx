@@ -5,7 +5,11 @@ import {
   useGastosManualesRecientes,
   type Gasto,
 } from '@/features/contabilidad/hooks/use-gastos'
-import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import {
+  useGruposGastoConSubcuentas,
+  findGrupoGastoById,
+  type GrupoConSubcuentas,
+} from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { GastoForm } from './gasto-form'
 import { GastosKpis } from './gastos-kpis'
 import { GastoReportes, type TipoReporte } from './gasto-reportes'
@@ -24,6 +28,17 @@ type GastoConJoins = Gasto & {
 }
 
 type GastoSortKey = 'nro_gasto' | 'fecha' | 'monto_usd' | 'status'
+
+/** Nodo del resumen por grupo — recursivo, admite subgrupos anidados a cualquier profundidad. */
+interface ResumenNode {
+  id: string
+  nombre: string
+  codigo: string
+  totalUsd: number
+  count: number
+  subgrupos: ResumenNode[]
+  subcuentas: { id: string; nombre: string; codigo: string; totalUsd: number; count: number }[]
+}
 
 function SortIcon({ field, current, dir }: { field: GastoSortKey; current: GastoSortKey; dir: 'asc' | 'desc' }) {
   if (field !== current) return <CaretDown className="h-3 w-3 opacity-30 inline ml-1" />
@@ -125,32 +140,49 @@ export function GastoList() {
     setConsultaActiva({ desde: fechaDesde, hasta: fechaHasta })
   }
 
-  // Resumen de gastos agrupado por grupo → subcuenta (solo REGISTRADO)
+  // Resumen de gastos agrupado por grupo → subgrupo (recursivo, cualquier
+  // profundidad) → subcuenta (solo REGISTRADO). Un nodo (grupo o subgrupo)
+  // solo se incluye si el tiene registros en algun nivel de su subarbol —
+  // evita entradas fantasma vacias sin importar la profundidad.
   const resumenPorGrupo = useMemo(() => {
     if (!hasConsulta || gastos.length === 0) return []
     const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
+
+    function buildResumenNode(grupo: GrupoConSubcuentas): ResumenNode | null {
+      const subcuentasConData = grupo.hojas
+        .map((sub) => {
+          const items = registrados.filter((g) => g.cuenta_id === sub.id)
+          if (items.length === 0) return null
+          const totalUsd = items.reduce((sum, g) => sum + (parseFloat(g.monto_usd) || 0), 0)
+          return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, totalUsd, count: items.length }
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+
+      const subgrupos = grupo.subgrupos
+        .map(buildResumenNode)
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+
+      if (subcuentasConData.length === 0 && subgrupos.length === 0) return null
+
+      const totalUsd =
+        subcuentasConData.reduce((sum, s) => sum + s.totalUsd, 0) +
+        subgrupos.reduce((sum, s) => sum + s.totalUsd, 0)
+      const count =
+        subcuentasConData.reduce((sum, s) => sum + s.count, 0) +
+        subgrupos.reduce((sum, s) => sum + s.count, 0)
+
+      return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, totalUsd, count, subgrupos, subcuentas: subcuentasConData }
+    }
+
     return grupos
-      .map((grupo) => {
-        const subcuentasConData = grupo.subcuentas
-          .map((sub) => {
-            const items = registrados.filter((g) => g.cuenta_id === sub.id)
-            if (items.length === 0) return null
-            const totalUsd = items.reduce((sum, g) => sum + (parseFloat(g.monto_usd) || 0), 0)
-            return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, totalUsd, count: items.length }
-          })
-          .filter((x): x is NonNullable<typeof x> => x !== null)
-        if (subcuentasConData.length === 0) return null
-        const totalUsd = subcuentasConData.reduce((sum, s) => sum + s.totalUsd, 0)
-        const count = subcuentasConData.reduce((sum, s) => sum + s.count, 0)
-        return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, totalUsd, count, subcuentas: subcuentasConData }
-      })
+      .map(buildResumenNode)
       .filter((x): x is NonNullable<typeof x> => x !== null)
   }, [gastos, grupos, hasConsulta])
 
   // Gastos filtrados por grupo seleccionado (para la tabla plana)
   const gastosFiltrados = useMemo(() => {
     if (!filtroGrupoId) return gastos
-    const grupo = grupos.find((g) => g.id === filtroGrupoId)
+    const grupo = findGrupoGastoById(grupos, filtroGrupoId)
     if (!grupo) return gastos
     const subIds = new Set(grupo.subcuentas.map((s) => s.id))
     return gastos.filter((g) => subIds.has(g.cuenta_id))
@@ -166,6 +198,44 @@ export function GastoList() {
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') handleConsultar()
+  }
+
+  // Render recursivo del nodo de resumen (grupo o subgrupo anidado a
+  // cualquier profundidad) — reemplaza el render de 2 niveles hardcodeado.
+  function renderResumenNode(nodo: ResumenNode, depth: number) {
+    const paddingLeft = 16 + depth * 24
+    const paddingLeftHoja = paddingLeft + 24
+
+    return (
+      <div key={nodo.id}>
+        <button
+          type="button"
+          onClick={() => setFiltroGrupoId(filtroGrupoId === nodo.id ? null : nodo.id)}
+          className={`w-full flex items-center justify-between py-2.5 pr-4 text-left transition-colors hover:bg-muted/30 ${
+            filtroGrupoId === nodo.id ? 'bg-primary/5' : ''
+          }`}
+          style={{ paddingLeft }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">{nodo.codigo}</span>
+            <span className="text-sm font-semibold text-foreground">{nodo.nombre}</span>
+            <span className="text-[10px] text-muted-foreground">({nodo.count})</span>
+          </div>
+          <span className="text-sm font-bold text-foreground tabular-nums shrink-0">{formatUsd(nodo.totalUsd)}</span>
+        </button>
+        {nodo.subgrupos.map((sg) => renderResumenNode(sg, depth + 1))}
+        {nodo.subcuentas.map((sub) => (
+          <div key={sub.id} className="flex items-center justify-between py-1.5 pr-4 bg-muted/10 border-t border-border/30" style={{ paddingLeft: paddingLeftHoja }}>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">{sub.codigo}</span>
+              <span className="text-xs text-muted-foreground">{sub.nombre}</span>
+              <span className="text-[10px] text-muted-foreground/60">({sub.count})</span>
+            </div>
+            <span className="text-xs font-medium text-foreground tabular-nums shrink-0">{formatUsd(sub.totalUsd)}</span>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   // Cerrar dropdown al hacer clic fuera
@@ -359,34 +429,7 @@ export function GastoList() {
                 )}
               </div>
               <div className="divide-y divide-border">
-                {resumenPorGrupo.map((grupo) => (
-                  <div key={grupo.id}>
-                    <button
-                      type="button"
-                      onClick={() => setFiltroGrupoId(filtroGrupoId === grupo.id ? null : grupo.id)}
-                      className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors hover:bg-muted/30 ${
-                        filtroGrupoId === grupo.id ? 'bg-primary/5' : ''
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">{grupo.codigo}</span>
-                        <span className="text-sm font-semibold text-foreground">{grupo.nombre}</span>
-                        <span className="text-[10px] text-muted-foreground">({grupo.count})</span>
-                      </div>
-                      <span className="text-sm font-bold text-foreground tabular-nums shrink-0">{formatUsd(grupo.totalUsd)}</span>
-                    </button>
-                    {grupo.subcuentas.map((sub) => (
-                      <div key={sub.id} className="flex items-center justify-between px-4 py-1.5 pl-10 bg-muted/10 border-t border-border/30">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">{sub.codigo}</span>
-                          <span className="text-xs text-muted-foreground">{sub.nombre}</span>
-                          <span className="text-[10px] text-muted-foreground/60">({sub.count})</span>
-                        </div>
-                        <span className="text-xs font-medium text-foreground tabular-nums shrink-0">{formatUsd(sub.totalUsd)}</span>
-                      </div>
-                    ))}
-                  </div>
-                ))}
+                {resumenPorGrupo.map((grupo) => renderResumenNode(grupo, 0))}
                 {/* Total general */}
                 <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30">
                   <span className="text-xs font-semibold text-muted-foreground">Total periodo</span>
@@ -406,7 +449,7 @@ export function GastoList() {
                 {isLoading
                   ? 'Cargando...'
                   : filtroGrupoId
-                    ? `${gastosFiltrados.length} gasto${gastosFiltrados.length !== 1 ? 's' : ''} · ${grupos.find(g => g.id === filtroGrupoId)?.nombre ?? ''}`
+                    ? `${gastosFiltrados.length} gasto${gastosFiltrados.length !== 1 ? 's' : ''} · ${findGrupoGastoById(grupos, filtroGrupoId ?? '')?.nombre ?? ''}`
                     : `${gastos.length} gasto${gastos.length !== 1 ? 's' : ''} encontrado${gastos.length !== 1 ? 's' : ''}`
                 }
               </p>

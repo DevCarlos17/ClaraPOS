@@ -2,7 +2,13 @@ import { useMemo, useState } from 'react'
 import { Plus, BookOpen, CaretDown, CaretUp, Printer } from '@phosphor-icons/react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
-import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import {
+  useGruposGastoConSubcuentas,
+  findGrupoGastoById,
+  flattenGruposGasto,
+  collectGrupoGastoIds,
+  type GrupoConSubcuentas,
+} from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { todayStr, startOfMonth } from '@/lib/dates'
@@ -137,10 +143,17 @@ export function GastosDashboard() {
   // ── Datos — declarados ANTES de expandir/colapsar todo para que los capture correctamente
   const { grupos } = useGruposGastoConSubcuentas()
 
-  // Expandir / colapsar todo — definidos DESPUÉS de grupos para tener la referencia correcta
+  // Arbol de grupos aplanado con su profundidad — usado por el selector
+  // "Grupo" para mostrar subgrupos anidados (ej. 6.1.25.01) con sangria bajo
+  // su padre en vez de como opciones sueltas al mismo nivel que las raices.
+  const gruposFlat = useMemo(() => flattenGruposGasto(grupos), [grupos])
+
+  // Expandir / colapsar todo — definidos DESPUÉS de grupos para tener la referencia correcta.
+  // Usa collectGrupoGastoIds para incluir subgrupos anidados a cualquier profundidad
+  // (ej. 6.1.25.01 dentro de 6.1.25), no solo los grupos raiz.
   function colapsarTodo() {
-    setCollapsedGroups(new Set(grupos.map((g) => g.id)))  // colapsa nivel grupo (TODAS)
-    setExpandedCuentas(new Set())                          // colapsa nivel cuenta (TODAS + GRUPO)
+    setCollapsedGroups(new Set(collectGrupoGastoIds(grupos)))  // colapsa nivel grupo (TODAS, cualquier profundidad)
+    setExpandedCuentas(new Set())                               // colapsa nivel cuenta (TODAS + GRUPO)
   }
   function expandirTodo() {
     setCollapsedGroups(new Set())                          // expande nivel grupo (TODAS)
@@ -160,7 +173,7 @@ export function GastosDashboard() {
   const gastosFiltrados = useMemo(() => {
     const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
     if (criterio === 'GRUPO' && grupoId) {
-      const grupo = grupos.find((g) => g.id === grupoId)
+      const grupo = findGrupoGastoById(grupos, grupoId)
       const ids = new Set(grupo?.subcuentas.map((s) => s.id) ?? [])
       return registrados.filter((g) => ids.has(g.cuenta_id))
     }
@@ -198,7 +211,7 @@ export function GastosDashboard() {
       }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total)
     }
     if (criterio === 'GRUPO' && grupoId) {
-      const grupo = grupos.find((g) => g.id === grupoId)
+      const grupo = findGrupoGastoById(grupos, grupoId)
       return (grupo?.subcuentas ?? []).map((sub) => {
         const total = gastosFiltrados
           .filter((g) => g.cuenta_id === sub.id)
@@ -263,7 +276,7 @@ export function GastosDashboard() {
 
     const criterioLabel =
       criterio === 'TODAS' ? 'Todas las cuentas'
-      : criterio === 'GRUPO' ? `Grupo: ${grupos.find((g) => g.id === grupoId)?.nombre ?? grupoId}`
+      : criterio === 'GRUPO' ? `Grupo: ${findGrupoGastoById(grupos, grupoId)?.nombre ?? grupoId}`
       : `Cuenta: ${todasLasCuentas.find((s) => s.id === cuentaId)?.nombre ?? cuentaId}`
 
     const intervaloLabel =
@@ -296,7 +309,7 @@ export function GastosDashboard() {
         }
       }
     } else if (criterio === 'GRUPO') {
-      const grupo = grupos.find((g) => g.id === grupoId)
+      const grupo = findGrupoGastoById(grupos, grupoId)
       const subcuentas = grupo?.subcuentas ?? grupos.flatMap((g) => g.subcuentas)
       for (const sub of subcuentas) {
         const rows = gastosFiltrados.filter((g) => g.cuenta_id === sub.id).sort((a, b) => a.fecha.localeCompare(b.fecha))
@@ -351,6 +364,72 @@ export function GastosDashboard() {
     openPrintWindow('Reporte de Gastos', html)
   }
 
+  // ── Render recursivo de filas de tabla (grupos anidados a cualquier
+  // profundidad — reemplaza el render de 2 niveles hardcodeado) ──────────
+
+  function renderGrupoHijosFilaTabla(grupo: GrupoConSubcuentas, depth: number): React.ReactNode[] {
+    return [
+      ...grupo.subgrupos.flatMap((sg) => renderGrupoFilaTabla(sg, depth + 1)),
+      ...grupo.hojas.flatMap((sub) => {
+        const rowsCuenta = gastosFiltrados
+          .filter((g) => g.cuenta_id === sub.id)
+          .sort((a, b) => a.fecha.localeCompare(b.fecha))
+        if (rowsCuenta.length === 0) return []
+        const subtotalCuenta = rowsCuenta.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        const cuentaExpanded = expandedCuentas.has(sub.id)
+        const cuentaPaddingLeft = 16 + (depth + 1) * 24
+        return [
+          <tr key={`acc-${sub.id}`}
+            className="bg-muted/20 border-t border-border/60 cursor-pointer select-none"
+            onClick={() => toggleCuenta(sub.id)}
+          >
+            <td colSpan={5} className="py-1.5 text-xs font-medium text-muted-foreground" style={{ paddingLeft: cuentaPaddingLeft, paddingRight: 16 }}>
+              <span className="inline-flex items-center gap-1.5">
+                {cuentaExpanded ? <CaretUp className="h-3 w-3" /> : <CaretDown className="h-3 w-3" />}
+                <span className="font-mono text-muted-foreground/50 mr-1">{sub.codigo}</span>
+                {sub.nombre}
+                <span className="opacity-50 font-normal ml-1">({rowsCuenta.length})</span>
+              </span>
+            </td>
+            <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotalCuenta)}</td>
+            <td />
+          </tr>,
+          ...(cuentaExpanded ? rowsCuenta.map((g) => (
+            <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} indent />
+          )) : []),
+        ]
+      }),
+    ]
+  }
+
+  function renderGrupoFilaTabla(grupo: GrupoConSubcuentas, depth: number): React.ReactNode[] {
+    const ids = new Set(grupo.subcuentas.map((s) => s.id))
+    const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
+    if (rowsGrupo.length === 0) return []
+    const subtotalGrupo = rowsGrupo.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+    const grupoCollapsed = collapsedGroups.has(grupo.id)
+    const paddingLeft = 16 + depth * 24
+
+    return [
+      <tr key={`grp-${grupo.id}`}
+        className="bg-muted/40 border-t-2 border-border cursor-pointer select-none"
+        onClick={() => toggleGroup(grupo.id)}
+      >
+        <td colSpan={5} className="py-2 text-xs font-semibold text-foreground uppercase tracking-wide" style={{ paddingLeft, paddingRight: 16 }}>
+          <span className="inline-flex items-center gap-1.5">
+            {grupoCollapsed ? <CaretDown className="h-3 w-3 text-muted-foreground" /> : <CaretUp className="h-3 w-3 text-muted-foreground" />}
+            <span className="font-mono text-muted-foreground/60 mr-1">{grupo.codigo}</span>
+            {grupo.nombre}
+            <span className="text-muted-foreground/50 font-normal ml-1">({rowsGrupo.length})</span>
+          </span>
+        </td>
+        <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-foreground">{formatUsd(subtotalGrupo)}</td>
+        <td />
+      </tr>,
+      ...(!grupoCollapsed ? renderGrupoHijosFilaTabla(grupo, depth) : []),
+    ]
+  }
+
   if (formOpen) {
     return <GastoForm onClose={() => setFormOpen(false)} />
   }
@@ -386,8 +465,10 @@ export function GastosDashboard() {
                 className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="">Seleccionar grupo...</option>
-                {grupos.map((g) => (
-                  <option key={g.id} value={g.id}>{g.codigo} — {g.nombre}</option>
+                {gruposFlat.map(({ grupo: g, depth }) => (
+                  <option key={g.id} value={g.id}>
+                    {'\u00A0\u00A0\u00A0\u00A0'.repeat(depth)}{g.codigo} — {g.nombre}
+                  </option>
                 ))}
               </select>
             </div>
@@ -679,92 +760,14 @@ export function GastosDashboard() {
                 <tbody>
                   {/* Group by: group separator when TODAS or GRUPO */}
                   {criterio === 'TODAS' ? (
-                    // Nivel 1: Grupo → Nivel 2: Cuenta → Nivel 3: Registros (orden ASC)
-                    grupos.map((grupo) => {
-                      const ids = new Set(grupo.subcuentas.map((s) => s.id))
-                      const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
-                      if (rowsGrupo.length === 0) return null
-                      const subtotalGrupo = rowsGrupo.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
-                      const grupoCollapsed = collapsedGroups.has(grupo.id)
-                      return [
-                        // ── Fila de grupo ─────────────────────────────
-                        <tr key={`grp-${grupo.id}`}
-                          className="bg-muted/40 border-t-2 border-border cursor-pointer select-none"
-                          onClick={() => toggleGroup(grupo.id)}
-                        >
-                          <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-foreground uppercase tracking-wide">
-                            <span className="inline-flex items-center gap-1.5">
-                              {grupoCollapsed ? <CaretDown className="h-3 w-3 text-muted-foreground" /> : <CaretUp className="h-3 w-3 text-muted-foreground" />}
-                              <span className="font-mono text-muted-foreground/60 mr-1">{grupo.codigo}</span>
-                              {grupo.nombre}
-                              <span className="text-muted-foreground/50 font-normal ml-1">({rowsGrupo.length})</span>
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-foreground">{formatUsd(subtotalGrupo)}</td>
-                          <td />
-                        </tr>,
-                        // ── Nivel de cuenta (solo si grupo expandido) ─
-                        ...(!grupoCollapsed ? grupo.subcuentas.flatMap((sub) => {
-                          const rowsCuenta = gastosFiltrados
-                            .filter((g) => g.cuenta_id === sub.id)
-                            .sort((a, b) => a.fecha.localeCompare(b.fecha))  // ASC cronológico
-                          if (rowsCuenta.length === 0) return []
-                          const subtotalCuenta = rowsCuenta.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
-                          const cuentaExpanded = expandedCuentas.has(sub.id)
-                          return [
-                            // Fila de cuenta (colapsada por defecto)
-                            <tr key={`acc-${sub.id}`}
-                              className="bg-muted/20 border-t border-border/60 cursor-pointer select-none"
-                              onClick={() => toggleCuenta(sub.id)}
-                            >
-                              <td colSpan={5} className="px-6 py-1.5 text-xs font-medium text-muted-foreground">
-                                <span className="inline-flex items-center gap-1.5">
-                                  {cuentaExpanded ? <CaretUp className="h-3 w-3" /> : <CaretDown className="h-3 w-3" />}
-                                  <span className="font-mono text-muted-foreground/50 mr-1">{sub.codigo}</span>
-                                  {sub.nombre}
-                                  <span className="opacity-50 font-normal ml-1">({rowsCuenta.length})</span>
-                                </span>
-                              </td>
-                              <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotalCuenta)}</td>
-                              <td />
-                            </tr>,
-                            // Registros (solo si cuenta expandida)
-                            ...(cuentaExpanded ? rowsCuenta.map((g) => (
-                              <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} indent />
-                            )) : []),
-                          ]
-                        }) : []),
-                      ]
-                    })
+                    // Nivel 1: Grupo → Nivel 2: Subgrupo (recursivo, cualquier
+                    // profundidad) → Nivel 3: Cuenta → Nivel 4: Registros (ASC)
+                    grupos.flatMap((grupo) => renderGrupoFilaTabla(grupo, 0))
                   ) : criterio === 'GRUPO' ? (
-                    grupos.map((grupo) => {
-                      if (grupoId && grupo.id !== grupoId) return null
-                      return grupo.subcuentas.map((sub) => {
-                        const rows = gastosFiltrados
-                          .filter((g) => g.cuenta_id === sub.id)
-                          .sort((a, b) => a.fecha.localeCompare(b.fecha))
-                        if (rows.length === 0) return null
-                        const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
-                        const cuentaExpanded = expandedCuentas.has(sub.id)
-                        return [
-                          <tr key={`sub-${sub.id}`}
-                            className="bg-muted/20 border-t border-border cursor-pointer select-none"
-                            onClick={() => toggleCuenta(sub.id)}
-                          >
-                            <td colSpan={5} className="px-4 py-1.5 text-xs font-medium text-muted-foreground">
-                              <span className="inline-flex items-center gap-1.5">
-                                {cuentaExpanded ? <CaretUp className="h-3 w-3" /> : <CaretDown className="h-3 w-3" />}
-                                <span className="font-mono mr-1">{sub.codigo}</span>{sub.nombre}
-                                <span className="opacity-50 font-normal">({rows.length})</span>
-                              </span>
-                            </td>
-                            <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotal)}</td>
-                            <td />
-                          </tr>,
-                          ...(cuentaExpanded ? rows.map((g) => <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />) : []),
-                        ]
-                      })
-                    })
+                    (() => {
+                      const grupo = grupoId ? findGrupoGastoById(grupos, grupoId) : undefined
+                      return grupo ? renderGrupoHijosFilaTabla(grupo, 0) : []
+                    })()
                   ) : (
                     gastosFiltrados.map((g) => (
                       <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />

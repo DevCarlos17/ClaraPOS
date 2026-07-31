@@ -81,9 +81,94 @@ Chain strategy: pending
 - [ ] 3.7 Manual QA — SC-15: reasignar cuenta de comisión de un banco existente a otra cuenta de gasto → se actualiza sin afectar deducciones existentes.
 - [ ] 3.8 Manual QA — SC-16: dos empresas creando bancos con el mismo nombre → cada una obtiene su propia leaf `6.2.05.NN` scoped por `empresa_id`, sin colisión.
 
+---
+
+## Review Workload Forecast — PR-2b (2026-07-30 addendum, supersede Phase 3/PR-2)
+
+> `6.2.05` plano queda superado por una jerarquía de 4 niveles. Ver obs Engram #706/#713/#705/#703 y `design.md` líneas 29-147.
+
+| Field | Value |
+|-------|-------|
+| Estimated changed lines | Migración 0081 ~400-500 (nuevo archivo; duplica el cuerpo completo de `seed_plan_cuentas`, inevitable en `CREATE OR REPLACE FUNCTION`) · `use-plan-cuentas.ts` ~70-90 · `use-bancos.ts` ~20-25 · `banco-form.tsx` ~180-230 · `schema.ts`/`types.ts` ~2-4 · Total ~675-850 |
+| 400-line budget risk | 3b.1 (migración+schema/types) High en solitario, pero mayormente SQL duplicado (bajo esfuerzo cognitivo real) · 3b.2 Low · 3b.3 Medium-High · Overall High |
+| Chained PRs recommended | Yes |
+| Suggested split | 3b.1 (migración 0081 + schema.ts + types.ts) → 3b.2 (`use-plan-cuentas.ts`) → 3b.3 (`use-bancos.ts` + `banco-form.tsx`) |
+| Delivery strategy | ask-on-risk (recibido de sesión) |
+| Chain strategy | feature-branch-chain (recibido de sesión, tracker `feat/gastos-registro-qol`) |
+
+Decision needed before apply: Yes
+Chained PRs recommended: Yes
+Chain strategy: feature-branch-chain
+400-line budget risk: High
+
+### Suggested Work Units — PR-2b
+
+| Unit | Goal | Likely PR | Base branch | Notes |
+|------|------|-----------|--------------|-------|
+| 3b.1 | Migración 0081 (4 niveles + `cuentas_config` x2 + columna `cuenta_gasto_pasarela_id`) + `schema.ts` + `types.ts` | PR-2b.1 | `feat/gastos-registro-qol` (tracker) | ~400-500 líneas, mayormente copia del cuerpo de `seed_plan_cuentas` — señalar al reviewer que el diff es de bajo esfuerzo cognitivo real pese al conteo alto |
+| 3b.2 | `use-plan-cuentas.ts`: resolvers vía `cuentas_config` + fix N-niveles de `useGruposGastoConSubcuentas` | PR-2b.2 | rama de PR-2b.1 | Depende de 3b.1 mergeada (necesita columnas/claves) |
+| 3b.3 | `use-bancos.ts` + `banco-form.tsx`: 3 cuentas por banco + invariante "ningún método huérfano" + UI | PR-2b.3 | rama de PR-2b.2 | Depende de 3b.2 mergeada; unidad con más lógica real, no solo copy-paste |
+
+**Nota crítica**: PR-2b MUST mergearse ANTES de Phase 4 (PR-3) — PR-3 lee `bancos_empresa.cuenta_gasto_pasarela_id` asumiendo que siempre existe (contrato PR-2b→PR-3, design.md línea 25).
+
+## Phase 3b: PR-2b — Reestructuración 4 niveles GASTOS + 3 cuentas por banco (supersede Phase 3/PR-2)
+
+> Depende de Phase 3 (PR-2, `16a0e3e`) mergeado. Debe mergearse ANTES de Phase 4 (PR-3). Zonas prohibidas (obs #705): solo tocar subárbol GASTOS de `plan_cuentas`, `bancos_empresa`, `metodo_cobro_deducciones`, `banco-form.tsx`, hooks de gasto/banco listados abajo.
+
+### 3b.1 — Migración 0081 + `schema.ts` + `types.ts`
+
+- [ ] 3b.1.1 `migrations/0081_gastos_comisiones_4niveles.sql` (nuevo) — `CREATE OR REPLACE FUNCTION seed_plan_cuentas`: mismo cuerpo de 0080 MENOS el INSERT de `6.2.05`, MÁS 4 bloques nuevos `ON CONFLICT (empresa_id,codigo) DO NOTHING`: `6.1.25 GASTOS DE VENTA`, `6.1.25.01 COMISIONES DE PASARELAS DE PAGO`, `6.2.06 GASTOS FINANCIEROS`, `6.2.06.01 COMISIONES BANCARIAS`. Satisface SC-01, SC-03.
+- [ ] 3b.1.2 Mismo archivo — `SELECT seed_plan_cuentas(id, NULL) FROM empresas` backfill idempotente. Satisface SC-02, SC-04.
+- [ ] 3b.1.3 Mismo archivo — `INSERT INTO cuentas_config (...) SELECT ... FROM plan_cuentas WHERE codigo IN ('6.1.25.01','6.2.06.01') ON CONFLICT (empresa_id,clave) DO NOTHING` con claves `GRUPO_COMISIONES_PASARELA`/`GRUPO_COMISIONES_BANCARIAS`.
+- [ ] 3b.1.4 Mismo archivo — `ALTER TABLE bancos_empresa ADD COLUMN IF NOT EXISTS cuenta_gasto_pasarela_id UUID REFERENCES plan_cuentas(id)`.
+- [ ] 3b.1.5 Mismo archivo — bloque `DO $$ ... $$`: por cada `bancos_empresa` existente, crear leaf bajo `6.2.06.01` (nombre `{Banco} {Tipo} {últ4}`) y actualizar `cuenta_gasto_comision_id`; crear leaf bajo `6.1.25.01` y setear `cuenta_gasto_pasarela_id`. Mismo patrón de numeración por conteo de hijos que 0080. Satisface SC-13 (backfill), SC-28.
+- [ ] 3b.1.6 Mismo archivo — `UPDATE metodo_cobro_deducciones SET cuenta_gasto_id = be.cuenta_gasto_comision_id ... WHERE cuenta_gasto_id IN (SELECT id FROM plan_cuentas WHERE codigo LIKE '6.2.05.%')`, re-apuntando el backfill de SC-10 a la leaf nueva de "Comisiones Bancarias". Satisface SC-10 (actualizado).
+- [ ] 3b.1.7 Mismo archivo — `UPDATE plan_cuentas SET is_active=FALSE WHERE codigo = '6.2.05' OR codigo LIKE '6.2.05.%'`, ejecutado DESPUÉS de 3b.1.6 (orden crítico — repuntar antes de desactivar, design.md líneas 61-69).
+- [ ] 3b.1.8 `src/core/db/powersync/schema.ts` — Agregar columna `cuenta_gasto_pasarela_id: column.text` en `bancos_empresa`.
+- [ ] 3b.1.9 `src/core/db/kysely/types.ts` — Agregar `cuenta_gasto_pasarela_id: string | null` en `BancosEmpresa`.
+- [ ] 3b.1.10 Verify: `yarn type-check` limpio en `schema.ts`/`types.ts` (0 errores nuevos vs baseline ~308 preexistentes de `*.test.ts`; `yarn lint` no aplica, ESLint no instalado).
+- [ ] 3b.1.11 Manual QA — SC-01/02/03/04: aplicar 0081 en empresa nueva (ambas ramas creadas) y empresa existente (backfill: `6.2.05`/`6.2.05.NN` quedan `is_active=false`, re-ejecución no duplica).
+- [ ] 3b.1.12 Manual QA — SC-10: método con backfill previo de 0080 ahora apunta a la leaf de "Comisiones Bancarias" (no a la leaf plana desactivada).
+- [ ] 3b.1.13 ⚠️ Financiero/inmutabilidad: orden 3b.1.6 ANTES de 3b.1.7 es crítico — desactivar `6.2.05` antes de repuntar dejaría FKs colgando de filas inactivas. Aplicar con cuidado extra en `sdd-apply`.
+
+### 3b.2 — `use-plan-cuentas.ts`: resolvers + fix N-niveles
+
+> Depende de 3b.1 mergeada (necesita `cuentas_config` con las 2 claves nuevas).
+
+- [x] 3b.2.1 `src/features/contabilidad/hooks/use-plan-cuentas.ts` — **DESVIACIÓN**: NO se eliminó `useSubgrupoComisionesBancarias()`. `banco-form.tsx` (slice 3b.3, aún no migrado) sigue importándola; eliminarla ahora introduciría un error de type-check nuevo (import roto), violando el requisito de 0 errores nuevos. Se marcó `@deprecated` con nota explícita de que se elimina en 3b.3 cuando ese archivo migre a los nuevos resolvers.
+- [x] 3b.2.2 Mismo archivo — Agregado `useGrupoComisionesBancarias()`: resuelve `{ id, codigo, nivel }` vía `cuentas_config WHERE clave='GRUPO_COMISIONES_BANCARIAS' AND empresa_id=?` (join a `plan_cuentas`), a través de un helper interno compartido `useGrupoPorClaveConfig(clave)`.
+- [x] 3b.2.3 Mismo archivo — Agregado `useGrupoComisionesPasarela()`: mismo patrón con clave `GRUPO_COMISIONES_PASARELA` (reusa `useGrupoPorClaveConfig`).
+- [x] 3b.2.4 Mismo archivo — `useGruposGastoConSubcuentas()`: reescrito para atribuir cada hoja a su grupo PADRE DIRECTO vía un mapa `Map<parent_id, hojas[]>` (en vez de `.filter` por grupo), y se **excluyen del resultado los grupos con 0 hojas directas** (`gruposConSubs.filter(g => g.subcuentas.length > 0)`). Esto es correcto a cualquier profundidad de anidamiento sin necesidad de recursión real: un grupo puramente estructural (ej. `6.1.25`/`6.2.06`, cuyos hijos directos son otros grupos, no hojas) nunca recibe hojas y queda oculto; un grupo que SÍ es padre directo de hojas (ej. `6.1.25.01`/`6.2.06.01`, o cualquier grupo preexistente de 2 niveles) se muestra igual que antes. Se evaluó recursión completa (acumular hojas de TODOS los descendientes, no solo hijos directos) pero se descartó: duplicaría las mismas hojas bajo `6.1.25` Y `6.1.25.01` simultáneamente, violando 3b.2.7. Forma `GrupoConSubcuentas` sin cambios — 0 ediciones en los 3 consumidores. Satisface la decisión #713 (opción A).
+- [x] 3b.2.5 Verify: `yarn type-check` → 308 errores, idénticos al baseline documentado (todos preexistentes en `*.test.ts`). 0 errores nuevos en `use-plan-cuentas.ts` ni en ningún otro archivo.
+- [x] 3b.2.6 QA (razonado por trazado de código, no browser en vivo) — Con la migración 0081 ya aplicada, las leaves por banco (`6.1.25.01.NN`/`6.2.06.01.NN`) tienen `parent_id` = id de `6.1.25.01`/`6.2.06.01` respectivamente (confirmado leyendo `migrations/0081_gastos_comisiones_4niveles.sql`), por lo que el nuevo mapa de atribución directa las agrupa correctamente bajo esos 2 grupos en los 3 consumidores. Recomendado: pase visual rápido del usuario en los 3 componentes tras aplicar 0081.
+- [x] 3b.2.7 QA (razonado por trazado de código) — `6.1.25`/`6.2.06` tienen como hijos directos únicamente otros grupos (`es_cuenta_detalle=0`), nunca hojas — su entrada en `subcuentasPorGrupoId` queda vacía y el `.filter(g => g.subcuentas.length > 0)` los excluye por completo de `grupos`. No aparecen como entradas fantasma vacías en ninguno de los 3 selectores.
+
+### 3b.3 — `use-bancos.ts` + `banco-form.tsx`: 3 cuentas por banco + invariante de métodos
+
+> Depende de 3b.2 mergeada.
+
+- [x] 3b.3.1 `src/features/configuracion/hooks/use-bancos.ts` — Agregar `cuenta_gasto_pasarela_id: string | null` a `interface Banco`.
+- [x] 3b.3.2 Mismo archivo — `createBanco`: agregar param `cuenta_gasto_pasarela_id?: string`, incluir columna en el INSERT.
+- [x] 3b.3.3 Mismo archivo — `updateBanco`: agregar param `cuenta_gasto_pasarela_id?: string | null`, agregar al `SET` condicional (mismo patrón que `cuenta_gasto_comision_id`).
+- [x] 3b.3.4 `src/features/configuracion/components/banco-form.tsx` — Rewrite `crearCuentasDelBanco`: firma `opts: { crearActivo, crearComisionBancaria, crearComisionPasarela }`, retorna `{ cuentaContableId?, cuentaGastoComisionId?, cuentaGastoPasarelaId?, comisionBancariaOmitida, comisionPasarelaOmitida }`. Usa `useGrupoComisionesBancarias()`/`useGrupoComisionesPasarela()` (reemplaza `useSubgrupoComisionesBancarias`, ahora eliminado de `use-plan-cuentas.ts` — sin consumidores restantes). Nombre dinámico de leaf: `{Banco} {Tipo} {últ4 de numero_cuenta}` (sin prefijo "COMISION BANCO"). Satisface SC-13, SC-28.
+- [x] 3b.3.5 Mismo archivo — `handleCrearCuentaContable`: extendido a 3 cuentas faltantes (activo/bancaria/pasarela), estado y toasts para los resultados posibles, condición `disabled` del botón actualizada (las 3 deben existir para deshabilitar).
+- [x] 3b.3.6 Mismo archivo — `handleSubmit` (rama CREATE): auto-crea las 3 cuentas faltantes antes de `createBanco`, pasa `cuenta_gasto_pasarela_id` al payload.
+- [x] 3b.3.7 Mismo archivo — `handleSubmit` (rama EDIT): mismo patrón de auto-completar solo lo que falta (sin tocar cuentas ya vinculadas), agrega `cuenta_gasto_pasarela_id` a `updateBanco`. Satisface SC-15 (reasignar 1 sin afectar la otra).
+- [x] 3b.3.8 Mismo archivo — UI: agregado tercer `NativeSelect` independiente para "Cuenta de Comisión de Pasarela de Pago" (filtrado `useCuentasDetallePorTipo('GASTO')`, mismo patrón que el select de comisión bancaria existente), con su propio texto de ayuda. Satisface la parte UI de SC-13/SC-15.
+- [x] 3b.3.9 Mismo archivo — Invariante "ningún método queda huérfano" (SC-29/30): `handleSubmit` (rama CREATE) garantiza que `cuenta_gasto_pasarela_id` quede resuelta y persistida en `bancos_empresa` ANTES de guardar los `metodoDrafts` — precondición para que el default-seeding de `createPaymentMethod` (PR-3, aún no implementado) vincule métodos sin cuenta propia. Este archivo NO duplica el insert en `metodo_cobro_deducciones` (confirmado: `createPaymentMethod` en `use-payment-methods.ts` no la toca hoy), solo garantiza la precondición (contrato PR-2b→PR-3, design.md línea 25).
+- [x] 3b.3.10 Verify: `yarn type-check` → 308 errores, idénticos al baseline (todos preexistentes en `*.test.ts` + 2 preexistentes no relacionados en `calendario-citas.tsx`/`factura-detalle-cxc.tsx` + 1 preexistente `BancoMetodo` unused import ya presente antes de esta slice). 0 errores nuevos en `use-bancos.ts` ni `banco-form.tsx`.
+- [ ] 3b.3.11 Manual QA — SC-13/SC-28: crear banco "Venezuela" Corriente terminado en 5546 → 3 cuentas creadas (activo, "Venezuela Corriente 5546" bajo Comisiones Bancarias, "Venezuela Corriente 5546" bajo Comisiones de Pasarelas), sin colisión con una 2da cuenta Ahorro del mismo banco terminada en 5546.
+- [ ] 3b.3.12 Manual QA — SC-29: crear banco + 2 métodos POS sin cuenta propia en el mismo flujo → ambos comparten la misma cuenta base de pasarela.
+- [ ] 3b.3.13 Manual QA — SC-30: método nuevo sin cuenta de pasarela especificada → queda vinculado automáticamente a la base del banco, nunca huérfano.
+- [ ] 3b.3.14 Manual QA — SC-15: editar banco, reasignar solo la cuenta bancaria → solo esa cambia; pasarela y deducciones existentes intactas.
+- [ ] 3b.3.15 Manual QA — SC-16: dos empresas con bancos de mismo nombre/últ4 → cada una obtiene sus propias leaves, sin colisión entre empresas.
+- [ ] 3b.3.16 ⚠️ Riesgo preexistente (sin mitigación nueva): cuentas huérfanas si `createBanco` falla tras crear las 3 leaves — igual a PR-2, solo anotado (design.md Open Questions).
+
+---
+
 ## Phase 4: PR-3 — `payment-method-form.tsx` N-deducciones (Slice 3)
 
-> Depende de PR-1a mergeado (requiere tabla `metodo_cobro_deducciones`).
+> Depende de PR-1a mergeado (requiere tabla `metodo_cobro_deducciones`) Y de Phase 3b/PR-2b mergeado (requiere `bancos_empresa.cuenta_gasto_pasarela_id` garantizado no-null, contrato PR-2b→PR-3).
 
 - [ ] 4.1 `src/features/configuracion/schemas/payment-method-schema.ts` — Agregar schema Zod para array de deducciones: `{ concepto: z.string().min(1), porcentaje: z.number().min(0).max(100), cuenta_gasto_id: z.string().uuid(), tipo: z.enum(['COMISION','ISLR','OTRO']) }[]`.
 - [ ] 4.2 `src/features/configuracion/components/payment-method-form.tsx` — UI de N filas de deducción (agregar/editar/desactivar), reusando patrón de formularios array existentes en el proyecto.
@@ -122,6 +207,7 @@ Chain strategy: pending
 ## Cross-Cutting Notes
 
 - **Ejecución de limpieza (Phase 2 / PR-1b)**: es manual, por el usuario, DESPUÉS de PR-1a mergeado y ANTES de validar PR-4 (Phase 5) end-to-end — los datos deben quedar consistentes antes de probar el loop de N-deducciones. `pg_dump` es salvaguarda obligatoria, no opcional.
+- **Phase 3b/PR-2b supera el mapeo plano de Phase 3/PR-2**: `6.2.05` queda desactivado por la migración 0081. Orden de merge obligatorio: Phase 3 (PR-2) → Phase 3b (PR-2b, 3 sub-unidades 3b.1→3b.2→3b.3) → Phase 4 (PR-3). PR-2b usa `feature-branch-chain` sobre el tracker `feat/gastos-registro-qol` dado su tamaño (~675-850 líneas estimadas, ver forecast dedicado antes de Phase 3b).
 - No existe test runner ni ESLint script de cobertura automática en este proyecto; verificación por fase es `yarn type-check && yarn lint` en los archivos tocados, más el checklist de QA manual de cada fase.
 - Chain strategy (stacked-to-main vs feature-branch-chain vs size:exception) no está decidida — preguntar al usuario antes de iniciar PR-1a, dado que PR-1a+PR-1b combinados exceden el presupuesto de 400 líneas y el script de limpieza es destructivo por diseño.
 - Fix de `tasaDelDia` (bloqueador histórico de Slice 4) YA RESUELTO en el Paso 1 previo (commits `db0417b`, `1e3a603`, `4fc9808`) — Phase 5 puede validarse end-to-end sin bloqueo pendiente.
