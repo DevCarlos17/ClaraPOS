@@ -184,13 +184,20 @@ export function useGrupoComisionesPasarela(): { id: string; codigo: string; nive
  * grupos que SI son padres directos de hojas (ej. `6.1.25.01`/`6.2.06.01`,
  * o cualquier grupo de 2 niveles preexistente) se muestran normalmente con
  * sus hojas, sin duplicacion entre niveles.
+ *
+ * `is_active = 1` en la query filtra tanto grupos como hojas desactivados
+ * (ej. el subgrupo plano `6.2.05` y sus leaves `6.2.05.NN`, superados y
+ * desactivados por la migracion 0081) para que no aparezcan como opciones
+ * seleccionables en los 3 selectores de registro manual de gasto.
  */
 export function useGruposGastoConSubcuentas() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT * FROM plan_cuentas WHERE empresa_id = ? AND tipo = 'GASTO' ORDER BY codigo ASC`,
+    `SELECT * FROM plan_cuentas
+     WHERE empresa_id = ? AND tipo = 'GASTO' AND is_active = 1
+     ORDER BY codigo ASC`,
     [empresaId]
   )
 
