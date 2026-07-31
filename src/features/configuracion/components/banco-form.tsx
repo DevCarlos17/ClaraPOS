@@ -496,9 +496,43 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     return resultado
   }
 
+  // Coincide con bancoSchema.nro_cuenta.min(5) — evita que el boton manual
+  // "Crear Cuenta" genere un nombre de leaf degradado (ult4 vacio) cuando el
+  // numero de cuenta aun no fue completado (hallazgo de review 3b.3).
+  const NRO_CUENTA_MIN_LENGTH = 5
+
+  /**
+   * Avisa (sin bloquear) cuando `crearCuentasDelBanco` no pudo resolver
+   * alguno de los 2 grupos-padre via cuentas_config. Compartido por el boton
+   * manual "Crear Cuenta" y por `handleSubmit` (CREATE/EDIT) — en ambos casos
+   * el banco/cuenta se guarda igual, pero el usuario debe ver que una de las
+   * cuentas de comision quedo sin crear/vincular (hallazgo de review 3b.3:
+   * antes solo se avisaba desde el boton manual, `handleSubmit` lo descartaba
+   * en silencio).
+   */
+  function avisarComisionesOmitidas(creadas: {
+    comisionBancariaOmitida: boolean
+    comisionPasarelaOmitida: boolean
+  }) {
+    if (creadas.comisionBancariaOmitida) {
+      toast.warning(
+        'No se pudo resolver el grupo de Comisiones Bancarias — la cuenta de comision bancaria no se creo. Verifica la configuracion contable de la empresa (cuentas_config) o aplica la migracion 0081.'
+      )
+    }
+    if (creadas.comisionPasarelaOmitida) {
+      toast.warning(
+        'No se pudo resolver el grupo de Comisiones de Pasarelas de Pago — la cuenta base de pasarela no se creo. Verifica la configuracion contable de la empresa (cuentas_config) o aplica la migracion 0081.'
+      )
+    }
+  }
+
   async function handleCrearCuentaContable() {
     if (!nombreBanco.trim()) {
       toast.warning('Ingresa el nombre del banco antes de crear la cuenta contable')
+      return
+    }
+    if (nroCuenta.trim().length < NRO_CUENTA_MIN_LENGTH) {
+      toast.warning(`Ingresa el numero de cuenta (minimo ${NRO_CUENTA_MIN_LENGTH} caracteres) antes de crear la(s) cuenta(s)`)
       return
     }
     if (!user?.empresa_id) return
@@ -535,12 +569,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         toast.success('Cuenta(s) creada(s) y vinculada(s)')
       }
 
-      if (creadas.comisionBancariaOmitida) {
-        toast.warning('No se encontro el grupo COMISIONES BANCARIAS — aplica la migracion 0081')
-      }
-      if (creadas.comisionPasarelaOmitida) {
-        toast.warning('No se encontro el grupo COMISIONES DE PASARELAS DE PAGO — aplica la migracion 0081')
-      }
+      avisarComisionesOmitidas(creadas)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error al crear la cuenta contable'
       toast.error(message)
@@ -604,6 +633,10 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             cuentaGastoPasarelaFinal = creadas.cuentaGastoPasarelaId
             setCuentaGastoPasarelaId(creadas.cuentaGastoPasarelaId)
           }
+          // El banco se actualiza igual (no bloqueante) — el aviso hace
+          // visible que alguna cuenta de comision quedo sin resolver
+          // (hallazgo de review 3b.3: antes se descartaba en silencio aqui).
+          avisarComisionesOmitidas(creadas)
         }
 
         await updateBanco(banco.id, {
@@ -647,6 +680,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           if (!cuentaGastoPasarelaFinal && creadas.cuentaGastoPasarelaId) {
             cuentaGastoPasarelaFinal = creadas.cuentaGastoPasarelaId
           }
+          // El banco se crea igual (no bloqueante) — el aviso hace visible
+          // que alguna cuenta de comision quedo sin resolver, en vez de
+          // guardar cuenta_gasto_pasarela_id/cuenta_gasto_comision_id = NULL
+          // en silencio (hallazgo de review 3b.3).
+          avisarComisionesOmitidas(creadas)
         }
 
         // Invariante "ningun metodo queda huerfano" (SC-29/30): al garantizar
@@ -894,14 +932,17 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
                 disabled={
                   creandoCuenta ||
                   !nombreBanco.trim() ||
+                  nroCuenta.trim().length < NRO_CUENTA_MIN_LENGTH ||
                   (!!cuentaContableId && !!cuentaGastoComisionId && !!cuentaGastoPasarelaId)
                 }
                 title={
                   !nombreBanco.trim()
                     ? 'Ingresa el nombre del banco primero'
-                    : cuentaContableId && cuentaGastoComisionId && cuentaGastoPasarelaId
-                      ? 'Las 3 cuentas ya estan vinculadas'
-                      : 'Crear ahora la(s) cuenta(s) faltante(s) para este banco'
+                    : nroCuenta.trim().length < NRO_CUENTA_MIN_LENGTH
+                      ? `Ingresa el numero de cuenta (minimo ${NRO_CUENTA_MIN_LENGTH} caracteres) primero`
+                      : cuentaContableId && cuentaGastoComisionId && cuentaGastoPasarelaId
+                        ? 'Las 3 cuentas ya estan vinculadas'
+                        : 'Crear ahora la(s) cuenta(s) faltante(s) para este banco'
                 }
                 className="inline-flex items-center gap-1 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
               >
