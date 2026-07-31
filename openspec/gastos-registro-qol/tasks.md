@@ -72,10 +72,10 @@ Chain strategy: pending
 
 > Depende de PR-1a mergeado (necesita `6.2.05` y columna `cuenta_gasto_comision_id`).
 
-- [ ] 3.1 `src/features/contabilidad/hooks/use-plan-cuentas.ts` — Nuevo hook `useSubgrupoComisionesBancarias()` retornando `{ id, codigo: '6.2.05', nivel: 3 } | undefined`, filtrado por `empresa_id`. NO modificar `agregarSubcuentaAGrupo`/`crearGrupoGastoConSubcuentas`.
-- [ ] 3.2 `src/features/configuracion/components/banco-form.tsx` (~L334-401) — Extender `handleCrearCuentaContable` para, además de la cuenta de activo existente, disparar `agregarSubcuentaAGrupo` creando la leaf `6.2.05.NN COMISION BANCO {nombre}` bajo `useSubgrupoComisionesBancarias()` y setear `cuentaGastoComisionId` en el insert/update de `bancos_empresa`. Satisface SC-13, SC-16.
-- [ ] 3.3 Mismo archivo — UI para mostrar la cuenta de comisión vinculada y permitir reasignarla vía `useCuentasDetallePorTipo('GASTO')`; on-select, `UPDATE bancos_empresa.cuenta_gasto_comision_id` sin afectar deducciones ya configuradas. Satisface SC-15.
-- [ ] 3.4 Verify: `yarn type-check && yarn lint` limpio en `use-plan-cuentas.ts` y `banco-form.tsx`.
+- [x] 3.1 `src/features/contabilidad/hooks/use-plan-cuentas.ts` — Nuevo hook `useSubgrupoComisionesBancarias()` retornando `{ id, codigo: '6.2.05', nivel: 3 } | undefined`, filtrado por `empresa_id`. NO modificar `agregarSubcuentaAGrupo`/`crearGrupoGastoConSubcuentas`.
+- [x] 3.2 `src/features/configuracion/components/banco-form.tsx` (~L334-401) — Extender `handleCrearCuentaContable` para, además de la cuenta de activo existente, disparar `agregarSubcuentaAGrupo` creando la leaf `6.2.05.NN COMISION BANCO {nombre}` bajo `useSubgrupoComisionesBancarias()` y setear `cuentaGastoComisionId` en el insert/update de `bancos_empresa`. Satisface SC-13, SC-16.
+- [x] 3.3 Mismo archivo — UI para mostrar la cuenta de comisión vinculada y permitir reasignarla vía `useCuentasDetallePorTipo('GASTO')`; on-select, `UPDATE bancos_empresa.cuenta_gasto_comision_id` sin afectar deducciones ya configuradas. Satisface SC-15.
+- [x] 3.4 Verify: `yarn type-check && yarn lint` limpio en `use-plan-cuentas.ts` y `banco-form.tsx`.
 - [ ] 3.5 Manual QA — SC-13: crear banco "Mercantil" nuevo → cuenta activo `1.1.xx` Y `6.2.05.NN COMISION BANCO MERCANTIL` creadas, ambas vinculadas sin pasos manuales.
 - [ ] 3.6 Manual QA — SC-14: configurar método de pago de ese banco → solo pide el porcentaje, cuenta destino ya resuelta.
 - [ ] 3.7 Manual QA — SC-15: reasignar cuenta de comisión de un banco existente a otra cuenta de gasto → se actualiza sin afectar deducciones existentes.
