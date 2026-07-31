@@ -16,7 +16,8 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   useCuentasDetalle,
   useCuentasDetallePorTipo,
-  useSubgrupoComisionesBancarias,
+  useGrupoComisionesBancarias,
+  useGrupoComisionesPasarela,
   crearCuenta,
   agregarSubcuentaAGrupo,
 } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -216,7 +217,10 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const { user } = useCurrentUser()
   const { cuentas } = useCuentasDetalle()
   const { cuentas: cuentasGasto } = useCuentasDetallePorTipo('GASTO')
-  const subgrupoComisiones = useSubgrupoComisionesBancarias()
+  // 0081 (PR-2b): 2 grupos-padre resueltos via cuentas_config, reemplaza el
+  // subgrupo plano 6.2.05 (useSubgrupoComisionesBancarias, eliminado)
+  const grupoComisionesBancarias = useGrupoComisionesBancarias()
+  const grupoComisionesPasarela = useGrupoComisionesPasarela()
 
   // Basic banco fields
   const [nombreBanco, setNombreBanco] = useState('')
@@ -227,6 +231,9 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const [cuentaContableId, setCuentaContableId] = useState('')
   // 0080: cuenta de gasto para comisiones bancarias (default de metodo_cobro_deducciones)
   const [cuentaGastoComisionId, setCuentaGastoComisionId] = useState('')
+  // 0081 (PR-2b): cuenta BASE de comision de pasarela de pago (compartida por
+  // los metodos de pago del banco que no especifiquen cuenta propia)
+  const [cuentaGastoPasarelaId, setCuentaGastoPasarelaId] = useState('')
   const [active, setActive] = useState(true)
 
   // 0069: moneda y saldo inicial
@@ -255,6 +262,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTitularDocumento(banco.titular_documento ?? '')
         setCuentaContableId(banco.cuenta_contable_id ?? '')
         setCuentaGastoComisionId(banco.cuenta_gasto_comision_id ?? '')
+        setCuentaGastoPasarelaId(banco.cuenta_gasto_pasarela_id ?? '')
         setActive(banco.is_active === 1)
         setSaldoInicial('0')
 
@@ -275,6 +283,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         setTitularDocumento('')
         setCuentaContableId('')
         setCuentaGastoComisionId('')
+        setCuentaGastoPasarelaId('')
         setActive(true)
         setMoneda('USD')
         setSaldoInicial('0')
@@ -344,20 +353,41 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   }
 
   /**
-   * 0080 (PR-2 refinado): crea la cuenta de activo (1.1.xx BANCO {nombre}) y/o
-   * la leaf de comision (6.2.05.NN COMISION BANCO {nombre}) segun `opts`.
-   * Reutilizada tanto por el boton manual "Crear Cuenta" como por el
-   * auto-creado silencioso en `handleSubmit` — un banco sin ambas cuentas es
-   * un estado invalido del sistema (decision de usuario, ver apply-progress).
-   * Idempotente por diseño: el llamador decide que falta crear via `opts`,
-   * esta funcion nunca decide por si misma si algo ya existe.
+   * 0081 (PR-2b): crea hasta 3 cuentas segun `opts`: la cuenta de activo
+   * (1.1.xx BANCO {nombre}), la leaf de comision BANCARIA (bajo el grupo
+   * `Comisiones Bancarias`, cuentas_config['GRUPO_COMISIONES_BANCARIAS']) y
+   * la leaf BASE de comision de PASARELA (bajo `Comisiones de Pasarelas de
+   * Pago`, cuentas_config['GRUPO_COMISIONES_PASARELA']). Reutilizada tanto
+   * por el boton manual "Crear Cuenta" como por el auto-creado silencioso en
+   * `handleSubmit` — un banco sin las 3 cuentas es un estado invalido del
+   * sistema (decision de usuario, ver apply-progress). Idempotente por
+   * diseno: el llamador decide que falta crear via `opts`, esta funcion
+   * nunca decide por si misma si algo ya existe.
+   *
+   * Nombre dinamico de ambas leaves de comision: `{Banco} {Tipo} {ult4 del
+   * numero de cuenta}` (ej. "VENEZUELA CORRIENTE 5546") — se incluye el tipo
+   * de cuenta para desambiguar cuando dos cuentas propias del mismo banco
+   * comparten los mismos ultimos 4 digitos (SC-28).
    */
   async function crearCuentasDelBanco(
-    nombreBancoInput: string,
-    opts: { crearActivo: boolean; crearComision: boolean }
-  ): Promise<{ cuentaContableId?: string; cuentaGastoComisionId?: string; comisionOmitida: boolean }> {
-    const resultado: { cuentaContableId?: string; cuentaGastoComisionId?: string; comisionOmitida: boolean } = {
-      comisionOmitida: false,
+    datos: { nombreBanco: string; nroCuenta: string; tipoCuenta?: string },
+    opts: { crearActivo: boolean; crearComisionBancaria: boolean; crearComisionPasarela: boolean }
+  ): Promise<{
+    cuentaContableId?: string
+    cuentaGastoComisionId?: string
+    cuentaGastoPasarelaId?: string
+    comisionBancariaOmitida: boolean
+    comisionPasarelaOmitida: boolean
+  }> {
+    const resultado: {
+      cuentaContableId?: string
+      cuentaGastoComisionId?: string
+      cuentaGastoPasarelaId?: string
+      comisionBancariaOmitida: boolean
+      comisionPasarelaOmitida: boolean
+    } = {
+      comisionBancariaOmitida: false,
+      comisionPasarelaOmitida: false,
     }
     if (!user?.empresa_id) return resultado
 
@@ -398,7 +428,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       }
 
       const nuevoCodigo = `${codigoPadre}.${String(siguienteSufijo).padStart(2, '0')}`
-      const nombreCuenta = `BANCO ${nombreBancoInput.trim().toUpperCase()}`
+      const nombreCuenta = `BANCO ${datos.nombreBanco.trim().toUpperCase()}`
 
       resultado.cuentaContableId = await crearCuenta({
         codigo: nuevoCodigo,
@@ -413,31 +443,53 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       })
     }
 
-    if (opts.crearComision) {
-      // 0080: cuenta de comision (6.2.05.NN COMISION BANCO {nombre}) bajo el
-      // subgrupo 6.2.05 de la empresa.
-      if (subgrupoComisiones) {
-        const nombreComision = `COMISION BANCO ${nombreBancoInput.trim().toUpperCase()}`
+    if (opts.crearComisionBancaria || opts.crearComisionPasarela) {
+      const ult4 = datos.nroCuenta.trim().slice(-4)
+      const nombreLeaf = [datos.nombreBanco.trim(), datos.tipoCuenta?.trim(), ult4]
+        .filter((parte): parte is string => !!parte)
+        .join(' ')
+        .toUpperCase()
+      const empresaId = user.empresa_id
+      const userId = user.id
+
+      const crearLeafBajoGrupo = async (
+        grupo: { id: string; codigo: string; nivel: number }
+      ): Promise<string | undefined> => {
         await agregarSubcuentaAGrupo({
-          grupoId: subgrupoComisiones.id,
-          grupoCodigo: subgrupoComisiones.codigo,
-          grupoNivel: subgrupoComisiones.nivel,
-          nombreSubcuenta: nombreComision,
-          empresaId: user.empresa_id,
-          userId: user.id,
+          grupoId: grupo.id,
+          grupoCodigo: grupo.codigo,
+          grupoNivel: grupo.nivel,
+          nombreSubcuenta: nombreLeaf,
+          empresaId,
+          userId,
         })
 
         const leafResult = await db.execute(
           `SELECT id FROM plan_cuentas
            WHERE empresa_id = ? AND parent_id = ? AND nombre = ?
            ORDER BY created_at DESC LIMIT 1`,
-          [user.empresa_id, subgrupoComisiones.id, nombreComision]
+          [empresaId, grupo.id, nombreLeaf]
         )
         if (leafResult.rows && leafResult.rows.length > 0) {
-          resultado.cuentaGastoComisionId = (leafResult.rows.item(0) as { id: string }).id
+          return (leafResult.rows.item(0) as { id: string }).id
         }
-      } else {
-        resultado.comisionOmitida = true
+        return undefined
+      }
+
+      if (opts.crearComisionBancaria) {
+        if (grupoComisionesBancarias) {
+          resultado.cuentaGastoComisionId = await crearLeafBajoGrupo(grupoComisionesBancarias)
+        } else {
+          resultado.comisionBancariaOmitida = true
+        }
+      }
+
+      if (opts.crearComisionPasarela) {
+        if (grupoComisionesPasarela) {
+          resultado.cuentaGastoPasarelaId = await crearLeafBajoGrupo(grupoComisionesPasarela)
+        } else {
+          resultado.comisionPasarelaOmitida = true
+        }
       }
     }
 
@@ -452,29 +504,42 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     if (!user?.empresa_id) return
 
     const necesitaActivo = !cuentaContableId
-    const necesitaComision = !cuentaGastoComisionId
-    if (!necesitaActivo && !necesitaComision) return
+    const necesitaComisionBancaria = !cuentaGastoComisionId
+    const necesitaComisionPasarela = !cuentaGastoPasarelaId
+    if (!necesitaActivo && !necesitaComisionBancaria && !necesitaComisionPasarela) return
 
     setCreandoCuenta(true)
     try {
-      const creadas = await crearCuentasDelBanco(nombreBanco, {
-        crearActivo: necesitaActivo,
-        crearComision: necesitaComision,
-      })
+      const creadas = await crearCuentasDelBanco(
+        { nombreBanco, nroCuenta, tipoCuenta },
+        {
+          crearActivo: necesitaActivo,
+          crearComisionBancaria: necesitaComisionBancaria,
+          crearComisionPasarela: necesitaComisionPasarela,
+        }
+      )
 
       if (creadas.cuentaContableId) setCuentaContableId(creadas.cuentaContableId)
       if (creadas.cuentaGastoComisionId) setCuentaGastoComisionId(creadas.cuentaGastoComisionId)
+      if (creadas.cuentaGastoPasarelaId) setCuentaGastoPasarelaId(creadas.cuentaGastoPasarelaId)
 
-      if (creadas.cuentaContableId && creadas.cuentaGastoComisionId) {
-        toast.success('Cuenta contable y cuenta de comision creadas y vinculadas')
-      } else if (creadas.cuentaContableId) {
-        toast.success('Cuenta contable creada y vinculada')
-      } else if (creadas.cuentaGastoComisionId) {
-        toast.success('Cuenta de comision creada y vinculada')
+      const cantidadCreadas = [
+        creadas.cuentaContableId,
+        creadas.cuentaGastoComisionId,
+        creadas.cuentaGastoPasarelaId,
+      ].filter(Boolean).length
+
+      if (cantidadCreadas === 3) {
+        toast.success('Cuenta contable, cuenta de comision bancaria y cuenta de comision de pasarela creadas y vinculadas')
+      } else if (cantidadCreadas > 0) {
+        toast.success('Cuenta(s) creada(s) y vinculada(s)')
       }
 
-      if (creadas.comisionOmitida) {
-        toast.warning('No se encontro el subgrupo 6.2.05 COMISIONES BANCARIAS — aplica la migracion 0080')
+      if (creadas.comisionBancariaOmitida) {
+        toast.warning('No se encontro el grupo COMISIONES BANCARIAS — aplica la migracion 0081')
+      }
+      if (creadas.comisionPasarelaOmitida) {
+        toast.warning('No se encontro el grupo COMISIONES DE PASARELAS DE PAGO — aplica la migracion 0081')
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error al crear la cuenta contable'
@@ -516,18 +581,28 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
       if (isEditing && banco) {
         // Modo edicion: NUNCA auto-crear la cuenta de activo (el banco ya
-        // existe con su propio flujo). Excepcion puntual: si la cuenta de
-        // comision quedo NULL (bancos creados antes de esta feature), se
-        // auto-crea SOLO esa, una vez, sin duplicar si ya existe.
+        // existe con su propio flujo). Excepcion puntual: si alguna de las 2
+        // cuentas de comision quedo NULL (bancos creados antes de esta
+        // feature o de la migracion 0081), se auto-crea SOLO la faltante,
+        // una vez, sin duplicar ni tocar la que ya esta vinculada (SC-15).
         let cuentaGastoComisionFinal = cuentaGastoComisionId
-        if (!cuentaGastoComisionFinal) {
-          const creadas = await crearCuentasDelBanco(parsed.data.nombre_banco, {
-            crearActivo: false,
-            crearComision: true,
-          })
+        let cuentaGastoPasarelaFinal = cuentaGastoPasarelaId
+        if (!cuentaGastoComisionFinal || !cuentaGastoPasarelaFinal) {
+          const creadas = await crearCuentasDelBanco(
+            { nombreBanco: parsed.data.nombre_banco, nroCuenta: parsed.data.nro_cuenta, tipoCuenta: parsed.data.tipo_cuenta },
+            {
+              crearActivo: false,
+              crearComisionBancaria: !cuentaGastoComisionFinal,
+              crearComisionPasarela: !cuentaGastoPasarelaFinal,
+            }
+          )
           if (creadas.cuentaGastoComisionId) {
             cuentaGastoComisionFinal = creadas.cuentaGastoComisionId
             setCuentaGastoComisionId(creadas.cuentaGastoComisionId)
+          }
+          if (creadas.cuentaGastoPasarelaId) {
+            cuentaGastoPasarelaFinal = creadas.cuentaGastoPasarelaId
+            setCuentaGastoPasarelaId(creadas.cuentaGastoPasarelaId)
           }
         }
 
@@ -539,31 +614,49 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           titular_documento: parsed.data.titular_documento,
           cuenta_contable_id: parsed.data.cuenta_contable_id ?? null,
           cuenta_gasto_comision_id: cuentaGastoComisionFinal || null,
+          cuenta_gasto_pasarela_id: cuentaGastoPasarelaFinal || null,
           is_active: parsed.data.active,
         })
         bancoId = banco.id
         toast.success('Banco actualizado correctamente')
       } else {
-        // Creacion de banco nuevo: un banco sin cuenta de activo Y cuenta de
-        // comision es un estado invalido del sistema (decision de usuario) —
-        // ambas se auto-crean y vinculan aqui, sin pasos manuales (SC-13).
-        // Idempotente: si el usuario ya uso "Crear Cuenta" o selecciono una
-        // cuenta existente en el select, solo se completa lo que falta.
+        // Creacion de banco nuevo: un banco sin las 3 cuentas (activo,
+        // comision bancaria, comision de pasarela) es un estado invalido del
+        // sistema (decision de usuario) — las 3 se auto-crean y vinculan
+        // aqui, sin pasos manuales (SC-13). Idempotente: si el usuario ya
+        // uso "Crear Cuenta" o selecciono una cuenta existente en algun
+        // select, solo se completa lo que falta.
         let cuentaContableFinal = cuentaContableId
         let cuentaGastoComisionFinal = cuentaGastoComisionId
-        if (!cuentaContableFinal || !cuentaGastoComisionFinal) {
-          const creadas = await crearCuentasDelBanco(parsed.data.nombre_banco, {
-            crearActivo: !cuentaContableFinal,
-            crearComision: !cuentaGastoComisionFinal,
-          })
+        let cuentaGastoPasarelaFinal = cuentaGastoPasarelaId
+        if (!cuentaContableFinal || !cuentaGastoComisionFinal || !cuentaGastoPasarelaFinal) {
+          const creadas = await crearCuentasDelBanco(
+            { nombreBanco: parsed.data.nombre_banco, nroCuenta: parsed.data.nro_cuenta, tipoCuenta: parsed.data.tipo_cuenta },
+            {
+              crearActivo: !cuentaContableFinal,
+              crearComisionBancaria: !cuentaGastoComisionFinal,
+              crearComisionPasarela: !cuentaGastoPasarelaFinal,
+            }
+          )
           if (!cuentaContableFinal && creadas.cuentaContableId) {
             cuentaContableFinal = creadas.cuentaContableId
           }
           if (!cuentaGastoComisionFinal && creadas.cuentaGastoComisionId) {
             cuentaGastoComisionFinal = creadas.cuentaGastoComisionId
           }
+          if (!cuentaGastoPasarelaFinal && creadas.cuentaGastoPasarelaId) {
+            cuentaGastoPasarelaFinal = creadas.cuentaGastoPasarelaId
+          }
         }
 
+        // Invariante "ningun metodo queda huerfano" (SC-29/30): al garantizar
+        // que cuentaGastoPasarelaFinal SIEMPRE quede resuelta antes de crear
+        // el banco, cuenta_gasto_pasarela_id nunca es null para un banco
+        // recien creado — precondicion que PR-3 (createPaymentMethod) lee
+        // como default para vincular en metodo_cobro_deducciones a los
+        // metodos que no especifiquen su propia cuenta de pasarela (contrato
+        // PR-2b -> PR-3, design.md linea 25). Este archivo no duplica ese
+        // insert, solo garantiza la precondicion.
         bancoId = await createBanco({
           nombre_banco: parsed.data.nombre_banco,
           nro_cuenta: parsed.data.nro_cuenta,
@@ -572,6 +665,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           titular_documento: parsed.data.titular_documento,
           cuenta_contable_id: cuentaContableFinal || undefined,
           cuenta_gasto_comision_id: cuentaGastoComisionFinal || undefined,
+          cuenta_gasto_pasarela_id: cuentaGastoPasarelaFinal || undefined,
           moneda_id: parsed.data.moneda_id,
           saldo_inicial: parsed.data.saldo_inicial,
           empresa_id: user!.empresa_id!,
@@ -797,12 +891,16 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
               <button
                 type="button"
                 onClick={handleCrearCuentaContable}
-                disabled={creandoCuenta || !nombreBanco.trim() || (!!cuentaContableId && !!cuentaGastoComisionId)}
+                disabled={
+                  creandoCuenta ||
+                  !nombreBanco.trim() ||
+                  (!!cuentaContableId && !!cuentaGastoComisionId && !!cuentaGastoPasarelaId)
+                }
                 title={
                   !nombreBanco.trim()
                     ? 'Ingresa el nombre del banco primero'
-                    : cuentaContableId && cuentaGastoComisionId
-                      ? 'Ambas cuentas ya estan vinculadas'
+                    : cuentaContableId && cuentaGastoComisionId && cuentaGastoPasarelaId
+                      ? 'Las 3 cuentas ya estan vinculadas'
                       : 'Crear ahora la(s) cuenta(s) faltante(s) para este banco'
                 }
                 className="inline-flex items-center gap-1 px-3 py-2 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
@@ -817,7 +915,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             </p>
           </div>
 
-          {/* Cuenta de Comision Bancaria (0080) */}
+          {/* Cuenta de Comision Bancaria (0080/0081) */}
           <div>
             <label htmlFor="banco-cuenta-comision" className="block text-sm font-medium text-gray-700 mb-1">
               Cuenta de Comision Bancaria
@@ -833,10 +931,34 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
               ))}
             </NativeSelect>
             <p className="text-xs text-gray-500 mt-1">
-              Cuenta de gasto usada por defecto para las deducciones (comisiones, ISLR, etc.) de los metodos
-              de pago de este banco. Si no seleccionas una cuenta existente, se crea y vincula automaticamente
-              al guardar el banco. Puedes reasignarla aqui a otra cuenta de gasto sin afectar deducciones ya
-              configuradas.
+              Cuenta de gasto financiero usada por defecto para deducciones bancarias (mantenimiento,
+              transferencia, etc.) de los metodos de pago de este banco. Si no seleccionas una cuenta
+              existente, se crea y vincula automaticamente al guardar el banco. Puedes reasignarla aqui a
+              otra cuenta de gasto sin afectar la cuenta de pasarela ni las deducciones ya configuradas.
+            </p>
+          </div>
+
+          {/* Cuenta de Comision de Pasarela de Pago (0081, PR-2b) */}
+          <div>
+            <label htmlFor="banco-cuenta-pasarela" className="block text-sm font-medium text-gray-700 mb-1">
+              Cuenta de Comision de Pasarela de Pago
+            </label>
+            <NativeSelect
+              id="banco-cuenta-pasarela"
+              value={cuentaGastoPasarelaId}
+              onChange={(e) => setCuentaGastoPasarelaId(e.target.value)}
+            >
+              <option value="">-- Se creara automaticamente --</option>
+              {cuentasGasto.map((c) => (
+                <option key={c.id} value={c.id}>{c.codigo} - {c.nombre}</option>
+              ))}
+            </NativeSelect>
+            <p className="text-xs text-gray-500 mt-1">
+              Cuenta BASE de gasto de venta para comisiones de pasarela de pago (POS/tarjetas) de este
+              banco. Todos los metodos de pago que no especifiquen su propia cuenta de pasarela comparten
+              esta cuenta — ningun metodo queda sin cuenta de comision resuelta. Si no seleccionas una
+              cuenta existente, se crea y vincula automaticamente al guardar el banco. Puedes reasignarla
+              aqui sin afectar la cuenta de comision bancaria ni las deducciones ya configuradas.
             </p>
           </div>
 

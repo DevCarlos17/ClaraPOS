@@ -104,29 +104,6 @@ export function useCuentasDetallePorTipo(tipo: TipoCuenta | TipoCuenta[]) {
 }
 
 /**
- * @deprecated Superado por la migracion 0081 (PR-2b): `6.2.05` queda
- * desactivado (`is_active = 0`) en favor de la jerarquia de 4 niveles
- * (`6.1.25.01 COMISIONES DE PASARELAS DE PAGO` / `6.2.06.01 COMISIONES
- * BANCARIAS`, ver `useGrupoComisionesPasarela`/`useGrupoComisionesBancarias`).
- * Se conserva sin cambios de comportamiento unicamente porque `banco-form.tsx`
- * (slice 3b.3, aun no migrado) sigue consumiendola. Sera eliminada cuando ese
- * archivo se actualice para usar los nuevos resolvers.
- */
-export function useSubgrupoComisionesBancarias(): { id: string; codigo: '6.2.05'; nivel: 3 } | undefined {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
-
-  const { data } = useQuery(
-    `SELECT id, codigo, nivel FROM plan_cuentas WHERE empresa_id = ? AND codigo = '6.2.05' LIMIT 1`,
-    [empresaId]
-  )
-
-  const row = (data ?? [])[0] as { id: string; codigo: string; nivel: number } | undefined
-  if (!row) return undefined
-  return { id: row.id, codigo: '6.2.05', nivel: 3 }
-}
-
-/**
  * Resuelve un grupo del plan de cuentas por su clave en `cuentas_config`, en
  * vez de asumir un `codigo` hardcoded. Mecanismo generico compartido por
  * `useGrupoComisionesBancarias`/`useGrupoComisionesPasarela` (PR-2b).
