@@ -27,6 +27,11 @@ export interface CuentaContable {
 }
 
 export interface GrupoConSubcuentas extends CuentaContable {
+  /** Subgrupos hijos DIRECTOS (recursivo — cada uno ya trae sus propios subgrupos/hojas/subcuentas). */
+  subgrupos: GrupoConSubcuentas[]
+  /** Cuentas de detalle (hojas) hijas DIRECTAS de este nodo (sin incluir las de subgrupos anidados). */
+  hojas: CuentaContable[]
+  /** TODAS las hojas descendientes del subarbol, a cualquier profundidad, aplanadas. */
   subcuentas: CuentaContable[]
 }
 
@@ -146,21 +151,26 @@ export function useGrupoComisionesPasarela(): { id: string; codigo: string; nive
 }
 
 /**
- * Grupos de tipo GASTO con sus subcuentas de movimiento.
+ * Grupos de tipo GASTO con su arbol de subgrupos y subcuentas de movimiento.
  * Usado en el modal de gestion de cuentas de gasto y en los selectores de
  * registro manual de gasto (`gastos-dashboard.tsx`, `gasto-list.tsx`,
  * `cuenta-gasto-modal.tsx`).
  *
- * Cada hoja (`es_cuenta_detalle = 1`) se atribuye a su grupo PADRE DIRECTO
- * (por `parent_id`) — no a niveles superiores. Esto es correcto sin importar
- * cuantos niveles de anidamiento tenga el arbol: un grupo que organiza
- * puramente subgrupos (sin hojas propias directas, ej. `6.1.25 GASTOS DE
- * VENTA` o `6.2.06 GASTOS FINANCIEROS` de la migracion 0081) nunca recibe
- * hojas y por lo tanto queda EXCLUIDO del resultado — evita que aparezcan
- * como entradas fantasma vacias en los selectores (ver tasks.md 3b.2.7). Los
- * grupos que SI son padres directos de hojas (ej. `6.1.25.01`/`6.2.06.01`,
- * o cualquier grupo de 2 niveles preexistente) se muestran normalmente con
- * sus hojas, sin duplicacion entre niveles.
+ * Construye el arbol de forma RECURSIVA y por profundidad agnostica (reusa
+ * el patron childrenMap + recorrido en profundidad de `plan-cuentas-list.tsx`):
+ * cada grupo devuelto conserva sus `subgrupos` hijos DIRECTOS (a su vez con
+ * su propio arbol completo), sus `hojas` hijas DIRECTAS, y `subcuentas` con
+ * TODAS las hojas descendientes del subarbol aplanadas (a cualquier
+ * profundidad) — este ultimo campo es el que consumen los calculos de
+ * totales/filtros existentes sin necesitar cambios.
+ *
+ * Un grupo que organiza puramente subgrupos (sin hojas en NINGUN nivel de su
+ * subarbol, ej. `6.1.25 GASTOS DE VENTA` o `6.2.06 GASTOS FINANCIEROS` de la
+ * migracion 0081 si quedaran sin hojas) se EXCLUYE del resultado — evita que
+ * aparezcan como entradas fantasma vacias en los selectores (ver tasks.md
+ * 3b.2.7). Un grupo que SI tiene hojas en algun nivel de su subarbol (directo
+ * o anidado, ej. `6.1.25.01`/`6.2.06.01`) se muestra, ANIDADO dentro de su
+ * padre — nunca como hermano suelto del nivel raiz.
  *
  * `is_active = 1` en la query filtra tanto grupos como hojas desactivados
  * (ej. el subgrupo plano `6.2.05` y sus leaves `6.2.05.NN`, superados y
@@ -178,26 +188,100 @@ export function useGruposGastoConSubcuentas() {
     [empresaId]
   )
 
-  const all = (data ?? []) as CuentaContable[]
-  const grupos = all.filter((c) => c.es_cuenta_detalle === 0)
-  const subcuentas = all.filter((c) => c.es_cuenta_detalle === 1)
+  const grupos = useMemo(() => {
+    const all = (data ?? []) as CuentaContable[]
 
-  const subcuentasPorGrupoId = new Map<string, CuentaContable[]>()
-  for (const sub of subcuentas) {
-    if (!sub.parent_id) continue
-    const arr = subcuentasPorGrupoId.get(sub.parent_id) ?? []
-    arr.push(sub)
-    subcuentasPorGrupoId.set(sub.parent_id, arr)
+    // Mapa de hijos: parent_id -> hijos directos (grupos y hojas mezclados)
+    const childrenMap = new Map<string | null, CuentaContable[]>()
+    for (const c of all) {
+      const key = c.parent_id ?? null
+      const arr = childrenMap.get(key)
+      if (arr) arr.push(c)
+      else childrenMap.set(key, [c])
+    }
+
+    // Construye recursivamente el nodo de un grupo. Devuelve null si el
+    // subarbol completo del grupo no tiene NINGUNA hoja (grupo fantasma
+    // vacio, ej. un subgrupo organizador sin cuentas de detalle aun) — se
+    // descarta en cualquier profundidad, no solo en la raiz.
+    function buildGrupo(node: CuentaContable): GrupoConSubcuentas | null {
+      const hijos = childrenMap.get(node.id) ?? []
+      const hojas: CuentaContable[] = []
+      const subgrupos: GrupoConSubcuentas[] = []
+
+      for (const hijo of hijos) {
+        if (hijo.es_cuenta_detalle === 1) {
+          hojas.push(hijo)
+        } else {
+          const sub = buildGrupo(hijo)
+          if (sub) subgrupos.push(sub)
+        }
+      }
+
+      const subcuentas = [...hojas, ...subgrupos.flatMap((s) => s.subcuentas)]
+      if (subcuentas.length === 0) return null
+
+      return { ...node, subgrupos, hojas, subcuentas }
+    }
+
+    const raices = childrenMap.get(null) ?? []
+    return raices
+      .filter((c) => c.es_cuenta_detalle === 0)
+      .map(buildGrupo)
+      .filter((g): g is GrupoConSubcuentas => g !== null)
+  }, [data])
+
+  return { grupos, isLoading }
+}
+
+/**
+ * Busca un grupo (raiz o anidado a cualquier profundidad) por id dentro del
+ * arbol devuelto por `useGruposGastoConSubcuentas`. Necesario porque los
+ * selectores/filtros ("Por grupo") pueden apuntar a un subgrupo anidado
+ * (ej. `6.1.25.01 COMISIONES DE PASARELAS DE PAGO`), no solo a un grupo raiz.
+ */
+export function findGrupoGastoById(
+  grupos: GrupoConSubcuentas[],
+  id: string
+): GrupoConSubcuentas | undefined {
+  for (const g of grupos) {
+    if (g.id === id) return g
+    const found = findGrupoGastoById(g.subgrupos, id)
+    if (found) return found
   }
+  return undefined
+}
 
-  const gruposConSubs: GrupoConSubcuentas[] = grupos
-    .map((g) => ({
-      ...g,
-      subcuentas: subcuentasPorGrupoId.get(g.id) ?? [],
-    }))
-    .filter((g) => g.subcuentas.length > 0)
+/**
+ * Aplana el arbol de grupos en una lista con su profundidad (0 = raiz),
+ * en recorrido pre-orden (el grupo antes que sus subgrupos). Util para
+ * selects/dropdowns que deben mostrar la jerarquia completa con sangria en
+ * vez de solo los grupos raiz.
+ */
+export function flattenGruposGasto(
+  grupos: GrupoConSubcuentas[],
+  depth = 0
+): { grupo: GrupoConSubcuentas; depth: number }[] {
+  const result: { grupo: GrupoConSubcuentas; depth: number }[] = []
+  for (const g of grupos) {
+    result.push({ grupo: g, depth })
+    result.push(...flattenGruposGasto(g.subgrupos, depth + 1))
+  }
+  return result
+}
 
-  return { grupos: gruposConSubs, isLoading }
+/**
+ * Recolecta los ids de TODOS los grupos del arbol (raiz + anidados a
+ * cualquier profundidad). Util para "expandir todo" / "colapsar todo" en
+ * los 3 consumidores, que antes solo consideraban el nivel raiz.
+ */
+export function collectGrupoGastoIds(grupos: GrupoConSubcuentas[]): string[] {
+  const ids: string[] = []
+  for (const g of grupos) {
+    ids.push(g.id)
+    ids.push(...collectGrupoGastoIds(g.subgrupos))
+  }
+  return ids
 }
 
 /**
