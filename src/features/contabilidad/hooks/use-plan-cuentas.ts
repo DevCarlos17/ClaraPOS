@@ -38,6 +38,33 @@ export interface GrupoConSubcuentas extends CuentaContable {
 // ─── Hooks ──────────────────────────────────────────────────
 
 /**
+ * Ids de `plan_cuentas` referenciados por `cuentas_config` (cuentas/grupos
+ * vinculados al sistema). Estas cuentas no pueden desactivarse (ver
+ * `PlanCuentasList`) ni eliminarse (ver `CuentaGastoModal`) porque otras
+ * partes del sistema dependen de su existencia (ej. los grupos resolver
+ * `GRUPO_COMISIONES_PASARELA`/`GRUPO_COMISIONES_BANCARIAS` de PR-2b).
+ * Extraido como hook propio para que ambos consumidores reusen la MISMA
+ * query/logica en vez de duplicarla.
+ */
+export function useSistemaCuentaIds(): Set<string> {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data: configData } = useQuery(
+    'SELECT cuenta_contable_id FROM cuentas_config WHERE empresa_id = ?',
+    [empresaId]
+  )
+
+  return useMemo(() => {
+    const set = new Set<string>()
+    for (const row of (configData ?? []) as { cuenta_contable_id: string }[]) {
+      if (row.cuenta_contable_id) set.add(row.cuenta_contable_id)
+    }
+    return set
+  }, [configData])
+}
+
+/**
  * Plan de cuentas completo de la empresa, ordenado por codigo ascendente.
  */
 export function usePlanCuentas() {
@@ -50,18 +77,7 @@ export function usePlanCuentas() {
   )
 
   // IDs de cuentas vinculadas al sistema (no pueden desactivarse)
-  const { data: configData } = useQuery(
-    'SELECT cuenta_contable_id FROM cuentas_config WHERE empresa_id = ?',
-    [empresaId]
-  )
-
-  const sistemaCuentaIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const row of (configData ?? []) as { cuenta_contable_id: string }[]) {
-      if (row.cuenta_contable_id) set.add(row.cuenta_contable_id)
-    }
-    return set
-  }, [configData])
+  const sistemaCuentaIds = useSistemaCuentaIds()
 
   return {
     cuentas: (data ?? []) as CuentaContable[],
@@ -200,11 +216,23 @@ export function useGruposGastoConSubcuentas() {
       else childrenMap.set(key, [c])
     }
 
+    // Guard de ciclos: `cuenta-form.tsx` permite reasignar el `parent_id` de
+    // cualquier grupo a cualquier otro (incluido uno de sus propios
+    // descendientes) sin validacion. Un ciclo asi termina siendo inalcanzable
+    // desde la raiz en el 99% de los casos (parent_id es un puntero unico
+    // por fila), pero se agrega este guard como defensa adicional: si un
+    // nodo ya fue visitado en la rama actual, se corta la recursion en vez
+    // de arriesgar un stack overflow.
+    const visitados = new Set<string>()
+
     // Construye recursivamente el nodo de un grupo. Devuelve null si el
     // subarbol completo del grupo no tiene NINGUNA hoja (grupo fantasma
     // vacio, ej. un subgrupo organizador sin cuentas de detalle aun) — se
     // descarta en cualquier profundidad, no solo en la raiz.
     function buildGrupo(node: CuentaContable): GrupoConSubcuentas | null {
+      if (visitados.has(node.id)) return null
+      visitados.add(node.id)
+
       const hijos = childrenMap.get(node.id) ?? []
       const hojas: CuentaContable[] = []
       const subgrupos: GrupoConSubcuentas[] = []
@@ -239,14 +267,21 @@ export function useGruposGastoConSubcuentas() {
  * arbol devuelto por `useGruposGastoConSubcuentas`. Necesario porque los
  * selectores/filtros ("Por grupo") pueden apuntar a un subgrupo anidado
  * (ej. `6.1.25.01 COMISIONES DE PASARELAS DE PAGO`), no solo a un grupo raiz.
+ *
+ * `visitados` es un guard defensivo contra ciclos (ver nota en
+ * `useGruposGastoConSubcuentas`) — se completa automaticamente en la
+ * llamada externa, no hace falta pasarlo.
  */
 export function findGrupoGastoById(
   grupos: GrupoConSubcuentas[],
-  id: string
+  id: string,
+  visitados: Set<string> = new Set()
 ): GrupoConSubcuentas | undefined {
   for (const g of grupos) {
+    if (visitados.has(g.id)) continue
+    visitados.add(g.id)
     if (g.id === id) return g
-    const found = findGrupoGastoById(g.subgrupos, id)
+    const found = findGrupoGastoById(g.subgrupos, id, visitados)
     if (found) return found
   }
   return undefined
@@ -257,15 +292,21 @@ export function findGrupoGastoById(
  * en recorrido pre-orden (el grupo antes que sus subgrupos). Util para
  * selects/dropdowns que deben mostrar la jerarquia completa con sangria en
  * vez de solo los grupos raiz.
+ *
+ * `visitados` es un guard defensivo contra ciclos — se completa
+ * automaticamente en la llamada externa, no hace falta pasarlo.
  */
 export function flattenGruposGasto(
   grupos: GrupoConSubcuentas[],
-  depth = 0
+  depth = 0,
+  visitados: Set<string> = new Set()
 ): { grupo: GrupoConSubcuentas; depth: number }[] {
   const result: { grupo: GrupoConSubcuentas; depth: number }[] = []
   for (const g of grupos) {
+    if (visitados.has(g.id)) continue
+    visitados.add(g.id)
     result.push({ grupo: g, depth })
-    result.push(...flattenGruposGasto(g.subgrupos, depth + 1))
+    result.push(...flattenGruposGasto(g.subgrupos, depth + 1, visitados))
   }
   return result
 }
@@ -274,12 +315,20 @@ export function flattenGruposGasto(
  * Recolecta los ids de TODOS los grupos del arbol (raiz + anidados a
  * cualquier profundidad). Util para "expandir todo" / "colapsar todo" en
  * los 3 consumidores, que antes solo consideraban el nivel raiz.
+ *
+ * `visitados` es un guard defensivo contra ciclos — se completa
+ * automaticamente en la llamada externa, no hace falta pasarlo.
  */
-export function collectGrupoGastoIds(grupos: GrupoConSubcuentas[]): string[] {
+export function collectGrupoGastoIds(
+  grupos: GrupoConSubcuentas[],
+  visitados: Set<string> = new Set()
+): string[] {
   const ids: string[] = []
   for (const g of grupos) {
+    if (visitados.has(g.id)) continue
+    visitados.add(g.id)
     ids.push(g.id)
-    ids.push(...collectGrupoGastoIds(g.subgrupos))
+    ids.push(...collectGrupoGastoIds(g.subgrupos, visitados))
   }
   return ids
 }
@@ -463,8 +512,17 @@ export async function eliminarSubcuentaGasto(subcuentaId: string, empresaId: str
 }
 
 /**
- * Elimina un grupo GASTO completo (grupo + todas sus subcuentas).
+ * Elimina un grupo GASTO completo (grupo + sus subcuentas DIRECTAS).
  * Solo se permite si ninguna subcuenta tiene gastos registrados.
+ *
+ * IMPORTANTE: esta funcion NO borra recursivamente subgrupos anidados (solo
+ * filas con `parent_id = grupoId`). `CuentaGastoModal` protege esto en la UI
+ * — el boton de eliminar se deshabilita si el grupo tiene `subgrupos` (ver
+ * `GrupoConSubcuentas.subgrupos`) o si es una cuenta de sistema (ver
+ * `useSistemaCuentaIds`), para no dejar hojas huerfanas ni violar los
+ * `ON DELETE RESTRICT` de Postgres (`plan_cuentas.parent_id`,
+ * `cuentas_config.cuenta_contable_id`) al sincronizar. No llamar a esta
+ * funcion sobre un grupo con subgrupos sin repetir esa validacion.
  */
 export async function eliminarGrupoGastoCompleto(grupoId: string, empresaId: string): Promise<void> {
   await db.writeTransaction(async (tx) => {

@@ -21,12 +21,14 @@ import { toast } from 'sonner'
 import {
   useGruposGastoConSubcuentas,
   useCuentaIdsConGastos,
+  useSistemaCuentaIds,
   actualizarCuenta,
   crearGrupoGastoConSubcuentas,
   agregarSubcuentaAGrupo,
   eliminarSubcuentaGasto,
   eliminarGrupoGastoCompleto,
   collectGrupoGastoIds,
+  findGrupoGastoById,
   type CuentaContable,
   type GrupoConSubcuentas,
 } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -53,6 +55,10 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
   const { user } = useCurrentUser()
   const { grupos, isLoading } = useGruposGastoConSubcuentas()
   const cuentasConGastos = useCuentaIdsConGastos()
+  // Cuentas/grupos vinculados al sistema (ej. los grupos resolver
+  // GRUPO_COMISIONES_PASARELA/GRUPO_COMISIONES_BANCARIAS) — no se pueden
+  // eliminar, igual que en PlanCuentasList.
+  const sistemaCuentaIds = useSistemaCuentaIds()
 
   // ─── Colapsar/expandir ────────────────────────────────────
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set())
@@ -178,6 +184,17 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
 
   async function handleEliminarGrupo(grupoId: string) {
     if (!user?.empresa_id) return
+    // Defensa adicional: el boton ya se deshabilita en el render, pero se
+    // revalida aca por si se dispara desde otro camino (ej. teclado).
+    const grupo = findGrupoGastoById(grupos, grupoId)
+    if (grupo && (sistemaCuentaIds.has(grupo.id) || grupo.subgrupos.length > 0)) {
+      toast.error(
+        sistemaCuentaIds.has(grupo.id)
+          ? 'Cuenta del sistema, no se puede eliminar'
+          : 'No se puede eliminar: contiene subgrupos'
+      )
+      return
+    }
     setEliminandoId(grupoId)
     try {
       await eliminarGrupoGastoCompleto(grupoId, user.empresa_id)
@@ -370,6 +387,20 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
     const estaExpandido = expandidos.has(grupo.id)
     const paddingLeft = 12 + depth * 20
 
+    // Proteccion contra borrado inseguro: un grupo con subgrupos anidados
+    // (ej. 6.1.25 GASTOS DE VENTA, que contiene 6.1.25.01) solo se borra a
+    // si mismo y sus hojas DIRECTAS (eliminarGrupoGastoCompleto no es
+    // recursivo) — dejaria huerfano el subgrupo y violaria los
+    // ON DELETE RESTRICT de Postgres al sincronizar. Un grupo vinculado al
+    // sistema (cuentas_config, ej. los resolver de comision) tampoco puede
+    // eliminarse aunque no tenga subgrupos.
+    const esSistema = sistemaCuentaIds.has(grupo.id)
+    const tieneSubgrupos = grupo.subgrupos.length > 0
+    const noEliminable = esSistema || tieneSubgrupos
+    const tituloNoEliminable = esSistema
+      ? 'Cuenta del sistema, no se puede eliminar'
+      : 'No se puede eliminar: contiene subgrupos'
+
     return (
       <div
         key={grupo.id}
@@ -483,9 +514,18 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
               {!grupoTieneGastos && (
                 <button
                   type="button"
-                  onClick={() => { setConfirmandoEliminarId(grupo.id); setEditandoId(null) }}
-                  className="p-1 text-muted-foreground hover:text-destructive transition-colors"
-                  title="Eliminar grupo"
+                  onClick={() => {
+                    if (noEliminable) return
+                    setConfirmandoEliminarId(grupo.id)
+                    setEditandoId(null)
+                  }}
+                  disabled={noEliminable}
+                  title={noEliminable ? tituloNoEliminable : 'Eliminar grupo'}
+                  className={`p-1 transition-colors disabled:cursor-not-allowed ${
+                    noEliminable
+                      ? 'text-muted-foreground/30'
+                      : 'text-muted-foreground hover:text-destructive'
+                  }`}
                 >
                   <Trash className="h-3.5 w-3.5" />
                 </button>
