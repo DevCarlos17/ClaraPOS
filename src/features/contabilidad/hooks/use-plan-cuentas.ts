@@ -517,9 +517,9 @@ export async function crearGrupoGastoConSubcuentas(params: {
  * Retorna el `id` de la subcuenta creada (PR-3c.1: antes `Promise<void>`) —
  * evita que el caller re-consulte por `parent_id+nombre` para obtener el id
  * (necesario para que `DeduccionesEditor` pueda setear `cuenta_gasto_id` de
- * inmediato tras crear la cuenta inline). El unico consumidor previo
- * (`cuenta-gasto-modal.tsx`) ignora el valor de retorno — sigue compilando
- * sin cambios.
+ * inmediato tras crear la cuenta inline). Los 2 consumidores previos
+ * (`cuenta-gasto-modal.tsx` y `banco-form.tsx`) ignoran el valor de retorno —
+ * siguen compilando sin cambios.
  */
 export async function agregarSubcuentaAGrupo(params: {
   grupoId: string

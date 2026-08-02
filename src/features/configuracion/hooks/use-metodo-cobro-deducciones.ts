@@ -200,11 +200,22 @@ export async function updateDeduccion(
  * - Cualquier fila que YA EXISTIA en la DB para este metodo pero no viene en
  *   `rows` (removida por completo del array local, no solo desactivada) se
  *   soft-desactiva (`is_active = 0`) — nunca DELETE fisico (SC-11).
+ * - Aislamiento multi-tenant (CLAUDE.md regla #11): ambos UPDATE filtran por
+ *   `empresa_id` y `metodo_cobro_id` ademas de `id` — RLS de Supabase NO
+ *   filtra por empresa_id, el filtro de query en frontend es la UNICA
+ *   barrera de aislamiento, y `row.id` llega desde props de estado cliente.
+ * - Centinela "nunca huerfano" (SC-08/SC-30, obs Engram #792): si
+ *   `row.cuenta_gasto_id` viene vacio (sentinel del selector de
+ *   `DeduccionesEditor` = "usar cuenta base de pasarela"), se resuelve aca
+ *   con `cuentaBasePasarelaId` ANTES de escribir INSERT/UPDATE. Si tras
+ *   resolver sigue vacio, se lanza un error — un centinela sin resolver
+ *   jamas debe llegar a la DB en silencio.
  */
 export async function persistDeduccionesDeMetodo(params: {
   metodoCobroId: string
   empresaId: string
   usuarioId: string
+  cuentaBasePasarelaId?: string
   rows: {
     id?: string
     concepto: string
@@ -232,22 +243,31 @@ export async function persistDeduccionesDeMetodo(params: {
 
     for (const [i, row] of params.rows.entries()) {
       const porcentajeStorage = new Decimal(row.porcentaje || '0').toFixed(2)
+      const cuentaGastoId = row.cuenta_gasto_id || params.cuentaBasePasarelaId || ''
+
+      if (!cuentaGastoId) {
+        throw new Error(
+          'No se puede persistir una deduccion sin cuenta de gasto (invariante nunca-huerfano)'
+        )
+      }
 
       if (row.id) {
         keptIds.add(row.id)
         await tx.execute(
           `UPDATE metodo_cobro_deducciones
            SET concepto = ?, tipo = ?, porcentaje = ?, cuenta_gasto_id = ?, orden = ?, is_active = ?, updated_at = ?
-           WHERE id = ?`,
+           WHERE id = ? AND empresa_id = ? AND metodo_cobro_id = ?`,
           [
             row.concepto,
             row.tipo,
             porcentajeStorage,
-            row.cuenta_gasto_id,
+            cuentaGastoId,
             i,
             row.is_active ? 1 : 0,
             now,
             row.id,
+            params.empresaId,
+            params.metodoCobroId,
           ]
         )
       } else {
@@ -261,7 +281,7 @@ export async function persistDeduccionesDeMetodo(params: {
             id,
             params.empresaId,
             params.metodoCobroId,
-            row.cuenta_gasto_id,
+            cuentaGastoId,
             row.concepto,
             row.tipo,
             porcentajeStorage,
@@ -278,8 +298,9 @@ export async function persistDeduccionesDeMetodo(params: {
     for (const existingId of existingIds) {
       if (!keptIds.has(existingId)) {
         await tx.execute(
-          `UPDATE metodo_cobro_deducciones SET is_active = 0, updated_at = ? WHERE id = ?`,
-          [now, existingId]
+          `UPDATE metodo_cobro_deducciones SET is_active = 0, updated_at = ?
+           WHERE id = ? AND empresa_id = ? AND metodo_cobro_id = ?`,
+          [now, existingId, params.empresaId, params.metodoCobroId]
         )
       }
     }
