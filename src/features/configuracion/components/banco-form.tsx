@@ -258,7 +258,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const [creandoCuenta, setCreandoCuenta] = useState(false)
 
   // Load existing methods when editing
-  const { data: existingMetodos, isLoading: metodosLoading } = useMetodosByBanco(banco?.id ?? '')
+  const {
+    data: existingMetodos,
+    isLoading: metodosLoading,
+    isFetching: metodosFetching,
+  } = useMetodosByBanco(banco?.id ?? '')
   // PR-3c.2: deducciones de TODOS los metodos existentes del banco, en una
   // sola query reactiva agrupada por metodo_cobro_id (useDeduccionesPorMetodos
   // ya memoiza internamente la clave de ids inestable).
@@ -343,6 +347,21 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   // reales". El efecto no debe sembrar `metodoDrafts` hasta que NINGUNA de
   // las dos queries (metodos, deducciones) este cargando o refrescando.
   //
+  // QA fix (obs Engram #844): el mismo problema existia TAMBIEN en
+  // `useMetodosByBanco` (`metodosLoading` de arriba), no solo en
+  // `useDeduccionesPorMetodos`. `editingBanco` (banco-list.tsx) pasa por
+  // `undefined` en CADA cierre de modal — incluido el auto-close tras
+  // guardar — asi que `bancoId` de `useMetodosByBanco` cicla `'' → id-real`
+  // en cada ciclo cerrar→reabrir. En el render intermedio de ese ciclo,
+  // `metodosLoading` podia leer `false` (heredado de una resolucion
+  // anterior de la MISMA instancia de WatchedQuery reutilizada) mientras
+  // `existingMetodos` todavia tenia datos STALE — el guard original (solo
+  // `metodosLoading`) no lo detectaba, y una deduccion recien guardada NO
+  // aparecia al reabrir el modal (perdida de LECTURA, no de escritura). Se
+  // agrega `metodosFetching` (expuesto ahora en `use-bancos.ts`, mismo
+  // patron que `deduccionesFetching`) al guard, cerrando tambien esta
+  // ventana de carrera.
+  //
   // El guard `userEdited` (ya establecido, seteado por CUALQUIER cambio
   // local — incluidos los de DeduccionesEditor via handleUpdateDraft) sigue
   // siendo lo que evita que un re-sync reactivo posterior (ej. otro tab de
@@ -350,7 +369,15 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   // locales sin guardar: una vez que el usuario toca cualquier campo, el
   // efecto retorna temprano y nunca vuelve a sobreescribir `metodoDrafts`.
   useEffect(() => {
-    if (!isOpen || userEdited || metodosLoading || deduccionesLoading || deduccionesFetching) return
+    if (
+      !isOpen ||
+      userEdited ||
+      metodosLoading ||
+      metodosFetching ||
+      deduccionesLoading ||
+      deduccionesFetching
+    )
+      return
     setMetodoDrafts(
       (existingMetodos ?? []).map((m) => {
         const deduccionesExistentes = (deduccionesPorMetodo.get(m.id) ?? []).map((d) => ({
@@ -361,37 +388,18 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           cuenta_gasto_id: d.cuenta_gasto_id,
           is_active: d.is_active === 1,
         }))
-        // QA fix: un metodo existente sin filas guardadas en
-        // metodo_cobro_deducciones mostraba "Sin deducciones configuradas"
-        // aunque el banco YA tiene una cuenta base de pasarela resuelta.
-        // Mismo shape/criterio que Fix W2a (payment-method-form.tsx:120-128)
-        // — se siembra 1 fila con la cuenta REAL (no el sentinel ''), asi
-        // el usuario ve de entrada la comision base que se va a aplicar. Si
-        // el banco no tiene cuenta pasarela aun, se deja vacio (sin cambio
-        // de comportamiento — el sentinel '' se resuelve/valida al guardar).
-        if (deduccionesExistentes.length === 0 && cuentaGastoPasarelaId) {
-          return {
-            _key: m.id,
-            id: m.id,
-            nombre: m.nombre,
-            tipo: m.tipo,
-            deposito_directo: m.deposito_directo === 1,
-            usa_pos: m.usa_pos === 1,
-            usa_cxc: m.usa_cxc === 1,
-            usa_cxp: m.usa_cxp === 1,
-            is_active: m.is_active === 1,
-            consolidar_lotes: m.consolidar_lotes !== 0,
-            deducciones: [
-              {
-                concepto: 'Comision bancaria',
-                tipo: 'COMISION' as TipoDeduccion,
-                porcentaje: '0',
-                cuenta_gasto_id: cuentaGastoPasarelaId,
-                is_active: true,
-              },
-            ],
-          }
-        }
+        // Un metodo existente sin filas guardadas en
+        // metodo_cobro_deducciones muestra "Sin deducciones configuradas"
+        // (decision de usuario, revertido el seed de base row de 399a1bf —
+        // ver obs Engram #844): NUNCA se inventa/siembra una fila creible
+        // para un metodo existente que no la tiene, porque en esa misma
+        // ventana de carrera stale la fila sembrada era indistinguible de
+        // un dato real — si el usuario la editaba, `userEdited` congelaba
+        // el snapshot stale y el guardado soft-desactivaba la deduccion
+        // real existente e insertaba una duplicada (perdida de ESCRITURA
+        // silenciosa). El sentinel '' para metodos NUEVOS agregados por el
+        // usuario (`handleAgregarMetodo`, mas abajo) es un caso distinto y
+        // se mantiene intacto.
         return {
           _key: m.id,
           id: m.id,
@@ -411,11 +419,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     isOpen,
     existingMetodos,
     metodosLoading,
+    metodosFetching,
     deduccionesLoading,
     deduccionesFetching,
     userEdited,
     deduccionesPorMetodo,
-    cuentaGastoPasarelaId,
   ])
 
   // Reset on close
