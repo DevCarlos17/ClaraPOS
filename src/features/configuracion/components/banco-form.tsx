@@ -54,6 +54,14 @@ interface MetodoDraft {
   // `comision_pct` sigue existiendo como columna en metodos_cobro (deprecada,
   // PR-4 lee metodo_cobro_deducciones) — se envia siempre '0' al guardar.
   deducciones: DeduccionRow[]
+  // Dirty tracking por metodo (QA fix, obs Engram #844 "comision fantasma"):
+  // el efecto de sync reactivo (mas abajo) NUNCA setea este flag — solo lo
+  // setean los handlers de edicion explicita del usuario
+  // (handleUpdateDraft/handleAgregarMetodo). El loop de guardado usa este
+  // flag para saltar metodos EXISTENTES que el usuario no toco, evitando
+  // reescribir (y soft-desactivar) sus deducciones reales con un draft
+  // potencialmente stale. Opcional/undefined = limpio (equivalente a false).
+  _dirty?: boolean
 }
 
 const TIPOS_METODO_BANCO = [
@@ -453,13 +461,17 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         deducciones: [
           { concepto: 'Comision bancaria', tipo: 'COMISION', porcentaje: '0', cuenta_gasto_id: '', is_active: true },
         ],
+        // Metodo nuevo agregado explicitamente por el usuario — siempre
+        // dirty (aunque el loop de guardado ya lo enruta por la rama
+        // "crear" via `!draft.id`, marcarlo mantiene el flag consistente).
+        _dirty: true,
       },
     ])
   }
 
   function handleUpdateDraft(idx: number, updated: MetodoDraft) {
     setUserEdited(true)
-    setMetodoDrafts((prev) => prev.map((d, i) => (i === idx ? updated : d)))
+    setMetodoDrafts((prev) => prev.map((d, i) => (i === idx ? { ...updated, _dirty: true } : d)))
   }
 
   function handleRemoveDraft(idx: number) {
@@ -841,6 +853,19 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       // Save method drafts
       for (const draft of metodoDrafts) {
         if (draft.id) {
+          // QA fix (obs Engram #844 "comision fantasma"): antes este loop
+          // persistia TODOS los metodos existentes en cada submit, incluidos
+          // los que el usuario nunca toco — persistDeduccionesDeMetodo
+          // reescribia (soft-desactivaba) sus deducciones reales contra el
+          // draft sembrado por el efecto de sync, que puede quedar stale si
+          // otro proceso/tab cambio esos datos entre la carga y el guardado.
+          // Ahora solo se persiste un metodo EXISTENTE si el usuario lo edito
+          // explicitamente (`_dirty`, seteado unicamente por
+          // handleUpdateDraft). El efecto de sync reactivo nunca marca
+          // `_dirty`, asi que un metodo no tocado llega limpio y se saltea
+          // por completo — cero escrituras a la DB para el.
+          if (!draft._dirty) continue
+
           // Update existing method
           await updatePaymentMethod(draft.id, {
             nombre: draft.nombre,
