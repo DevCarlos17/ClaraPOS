@@ -3,7 +3,9 @@
 
 > Change: `gastos-registro-qol` | Implementa capacidades `gastos-comisiones-bancarias-seed`, `metodo-cobro-deducciones` | Modifica `caja`, `configuracion` (bancos)
 
-> **PR-2b (2026-07-30)**: Supera el diseño plano `6.2.05 COMISIONES BANCARIAS` de PR-2 (`16a0e3e`). Ver obs Engram `#706` (diseño final), `#703` (rewrite opción C permitido, gastos en desarrollo), `#705` (zonas prohibidas). Secciones marcadas `(PR-2b)` reemplazan el contenido anterior; el resto del documento (metodo_cobro_deducciones DDL, script de limpieza, PR-3/PR-4) sigue vigente sin cambios.
+> **PR-2b (2026-07-30, mergeado `159cb88`)**: Supera el diseño plano `6.2.05 COMISIONES BANCARIAS` de PR-2 (`16a0e3e`). Ver obs Engram `#706` (diseño final), `#703` (rewrite opción C permitido, gastos en desarrollo), `#705` (zonas prohibidas). Secciones marcadas `(PR-2b)` reemplazan el contenido anterior.
+>
+> **PR-3 (2026-07-31, corregido 2026-08-02)**: Ver sección dedicada "PR-3 — Deducciones N-conceptos en `payment-method-form.tsx`" más abajo. Reemplaza el entendimiento original de "cuenta especial por `tipo`" (tasks.md 4.3 viejo) por la regla unificada confirmada en obs Engram `#753` (revisión final: SIN defaults por `tipo`, un único slot base). El resto del documento (metodo_cobro_deducciones DDL, script de limpieza, PR-4) sigue vigente sin cambios.
 
 ## Technical Approach
 
@@ -139,9 +141,107 @@ cuenta_gasto_pasarela_id?: string | null
 
 Rollback: 0081 es mayormente aditiva; el único paso destructivo es desactivar `6.2.05` (paso 7) — reversible con `UPDATE ... SET is_active=TRUE` manual si algo sale mal, ya que no hay DELETE. PR-2b frontend es `git revert`.
 
+## PR-3 — Deducciones N-conceptos en `payment-method-form.tsx` (Slice 3, actualizado 2026-07-31)
+
+> Diseñado originalmente ANTES de PR-2b (asumía cuenta especial por `tipo`, ej. ISLR en tarjeta de crédito). El usuario aclaró y UNIFICÓ la regla (obs Engram `#753`) y confirmó el propósito real del feature. En su revisión final, `#753` fue MÁS ALLÁ de la unificación de cuenta: eliminó también los conteos de slots por `tipo` (ej. "PUNTO → 2 slots") — el default es SIEMPRE 1 slot de comisión base, sin importar el `tipo` del método. Esta sección REEMPLAZA por completo el entendimiento de `tasks.md` 4.3 / `spec.md` SC-07/SC-08 (ya corregidos por `sdd-spec`, ver spec.md). **PR-2b ya mergeado** (`159cb88`) — la precondición que esta sección asume (`bancos_empresa.cuenta_gasto_pasarela_id` siempre no-null cuando hay banco) está satisfecha.
+
+### Decisión: Regla unificada de cuenta default (opción A)
+
+| Elección | Alternativas | Racional |
+|---|---|---|
+| TODO concepto de deducción (1º o N-ésimo, en creación o agregado después) nace con `cuenta_gasto_id` PRE-SELECCIONADA = `bancos_empresa.cuenta_gasto_pasarela_id` del banco del método, mostrada en el select y editable por el usuario | Cuenta especial por `tipo` (ej. ISLR siempre a una cuenta ISLR distinta, tasks.md 4.3 original) | El "ISLR 5%" del tasks.md 4.3 original era solo un EJEMPLO ilustrativo de "2º concepto con otra cuenta", NO una regla de negocio (obs #753). Unificar evita 2 caminos de código (default especial vs. genérico) y elimina el riesgo de concepto huérfano — un usuario avanzado sigue pudiendo re-apuntar manualmente cualquier fila a una cuenta de gasto separada |
+| Cantidad de slots default = SIEMPRE 1 (comisión, `porcentaje=0`), sin importar `tipo` del método | Conteos variables por `tipo` (`PUNTO` → 2, transferencia/otros → 1, tarjeta de crédito → 1 ISLR) | Revisión final de obs #753: los conteos por `tipo` eran conveniencia de UX especulativa, no un requisito confirmado. El usuario prefiere UN solo default simple y agregar manualmente lo que necesite (ej. un 2º slot si separa débito/crédito en el mismo método, o ISLR si aplica) — menos lógica condicional, menos superficie de bugs |
+
+**Propósito real (nota de trazabilidad para PR-4)**: esto NO es contabilidad de partida doble real — EMULA el cálculo del banco. El banco cobra Bs X al cliente pero deposita X menos sus comisiones; ClaraPOS replica ese descuento para comparar saldo-banco vs. saldo-tesorería. Por eso TODAS las deducciones activas de un método DEBEN fluir al pase de tesorería en el cierre. Esto no cambia el diseño de PR-4 ya vigente (`aplicarComisionSiCorresponde` iterando `metodo_cobro_deducciones WHERE is_active=1 ORDER BY orden`, Migration/Rollout arriba) — solo confirma que ninguna deducción activa puede quedar fuera del loop.
+
+### `createPaymentMethod` — default-seeding (contrato PR-2b→PR-3 cumplido)
+
+Confirmado por lectura de código: `createPaymentMethod` (`use-payment-methods.ts:110-176`) HOY solo inserta en `metodos_cobro`, dentro de un único `db.writeTransaction`. NO toca `metodo_cobro_deducciones`. PR-3 lo extiende:
+
+```ts
+// use-payment-methods.ts — nuevo param, misma writeTransaction existente
+export async function createPaymentMethod(params: {
+  // ...params existentes sin cambios
+  deducciones?: {
+    concepto: string
+    tipo: 'COMISION' | 'ISLR' | 'OTRO'
+    porcentaje: string        // Decimal string, igual patrón que comision_pct
+    cuenta_gasto_id: string
+  }[]
+}) {
+  await db.writeTransaction(async (tx) => {
+    // ... INSERT INTO metodos_cobro (sin cambios)
+    for (const [i, d] of (params.deducciones ?? []).entries()) {
+      await tx.execute(
+        `INSERT INTO metodo_cobro_deducciones
+           (id, empresa_id, metodo_cobro_id, cuenta_gasto_id, concepto, tipo, porcentaje, orden, is_active, created_at, updated_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+        [uuidv4(), params.empresa_id, id, d.cuenta_gasto_id, d.concepto, d.tipo,
+         new Decimal(d.porcentaje || '0').toFixed(2), i, now, now, params.usuario_id]
+      )
+    }
+  })
+}
+```
+
+- **Un solo `writeTransaction`** (el que ya existe) — el método y sus filas de deducción se crean o fallan juntos. Ningún `metodo_cobro_deducciones` puede existir sin su `metodos_cobro` padre.
+- `createPaymentMethod` **NO resuelve** `cuenta_gasto_pasarela_id` por su cuenta — el **caller** (`payment-method-form.tsx`, que ya carga `useBancosActivos()`) arma el array `deducciones` con la cuenta base del banco seleccionado y lo pasa. Mantiene la función pura y evita una 2ª fuente de verdad para "cuál es la cuenta default".
+- Método sin `banco_empresa_id` (EFECTIVO, o cualquier tipo sin banco seleccionado): el form nunca arma `deducciones` — sin sección de deducciones bancarias (SC-09).
+
+### Default único de comisión (SIN defaults por tipo — cuenta siempre = base pasarela)
+
+`TIPOS_METODO` real en el código (`use-payment-methods.ts:34-42`) es `EFECTIVO | TRANSFERENCIA | PUNTO | PAGO_MOVIL | ZELLE | DIVISA_DIGITAL | OTRO` — el CHECK de la tabla `metodos_cobro` (`0005_caja_tesoreria.sql:41`) coincide exactamente. **No existe `tipo='TARJETA_CREDITO'`** en el schema. Débito y crédito son ambos `tipo='PUNTO'` (se diferencian por `nombre`, ej. "Tarjeta Débito Banesco" vs. "Tarjeta Crédito Banesco" — confirma el ejemplo de obs #753). Esto ya está corregido en `spec.md` SC-07/SC-08 por `sdd-spec` (ver header de este documento).
+
+| `banco_empresa_id` asociado | Slots default | `porcentaje` sugerido | Cuenta (el slot) |
+|---|---|---|---|
+| Sí (cualquier `tipo` — `PUNTO`, `TRANSFERENCIA`, `PAGO_MOVIL`, `ZELLE`, `DIVISA_DIGITAL`, `OTRO`) | 1 (`tipo='COMISION'`) | `0` | pasarela base |
+| No (`EFECTIVO` o sin banco elegido) | 0 (sin sección) | — | — |
+
+Sin excepciones por `tipo`: NO hay conteo especial de 2 slots para `PUNTO` ni un slot `ISLR` para tarjeta de crédito (ambos existían en el diseño previo a la revisión final de obs #753 y quedan eliminados). Si el usuario necesita separar débito/crédito, retención ISLR, u otro concepto, los agrega manualmente desde el slot base — cada concepto nuevo también nace apuntando a la pasarela base (re-apuntable).
+
+### Schema Zod (`payment-method-schema.ts`)
+
+```ts
+export const metodoCobroDeduccionSchema = z.object({
+  id: z.string().uuid().optional(),      // undefined = fila nueva, no persistida aun
+  concepto: z.string().min(1, 'Requerido'),
+  tipo: z.enum(['COMISION', 'ISLR', 'OTRO']),
+  porcentaje: z.string().refine(
+    (v) => { const n = Number(v); return !isNaN(n) && n >= 0 && n <= 100 },
+    'Debe estar entre 0 y 100'
+  ),
+  cuenta_gasto_id: z.string().uuid('Seleccione una cuenta'),
+  is_active: z.boolean().default(true),
+})
+
+// paymentMethodSchema agrega:
+deducciones: z.array(metodoCobroDeduccionSchema).default([]),
+```
+
+### Flujos UI (`payment-method-form.tsx`)
+
+| Flujo | Comportamiento |
+|---|---|
+| **Crear**, banco seleccionado | Al elegir banco, precarga 1 slot (tabla arriba) con `cuenta_gasto_id = banco.cuenta_gasto_pasarela_id` (de `useBancosActivos()`), editable antes de guardar |
+| **Agregar concepto** (crear o editar) | Botón "+ Agregar deducción" añade fila con `cuenta_gasto_id` default = pasarela base del banco actual, `tipo='COMISION'`, `porcentaje='0'`, reutilizando el mismo `NativeSelect` filtrado por `useCuentasDetallePorTipo('GASTO')` que ya usa `banco-form.tsx` |
+| **Editar existente** | Nuevo hook `use-metodo-cobro-deducciones.ts`: `useDeduccionesDeMetodo(metodoCobroId)` — `SELECT * FROM metodo_cobro_deducciones WHERE metodo_cobro_id=? AND empresa_id=? ORDER BY orden`; `updateDeduccion(id, data)` vía `db.execute` (mismo patrón no-transaccional que `updatePaymentMethod`, fila suelta no ledger) |
+| **Desactivar** | Toggle por fila → `updateDeduccion(id, { is_active: false })`. Nunca DELETE físico (SC-11) — sin botón de borrado en la UI |
+| **Multi-tenant** | Todo `SELECT`/`INSERT`/`UPDATE` de `metodo_cobro_deducciones` filtra por `empresa_id` de `useCurrentUser()`, igual patrón que el resto del proyecto (SC-12) |
+
+### File Changes (PR-3)
+
+| Archivo | Acción | Descripción |
+|---|---|---|
+| `src/features/configuracion/schemas/payment-method-schema.ts` | Modify | Agrega `metodoCobroDeduccionSchema` + campo `deducciones` |
+| `src/features/configuracion/hooks/use-payment-methods.ts` | Modify | `createPaymentMethod` acepta `deducciones[]`, inserta en la misma `writeTransaction` |
+| `src/features/configuracion/hooks/use-metodo-cobro-deducciones.ts` | Create | `useDeduccionesDeMetodo`, `createDeduccion` (agregar concepto a método ya existente), `updateDeduccion` |
+| `src/features/configuracion/components/payment-method-form.tsx` | Modify | UI de N filas: precarga 1 slot default (comisión, base pasarela), agregar/editar/desactivar, oculta sección si no hay banco |
+
 ## Open Questions
 
 - [x] Códigos exactos → `6.1.25`/`6.1.25.01` y `6.2.06`/`6.2.06.01` — resuelto arriba.
 - [x] Mecanismo de resolución de grupos-padre → `cuentas_config`, no código hardcoded — resuelto arriba.
-- [ ] **`useGruposGastoConSubcuentas`** (usado en `gastos-dashboard.tsx`, `gasto-list.tsx`, `cuenta-gasto-modal.tsx`) asume 2 niveles planos (grupo es_cuenta_detalle=0 → subcuentas es_cuenta_detalle=1 directas). Con la nueva jerarquía de 4 niveles, las leaves reales (`6.1.25.01.NN`/`6.2.06.01.NN`) NO aparecerán como subcuentas de `6.1.25`/`6.2.06` (sus hijos directos son grupos, no leaves) — quedan invisibles en los selectores de gasto manual. **Necesita decisión del usuario**: ¿extender el hook a recursión N-niveles ahora (dentro de PR-2b, ampliaría el scope guard sobre esos 3 componentes) o diferir a un PR aparte? No bloqueante para las 3 cuentas auto-creadas por banco (que no pasan por este hook), pero SÍ afecta el registro manual de gastos contra esas cuentas.
+- [x] Regla de cuenta default por `tipo` en deducciones de PR-3 → UNIFICADA a opción A (siempre pasarela base, editable), obs #753 — resuelto arriba.
+- [x] `spec.md` SC-07/SC-08 referenciaban `tipo='TARJETA_CREDITO'`, valor inexistente en el CHECK de `metodos_cobro` — corregido por `sdd-spec` (2026-08-02): SC-07 ahora describe el default único de comisión para cualquier método bancario; SC-08 ahora cubre el invariante "nunca huérfano". `tasks.md` 4.3/4.9 y `proposal.md` (referencias a slots por tipo) quedan pendientes de una pasada de `sdd-tasks` para alinearse — no bloqueante para este documento.
+- [ ] **`useGruposGastoConSubcuentas`** (usado en `gastos-dashboard.tsx`, `gasto-list.tsx`, `cuenta-gasto-modal.tsx`) asume 2 niveles planos (grupo es_cuenta_detalle=0 → subcuentas es_cuenta_detalle=1 directas). Con la nueva jerarquía de 4 niveles, las leaves reales (`6.1.25.01.NN`/`6.2.06.01.NN`) NO aparecerán como subcuentas de `6.1.25`/`6.2.06` (sus hijos directos son grupos, no leaves) — quedan invisibles en los selectores de gasto manual. **Necesita decisión del usuario**: ¿extender el hook a recursión N-niveles ahora (dentro de PR-2b, ampliaría el scope guard sobre esos 3 componentes) o diferir a un PR aparte? No bloqueante para las 3 cuentas auto-creadas por banco (que no pasan por este hook), pero SÍ afecta el registro manual de gastos contra esas cuentas. **Nota**: PR-2b ya mergeado (`159cb88`) — confirmar si esto quedó resuelto en 3b.2.4 (`useGruposGastoConSubcuentas` reescrito con mapa `Map<parent_id, hojas[]>`) o sigue abierto.
 - [ ] Riesgo de cuentas huérfanas en `crearCuentasDelBanco` si `createBanco` falla después de crear las leaves — preexistente de PR-2, sin mitigación nueva, solo anotado.

@@ -166,22 +166,52 @@ Chain strategy: feature-branch-chain
 
 ---
 
-## Phase 4: PR-3 — `payment-method-form.tsx` N-deducciones (Slice 3)
+## Review Workload Forecast — PR-3 (corrected 2026-08-02, supersede embedded PR-3 estimate in top table)
 
-> Depende de PR-1a mergeado (requiere tabla `metodo_cobro_deducciones`) Y de Phase 3b/PR-2b mergeado (requiere `bancos_empresa.cuenta_gasto_pasarela_id` garantizado no-null, contrato PR-2b→PR-3).
+> Spec/design corregidos (obs Engram `#753`): sin `TARJETA_CREDITO`, sin defaults por `tipo`, un único slot base. Estimación original de la tabla superior (línea 9, "~150-250") no contaba el hook nuevo `use-metodo-cobro-deducciones.ts` exigido por design.md — corregida abajo.
 
-- [ ] 4.1 `src/features/configuracion/schemas/payment-method-schema.ts` — Agregar schema Zod para array de deducciones: `{ concepto: z.string().min(1), porcentaje: z.number().min(0).max(100), cuenta_gasto_id: z.string().uuid(), tipo: z.enum(['COMISION','ISLR','OTRO']) }[]`.
-- [ ] 4.2 `src/features/configuracion/components/payment-method-form.tsx` — UI de N filas de deducción (agregar/editar/desactivar), reusando patrón de formularios array existentes en el proyecto.
-- [ ] 4.3 Mismo archivo — Defaults al crear según `tipo`: `PUNTO` → 2 slots `porcentaje=0`; transferencia/otros bancarios → 1 slot `porcentaje=0`; `TARJETA_CREDITO` → 1 slot `tipo='ISLR'`, `porcentaje=5`. Todos editables antes/después de guardar. Satisface SC-07, SC-08.
-- [ ] 4.4 Mismo archivo — Si el método no tiene `banco_empresa_id` (ej. EFECTIVO), no ofrecer la sección de deducciones bancarias. Satisface SC-09.
-- [ ] 4.5 Mismo archivo — Acción "desactivar" concepto ejecuta `UPDATE ... SET is_active=0` (soft-deactivate); NO ofrecer ni ejecutar DELETE físico de filas de `metodo_cobro_deducciones`. Satisface SC-11.
-- [ ] 4.6 Confirmar que toda query/insert de deducciones filtra por `empresa_id` del usuario actual (multi-tenant). Satisface SC-12.
-- [ ] 4.7 Verify: `yarn type-check && yarn lint` limpio en `payment-method-schema.ts` y `payment-method-form.tsx`.
-- [ ] 4.8 Manual QA — SC-07: crear método `PUNTO` → 2 filas con `porcentaje=0`.
-- [ ] 4.9 Manual QA — SC-08: crear tarjeta de crédito → 1 fila `tipo='ISLR'`, `porcentaje=5` precargada.
-- [ ] 4.10 Manual QA — SC-09: método EFECTIVO no ofrece agregar deducciones bancarias.
-- [ ] 4.11 Manual QA — SC-11: desactivar una deducción → `is_active=0`, deja de aplicarse en cierres futuros pero sigue en la tabla.
-- [ ] 4.12 Manual QA — SC-12: usuario de Empresa A solo ve deducciones de sus propios métodos, nunca las de Empresa B.
+| Field | Value |
+|-------|-------|
+| Estimated changed lines | `payment-method-schema.ts` ~18-25 (agrega `metodoCobroDeduccionSchema` + campo `deducciones`) · `use-payment-methods.ts` ~25-35 (modifica `createPaymentMethod`, mismo `writeTransaction`) · `use-metodo-cobro-deducciones.ts` (NUEVO) ~70-100 (hook query + `createDeduccion` + `updateDeduccion`, referencia de tamaño: `use-bancos.ts` = 216 líneas con alcance similar) · `payment-method-form.tsx` ~150-220 (UI de N filas: state array, precarga de slot, agregar/desactivar, selects de cuenta condicionales — el proyecto NO usa `useFieldArray`, patrón existente es `useState` plano, confirmado en el archivo actual) · **Total ~265-380** |
+| 400-line budget risk | Medium-High — el rango superior (~380) queda peligrosamente cerca del presupuesto de 400 líneas si la UI de N-filas termina más compleja de lo estimado (selects por fila + validación por fila + botones agregar/desactivar) |
+| Chained PRs recommended | Yes (precautorio, mismo patrón de sub-slicing ya usado en Phase 3b para PR-2b) |
+| Suggested split | PR-3a (`payment-method-schema.ts` + `use-payment-methods.ts` + `use-metodo-cobro-deducciones.ts` — backend/hooks, ~115-160 líneas) → PR-3b (`payment-method-form.tsx` — UI completa, ~150-220 líneas), ambas bajo el tracker `feat/gastos-registro-qol` (feature-branch-chain) |
+| Delivery strategy | ask-on-risk (recibido de sesión) |
+| Chain strategy | feature-branch-chain (recibido de sesión, tracker `feat/gastos-registro-qol`, PR-2b ya mergeado `159cb88`) |
+
+Decision needed before apply: Yes
+Chained PRs recommended: Yes
+Chain strategy: feature-branch-chain
+400-line budget risk: Medium-High
+
+### Suggested Work Units — PR-3
+
+| Unit | Goal | Likely PR | Base branch | Notes |
+|------|------|-----------|--------------|-------|
+| 4a | `payment-method-schema.ts` (Zod `metodoCobroDeduccionSchema`) + `use-payment-methods.ts` (`createPaymentMethod` acepta `deducciones[]`) + `use-metodo-cobro-deducciones.ts` (nuevo: `useDeduccionesDeMetodo`, `createDeduccion`, `updateDeduccion`) | PR-3a | `feat/gastos-registro-qol` (tracker) | Backend puro, sin UI — verificable con `yarn type-check` y pruebas manuales de INSERT/UPDATE directo |
+| 4b | `payment-method-form.tsx` — UI completa de N filas (precarga, agregar, editar, desactivar, ocultar sin banco) | PR-3b | rama de PR-3a | Depende de 4a mergeada (necesita el hook y el schema) |
+
+Si el diff real de la Fase 4 completa (4a+4b) se mantiene bajo ~350 líneas al implementar, `sdd-apply` puede proponer una única PR-3 y solo usar esta sub-división si el conteo real se acerca al límite.
+
+## Phase 4: PR-3 — `payment-method-form.tsx` N-deducciones (Slice 3, corregido 2026-08-02)
+
+> Depende de PR-1a mergeado (requiere tabla `metodo_cobro_deducciones`) Y de Phase 3b/PR-2b mergeado (requiere `bancos_empresa.cuenta_gasto_pasarela_id` garantizado no-null, contrato PR-2b→PR-3, `159cb88` ya mergeado). Regla ÚNICA (obs #753): sin defaults por `tipo` de método, un único slot base `COMISION` al crear cualquier método bancario.
+
+- [ ] 4.1 `src/features/configuracion/schemas/payment-method-schema.ts` — Agregar `metodoCobroDeduccionSchema = z.object({ id: z.string().uuid().optional(), concepto: z.string().min(1,'Requerido'), tipo: z.enum(['COMISION','ISLR','OTRO']), porcentaje: z.string().refine(v => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 100, 'Debe estar entre 0 y 100'), cuenta_gasto_id: z.string().uuid('Seleccione una cuenta'), is_active: z.boolean().default(true) })` y campo `deducciones: z.array(metodoCobroDeduccionSchema).default([])` en `paymentMethodSchema`.
+- [ ] 4.2 `src/features/configuracion/hooks/use-metodo-cobro-deducciones.ts` (nuevo archivo) — `useDeduccionesDeMetodo(metodoCobroId)`: `SELECT * FROM metodo_cobro_deducciones WHERE metodo_cobro_id=? AND empresa_id=? ORDER BY orden` (filtra por `empresa_id` de `useCurrentUser()`, SC-12); `createDeduccion(params)`: INSERT suelto (fila nueva agregada a un método ya existente, no dentro de la transacción de creación del método); `updateDeduccion(id, data)`: `UPDATE` vía `db.execute` (patrón no-transaccional, igual que `updatePaymentMethod`).
+- [ ] 4.3 `src/features/configuracion/hooks/use-payment-methods.ts` — Extender `createPaymentMethod` con param opcional `deducciones?: { concepto: string; tipo: 'COMISION'|'ISLR'|'OTRO'; porcentaje: string; cuenta_gasto_id: string }[]`; dentro del MISMO `db.writeTransaction` ya existente (líneas 131-173), tras el INSERT de `metodos_cobro`, iterar `deducciones` e `INSERT INTO metodo_cobro_deducciones (id, empresa_id, metodo_cobro_id, cuenta_gasto_id, concepto, tipo, porcentaje, orden, is_active, created_at, updated_at, created_by) VALUES (...)` por cada una (orden = índice del array). `createPaymentMethod` NO resuelve la cuenta pasarela por su cuenta — el caller arma el array. Satisface el default-seeding transaccional de SC-07/SC-08.
+- [ ] 4.4 `src/features/configuracion/components/payment-method-form.tsx` — Agregar state `deducciones: DeduccionRow[]`; al seleccionar un banco en modo creación (`bancoEmpresaId` cambia y hay banco con `cuenta_gasto_pasarela_id`), precargar automáticamente 1 fila: `{ concepto: 'Comision bancaria', tipo: 'COMISION', porcentaje: '0', cuenta_gasto_id: banco.cuenta_gasto_pasarela_id, is_active: true }` (sin excepciones por `tipo` de método — mismo comportamiento para `PUNTO`, `TRANSFERENCIA`, `PAGO_MOVIL`, etc.). Satisface SC-07.
+- [ ] 4.5 Mismo archivo — Botón "+ Agregar deducción": append de una fila nueva con `cuenta_gasto_id` default = la pasarela base del banco actualmente seleccionado, `tipo='COMISION'`, `porcentaje='0'`, re-apuntable vía `NativeSelect` filtrado por `useCuentasDetallePorTipo('GASTO')` (mismo hook que ya usa `banco-form.tsx`). Ningún concepto nace sin cuenta (SC-08).
+- [ ] 4.6 Mismo archivo — Modo edición (`method` presente): cargar filas existentes vía `useDeduccionesDeMetodo(method.id)` en vez de precarga; cambios de fila existente llaman `updateDeduccion(id, data)` al guardar (no van dentro del `writeTransaction` de creación, que solo aplica a método nuevo).
+- [ ] 4.7 Mismo archivo — Toggle "desactivar" por fila → `updateDeduccion(id, { is_active: false })`; sin botón de borrado físico en la UI (SC-11).
+- [ ] 4.8 Mismo archivo — Ocultar por completo la sección de deducciones cuando `!requiereBanco || !bancoEmpresaId` (método sin banco, ej. EFECTIVO). Satisface SC-09.
+- [ ] 4.9 Confirmar que `useDeduccionesDeMetodo`, `createDeduccion`, `updateDeduccion` y el INSERT dentro de `createPaymentMethod` filtran/asignan `empresa_id` del usuario actual (`useCurrentUser()`), nunca cruzando empresas. Satisface SC-12.
+- [ ] 4.10 Verify: `yarn type-check` limpio (0 errores NUEVOS respecto al baseline ~308 preexistentes de `*.test.ts`, ver 3b.1.10/3b.2.5/3b.3.10) en `payment-method-schema.ts`, `use-payment-methods.ts`, `use-metodo-cobro-deducciones.ts` y `payment-method-form.tsx`. `yarn lint` NO aplica (ESLint no instalado, roto en el proyecto — no es red de seguridad para esta fase).
+- [ ] 4.11 Manual QA — SC-07/SC-08: crear método bancario (cualquier `tipo`, ej. "Banesco TDD" `PUNTO`) → se precarga exactamente 1 fila `tipo='COMISION'`, `porcentaje=0`, `cuenta_gasto_id` = pasarela base del banco (nunca NULL/huérfana).
+- [ ] 4.12 Manual QA — Agregar un segundo concepto (ej. "Retencion ISLR" `tipo='ISLR'`, `porcentaje=5`) al mismo método → nace apuntando a la misma cuenta pasarela base por default, y el usuario puede re-apuntarlo manualmente a una cuenta de gasto separada sin afectar el slot `COMISION` original (reemplaza el escenario inválido de "TARJETA_CREDITO→ISLR" descartado por obs #753).
+- [ ] 4.13 Manual QA — SC-09: método EFECTIVO (sin banco) no muestra la sección de deducciones bancarias.
+- [ ] 4.14 Manual QA — SC-11: desactivar una deducción → `is_active=0`, deja de aplicarse en cierres futuros (Phase 5) pero sigue existiendo en la tabla, sin opción de borrado físico en la UI.
+- [ ] 4.15 Manual QA — SC-12: usuario de Empresa A solo ve deducciones de sus propios métodos vía `useDeduccionesDeMetodo`, nunca las de Empresa B.
 
 ## Phase 5: PR-4 — Cierre aplica N deducciones (Slice 4)
 
