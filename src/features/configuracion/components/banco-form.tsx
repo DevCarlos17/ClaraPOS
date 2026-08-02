@@ -262,9 +262,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   // PR-3c.2: deducciones de TODOS los metodos existentes del banco, en una
   // sola query reactiva agrupada por metodo_cobro_id (useDeduccionesPorMetodos
   // ya memoiza internamente la clave de ids inestable).
-  const { deduccionesPorMetodo } = useDeduccionesPorMetodos(
-    (existingMetodos ?? []).map((m) => m.id)
-  )
+  const {
+    deduccionesPorMetodo,
+    isLoading: deduccionesLoading,
+    isFetching: deduccionesFetching,
+  } = useDeduccionesPorMetodos((existingMetodos ?? []).map((m) => m.id))
 
   // Initialize form fields
   useEffect(() => {
@@ -311,19 +313,44 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   }, [isOpen, banco])
 
   // Sync drafts from PowerSync reactively — until the user makes a manual edit.
-  // FIX W3 (deferred from 3c.1): esta sincronizacion tambien adjunta las
-  // deducciones reactivas de `deduccionesPorMetodo` (useDeduccionesPorMetodos).
-  // Esa query puede resolver DESPUES del primer render (existingMetodos carga,
-  // luego deduccionesPorMetodo carga en un render posterior) — por eso esta al
-  // agregarla como dependencia el efecto se re-ejecuta cuando llegan los datos.
-  // El guard `userEdited` (ya establecido, seteado por CUALQUIER cambio local —
-  // incluidos los de DeduccionesEditor via handleUpdateDraft) es lo que evita
-  // que un re-sync reactivo posterior (ej. otro tab de la misma empresa
-  // guardando algo, sync de PowerSync) pise ediciones locales sin guardar: una
-  // vez que el usuario toca cualquier campo, el efecto retorna temprano y
-  // nunca vuelve a sobreescribir `metodoDrafts`.
+  // FIX W3 (deferred from 3c.1, re-fixed en review de 3c.2): esta
+  // sincronizacion tambien adjunta las deducciones reactivas de
+  // `deduccionesPorMetodo` (useDeduccionesPorMetodos). Esa query DEPENDE del
+  // resultado de `existingMetodos` (sus ids se derivan de el), asi que existe
+  // SIEMPRE un render donde `metodosLoading` ya es `false` pero los datos de
+  // deducciones para los ids REALES todavia no llegaron — un guard que solo
+  // chequeara `metodosLoading` dejaria pasar ese render y sembraria
+  // `metodoDrafts` con deducciones VACIAS para metodos que en realidad si
+  // las tienen. Si el usuario toca cualquier campo en esa ventana,
+  // `userEdited` se congela en true y el submit interpreta las deducciones
+  // ausentes como "removidas", soft-desactivando TODAS las deducciones
+  // reales del metodo (persistDeduccionesDeMetodo, perdida de datos
+  // silenciosa — hallazgo CRITICAL de review).
+  //
+  // Por eso el guard chequea `deduccionesLoading` Y `deduccionesFetching`
+  // (no alcanza con solo `isLoading`): en @powersync/react, `isLoading` es
+  // un flag de UNA SOLA VEZ que pasa a `false` la primera vez que la query
+  // resuelve y NUNCA vuelve a `true` cuando sus parametros cambian despues
+  // (ver comentario en use-metodo-cobro-deducciones.ts). Como los ids de
+  // esta query dependen de `existingMetodos`, su primera resolucion suele
+  // ocurrir con `ids=[]` (placeholder) ANTES de que `existingMetodos` cargue
+  // — en ese momento `deduccionesLoading` YA quedo permanentemente en
+  // `false`, aunque los datos reales aun no llegaron. `isFetching` SI se
+  // pone en `true` en el mismo render en que los ids cambian (mecanismo
+  // `shouldReportCurrentlyFetching` de @powersync/react) y vuelve a `false`
+  // solo cuando los datos nuevos ya estan disponibles — es la señal
+  // confiable de "esta query esta siendo re-consultada para los ids
+  // reales". El efecto no debe sembrar `metodoDrafts` hasta que NINGUNA de
+  // las dos queries (metodos, deducciones) este cargando o refrescando.
+  //
+  // El guard `userEdited` (ya establecido, seteado por CUALQUIER cambio
+  // local — incluidos los de DeduccionesEditor via handleUpdateDraft) sigue
+  // siendo lo que evita que un re-sync reactivo posterior (ej. otro tab de
+  // la misma empresa guardando algo, sync de PowerSync) pise ediciones
+  // locales sin guardar: una vez que el usuario toca cualquier campo, el
+  // efecto retorna temprano y nunca vuelve a sobreescribir `metodoDrafts`.
   useEffect(() => {
-    if (!isOpen || userEdited || metodosLoading) return
+    if (!isOpen || userEdited || metodosLoading || deduccionesLoading || deduccionesFetching) return
     setMetodoDrafts(
       (existingMetodos ?? []).map((m) => ({
         _key: m.id,
@@ -346,7 +373,15 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         })),
       }))
     )
-  }, [isOpen, existingMetodos, metodosLoading, userEdited, deduccionesPorMetodo])
+  }, [
+    isOpen,
+    existingMetodos,
+    metodosLoading,
+    deduccionesLoading,
+    deduccionesFetching,
+    userEdited,
+    deduccionesPorMetodo,
+  ])
 
   // Reset on close
   useEffect(() => {

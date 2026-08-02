@@ -39,6 +39,15 @@ interface DeduccionesEditorProps {
   onChange: (rows: DeduccionRow[]) => void
   /** bancos_empresa.cuenta_gasto_pasarela_id — solo informativo, indica que cuenta resuelve el sentinel '' */
   cuentaBasePasarelaId: string | undefined
+  /**
+   * Errores de Zod por fila, keyed como `deducciones.{index}.{campo}`
+   * (mismo formato que `issue.path.join('.')` de metodoCobroDeduccionSchema
+   * dentro de paymentMethodSchema). Opcional: el padre solo lo pasa si
+   * valida las filas via Zod (ej. `payment-method-form.tsx`) — hallazgo
+   * WARNING de review 3c.2, la extraccion de este componente elimino el
+   * display inline de estos errores que existia antes (obs Engram #642).
+   */
+  errors?: Record<string, string>
 }
 
 const TIPOS_DEDUCCION: { value: TipoDeduccion; label: string }[] = [
@@ -47,7 +56,7 @@ const TIPOS_DEDUCCION: { value: TipoDeduccion; label: string }[] = [
   { value: 'OTRO', label: 'Otro' },
 ]
 
-export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId }: DeduccionesEditorProps) {
+export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId, errors }: DeduccionesEditorProps) {
   const { user } = useCurrentUser()
   const { cuentas: cuentasGasto } = useCuentasDetallePorTipo('GASTO')
 
@@ -114,6 +123,9 @@ export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId }: Dedu
             }}
             userId={user?.id}
             empresaId={user?.empresa_id ?? undefined}
+            errorConcepto={errors?.[`deducciones.${i}.concepto`]}
+            errorPorcentaje={errors?.[`deducciones.${i}.porcentaje`]}
+            errorCuentaGastoId={errors?.[`deducciones.${i}.cuenta_gasto_id`]}
           />
         ))}
       </div>
@@ -137,6 +149,9 @@ interface DeduccionRowEditorProps {
   onCuentaCreada: (subId: string) => void
   userId: string | undefined
   empresaId: string | undefined
+  errorConcepto?: string
+  errorPorcentaje?: string
+  errorCuentaGastoId?: string
 }
 
 function DeduccionRowEditor({
@@ -149,6 +164,9 @@ function DeduccionRowEditor({
   onCuentaCreada,
   userId,
   empresaId,
+  errorConcepto,
+  errorPorcentaje,
+  errorCuentaGastoId,
 }: DeduccionRowEditorProps) {
   return (
     <div
@@ -164,8 +182,11 @@ function DeduccionRowEditor({
             value={row.concepto}
             onChange={(e) => onUpdate({ concepto: e.target.value })}
             disabled={!row.is_active}
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+            className={`w-full rounded-md border px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 ${
+              errorConcepto ? 'border-red-500' : 'border-gray-300'
+            }`}
           />
+          {errorConcepto && <p className="text-red-500 text-xs mt-1">{errorConcepto}</p>}
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Tipo</label>
@@ -194,8 +215,11 @@ function DeduccionRowEditor({
             value={row.porcentaje}
             onChange={(e) => onUpdate({ porcentaje: e.target.value })}
             disabled={!row.is_active}
-            className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
+            className={`w-full rounded-md border px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 ${
+              errorPorcentaje ? 'border-red-500' : 'border-gray-300'
+            }`}
           />
+          {errorPorcentaje && <p className="text-red-500 text-xs mt-1">{errorPorcentaje}</p>}
         </div>
         <div>
           <label className="block text-xs text-gray-600 mb-1">Cuenta de gasto</label>
@@ -222,6 +246,7 @@ function DeduccionRowEditor({
               + Crear cuenta
             </button>
           </div>
+          {errorCuentaGastoId && <p className="text-red-500 text-xs mt-1">{errorCuentaGastoId}</p>}
         </div>
       </div>
 

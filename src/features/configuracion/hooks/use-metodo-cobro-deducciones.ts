@@ -73,7 +73,7 @@ export function useDeduccionesPorMetodos(metodoCobroIds: string[]) {
     }
   }, [ids, empresaId])
 
-  const { data, isLoading } = useQuery(
+  const { data, isLoading, isFetching } = useQuery(
     `SELECT * FROM metodo_cobro_deducciones
      WHERE metodo_cobro_id IN (${placeholders}) AND empresa_id = ?
      ORDER BY orden ASC`,
@@ -90,7 +90,24 @@ export function useDeduccionesPorMetodos(metodoCobroIds: string[]) {
     return map
   }, [data])
 
-  return { deduccionesPorMetodo, isLoading }
+  // `isLoading` (de @powersync/react) es un flag de UNA SOLA VEZ: pasa a
+  // `false` la primera vez que la query resuelve y NUNCA vuelve a `true`,
+  // ni siquiera cuando `ids` (y por lo tanto los parametros de la query)
+  // cambian despues (ver AbstractQueryProcessor/OnChangeQueryProcessor —
+  // solo `isFetching` se resetea a `true` en cada re-link via
+  // `updateSettings`). Como `ids` aca depende de `metodoCobroIds`
+  // (parametro derivado de OTRA query en el caller), la primera resolucion
+  // de ESTA query suele ocurrir con `ids=[]` (placeholder) ANTES de que el
+  // caller tenga los ids reales — en ese momento `isLoading` ya queda
+  // permanentemente en `false`, aunque los datos reales para los ids reales
+  // todavia no llegaron. `isFetching` SI se pone en `true` en cuanto los
+  // parametros cambian (mismo render en que cambian los ids, via el
+  // mecanismo `shouldReportCurrentlyFetching` de `useWatchedQuery`) y vuelve
+  // a `false` recien cuando los datos nuevos llegan. Por eso se expone
+  // tambien `isFetching` — el guard del caller (banco-form.tsx, fix W3)
+  // debe usar AMBOS (`isLoading || isFetching`) para cerrar la ventana de
+  // carrera por completo.
+  return { deduccionesPorMetodo, isLoading, isFetching }
 }
 
 /**

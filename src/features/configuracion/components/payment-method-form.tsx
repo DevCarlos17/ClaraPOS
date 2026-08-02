@@ -363,7 +363,13 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
           )}
 
           {/* Deducciones del metodo (PR-3c.2): solo si hay banco asociado (SC-09),
-              componente compartido con banco-form.tsx (DeduccionesEditor) */}
+              componente compartido con banco-form.tsx (DeduccionesEditor).
+              `errors` (fix de review 3c.2, hallazgo WARNING): restaura el
+              display inline por fila que la extraccion a DeduccionesEditor
+              habia dejado sin conectar — sin esto, un fallo de
+              metodoCobroDeduccionSchema (concepto vacio, porcentaje fuera de
+              rango, cuenta_gasto_id sin resolver) bloqueaba el submit en
+              total silencio. */}
           {bancoEmpresaId && (
             <div className="border-t border-gray-200 pt-4">
               <DeduccionesEditor
@@ -372,6 +378,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
                 cuentaBasePasarelaId={
                   bancos.find((b) => b.id === bancoEmpresaId)?.cuenta_gasto_pasarela_id ?? undefined
                 }
+                errors={errors}
               />
             </div>
           )}
