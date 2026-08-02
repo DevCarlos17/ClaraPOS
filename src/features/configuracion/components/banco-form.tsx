@@ -6,12 +6,20 @@ import {
   updateBanco,
   useMetodosByBanco,
   type Banco,
-  type BancoMetodo,
 } from '@/features/configuracion/hooks/use-bancos'
 import {
   createPaymentMethod,
   updatePaymentMethod,
 } from '@/features/configuracion/hooks/use-payment-methods'
+import {
+  DeduccionesEditor,
+  type DeduccionRow,
+} from '@/features/configuracion/components/deducciones-editor'
+import {
+  useDeduccionesPorMetodos,
+  persistDeduccionesDeMetodo,
+  type TipoDeduccion,
+} from '@/features/configuracion/hooks/use-metodo-cobro-deducciones'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   useCuentasDetalle,
@@ -35,7 +43,6 @@ interface MetodoDraft {
   nombre: string
   tipo: string
   deposito_directo: boolean
-  comision_pct: string
   usa_pos: boolean
   usa_cxc: boolean
   usa_cxp: boolean
@@ -43,6 +50,10 @@ interface MetodoDraft {
   // 0079: solo aplica cuando tipo === 'PUNTO' — consolidar lotes en un
   // traspaso (true) o enviar uno por lote (false) al cerrar caja.
   consolidar_lotes: boolean
+  // PR-3c.2: N conceptos de deduccion (reemplaza el input suelto "Comision %").
+  // `comision_pct` sigue existiendo como columna en metodos_cobro (deprecada,
+  // PR-4 lee metodo_cobro_deducciones) — se envia siempre '0' al guardar.
+  deducciones: DeduccionRow[]
 }
 
 const TIPOS_METODO_BANCO = [
@@ -62,9 +73,11 @@ interface MetodoDraftRowProps {
   draft: MetodoDraft
   onChange: (updated: MetodoDraft) => void
   onRemove: () => void
+  /** bancos_empresa.cuenta_gasto_pasarela_id del banco actual — resuelve el sentinel '' de DeduccionesEditor */
+  cuentaBasePasarelaId: string | undefined
 }
 
-function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
+function MetodoDraftRow({ draft, onChange, onRemove, cuentaBasePasarelaId }: MetodoDraftRowProps) {
   return (
     <div className="border border-gray-300 rounded-md p-3 space-y-2 bg-white shadow-sm">
       {/* Row 1: Nombre | Tipo | Action */}
@@ -121,7 +134,7 @@ function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
         )}
       </div>
 
-      {/* Row 2: Deposito directo | Comision % | Usar en */}
+      {/* Row 2: Deposito directo | Usar en */}
       <div className="flex flex-wrap gap-3 items-center">
         <label className="flex items-center gap-1.5 text-xs text-gray-700 cursor-pointer">
           <input
@@ -132,19 +145,6 @@ function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
           />
           Deposito directo
         </label>
-
-        <div className="flex items-center gap-1.5">
-          <label className="text-xs text-gray-600">Comision %</label>
-          <input
-            type="number"
-            step="0.01"
-            min="0"
-            max="100"
-            value={draft.comision_pct}
-            onChange={(e) => onChange({ ...draft, comision_pct: e.target.value })}
-            className="w-16 rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </div>
 
         <div className="flex items-center gap-2">
           <span className="text-xs text-gray-600">Usar en:</span>
@@ -197,6 +197,15 @@ function MetodoDraftRow({ draft, onChange, onRemove }: MetodoDraftRowProps) {
           </p>
         </div>
       )}
+
+      {/* Row 4: N-deducciones (PR-3c.2) */}
+      <div className="pt-2 border-t border-gray-100">
+        <DeduccionesEditor
+          rows={draft.deducciones}
+          onChange={(deducciones) => onChange({ ...draft, deducciones })}
+          cuentaBasePasarelaId={cuentaBasePasarelaId}
+        />
+      </div>
     </div>
   )
 }
@@ -250,6 +259,12 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
   // Load existing methods when editing
   const { data: existingMetodos, isLoading: metodosLoading } = useMetodosByBanco(banco?.id ?? '')
+  // PR-3c.2: deducciones de TODOS los metodos existentes del banco, en una
+  // sola query reactiva agrupada por metodo_cobro_id (useDeduccionesPorMetodos
+  // ya memoiza internamente la clave de ids inestable).
+  const { deduccionesPorMetodo } = useDeduccionesPorMetodos(
+    (existingMetodos ?? []).map((m) => m.id)
+  )
 
   // Initialize form fields
   useEffect(() => {
@@ -295,7 +310,18 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     }
   }, [isOpen, banco])
 
-  // Sync drafts from PowerSync reactively — until the user makes a manual edit
+  // Sync drafts from PowerSync reactively — until the user makes a manual edit.
+  // FIX W3 (deferred from 3c.1): esta sincronizacion tambien adjunta las
+  // deducciones reactivas de `deduccionesPorMetodo` (useDeduccionesPorMetodos).
+  // Esa query puede resolver DESPUES del primer render (existingMetodos carga,
+  // luego deduccionesPorMetodo carga en un render posterior) — por eso esta al
+  // agregarla como dependencia el efecto se re-ejecuta cuando llegan los datos.
+  // El guard `userEdited` (ya establecido, seteado por CUALQUIER cambio local —
+  // incluidos los de DeduccionesEditor via handleUpdateDraft) es lo que evita
+  // que un re-sync reactivo posterior (ej. otro tab de la misma empresa
+  // guardando algo, sync de PowerSync) pise ediciones locales sin guardar: una
+  // vez que el usuario toca cualquier campo, el efecto retorna temprano y
+  // nunca vuelve a sobreescribir `metodoDrafts`.
   useEffect(() => {
     if (!isOpen || userEdited || metodosLoading) return
     setMetodoDrafts(
@@ -305,15 +331,22 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         nombre: m.nombre,
         tipo: m.tipo,
         deposito_directo: m.deposito_directo === 1,
-        comision_pct: m.comision_pct ?? '0',
         usa_pos: m.usa_pos === 1,
         usa_cxc: m.usa_cxc === 1,
         usa_cxp: m.usa_cxp === 1,
         is_active: m.is_active === 1,
         consolidar_lotes: m.consolidar_lotes !== 0,
+        deducciones: (deduccionesPorMetodo.get(m.id) ?? []).map((d) => ({
+          id: d.id,
+          concepto: d.concepto,
+          tipo: d.tipo as TipoDeduccion,
+          porcentaje: d.porcentaje,
+          cuenta_gasto_id: d.cuenta_gasto_id,
+          is_active: d.is_active === 1,
+        })),
       }))
     )
-  }, [isOpen, existingMetodos, metodosLoading, userEdited])
+  }, [isOpen, existingMetodos, metodosLoading, userEdited, deduccionesPorMetodo])
 
   // Reset on close
   useEffect(() => {
@@ -332,12 +365,16 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         nombre: '',
         tipo: 'TRANSFERENCIA',
         deposito_directo: false,
-        comision_pct: '0',
         usa_pos: true,
         usa_cxc: true,
         usa_cxp: true,
         is_active: true,
         consolidar_lotes: true,
+        // Sentinel '' — el banco puede ser nuevo (cuenta pasarela aun no
+        // existe), se resuelve en handleSubmit contra cuentaGastoPasarelaFinal.
+        deducciones: [
+          { concepto: 'Comision bancaria', tipo: 'COMISION', porcentaje: '0', cuenta_gasto_id: '', is_active: true },
+        ],
       },
     ])
   }
@@ -364,10 +401,15 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
    * diseno: el llamador decide que falta crear via `opts`, esta funcion
    * nunca decide por si misma si algo ya existe.
    *
-   * Nombre dinamico de ambas leaves de comision: `{Banco} {Tipo} {ult4 del
-   * numero de cuenta}` (ej. "VENEZUELA CORRIENTE 5546") — se incluye el tipo
-   * de cuenta para desambiguar cuando dos cuentas propias del mismo banco
-   * comparten los mismos ultimos 4 digitos (SC-28).
+   * Nombre dinamico de cada leaf de comision (PR-3c.2, resuelve tasks.md
+   * 4c.2.7): `COMISION BANCARIA {Banco} {Tipo} {ult4}` / `COMISION PASARELA
+   * {Banco} {Tipo} {ult4}` (ej. "COMISION PASARELA VENEZUELA CORRIENTE
+   * 5546") — el prefijo distingue el proposito de la cuenta y el tipo de
+   * cuenta desambigua cuando dos cuentas propias del mismo banco comparten
+   * los mismos ultimos 4 digitos (SC-28). Solo aplica a bancos creados o
+   * editados desde este cambio en adelante — los backfilleados por la
+   * migracion 0081 conservan el nombre viejo sin prefijo (decision de
+   * usuario, sin migracion de rename).
    */
   async function crearCuentasDelBanco(
     datos: { nombreBanco: string; nroCuenta: string; tipoCuenta?: string },
@@ -445,15 +487,18 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
     if (opts.crearComisionBancaria || opts.crearComisionPasarela) {
       const ult4 = datos.nroCuenta.trim().slice(-4)
-      const nombreLeaf = [datos.nombreBanco.trim(), datos.tipoCuenta?.trim(), ult4]
+      const nombreLeafBase = [datos.nombreBanco.trim(), datos.tipoCuenta?.trim(), ult4]
         .filter((parte): parte is string => !!parte)
         .join(' ')
         .toUpperCase()
+      const nombreLeafBancaria = `COMISION BANCARIA ${nombreLeafBase}`
+      const nombreLeafPasarela = `COMISION PASARELA ${nombreLeafBase}`
       const empresaId = user.empresa_id
       const userId = user.id
 
       const crearLeafBajoGrupo = async (
-        grupo: { id: string; codigo: string; nivel: number }
+        grupo: { id: string; codigo: string; nivel: number },
+        nombreLeaf: string
       ): Promise<string | undefined> => {
         await agregarSubcuentaAGrupo({
           grupoId: grupo.id,
@@ -478,7 +523,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
       if (opts.crearComisionBancaria) {
         if (grupoComisionesBancarias) {
-          resultado.cuentaGastoComisionId = await crearLeafBajoGrupo(grupoComisionesBancarias)
+          resultado.cuentaGastoComisionId = await crearLeafBajoGrupo(grupoComisionesBancarias, nombreLeafBancaria)
         } else {
           resultado.comisionBancariaOmitida = true
         }
@@ -486,7 +531,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
 
       if (opts.crearComisionPasarela) {
         if (grupoComisionesPasarela) {
-          resultado.cuentaGastoPasarelaId = await crearLeafBajoGrupo(grupoComisionesPasarela)
+          resultado.cuentaGastoPasarelaId = await crearLeafBajoGrupo(grupoComisionesPasarela, nombreLeafPasarela)
         } else {
           resultado.comisionPasarelaOmitida = true
         }
@@ -607,6 +652,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     setSubmitting(true)
     try {
       let bancoId: string
+      // PR-3c.2 (tasks.md 4c.2.4): hoisteado fuera de las ramas if/else para
+      // que el loop "Save method drafts" lo lea ya resuelto en ambos casos
+      // (creacion y edicion) — es el valor que resuelve el sentinel '' de
+      // DeduccionesEditor (invariante nunca-huerfano, SC-08/SC-30).
+      let cuentaGastoPasarelaFinal = cuentaGastoPasarelaId
 
       if (isEditing && banco) {
         // Modo edicion: NUNCA auto-crear la cuenta de activo (el banco ya
@@ -615,7 +665,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         // feature o de la migracion 0081), se auto-crea SOLO la faltante,
         // una vez, sin duplicar ni tocar la que ya esta vinculada (SC-15).
         let cuentaGastoComisionFinal = cuentaGastoComisionId
-        let cuentaGastoPasarelaFinal = cuentaGastoPasarelaId
         if (!cuentaGastoComisionFinal || !cuentaGastoPasarelaFinal) {
           const creadas = await crearCuentasDelBanco(
             { nombreBanco: parsed.data.nombre_banco, nroCuenta: parsed.data.nro_cuenta, tipoCuenta: parsed.data.tipo_cuenta },
@@ -661,7 +710,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         // select, solo se completa lo que falta.
         let cuentaContableFinal = cuentaContableId
         let cuentaGastoComisionFinal = cuentaGastoComisionId
-        let cuentaGastoPasarelaFinal = cuentaGastoPasarelaId
         if (!cuentaContableFinal || !cuentaGastoComisionFinal || !cuentaGastoPasarelaFinal) {
           const creadas = await crearCuentasDelBanco(
             { nombreBanco: parsed.data.nombre_banco, nroCuenta: parsed.data.nro_cuenta, tipoCuenta: parsed.data.tipo_cuenta },
@@ -722,11 +770,22 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             banco_empresa_id: bancoId,
             is_active: draft.is_active,
             deposito_directo: draft.deposito_directo,
-            comision_pct: draft.comision_pct,
+            comision_pct: '0', // deprecado (PR-4 lee metodo_cobro_deducciones)
             usa_pos: draft.usa_pos,
             usa_cxc: draft.usa_cxc,
             usa_cxp: draft.usa_cxp,
             consolidar_lotes: draft.consolidar_lotes,
+          })
+          // PR-3c.2 (tasks.md 4c.2.6): un writeTransaction por metodo, todo o
+          // nada. cuentaBasePasarelaId resuelve el sentinel '' de filas nuevas
+          // agregadas durante esta edicion; el throw interno de la funcion es
+          // el backstop final del invariante nunca-huerfano.
+          await persistDeduccionesDeMetodo({
+            metodoCobroId: draft.id,
+            empresaId: user!.empresa_id!,
+            usuarioId: user!.id,
+            cuentaBasePasarelaId: cuentaGastoPasarelaFinal || undefined,
+            rows: draft.deducciones,
           })
         } else {
           // Skip incomplete new drafts
@@ -737,13 +796,34 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             tipo: draft.tipo,
             banco_empresa_id: bancoId,
             deposito_directo: draft.deposito_directo,
-            comision_pct: draft.comision_pct,
+            comision_pct: '0', // deprecado (PR-4 lee metodo_cobro_deducciones)
             usa_pos: draft.usa_pos,
             usa_cxc: draft.usa_cxc,
             usa_cxp: draft.usa_cxp,
             consolidar_lotes: draft.consolidar_lotes,
             empresa_id: user!.empresa_id!,
             usuario_id: user!.id,
+            // PR-3c.2 (tasks.md 4c.2.5): resuelve el sentinel '' ANTES de
+            // llegar a createPaymentMethod — nunca persiste cuenta_gasto_id
+            // vacio (invariante nunca-huerfano, SC-08/SC-30). Si tras
+            // resolver contra cuentaGastoPasarelaFinal sigue vacio (caso
+            // extremo: la cuenta de pasarela no pudo crearse, ver
+            // avisarComisionesOmitidas arriba), se aborta con un error claro
+            // en vez de guardar un huerfano en silencio.
+            deducciones: draft.deducciones.map((d) => {
+              const cuentaGastoId = d.cuenta_gasto_id || cuentaGastoPasarelaFinal
+              if (!cuentaGastoId) {
+                throw new Error(
+                  'No se puede crear el metodo de pago: la deduccion no tiene cuenta de gasto resuelta (invariante nunca-huerfano)'
+                )
+              }
+              return {
+                concepto: d.concepto,
+                tipo: d.tipo,
+                porcentaje: d.porcentaje,
+                cuenta_gasto_id: cuentaGastoId,
+              }
+            }),
           })
         }
       }
@@ -1045,6 +1125,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
                     draft={draft}
                     onChange={(updated) => handleUpdateDraft(idx, updated)}
                     onRemove={() => handleRemoveDraft(idx)}
+                    cuentaBasePasarelaId={cuentaGastoPasarelaId || undefined}
                   />
                 ))}
               </div>

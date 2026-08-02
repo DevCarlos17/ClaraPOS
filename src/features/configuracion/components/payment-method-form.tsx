@@ -10,11 +10,13 @@ import {
 import { useBancosActivos } from '@/features/configuracion/hooks/use-bancos'
 import {
   useDeduccionesDeMetodo,
-  createDeduccion,
-  updateDeduccion,
+  persistDeduccionesDeMetodo,
   type TipoDeduccion,
 } from '@/features/configuracion/hooks/use-metodo-cobro-deducciones'
-import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import {
+  DeduccionesEditor,
+  type DeduccionRow,
+} from '@/features/configuracion/components/deducciones-editor'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { NativeSelect } from '@/components/ui/native-select'
 
@@ -24,29 +26,11 @@ interface PaymentMethodFormProps {
   method?: PaymentMethod
 }
 
-// PR-3 (metodo-cobro-deducciones): fila local editable de deduccion.
-// `id` undefined = fila nueva, aun no persistida.
-interface DeduccionRow {
-  id?: string
-  concepto: string
-  tipo: TipoDeduccion
-  porcentaje: string
-  cuenta_gasto_id: string
-  is_active: boolean
-}
-
-const TIPOS_DEDUCCION: { value: TipoDeduccion; label: string }[] = [
-  { value: 'COMISION', label: 'Comision' },
-  { value: 'ISLR', label: 'Retencion ISLR' },
-  { value: 'OTRO', label: 'Otro' },
-]
-
 export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!method
   const { user } = useCurrentUser()
   const { bancos } = useBancosActivos()
-  const { cuentas: cuentasGasto } = useCuentasDetallePorTipo('GASTO')
 
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState<'USD' | 'BS'>('USD')
@@ -149,7 +133,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
   // hay nada persistido aun — se limpia el array local sin mas. En edicion,
   // las filas YA EXISTENTES no se borran (SC-11/inmutabilidad): se
   // soft-desactivan localmente (is_active=false) y se persisten al guardar
-  // (`persistDeducciones`), con aviso visible al usuario.
+  // (`persistDeduccionesDeMetodo`, PR-3c.2), con aviso visible al usuario.
   useEffect(() => {
     if (!isOpen || bancoEmpresaId) {
       detachedBancoRef.current = false
@@ -173,84 +157,23 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
     setName(value.toUpperCase())
   }
 
-  function handleAddDeduccion() {
-    const banco = bancos.find((b) => b.id === bancoEmpresaId)
-    setDeducciones((prev) => [
-      ...prev,
-      {
-        concepto: '',
-        tipo: 'COMISION',
-        porcentaje: '0',
-        cuenta_gasto_id: banco?.cuenta_gasto_pasarela_id ?? '',
-        is_active: true,
-      },
-    ])
-  }
-
-  function updateDeduccionRow(index: number, patch: Partial<DeduccionRow>) {
-    setDeducciones((prev) => prev.map((d, i) => (i === index ? { ...d, ...patch } : d)))
-  }
-
-  // SC-11: soft-deactivate, nunca DELETE fisico. Una fila aun no persistida
-  // (sin id) simplemente se quita del array local.
-  async function handleDeactivateDeduccion(index: number) {
-    const row = deducciones[index]
-    if (!row.id) {
-      setDeducciones((prev) => prev.filter((_, i) => i !== index))
-      return
-    }
-    try {
-      await updateDeduccion(row.id, { is_active: false })
-      updateDeduccionRow(index, { is_active: false })
-      toast.success('Deduccion desactivada')
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Error inesperado'
-      toast.error(message)
-    }
-  }
-
-  // Persiste filas de deduccion de un metodo YA EXISTENTE (fuera de la
-  // writeTransaction de creacion, que solo aplica a metodo nuevo).
-  async function persistDeducciones(metodoCobroId: string, rows: DeduccionRow[]) {
-    if (!user?.empresa_id) return
-    for (const [i, row] of rows.entries()) {
-      if (row.id) {
-        // Incluye is_active: cubre tanto el toggle manual (handleDeactivateDeduccion,
-        // que ya persiste de inmediato — este segundo write es idempotente) como el
-        // soft-deactivate automatico por desvinculacion de banco (Fix W2b), que solo
-        // muta el estado local y se persiste recien aqui, al guardar.
-        await updateDeduccion(row.id, {
-          concepto: row.concepto,
-          tipo: row.tipo,
-          porcentaje: row.porcentaje,
-          cuenta_gasto_id: row.cuenta_gasto_id,
-          orden: i,
-          is_active: row.is_active,
-        })
-      } else {
-        await createDeduccion({
-          metodo_cobro_id: metodoCobroId,
-          empresa_id: user.empresa_id,
-          cuenta_gasto_id: row.cuenta_gasto_id,
-          concepto: row.concepto,
-          tipo: row.tipo,
-          porcentaje: row.porcentaje,
-          orden: i,
-          usuario_id: user.id,
-        })
-      }
-    }
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setErrors({})
+
+    const cuentaBasePasarelaId = bancos.find((b) => b.id === bancoEmpresaId)?.cuenta_gasto_pasarela_id ?? undefined
 
     // SC-09 (creacion): sin banco, no se arma el array (no se crean filas
     // nuevas). Fix W2b (edicion): SIEMPRE se envian las filas locales, aun
     // sin banco — pueden incluir deducciones YA EXISTENTES que el efecto de
     // desvinculacion dejo con is_active=false y que deben persistirse.
-    const deduccionesPayload = isEditing ? deducciones : bancoEmpresaId ? deducciones : []
+    // PR-3c.2: resuelve el sentinel '' de DeduccionesEditor (filas agregadas
+    // manualmente via su boton propio) CONTRA cuentaBasePasarelaId ANTES de
+    // la validacion Zod (metodoCobroDeduccionSchema.cuenta_gasto_id exige
+    // un uuid real) — el sentinel nunca debe llegar al parse ni a la DB.
+    const deduccionesPayload = (isEditing ? deducciones : bancoEmpresaId ? deducciones : []).map(
+      (d) => ({ ...d, cuenta_gasto_id: d.cuenta_gasto_id || cuentaBasePasarelaId || '' })
+    )
 
     const parsed = paymentMethodSchema.safeParse({
       name,
@@ -288,7 +211,17 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
           is_active: parsed.data.active,
           consolidar_lotes: parsed.data.consolidar_lotes,
         })
-        await persistDeducciones(method.id, parsed.data.deducciones)
+        // PR-3c.2 (tasks.md 4c.2.8): reemplaza la fila suelta persistDeducciones
+        // local por la funcion transaccional compartida (1 writeTransaction,
+        // todo o nada). cuentaBasePasarelaId es backstop defensivo — las filas
+        // ya llegan resueltas por el map de arriba.
+        await persistDeduccionesDeMetodo({
+          metodoCobroId: method.id,
+          empresaId: user!.empresa_id!,
+          usuarioId: user!.id,
+          cuentaBasePasarelaId,
+          rows: parsed.data.deducciones,
+        })
         toast.success('Metodo de pago actualizado correctamente')
       } else {
         await createPaymentMethod({
@@ -429,133 +362,17 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
             </div>
           )}
 
-          {/* Deducciones del metodo (PR-3): solo si hay banco asociado (SC-09) */}
+          {/* Deducciones del metodo (PR-3c.2): solo si hay banco asociado (SC-09),
+              componente compartido con banco-form.tsx (DeduccionesEditor) */}
           {bancoEmpresaId && (
             <div className="border-t border-gray-200 pt-4">
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-sm font-medium text-gray-700">
-                  Deducciones (comisiones)
-                </label>
-                <button
-                  type="button"
-                  onClick={handleAddDeduccion}
-                  className="text-xs font-medium text-blue-600 hover:text-blue-800"
-                >
-                  + Agregar deduccion
-                </button>
-              </div>
-
-              {deducciones.length === 0 && (
-                <p className="text-xs text-gray-400 mb-2">Sin deducciones configuradas.</p>
-              )}
-
-              <div className="space-y-3">
-                {deducciones.map((row, i) => (
-                  <div
-                    key={row.id ?? `nueva-${i}`}
-                    className={`rounded-md border p-3 space-y-2 ${
-                      row.is_active ? 'border-gray-200' : 'border-gray-100 bg-gray-50 opacity-60'
-                    }`}
-                  >
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Concepto</label>
-                        <input
-                          type="text"
-                          value={row.concepto}
-                          onChange={(e) => updateDeduccionRow(i, { concepto: e.target.value })}
-                          disabled={!row.is_active}
-                          className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                        />
-                        {errors[`deducciones.${i}.concepto`] && (
-                          <p className="text-red-500 text-xs mt-1">
-                            {errors[`deducciones.${i}.concepto`]}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Tipo</label>
-                        <NativeSelect
-                          value={row.tipo}
-                          onChange={(e) =>
-                            updateDeduccionRow(i, { tipo: e.target.value as TipoDeduccion })
-                          }
-                          disabled={!row.is_active}
-                        >
-                          {TIPOS_DEDUCCION.map((t) => (
-                            <option key={t.value} value={t.value}>
-                              {t.label}
-                            </option>
-                          ))}
-                        </NativeSelect>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Porcentaje %</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          max="100"
-                          value={row.porcentaje}
-                          onChange={(e) => updateDeduccionRow(i, { porcentaje: e.target.value })}
-                          disabled={!row.is_active}
-                          className="w-full rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                        />
-                        {errors[`deducciones.${i}.porcentaje`] && (
-                          <p className="text-red-500 text-xs mt-1">
-                            {errors[`deducciones.${i}.porcentaje`]}
-                          </p>
-                        )}
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-600 mb-1">Cuenta de gasto</label>
-                        <NativeSelect
-                          value={row.cuenta_gasto_id}
-                          onChange={(e) =>
-                            updateDeduccionRow(i, { cuenta_gasto_id: e.target.value })
-                          }
-                          disabled={!row.is_active}
-                        >
-                          <option value="">-- Seleccione una cuenta --</option>
-                          {cuentasGasto.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.codigo} - {c.nombre}
-                            </option>
-                          ))}
-                        </NativeSelect>
-                        {errors[`deducciones.${i}.cuenta_gasto_id`] && (
-                          <p className="text-red-500 text-xs mt-1">
-                            {errors[`deducciones.${i}.cuenta_gasto_id`]}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end">
-                      {row.is_active ? (
-                        <button
-                          type="button"
-                          onClick={() => handleDeactivateDeduccion(i)}
-                          className="text-xs text-red-600 hover:text-red-800"
-                        >
-                          {row.id ? 'Desactivar' : 'Quitar'}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-gray-400">Desactivada</span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <p className="text-xs text-gray-500 mt-2">
-                La comision de pasarela ya viene precargada con la cuenta base del banco. Puedes
-                ajustar el porcentaje, re-apuntar la cuenta o agregar mas conceptos (ej. retencion
-                ISLR).
-              </p>
+              <DeduccionesEditor
+                rows={deducciones}
+                onChange={setDeducciones}
+                cuentaBasePasarelaId={
+                  bancos.find((b) => b.id === bancoEmpresaId)?.cuenta_gasto_pasarela_id ?? undefined
+                }
+              />
             </div>
           )}
 
