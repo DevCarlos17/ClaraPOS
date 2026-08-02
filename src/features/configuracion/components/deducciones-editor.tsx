@@ -60,6 +60,16 @@ export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId, errors
   const { user } = useCurrentUser()
   const { cuentas: cuentasGasto } = useCuentasDetallePorTipo('GASTO')
 
+  // Resuelve el nombre legible de la cuenta base de pasarela para mostrarla
+  // bajo el select cuando una fila usa el sentinel '' — sin query nueva,
+  // `cuentasGasto` ya incluye codigo+nombre (obs Engram sdd/explore/deducciones-editor-base-row).
+  const cuentaBaseLabel = cuentaBasePasarelaId
+    ? (() => {
+        const cuentaBase = cuentasGasto.find((cuenta) => cuenta.id === cuentaBasePasarelaId)
+        return cuentaBase ? `${cuentaBase.codigo} - ${cuentaBase.nombre}` : undefined
+      })()
+    : undefined
+
   // Solo una fila puede tener el panel "+ Crear cuenta" abierto a la vez.
   const [crearCuentaEnIndex, setCrearCuentaEnIndex] = useState<number | null>(null)
 
@@ -113,6 +123,7 @@ export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId, errors
             key={row.id ?? `nueva-${i}`}
             row={row}
             cuentasGasto={cuentasGasto}
+            cuentaBaseLabel={cuentaBaseLabel}
             onUpdate={(patch) => updateRow(i, patch)}
             onRemoveOrDeactivate={() => handleRemoveOrDeactivate(i)}
             creandoCuenta={crearCuentaEnIndex === i}
@@ -142,6 +153,8 @@ export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId, errors
 interface DeduccionRowEditorProps {
   row: DeduccionRow
   cuentasGasto: CuentaContable[]
+  /** Nombre legible de la cuenta base de pasarela — solo se muestra cuando la fila usa el sentinel '' */
+  cuentaBaseLabel?: string
   onUpdate: (patch: Partial<DeduccionRow>) => void
   onRemoveOrDeactivate: () => void
   creandoCuenta: boolean
@@ -157,6 +170,7 @@ interface DeduccionRowEditorProps {
 function DeduccionRowEditor({
   row,
   cuentasGasto,
+  cuentaBaseLabel,
   onUpdate,
   onRemoveOrDeactivate,
   creandoCuenta,
@@ -247,6 +261,9 @@ function DeduccionRowEditor({
             </button>
           </div>
           {errorCuentaGastoId && <p className="text-red-500 text-xs mt-1">{errorCuentaGastoId}</p>}
+          {!errorCuentaGastoId && row.cuenta_gasto_id === '' && cuentaBaseLabel && (
+            <p className="text-gray-400 text-xs mt-1">Se registrara en: {cuentaBaseLabel}</p>
+          )}
         </div>
       </div>
 

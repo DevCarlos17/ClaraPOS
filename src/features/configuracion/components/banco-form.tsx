@@ -352,26 +352,60 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   useEffect(() => {
     if (!isOpen || userEdited || metodosLoading || deduccionesLoading || deduccionesFetching) return
     setMetodoDrafts(
-      (existingMetodos ?? []).map((m) => ({
-        _key: m.id,
-        id: m.id,
-        nombre: m.nombre,
-        tipo: m.tipo,
-        deposito_directo: m.deposito_directo === 1,
-        usa_pos: m.usa_pos === 1,
-        usa_cxc: m.usa_cxc === 1,
-        usa_cxp: m.usa_cxp === 1,
-        is_active: m.is_active === 1,
-        consolidar_lotes: m.consolidar_lotes !== 0,
-        deducciones: (deduccionesPorMetodo.get(m.id) ?? []).map((d) => ({
+      (existingMetodos ?? []).map((m) => {
+        const deduccionesExistentes = (deduccionesPorMetodo.get(m.id) ?? []).map((d) => ({
           id: d.id,
           concepto: d.concepto,
           tipo: d.tipo as TipoDeduccion,
           porcentaje: d.porcentaje,
           cuenta_gasto_id: d.cuenta_gasto_id,
           is_active: d.is_active === 1,
-        })),
-      }))
+        }))
+        // QA fix: un metodo existente sin filas guardadas en
+        // metodo_cobro_deducciones mostraba "Sin deducciones configuradas"
+        // aunque el banco YA tiene una cuenta base de pasarela resuelta.
+        // Mismo shape/criterio que Fix W2a (payment-method-form.tsx:120-128)
+        // — se siembra 1 fila con la cuenta REAL (no el sentinel ''), asi
+        // el usuario ve de entrada la comision base que se va a aplicar. Si
+        // el banco no tiene cuenta pasarela aun, se deja vacio (sin cambio
+        // de comportamiento — el sentinel '' se resuelve/valida al guardar).
+        if (deduccionesExistentes.length === 0 && cuentaGastoPasarelaId) {
+          return {
+            _key: m.id,
+            id: m.id,
+            nombre: m.nombre,
+            tipo: m.tipo,
+            deposito_directo: m.deposito_directo === 1,
+            usa_pos: m.usa_pos === 1,
+            usa_cxc: m.usa_cxc === 1,
+            usa_cxp: m.usa_cxp === 1,
+            is_active: m.is_active === 1,
+            consolidar_lotes: m.consolidar_lotes !== 0,
+            deducciones: [
+              {
+                concepto: 'Comision bancaria',
+                tipo: 'COMISION' as TipoDeduccion,
+                porcentaje: '0',
+                cuenta_gasto_id: cuentaGastoPasarelaId,
+                is_active: true,
+              },
+            ],
+          }
+        }
+        return {
+          _key: m.id,
+          id: m.id,
+          nombre: m.nombre,
+          tipo: m.tipo,
+          deposito_directo: m.deposito_directo === 1,
+          usa_pos: m.usa_pos === 1,
+          usa_cxc: m.usa_cxc === 1,
+          usa_cxp: m.usa_cxp === 1,
+          is_active: m.is_active === 1,
+          consolidar_lotes: m.consolidar_lotes !== 0,
+          deducciones: deduccionesExistentes,
+        }
+      })
     )
   }, [
     isOpen,
@@ -381,6 +415,7 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     deduccionesFetching,
     userEdited,
     deduccionesPorMetodo,
+    cuentaGastoPasarelaId,
   ])
 
   // Reset on close
