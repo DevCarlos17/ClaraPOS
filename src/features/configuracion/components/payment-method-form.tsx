@@ -61,6 +61,12 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
 
   const requiereBanco = ['TRANSFERENCIA', 'PUNTO', 'PAGO_MOVIL'].includes(tipo)
   const { deducciones: deduccionesExistentes } = useDeduccionesDeMetodo(method?.id)
+  // Fix W1: evita repetir el warning de "sin cuenta pasarela" en cada
+  // render mientras el mismo banco siga seleccionado.
+  const warnedNoPasarelaRef = useRef<string | null>(null)
+  // Fix W2b: evita repetir el soft-deactivate/aviso mientras el metodo
+  // siga sin banco durante la misma apertura del dialogo.
+  const detachedBancoRef = useRef(false)
 
   useEffect(() => {
     if (isOpen) {
@@ -99,14 +105,34 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
     }
   }, [isOpen, method, deduccionesExistentes])
 
-  // PR-3 (SC-07): al elegir banco en modo creacion, precarga 1 slot de
-  // comision base apuntando a la cuenta pasarela del banco (editable). Sin
-  // defaults por `tipo` de metodo — misma regla para cualquier tipo bancario.
+  // PR-3 (SC-07) + Fix W2a: al elegir/tener banco asociado (creacion O
+  // edicion — ej. una edicion que le agrega banco a un metodo EFECTIVO),
+  // precarga 1 slot de comision base apuntando a la cuenta pasarela del
+  // banco (editable). Sin defaults por `tipo` de metodo — misma regla para
+  // cualquier tipo bancario.
+  // Fix W1: si el banco NO tiene cuenta pasarela configurada, el seed se
+  // omite (nunca se inserta una fila con cuenta_gasto_id invalida/NULL —
+  // evita violar el FK) pero el usuario recibe un warning visible en vez
+  // de quedar con un metodo bancario sin ninguna deduccion en silencio
+  // (SC-08/SC-30).
   useEffect(() => {
-    if (!isOpen || isEditing || !bancoEmpresaId) return
+    if (!isOpen || !bancoEmpresaId) {
+      warnedNoPasarelaRef.current = null
+      return
+    }
     if (deducciones.length > 0) return
     const banco = bancos.find((b) => b.id === bancoEmpresaId)
-    if (!banco?.cuenta_gasto_pasarela_id) return
+    if (!banco) return
+    if (!banco.cuenta_gasto_pasarela_id) {
+      if (warnedNoPasarelaRef.current !== bancoEmpresaId) {
+        warnedNoPasarelaRef.current = bancoEmpresaId
+        toast.warning(
+          'El banco no tiene cuenta de comision de pasarela configurada — no se pudo agregar la comision base. Verifica la configuracion del banco.'
+        )
+      }
+      return
+    }
+    warnedNoPasarelaRef.current = null
     setDeducciones([
       {
         concepto: 'Comision bancaria',
@@ -116,14 +142,32 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
         is_active: true,
       },
     ])
-  }, [isOpen, isEditing, bancoEmpresaId, bancos, deducciones.length])
+  }, [isOpen, bancoEmpresaId, bancos, deducciones.length])
 
-  // SC-09: metodo sin banco no ofrece deducciones bancarias.
+  // SC-09 (creacion) + Fix W2b (edicion): al quedar sin banco, el metodo no
+  // debe seguir ofreciendo/aplicando deducciones bancarias. En creacion no
+  // hay nada persistido aun — se limpia el array local sin mas. En edicion,
+  // las filas YA EXISTENTES no se borran (SC-11/inmutabilidad): se
+  // soft-desactivan localmente (is_active=false) y se persisten al guardar
+  // (`persistDeducciones`), con aviso visible al usuario.
   useEffect(() => {
-    if (isOpen && !isEditing && !bancoEmpresaId) {
-      setDeducciones([])
+    if (!isOpen || bancoEmpresaId) {
+      detachedBancoRef.current = false
+      return
     }
-  }, [isOpen, isEditing, bancoEmpresaId])
+    if (!isEditing) {
+      if (deducciones.length > 0) setDeducciones([])
+      return
+    }
+    if (detachedBancoRef.current) return
+    const hayActivas = deducciones.some((d) => d.is_active)
+    if (!hayActivas) return
+    detachedBancoRef.current = true
+    setDeducciones(deducciones.map((d) => (d.is_active ? { ...d, is_active: false } : d)))
+    toast.warning(
+      'Se desactivaron las deducciones de este metodo porque ya no tiene un banco asociado.'
+    )
+  }, [isOpen, isEditing, bancoEmpresaId, deducciones])
 
   function handleNameChange(value: string) {
     setName(value.toUpperCase())
@@ -171,12 +215,17 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
     if (!user?.empresa_id) return
     for (const [i, row] of rows.entries()) {
       if (row.id) {
+        // Incluye is_active: cubre tanto el toggle manual (handleDeactivateDeduccion,
+        // que ya persiste de inmediato — este segundo write es idempotente) como el
+        // soft-deactivate automatico por desvinculacion de banco (Fix W2b), que solo
+        // muta el estado local y se persiste recien aqui, al guardar.
         await updateDeduccion(row.id, {
           concepto: row.concepto,
           tipo: row.tipo,
           porcentaje: row.porcentaje,
           cuenta_gasto_id: row.cuenta_gasto_id,
           orden: i,
+          is_active: row.is_active,
         })
       } else {
         await createDeduccion({
@@ -197,8 +246,11 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
     e.preventDefault()
     setErrors({})
 
-    // SC-09: metodo sin banco no arma el array de deducciones bancarias.
-    const deduccionesPayload = bancoEmpresaId ? deducciones : []
+    // SC-09 (creacion): sin banco, no se arma el array (no se crean filas
+    // nuevas). Fix W2b (edicion): SIEMPRE se envian las filas locales, aun
+    // sin banco — pueden incluir deducciones YA EXISTENTES que el efecto de
+    // desvinculacion dejo con is_active=false y que deben persistirse.
+    const deduccionesPayload = isEditing ? deducciones : bancoEmpresaId ? deducciones : []
 
     const parsed = paymentMethodSchema.safeParse({
       name,

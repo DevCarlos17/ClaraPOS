@@ -213,6 +213,19 @@ Si el diff real de la Fase 4 completa (4a+4b) se mantiene bajo ~350 líneas al i
 - [x] 4.14 QA (razonado por trazado de código) — SC-11: `handleDeactivateDeduccion` llama `updateDeduccion(id, { is_active: false })` (nunca DELETE); la fila permanece en la tabla y en el array local (mostrada atenuada/deshabilitada), lista para el loop de Phase 5 que filtra `WHERE is_active=1`.
 - [x] 4.15 QA (razonado por trazado de código) — SC-12: `useDeduccionesDeMetodo` filtra `WHERE metodo_cobro_id=? AND empresa_id=?` con `empresa_id` de `useCurrentUser()`; el INSERT de `createPaymentMethod`/`createDeduccion` siempre usa `params.empresa_id` (provisto por el caller desde `user!.empresa_id!`), nunca un valor cruzado de otra empresa.
 
+### Fixes post-review adversarial (2026-08-02, obs Engram `#778`) — APPROVE WITH FIXES
+
+> Revisión adversarial fresh-context de PR-3 (commits `2b77026`+`b1efe91`). Veredicto: APPROVE WITH FIXES. W1 y W2 corregidos en esta misma rama; W3 (reactividad de `deduccionesExistentes` clobbering ediciones no guardadas) queda anotado, NO corregido — riesgo bajo, no confirmado sin pruebas en vivo.
+
+- [x] 4.16 Fix W1 — `payment-method-form.tsx`: el `useEffect` de auto-seed (SC-07) ahora emite `toast.warning` cuando el banco seleccionado no tiene `cuenta_gasto_pasarela_id` (columna nullable, garantía solo a nivel UI de PR-2b, no a nivel DB) — nunca inserta una fila con `cuenta_gasto_id` inválida/NULL (se preserva el guard existente), pero el usuario ya no queda con un método bancario con CERO deducciones en silencio (SC-08/SC-30). Guardado con `warnedNoPasarelaRef` para no repetir el toast en cada render mientras el mismo banco siga seleccionado.
+- [x] 4.17 Fix W2a (attach en edición) — el mismo `useEffect` de auto-seed ya NO se restringe a `!isEditing`: si un método edita de sin-banco (ej. EFECTIVO) a bancario, se precarga el slot base igual que en creación (o se emite el warning de 4.16 si el banco no tiene cuenta pasarela).
+- [x] 4.18 Fix W2b (detach en edición) — nuevo comportamiento en el `useEffect` que reemplaza el reset SC-09: en edición, si el método pasa de bancario a sin-banco, las filas de deducción YA EXISTENTES (con `id`) se soft-desactivan localmente (`is_active=false`, nunca DELETE — SC-11) vía `detachedBancoRef` como guard anti-repetición, con `toast.warning` visible. `persistDeducciones` fue extendido para enviar `is_active` en cada `updateDeduccion`, y `deduccionesPayload` en `handleSubmit` ahora envía siempre las filas locales en modo edición (antes se vaciaba a `[]` si `bancoEmpresaId` quedaba vacío, lo que habría descartado la desactivación antes de persistirla).
+- [x] 4.19 Verify: `yarn type-check` → 308 errores, idénticos al baseline (0 nuevos) en `payment-method-form.tsx`.
+- [x] 4.20 QA (razonado por trazado de código) — W1: banco sin `cuenta_gasto_pasarela_id` → toast de advertencia visible, sin fila creada, sin violación de FK.
+- [x] 4.21 QA (razonado por trazado de código) — W2a: editar método EFECTIVO → asignar banco → se precarga el slot base (o warning si el banco no tiene pasarela).
+- [x] 4.22 QA (razonado por trazado de código) — W2b: editar método bancario → quitar banco → las filas existentes quedan `is_active=false` tras guardar, con aviso visible al desvincular.
+- [ ] W3 (NO corregido, solo anotado) — el `useEffect` de sincronización principal depende de `deduccionesExistentes` (resultado reactivo de `useQuery`); si esa referencia cambia mientras el diálogo está abierto y el usuario está editando, podría sobreescribir ediciones locales no guardadas. Riesgo bajo (solo se dispara ante un cambio real en la tabla, no en cada render), no confirmado sin pruebas en vivo — queda pendiente de QA manual/futuro seguimiento, fuera de alcance de esta corrección.
+
 ## Phase 5: PR-4 — Cierre aplica N deducciones (Slice 4)
 
 > Depende de PR-1a y PR-3 mergeados (necesita filas de `metodo_cobro_deducciones` pobladas).
