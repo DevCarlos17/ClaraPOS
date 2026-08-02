@@ -5,7 +5,7 @@
 
 > **PR-2b (2026-07-30, mergeado `159cb88`)**: Supera el diseño plano `6.2.05 COMISIONES BANCARIAS` de PR-2 (`16a0e3e`). Ver obs Engram `#706` (diseño final), `#703` (rewrite opción C permitido, gastos en desarrollo), `#705` (zonas prohibidas). Secciones marcadas `(PR-2b)` reemplazan el contenido anterior.
 >
-> **PR-3 (2026-07-31, corregido 2026-08-02)**: Ver sección dedicada "PR-3 — Deducciones N-conceptos en `payment-method-form.tsx`" más abajo. Reemplaza el entendimiento original de "cuenta especial por `tipo`" (tasks.md 4.3 viejo) por la regla unificada confirmada en obs Engram `#753` (revisión final: SIN defaults por `tipo`, un único slot base). El resto del documento (metodo_cobro_deducciones DDL, script de limpieza, PR-4) sigue vigente sin cambios.
+> **PR-3 (2026-07-31, corregido 2026-08-02, consolidado 2026-08-02)**: Ver sección dedicada "PR-3 — Consolidación de métodos de pago + N-deducciones en `banco-form.tsx`" más abajo. Reemplaza el entendimiento original de "cuenta especial por `tipo`" (tasks.md 4.3 viejo) por la regla unificada confirmada en obs Engram `#753` (revisión final: SIN defaults por `tipo`, un único slot base). QA manual detectó que la UI de deducciones vivía huérfana en `payment-method-form.tsx` (obs Engram `#792`) — la sección fue REDISEÑADA para consolidar todo en `banco-form.tsx`, único punto real de gestión de métodos de pago. El resto del documento (metodo_cobro_deducciones DDL, script de limpieza, PR-4) sigue vigente sin cambios.
 
 ## Technical Approach
 
@@ -141,9 +141,11 @@ cuenta_gasto_pasarela_id?: string | null
 
 Rollback: 0081 es mayormente aditiva; el único paso destructivo es desactivar `6.2.05` (paso 7) — reversible con `UPDATE ... SET is_active=TRUE` manual si algo sale mal, ya que no hay DELETE. PR-2b frontend es `git revert`.
 
-## PR-3 — Deducciones N-conceptos en `payment-method-form.tsx` (Slice 3, actualizado 2026-07-31)
+## PR-3 — Consolidación de métodos de pago + N-deducciones en `banco-form.tsx` (Slice 3, rediseñado 2026-08-02)
 
 > Diseñado originalmente ANTES de PR-2b (asumía cuenta especial por `tipo`, ej. ISLR en tarjeta de crédito). El usuario aclaró y UNIFICÓ la regla (obs Engram `#753`) y confirmó el propósito real del feature. En su revisión final, `#753` fue MÁS ALLÁ de la unificación de cuenta: eliminó también los conteos de slots por `tipo` (ej. "PUNTO → 2 slots") — el default es SIEMPRE 1 slot de comisión base, sin importar el `tipo` del método. Esta sección REEMPLAZA por completo el entendimiento de `tasks.md` 4.3 / `spec.md` SC-07/SC-08 (ya corregidos por `sdd-spec`, ver spec.md). **PR-2b ya mergeado** (`159cb88`) — la precondición que esta sección asume (`bancos_empresa.cuenta_gasto_pasarela_id` siempre no-null cuando hay banco) está satisfecha.
+>
+> **QA manual (2026-08-02, obs Engram `#792`)**: la implementación real de PR-3 dejó la UI de N-deducciones (`payment-method-form.tsx`) **huérfana** — los métodos de pago se gestionan inline en `banco-form.tsx` (`MetodoDraftRow`), que llama a `createPaymentMethod` **sin** `deducciones` (banco-form.tsx:734-748), incumpliendo el invariante "nunca huérfano" (SC-08/SC-30) en el flujo real. Decisión del usuario: **consolidar todo en `banco-form.tsx`**. Las subsecciones "Decisión: Regla unificada", "Propósito real", "`createPaymentMethod` — default-seeding", "Default único de comisión" y "Schema Zod" (abajo) siguen vigentes sin cambios — solo cambia DÓNDE vive la UI y CÓMO se persiste. Las subsecciones "Flujos UI" y "File Changes" de la revisión 2026-07-31 quedan reemplazadas por las nuevas al final de esta sección.
 
 ### Decisión: Regla unificada de cuenta default (opción A)
 
@@ -218,24 +220,94 @@ export const metodoCobroDeduccionSchema = z.object({
 deducciones: z.array(metodoCobroDeduccionSchema).default([]),
 ```
 
-### Flujos UI (`payment-method-form.tsx`)
+### Decisión: dónde vive la UI (consolidación 2026-08-02)
 
-| Flujo | Comportamiento |
+| Elección | Alternativas | Racional |
+|---|---|---|
+| Todo en `banco-form.tsx`: banco + métodos (`MetodoDraftRow`) + N-deducciones por método, en un solo diálogo | Mantener `payment-method-form.tsx` como superficie primaria | Los métodos de pago SIEMPRE se crean/editan junto a su banco en el flujo real de uso (obs #792) — mantener 2 puntos de entrada duplicó lógica y causó el bug de seeding faltante |
+| `payment-method-list.tsx`/`payment-method-form.tsx` se **mantienen en el repo** (ruta `/configuracion/metodos-pago` sigue redirigiendo a `/configuracion/bancos`, sin cambios) | Borrar los archivos | Opción de bajo riesgo elegida por el usuario — mantenerlos inertes no cuesta nada, y se **refactorizan** (no quedan divergentes) para reusar la misma UI de deducciones que `banco-form.tsx` |
+| Fila de deducción extraída a un componente compartido `DeduccionesEditor` (nuevo, `deducciones-editor.tsx`), consumido por `MetodoDraftRow` (banco-form) Y por `PaymentMethodForm` | Duplicar el bloque de UI en ambos archivos | Extract-and-share: un solo lugar de verdad para concepto/tipo/porcentaje/cuenta/desactivar/crear-cuenta-inline; si `payment-method-form.tsx` se reactiva algún día, no arrastra una versión vieja |
+
+### `DeduccionesEditor` — componente compartido
+
+```ts
+// src/features/configuracion/components/deducciones-editor.tsx
+export interface DeduccionRow {
+  id?: string                // undefined = fila nueva, no persistida
+  concepto: string
+  tipo: TipoDeduccion         // 'COMISION' | 'ISLR' | 'OTRO'
+  porcentaje: string
+  cuenta_gasto_id: string     // '' = usar la cuenta BASE de pasarela del banco (sentinel "automático")
+  is_active: boolean
+}
+
+interface DeduccionesEditorProps {
+  rows: DeduccionRow[]
+  onChange: (rows: DeduccionRow[]) => void
+  /** bancos_empresa.cuenta_gasto_pasarela_id — solo para mostrar cuál cuenta aplica el sentinel '' */
+  cuentaBasePasarelaId: string | undefined
+}
+```
+
+- Reemplaza el `useState<DeduccionRow[]>` + JSX que hoy vive inline en `payment-method-form.tsx` (líneas 58, 176-560) — se mueve tal cual (mismo comportamiento visual), MÁS el panel nuevo "+ Crear cuenta" por fila (abajo).
+- **Todo cambio queda local** (`onChange`) — ni `MetodoDraftRow` ni `DeduccionesEditor` llaman `createDeduccion`/`updateDeduccion` directamente. La persistencia es 100% responsabilidad del formulario padre, igual que ya ocurre con `nombre`/`tipo`/`comision_pct` de `MetodoDraft` hoy — un solo momento de guardado, sin escrituras parciales a mitad de edición.
+- "Desactivar" en una fila con `id`: solo muta `is_active=false` en el array local (deja de llamar `updateDeduccion` de inmediato — cambio de comportamiento respecto al `payment-method-form.tsx` actual, que sí persistía al toque). "Quitar" en una fila sin `id`: la elimina del array (sin llamada a DB, igual que hoy).
+- Selector de cuenta: primera opción `-- Cuenta base de pasarela del banco (automático) --` (`value=""`), luego `cuentasGasto` (`useCuentasDetallePorTipo('GASTO')`). Botón `+ Crear cuenta` junto al select (ver abajo).
+
+### Inline "crear cuenta de gasto" (por fila de deducción)
+
+Panel inline expandido bajo la fila — **NO un `<dialog>` anidado**: sigue el patrón ya usado en `cuenta-gasto-modal.tsx` para "agregar subcuenta" (fila que se expande bajo su trigger), evitando anidar overlays modales dentro del `<dialog>` de `banco-form.tsx`.
+
+| Campo | Fuente | Comportamiento |
+|---|---|---|
+| Grupo padre | Hook nuevo `useGruposGasto()` — lista PLANA de grupos GASTO (`es_cuenta_detalle=0`, `is_active=1`), SIN el filtro "solo si tiene hojas" de `useGruposGastoConSubcuentas` (ese hook oculta grupos vacíos; aquí hace falta poder elegir cualquiera, incluso uno recién creado sin hojas) | Preseleccionado a `useGrupoComisionesPasarela()`; el usuario puede cambiarlo (ej. a otro grupo para ISLR, que no es comisión de pasarela) |
+| Código sugerido | Hook nuevo `useSiguienteCodigoDeGrupo(grupoSeleccionado)` — `SELECT COUNT(*) WHERE parent_id=? AND empresa_id=?` reactivo, mismo cálculo que ya hace `agregarSubcuentaAGrupo` al escribir | Se recalcula cada vez que cambia el grupo elegido; es un preview informativo — el valor real se recalcula de nuevo al escribir (mismo riesgo de carrera preexistente en `agregarSubcuentaAGrupo`, no uno nuevo) |
+| Nombre | input libre | Requerido |
+| Crear | `agregarSubcuentaAGrupo({ grupoId, grupoCodigo, grupoNivel, nombreSubcuenta, empresaId, userId })` (lógica sin cambios) | **Cambio de firma**: pasa de `Promise<void>` a `Promise<string>` (retorna el `subId` creado) — evita que el caller re-consulte por `parent_id+nombre` como hace hoy `banco-form.tsx` (`crearLeafBajoGrupo`, líneas 467-476); ese código se simplifica para usar el retorno directo |
+
+Al crear, la fila de deducción setea `cuenta_gasto_id` = el id retornado y cierra el panel. La cuenta nueva aparece de inmediato en `cuentasGasto` (query reactiva PowerSync, sin refresco manual).
+
+### `MetodoDraft` — extensión de estado (`banco-form.tsx`)
+
+```ts
+interface MetodoDraft {
+  _key: string
+  id?: string
+  nombre: string
+  tipo: string
+  // ... campos existentes sin cambios ...
+  deducciones: DeduccionRow[]   // NUEVO
+}
+```
+
+- `handleAgregarMetodo` (nuevo draft): seedea `deducciones: [{ concepto: 'Comision bancaria', tipo: 'COMISION', porcentaje: '0', cuenta_gasto_id: '', is_active: true }]` — sentinel `''` porque, si el banco es nuevo, `cuentaGastoPasarelaId` puede no existir todavía (la cuenta se auto-crea recién en `handleSubmit`). Se resuelve al guardar (abajo).
+- Métodos existentes (`existingMetodos`, editar banco): hook nuevo `useDeduccionesPorMetodos(metodoCobroIds: string[])` (`use-metodo-cobro-deducciones.ts`) — trae TODAS las deducciones de todos los métodos del banco en una sola query `WHERE metodo_cobro_id IN (...)`, agrupadas en `Map<metodo_cobro_id, MetodoCobroDeduccion[]>`. El efecto de sincronización de drafts (banco-form.tsx:298-316) las adjunta por `id`.
+
+### Persistencia — `handleSubmit` (creación y edición)
+
+- **Hoist necesario**: `cuentaGastoPasarelaFinal` hoy se declara con `let` DENTRO de cada rama `if (isEditing)`/`else` (banco-form.tsx:618, 664) — pasa a declararse ANTES del `if/else` para que el loop de "Save method drafts" (línea 716) pueda leerlo, ya resuelto (auto-creado si hacía falta) en ambas ramas.
+- **Creación** (`!draft.id`): `createPaymentMethod({ ..., deducciones: draft.deducciones.map(d => ({ concepto: d.concepto, tipo: d.tipo, porcentaje: d.porcentaje, cuenta_gasto_id: d.cuenta_gasto_id || cuentaGastoPasarelaFinal })) })` — el sentinel `''` se resuelve aquí, nunca llega a la DB vacío. Sin cambio de firma en `createPaymentMethod` (ya acepta `deducciones?`, use-payment-methods.ts:129-134).
+- **Edición** (`draft.id` presente): tras `updatePaymentMethod(...)`, función nueva `persistDeduccionesDeMetodo({ metodoCobroId: draft.id, empresaId, usuarioId, rows })` (`use-metodo-cobro-deducciones.ts`) — **una `db.writeTransaction` por método** (no una por fila): itera `rows`, `UPDATE` si `row.id` existe, `INSERT` si no, todo o nada por método. Reemplaza el uso disperso de `updateDeduccion`/`createDeduccion` sueltos que hacía `payment-method-form.tsx` (`persistDeducciones` local, eliminada de ese archivo en favor de la función compartida).
+- **Invariante nunca-huérfano (SC-08/SC-30) ahora se cumple en el flujo real**: antes, `createPaymentMethod` se llamaba sin `deducciones` (banco-form.tsx:734-748) → 0 filas. Con este cambio, todo método bancario nuevo nace con al menos 1 fila `COMISION` apuntando a una cuenta resuelta (nunca NULL, nunca sentinel sin resolver).
+
+### Nombres descriptivos de leaf (`banco-form.tsx:447-451`)
+
+| Antes | Ahora |
 |---|---|
-| **Crear**, banco seleccionado | Al elegir banco, precarga 1 slot (tabla arriba) con `cuenta_gasto_id = banco.cuenta_gasto_pasarela_id` (de `useBancosActivos()`), editable antes de guardar |
-| **Agregar concepto** (crear o editar) | Botón "+ Agregar deducción" añade fila con `cuenta_gasto_id` default = pasarela base del banco actual, `tipo='COMISION'`, `porcentaje='0'`, reutilizando el mismo `NativeSelect` filtrado por `useCuentasDetallePorTipo('GASTO')` que ya usa `banco-form.tsx` |
-| **Editar existente** | Nuevo hook `use-metodo-cobro-deducciones.ts`: `useDeduccionesDeMetodo(metodoCobroId)` — `SELECT * FROM metodo_cobro_deducciones WHERE metodo_cobro_id=? AND empresa_id=? ORDER BY orden`; `updateDeduccion(id, data)` vía `db.execute` (mismo patrón no-transaccional que `updatePaymentMethod`, fila suelta no ledger) |
-| **Desactivar** | Toggle por fila → `updateDeduccion(id, { is_active: false })`. Nunca DELETE físico (SC-11) — sin botón de borrado en la UI |
-| **Multi-tenant** | Todo `SELECT`/`INSERT`/`UPDATE` de `metodo_cobro_deducciones` filtra por `empresa_id` de `useCurrentUser()`, igual patrón que el resto del proyecto (SC-12) |
+| Un solo `nombreLeaf = "{BANCO} {TIPO} {ULT4}"` para AMBAS leaves (bancaria y pasarela) — mismo nombre, solo se distinguen por el grupo padre | `nombreLeafBancaria = "COMISION BANCARIA {BANCO} {TIPO} {ULT4}"` / `nombreLeafPasarela = "COMISION PASARELA {BANCO} {TIPO} {ULT4}"` |
 
-### File Changes (PR-3)
+`crearLeafBajoGrupo` recibe el nombre como parámetro (antes cerraba sobre una única variable compartida) — cada llamada (bancaria/pasarela) pasa el suyo. Solo afecta bancos creados/editados DESPUÉS de este cambio — los backfilleados por la migración 0081 conservan el nombre viejo sin prefijo (ver Open Questions).
+
+### File Changes (PR-3, reemplaza tabla de la revisión 2026-07-31)
 
 | Archivo | Acción | Descripción |
 |---|---|---|
-| `src/features/configuracion/schemas/payment-method-schema.ts` | Modify | Agrega `metodoCobroDeduccionSchema` + campo `deducciones` |
-| `src/features/configuracion/hooks/use-payment-methods.ts` | Modify | `createPaymentMethod` acepta `deducciones[]`, inserta en la misma `writeTransaction` |
-| `src/features/configuracion/hooks/use-metodo-cobro-deducciones.ts` | Create | `useDeduccionesDeMetodo`, `createDeduccion` (agregar concepto a método ya existente), `updateDeduccion` |
-| `src/features/configuracion/components/payment-method-form.tsx` | Modify | UI de N filas: precarga 1 slot default (comisión, base pasarela), agregar/editar/desactivar, oculta sección si no hay banco |
+| `src/features/configuracion/components/deducciones-editor.tsx` | Create | `DeduccionesEditor` + `DeduccionRow` (movido desde `payment-method-form.tsx`) + panel inline "crear cuenta" |
+| `src/features/configuracion/hooks/use-metodo-cobro-deducciones.ts` | Modify | Agrega `useDeduccionesPorMetodos(ids)` y `persistDeduccionesDeMetodo(params)` (transaccional, 1 `writeTransaction` por método). `createDeduccion`/`updateDeduccion` sueltos quedan sin consumidores directos tras el cambio, se mantienen exportados (no se eliminan) |
+| `src/features/contabilidad/hooks/use-plan-cuentas.ts` | Modify | Agrega `useGruposGasto()` (lista plana GASTO) y `useSiguienteCodigoDeGrupo(grupo)`; `agregarSubcuentaAGrupo` retorna `Promise<string>` (antes `void`) |
+| `src/features/configuracion/components/banco-form.tsx` | Modify | `MetodoDraft.deducciones`; `crearCuentasDelBanco` con nombres de leaf distintos; `MetodoDraftRow` usa `DeduccionesEditor`, quita el input suelto "Comisión %" (ver Open Questions); `handleSubmit` con hoist de `cuentaGastoPasarelaFinal` + wiring de deducciones create/edit; nueva query `useDeduccionesPorMetodos` |
+| `src/features/configuracion/components/payment-method-form.tsx` | Modify | Usa `DeduccionesEditor` en vez de su bloque de UI inline; elimina su `persistDeducciones` local en favor de `persistDeduccionesDeMetodo` compartida. Sin cambio de comportamiento observable (sigue sin ruta alcanzable, pero deja de divergir) |
+| `src/routes/_app/configuracion/metodos-pago.tsx` | No change | Sigue redirigiendo a `/configuracion/bancos` |
 
 ## Open Questions
 
@@ -245,3 +317,6 @@ deducciones: z.array(metodoCobroDeduccionSchema).default([]),
 - [x] `spec.md` SC-07/SC-08 referenciaban `tipo='TARJETA_CREDITO'`, valor inexistente en el CHECK de `metodos_cobro` — corregido por `sdd-spec` (2026-08-02): SC-07 ahora describe el default único de comisión para cualquier método bancario; SC-08 ahora cubre el invariante "nunca huérfano". `tasks.md` 4.3/4.9 y `proposal.md` (referencias a slots por tipo) quedan pendientes de una pasada de `sdd-tasks` para alinearse — no bloqueante para este documento.
 - [ ] **`useGruposGastoConSubcuentas`** (usado en `gastos-dashboard.tsx`, `gasto-list.tsx`, `cuenta-gasto-modal.tsx`) asume 2 niveles planos (grupo es_cuenta_detalle=0 → subcuentas es_cuenta_detalle=1 directas). Con la nueva jerarquía de 4 niveles, las leaves reales (`6.1.25.01.NN`/`6.2.06.01.NN`) NO aparecerán como subcuentas de `6.1.25`/`6.2.06` (sus hijos directos son grupos, no leaves) — quedan invisibles en los selectores de gasto manual. **Necesita decisión del usuario**: ¿extender el hook a recursión N-niveles ahora (dentro de PR-2b, ampliaría el scope guard sobre esos 3 componentes) o diferir a un PR aparte? No bloqueante para las 3 cuentas auto-creadas por banco (que no pasan por este hook), pero SÍ afecta el registro manual de gastos contra esas cuentas. **Nota**: PR-2b ya mergeado (`159cb88`) — confirmar si esto quedó resuelto en 3b.2.4 (`useGruposGastoConSubcuentas` reescrito con mapa `Map<parent_id, hojas[]>`) o sigue abierto.
 - [ ] Riesgo de cuentas huérfanas en `crearCuentasDelBanco` si `createBanco` falla después de crear las leaves — preexistente de PR-2, sin mitigación nueva, solo anotado.
+- [ ] **Necesita confirmación del usuario antes de implementar**: la consolidación (obs #792) quita de `MetodoDraftRow` el input suelto "Comisión %" (`comision_pct`, banco-form.tsx:136-147) en favor exclusivo de `DeduccionesEditor`. `comision_pct` queda deprecado desde design.md original (PR-4 lee `metodo_cobro_deducciones`, no esta columna) — la propuesta es dejar de mostrarlo en la UI y enviar siempre `'0'` al backend, sin quitar la columna. Es un cambio de UI visible (se quita un campo que hoy el usuario ve y llena) — confirmar antes de tocar `MetodoDraftRow`.
+- [ ] Las leaves de comisión bancarias/pasarela ya backfilleadas por la migración 0081 (bancos creados antes de este cambio) conservan el nombre viejo sin prefijo (`"{BANCO} {TIPO} {ULT4}"`, sin distinguir bancaria de pasarela). El nuevo naming con prefijo `COMISION BANCARIA`/`COMISION PASARELA` solo aplica a bancos creados/editados con `crearCuentasDelBanco` DESPUÉS de este cambio. **Decisión pendiente**: ¿migración de backfill para renombrar las leaves existentes, o se acepta la inconsistencia histórica (dato de desarrollo, sin producción real, obs #703/#705)?
+- [ ] `useDeduccionesPorMetodos(metodoCobroIds)` recibe un array que cambia de referencia en cada render de `banco-form.tsx` (viene de `.map()` sobre `existingMetodos`) — funciona correctamente pero puede re-ejecutar la query más seguido de lo necesario. Memoizar con `useMemo` si se detecta un problema de performance real; no bloqueante para la primera implementación.

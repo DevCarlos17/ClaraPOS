@@ -167,6 +167,52 @@ export function useGrupoComisionesPasarela(): { id: string; codigo: string; nive
 }
 
 /**
+ * Lista PLANA de grupos GASTO (`es_cuenta_detalle=0`, `is_active=1`), SIN el
+ * filtro "solo si tiene hojas" de `useGruposGastoConSubcuentas` (ese hook
+ * oculta grupos vacios; aca hace falta poder elegir cualquiera, incluso uno
+ * recien creado sin hojas todavia). Usado por el panel inline "+ Crear
+ * cuenta" de `DeduccionesEditor` (PR-3c.1) para el selector de grupo padre.
+ */
+export function useGruposGasto() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `SELECT * FROM plan_cuentas
+     WHERE empresa_id = ? AND tipo = 'GASTO' AND es_cuenta_detalle = 0 AND is_active = 1
+     ORDER BY codigo ASC`,
+    [empresaId]
+  )
+
+  return { grupos: (data ?? []) as CuentaContable[], isLoading }
+}
+
+/**
+ * Preview reactivo del proximo codigo de subcuenta dentro de un grupo
+ * (`{grupoCodigo}.{n:02}`), mismo calculo que ya hace `agregarSubcuentaAGrupo`
+ * al escribir. Recalculado cada vez que cambia `grupoId` o se agrega/quita
+ * una subcuenta del grupo (query reactiva) — es solo informativo, el valor
+ * real se recalcula de nuevo al crear (mismo riesgo de carrera preexistente
+ * en `agregarSubcuentaAGrupo`, no uno nuevo).
+ */
+export function useSiguienteCodigoDeGrupo(grupoId: string | undefined): string | undefined {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data } = useQuery(
+    `SELECT
+       (SELECT codigo FROM plan_cuentas WHERE id = ?) AS grupo_codigo,
+       (SELECT COUNT(*) FROM plan_cuentas WHERE parent_id = ? AND empresa_id = ?) AS cnt`,
+    [grupoId ?? '', grupoId ?? '', empresaId]
+  )
+
+  const row = (data ?? [])[0] as { grupo_codigo: string | null; cnt: number } | undefined
+  if (!grupoId || !row?.grupo_codigo) return undefined
+
+  return `${row.grupo_codigo}.${String(row.cnt + 1).padStart(2, '0')}`
+}
+
+/**
  * Grupos de tipo GASTO con su arbol de subgrupos y subcuentas de movimiento.
  * Usado en el modal de gestion de cuentas de gasto y en los selectores de
  * registro manual de gasto (`gastos-dashboard.tsx`, `gasto-list.tsx`,
@@ -467,6 +513,13 @@ export async function crearGrupoGastoConSubcuentas(params: {
 /**
  * Agrega una subcuenta de movimiento a un grupo GASTO existente.
  * El codigo se genera automaticamente: {grupoCodigo}.{n:02}.
+ *
+ * Retorna el `id` de la subcuenta creada (PR-3c.1: antes `Promise<void>`) —
+ * evita que el caller re-consulte por `parent_id+nombre` para obtener el id
+ * (necesario para que `DeduccionesEditor` pueda setear `cuenta_gasto_id` de
+ * inmediato tras crear la cuenta inline). El unico consumidor previo
+ * (`cuenta-gasto-modal.tsx`) ignora el valor de retorno — sigue compilando
+ * sin cambios.
  */
 export async function agregarSubcuentaAGrupo(params: {
   grupoId: string
@@ -475,7 +528,8 @@ export async function agregarSubcuentaAGrupo(params: {
   nombreSubcuenta: string
   empresaId: string
   userId: string
-}): Promise<void> {
+}): Promise<string> {
+  const subId = uuidv4()
   await db.writeTransaction(async (tx) => {
     const now = localNow()
 
@@ -485,7 +539,6 @@ export async function agregarSubcuentaAGrupo(params: {
     )
     const cnt = Number((cntResult.rows?.item(0) as { cnt: number } | undefined)?.cnt ?? 0)
     const codigoSub = `${params.grupoCodigo}.${String(cnt + 1).padStart(2, '0')}`
-    const subId = uuidv4()
 
     await tx.execute(
       `INSERT INTO plan_cuentas
@@ -494,6 +547,7 @@ export async function agregarSubcuentaAGrupo(params: {
       [subId, params.empresaId, codigoSub, params.nombreSubcuenta.trim().toUpperCase(), params.grupoId, params.grupoNivel + 1, now, now, params.userId]
     )
   })
+  return subId
 }
 
 /**
