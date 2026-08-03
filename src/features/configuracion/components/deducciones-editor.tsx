@@ -102,6 +102,15 @@ export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId, errors
     updateRow(index, { is_active: false })
   }
 
+  // Simetrico a `handleRemoveOrDeactivate`: metodo_cobro_deducciones es
+  // config editable (no ledger inmutable), reactivar es un cambio de config
+  // tan valido como desactivar. Conserva concepto/porcentaje/cuenta_gasto_id
+  // (solo cambia `is_active`) — el padre persiste la fila reactivada como
+  // activa via `persistDeduccionesDeMetodo` al guardar.
+  function handleReactivar(index: number) {
+    updateRow(index, { is_active: true })
+  }
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
@@ -126,6 +135,7 @@ export function DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId, errors
             cuentaBaseLabel={cuentaBaseLabel}
             onUpdate={(patch) => updateRow(i, patch)}
             onRemoveOrDeactivate={() => handleRemoveOrDeactivate(i)}
+            onReactivar={() => handleReactivar(i)}
             creandoCuenta={crearCuentaEnIndex === i}
             onToggleCrearCuenta={() => setCrearCuentaEnIndex(crearCuentaEnIndex === i ? null : i)}
             onCuentaCreada={(subId) => {
@@ -157,6 +167,7 @@ interface DeduccionRowEditorProps {
   cuentaBaseLabel?: string
   onUpdate: (patch: Partial<DeduccionRow>) => void
   onRemoveOrDeactivate: () => void
+  onReactivar: () => void
   creandoCuenta: boolean
   onToggleCrearCuenta: () => void
   onCuentaCreada: (subId: string) => void
@@ -173,6 +184,7 @@ function DeduccionRowEditor({
   cuentaBaseLabel,
   onUpdate,
   onRemoveOrDeactivate,
+  onReactivar,
   creandoCuenta,
   onToggleCrearCuenta,
   onCuentaCreada,
@@ -281,7 +293,16 @@ function DeduccionRowEditor({
             {row.id ? 'Desactivar' : 'Quitar'}
           </button>
         ) : (
-          <span className="text-xs text-gray-400">Desactivada</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">Desactivada</span>
+            <button
+              type="button"
+              onClick={onReactivar}
+              className="text-xs text-blue-600 hover:text-blue-800"
+            >
+              Reactivar
+            </button>
+          </div>
         )}
       </div>
     </div>
