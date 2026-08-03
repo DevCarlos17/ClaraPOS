@@ -73,16 +73,30 @@ export function useBancosActivos() {
   return { bancos: (data ?? []) as Banco[], isLoading }
 }
 
-/** Returns all payment methods associated with a specific banco. */
+/**
+ * Returns all payment methods associated with a specific banco.
+ *
+ * Exposes `isFetching` ademas de `isLoading` (mismo patron que
+ * `useDeduccionesPorMetodos`, use-metodo-cobro-deducciones.ts) porque
+ * `isLoading` (de @powersync/react) es un flag de UNA SOLA VEZ que pasa a
+ * `false` la primera vez que la query resuelve y NUNCA vuelve a `true`
+ * cuando `bancoId` cambia despues. Como `bancoId` pasa por `''` en CADA
+ * ciclo cerrar/reabrir del modal (banco-list.tsx hace
+ * `setEditingBanco(undefined)` al cerrar, incluido el auto-close tras
+ * guardar), un caller que solo mire `isLoading` puede leer datos STALE
+ * de `data` durante el render intermedio en el que `bancoId` ya cambio al
+ * id real pero la query aun no re-resolvio. Ver banco-form.tsx (guard del
+ * efecto de sync, fix isFetching en useMetodosByBanco).
+ */
 export function useMetodosByBanco(bancoId: string) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
-  const { data, isLoading } = useQuery(
+  const { data, isLoading, isFetching } = useQuery(
     'SELECT * FROM metodos_cobro WHERE banco_empresa_id = ? AND empresa_id = ? ORDER BY created_at ASC',
     [bancoId, empresaId]
   )
-  return { data: (data ?? []) as BancoMetodo[], isLoading }
+  return { data: (data ?? []) as BancoMetodo[], isLoading, isFetching }
 }
 
 export async function createBanco(params: {

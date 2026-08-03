@@ -8,6 +8,8 @@
 
 > **PR-2b (2026-07-30)**: El diseño plano `6.2.05 COMISIONES BANCARIAS` de PR-2 (commit `16a0e3e`) queda SUPERADO por una estructura de 4 niveles que separa comisiones de pasarela de pago (gasto de venta) de comisiones bancarias (gasto financiero), y agrega el invariante de que ningún método de pago queda sin cuenta de comisión de pasarela. Ver obs. Engram `#706` (diseño final), `#703` (constraint: gastos en desarrollo, rewrite opción C permitido), `#705` (zonas prohibidas).
 
+> **PR-3 spec fix (2026-08-02)**: SC-07/SC-08 corregidos. `tipo='TARJETA_CREDITO'` NO existe en `metodos_cobro` (obs Engram `#759` — el CHECK real es `EFECTIVO|TRANSFERENCIA|PUNTO|PAGO_MOVIL|ZELLE|DIVISA_DIGITAL|OTRO`; débito y crédito son ambos `tipo='PUNTO'`, distinguidos solo por `nombre`). El usuario confirmó además una simplificación total: SIN defaults especiales por `tipo` de método — un único slot de comisión base para cualquier método bancario (obs Engram `#753`, revisión final).
+
 > **Scope guard**: Este cambio SOLO puede tocar el subárbol GASTOS de `plan_cuentas`, `bancos_empresa` y `metodo_cobro_deducciones`, además de la lógica de `banco-form.tsx`. MUST NOT tocar `ventas*`, `inventario_stock`/`movimientos_inventario` (Kardex), `productos`/`departamentos`/`marcas`/`unidades`/`depositos`/`lotes`/`ajustes`, `clientes`/`movimientos_cuenta`/`vencimientos_cobrar`, ni `usuarios`/`roles`/`rol_permisos`/`tenant_permisos` (obs #705).
 
 ---
@@ -69,21 +71,21 @@ El sistema MUST soportar N filas de deducción por `metodo_cobro_id` en la tabla
 - WHEN `porcentaje` es negativo o mayor a 100
 - THEN la base de datos rechaza el INSERT/UPDATE (`CHECK (porcentaje >= 0 AND porcentaje <= 100)`)
 
-### Requirement: Defaults por tipo de método al crear (Slice 3)
+### Requirement: Default único de comisión al crear método bancario (Slice 3)
 
-Al crear un método de pago, el sistema MUST precargar deducciones por defecto según el tipo: PUNTO → 2 slots al 0%; transferencia/otros bancarios → 1 slot al 0%; tarjeta de crédito → 1 slot con `tipo='ISLR'` y `porcentaje=5`. Todos los defaults MUST quedar editables por el usuario antes o después de guardar.
+Al crear un método de pago con `banco_empresa_id` asociado (cualquier `tipo` — no hay defaults especiales por `tipo`), el sistema MUST precargar exactamente 1 deducción por defecto: `tipo='COMISION'`, `porcentaje=0`, `cuenta_gasto_id` = `cuenta_gasto_pasarela_id` del banco del método. Este slot MUST quedar pre-seleccionado y editable por el usuario (ajustar `porcentaje`, cambiar cuenta, agregar más conceptos o desactivar) antes o después de guardar. Cualquier concepto adicional que el usuario agregue (segundo, tercero, etc.) MUST nacer también con `cuenta_gasto_id` default = la misma pasarela base, re-apuntable manualmente a otra cuenta de gasto.
 
-#### Scenario: SC-07 — Defaults de método PUNTO
+#### Scenario: SC-07 — Default único al crear método bancario
 
-- GIVEN la creación de un nuevo método de pago con `tipo='PUNTO'`
+- GIVEN la creación de un nuevo método de pago con `banco_empresa_id` asociado (cualquier `tipo`, ej. `PUNTO` para una tarjeta débito o crédito — ambas comparten el mismo `tipo`, se distinguen solo por `nombre`)
 - WHEN se guarda el método
-- THEN se precargan 2 filas en `metodo_cobro_deducciones` con `porcentaje=0`
+- THEN se precarga exactamente 1 fila en `metodo_cobro_deducciones` con `tipo='COMISION'`, `porcentaje=0` y `cuenta_gasto_id` = la cuenta pasarela base del banco
 
-#### Scenario: SC-08 — Defaults de tarjeta de crédito
+#### Scenario: SC-08 — El slot default nunca queda huérfano de cuenta
 
-- GIVEN la creación de un nuevo método de pago con `tipo='TARJETA_CREDITO'`
+- GIVEN un método de pago bancario recién creado, sin que el usuario haya tocado el slot default
 - WHEN se guarda el método
-- THEN se precarga 1 fila con `tipo='ISLR'` y `porcentaje=5`
+- THEN el slot `COMISION` queda vinculado a `bancos_empresa.cuenta_gasto_pasarela_id` (garantizado no-null por PR-2b), nunca con `cuenta_gasto_id` NULL ni huérfano
 
 #### Scenario: SC-09 — Método sin banco no ofrece deducciones bancarias
 
@@ -299,6 +301,6 @@ El script MUST incluir en su cabecera la instrucción de ejecutar `pg_dump` de l
 
 - Cualquier tabla o dominio fuera del scope guard indicado al inicio del documento (obs #705): `ventas*`, inventario/Kardex, `clientes`/CxC, `usuarios`/roles/permisos. PR-2b no toca ninguna de estas.
 - Contabilidad real con partida doble formal o conciliación fiscal — este registro sigue siendo un registro QoL, no un módulo contable.
-- Vinculación de la deducción ISLR de tarjetas de crédito a impuestos o anticipos fiscales — va directo a Gastos > Comisiones Bancarias como cualquier otro concepto.
+- Vinculación de deducciones tipo `ISLR` (u otro) a impuestos o anticipos fiscales reales — no hay default automático de `ISLR`; si el usuario agrega manualmente un concepto de ese tipo, va directo a la cuenta de gasto que el usuario elija, como cualquier otro concepto.
 - Fix de `tasaDelDia` en `useTasaDelDia`/`FormCierre` — ya resuelto en el Paso 1 (commits `db0417b`, `1e3a603`, `4fc9808`), fuera de este cambio.
 - Correlativo secuencial de sesiones de caja, rediseño de conciliación bancaria, o cualquier tema no listado en `task.md`.

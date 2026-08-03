@@ -123,6 +123,15 @@ export async function createPaymentMethod(params: {
   usa_cxp?: boolean
   caja_fuerte_id?: string | null
   consolidar_lotes?: boolean
+  // PR-3: N conceptos de deduccion (comision de pasarela, ISLR, etc.), pre-armados
+  // por el caller (payment-method-form.tsx) con la cuenta base de pasarela del banco.
+  // createPaymentMethod NO resuelve la cuenta por su cuenta — solo persiste.
+  deducciones?: {
+    concepto: string
+    tipo: 'COMISION' | 'ISLR' | 'OTRO'
+    porcentaje: string
+    cuenta_gasto_id: string
+  }[]
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -170,6 +179,33 @@ export async function createPaymentMethod(params: {
         params.consolidar_lotes !== false ? 1 : 0,
       ]
     )
+
+    // PR-3: default-seeding de deducciones, MISMA writeTransaction que el
+    // INSERT de metodos_cobro — el metodo y sus filas de deduccion se crean
+    // o fallan juntos (ningun metodo_cobro_deducciones puede quedar huerfano
+    // de su metodos_cobro padre).
+    for (const [i, d] of (params.deducciones ?? []).entries()) {
+      await tx.execute(
+        `INSERT INTO metodo_cobro_deducciones
+           (id, empresa_id, metodo_cobro_id, cuenta_gasto_id, concepto, tipo, porcentaje, orden,
+            is_active, created_at, updated_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          params.empresa_id,
+          id,
+          d.cuenta_gasto_id,
+          d.concepto,
+          d.tipo,
+          new Decimal(d.porcentaje || '0').toFixed(2),
+          i,
+          1,
+          now,
+          now,
+          params.usuario_id,
+        ]
+      )
+    }
   })
 
   return id

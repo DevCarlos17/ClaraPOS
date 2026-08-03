@@ -166,26 +166,137 @@ Chain strategy: feature-branch-chain
 
 ---
 
-## Phase 4: PR-3 — `payment-method-form.tsx` N-deducciones (Slice 3)
+## Review Workload Forecast — PR-3 (corrected 2026-08-02, supersede embedded PR-3 estimate in top table)
 
-> Depende de PR-1a mergeado (requiere tabla `metodo_cobro_deducciones`) Y de Phase 3b/PR-2b mergeado (requiere `bancos_empresa.cuenta_gasto_pasarela_id` garantizado no-null, contrato PR-2b→PR-3).
+> Spec/design corregidos (obs Engram `#753`): sin `TARJETA_CREDITO`, sin defaults por `tipo`, un único slot base. Estimación original de la tabla superior (línea 9, "~150-250") no contaba el hook nuevo `use-metodo-cobro-deducciones.ts` exigido por design.md — corregida abajo.
 
-- [ ] 4.1 `src/features/configuracion/schemas/payment-method-schema.ts` — Agregar schema Zod para array de deducciones: `{ concepto: z.string().min(1), porcentaje: z.number().min(0).max(100), cuenta_gasto_id: z.string().uuid(), tipo: z.enum(['COMISION','ISLR','OTRO']) }[]`.
-- [ ] 4.2 `src/features/configuracion/components/payment-method-form.tsx` — UI de N filas de deducción (agregar/editar/desactivar), reusando patrón de formularios array existentes en el proyecto.
-- [ ] 4.3 Mismo archivo — Defaults al crear según `tipo`: `PUNTO` → 2 slots `porcentaje=0`; transferencia/otros bancarios → 1 slot `porcentaje=0`; `TARJETA_CREDITO` → 1 slot `tipo='ISLR'`, `porcentaje=5`. Todos editables antes/después de guardar. Satisface SC-07, SC-08.
-- [ ] 4.4 Mismo archivo — Si el método no tiene `banco_empresa_id` (ej. EFECTIVO), no ofrecer la sección de deducciones bancarias. Satisface SC-09.
-- [ ] 4.5 Mismo archivo — Acción "desactivar" concepto ejecuta `UPDATE ... SET is_active=0` (soft-deactivate); NO ofrecer ni ejecutar DELETE físico de filas de `metodo_cobro_deducciones`. Satisface SC-11.
-- [ ] 4.6 Confirmar que toda query/insert de deducciones filtra por `empresa_id` del usuario actual (multi-tenant). Satisface SC-12.
-- [ ] 4.7 Verify: `yarn type-check && yarn lint` limpio en `payment-method-schema.ts` y `payment-method-form.tsx`.
-- [ ] 4.8 Manual QA — SC-07: crear método `PUNTO` → 2 filas con `porcentaje=0`.
-- [ ] 4.9 Manual QA — SC-08: crear tarjeta de crédito → 1 fila `tipo='ISLR'`, `porcentaje=5` precargada.
-- [ ] 4.10 Manual QA — SC-09: método EFECTIVO no ofrece agregar deducciones bancarias.
-- [ ] 4.11 Manual QA — SC-11: desactivar una deducción → `is_active=0`, deja de aplicarse en cierres futuros pero sigue en la tabla.
-- [ ] 4.12 Manual QA — SC-12: usuario de Empresa A solo ve deducciones de sus propios métodos, nunca las de Empresa B.
+| Field | Value |
+|-------|-------|
+| Estimated changed lines | `payment-method-schema.ts` ~18-25 (agrega `metodoCobroDeduccionSchema` + campo `deducciones`) · `use-payment-methods.ts` ~25-35 (modifica `createPaymentMethod`, mismo `writeTransaction`) · `use-metodo-cobro-deducciones.ts` (NUEVO) ~70-100 (hook query + `createDeduccion` + `updateDeduccion`, referencia de tamaño: `use-bancos.ts` = 216 líneas con alcance similar) · `payment-method-form.tsx` ~150-220 (UI de N filas: state array, precarga de slot, agregar/desactivar, selects de cuenta condicionales — el proyecto NO usa `useFieldArray`, patrón existente es `useState` plano, confirmado en el archivo actual) · **Total ~265-380** |
+| 400-line budget risk | Medium-High — el rango superior (~380) queda peligrosamente cerca del presupuesto de 400 líneas si la UI de N-filas termina más compleja de lo estimado (selects por fila + validación por fila + botones agregar/desactivar) |
+| Chained PRs recommended | Yes (precautorio, mismo patrón de sub-slicing ya usado en Phase 3b para PR-2b) |
+| Suggested split | PR-3a (`payment-method-schema.ts` + `use-payment-methods.ts` + `use-metodo-cobro-deducciones.ts` — backend/hooks, ~115-160 líneas) → PR-3b (`payment-method-form.tsx` — UI completa, ~150-220 líneas), ambas bajo el tracker `feat/gastos-registro-qol` (feature-branch-chain) |
+| Delivery strategy | ask-on-risk (recibido de sesión) |
+| Chain strategy | feature-branch-chain (recibido de sesión, tracker `feat/gastos-registro-qol`, PR-2b ya mergeado `159cb88`) |
+
+Decision needed before apply: Yes
+Chained PRs recommended: Yes
+Chain strategy: feature-branch-chain
+400-line budget risk: Medium-High
+
+### Suggested Work Units — PR-3
+
+| Unit | Goal | Likely PR | Base branch | Notes |
+|------|------|-----------|--------------|-------|
+| 4a | `payment-method-schema.ts` (Zod `metodoCobroDeduccionSchema`) + `use-payment-methods.ts` (`createPaymentMethod` acepta `deducciones[]`) + `use-metodo-cobro-deducciones.ts` (nuevo: `useDeduccionesDeMetodo`, `createDeduccion`, `updateDeduccion`) | PR-3a | `feat/gastos-registro-qol` (tracker) | Backend puro, sin UI — verificable con `yarn type-check` y pruebas manuales de INSERT/UPDATE directo |
+| 4b | `payment-method-form.tsx` — UI completa de N filas (precarga, agregar, editar, desactivar, ocultar sin banco) | PR-3b | rama de PR-3a | Depende de 4a mergeada (necesita el hook y el schema) |
+
+Si el diff real de la Fase 4 completa (4a+4b) se mantiene bajo ~350 líneas al implementar, `sdd-apply` puede proponer una única PR-3 y solo usar esta sub-división si el conteo real se acerca al límite.
+
+## Phase 4: PR-3 — `payment-method-form.tsx` N-deducciones (Slice 3, corregido 2026-08-02)
+
+> Depende de PR-1a mergeado (requiere tabla `metodo_cobro_deducciones`) Y de Phase 3b/PR-2b mergeado (requiere `bancos_empresa.cuenta_gasto_pasarela_id` garantizado no-null, contrato PR-2b→PR-3, `159cb88` ya mergeado). Regla ÚNICA (obs #753): sin defaults por `tipo` de método, un único slot base `COMISION` al crear cualquier método bancario.
+>
+> **REDISEÑO 2026-08-02 (consolidación UI, obs Engram #792/#753 final — 3 decisiones RESUELTAS)**: QA manual detectó que esta implementación dejó la UI de N-deducciones huérfana en `payment-method-form.tsx` — el flujo real crea métodos desde `banco-form.tsx` (`MetodoDraftRow`), que llamaba `createPaymentMethod` SIN `deducciones`, incumpliendo el invariante "nunca huérfano" (SC-08/SC-30) en producción. Los ítems **4.4–4.8 y 4.11–4.15** de abajo describen el comportamiento de `payment-method-form.tsx` como superficie PRIMARIA — quedan **SUPERSEDED por Phase 4c** (más abajo), que consolida toda la UI en `banco-form.tsx` vía un componente compartido `DeduccionesEditor`. Los ítems **4.1–4.3, 4.9, 4.10, 4.16–4.22** (schema Zod, hook base `use-metodo-cobro-deducciones.ts`, contrato `createPaymentMethod`, filtro `empresa_id`, fixes W1/W2) siguen VIGENTES sin cambios — Phase 4c los reutiliza tal cual, solo cambia DÓNDE vive la UI.
+
+- [x] 4.1 `src/features/configuracion/schemas/payment-method-schema.ts` — Agregar `metodoCobroDeduccionSchema = z.object({ id: z.string().uuid().optional(), concepto: z.string().min(1,'Requerido'), tipo: z.enum(['COMISION','ISLR','OTRO']), porcentaje: z.string().refine(v => !isNaN(Number(v)) && Number(v) >= 0 && Number(v) <= 100, 'Debe estar entre 0 y 100'), cuenta_gasto_id: z.string().uuid('Seleccione una cuenta'), is_active: z.boolean().default(true) })` y campo `deducciones: z.array(metodoCobroDeduccionSchema).default([])` en `paymentMethodSchema`.
+- [x] 4.2 `src/features/configuracion/hooks/use-metodo-cobro-deducciones.ts` (nuevo archivo) — `useDeduccionesDeMetodo(metodoCobroId)`: `SELECT * FROM metodo_cobro_deducciones WHERE metodo_cobro_id=? AND empresa_id=? ORDER BY orden` (filtra por `empresa_id` de `useCurrentUser()`, SC-12); `createDeduccion(params)`: INSERT suelto (fila nueva agregada a un método ya existente, no dentro de la transacción de creación del método); `updateDeduccion(id, data)`: `UPDATE` vía `db.execute` (patrón no-transaccional, igual que `updatePaymentMethod`).
+- [x] 4.3 `src/features/configuracion/hooks/use-payment-methods.ts` — Extender `createPaymentMethod` con param opcional `deducciones?: { concepto: string; tipo: 'COMISION'|'ISLR'|'OTRO'; porcentaje: string; cuenta_gasto_id: string }[]`; dentro del MISMO `db.writeTransaction` ya existente, tras el INSERT de `metodos_cobro`, iterar `deducciones` e `INSERT INTO metodo_cobro_deducciones (id, empresa_id, metodo_cobro_id, cuenta_gasto_id, concepto, tipo, porcentaje, orden, is_active, created_at, updated_at, created_by) VALUES (...)` por cada una (orden = índice del array). `createPaymentMethod` NO resuelve la cuenta pasarela por su cuenta — el caller arma el array. Satisface el default-seeding transaccional de SC-07/SC-08.
+- [x] 4.4 `src/features/configuracion/components/payment-method-form.tsx` — Agregar state `deducciones: DeduccionRow[]`; al seleccionar un banco en modo creación (`bancoEmpresaId` cambia y hay banco con `cuenta_gasto_pasarela_id`), precargar automáticamente 1 fila: `{ concepto: 'Comision bancaria', tipo: 'COMISION', porcentaje: '0', cuenta_gasto_id: banco.cuenta_gasto_pasarela_id, is_active: true }` (sin excepciones por `tipo` de método — mismo comportamiento para `PUNTO`, `TRANSFERENCIA`, `PAGO_MOVIL`, etc.). Satisface SC-07. **Nota de implementación**: el efecto solo precarga si `deducciones.length === 0`, para no pisar filas que el usuario ya agregó/editó si cambia de banco antes de guardar.
+- [x] 4.5 Mismo archivo — Botón "+ Agregar deducción": append de una fila nueva con `cuenta_gasto_id` default = la pasarela base del banco actualmente seleccionado, `tipo='COMISION'`, `porcentaje='0'`, re-apuntable vía `NativeSelect` filtrado por `useCuentasDetallePorTipo('GASTO')` (mismo hook que ya usa `banco-form.tsx`). Ningún concepto nace sin cuenta (SC-08).
+- [x] 4.6 Mismo archivo — Modo edición (`method` presente): cargar filas existentes vía `useDeduccionesDeMetodo(method.id)` en vez de precarga; cambios de fila existente llaman `updateDeduccion(id, data)` al guardar (no van dentro del `writeTransaction` de creación, que solo aplica a método nuevo). **Nota de implementación**: se llama `updateDeduccion` incondicionalmente para toda fila con `id` al guardar (sin diff de campos) — mismo patrón idempotente que `updatePaymentMethod`, evita comparar strings de `porcentaje` formateados vs. crudos.
+- [x] 4.7 Mismo archivo — Toggle "desactivar" por fila → `updateDeduccion(id, { is_active: false })`; sin botón de borrado físico en la UI (SC-11). **Nota de implementación**: para una fila NUEVA aún no persistida (sin `id`), "desactivar" simplemente la quita del array local (nada que soft-deactivate en DB todavía).
+- [x] 4.8 Mismo archivo — Ocultar por completo la sección de deducciones cuando `!requiereBanco || !bancoEmpresaId` (método sin banco, ej. EFECTIVO). Satisface SC-09. **Nota de implementación**: el gate real usado es `bancoEmpresaId` truthy (no `requiereBanco` explícito) — en la práctica equivalente, porque `bancoEmpresaId` solo puede tener valor cuando `requiereBanco` ya mostró el selector de banco.
+- [x] 4.9 Confirmar que `useDeduccionesDeMetodo`, `createDeduccion`, `updateDeduccion` y el INSERT dentro de `createPaymentMethod` filtran/asignan `empresa_id` del usuario actual (`useCurrentUser()`), nunca cruzando empresas. Satisface SC-12.
+- [x] 4.10 Verify: `yarn type-check` → 308 errores, idénticos al baseline documentado (todos preexistentes en `*.test.ts` + los mismos 3 preexistentes no relacionados ya anotados en 3b.3.10: `calendario-citas.tsx`, `factura-detalle-cxc.tsx`, `banco-form.tsx` `BancoMetodo` unused import). 0 errores nuevos en `payment-method-schema.ts`, `use-payment-methods.ts`, `use-metodo-cobro-deducciones.ts` ni `payment-method-form.tsx`. `yarn lint` NO aplica (ESLint no instalado, roto en el proyecto).
+- [x] 4.11 QA (razonado por trazado de código, no browser en vivo) — SC-07/SC-08: al crear un método bancario (cualquier `tipo`, ej. "Banesco TDD" `PUNTO`), el efecto en `payment-method-form.tsx` precarga exactamente 1 fila `tipo='COMISION'`, `porcentaje='0'`, `cuenta_gasto_id = banco.cuenta_gasto_pasarela_id` solo cuando ese campo existe (garantizado no-null por el contrato PR-2b→PR-3) — nunca se seedea con cuenta vacía, y el schema Zod (`cuenta_gasto_id: z.string().uuid(...)`) bloquea el submit si de todos modos quedara vacía.
+- [x] 4.12 QA (razonado por trazado de código) — Agregar un segundo concepto (ej. "Retencion ISLR" `tipo='ISLR'`, `porcentaje=5'`): `handleAddDeduccion` agrega una fila independiente en el array con `cuenta_gasto_id` default = la misma pasarela base, re-apuntable vía su propio `NativeSelect` sin mutar la fila `COMISION` original (arrays de `DeduccionRow` inmutables por índice en `updateDeduccionRow`).
+- [x] 4.13 QA (razonado por trazado de código) — SC-09: método EFECTIVO (`bancoEmpresaId === ''`) nunca activa el efecto de precarga y la sección de deducciones está condicionada a `{bancoEmpresaId && (...)}` — no se renderiza.
+- [x] 4.14 QA (razonado por trazado de código) — SC-11: `handleDeactivateDeduccion` llama `updateDeduccion(id, { is_active: false })` (nunca DELETE); la fila permanece en la tabla y en el array local (mostrada atenuada/deshabilitada), lista para el loop de Phase 5 que filtra `WHERE is_active=1`.
+- [x] 4.15 QA (razonado por trazado de código) — SC-12: `useDeduccionesDeMetodo` filtra `WHERE metodo_cobro_id=? AND empresa_id=?` con `empresa_id` de `useCurrentUser()`; el INSERT de `createPaymentMethod`/`createDeduccion` siempre usa `params.empresa_id` (provisto por el caller desde `user!.empresa_id!`), nunca un valor cruzado de otra empresa.
+
+### Fixes post-review adversarial (2026-08-02, obs Engram `#778`) — APPROVE WITH FIXES
+
+> Revisión adversarial fresh-context de PR-3 (commits `2b77026`+`b1efe91`). Veredicto: APPROVE WITH FIXES. W1 y W2 corregidos en esta misma rama; W3 (reactividad de `deduccionesExistentes` clobbering ediciones no guardadas) queda anotado, NO corregido — riesgo bajo, no confirmado sin pruebas en vivo.
+
+- [x] 4.16 Fix W1 — `payment-method-form.tsx`: el `useEffect` de auto-seed (SC-07) ahora emite `toast.warning` cuando el banco seleccionado no tiene `cuenta_gasto_pasarela_id` (columna nullable, garantía solo a nivel UI de PR-2b, no a nivel DB) — nunca inserta una fila con `cuenta_gasto_id` inválida/NULL (se preserva el guard existente), pero el usuario ya no queda con un método bancario con CERO deducciones en silencio (SC-08/SC-30). Guardado con `warnedNoPasarelaRef` para no repetir el toast en cada render mientras el mismo banco siga seleccionado.
+- [x] 4.17 Fix W2a (attach en edición) — el mismo `useEffect` de auto-seed ya NO se restringe a `!isEditing`: si un método edita de sin-banco (ej. EFECTIVO) a bancario, se precarga el slot base igual que en creación (o se emite el warning de 4.16 si el banco no tiene cuenta pasarela).
+- [x] 4.18 Fix W2b (detach en edición) — nuevo comportamiento en el `useEffect` que reemplaza el reset SC-09: en edición, si el método pasa de bancario a sin-banco, las filas de deducción YA EXISTENTES (con `id`) se soft-desactivan localmente (`is_active=false`, nunca DELETE — SC-11) vía `detachedBancoRef` como guard anti-repetición, con `toast.warning` visible. `persistDeducciones` fue extendido para enviar `is_active` en cada `updateDeduccion`, y `deduccionesPayload` en `handleSubmit` ahora envía siempre las filas locales en modo edición (antes se vaciaba a `[]` si `bancoEmpresaId` quedaba vacío, lo que habría descartado la desactivación antes de persistirla).
+- [x] 4.19 Verify: `yarn type-check` → 308 errores, idénticos al baseline (0 nuevos) en `payment-method-form.tsx`.
+- [x] 4.20 QA (razonado por trazado de código) — W1: banco sin `cuenta_gasto_pasarela_id` → toast de advertencia visible, sin fila creada, sin violación de FK.
+- [x] 4.21 QA (razonado por trazado de código) — W2a: editar método EFECTIVO → asignar banco → se precarga el slot base (o warning si el banco no tiene pasarela).
+- [x] 4.22 QA (razonado por trazado de código) — W2b: editar método bancario → quitar banco → las filas existentes quedan `is_active=false` tras guardar, con aviso visible al desvincular.
+- [ ] W3 (NO corregido, solo anotado) — el `useEffect` de sincronización principal depende de `deduccionesExistentes` (resultado reactivo de `useQuery`); si esa referencia cambia mientras el diálogo está abierto y el usuario está editando, podría sobreescribir ediciones locales no guardadas. Riesgo bajo (solo se dispara ante un cambio real en la tabla, no en cada render), no confirmado sin pruebas en vivo — queda pendiente de QA manual/futuro seguimiento, fuera de alcance de esta corrección.
+
+## Review Workload Forecast — PR-3c (redesign 2026-08-02, supersede UI estimate embedded in Phase 4)
+
+> Las 3 decisiones (obs #753 final, #792) quedaron RESUELTAS: sin input "Comisión %" suelto, sin migración de rename para bancos ya backfilleados, memoizar `useDeduccionesPorMetodos`. La consolidación agrega 1 archivo nuevo (`deducciones-editor.tsx`) y amplía 4 archivos existentes — sustancialmente más grande que la estimación original de Phase 4 (que solo tocaba `payment-method-form.tsx` + 2 hooks).
+
+| Field | Value |
+|-------|-------|
+| Estimated changed lines | `deducciones-editor.tsx` (NUEVO, extraído+ampliado) ~180-260 · `use-metodo-cobro-deducciones.ts` (+`useDeduccionesPorMetodos`, +`persistDeduccionesDeMetodo`) ~90-130 · `use-plan-cuentas.ts` (+`useGruposGasto`, +`useSiguienteCodigoDeGrupo`, firma `agregarSubcuentaAGrupo`) ~50-80 · `banco-form.tsx` (quita input suelto, integra `DeduccionesEditor`, hoist, persist create/edit, naming dinámico) ~160-230 · `payment-method-form.tsx` (refactor a componente compartido, sin cambio de comportamiento) ~120-190 · **Total incremento ~600-890**, SOBRE una rama que ya tiene commits de la implementación original (`2b77026`, `b1efe91`, `6f4f9ed`) |
+| 400-line budget risk | High — el incremento por sí solo ya duplica el presupuesto; sumado a los commits previos de la rama, el diff acumulado de PR-3 completo queda muy por encima de 400 líneas |
+| Chained PRs recommended | Yes |
+| Suggested split | PR-3c.1 (`deducciones-editor.tsx` + `use-metodo-cobro-deducciones.ts` + `use-plan-cuentas.ts` — fundación compartida, sin wiring de UI real) → PR-3c.2 (`banco-form.tsx` wiring + `payment-method-form.tsx` refactor — consume la fundación de 3c.1) |
+| Delivery strategy | ask-on-risk (recibido de sesión) |
+| Chain strategy | feature-branch-chain (recibido de sesión) — continúa sobre `feat/gastos-qol-pr3-metodos-deducciones`, YA pusheada, NO mergeada |
+
+Decision needed before apply: Yes
+Chained PRs recommended: Yes
+Chain strategy: feature-branch-chain
+400-line budget risk: High
+
+**Nota crítica de exception ya aceptado**: `size:exception` fue aceptado para la implementación ORIGINAL de PR-3 (~265-380 líneas estimadas, ver forecast arriba). Este rediseño la agranda a ~865-1270 líneas totales (original + incremento) — el exception aceptado NO cubre automáticamente este tamaño mayor. Antes de `sdd-apply`: pedir al usuario que **reconfirme** `size:exception` para el PR-3 agrandado, O adoptar el split 3c.1→3c.2 sugerido arriba como 2 commits/PRs reviewables independientes dentro de la misma rama feature (no mezclar ambas estrategias a mitad de camino, per skill `chained-pr`).
+
+### Suggested Work Units — PR-3c
+
+| Unit | Goal | Likely PR | Base branch | Notes |
+|------|------|-----------|--------------|-------|
+| 4c.1 | `deducciones-editor.tsx` (componente + panel inline "crear cuenta") + `use-metodo-cobro-deducciones.ts` (`useDeduccionesPorMetodos`, `persistDeduccionesDeMetodo`) + `use-plan-cuentas.ts` (`useGruposGasto`, `useSiguienteCodigoDeGrupo`, firma `agregarSubcuentaAGrupo`→`Promise<string>`) | PR-3c.1 | `feat/gastos-qol-pr3-metodos-deducciones` (rama ya pusheada) | Fundación pura, sin wiring en ningún form todavía — verificable con `yarn type-check` y QA de código |
+| 4c.2 | `banco-form.tsx` (quita "Comisión %", integra `DeduccionesEditor`, hoist, persist create/edit, naming dinámico) + `payment-method-form.tsx` (refactor a componente compartido) | PR-3c.2 | rama de 4c.1 (mismo branch, commit separado) | Depende de 4c.1; unidad con el wiring real, mayor riesgo de regresión visual |
+
+## Phase 4c: PR-3c — Consolidación de N-deducciones en `banco-form.tsx` (rediseño 2026-08-02, supersede UI de Phase 4)
+
+> Aplica SOBRE la rama `feat/gastos-qol-pr3-metodos-deducciones` (commits `3c159e8`/`2b77026`/`b1efe91`/`6f4f9ed` ya pusheados, rama NO mergeada). Reutiliza 4.1/4.2/4.3/4.9/4.10/4.16-4.22 de Phase 4 sin cambios. Las 3 decisiones resueltas (obs #753 final, #792) están integradas en las tareas de abajo.
+
+### 4c.1 — Fundación compartida (componente + hooks)
+
+- [x] 4c.1.1 `src/features/configuracion/components/deducciones-editor.tsx` (nuevo) — Mover el bloque de UI de fila-de-deducción hoy inline en `payment-method-form.tsx` (state array, selects concepto/tipo/porcentaje/cuenta, toggle desactivar) a un componente `DeduccionesEditor({ rows, onChange, cuentaBasePasarelaId })` con `DeduccionRow` (`cuenta_gasto_id: ''` = sentinel "usar cuenta base de pasarela"). Selector de cuenta con opción `-- Cuenta base de pasarela del banco (automático) --` (`value=""`) primero, luego `useCuentasDetallePorTipo('GASTO')`. Ningún `createDeduccion`/`updateDeduccion` se llama desde el componente — todo cambio es local vía `onChange` (persistencia 100% del form padre).
+- [x] 4c.1.2 Mismo archivo — Panel inline "+ Crear cuenta" por fila (expandido bajo la fila, NO `<dialog>` anidado, mismo patrón que `cuenta-gasto-modal.tsx`): grupo padre (`useGruposGasto()`, preseleccionado a `useGrupoComisionesPasarela()`), código sugerido (`useSiguienteCodigoDeGrupo(grupo)`), nombre libre, botón Crear invoca `agregarSubcuentaAGrupo(...)` y usa el `subId` retornado para setear `cuenta_gasto_id` de la fila y cerrar el panel.
+- [x] 4c.1.3 `src/features/contabilidad/hooks/use-plan-cuentas.ts` — Agregar `useGruposGasto()`: lista PLANA de grupos `GASTO` (`es_cuenta_detalle=0`, `is_active=1`), SIN el filtro "solo si tiene hojas" de `useGruposGastoConSubcuentas` (necesario poder elegir un grupo recién creado sin hojas).
+- [x] 4c.1.4 Mismo archivo — Agregar `useSiguienteCodigoDeGrupo(grupoSeleccionado)`: `SELECT COUNT(*) WHERE parent_id=? AND empresa_id=?` reactivo, mismo cálculo que ya hace `agregarSubcuentaAGrupo` al escribir (preview informativo, recalculado al crear).
+- [x] 4c.1.5 Mismo archivo — Cambiar firma de `agregarSubcuentaAGrupo`: `Promise<void>` → `Promise<string>` (retorna `subId` creado). Verificar el único consumidor existente (`cuenta-gasto-modal.tsx`) sigue compilando sin cambios funcionales (ignora hoy el valor de retorno).
+- [x] 4c.1.6 `src/features/configuracion/hooks/use-metodo-cobro-deducciones.ts` — Agregar `useDeduccionesPorMetodos(metodoCobroIds: string[])`: `SELECT * FROM metodo_cobro_deducciones WHERE metodo_cobro_id IN (...) AND empresa_id=? ORDER BY orden`, agrupado en `Map<metodo_cobro_id, MetodoCobroDeduccion[]>`. **Memoización obligatoria (decisión resuelta #3)**: derivar clave string estable `metodoIds.slice().sort().join(',')` vía `useMemo` y usarla (NO el array de objetos completo) como dependencia del `useMemo` que arma los params de la query reactiva `@powersync/react useQuery` — un array con ref inestable re-registra la suscripción SQLite en cada render (no es cómputo en memoria, es una query reactiva real).
+- [x] 4c.1.7 Mismo archivo — Agregar `persistDeduccionesDeMetodo({ metodoCobroId, empresaId, usuarioId, rows })`: **1 `db.writeTransaction` por método** (no por fila) — `UPDATE` si `row.id` existe, `INSERT` si no, todo o nada por método. Reemplaza el uso disperso de `createDeduccion`/`updateDeduccion` sueltos (se mantienen exportados, sin consumidores directos tras el cambio).
+- [x] 4c.1.8 Verify: `yarn type-check` limpio en los 3 archivos nuevos/modificados (0 errores nuevos vs. baseline documentado en 3b.3.10/4.10). `yarn lint` no ejecutable en este repo (paquete `eslint` no instalado como dependencia — condicion preexistente, no introducida por esta rama).
+
+### 4c.2 — Wiring en `banco-form.tsx` + refactor de `payment-method-form.tsx`
+
+> Depende de 4c.1.
+
+- [x] 4c.2.1 `src/features/configuracion/components/banco-form.tsx` — `MetodoDraft`: agregar campo `deducciones: DeduccionRow[]`. `handleAgregarMetodo` (draft nuevo) seedea `[{ concepto: 'Comision bancaria', tipo: 'COMISION', porcentaje: '0', cuenta_gasto_id: '', is_active: true }]` (sentinel `''`, resuelto al guardar — la cuenta pasarela puede no existir aún si el banco también es nuevo).
+- [x] 4c.2.2 Mismo archivo — **Decisión resuelta #1**: eliminar el input suelto "Comisión %" (`comision_pct`) de `MetodoDraftRow`; reemplazar por `<DeduccionesEditor rows={draft.deducciones} onChange={...} cuentaBasePasarelaId={cuentaGastoPasarelaId} />`. `comision_pct` NO se elimina de la tabla/columna — se envía siempre `'0'` al backend (deprecado desde `design.md` original, PR-4 lee `metodo_cobro_deducciones`, no esta columna).
+- [x] 4c.2.3 Mismo archivo — Métodos existentes (editar banco): hook `useDeduccionesPorMetodos(existingMetodoIds)` con la clave memoizada de 4c.1.6; el efecto de sincronización de drafts (L298-316) adjunta las deducciones traídas por `id` de método.
+- [x] 4c.2.4 Mismo archivo — Hoist: mover `cuentaGastoPasarelaFinal` de dentro de cada rama `if (isEditing)`/`else` (L618, L664) a ANTES del `if/else`, para que el loop de "Save method drafts" (L716) lo lea ya resuelto en ambas ramas.
+- [x] 4c.2.5 Mismo archivo — `handleSubmit` CREATE: `createPaymentMethod({ ..., deducciones: draft.deducciones.map(d => ({ ...d, cuenta_gasto_id: d.cuenta_gasto_id || cuentaGastoPasarelaFinal })) })` — resuelve el sentinel `''` antes de llegar a la DB. Sin cambio de firma en `createPaymentMethod` (ya acepta `deducciones?`, ver 4.3).
+- [x] 4c.2.6 Mismo archivo — `handleSubmit` EDIT: tras `updatePaymentMethod(...)`, llamar `persistDeduccionesDeMetodo({ metodoCobroId: draft.id, empresaId, usuarioId, rows: draft.deducciones })` por cada método editado (reemplaza cualquier `updateDeduccion`/`createDeduccion` suelto).
+- [x] 4c.2.7 Mismo archivo — Nombres dinámicos de leaf (L447-451): `crearLeafBajoGrupo` recibe el nombre como parámetro por llamada — `nombreLeafBancaria = "COMISION BANCARIA {BANCO} {TIPO} {ULT4}"`, `nombreLeafPasarela = "COMISION PASARELA {BANCO} {TIPO} {ULT4}"`. **Decisión resuelta #2**: aplica SOLO a bancos creados/editados con este código en adelante — NO se escribe migración de rename para bancos ya backfilleados por 0081 (datos de prueba, aceptado obs #703/#705; la base se limpiará al final vía el script de limpieza de Phase 2).
+- [x] 4c.2.8 `src/features/configuracion/components/payment-method-form.tsx` — Reemplazar el bloque de UI inline de deducciones (state array, JSX) por `<DeduccionesEditor .../>` (mismos props que 4c.2.2); reemplazar `persistDeducciones` local por `persistDeduccionesDeMetodo` compartida. Sin cambio de comportamiento observable — el efecto de auto-seed y los fixes W1/W2 (4.16-4.22) se preservan tal cual, ruta sigue sin alcance real (redirige a `/configuracion/bancos`, `payment-method-list.tsx` NO se borra).
+- [x] 4c.2.9 Verify: `yarn type-check` limpio en `banco-form.tsx` y `payment-method-form.tsx` (0 errores nuevos vs. baseline).
+- [ ] 4c.2.10 Manual QA — SC-07/SC-08: crear método bancario nuevo en `banco-form.tsx` → 1 fila `COMISION`/`porcentaje=0` precargada, resuelta a la cuenta pasarela real al guardar (nunca sentinel `''` persistido, invariante nunca-huérfano cumplido en el flujo real — antes fallaba, obs #792).
+- [ ] 4c.2.11 Manual QA — SC-09: método `EFECTIVO` (sin banco) no muestra `DeduccionesEditor`.
+- [ ] 4c.2.12 Manual QA — SC-11: desactivar una fila con `id` en la UI solo muta el array local (`is_active=false`); persiste recién al guardar el banco, nunca DELETE físico.
+- [ ] 4c.2.13 Manual QA — SC-12: deducciones de una empresa nunca visibles para otra (filtro `empresa_id` en `useDeduccionesPorMetodos`).
+- [ ] 4c.2.14 Manual QA — SC-13/SC-28: nombres de leaf nuevos con prefijo `COMISION BANCARIA`/`COMISION PASARELA` en bancos creados después de este cambio; bancos backfilleados por 0081 conservan el nombre viejo sin prefijo (inconsistencia histórica aceptada, sin migración).
+- [ ] 4c.2.15 Manual QA — SC-15: reasignar solo la cuenta bancaria de un banco existente no afecta deducciones ya configuradas.
+- [ ] 4c.2.16 Manual QA — SC-29/SC-30/SC-31: 2 métodos POS sin cuenta propia comparten la base de pasarela; un método nunca queda huérfano; agregar un concepto manual (ej. ISLR) no rompe el vínculo del slot `COMISION`.
+- [ ] 4c.2.17 ⚠️ Financiero: 4c.2.5/4c.2.6 son el único punto donde el invariante "nunca huérfano" (SC-08/SC-30) se cumple en el flujo real — aplicar con cuidado extra en `sdd-apply`, confirmar que el sentinel `''` JAMÁS llega a `metodo_cobro_deducciones.cuenta_gasto_id` en la DB.
+
+---
 
 ## Phase 5: PR-4 — Cierre aplica N deducciones (Slice 4)
 
-> Depende de PR-1a y PR-3 mergeados (necesita filas de `metodo_cobro_deducciones` pobladas).
+> Depende de PR-1a y PR-3 mergeados (necesita filas de `metodo_cobro_deducciones` pobladas). PR-3 = Phase 4 + Phase 4c (el invariante nunca-huérfano solo queda garantizado en el flujo real tras Phase 4c — Phase 4 sola dejaba `createPaymentMethod` sin `deducciones` desde `banco-form.tsx`, obs #792).
 
 - [ ] 5.1 `src/features/contabilidad/hooks/use-gastos.ts` (`insertarGastoComisionEnTx` L505-645) — Cambiar firma: `cuentaComisionId` → `cuentaGastoId` (mismo tipo); agregar `concepto: string` (reemplaza el literal `'Comision bancaria'` hardcodeado en la descripción, línea 566) y `tipo: string` (solo trazabilidad en `observaciones`, sin cambiar lógica contable).
 - [ ] 5.2 `src/features/caja/hooks/use-sesiones-caja.ts` (`aplicarComisionSiCorresponde` ~L1138-1179) — Reemplazar el único `comisionPct`/`cuentasConfig['COMISION_BANCARIA']` por: `SELECT * FROM metodo_cobro_deducciones WHERE metodo_cobro_id=? AND is_active=1 ORDER BY orden`, iterando cada concepto dentro de la misma `writeTransaction`.
@@ -207,7 +318,8 @@ Chain strategy: feature-branch-chain
 ## Cross-Cutting Notes
 
 - **Ejecución de limpieza (Phase 2 / PR-1b)**: es manual, por el usuario, DESPUÉS de PR-1a mergeado y ANTES de validar PR-4 (Phase 5) end-to-end — los datos deben quedar consistentes antes de probar el loop de N-deducciones. `pg_dump` es salvaguarda obligatoria, no opcional.
-- **Phase 3b/PR-2b supera el mapeo plano de Phase 3/PR-2**: `6.2.05` queda desactivado por la migración 0081. Orden de merge obligatorio: Phase 3 (PR-2) → Phase 3b (PR-2b, 3 sub-unidades 3b.1→3b.2→3b.3) → Phase 4 (PR-3). PR-2b usa `feature-branch-chain` sobre el tracker `feat/gastos-registro-qol` dado su tamaño (~675-850 líneas estimadas, ver forecast dedicado antes de Phase 3b).
+- **Phase 3b/PR-2b supera el mapeo plano de Phase 3/PR-2**: `6.2.05` queda desactivado por la migración 0081. Orden de merge obligatorio: Phase 3 (PR-2) → Phase 3b (PR-2b, 3 sub-unidades 3b.1→3b.2→3b.3) → Phase 4 (PR-3) → **Phase 4c (PR-3c, consolidación)**. PR-2b usa `feature-branch-chain` sobre el tracker `feat/gastos-registro-qol` dado su tamaño (~675-850 líneas estimadas, ver forecast dedicado antes de Phase 3b).
+- **Phase 4c supera la superficie de UI de Phase 4**: Phase 4 (`payment-method-form.tsx` como superficie primaria) queda con lógica huérfana en el flujo real (obs #792) — Phase 4c consolida en `banco-form.tsx` vía `DeduccionesEditor` compartido, sobre la MISMA rama `feat/gastos-qol-pr3-metodos-deducciones` (ya pusheada, no mergeada). No mezclar con la rama tracker `feat/gastos-registro-qol` de PR-2b — son ramas distintas del mismo cambio.
 - No existe test runner ni ESLint script de cobertura automática en este proyecto; verificación por fase es `yarn type-check && yarn lint` en los archivos tocados, más el checklist de QA manual de cada fase.
-- Chain strategy (stacked-to-main vs feature-branch-chain vs size:exception) no está decidida — preguntar al usuario antes de iniciar PR-1a, dado que PR-1a+PR-1b combinados exceden el presupuesto de 400 líneas y el script de limpieza es destructivo por diseño.
+- Chain strategy (stacked-to-main vs feature-branch-chain vs size:exception) no está decidida para Phase 1/2 — preguntar al usuario antes de iniciar PR-1a, dado que PR-1a+PR-1b combinados exceden el presupuesto de 400 líneas y el script de limpieza es destructivo por diseño. Para PR-3/PR-3c, la sesión ya cachea `feature-branch-chain` (ver forecast de Phase 4c).
 - Fix de `tasaDelDia` (bloqueador histórico de Slice 4) YA RESUELTO en el Paso 1 previo (commits `db0417b`, `1e3a603`, `4fc9808`) — Phase 5 puede validarse end-to-end sin bloqueo pendiente.
