@@ -1186,19 +1186,10 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             </p>
           </div>
 
-          {/* Activo */}
-          <div className="flex items-center gap-2">
-            <input
-              id="banco-active"
-              type="checkbox"
-              checked={active}
-              onChange={(e) => setActive(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <label htmlFor="banco-active" className="text-sm font-medium text-gray-700">
-              Activo
-            </label>
-          </div>
+          {/* El estado Activo/Inactivo del banco se controla desde la tabla de
+              bancos (banco-list.tsx). Aqui `active` se mantiene en el estado del
+              form solo para preservar el valor real al guardar (create arranca en
+              true; edit conserva el is_active existente del banco). */}
 
           {/* ============================================
               METODOS DE PAGO SECTION

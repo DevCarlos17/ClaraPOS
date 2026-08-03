@@ -79,7 +79,7 @@ export function useMetodosPOS() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND mc.usa_pos = 1 ORDER BY mc.nombre ASC`,
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) AND mc.usa_pos = 1 ORDER BY mc.nombre ASC`,
     [empresaId]
   )
   return { metodos: (data ?? []) as PaymentMethod[], isLoading }
@@ -90,7 +90,7 @@ export function useMetodosCxC() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND mc.usa_cxc = 1 ORDER BY mc.nombre ASC`,
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) AND mc.usa_cxc = 1 ORDER BY mc.nombre ASC`,
     [empresaId]
   )
   return { metodos: (data ?? []) as PaymentMethod[], isLoading }
@@ -101,7 +101,7 @@ export function useMetodosCxP() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND mc.usa_cxp = 1 ORDER BY mc.nombre ASC`,
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) AND mc.usa_cxp = 1 ORDER BY mc.nombre ASC`,
     [empresaId]
   )
   return { metodos: (data ?? []) as PaymentMethod[], isLoading }
