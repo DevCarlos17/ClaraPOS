@@ -72,6 +72,7 @@ bucket_definitions:
       # --- CONFIGURACION ---
       - SELECT * FROM tasas_cambio WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM metodos_cobro WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM metodo_cobro_deducciones WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM bancos_empresa WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM cajas WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM impuestos_ve WHERE empresa_id = bucket.empresa_id
