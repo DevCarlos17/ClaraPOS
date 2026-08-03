@@ -68,7 +68,7 @@ export function useMetodosPagoActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 ORDER BY mc.nombre ASC`,
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) ORDER BY mc.nombre ASC`,
     [empresaId]
   )
   return { metodos: (data ?? []) as PaymentMethod[], isLoading }
