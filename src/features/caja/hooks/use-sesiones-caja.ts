@@ -10,8 +10,11 @@ import {
   consolidarMetodoATesoreriaEnTx,
   type DestinoConsolidacion,
 } from '@/features/tesoreria/hooks/use-traspasos'
-import { insertarGastoComisionEnTx } from '@/features/contabilidad/hooks/use-gastos'
-import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
+import { insertarGastoDeduccionEnTx } from '@/features/contabilidad/hooks/use-gastos'
+import {
+  resolverDeduccionesCierre,
+  type DeduccionActivaRow,
+} from '@/features/caja/lib/deducciones-cierre'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -1018,7 +1021,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
 
       const metodosConfigResult = await tx.execute(
         `SELECT mc.id AS metodo_cobro_id, mc.nombre, mc.tipo, mc.banco_empresa_id, mc.caja_fuerte_id,
-                mc.comision_pct, mc.moneda_id, mo.codigo_iso AS moneda_codigo, mc.consolidar_lotes
+                mc.moneda_id, mo.codigo_iso AS moneda_codigo, mc.consolidar_lotes
          FROM metodos_cobro mc
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mc.id IN (${inPhConsolidar}) AND mc.empresa_id = ?`,
@@ -1031,7 +1034,6 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         tipo: string
         banco_empresa_id: string | null
         caja_fuerte_id: string | null
-        comision_pct: string | null
         moneda_id: string
         moneda_codigo: string
         consolidar_lotes: number
@@ -1043,9 +1045,6 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
           metodosConfigMap.set(row.metodo_cobro_id, row)
         }
       }
-
-      // Cuentas contables de la empresa (para resolver COMISION_BANCARIA una sola vez)
-      const cuentasConfig = await cargarMapaCuentas(tx, empresaId)
 
       // conciliacion-lotes-pos (PR-C): lotes POS cargados para esta sesion (cuadre-conteo-fisico.tsx,
       // PR-B), agrupados por metodo_cobro_id. Solo metodos tipo='PUNTO' con lotes cargados en el
@@ -1132,48 +1131,66 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
 
         const origenDestino = destino.tipo === 'CAJA_FUERTE' ? 'DEPOSITO_CIERRE' : 'CIERRE_CONSOLIDACION'
 
-        // Comision bancaria: solo aplica a metodos consolidados hacia banco. Factorizada para
-        // reutilizarse sobre el monto correcto (totalSistemaD, suma de lotes, o lote individual)
-        // sin duplicar la logica W5/COMISION_BANCARIA en cada rama (conciliacion-lotes-pos, PR-C).
+        // Deducciones del cierre (comision-consolidacion-cierre, PR-Pieza-1): N conceptos
+        // por metodo (comision bancaria, retencion ISLR, otros) via `metodo_cobro_deducciones`
+        // en vez del antiguo `comision_pct` unico. Factorizada para reutilizarse sobre el monto
+        // correcto (totalSistemaD, suma de lotes, o lote individual) sin duplicar la logica W5
+        // en cada rama (conciliacion-lotes-pos, PR-C).
         const aplicarComisionSiCorresponde = async (montoBaseD: Decimal): Promise<void> => {
-          const comisionPct = new Decimal(config.comision_pct ?? '0')
-          // W5: un metodo EFECTIVO con comision configurada es un error de config; no se
-          // cobra comision sobre efectivo, pero se deja rastro para que sea detectable.
-          if (comisionPct.gt(0) && destino.tipo !== 'BANCO') {
-            console.warn(
-              `[cierre] El metodo EFECTIVO "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision ` +
-              `configurada; se ignora (la comision solo aplica a metodos consolidados hacia banco).`
+          const deduccionesResult = await tx.execute(
+            `SELECT id, cuenta_gasto_id, concepto, tipo, porcentaje, orden
+             FROM metodo_cobro_deducciones
+             WHERE metodo_cobro_id = ? AND empresa_id = ? AND is_active = 1
+             ORDER BY orden`,
+            [metodoCobroId, empresaId]
+          )
+          const deducciones: DeduccionActivaRow[] = []
+          if (deduccionesResult.rows) {
+            for (let i = 0; i < deduccionesResult.rows.length; i++) {
+              deducciones.push(deduccionesResult.rows.item(i) as DeduccionActivaRow)
+            }
+          }
+
+          const { toPost, warning } = resolverDeduccionesCierre({
+            deducciones,
+            montoBaseD,
+            destinoTipo: destino.tipo,
+            nombreMetodo,
+          })
+
+          // W5: un metodo EFECTIVO (o cualquier destino no-BANCO) con deducciones activas
+          // configuradas es un error de config; no se cobra deduccion sobre efectivo, pero
+          // se deja rastro para que sea detectable.
+          if (warning) {
+            console.warn(`[cierre] ${warning}`)
+            return
+          }
+
+          if (toPost.length === 0) return
+
+          const monedaCodigo: 'USD' | 'VES' = config.moneda_codigo === 'VES' ? 'VES' : 'USD'
+          if (monedaCodigo === 'VES' && !((tasaDelDia ?? 0) > 0)) {
+            throw new Error(
+              `No se puede registrar las deducciones del cierre en Bs: falta la tasa del dia para el cierre.`
             )
           }
-          if (comisionPct.gt(0) && destino.tipo === 'BANCO') {
-            const cuentaComisionId = cuentasConfig['COMISION_BANCARIA']
-            if (!cuentaComisionId) {
-              throw new Error(
-                `El metodo de cobro "${nombreMetodo}" tiene ${comisionPct.toFixed(2)}% de comision pero no hay una cuenta ` +
-                `"Comisiones bancarias" configurada. Configura la clave COMISION_BANCARIA en ` +
-                `Contabilidad > Cuentas de Configuracion antes de cerrar la sesion.`
-              )
-            }
 
-            const monedaCodigo: 'USD' | 'VES' = config.moneda_codigo === 'VES' ? 'VES' : 'USD'
-            if (monedaCodigo === 'VES' && !((tasaDelDia ?? 0) > 0)) {
-              throw new Error(
-                `No se puede registrar la comision bancaria en Bs: falta la tasa del dia para el cierre.`
-              )
-            }
+          for (const deduccion of toPost) {
+            const gastoId = uuidv4()
 
-            const montoComisionNativo = montoBaseD.times(comisionPct).dividedBy(100)
-
-            await insertarGastoComisionEnTx(tx, {
+            await insertarGastoDeduccionEnTx(tx, {
               empresaId,
               metodoCobroId,
               bancoEmpresaId: destino.id,
-              montoComisionNativo: toStorageString(montoComisionNativo),
+              montoDeduccionNativo: toStorageString(deduccion.montoDeduccionNativo),
               monedaCodigo,
               tasa: tasaDelDia ?? 0,
-              cuentaComisionId,
+              cuentaGastoId: deduccion.cuentaGastoId,
+              concepto: deduccion.concepto,
+              porcentaje: deduccion.porcentaje,
+              orden: deduccion.orden,
               sesionCajaId: id,
-              comisionPct: comisionPct.toFixed(2),
+              gastoId,
               usuarioId: usuario_cierre_id,
             })
           }

@@ -8,6 +8,7 @@ import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow, todayStr } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosGasto, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
+import { construirNroGastoDeduccion } from '@/features/caja/lib/deducciones-cierre'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -489,11 +490,11 @@ export async function crearGasto(data: {
 }
 
 /**
- * Crea un gasto minimo para una comision bancaria detectada al consolidar el
- * cierre de caja (cierre-consolidacion-tesoreria, PR2), DENTRO de una
- * transaccion existente provista por el llamador (no abre su propia
- * writeTransaction — PowerSync no permite anidarlas, y `cerrarSesionCaja`
- * ya tiene una abierta).
+ * Crea un gasto minimo para una deduccion (comision bancaria, retencion ISLR,
+ * u otro concepto) detectada al consolidar el cierre de caja
+ * (comisiones-consolidacion-cierre, PR-Pieza-1), DENTRO de una transaccion
+ * existente provista por el llamador (no abre su propia writeTransaction —
+ * PowerSync no permite anidarlas, y `cerrarSesionCaja` ya tiene una abierta).
  *
  * Deliberadamente NO reutiliza `crearGasto`: esa funcion abre su propia
  * writeTransaction (no se puede anidar) y su loop de pagos inserta
@@ -501,38 +502,45 @@ export async function crearGasto(data: {
  * drenaria dos veces el saldo que `consolidarMetodoATesoreriaEnTx` ya dejo
  * en cero para ese metodo. Esta funcion inserta un `gasto_pagos` con
  * `metodo_cobro_id = NULL` a proposito para evitar ese doble drenaje.
+ *
+ * Se llama UNA VEZ POR DEDUCCION ACTIVA del metodo (N `metodo_cobro_deducciones`
+ * en vez del antiguo `comision_pct` unico) — cada deduccion postea su propio
+ * gasto contra su propia `cuenta_gasto_id` (nunca via `cuentas_config['COMISION_BANCARIA']`).
  */
-export async function insertarGastoComisionEnTx(
+export async function insertarGastoDeduccionEnTx(
   tx: Transaction,
   p: {
     empresaId: string
     metodoCobroId: string
     bancoEmpresaId: string
-    montoComisionNativo: string
+    montoDeduccionNativo: string
     monedaCodigo: 'USD' | 'VES'
     tasa: number
-    cuentaComisionId: string
+    cuentaGastoId: string
+    concepto: string
+    porcentaje: string
+    orden: number
     sesionCajaId: string
-    comisionPct: string
+    gastoId: string
     usuarioId: string
   }
 ): Promise<{ gastoId: string }> {
-  if (p.tasa <= 0) throw new Error('La tasa debe ser mayor a 0 para registrar la comision bancaria')
+  if (p.tasa <= 0) throw new Error('La tasa debe ser mayor a 0 para registrar la deduccion del cierre de caja')
 
-  const montoNativo = new Decimal(p.montoComisionNativo)
+  const montoNativo = new Decimal(p.montoDeduccionNativo)
   if (montoNativo.lessThanOrEqualTo(0)) {
-    throw new Error('El monto de la comision bancaria debe ser mayor a 0')
+    throw new Error('El monto de la deduccion del cierre de caja debe ser mayor a 0')
   }
 
-  const comisionUsd = p.monedaCodigo === 'VES'
+  const montoUsd = p.monedaCodigo === 'VES'
     ? bsToUsd(montoNativo, p.tasa)
     : montoNativo
 
   const now = localNow()
   const fecha = todayStr()
-  const gastoId = uuidv4()
+  const gastoId = p.gastoId
 
-  // Resolver moneda_id de la comision (codigo_iso: 'USD' | 'VES')
+  // Resolver moneda_id de la deduccion (codigo_iso: 'USD' | 'VES')
   const monedaResult = await tx.execute(
     'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
     [p.monedaCodigo]
@@ -540,13 +548,12 @@ export async function insertarGastoComisionEnTx(
   const monedaId = (monedaResult.rows?.item(0) as { id: string } | undefined)?.id
   if (!monedaId) throw new Error(`Moneda no encontrada: ${p.monedaCodigo}`)
 
-  // Generar nro_gasto secuencial por empresa (formato GTO-XXXX)
-  const countResult = await tx.execute(
-    'SELECT COUNT(*) as cnt FROM gastos WHERE empresa_id = ?',
-    [p.empresaId]
-  )
-  const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
-  const nroGasto = `GTO-${String(count + 1).padStart(4, '0')}`
+  const nroGasto = construirNroGastoDeduccion({
+    sesionCajaId: p.sesionCajaId,
+    metodoCobroId: p.metodoCobroId,
+    orden: p.orden,
+    gastoId,
+  })
   const monedaFactura: 'USD' | 'BS' = p.monedaCodigo === 'VES' ? 'BS' : 'USD'
 
   await tx.execute(
@@ -562,15 +569,15 @@ export async function insertarGastoComisionEnTx(
       gastoId,
       p.empresaId,
       nroGasto,
-      p.cuentaComisionId,
-      `Comision bancaria ${p.comisionPct}% - consolidacion cierre de caja`,
+      p.cuentaGastoId,
+      `${p.concepto} ${p.porcentaje}% - consolidacion cierre de caja`,
       fecha,
       monedaId,
       monedaFactura,
       p.tasa.toFixed(4),
       toStorageString(montoNativo),
-      toStorageString(comisionUsd),
-      toStorageString(comisionUsd),
+      toStorageString(montoUsd),
+      toStorageString(montoUsd),
       p.metodoCobroId,
       p.bancoEmpresaId,
       `Sesion de caja ${p.sesionCajaId}`,
@@ -587,7 +594,7 @@ export async function insertarGastoComisionEnTx(
        id, empresa_id, gasto_id, metodo_cobro_id, banco_empresa_id,
        monto_usd, referencia, created_at
      ) VALUES (?, ?, ?, NULL, ?, ?, NULL, ?)`,
-    [uuidv4(), p.empresaId, gastoId, p.bancoEmpresaId, toStorageString(comisionUsd), now]
+    [uuidv4(), p.empresaId, gastoId, p.bancoEmpresaId, toStorageString(montoUsd), now]
   )
 
   // EGRESO bancario que neta el deposito bruto ya consolidado
@@ -595,7 +602,7 @@ export async function insertarGastoComisionEnTx(
     'SELECT saldo_actual FROM bancos_empresa WHERE id = ? AND empresa_id = ?',
     [p.bancoEmpresaId, p.empresaId]
   )
-  if (!bancoRes.rows?.length) throw new Error('Banco no encontrado para la comision bancaria')
+  if (!bancoRes.rows?.length) throw new Error('Banco no encontrado para la deduccion del cierre de caja')
   const saldoBancoAnt = new Decimal(
     (bancoRes.rows.item(0) as { saldo_actual: string }).saldo_actual
   )
@@ -613,7 +620,7 @@ export async function insertarGastoComisionEnTx(
       toStorageString(saldoBancoAnt),
       toStorageString(saldoBancoNuevo),
       gastoId,
-      `Comision bancaria ${nroGasto}`,
+      `${p.concepto} ${nroGasto}`,
       fecha, now, p.usuarioId,
     ]
   )
@@ -623,23 +630,34 @@ export async function insertarGastoComisionEnTx(
     [toStorageString(saldoBancoNuevo), now, p.bancoEmpresaId]
   )
 
-  // Asientos contables (DEBE cuenta comision / HABER banco)
-  const [cuentas, monedaContable] = await Promise.all([
-    cargarMapaCuentas(tx, p.empresaId),
-    leerMonedaContable(tx, p.empresaId),
-  ])
-  await generarAsientosGasto(tx, {
-    empresaId: p.empresaId,
-    gastoId,
-    nroGasto,
-    cuentaGastoId: p.cuentaComisionId,
-    monto_usd: comisionUsd.toNumber(),
-    pagos: [{ monto_usd: comisionUsd.toNumber(), banco_empresa_id: p.bancoEmpresaId }],
-    cuentas,
-    usuarioId: p.usuarioId,
-    monedaContable,
-    tasa: p.tasa,
-  })
+  // Asientos contables (DEBE cuenta de gasto / HABER banco). Best-effort: si falla
+  // la contabilidad, NO abortar el cierre de caja completo — el gasto y el egreso
+  // bancario (primarios) ya quedaron registrados arriba. Mirror de `crearGasto`.
+  try {
+    const [cuentas, monedaContable] = await Promise.all([
+      cargarMapaCuentas(tx, p.empresaId),
+      leerMonedaContable(tx, p.empresaId),
+    ])
+    await generarAsientosGasto(tx, {
+      empresaId: p.empresaId,
+      gastoId,
+      nroGasto,
+      cuentaGastoId: p.cuentaGastoId,
+      monto_usd: montoUsd.toNumber(),
+      pagos: [{ monto_usd: montoUsd.toNumber(), banco_empresa_id: p.bancoEmpresaId }],
+      cuentas,
+      usuarioId: p.usuarioId,
+      monedaContable,
+      tasa: p.tasa,
+    })
+  } catch (err) {
+    console.warn(
+      `[cierre] No se pudo generar el asiento contable para la deduccion "${p.concepto}" ` +
+      `del metodo de cobro ${p.metodoCobroId} (gasto ${nroGasto}). El gasto y el egreso ` +
+      `bancario ya quedaron registrados; el asiento de libro_contable queda pendiente.`,
+      err
+    )
+  }
 
   return { gastoId }
 }
