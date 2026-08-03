@@ -1,7 +1,7 @@
 # Spec: Tesorería — Consolidación automática al cierre de sesión
 
 > **Domain**: tesoreria-consolidacion-cierre (cross-cutting: `features/caja` + `features/tesoreria` + `features/contabilidad`)
-> **Last updated by change**: `cierre-consolidacion-tesoreria` (2026-07-24) — new capability, archived
+> **Last updated by change**: `comisiones-consolidacion-cierre` (2026-08-03) — migrated Commission requirement from single `comision_pct` to N-`metodo_cobro_deducciones` (Cambio B, Pieza 1)
 
 ## Purpose
 
@@ -34,19 +34,68 @@ The system MUST route each used method's `totalSistemaD` to: EFECTIVO/USD → th
 
 ### Requirement: Commission booked as a real gasto (Option A2)
 
-For a method with `comision_pct > 0` AND `destino.tipo === 'BANCO'`, the system MUST deposit the GROSS total to the bank, AND create a `gastos` row for `total * comision_pct / 100` against the account resolved via `cuentas_config` clave `COMISION_BANCARIA`, in the method's native currency, session `tasaDelDia`, USD equivalent via `bsToUsd`, exento of IVA/ISLR. An EFECTIVO method with `comision_pct > 0` is not commission-eligible (no bank leg to net the commission against) — the commission step is skipped with a `console.warn`, not a hard-fail (documented deviation, see Design Coherence in the verify report).
+For a method toward `destino.tipo === 'BANCO'`, the system MUST read all active `metodo_cobro_deducciones` rows (`WHERE is_active = 1 ORDER BY orden`) and, for EACH, create its OWN `gastos` row for `montoBase * porcentaje / 100` against that row's `cuenta_gasto_id` — not via `cuentas_config['COMISION_BANCARIA']`. `montoBase` MUST be the native-currency amount already being consolidated (plain `totalSistemaD`, per-lote, or lote-sum); no USD conversion of the base. `tipo` (`COMISION`/`ISLR`/`OTRO`) MUST NOT change routing. `nro_gasto` MUST use a UUID-slice pattern (`POS-COM-{sesionCajaId8}-{metodoCobroId6}-{orden}-{gastoId6}`), never `COUNT(*)`. An EFECTIVO/caja-fuerte método with an active deducción stays not commission-eligible (no bank leg to net the deducción against) — skipped with a `console.warn`, not a hard-fail (documented deviation, preserved from the original design). A deducción with an empty/null `cuenta_gasto_id` MUST hard-fail the cierre naming método and concepto, never posting an orphan gasto. The `generarAsientosGasto` → `libro_contable` posting from the original design is PRESERVED — once per deducción instead of once per método — wrapped in a best-effort try/catch: a `libro_contable` failure degrades to `console.warn` and MUST NOT abort the cierre or the primary gasto/tesorería writes.
+(Previously: single `comision_pct` on `metodos_cobro`, one gasto per método via `cuentas_config['COMISION_BANCARIA']`, `nro_gasto` via `COUNT(*)`.)
 
-#### Scenario: Commission gasto created with correct currency
+#### Scenario: N active deducciones produce N gastos with own cuentas
 
-- GIVEN a PUNTO method, `comision_pct=3`, gross 1000 VES, `tasaDelDia=40`
-- WHEN consolidation processes this method
-- THEN a `gastos` row of 30 VES posts against `COMISION_BANCARIA`'s account, `tasa=40`, USD equivalent via `bsToUsd`, `tipo_impuesto='Exento'`
+- GIVEN a PUNTO método toward BANCO with 2 active deducciones (COMISION 3%, ISLR 2%), gross 1000 VES, `tasaDelDia=40`
+- WHEN cerrarSesionCaja consolidates (plain, per-lote, or lote-sum path alike)
+- THEN 2 `gastos` rows post — 30 VES and 20 VES — each against its own `cuenta_gasto_id`, own `nro_gasto`, own `libro_contable` pair, base always native-currency
 
-#### Scenario: Missing COMISION_BANCARIA account hard-fails
+#### Scenario: Inactive deducción skipped
 
-- GIVEN a commission-bearing method with activity but no `COMISION_BANCARIA` clave configured
-- WHEN cerrarSesionCaja attempts to book the commission gasto
-- THEN the whole cierre throws a Spanish error naming the method; session stays `ABIERTA`; no row persists
+- GIVEN a método with one deducción row `is_active=0`
+- WHEN consolidation runs
+- THEN no gasto posts for that row
+
+#### Scenario: nro_gasto is UUID-slice based, collision-free
+
+- GIVEN two devices closing sessions concurrently, and/or the same método processed across multiple lotes in one cierre, each posting deducción gastos
+- WHEN both/all cierres or lote-loops run
+- THEN each `nro_gasto` derives from `sesionCajaId`+`metodoCobroId`+`orden`+a fresh per-row `gastoId` slice, never a shared `COUNT(*)` — no collision even across lotes of the same método
+
+#### Scenario: EFECTIVO método with a deducción is warned and skipped
+
+- GIVEN an EFECTIVO método (destino CAJA_FUERTE) with an active deducción configured
+- WHEN consolidation runs
+- THEN a `console.warn` fires naming the método; no gasto posts
+
+#### Scenario: VES-native método requires tasaDelDia, base stays native
+
+- GIVEN a VES-native método with active deducciones and no `tasaDelDia`
+- WHEN consolidation attempts the deducción step
+- THEN it hard-fails as today; once `tasaDelDia` is present, the percentage applies to the native VES base — `tasaDelDia` only converts the gasto's USD-equivalent bookkeeping
+
+#### Scenario: Missing cuenta_gasto_id hard-fails defensively
+
+- GIVEN an active deducción with empty/null `cuenta_gasto_id` (defensive case; should not occur per the deducciones-configuration change that created the table)
+- WHEN consolidation reaches it
+- THEN the cierre throws naming método and concepto; session stays `ABIERTA`; no row persists
+
+#### Scenario: Zero active deducciones — no regression
+
+- GIVEN a método with zero active deducciones
+- WHEN consolidation runs
+- THEN zero commission gastos post; ingreso consolidation is unchanged from today
+
+#### Scenario: Accounting posting failure does not abort the cierre
+
+- GIVEN a deducción gasto's primary INSERT/tesorería egreso succeeds but `generarAsientosGasto` throws
+- WHEN cerrarSesionCaja continues
+- THEN the error is caught, a `console.warn` fires, and the cierre completes normally — the gasto and tesorería egreso persist without their `libro_contable` pair
+
+#### Scenario: No double-posting under the existing single-cierre guarantee
+
+- GIVEN a session already `CERRADA` (deducción gastos posted)
+- WHEN any path attempts to re-run consolidation for it
+- THEN the existing status guard blocks it — no new idempotency mechanism added
+
+#### Scenario: Reversing a cierre's commissions requires N anularGasto calls
+
+- GIVEN a cierre posted 2 deducción gastos for one método
+- WHEN a user reverses that cierre's commissions
+- THEN each gasto is anulled individually via existing `anularGasto` — no bulk-reversal function added
 
 ### Requirement: Hard-fail on missing destination, atomic rollback
 
@@ -100,3 +149,6 @@ Inside `cerrarSesionCaja`'s single transaction, the `sesiones_caja.status='CERRA
 - Histórico de lotes UI in bancos — deferred to `conciliacion-lotes-pos`.
 - Fixing the pre-existing `caja_fuerte.saldo_actual` / `bancos_empresa.saldo_actual` read-then-write race on concurrent closes — documented as risk only (see caja spec DEUDA-5).
 - Systemic multi-statement atomicity hardening of the PowerSync upload connector (see caja spec DEUDA-6).
+- Sale-time "depósito directo con comisión" egreso posting and the cierre-loop exclusion of `deposito_directo=1` métodos from the ingreso consolidation (double-booking guard) — this capability does not exist yet; deferred to a future change (`comisiones-consolidacion-cierre` proposal names it "Cambio C").
+- Removing/altering the existing `libro_contable` posting for deducción gastos — confirmed it stays (obs #976), only isolated to best-effort.
+- Cross-método grouping of gastos sharing a `cuenta_gasto_id` into a single row — unconfirmed, not committed; current (and proposed) granularity is one gasto per deducción per método.
