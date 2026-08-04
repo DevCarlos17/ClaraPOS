@@ -38,6 +38,7 @@ import {
   validarMovCajaFuerte,
 } from '../hooks/use-conciliacion-tesoreria'
 import { CuentasOverview } from './cuentas-overview'
+import { resolverCuentaSeleccionadaViva } from '../utils/resolver-cuenta-seleccionada-viva'
 import { MovimientosTable, type MovimientoTesoreria, type MovimientoTableRow } from './movimientos-table'
 import { CajaFuerteModal } from './caja-fuerte-modal'
 import { MovimientoManualModal } from './movimiento-manual-modal'
@@ -205,6 +206,12 @@ export function ConciliacionTesoreria() {
   const { cuentas: cuentasInactivas } = useBancosInactivosTesoreria()
   const pendingCounts = usePendingCounts()
 
+  // Estado VIVO de la cuenta seleccionada — NO confiar en el snapshot de
+  // `selectedCuenta.is_active`, que queda obsoleto si el banco se inactiva
+  // desde otra sesion mientras sigue seleccionado (ver resolver-cuenta-seleccionada-viva.ts)
+  const { cuenta: selectedCuentaLive, esActivo: selectedEsActivo } =
+    resolverCuentaSeleccionadaViva(selectedCuenta?.id ?? null, cuentas, cuentasInactivas)
+
   const bancoId = selectedCuenta?.tipo === 'BANCO' ? selectedCuenta.id : ''
   const cajaId = selectedCuenta?.tipo === 'CAJA_FUERTE' ? selectedCuenta.id : ''
 
@@ -250,6 +257,18 @@ export function ConciliacionTesoreria() {
 
   function handleDeselectCuenta() {
     setSelectedCuenta(null)
+  }
+
+  function handleAbrirTraspaso() {
+    // Defensa adicional: no abrir si el banco se inactivo justo antes del click
+    // (el `disabled` del boton ya cubre el caso normal — ver selectedEsActivo)
+    if (!selectedCuenta || !selectedEsActivo) return
+    setShowTraspasoModal(true)
+  }
+
+  function handleAbrirMovimientoManual() {
+    if (!selectedCuenta || !selectedEsActivo) return
+    setShowManualModal(true)
   }
 
   function handleConsultarHistorico() {
@@ -497,14 +516,14 @@ export function ConciliacionTesoreria() {
           Enviar efectivo a caja
         </Button>
 
-        {/* Traspaso + Manual — deshabilitados si el banco seleccionado está inactivo */}
+        {/* Traspaso + Manual — deshabilitados si el banco seleccionado está inactivo (estado VIVO, no snapshot) */}
         <Button
           variant="outline"
           size="sm"
-          onClick={() => setShowTraspasoModal(true)}
-          disabled={!selectedCuenta || !selectedCuenta.is_active}
+          onClick={handleAbrirTraspaso}
+          disabled={!selectedCuenta || !selectedEsActivo}
           title={
-            selectedCuenta && !selectedCuenta.is_active
+            selectedCuenta && !selectedEsActivo
               ? 'No disponible para bancos inactivos'
               : undefined
           }
@@ -514,10 +533,10 @@ export function ConciliacionTesoreria() {
         </Button>
         <Button
           size="sm"
-          onClick={() => setShowManualModal(true)}
-          disabled={!selectedCuenta || !selectedCuenta.is_active}
+          onClick={handleAbrirMovimientoManual}
+          disabled={!selectedCuenta || !selectedEsActivo}
           title={
-            selectedCuenta && !selectedCuenta.is_active
+            selectedCuenta && !selectedEsActivo
               ? 'No disponible para bancos inactivos'
               : undefined
           }
@@ -767,11 +786,11 @@ export function ConciliacionTesoreria() {
         editando={editandoCaja}
       />
 
-      {selectedCuenta && (
+      {selectedCuentaLive && (
         <MovimientoManualModal
           isOpen={showManualModal}
           onClose={() => setShowManualModal(false)}
-          cuenta={selectedCuenta}
+          cuenta={selectedCuentaLive}
         />
       )}
 
@@ -779,7 +798,7 @@ export function ConciliacionTesoreria() {
         isOpen={showTraspasoModal}
         onClose={() => setShowTraspasoModal(false)}
         cuentas={cuentas}
-        cuentaOrigen={selectedCuenta ?? undefined}
+        cuentaOrigen={selectedCuentaLive ?? undefined}
       />
 
       <ReversoModal
