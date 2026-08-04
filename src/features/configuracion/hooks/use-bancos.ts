@@ -5,6 +5,13 @@ import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
 import { toStorageString } from '@/lib/currency'
+import {
+  bancoTieneActividadEnSesionAbierta,
+  type EjecutorSql,
+} from './banco-actividad-sesion'
+
+export { bancoTieneActividadEnSesionAbierta }
+export type { EjecutorSql }
 
 export interface Banco {
   id: string
@@ -222,9 +229,34 @@ export async function updateBanco(
 
   if (sets.length === 0) return
 
+  const current = await db.execute(
+    'SELECT is_active, empresa_id FROM bancos_empresa WHERE id = ?',
+    [id]
+  )
+  const currentRow = current.rows?.item(0) as
+    | { is_active: number; empresa_id: string }
+    | undefined
+  if (!currentRow) {
+    throw new Error('Banco no encontrado')
+  }
+  const empresaId = currentRow.empresa_id
+
+  if (data.is_active === false && currentRow.is_active === 1) {
+    const tieneActividad = await bancoTieneActividadEnSesionAbierta(db, id, empresaId)
+    if (tieneActividad) {
+      throw new Error(
+        'No se puede desactivar el banco: tiene pagos en una sesión de caja abierta.'
+      )
+    }
+  }
+
   sets.push('updated_at = ?')
   values.push(localNow())
   values.push(id)
+  values.push(empresaId)
 
-  await db.execute(`UPDATE bancos_empresa SET ${sets.join(', ')} WHERE id = ?`, values)
+  await db.execute(
+    `UPDATE bancos_empresa SET ${sets.join(', ')} WHERE id = ? AND empresa_id = ?`,
+    values
+  )
 }
