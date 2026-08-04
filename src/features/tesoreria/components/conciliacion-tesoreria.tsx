@@ -18,7 +18,12 @@ import { cn } from '@/lib/utils'
 import { formatUsd, formatBs } from '@/lib/currency'
 
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useCuentasTesoreria, usePendingCounts, type CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
+import {
+  useCuentasTesoreria,
+  useBancosInactivosTesoreria,
+  usePendingCounts,
+  type CuentaTesoreria,
+} from '../hooks/use-cuentas-tesoreria'
 import {
   useMovBancariosFiltrados,
   type MovBancario,
@@ -197,6 +202,7 @@ export function ConciliacionTesoreria() {
 
   // Datos
   const { cuentas, isLoading: loadingCuentas } = useCuentasTesoreria()
+  const { cuentas: cuentasInactivas } = useBancosInactivosTesoreria()
   const pendingCounts = usePendingCounts()
 
   const bancoId = selectedCuenta?.tipo === 'BANCO' ? selectedCuenta.id : ''
@@ -491,12 +497,17 @@ export function ConciliacionTesoreria() {
           Enviar efectivo a caja
         </Button>
 
-        {/* Traspaso + Manual — right side, unchanged */}
+        {/* Traspaso + Manual — deshabilitados si el banco seleccionado está inactivo */}
         <Button
           variant="outline"
           size="sm"
           onClick={() => setShowTraspasoModal(true)}
-          disabled={!selectedCuenta}
+          disabled={!selectedCuenta || !selectedCuenta.is_active}
+          title={
+            selectedCuenta && !selectedCuenta.is_active
+              ? 'No disponible para bancos inactivos'
+              : undefined
+          }
         >
           <ArrowsLeftRight size={16} className="mr-1.5" />
           Traspaso
@@ -504,7 +515,12 @@ export function ConciliacionTesoreria() {
         <Button
           size="sm"
           onClick={() => setShowManualModal(true)}
-          disabled={!selectedCuenta}
+          disabled={!selectedCuenta || !selectedCuenta.is_active}
+          title={
+            selectedCuenta && !selectedCuenta.is_active
+              ? 'No disponible para bancos inactivos'
+              : undefined
+          }
         >
           <Plus size={16} className="mr-1.5" />
           Movimiento manual
@@ -517,6 +533,7 @@ export function ConciliacionTesoreria() {
       ) : (
         <CuentasOverview
           cuentas={cuentas}
+          cuentasInactivas={cuentasInactivas}
           selectedId={selectedCuenta?.id ?? null}
           onSelect={handleSelectCuenta}
           onDeselect={handleDeselectCuenta}

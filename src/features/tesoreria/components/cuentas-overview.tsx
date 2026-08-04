@@ -5,16 +5,26 @@ import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 
 interface Props {
   cuentas: CuentaTesoreria[]
+  cuentasInactivas?: CuentaTesoreria[]
   selectedId: string | null
   onSelect: (cuenta: CuentaTesoreria) => void
   onDeselect?: () => void
   pendingCounts?: Map<string, number>
 }
 
-export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect, pendingCounts }: Props) {
+export function CuentasOverview({
+  cuentas,
+  cuentasInactivas = [],
+  selectedId,
+  onSelect,
+  onDeselect,
+  pendingCounts,
+}: Props) {
   // If a card is selected, show ONLY that card (no section headers, no other cards)
+  // Lookup over the COMBINED active+inactive set: a bank that gets deactivated
+  // while selected must not disappear (see spec "Resiliencia de selección").
   if (selectedId) {
-    const seleccionada = cuentas.find((c) => c.id === selectedId)
+    const seleccionada = [...cuentas, ...cuentasInactivas].find((c) => c.id === selectedId)
     if (!seleccionada) return null
     return (
       <div className="py-1">
@@ -33,7 +43,7 @@ export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect, pen
   const bancos = cuentas.filter((c) => c.tipo === 'BANCO')
   const cajas = cuentas.filter((c) => c.tipo === 'CAJA_FUERTE')
 
-  if (cuentas.length === 0) {
+  if (cuentas.length === 0 && cuentasInactivas.length === 0) {
     return (
       <div className="text-sm text-muted-foreground py-4 text-center">
         No hay cuentas configuradas. Cree un banco para comenzar.
@@ -68,6 +78,24 @@ export function CuentasOverview({ cuentas, selectedId, onSelect, onDeselect, pen
           </p>
           <div className="flex gap-3 overflow-x-auto pb-1">
             {cajas.map((cuenta) => (
+              <CuentaCard
+                key={cuenta.id}
+                cuenta={cuenta}
+                selected={false}
+                onSelect={onSelect}
+                pendingCount={pendingCounts?.get(cuenta.id) ?? 0}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      {cuentasInactivas.length > 0 && (
+        <div className="opacity-60">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+            Inactivos
+          </p>
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {cuentasInactivas.map((cuenta) => (
               <CuentaCard
                 key={cuenta.id}
                 cuenta={cuenta}
