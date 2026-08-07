@@ -65,9 +65,11 @@ export function calcRifCheckDigit(rif: string): number {
   return digito >= 10 ? 0 : digito
 }
 
-/** Valida RIF purificado (10 chars): letra permitida + 9 digitos */
+/** Valida RIF purificado (10 chars): letra permitida + 9 digitos + digito verificador Modulo 11 */
 export function isValidRif(value: string): boolean {
-  return /^[VEJGCP]\d{9}$/.test(value)
+  if (!/^[VEJGCP]\d{9}$/.test(value)) return false
+  const expectedCheck = calcRifCheckDigit(value.slice(0, 9))
+  return expectedCheck.toString() === value[9]
 }
 
 // ---------------------------------------------------------------------------
