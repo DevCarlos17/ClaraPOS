@@ -11,7 +11,7 @@ import {
 } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
-import { todayStr, startOfMonth } from '@/lib/dates'
+import { todayStr, startOfMonth, daysAgo } from '@/lib/dates'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { GastoForm } from './gasto-form'
@@ -118,11 +118,7 @@ export function GastosDashboard() {
   const [mesHasta, setMesHasta]       = useState(defaultMesDesde)
 
   // Últimos 7 días: auto-computed, no pickers
-  const ultimos7Desde = useMemo(() => {
-    const d = new Date(today + 'T00:00:00')
-    d.setDate(d.getDate() - 7)
-    return d.toISOString().slice(0, 10)
-  }, [today])
+  const ultimos7Desde = useMemo(() => daysAgo(7), [today])
 
   // Collapsible: grupos expandidos por defecto, cuentas colapsadas por defecto
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())

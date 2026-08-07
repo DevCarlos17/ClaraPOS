@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { todayStr, startOfMonth } from '@/lib/dates'
 
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
@@ -173,10 +174,8 @@ export function ConciliacionTesoreria() {
   const [activeTab, setActiveTab] = useState<'pendiente' | 'historico' | 'traspasos'>('pendiente')
 
   // Filtros de historico (inputs — no aplicados hasta "Consultar")
-  const _now = new Date()
-  const _firstDay = new Date(_now.getFullYear(), _now.getMonth(), 1)
-  const DESDE_DEFAULT = _firstDay.toISOString().slice(0, 10)
-  const HASTA_DEFAULT = _now.toISOString().slice(0, 10)
+  const DESDE_DEFAULT = startOfMonth()
+  const HASTA_DEFAULT = todayStr()
 
   const [filterDesde,  setFilterDesde]  = useState(DESDE_DEFAULT)
   const [filterHasta,  setFilterHasta]  = useState(HASTA_DEFAULT)

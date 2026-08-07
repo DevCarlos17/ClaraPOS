@@ -3,7 +3,7 @@ import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
-import { localNow, todayStr, VE_OFFSET } from '@/lib/dates'
+import { localNow, todayStr, daysFromNow, VE_OFFSET } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import Decimal from 'decimal.js'
@@ -1690,9 +1690,7 @@ export async function crearPrestamoStandalone(
     const totalDeudaUsd = principalUsd.plus(interesUsd)
 
     // Fecha de vencimiento
-    const hoy = new Date(localNow().slice(0, 10) + 'T00:00:00')
-    hoy.setDate(hoy.getDate() + diasPlazo)
-    const fechaVencimiento = hoy.toISOString().split('T')[0]
+    const fechaVencimiento = daysFromNow(diasPlazo)
 
     // Egreso de caja (solo si origen = CAJA)
     if (origenFondos === 'CAJA') {

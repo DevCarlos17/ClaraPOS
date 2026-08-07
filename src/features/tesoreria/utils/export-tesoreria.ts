@@ -3,6 +3,7 @@ import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 import { db } from '@/core/db/powersync/db'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { todayStr } from '@/lib/dates'
 import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 import type { MovimientoTableRow } from '../components/movimientos-table'
 
@@ -196,7 +197,7 @@ export function exportPendientesPdf(params: {
   doc.text(`Por conciliar: ${fmtAmount(Math.abs(totalNeto), cuenta.moneda_codigo)}`, 14, finalY)
 
   doc.save(
-    `pendientes_${cuenta.nombre.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`
+    `pendientes_${cuenta.nombre.replace(/\s+/g, '_')}_${todayStr()}.pdf`
   )
 }
 
@@ -229,7 +230,7 @@ export function exportPendientesExcel(params: {
   XLSX.utils.book_append_sheet(wb, ws, 'Pendientes')
   XLSX.writeFile(
     wb,
-    `pendientes_${cuenta.nombre.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`
+    `pendientes_${cuenta.nombre.replace(/\s+/g, '_')}_${todayStr()}.xlsx`
   )
 }
 
@@ -353,7 +354,7 @@ export async function exportConsolidadoPendientesPdf(params: {
     )
   }
 
-  doc.save(`consolidado_pendientes_${new Date().toISOString().slice(0, 10)}.pdf`)
+  doc.save(`consolidado_pendientes_${todayStr()}.pdf`)
 }
 
 // ─── Exportar Consolidado Pendientes Excel ────────────────────
@@ -420,5 +421,5 @@ export async function exportConsolidadoPendientesExcel(params: {
     XLSX.utils.book_append_sheet(wb, ws, sheetName)
   }
 
-  XLSX.writeFile(wb, `consolidado_pendientes_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  XLSX.writeFile(wb, `consolidado_pendientes_${todayStr()}.xlsx`)
 }

@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import { todayStr, daysAgo, startOfMonth, localNow } from '../dates'
+import { todayStr, daysAgo, daysFromNow, startOfMonth, localNow } from '../dates'
 
 describe('todayStr', () => {
   it('retorna la fecha de hoy en formato YYYY-MM-DD', () => {
@@ -11,6 +11,13 @@ describe('todayStr', () => {
   it('formatea con ceros a la izquierda para mes y dia', () => {
     vi.setSystemTime(new Date('2026-01-05T00:00:00'))
     expect(todayStr()).toBe('2026-01-05')
+    vi.useRealTimers()
+  })
+
+  it('boundary 20:05 VET no salta al dia siguiente (UTC ya es 2026-05-22)', () => {
+    // UTC 00:05 del 22 de mayo = 20:05 del 21 de mayo en Venezuela (UTC-4)
+    vi.setSystemTime(new Date('2026-05-22T00:05:00.000Z'))
+    expect(todayStr()).toBe('2026-05-21')
     vi.useRealTimers()
   })
 })
@@ -31,6 +38,40 @@ describe('daysAgo', () => {
   it('cruza mes correctamente', () => {
     vi.setSystemTime(new Date('2026-05-05T12:00:00'))
     expect(daysAgo(10)).toBe('2026-04-25')
+    vi.useRealTimers()
+  })
+
+  it('boundary 21:00 VET no desplaza el rango un dia de mas (UTC ya es 2026-05-22)', () => {
+    // UTC 01:00 del 22 de mayo = 21:00 del 21 de mayo en Venezuela (UTC-4)
+    vi.setSystemTime(new Date('2026-05-22T01:00:00.000Z'))
+    expect(daysAgo(7)).toBe('2026-05-14')
+    vi.useRealTimers()
+  })
+})
+
+describe('daysFromNow', () => {
+  it('retorna la fecha de N dias adelante', () => {
+    vi.setSystemTime(new Date('2026-05-21T12:00:00'))
+    expect(daysFromNow(30)).toBe('2026-06-20')
+    vi.useRealTimers()
+  })
+
+  it('retorna hoy cuando N es 0', () => {
+    vi.setSystemTime(new Date('2026-05-21T12:00:00'))
+    expect(daysFromNow(0)).toBe('2026-05-21')
+    vi.useRealTimers()
+  })
+
+  it('cruza mes correctamente', () => {
+    vi.setSystemTime(new Date('2026-05-25T12:00:00'))
+    expect(daysFromNow(10)).toBe('2026-06-04')
+    vi.useRealTimers()
+  })
+
+  it('boundary 20:15 VET no desplaza el vencimiento un dia de mas (UTC ya es 2026-05-22)', () => {
+    // UTC 00:15 del 22 de mayo = 20:15 del 21 de mayo en Venezuela (UTC-4)
+    vi.setSystemTime(new Date('2026-05-22T00:15:00.000Z'))
+    expect(daysFromNow(30)).toBe('2026-06-20')
     vi.useRealTimers()
   })
 })
