@@ -4,7 +4,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import listPlugin from '@fullcalendar/list'
-import type { EventClickArg, DateSelectArg, EventInput, EventDropArg } from '@fullcalendar/core'
+import type { EventClickArg, DateSelectArg, EventInput, EventDropArg, SlotLaneMountArg } from '@fullcalendar/core'
 import { useCitaWizardStore } from '@/stores/cita-wizard-store'
 import { NuevaCitaSheet } from '../wizard/nueva-cita-sheet'
 import {
@@ -391,7 +391,8 @@ export function CalendarioCitas() {
 
   // slotLaneDidMount — aplica fc-slot-past directamente en el td del slot.
   const slotLaneDidMount = useCallback(
-    (arg: { date: Date; el: HTMLElement }) => {
+    (arg: SlotLaneMountArg) => {
+      if (!arg.date) return
       const now = nowRef.current
       const slotDate = arg.date
       const slotMidnight = new Date(slotDate)

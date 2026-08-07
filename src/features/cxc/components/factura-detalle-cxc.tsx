@@ -268,7 +268,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   // ─── Diferencial cambiario ───────────────────────────────
 
   async function handleDiferencialCambiario() {
-    if (!user?.empresa_id || !user.id) return
+    if (!user?.empresa_id || !user.id || !factura) return
     // Usar la tasa de la factura como referencia para el equivalente Bs
     const tasaRef = parseFloat(factura.tasa) || 1
     setAplicandoDiferencial(true)
@@ -292,7 +292,7 @@ export function FacturaDetalleCxc({ isOpen, onClose, factura }: FacturaDetalleCx
   // ─── Reverso de diferencial cambiario ────────────────────
 
   async function handleReversarDiferencial() {
-    if (!user?.empresa_id || !user.id) return
+    if (!user?.empresa_id || !user.id || !factura) return
     setReversandoDife(true)
     try {
       await registrarReversoDiferencialCxC({
