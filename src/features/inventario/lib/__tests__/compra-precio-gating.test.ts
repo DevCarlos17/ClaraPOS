@@ -5,10 +5,12 @@ import {
   calcularPvpSiSeMantieneMargen,
   clasificarCasoLinea,
   debeMostrarInfoPvpEnResumen,
+  derivarSenalesPvp,
   lineaTieneDecisionBloqueante,
   resolverAccionesLineaCompra,
   resolverCostoAEscribir,
   type NivelDecisionUI,
+  type NivelSenalPvp,
 } from '../compra-precio-gating'
 
 describe('calcularNoActualizarPvp', () => {
@@ -209,5 +211,184 @@ describe('lineaTieneDecisionBloqueante', () => {
         nivelResuelto('manual', '22.00'),
       ])
     ).toBe(false)
+  })
+})
+
+describe('derivarSenalesPvp', () => {
+  const nivel = (overrides: Partial<NivelSenalPvp> = {}): NivelSenalPvp => ({
+    orden: 1,
+    decision: 'mantener_pvp',
+    pvp_actual_usd: 15,
+    pvp_input: '',
+    ...overrides,
+  })
+
+  it('sin niveles (linea sin cambio de costo, pvp_niveles vacio): no_actualizar_pvp=true, sin valores', () => {
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp([], 'USD', 0)
+    expect(noActualizarPvp).toBe(true)
+    expect(getNewPvpUsdForNivel(1)).toBeUndefined()
+  })
+
+  it('un solo nivel en mantener_pvp: no_actualizar_pvp=true (servidor conserva el pvp actual)', () => {
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'mantener_pvp', pvp_actual_usd: 15 })],
+      'USD',
+      0
+    )
+    expect(noActualizarPvp).toBe(true)
+    expect(getNewPvpUsdForNivel(1)).toBeUndefined()
+  })
+
+  it('multi-nivel, TODOS en mantener_pvp (uniforme): no_actualizar_pvp=true', () => {
+    const { noActualizarPvp } = derivarSenalesPvp(
+      [
+        nivel({ orden: 1, decision: 'mantener_pvp' }),
+        nivel({ orden: 2, decision: 'mantener_pvp' }),
+        nivel({ orden: 3, decision: 'mantener_pvp' }),
+      ],
+      'USD',
+      0
+    )
+    expect(noActualizarPvp).toBe(true)
+  })
+
+  it('mantener_margen: no_actualizar_pvp=false, retorna el pvp explicito tipeado (moneda USD, sin conversion)', () => {
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'mantener_margen', pvp_input: '18.5' })],
+      'USD',
+      0
+    )
+    expect(noActualizarPvp).toBe(false)
+    expect(getNewPvpUsdForNivel(1)).toBe(18.5)
+  })
+
+  it('manual: no_actualizar_pvp=false, persiste el pvp tipeado por el usuario', () => {
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: '22.00' })],
+      'USD',
+      0
+    )
+    expect(noActualizarPvp).toBe(false)
+    expect(getNewPvpUsdForNivel(1)).toBe(22)
+  })
+
+  it('mezcla: un nivel en mantener_pvp dentro de una linea con otros niveles editados retorna su pvp_actual_usd CONGELADO (fuerza rama "provisto" en use-compras.ts, no delega al fallback del servidor)', () => {
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [
+        nivel({ orden: 1, decision: 'mantener_pvp', pvp_actual_usd: 15 }),
+        nivel({ orden: 2, decision: 'mantener_margen', pvp_input: '30' }),
+      ],
+      'USD',
+      0
+    )
+    expect(noActualizarPvp).toBe(false)
+    expect(getNewPvpUsdForNivel(1)).toBe(15) // congelado, no undefined
+    expect(getNewPvpUsdForNivel(2)).toBe(30)
+  })
+
+  it('multi-nivel con las 3 decisiones resueltas mezcladas: cada getter retorna su valor explicito correspondiente', () => {
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [
+        nivel({ orden: 1, decision: 'mantener_pvp', pvp_actual_usd: 12 }),
+        nivel({ orden: 2, decision: 'mantener_margen', pvp_input: '25.75' }),
+        nivel({ orden: 3, decision: 'manual', pvp_input: '40.10' }),
+      ],
+      'USD',
+      0
+    )
+    expect(noActualizarPvp).toBe(false)
+    expect(getNewPvpUsdForNivel(1)).toBe(12)
+    expect(getNewPvpUsdForNivel(2)).toBe(25.75)
+    expect(getNewPvpUsdForNivel(3)).toBe(40.1)
+  })
+
+  it('moneda BS con tasa valida: convierte el pvp tipeado en Bs a USD dividiendo por la tasa (decimal.js, division exacta)', () => {
+    const { getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: '100' })],
+      'BS',
+      8
+    )
+    // 100 Bs / 8 = 12.5 USD exacto — division sin drift de punto flotante.
+    expect(getNewPvpUsdForNivel(1)).toBe(12.5)
+  })
+
+  it('precision-8: division no exacta en moneda BS se resuelve via Decimal sin redondeo prematuro', () => {
+    const { getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: '100' })],
+      'BS',
+      3
+    )
+    const esperado = new Decimal(100).dividedBy(3).toNumber()
+    expect(getNewPvpUsdForNivel(1)).toBe(esperado)
+    expect(getNewPvpUsdForNivel(1)?.toString()).toBe('33.333333333333336')
+  })
+
+  it('moneda BS con tasa <= 0 (sin tasa de factura configurada): retorna el pvp tipeado sin convertir (mismo criterio de seguridad que bsToUsd)', () => {
+    const { getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: '100' })],
+      'BS',
+      0
+    )
+    expect(getNewPvpUsdForNivel(1)).toBe(100)
+  })
+
+  it('pvp_input vacio en una decision no-mantener_pvp: getter retorna undefined para ese nivel', () => {
+    const { getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: '' })],
+      'USD',
+      0
+    )
+    expect(getNewPvpUsdForNivel(1)).toBeUndefined()
+  })
+
+  it('pvp_input invalido (NaN o <= 0): getter retorna undefined para ese nivel', () => {
+    const { getNewPvpUsdForNivel: getterNaN } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: 'abc' })],
+      'USD',
+      0
+    )
+    expect(getterNaN(1)).toBeUndefined()
+
+    const { getNewPvpUsdForNivel: getterCero } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'mantener_margen', pvp_input: '0' })],
+      'USD',
+      0
+    )
+    expect(getterCero(1)).toBeUndefined()
+  })
+
+  it('orden inexistente: getter retorna undefined', () => {
+    const { getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: '20' })],
+      'USD',
+      0
+    )
+    expect(getNewPvpUsdForNivel(99)).toBeUndefined()
+  })
+
+  it('guard de margen negativo: mantener_margen/manual retornan SIEMPRE un valor explicito concreto, incluso por debajo de un costo hipotetico, para que el guard client-side (compra-form.tsx) pueda comparar sin depender del fallback del servidor', () => {
+    // El guard de margen negativo (compra-form.tsx) compara nuevo_precio_venta_usd
+    // contra costo_usd_sistema DESPUES de llamar a este derivador — este helper no
+    // conoce el costo, solo debe garantizar que el valor no quede undefined/implicito
+    // cuando la decision esta resuelta, para que ese guard tenga algo que comparar.
+    const { getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'manual', pvp_input: '5.00' })],
+      'USD',
+      0
+    )
+    const costoHipoteticoMasAlto = 8
+    const nuevoPvp = getNewPvpUsdForNivel(1)
+    expect(nuevoPvp).toBe(5)
+    expect(nuevoPvp).toBeLessThan(costoHipoteticoMasAlto) // el valor esta disponible para que el guard lo detecte
+  })
+
+  it('decision "pendiente" residual (defensivo — el contrato real es que el gate `lineaTieneDecisionBloqueante` bloquea el submit ANTES de que esta funcion se invoque, ver describe de arriba): con pvp_input vacio, el getter no revienta y retorna undefined', () => {
+    const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(
+      [nivel({ orden: 1, decision: 'pendiente', pvp_input: '' })],
+      'USD',
+      0
+    )
+    expect(noActualizarPvp).toBe(false) // no es mantener_pvp uniforme
+    expect(getNewPvpUsdForNivel(1)).toBeUndefined()
   })
 })

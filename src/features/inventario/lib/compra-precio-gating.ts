@@ -189,3 +189,58 @@ export function lineaTieneDecisionBloqueante(costoCambio: boolean, niveles: Nive
     return false
   })
 }
+
+/** Nivel de precio con los datos necesarios para derivar las senales de
+ * persistencia de PVP (`no_actualizar_pvp` / `nuevo_precio_*_usd`) a partir
+ * de la decision explicita del usuario. Ver `derivarSenalesPvp`.
+ */
+export interface NivelSenalPvp {
+  orden: number
+  decision: DecisionPvp
+  pvp_actual_usd: number
+  pvp_input: string
+}
+
+/**
+ * Deriva `no_actualizar_pvp` y el getter de nuevo PVP en USD por nivel, a
+ * partir de las decisiones por nivel de una linea de compra (Decision 1 del
+ * design: reduccion de senales limpia, `use-compras.ts` sin cambios).
+ *
+ * Uniforme `mantener_pvp` en TODOS los niveles (o linea sin niveles, p. ej.
+ * sin cambio de costo) -> `no_actualizar_pvp=true`, sin nuevo PVP explicito
+ * (el servidor conserva el `pvpActual`). Cualquier mezcla de decisiones o
+ * decision distinta -> `false` con valores EXPLICITOS por nivel, nunca
+ * delegados al fallback de margen del servidor: el guard de margen negativo
+ * client-side (compra-form.tsx, pre-submit) necesita un numero concreto para
+ * validar contra el costo. Un nivel en `mantener_pvp` DENTRO de una linea
+ * mixta retorna su `pvp_actual_usd` congelado (fuerza la rama "provisto" en
+ * `use-compras.ts` en lugar de la implicita).
+ *
+ * La conversion Bs -> USD del `pvp_input` tipeado usa `Decimal` (mismo
+ * criterio de seguridad que `bsToUsd`: si no hay tasa de factura configurada,
+ * retorna el valor tipeado sin convertir en lugar de dividir por cero).
+ */
+export function derivarSenalesPvp(
+  pvpNiveles: NivelSenalPvp[],
+  moneda: 'USD' | 'BS',
+  tasaFactura: number
+): {
+  noActualizarPvp: boolean
+  getNewPvpUsdForNivel: (orden: number) => number | undefined
+} {
+  if (pvpNiveles.length === 0 || pvpNiveles.every((n) => n.decision === 'mantener_pvp')) {
+    return { noActualizarPvp: true, getNewPvpUsdForNivel: () => undefined }
+  }
+  const getNewPvpUsdForNivel = (orden: number): number | undefined => {
+    const nivel = pvpNiveles.find((n) => n.orden === orden)
+    if (!nivel) return undefined
+    if (nivel.decision === 'mantener_pvp') return nivel.pvp_actual_usd
+    if (nivel.pvp_input === '') return undefined
+    const pvpNum = parseFloat(nivel.pvp_input)
+    if (isNaN(pvpNum) || pvpNum <= 0) return undefined
+    return moneda === 'USD'
+      ? pvpNum
+      : (tasaFactura > 0 ? new Decimal(pvpNum).dividedBy(tasaFactura).toNumber() : pvpNum)
+  }
+  return { noActualizarPvp: false, getNewPvpUsdForNivel }
+}

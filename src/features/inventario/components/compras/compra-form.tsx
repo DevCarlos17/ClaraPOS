@@ -10,6 +10,7 @@ import {
   lineaTieneDecisionBloqueante,
   calcularMargenSiSeMantienePvp,
   calcularPvpSiSeMantieneMargen,
+  derivarSenalesPvp,
   type DecisionPvp,
 } from '@/features/inventario/lib/compra-precio-gating'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
@@ -1081,7 +1082,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       // (el servidor conserva el pvpActual). Cualquier mezcla o decisión distinta →
       // false con valores EXPLÍCITOS por nivel, nunca delegados al fallback de
       // margen del servidor (el guard de margen negativo client-side lo necesita).
-      const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(l)
+      const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(l.pvp_niveles, moneda, tasaFacturaNum)
 
       const nuevoPrecioVentaUsd = getNewPvpUsdForNivel(1)
       const nuevoPrecioMayorUsd = getNewPvpUsdForNivel(2)
@@ -1211,31 +1212,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
    */
   function lineaTienePvpEditado(l: LineaUI): boolean {
     return l.pvp_niveles.some((n) => n.decision !== 'mantener_pvp')
-  }
-
-  /** Deriva no_actualizar_pvp y el getter de nuevo PVP por nivel a partir de las
-   * decisiones por nivel de la línea (Decisión 1 del design: reducción de señales
-   * limpia, use-compras.ts sin cambios).
-   */
-  function derivarSenalesPvp(l: LineaUI): {
-    noActualizarPvp: boolean
-    getNewPvpUsdForNivel: (orden: number) => number | undefined
-  } {
-    if (l.pvp_niveles.length === 0 || l.pvp_niveles.every((n) => n.decision === 'mantener_pvp')) {
-      return { noActualizarPvp: true, getNewPvpUsdForNivel: () => undefined }
-    }
-    const getNewPvpUsdForNivel = (orden: number): number | undefined => {
-      const nivel = l.pvp_niveles.find((n) => n.orden === orden)
-      if (!nivel) return undefined
-      if (nivel.decision === 'mantener_pvp') return nivel.pvp_actual_usd
-      if (nivel.pvp_input === '') return undefined
-      const pvpNum = parseFloat(nivel.pvp_input)
-      if (isNaN(pvpNum) || pvpNum <= 0) return undefined
-      return moneda === 'USD'
-        ? pvpNum
-        : (tasaFacturaNum > 0 ? new Decimal(pvpNum).dividedBy(tasaFacturaNum).toNumber() : pvpNum)
-    }
-    return { noActualizarPvp: false, getNewPvpUsdForNivel }
   }
 
   // True si hay líneas con decisión de PVP pendiente que bloquean el guardado
