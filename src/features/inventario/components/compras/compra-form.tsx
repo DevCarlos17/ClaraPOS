@@ -5,8 +5,12 @@ import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, C
 import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import {
-  calcularNoActualizarPvp,
   debeMostrarInfoPvpEnResumen,
+  clasificarCasoLinea,
+  lineaTieneDecisionBloqueante,
+  calcularMargenSiSeMantienePvp,
+  calcularPvpSiSeMantieneMargen,
+  type DecisionPvp,
 } from '@/features/inventario/lib/compra-precio-gating'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
 import { useProductosTipo, type Producto } from '@/features/inventario/hooks/use-productos'
@@ -45,6 +49,8 @@ interface PvpNivelUI {
   pvp_input: string         // PVP editable en moneda display
   margen_input: string      // Margen % editable
   violado: boolean          // true cuando nuevo_costo > pvp_actual_usd
+  decision: DecisionPvp             // decisión explícita del usuario sobre este nivel
+  margen_si_mantiene_pvp: string    // vista base de comparación, siempre poblado
 }
 
 interface LineaUI {
@@ -79,10 +85,10 @@ interface LineaUI {
   precio_especial_usd: string   // PVP nivel 3 actual en USD ('0' si no existe)
   margen_actual: string         // margen % nivel 1 (derivado de costo/pvp vigentes)
 
-  // Control de edición multi-nivel
-  // pvp_editando: true = todos los niveles desbloqueados para edición manual
-  pvp_editando: boolean
-  pvp_niveles: PvpNivelUI[]   // estado por nivel (poblado cuando hay cambio de costo)
+  // Control de edición multi-nivel: estado por nivel (poblado cuando hay cambio de
+  // costo, o cuando el usuario abre la edición manual sin cambio de costo). Vacío
+  // ([]) = sin decisión pendiente ni edición activa para esta línea.
+  pvp_niveles: PvpNivelUI[]
 }
 
 interface PagoUI {
@@ -544,7 +550,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
         precio_mayor_usd: producto.precio_mayor_usd ?? '0',
         precio_especial_usd: producto.precio_especial_usd ?? '0',
         margen_actual: margenActual,
-        pvp_editando: false,
         pvp_niveles: [],
       },
     ])
@@ -572,6 +577,30 @@ export function CompraForm({ onClose }: CompraFormProps) {
     )
   }
 
+  /** Costo nuevo de una línea en USD por unidad base — usado para clasificar Caso
+   * A/B, proyectar niveles de precio y resolver decisiones. Centraliza el cálculo
+   * antes duplicado en cada handler de PVP.
+   */
+  function getCostoNuevoUsdForLinea(l: LineaUI): number {
+    if (moneda === 'USD') {
+      return l.factor > 0
+        ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
+        : l.costo_input
+    }
+    return tasaFacturaNum > 0
+      ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
+      : 0
+  }
+
+  /** Niveles de precio efectivos: los configurados por la empresa, o un nivel
+   * virtual "PVP" (orden 1) si la empresa no configuró niveles de precio.
+   */
+  function getNivelesEfectivos(): NivelPrecio[] {
+    return nivelesActivos.length > 0
+      ? nivelesActivos
+      : [{ id: 'virtual', empresa_id: '', nombre: 'PVP', orden: 1, porcentaje_defecto: '0.00', is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null }]
+  }
+
   /** Maneja cambios en el campo "Nuevo Costo" de una línea. */
   function handleNuevoCostoChange(index: number, value: string) {
     setLineas((prev) =>
@@ -580,7 +609,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
         // Blank → sin cambio: restaurar costo_input al costo_actual
         if (value === '') {
-          return { ...l, nuevo_costo_raw: '', costo_input: l.costo_actual, pvp_editando: false, pvp_niveles: [] }
+          return { ...l, nuevo_costo_raw: '', costo_input: l.costo_actual, pvp_niveles: [] }
         }
 
         // Decimal incompleto ("1.", "12.", etc.) → guardar el raw sin recalcular todavía.
@@ -593,60 +622,29 @@ export function CompraForm({ onClose }: CompraFormProps) {
         if (isNaN(numericalValue) || numericalValue < 0) return l
 
         const updated = { ...l, nuevo_costo_raw: clamped, costo_input: numericalValue }
+        const costoNuevoUsd = getCostoNuevoUsdForLinea(updated)
 
-        // Calcular costo nuevo en USD por unidad base
-        let costoNuevoUsd: number
-        if (moneda === 'USD') {
-          costoNuevoUsd = l.factor > 0
-            ? new Decimal(numericalValue).dividedBy(l.factor).toNumber()
-            : numericalValue
-        } else {
-          const costoOrig = tasaFacturaNum > 0
-            ? new Decimal(numericalValue).dividedBy(tasaFacturaNum).toNumber()
-            : 0
-          costoNuevoUsd = l.factor > 0
-            ? new Decimal(costoOrig).dividedBy(l.factor).toNumber()
-            : costoOrig
-        }
-
-        const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
-
-        // Sin cambio real → limpiar estado de edición.
+        // Sin cambio real → limpiar decisiones pendientes.
         // Normalizar a Bs para comparar con precisión en ambos modos:
         // en USD con tasas altas, Bs 0.01 de diferencia equivale a < $0.0001.
         const toBS = (v: number) => moneda === 'BS'
           ? v
           : (tasaFacturaNum > 0 ? new Decimal(v).times(tasaFacturaNum).toNumber() : v)
         if (Math.abs(toBS(numericalValue) - toBS(l.costo_actual)) < 0.001) {
-          return { ...updated, pvp_editando: false, pvp_niveles: [] }
+          return { ...updated, pvp_niveles: [] }
         }
 
-        // Calcular niveles efectivos (virtual nivel 1 si empresa no tiene configurados)
-        const nivelesEf: NivelPrecio[] = nivelesActivos.length > 0
-          ? nivelesActivos
-          : [{ id: 'virtual', empresa_id: '', nombre: 'PVP', orden: 1, porcentaje_defecto: '0.00', is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null }]
-
-        // Construir estado de pvp_niveles con proyección de cada nivel
-        const pvpNiveles: PvpNivelUI[] = nivelesEf.map((nivel) => {
+        // Vista base de comparación: PVP actual + margen resultante si se mantiene,
+        // por nivel. decision arranca en 'pendiente' — nunca se auto-selecciona ni
+        // auto-actualiza el PVP (el usuario debe elegir explícitamente).
+        const pvpNiveles: PvpNivelUI[] = getNivelesEfectivos().map((nivel) => {
           const campo = getPvpCampoByOrden(nivel.orden)
           const pvpActualUsd = parseFloat(getPvpValueFromLinea(l, campo)) || 0
           const violado = costoNuevoUsd > pvpActualUsd + 0.0001
-
-          // Proyectar PVP manteniendo el margen original de este nivel
-          const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
-            ? new Decimal(pvpActualUsd).minus(costoUsdActual).dividedBy(costoUsdActual).toNumber()
-            : 0
-          const dProyPvp = Decimal.max(
-            new Decimal(costoNuevoUsd),
-            new Decimal(costoNuevoUsd).times(new Decimal(1).plus(margenDecimal))
-          )
-          const proyPvpUsd = dProyPvp.toNumber()
-          const proyMargen = costoNuevoUsd > 0
-            ? dProyPvp.minus(costoNuevoUsd).dividedBy(costoNuevoUsd).times(100).toFixed(1)
-            : '0.0'
+          const margenSiMantienePvp = calcularMargenSiSeMantienePvp(new Decimal(costoNuevoUsd), new Decimal(pvpActualUsd))
           const pvpDisplay = moneda === 'USD'
-            ? proyPvpUsd
-            : new Decimal(proyPvpUsd).times(tasaFacturaNum).toNumber()
+            ? pvpActualUsd
+            : new Decimal(pvpActualUsd).times(tasaFacturaNum).toNumber()
 
           return {
             orden: nivel.orden,
@@ -654,82 +652,103 @@ export function CompraForm({ onClose }: CompraFormProps) {
             campo,
             pvp_actual_usd: pvpActualUsd,
             pvp_input: pvpDisplay.toFixed(2),
-            margen_input: proyMargen,
+            margen_input: margenSiMantienePvp.toFixed(1),
             violado,
+            decision: 'pendiente',
+            margen_si_mantiene_pvp: margenSiMantienePvp.toFixed(1),
           }
         })
 
-        // Si algún nivel es violado → activar edición automáticamente
-        const hayViolado = pvpNiveles.some((n) => n.violado)
-
-        return { ...updated, pvp_editando: hayViolado, pvp_niveles: pvpNiveles }
+        return { ...updated, pvp_niveles: pvpNiveles }
       })
     )
   }
 
-  /** Alterna la edición manual de PVPs para una línea con cambio de costo. */
-  function handleTogglePvpEdicion(index: number) {
+  /** Abre edición manual de PVP para una línea SIN cambio de costo (feature
+   * existente, preservada: permite ajustar PVP/Mayor/Especial sin haber tocado
+   * "Nuevo Costo"). A diferencia del flujo con cambio de costo, no hay Caso A/B
+   * que clasificar — cada nivel entra directo en decision='manual' (edición
+   * bidireccional inmediata, igual que el editor original).
+   */
+  function handleAbrirEdicionManual(index: number) {
     setLineas((prev) =>
       prev.map((l, i) => {
         if (i !== index) return l
-
-        if (l.pvp_editando) {
-          // Cerrar editor (solo si no hay violados pendientes)
-          const hayViolado = l.pvp_niveles.some((n) => n.violado)
-          if (hayViolado) return l // No se puede cerrar con violados sin resolver
-          return { ...l, pvp_editando: false }
-        }
-
-        // Abrir editor: re-calcular proyecciones para todos los niveles
-        const costoNuevoUsd = moneda === 'USD'
-          ? (l.factor > 0
-              ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
-              : l.costo_input)
-          : (tasaFacturaNum > 0
-              ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
-              : 0)
+        const costoNuevoUsd = getCostoNuevoUsdForLinea(l)
         const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
 
-        const nivelesEf: NivelPrecio[] = nivelesActivos.length > 0
-          ? nivelesActivos
-          : [{ id: 'virtual', empresa_id: '', nombre: 'PVP', orden: 1, porcentaje_defecto: '0.00', is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null }]
-
-        // Si ya hay pvp_niveles y no están vacíos, conservar los valores del usuario
-        // Si no hay, construirlos desde proyección
-        const pvpNiveles: PvpNivelUI[] = nivelesEf.map((nivel) => {
+        const pvpNiveles: PvpNivelUI[] = getNivelesEfectivos().map((nivel) => {
           const campo = getPvpCampoByOrden(nivel.orden)
           const pvpActualUsd = parseFloat(getPvpValueFromLinea(l, campo)) || 0
           const violado = costoNuevoUsd > pvpActualUsd + 0.0001
-          const existing = l.pvp_niveles.find((n) => n.orden === nivel.orden)
-          if (existing) {
-            return { ...existing, violado }
-          }
-          const margenDecimal = costoUsdActual > 0 && pvpActualUsd > 0
-            ? new Decimal(pvpActualUsd).minus(costoUsdActual).dividedBy(costoUsdActual).toNumber()
-            : 0
-          const dProyPvp = Decimal.max(
-            new Decimal(costoNuevoUsd),
-            new Decimal(costoNuevoUsd).times(new Decimal(1).plus(margenDecimal))
-          )
-          const proyPvpUsd = dProyPvp.toNumber()
-          const proyMargen = costoNuevoUsd > 0
-            ? dProyPvp.minus(costoNuevoUsd).dividedBy(costoNuevoUsd).times(100).toFixed(1)
-            : '0.0'
+          const margenSiMantienePvp = calcularMargenSiSeMantienePvp(new Decimal(costoNuevoUsd), new Decimal(pvpActualUsd))
+          const margenOriginal = costoUsdActual > 0 && pvpActualUsd > 0
+            ? new Decimal(pvpActualUsd).minus(costoUsdActual).dividedBy(costoUsdActual).times(100)
+            : new Decimal(0)
           const pvpDisplay = moneda === 'USD'
-            ? proyPvpUsd
-            : new Decimal(proyPvpUsd).times(tasaFacturaNum).toNumber()
+            ? pvpActualUsd
+            : new Decimal(pvpActualUsd).times(tasaFacturaNum).toNumber()
+
           return {
             orden: nivel.orden,
             nombre: nivel.nombre,
             campo,
             pvp_actual_usd: pvpActualUsd,
             pvp_input: pvpDisplay.toFixed(2),
-            margen_input: proyMargen,
+            margen_input: margenOriginal.toFixed(1),
             violado,
+            decision: 'manual',
+            margen_si_mantiene_pvp: margenSiMantienePvp.toFixed(1),
           }
         })
 
-        return { ...l, pvp_editando: true, pvp_niveles: pvpNiveles }
+        return { ...l, pvp_niveles: pvpNiveles }
+      })
+    )
+  }
+
+  /** Aplica la decisión explícita del usuario sobre el PVP de UN nivel de precio,
+   * tras un cambio de costo (Caso A/B). `mantener_pvp` congela el PVP actual;
+   * `mantener_margen` recalcula el PVP preservando el margen % original del nivel
+   * (Caso B lo ofrece como "Recalcular por %"); `manual` habilita edición
+   * bidireccional existente; `pendiente` revierte la decisión para volver a elegir.
+   */
+  function handleDecisionNivel(index: number, orden: number, decision: DecisionPvp) {
+    setLineas((prev) =>
+      prev.map((l, i) => {
+        if (i !== index) return l
+        const costoNuevoUsd = getCostoNuevoUsdForLinea(l)
+        const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
+
+        const pvpNiveles = l.pvp_niveles.map((n) => {
+          if (n.orden !== orden) return n
+
+          if (decision === 'pendiente' || decision === 'manual') {
+            return { ...n, decision }
+          }
+
+          if (decision === 'mantener_pvp') {
+            const pvpDisplay = moneda === 'USD'
+              ? n.pvp_actual_usd
+              : new Decimal(n.pvp_actual_usd).times(tasaFacturaNum).toNumber()
+            return { ...n, decision, pvp_input: pvpDisplay.toFixed(2), margen_input: n.margen_si_mantiene_pvp }
+          }
+
+          // mantener_margen: preserva el margen % ORIGINAL del nivel (antes del
+          // cambio de costo), recalcula el PVP — nunca se delega al fallback de
+          // margen del servidor (el guard de margen negativo client-side necesita
+          // un número concreto).
+          const margenOriginalPct = costoUsdActual > 0 && n.pvp_actual_usd > 0
+            ? new Decimal(n.pvp_actual_usd).minus(costoUsdActual).dividedBy(costoUsdActual).times(100)
+            : new Decimal(0)
+          const pvpUsd = calcularPvpSiSeMantieneMargen(new Decimal(costoNuevoUsd), margenOriginalPct)
+          const pvpDisplay = moneda === 'USD'
+            ? pvpUsd.toNumber()
+            : pvpUsd.times(tasaFacturaNum).toNumber()
+          return { ...n, decision, pvp_input: pvpDisplay.toFixed(2), margen_input: margenOriginalPct.toFixed(1) }
+        })
+
+        return { ...l, pvp_niveles: pvpNiveles }
       })
     )
   }
@@ -803,7 +822,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
           ...l,
           nuevo_costo_raw: '',
           costo_input: l.costo_actual,
-          pvp_editando: false,
           pvp_niveles: [],
         }
       })
@@ -997,21 +1015,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
-    // Validar que las líneas con conflicto de PVP estén resueltas
-    const lineasConConflictoValidacion = lineas.filter((l) => {
-      if (!lineaTieneCostoCambiado(l)) return false
-      if (l.pvp_niveles.length === 0) return false
-      const hayViolado = lineaTieneNivelViolado(l)
-      if (hayViolado && !l.pvp_editando) return true
-      if (l.pvp_editando) {
-        return l.pvp_niveles.some((n) => {
-          if (!n.violado) return false
-          const pvpNum = parseFloat(n.pvp_input)
-          return isNaN(pvpNum) || pvpNum <= 0
-        })
-      }
-      return false
-    })
+    // Validar que las líneas con decisión de PVP pendiente estén resueltas
+    const lineasConConflictoValidacion = lineas.filter((l) =>
+      lineaTieneDecisionBloqueante(lineaTieneCostoCambiado(l), l.pvp_niveles)
+    )
     if (lineasConConflictoValidacion.length > 0) {
       const nombres = lineasConConflictoValidacion.map((l) => l.nombre).join(', ')
       setErrors({ lineas: `Corregí el PVP de: ${nombres}` })
@@ -1068,25 +1075,13 @@ export function CompraForm({ onClose }: CompraFormProps) {
       const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
       const costoCambio = l.nuevo_costo_raw !== '' && Math.abs(costoUnitarioUsd - costoUsdActual) > 0.0001
 
-      // Determinar si algún nivel de precio está violado
-      const algúnViolado = l.pvp_niveles.some((n) => n.violado)
-
-      // noActualizarPvp: mantener PVP cuando el usuario no abrió el editor Y no hay
-      // niveles violados (badge "sin cambio"). Ya no depende de costoCambio: un PVP
-      // editado sin cambio de costo también debe actualizarse.
-      const noActualizarPvp = calcularNoActualizarPvp(l.pvp_editando, algúnViolado)
-
-      // Obtener PVP en USD para cada nivel (solo si pvp_editando=true)
-      const getNewPvpUsdForNivel = (orden: number): number | undefined => {
-        if (!l.pvp_editando) return undefined
-        const nivel = l.pvp_niveles.find((n) => n.orden === orden)
-        if (!nivel || nivel.pvp_input === '') return undefined
-        const pvpNum = parseFloat(nivel.pvp_input)
-        if (isNaN(pvpNum) || pvpNum <= 0) return undefined
-        return moneda === 'USD'
-          ? pvpNum
-          : (tasaFacturaNum > 0 ? new Decimal(pvpNum).dividedBy(tasaFacturaNum).toNumber() : pvpNum)
-      }
+      // no_actualizar_pvp / nuevo_precio_*_usd: derivados de la decisión explícita
+      // por nivel (Decisión 1 del design: reducción de señales, use-compras.ts sin
+      // cambios). Uniforme mantener_pvp → no_actualizar_pvp=true, sin nuevo PVP
+      // (el servidor conserva el pvpActual). Cualquier mezcla o decisión distinta →
+      // false con valores EXPLÍCITOS por nivel, nunca delegados al fallback de
+      // margen del servidor (el guard de margen negativo client-side lo necesita).
+      const { noActualizarPvp, getNewPvpUsdForNivel } = derivarSenalesPvp(l)
 
       const nuevoPrecioVentaUsd = getNewPvpUsdForNivel(1)
       const nuevoPrecioMayorUsd = getNewPvpUsdForNivel(2)
@@ -1211,23 +1206,43 @@ export function CompraForm({ onClose }: CompraFormProps) {
     return l.pvp_niveles.some((n) => n.violado)
   }
 
-  // True si hay líneas con conflicto de PVP que bloquean el guardado:
-  // - algún nivel violado y pvp_editando=false (no debería pasar pero fallback)
-  // - pvp_editando=true con un nivel violado cuyo pvp_input está vacío/inválido
-  const hayLineasConConflicto = lineas.some((l) => {
-    if (!lineaTieneCostoCambiado(l)) return false
-    if (l.pvp_niveles.length === 0) return false
-    const hayViolado = lineaTieneNivelViolado(l)
-    if (hayViolado && !l.pvp_editando) return true
-    if (l.pvp_editando) {
-      return l.pvp_niveles.some((n) => {
-        if (!n.violado) return false
-        const pvpNum = parseFloat(n.pvp_input)
-        return isNaN(pvpNum) || pvpNum <= 0
-      })
+  /** True si algún nivel de la línea tiene una decisión de PVP distinta a
+   * 'mantener_pvp' (edición efectiva) — usado para badges de "editado" en la UI.
+   */
+  function lineaTienePvpEditado(l: LineaUI): boolean {
+    return l.pvp_niveles.some((n) => n.decision !== 'mantener_pvp')
+  }
+
+  /** Deriva no_actualizar_pvp y el getter de nuevo PVP por nivel a partir de las
+   * decisiones por nivel de la línea (Decisión 1 del design: reducción de señales
+   * limpia, use-compras.ts sin cambios).
+   */
+  function derivarSenalesPvp(l: LineaUI): {
+    noActualizarPvp: boolean
+    getNewPvpUsdForNivel: (orden: number) => number | undefined
+  } {
+    if (l.pvp_niveles.length === 0 || l.pvp_niveles.every((n) => n.decision === 'mantener_pvp')) {
+      return { noActualizarPvp: true, getNewPvpUsdForNivel: () => undefined }
     }
-    return false
-  })
+    const getNewPvpUsdForNivel = (orden: number): number | undefined => {
+      const nivel = l.pvp_niveles.find((n) => n.orden === orden)
+      if (!nivel) return undefined
+      if (nivel.decision === 'mantener_pvp') return nivel.pvp_actual_usd
+      if (nivel.pvp_input === '') return undefined
+      const pvpNum = parseFloat(nivel.pvp_input)
+      if (isNaN(pvpNum) || pvpNum <= 0) return undefined
+      return moneda === 'USD'
+        ? pvpNum
+        : (tasaFacturaNum > 0 ? new Decimal(pvpNum).dividedBy(tasaFacturaNum).toNumber() : pvpNum)
+    }
+    return { noActualizarPvp: false, getNewPvpUsdForNivel }
+  }
+
+  // True si hay líneas con decisión de PVP pendiente que bloquean el guardado
+  // (misma regla que la validación pre-submit, consolidada en un único helper).
+  const hayLineasConConflicto = lineas.some((l) =>
+    lineaTieneDecisionBloqueante(lineaTieneCostoCambiado(l), l.pvp_niveles)
+  )
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-6 space-y-6">
@@ -1683,38 +1698,29 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           {/* Separador visual */}
                           <td className="px-0 bg-border/30 w-px"></td>
 
-                          {/* PRECIOS — estado y control de edición multi-nivel */}
+                          {/* PRECIOS — estado de la decisión de PVP por nivel */}
                           <td className="px-2 py-2 text-center">
-                            {linea.pvp_editando ? (
-                              <div className="flex flex-col gap-1 items-center">
-                                <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400">
-                                  ✎ editando
-                                </span>
-                                {!hayVioladoLinea && (
-                                  <button type="button" onClick={() => handleTogglePvpEdicion(index)}
-                                    className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground hover:bg-muted/80 transition-colors">
-                                    ✓ Listo
-                                  </button>
-                                )}
-                                <button type="button" title="Revertir a valores originales"
-                                  onClick={() => handleResetLinea(index)}
-                                  className="rounded p-0.5 text-muted-foreground hover:text-destructive transition-colors">
-                                  <ArrowCounterClockwise className="h-3 w-3" />
-                                </button>
-                              </div>
-                            ) : hayVioladoLinea ? (
-                              <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400">
-                                ⚠ costo &gt; PVP
-                              </span>
-                            ) : (
+                            {linea.pvp_niveles.length === 0 ? (
                               <div className="flex flex-col gap-1 items-center">
                                 <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
                                   sin cambio
                                 </span>
-                                <button type="button" onClick={() => handleTogglePvpEdicion(index)}
+                                <button type="button" onClick={() => handleAbrirEdicionManual(index)}
                                   className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground hover:bg-blue-100 hover:text-blue-700 transition-colors">
                                   Editar precios ✎
                                 </button>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col gap-1 items-center">
+                                {linea.pvp_niveles.some((n) => n.decision === 'pendiente') ? (
+                                  <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-bold bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                                    ⏳ elegí opción
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400">
+                                    ✎ editado
+                                  </span>
+                                )}
                                 <button type="button" title="Revertir a valores originales"
                                   onClick={() => handleResetLinea(index)}
                                   className="rounded p-0.5 text-muted-foreground hover:text-destructive transition-colors">
@@ -1733,71 +1739,96 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           </td>
                         </tr>
 
-                        {/* Sub-filas de niveles de precio (cuando hay pvp_niveles cargados, con o sin cambio de costo) */}
+                        {/* Sub-fila: decisión de PVP por nivel (Caso A/B cuando hay cambio de
+                            costo, edición directa cuando el usuario la abrió sin cambio de costo) */}
                         {linea.pvp_niveles.length > 0 && (
                           <tr key={`pvp-niveles-${linea.producto_id}`} className="bg-blue-50/40 dark:bg-blue-950/10">
                             <td colSpan={totalCols} className="px-3 py-2">
                               <div className="flex flex-col gap-1.5">
-                                <div className="grid text-[10px] font-medium text-muted-foreground/70 uppercase" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr 2fr' }}>
-                                  <span>Nivel</span>
-                                  <span className="text-right">PVP actual</span>
-                                  <span className="text-right">Margen ant.</span>
-                                  <span className="text-right">Margen nuevo</span>
-                                  <span className="text-right">PVP nuevo ({monedaLabel})</span>
-                                </div>
-                                {linea.pvp_niveles.map((nivel) => (
-                                  <div key={nivel.orden} className="grid items-center gap-1" style={{ gridTemplateColumns: '1fr 1fr 1fr 1fr 2fr' }}>
-                                    {/* Nombre del nivel */}
-                                    <span className={`text-[10px] font-medium flex items-center gap-1 ${nivel.violado ? 'text-red-600' : 'text-blue-700 dark:text-blue-400'}`}>
-                                      {nivel.violado && <span>⚠</span>}
-                                      {nivel.nombre}
-                                    </span>
-                                    {/* PVP actual */}
-                                    <span className="text-[10px] tabular-nums text-right text-muted-foreground">
-                                      {formatUsd(nivel.pvp_actual_usd)}
-                                    </span>
-                                    {/* Margen anterior */}
-                                    <span className="text-[10px] tabular-nums text-right text-muted-foreground/60">
-                                      {linea.margen_actual}%
-                                    </span>
-                                    {/* Margen nuevo */}
-                                    {linea.pvp_editando ? (
-                                      <input
-                                        type="text" inputMode="decimal"
-                                        value={nivel.margen_input}
-                                        onChange={(e) => handleMargenNivelInputChange(index, nivel.orden, e.target.value)}
-                                        onKeyDown={handleNumericKeyDown}
-                                        onPaste={handleNumericPaste}
-                                        className="w-full rounded border border-blue-400 bg-blue-50 dark:bg-blue-950/20 px-1.5 py-0.5 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
-                                      />
-                                    ) : (
-                                      <span className="text-[10px] tabular-nums text-right text-blue-700 dark:text-blue-400">
-                                        {nivel.margen_input}%
-                                      </span>
-                                    )}
-                                    {/* PVP nuevo */}
-                                    {linea.pvp_editando ? (
-                                      <input
-                                        type="text" inputMode="decimal"
-                                        value={nivel.pvp_input}
-                                        onChange={(e) => handlePvpNivelInputChange(index, nivel.orden, e.target.value)}
-                                        onKeyDown={handleNumericKeyDown}
-                                        onPaste={handleNumericPaste}
-                                        className={`w-full rounded border px-1.5 py-0.5 text-[10px] text-right focus:outline-none focus:ring-1 ${
-                                          nivel.violado
-                                            ? 'border-red-400 bg-red-50 dark:bg-red-950/20 focus:ring-red-400'
-                                            : 'border-blue-400 bg-blue-50 dark:bg-blue-950/20 focus:ring-blue-400'
-                                        }`}
-                                      />
-                                    ) : (
-                                      <span className="text-[10px] tabular-nums text-right text-blue-700 dark:text-blue-400">
-                                        {moneda === 'USD'
-                                          ? formatUsd(parseFloat(nivel.pvp_input) || 0)
-                                          : formatBs(parseFloat(nivel.pvp_input) || 0)}
-                                      </span>
-                                    )}
-                                  </div>
-                                ))}
+                                {linea.pvp_niveles.map((nivel) => {
+                                  const casoLinea = clasificarCasoLinea(linea.pvp_niveles)
+                                  return (
+                                    <div key={nivel.orden} className={`rounded-lg border px-2 py-1.5 ${
+                                      nivel.violado ? 'border-red-300 bg-red-50/60 dark:bg-red-950/10' : 'border-blue-200 dark:border-blue-900'
+                                    }`}>
+                                      <div className="flex items-center justify-between gap-2 flex-wrap text-[10px]">
+                                        <span className={`font-medium flex items-center gap-1 ${nivel.violado ? 'text-red-600' : 'text-blue-700 dark:text-blue-400'}`}>
+                                          {nivel.violado && <span>⚠</span>}
+                                          {nivel.nombre}
+                                        </span>
+                                        <span className="text-muted-foreground/70 tabular-nums">
+                                          PVP actual: {formatUsd(nivel.pvp_actual_usd)} · Margen actual: {linea.margen_actual}%
+                                        </span>
+                                      </div>
+
+                                      {nivel.decision === 'pendiente' && (
+                                        <div className="mt-1 space-y-1">
+                                          <p className={`text-[10px] ${parseFloat(nivel.margen_si_mantiene_pvp) < 0 ? 'text-red-600 font-medium' : 'text-muted-foreground'}`}>
+                                            Si se mantiene el PVP: margen {nivel.margen_si_mantiene_pvp}%
+                                          </p>
+                                          <div className="flex gap-1 flex-wrap">
+                                            {casoLinea === 'A' && (
+                                              <button type="button" onClick={() => handleDecisionNivel(index, nivel.orden, 'mantener_pvp')}
+                                                className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-950/40 dark:text-green-400 transition-colors">
+                                                Mantener PVP
+                                              </button>
+                                            )}
+                                            <button type="button" onClick={() => handleDecisionNivel(index, nivel.orden, 'mantener_margen')}
+                                              className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-950/40 dark:text-blue-400 transition-colors">
+                                              {casoLinea === 'A' ? 'Mantener margen' : 'Recalcular por %'}
+                                            </button>
+                                            <button type="button" onClick={() => handleDecisionNivel(index, nivel.orden, 'manual')}
+                                              className="rounded px-1.5 py-0.5 text-[9px] font-medium bg-muted text-muted-foreground hover:bg-muted/80 transition-colors">
+                                              Editar manual
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {nivel.decision !== 'pendiente' && (
+                                        <div className="mt-1 flex items-center gap-2 flex-wrap">
+                                          {nivel.decision === 'manual' ? (
+                                            <>
+                                              <label className="text-[9px] text-muted-foreground">Margen%</label>
+                                              <input
+                                                type="text" inputMode="decimal"
+                                                value={nivel.margen_input}
+                                                onChange={(e) => handleMargenNivelInputChange(index, nivel.orden, e.target.value)}
+                                                onKeyDown={handleNumericKeyDown}
+                                                onPaste={handleNumericPaste}
+                                                className="w-16 rounded border border-blue-400 bg-blue-50 dark:bg-blue-950/20 px-1.5 py-0.5 text-[10px] text-right focus:outline-none focus:ring-1 focus:ring-blue-400"
+                                              />
+                                              <label className="text-[9px] text-muted-foreground">PVP ({monedaLabel})</label>
+                                              <input
+                                                type="text" inputMode="decimal"
+                                                value={nivel.pvp_input}
+                                                onChange={(e) => handlePvpNivelInputChange(index, nivel.orden, e.target.value)}
+                                                onKeyDown={handleNumericKeyDown}
+                                                onPaste={handleNumericPaste}
+                                                className={`w-20 rounded border px-1.5 py-0.5 text-[10px] text-right focus:outline-none focus:ring-1 ${
+                                                  nivel.violado
+                                                    ? 'border-red-400 bg-red-50 dark:bg-red-950/20 focus:ring-red-400'
+                                                    : 'border-blue-400 bg-blue-50 dark:bg-blue-950/20 focus:ring-blue-400'
+                                                }`}
+                                              />
+                                            </>
+                                          ) : (
+                                            <span className="text-[10px] tabular-nums text-blue-700 dark:text-blue-400">
+                                              Margen {nivel.margen_input}% · PVP {moneda === 'USD'
+                                                ? formatUsd(parseFloat(nivel.pvp_input) || 0)
+                                                : formatBs(parseFloat(nivel.pvp_input) || 0)}
+                                            </span>
+                                          )}
+                                          <button type="button" title="Cambiar decisión"
+                                            onClick={() => handleDecisionNivel(index, nivel.orden, 'pendiente')}
+                                            className="rounded p-0.5 text-muted-foreground hover:text-primary transition-colors ml-auto">
+                                            <ArrowCounterClockwise className="h-3 w-3" />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )
+                                })}
                               </div>
                             </td>
                           </tr>
@@ -2222,22 +2253,23 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     const st = getLineSubtotal(l)
                     const sts = getSubtotalSistema(l)
                     const costoCambio = lineaTieneCostoCambiado(l)
-                    const pvpNivel1 = l.pvp_editando ? l.pvp_niveles.find((n) => n.orden === 1) : null
-                    const pvpResultante = pvpNivel1 && pvpNivel1.pvp_input !== ''
+                    const algunNivelEditado = lineaTienePvpEditado(l)
+                    const nivel1 = l.pvp_niveles.find((n) => n.orden === 1)
+                    const pvpResultante = nivel1 && nivel1.pvp_input !== ''
                       ? (moneda === 'USD'
-                          ? parseFloat(pvpNivel1.pvp_input) || 0
-                          : (tasaFacturaNum > 0 ? (parseFloat(pvpNivel1.pvp_input) || 0) / tasaFacturaNum : 0))
+                          ? parseFloat(nivel1.pvp_input) || 0
+                          : (tasaFacturaNum > 0 ? (parseFloat(nivel1.pvp_input) || 0) / tasaFacturaNum : 0))
                       : parseFloat(l.precio_venta_usd) || 0
                     return (
                       <tr key={l.producto_id} className={costoCambio ? 'bg-amber-50/40' : ''}>
                         <td className="px-3 py-1.5">
                           <span className="font-mono text-muted-foreground text-[10px]">{l.codigo}</span>
                           {' '}{l.nombre}
-                          {debeMostrarInfoPvpEnResumen(costoCambio, l.pvp_editando) && (
+                          {debeMostrarInfoPvpEnResumen(costoCambio, algunNivelEditado) && (
                             <span className={`ml-1 text-[9px] font-bold ${
-                              l.pvp_editando ? 'text-blue-600' : 'text-slate-500'
+                              algunNivelEditado ? 'text-blue-600' : 'text-slate-500'
                             }`}>
-                              {l.pvp_editando ? '↺ precios editados' : '✓ precios sin cambio'}
+                              {algunNivelEditado ? '↺ precios editados' : '✓ precios sin cambio'}
                             </span>
                           )}
                         </td>
@@ -2326,11 +2358,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
           </div>
 
           {/* Resumen de cambios de costo/pvp */}
-          {lineas.some((l) => debeMostrarInfoPvpEnResumen(lineaTieneCostoCambiado(l), l.pvp_editando)) && (
+          {lineas.some((l) => debeMostrarInfoPvpEnResumen(lineaTieneCostoCambiado(l), lineaTienePvpEditado(l))) && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
               <p className="font-semibold text-sm">⚠ Cambios de costo/precios en esta compra</p>
               <ul className="space-y-1">
-                {lineas.filter((l) => debeMostrarInfoPvpEnResumen(lineaTieneCostoCambiado(l), l.pvp_editando)).map((l) => {
+                {lineas.filter((l) => debeMostrarInfoPvpEnResumen(lineaTieneCostoCambiado(l), lineaTienePvpEditado(l))).map((l) => {
+                  const algunNivelEditado = lineaTienePvpEditado(l)
                   return (
                     <li key={l.producto_id} className="space-y-0.5">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -2341,14 +2374,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           <span className="font-medium">{moneda === 'USD' ? formatUsd(l.costo_input) : formatBs(l.costo_input)}</span>
                         </span>
                         <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${
-                          l.pvp_editando
+                          algunNivelEditado
                             ? 'bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400'
                             : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {l.pvp_editando ? 'precios editados' : 'precios sin cambio'}
+                          {algunNivelEditado ? 'precios editados' : 'precios sin cambio'}
                         </span>
                       </div>
-                      {l.pvp_editando && l.pvp_niveles.length > 0 && (
+                      {algunNivelEditado && l.pvp_niveles.length > 0 && (
                         <div className="ml-4 flex flex-wrap gap-2">
                           {l.pvp_niveles.map((n) => {
                             const pvpUsd = moneda === 'USD'
