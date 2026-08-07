@@ -2,41 +2,43 @@ import { usdToBs, bsToUsd, formatUsd, formatBs, formatTasa } from '../currency'
 
 describe('usdToBs', () => {
   it('convierte USD a Bs con tasa normal', () => {
-    expect(usdToBs(100, 36.5)).toBe(3650)
+    expect(usdToBs(100, 36.5).toNumber()).toBe(3650)
   })
 
   it('retorna 0 cuando el monto es 0', () => {
-    expect(usdToBs(0, 36.5)).toBe(0)
+    expect(usdToBs(0, 36.5).toNumber()).toBe(0)
   })
 
   it('retorna 0 cuando la tasa es 0', () => {
-    expect(usdToBs(100, 0)).toBe(0)
+    expect(usdToBs(100, 0).toNumber()).toBe(0)
   })
 
-  it('redondea a 2 decimales', () => {
-    expect(usdToBs(1, 3.333)).toBe(3.33)
+  it('no redondea en la capa de calculo (redondeo es responsabilidad del formato)', () => {
+    expect(usdToBs(1, 3.333).toNumber()).toBe(3.333)
+    expect(usdToBs(1, 3.333).toFixed(2)).toBe('3.33')
   })
 
   it('maneja valores negativos (refleja el resultado matematico)', () => {
-    expect(usdToBs(-50, 36.5)).toBe(-1825)
+    expect(usdToBs(-50, 36.5).toNumber()).toBe(-1825)
   })
 })
 
 describe('bsToUsd', () => {
   it('convierte Bs a USD con tasa normal', () => {
-    expect(bsToUsd(3650, 36.5)).toBe(100)
+    expect(bsToUsd(3650, 36.5).toNumber()).toBe(100)
   })
 
   it('retorna 0 cuando la tasa es 0 (evita division por cero)', () => {
-    expect(bsToUsd(1000, 0)).toBe(0)
+    expect(bsToUsd(1000, 0).toNumber()).toBe(0)
   })
 
   it('retorna 0 cuando el monto es 0', () => {
-    expect(bsToUsd(0, 36.5)).toBe(0)
+    expect(bsToUsd(0, 36.5).toNumber()).toBe(0)
   })
 
-  it('redondea a 2 decimales', () => {
-    expect(bsToUsd(100, 3)).toBe(33.33)
+  it('no redondea en la capa de calculo (redondeo es responsabilidad del formato)', () => {
+    expect(bsToUsd(100, 3).toFixed(2)).toBe('33.33')
+    expect(bsToUsd(100, 3).toNumber()).toBeCloseTo(33.333333, 5)
   })
 })
 
