@@ -18,6 +18,10 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
+import {
+  calcularPrecioPreservandoMargen,
+  calcularViolacionCostoPvp,
+} from '@/features/inventario/lib/producto-precio-gating'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 import { useDebounce } from '@/hooks/use-debounce'
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -242,6 +246,45 @@ function SearchSelect({
 
 // ============================================================
 
+/** Proyeccion de PVP (no aplicada aun) calculada al editar el Costo. */
+interface ProyeccionPvp {
+  pvpProyectado: number
+  margenPct: number
+  violado: boolean
+}
+
+/** Hint "PVP cambiaria a $X, margen Y%" con accion explicita "Aplicar". */
+function ProyeccionPvpHint({
+  proyeccion,
+  onAplicar,
+}: {
+  proyeccion: ProyeccionPvp | null
+  onAplicar: () => void
+}) {
+  if (!proyeccion) return null
+  return (
+    <div
+      className={`mt-1 rounded px-1.5 py-1 text-[11px] leading-tight ${
+        proyeccion.violado ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
+      }`}
+    >
+      <p>
+        PVP cambiaria a ${proyeccion.pvpProyectado.toFixed(2)}, margen {proyeccion.margenPct.toFixed(1)}%
+      </p>
+      {proyeccion.violado && (
+        <p className="font-medium">El costo iguala o supera el PVP actual</p>
+      )}
+      <button
+        type="button"
+        onClick={onAplicar}
+        className="mt-0.5 font-medium underline hover:no-underline"
+      >
+        Aplicar
+      </button>
+    </div>
+  )
+}
+
 type TabId = 'general' | 'precios' | 'inventario'
 
 interface LoteRow {
@@ -313,6 +356,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [precioEspecialBs, setPrecioEspecialBs] = useState('')
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [impuestoIvaId, setImpuestoIvaId] = useState<string>('')
+
+  // Proyeccion de PVP por nivel — calculada al editar el Costo, no comprometida
+  // en los precios reales hasta que el usuario ejecuta "Aplicar" (ver spec
+  // productos-edicion-precios).
+  const [proyeccionDetal, setProyeccionDetal] = useState<ProyeccionPvp | null>(null)
+  const [proyeccionMayor, setProyeccionMayor] = useState<ProyeccionPvp | null>(null)
+  const [proyeccionEspecial, setProyeccionEspecial] = useState<ProyeccionPvp | null>(null)
 
   // === Duracion por defecto (solo Servicios) ===
   const [duracionMin, setDuracionMin] = useState<number | null>(null)
@@ -421,6 +471,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setStockInicial('')
       }
       setErrors({})
+      setProyeccionDetal(null)
+      setProyeccionMayor(null)
+      setProyeccionEspecial(null)
       setPopoverOpen(false)
       dialogRef.current?.showModal()
     } else {
@@ -467,6 +520,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setStockInicial('')
       setCostoUsd('0')
       setCostoBs('0')
+      setProyeccionDetal(null)
+      setProyeccionMayor(null)
+      setProyeccionEspecial(null)
     }
   }
 
@@ -476,40 +532,90 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   // --- Bidireccionales: Costo ---
-  // Recalcula precios cuando cambia el costo.
-  // Prioridad: si hay margen configurado → calcula precio; si no → recalcula margen del precio existente.
+  // Proyecta precios cuando cambia el costo, SIN mutar los precios reales
+  // (regla: editar el Costo no debe alterar el PVP automaticamente).
+  // Prioridad por nivel: si hay margen configurado → proyecta PVP preservando
+  // ese margen (requiere accion explicita "Aplicar"); si no → recalcula el
+  // margen desde el precio existente (esto no muta el PVP, solo el margen%).
   function applyPricesFromCosto(costoN: number) {
-    if (costoN <= 0) return
+    if (costoN <= 0) {
+      setProyeccionDetal(null)
+      setProyeccionMayor(null)
+      setProyeccionEspecial(null)
+      return
+    }
 
     const margenN = parseFloat(margen)
     const ventaN = parseFloat(precioVentaUsd) || 0
     if (!isNaN(margenN) && margenN !== 0) {
-      const pvp = Math.max(0, costoN * (1 + margenN / 100))
-      setPrecioVentaUsd(pvp.toFixed(2))
-      if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
-    } else if (ventaN > 0) {
-      setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
+      setProyeccionDetal({
+        pvpProyectado: calcularPrecioPreservandoMargen(costoN, margenN),
+        margenPct: margenN,
+        violado: ventaN > 0 && calcularViolacionCostoPvp(costoN, ventaN),
+      })
+    } else {
+      setProyeccionDetal(null)
+      if (ventaN > 0) {
+        setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
+      }
     }
 
     const margenMayorN = parseFloat(margenMayor)
     const mayorN = parseFloat(precioMayorUsd) || 0
     if (!isNaN(margenMayorN) && margenMayorN !== 0) {
-      const pvp = Math.max(0, costoN * (1 + margenMayorN / 100))
-      setPrecioMayorUsd(pvp.toFixed(2))
-      if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
-    } else if (mayorN > 0) {
-      setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
+      setProyeccionMayor({
+        pvpProyectado: calcularPrecioPreservandoMargen(costoN, margenMayorN),
+        margenPct: margenMayorN,
+        violado: mayorN > 0 && calcularViolacionCostoPvp(costoN, mayorN),
+      })
+    } else {
+      setProyeccionMayor(null)
+      if (mayorN > 0) {
+        setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
+      }
     }
 
     const margenEspecialN = parseFloat(margenEspecial)
     const especN = parseFloat(precioEspecialUsd) || 0
     if (!isNaN(margenEspecialN) && margenEspecialN !== 0) {
-      const pvp = Math.max(0, costoN * (1 + margenEspecialN / 100))
-      setPrecioEspecialUsd(pvp.toFixed(2))
-      if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
-    } else if (especN > 0) {
-      setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
+      setProyeccionEspecial({
+        pvpProyectado: calcularPrecioPreservandoMargen(costoN, margenEspecialN),
+        margenPct: margenEspecialN,
+        violado: especN > 0 && calcularViolacionCostoPvp(costoN, especN),
+      })
+    } else {
+      setProyeccionEspecial(null)
+      if (especN > 0) {
+        setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
+      }
     }
+  }
+
+  /** Aplica la proyeccion de PVP Detal a los precios reales (accion explicita del usuario). */
+  function aplicarProyeccionDetal() {
+    if (!proyeccionDetal) return
+    setPrecioVentaUsd(proyeccionDetal.pvpProyectado.toFixed(2))
+    setMargen(proyeccionDetal.margenPct.toFixed(2))
+    if (tasaValor > 0) setPrecioVentaBs(usdToBs(proyeccionDetal.pvpProyectado, tasaValor).toFixed(2))
+    setProyeccionDetal(null)
+  }
+
+  /** Aplica la proyeccion de PVP Mayor a los precios reales (accion explicita del usuario). */
+  function aplicarProyeccionMayor() {
+    if (!proyeccionMayor) return
+    setPrecioMayorUsd(proyeccionMayor.pvpProyectado.toFixed(2))
+    setMargenMayor(proyeccionMayor.margenPct.toFixed(2))
+    if (tasaValor > 0) setPrecioMayorBs(usdToBs(proyeccionMayor.pvpProyectado, tasaValor).toFixed(2))
+    setProyeccionMayor(null)
+  }
+
+  /** Aplica la proyeccion de PVP Especial a los precios reales (accion explicita del usuario). */
+  function aplicarProyeccionEspecial() {
+    if (!proyeccionEspecial) return
+    setPrecioEspecialUsd(proyeccionEspecial.pvpProyectado.toFixed(2))
+    setMargenEspecial(proyeccionEspecial.margenPct.toFixed(2))
+    if (tasaValor > 0) setPrecioEspecialBs(usdToBs(proyeccionEspecial.pvpProyectado, tasaValor).toFixed(2))
+    setProyeccionEspecial(null)
   }
 
   function handleCostoUsdChange(val: string) {
@@ -531,6 +637,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Bidireccionales: PVP Detal ---
   function handlePrecioVentaUsdChange(val: string) {
+    setProyeccionDetal(null)
     setPrecioVentaUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioVentaBs(usdToBs(num, tasaValor).toFixed(2))
@@ -542,6 +649,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioVentaBsChange(val: string) {
+    setProyeccionDetal(null)
     setPrecioVentaBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
@@ -558,6 +666,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Margen Detal ---
   function handleMargenChange(val: string) {
+    setProyeccionDetal(null)
     setMargen(val)
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
@@ -570,6 +679,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Margen Mayor ---
   function handleMargenMayorChange(val: string) {
+    setProyeccionMayor(null)
     setMargenMayor(val)
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
@@ -582,6 +692,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Margen Especial ---
   function handleMargenEspecialChange(val: string) {
+    setProyeccionEspecial(null)
     setMargenEspecial(val)
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
@@ -594,6 +705,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Bidireccionales: PVP Mayor ---
   function handlePrecioMayorUsdChange(val: string) {
+    setProyeccionMayor(null)
     setPrecioMayorUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioMayorBs(usdToBs(num, tasaValor).toFixed(2))
@@ -605,6 +717,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioMayorBsChange(val: string) {
+    setProyeccionMayor(null)
     setPrecioMayorBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
@@ -620,6 +733,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Bidireccionales: PVP Especial ---
   function handlePrecioEspecialUsdChange(val: string) {
+    setProyeccionEspecial(null)
     setPrecioEspecialUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioEspecialBs(usdToBs(num, tasaValor).toFixed(2))
@@ -631,6 +745,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioEspecialBsChange(val: string) {
+    setProyeccionEspecial(null)
     setPrecioEspecialBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
@@ -648,6 +763,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handlePrecioFinalDetalUsdChange(val: string) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
+    setProyeccionDetal(null)
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioVentaUsd(baseUsd.toFixed(2))
@@ -661,6 +777,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
+    setProyeccionDetal(null)
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
@@ -675,6 +792,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handlePrecioFinalMayorUsdChange(val: string) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
+    setProyeccionMayor(null)
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioMayorUsd(baseUsd.toFixed(2))
@@ -688,6 +806,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
+    setProyeccionMayor(null)
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
@@ -702,6 +821,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handlePrecioFinalEspecialUsdChange(val: string) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
+    setProyeccionEspecial(null)
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioEspecialUsd(baseUsd.toFixed(2))
@@ -715,6 +835,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
+    setProyeccionEspecial(null)
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
@@ -1470,6 +1591,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             {errors.precio_venta_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_venta_usd}</p>
                             )}
+                            <ProyeccionPvpHint proyeccion={proyeccionDetal} onAplicar={aplicarProyeccionDetal} />
                           </td>
                           <td className="px-2 py-1.5">
                             <input
@@ -1570,6 +1692,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             {errors.precio_mayor_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_mayor_usd}</p>
                             )}
+                            <ProyeccionPvpHint proyeccion={proyeccionMayor} onAplicar={aplicarProyeccionMayor} />
                           </td>
                           <td className="px-2 py-1.5">
                             <input
@@ -1671,6 +1794,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             {errors.precio_especial_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_especial_usd}</p>
                             )}
+                            <ProyeccionPvpHint proyeccion={proyeccionEspecial} onAplicar={aplicarProyeccionEspecial} />
                           </td>
                           <td className="px-2 py-1.5">
                             <input
