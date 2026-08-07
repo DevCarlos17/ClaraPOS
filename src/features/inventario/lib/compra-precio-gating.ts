@@ -7,6 +7,8 @@
  * logica y no diverjan.
  */
 
+import Decimal from 'decimal.js'
+
 /**
  * Determina si el PVP de una linea debe mantenerse sin actualizar al enviar el
  * formulario de compra.
@@ -85,4 +87,105 @@ export function resolverAccionesLineaCompra(
  */
 export function resolverCostoAEscribir<T>(actualizarCosto: boolean, costoSistema: T, costoActual: T): T {
   return actualizarCosto ? costoSistema : costoActual
+}
+
+/**
+ * Decision explicita del usuario sobre el PVP de un nivel de precio, tomada
+ * cuando el costo de una linea de compra cambia.
+ *
+ * - `pendiente`: el usuario aun no decidio; bloquea el envio de la factura
+ *   (ver `lineaTieneDecisionBloqueante`).
+ * - `mantener_pvp`: conserva el PVP actual del nivel (el margen se ajusta).
+ * - `mantener_margen`: conserva el margen % actual del nivel (el PVP se ajusta).
+ * - `manual`: el usuario tipeo un PVP/margen explicito (edicion bidireccional).
+ */
+export type DecisionPvp = 'pendiente' | 'mantener_pvp' | 'mantener_margen' | 'manual'
+
+/**
+ * Calcula el margen % resultante de UN nivel de precio si su PVP se mantiene
+ * sin cambios ante un nuevo costo. Es la vista base de comparacion que se
+ * muestra ANTES de que el usuario tome una decision (permite margen negativo:
+ * eso es precisamente lo que distingue Caso A de Caso B via `clasificarCasoLinea`).
+ *
+ * Formula: (pvpActual - costoNuevo) / costoNuevo * 100
+ *
+ * Si `costoNuevo` es cero, retorna `Decimal(0)` en lugar de dividir por cero
+ * (mismo criterio de seguridad que `bsToUsd` en `src/lib/currency.ts`).
+ */
+export function calcularMargenSiSeMantienePvp(costoNuevo: Decimal, pvpActual: Decimal): Decimal {
+  if (costoNuevo.isZero()) return new Decimal(0)
+  return pvpActual.minus(costoNuevo).dividedBy(costoNuevo).times(100)
+}
+
+/**
+ * Calcula el PVP resultante de UN nivel de precio si su margen % actual se
+ * mantiene ante un nuevo costo. Porta a `Decimal` puro la logica que antes
+ * vivia inline en `compra-form.tsx` (proyeccion "mantener margen").
+ *
+ * Formula: max(costoNuevo, costoNuevo * (1 + margenActualPct / 100))
+ *
+ * El `max` contra `costoNuevo` evita que un margen negativo preexistente
+ * proyecte un PVP por debajo del costo nuevo (el PVP nunca debe ser menor
+ * al costo que lo origina).
+ */
+export function calcularPvpSiSeMantieneMargen(costoNuevo: Decimal, margenActualPct: Decimal): Decimal {
+  const proyectado = costoNuevo.times(new Decimal(1).plus(margenActualPct.dividedBy(100)))
+  return Decimal.max(costoNuevo, proyectado)
+}
+
+/** Nivel de precio con su bandera de violacion (costo_nuevo > pvp_actual). */
+export interface NivelViolado {
+  violado: boolean
+}
+
+/**
+ * Clasifica una linea de compra con costo cambiado en Caso A o Caso B, a
+ * partir de las banderas `violado` ya calculadas por nivel de precio
+ * (`pvp_niveles[].violado`, derivadas en cada render/keystroke — nunca
+ * persistidas, ver design.md Decision de State Model).
+ *
+ * - Caso `'A'`: el nuevo costo es rentable en TODOS los niveles (ningun
+ *   `violado`). Se ofrecen 3 opciones (Mantener PVP / Mantener margen / Manual).
+ * - Caso `'B'`: el nuevo costo supera el PVP de AL MENOS un nivel. Se ofrecen
+ *   2 opciones (Recalcular por % / Manual, sin "Mantener PVP") y el/los
+ *   niveles violados se resaltan en rojo.
+ */
+export function clasificarCasoLinea(niveles: NivelViolado[]): 'A' | 'B' {
+  return niveles.some((n) => n.violado) ? 'B' : 'A'
+}
+
+/** Nivel de precio con los datos minimos para evaluar el gate de decision pendiente. */
+export interface NivelDecisionUI {
+  violado: boolean
+  decision: DecisionPvp
+  pvp_input: string
+}
+
+/**
+ * Determina si una linea de compra debe bloquear el envio de la factura por
+ * tener una decision de PVP sin resolver.
+ *
+ * Reglas (ver design.md, seccion "Blocking Gate"):
+ * - Si la linea NO tuvo cambio de costo (`costoCambio === false`), nunca
+ *   bloquea — el guard es la primera linea de la funcion, sin excepciones.
+ * - Si algun nivel quedo en `decision === 'pendiente'`, bloquea.
+ * - Si algun nivel en `decision === 'manual'` o `decision === 'mantener_margen'`
+ *   quedo con `pvp_input` vacio o `<= 0`, bloquea (un valor no numerico o
+ *   negativo tampoco es un PVP valido para persistir).
+ * - Caso contrario (todas las decisiones resueltas con un PVP valido), no
+ *   bloquea.
+ */
+export function lineaTieneDecisionBloqueante(costoCambio: boolean, niveles: NivelDecisionUI[]): boolean {
+  if (!costoCambio) return false
+
+  return niveles.some((n) => {
+    if (n.decision === 'pendiente') return true
+    if (n.decision === 'manual' || n.decision === 'mantener_margen') {
+      const trimmed = n.pvp_input.trim()
+      if (trimmed === '') return true
+      const numero = parseFloat(trimmed)
+      return isNaN(numero) || numero <= 0
+    }
+    return false
+  })
 }
