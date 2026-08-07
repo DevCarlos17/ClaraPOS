@@ -108,28 +108,12 @@ export function HorariosStaffPage() {
     const isNewProfesional = prevProfesionalIdRef.current !== profesionalId
     prevProfesionalIdRef.current = profesionalId
 
-    console.log('🔄 [useEffect horarios]', {
-      isNewProfesional,
-      dirty,
-      justSaved: justSavedRef.current,
-      cantidadHorarios: horarios.length,
-      horarios: horarios.map(h => `dia${h.dia_semana}:active=${h.is_active} ${h.hora_inicio}-${h.hora_fin}`),
-    })
-
     if (isNewProfesional) {
       // Cambio de profesional: resetear siempre y limpiar flag post-guardado
       justSavedRef.current = false
       setHorariosDia(nuevos)
       baselineRef.current = nuevos
       setDirty(false)
-      console.log('  → reset por nuevo profesional')
-      console.table(nuevos.map(n => ({
-        dia: n.diaSemana,
-        activo: n.isActive ? '✓' : '✗',
-        entrada: n.horaInicio,
-        salida: n.horaFin,
-        prep: n.tiempoPreparacionMin,
-      })))
     } else if (!dirty) {
       if (horarios.length === 0) {
         // Array vacio mientras hay un profesional seleccionado = ventana transitoria
@@ -137,12 +121,10 @@ export function HorariosStaffPage() {
         // porque el PUT hizo UPDATE por clave natural conservando el UUID de Supabase)
         // pero los UUIDs reales de Supabase aun no llegaron via sync-down.
         // El caso genuino de professional sin horarios se maneja en isNewProfesional.
-        console.log('  → ignorado (horarios vacio, ventana transitoria de PowerSync)')
       } else if (justSavedRef.current) {
         // Primera notificacion post-guardado con datos: podria ser data local pre-sync
         // que no refleja aun los valores de Supabase. No sobreescribir el formulario
         // — el usuario ya ve los valores correctos que guardo. Solo limpiar el flag.
-        console.log('  → primera notificacion post-guardado, no sobreescribir (justSaved cleared)')
         justSavedRef.current = false
         baselineRef.current = nuevos
       } else {
@@ -174,8 +156,6 @@ export function HorariosStaffPage() {
             const f = formActual.find(x => x.diaSemana === n.diaSemana)
             console.warn(`    dia${n.diaSemana}: form=[${f?.horaInicio}-${f?.horaFin} activo=${f?.isActive} prep=${f?.tiempoPreparacionMin}] → DB=[${n.horaInicio}-${n.horaFin} activo=${n.isActive} prep=${n.tiempoPreparacionMin}]`)
           })
-        } else {
-          console.log('  ✓ [BRANCH D] DB coincide con form actual (sin sobreescritura visible)')
         }
 
         if (diffVsBaseline.length > 0) {
@@ -186,15 +166,11 @@ export function HorariosStaffPage() {
           })
           console.warn('  → Si ves esto DESPUES de guardar, el PATCH a Supabase fallo y sync-down esta revirtiendo el form.')
           console.warn('  → Busca errores "[PowerSync upload]" o "[upload PATCH horarios_staff]" mas arriba en el log.')
-        } else {
-          console.log('  ✓ [BRANCH D] DB coincide con baseline guardado')
         }
 
         setHorariosDia(nuevos)
         baselineRef.current = nuevos
       }
-    } else {
-      console.log('  → ignorado (dirty=true, cambios pendientes del usuario)')
     }
   }, [horarios, profesionalId, dirty])
 

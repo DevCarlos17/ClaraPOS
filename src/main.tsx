@@ -61,7 +61,6 @@ async function loadCurrencyConfig(): Promise<void> {
     )
 
     if (!rows || rows.length === 0) {
-      console.log('[ClaraPOS] initCurrencyConfig called with defaults (system_settings empty):', DEFAULTS)
       initCurrencyConfig(DEFAULTS)
       return
     }
@@ -90,11 +89,9 @@ async function loadCurrencyConfig(): Promise<void> {
         : DEFAULTS.roundingMode
 
     const config = { precisionCalc, precisionView, roundingMode }
-    console.log('[ClaraPOS] initCurrencyConfig called with:', config)
     initCurrencyConfig(config)
   } catch (err) {
     console.warn('[ClaraPOS] system_settings load failed, using defaults:', err)
-    console.log('[ClaraPOS] initCurrencyConfig called with defaults:', DEFAULTS)
     initCurrencyConfig(DEFAULTS)
   }
 }

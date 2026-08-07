@@ -10,6 +10,15 @@ import {
 import { type Session, SupabaseClient, createClient } from '@supabase/supabase-js'
 import { isValidCedula, isValidRif } from '@/lib/identity'
 
+/**
+ * Logging de la capa de sincronización, solo en desarrollo.
+ * En producción no ensucia la consola del cliente; en dev conserva la
+ * trazabilidad del upload PowerSync → Supabase para diagnosticar syncs fallidos.
+ */
+function debugLog(...args: unknown[]): void {
+  if (import.meta.env.DEV) console.log(...args)
+}
+
 export type SupabaseConfig = {
   supabaseUrl: string
   supabaseAnonKey: string
@@ -317,7 +326,7 @@ export class SupabaseConnector
       return
     }
 
-    console.log('⬆️ [PowerSync upload] Procesando transaccion con', transaction.crud.length, 'operaciones')
+    debugLog('⬆️ [PowerSync upload] Procesando transaccion con', transaction.crud.length, 'operaciones')
 
     // Clave estable para esta transacción a través de reintentos
     const txKey = transaction.crud[0]?.id ?? 'tx_unknown'
@@ -327,7 +336,7 @@ export class SupabaseConnector
     try {
       for (const op of transaction.crud) {
         lastOp = op
-        console.log('⬆️ [PowerSync upload] Op:', op.op, op.table, op.id)
+        debugLog('⬆️ [PowerSync upload] Op:', op.op, op.table, op.id)
 
         // Validacion de identidad fiscal (middle layer)
         if (op.op === UpdateType.PUT) {
@@ -402,7 +411,7 @@ export class SupabaseConnector
               updatePayload = convertBooleans(op.table, updatePayload)
 
               if (op.table === 'horarios_staff') {
-                console.log('⬆️ [upload PUT horarios_staff] matchFilter:', matchFilter, '| payload:', updatePayload)
+                debugLog('⬆️ [upload PUT horarios_staff] matchFilter:', matchFilter, '| payload:', updatePayload)
               }
 
               const { data: updatedRows, error: updateErr } = await table
@@ -415,16 +424,16 @@ export class SupabaseConnector
                 result = { error: updateErr }
               } else if (!updatedRows || updatedRows.length === 0) {
                 // No existe en Supabase → INSERT con el UUID del cliente
-                if (op.table === 'horarios_staff') console.log('⬆️ [upload PUT horarios_staff] 0 filas por clave natural → INSERT id:', op.id)
+                if (op.table === 'horarios_staff') debugLog('⬆️ [upload PUT horarios_staff] 0 filas por clave natural → INSERT id:', op.id)
                 const insertRecord = convertBooleans(op.table, record as Record<string, unknown>)
                 const insertResult = await table.insert(insertRecord)
                 if (op.table === 'horarios_staff') {
                   if (insertResult.error) console.error('⬆️ [upload PUT horarios_staff] INSERT error:', insertResult.error)
-                  else console.log('⬆️ [upload PUT horarios_staff] INSERT OK')
+                  else debugLog('⬆️ [upload PUT horarios_staff] INSERT OK')
                 }
                 result = insertResult
               } else {
-                if (op.table === 'horarios_staff') console.log('⬆️ [upload PUT horarios_staff] UPDATE OK, filas afectadas:', updatedRows.length, '| ids Supabase:', updatedRows.map((r: any) => r.id))
+                if (op.table === 'horarios_staff') debugLog('⬆️ [upload PUT horarios_staff] UPDATE OK, filas afectadas:', updatedRows.length, '| ids Supabase:', updatedRows.map((r: any) => r.id))
                 result = { error: null }
               }
             } else {
@@ -459,7 +468,7 @@ export class SupabaseConnector
               // Ocurre cuando el UUID local no llego a Supabase (ciclo PUT previo
               // actualizo por clave natural manteniendo el UUID de Supabase).
               if (op.table === 'horarios_staff') {
-                console.log('⬆️ [upload PATCH horarios_staff] id:', op.id, '| payload:', patchPayload)
+                debugLog('⬆️ [upload PATCH horarios_staff] id:', op.id, '| payload:', patchPayload)
               }
 
               const { data: updatedRows, error: patchErr } = await table
@@ -483,11 +492,11 @@ export class SupabaseConnector
                   for (const k of keyColumns) {
                     matchFilter[k] = localRow[k]
                   }
-                  console.log('⬆️ [upload PATCH horarios_staff] fallback matchFilter:', matchFilter)
+                  debugLog('⬆️ [upload PATCH horarios_staff] fallback matchFilter:', matchFilter)
                   const fallbackResult = await table.update(patchPayload).match(matchFilter)
                   if (op.table === 'horarios_staff') {
                     if (fallbackResult.error) console.error('⬆️ [upload PATCH horarios_staff] fallback error:', fallbackResult.error)
-                    else console.log('⬆️ [upload PATCH horarios_staff] fallback OK')
+                    else debugLog('⬆️ [upload PATCH horarios_staff] fallback OK')
                   }
                   result = fallbackResult
                 } else {
@@ -495,7 +504,7 @@ export class SupabaseConnector
                   result = { error: null }
                 }
               } else {
-                if (op.table === 'horarios_staff') console.log('⬆️ [upload PATCH horarios_staff] UPDATE por UUID OK')
+                if (op.table === 'horarios_staff') debugLog('⬆️ [upload PATCH horarios_staff] UPDATE por UUID OK')
                 result = { error: null }
               }
             } else {

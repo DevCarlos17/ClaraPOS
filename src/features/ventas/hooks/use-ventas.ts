@@ -267,7 +267,6 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
   await db.writeTransaction(async (tx) => {
     const now = localNow()
     ventaId = uuidv4()
-    console.log('🛒 CREAR VENTA - inicio writeTransaction', { ventaId, empresa_id, now })
 
     // 0. Obtener deposito principal de la empresa
     const depResult = await tx.execute(
