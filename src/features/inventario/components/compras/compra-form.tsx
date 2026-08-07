@@ -4,6 +4,10 @@ import { toast } from 'sonner'
 import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise, CashRegister, Vault } from '@phosphor-icons/react'
 import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
+import {
+  calcularNoActualizarPvp,
+  debeMostrarInfoPvpEnResumen,
+} from '@/features/inventario/lib/compra-precio-gating'
 import { useProveedoresActivos } from '@/features/proveedores/hooks/use-proveedores'
 import { useProductosTipo, type Producto } from '@/features/inventario/hooks/use-productos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -1067,9 +1071,10 @@ export function CompraForm({ onClose }: CompraFormProps) {
       // Determinar si algún nivel de precio está violado
       const algúnViolado = l.pvp_niveles.some((n) => n.violado)
 
-      // noActualizarPvp: mantener PVP cuando no hay cambio de costo, o
-      // cuando el usuario no abrió el editor Y no hay niveles violados (badge "sin cambio")
-      const noActualizarPvp = !costoCambio || (!l.pvp_editando && !algúnViolado)
+      // noActualizarPvp: mantener PVP cuando el usuario no abrió el editor Y no hay
+      // niveles violados (badge "sin cambio"). Ya no depende de costoCambio: un PVP
+      // editado sin cambio de costo también debe actualizarse.
+      const noActualizarPvp = calcularNoActualizarPvp(l.pvp_editando, algúnViolado)
 
       // Obtener PVP en USD para cada nivel (solo si pvp_editando=true)
       const getNewPvpUsdForNivel = (orden: number): number | undefined => {
@@ -1680,9 +1685,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
                           {/* PRECIOS — estado y control de edición multi-nivel */}
                           <td className="px-2 py-2 text-center">
-                            {!costoCambio ? (
-                              <span className="text-[9px] text-muted-foreground/50">—</span>
-                            ) : linea.pvp_editando ? (
+                            {linea.pvp_editando ? (
                               <div className="flex flex-col gap-1 items-center">
                                 <span className="inline-flex items-center rounded px-1 py-0.5 text-[9px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400">
                                   ✎ editando
@@ -1730,8 +1733,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           </td>
                         </tr>
 
-                        {/* Sub-filas de niveles de precio (cuando hay cambio de costo) */}
-                        {costoCambio && linea.pvp_niveles.length > 0 && (
+                        {/* Sub-filas de niveles de precio (cuando hay pvp_niveles cargados, con o sin cambio de costo) */}
+                        {linea.pvp_niveles.length > 0 && (
                           <tr key={`pvp-niveles-${linea.producto_id}`} className="bg-blue-50/40 dark:bg-blue-950/10">
                             <td colSpan={totalCols} className="px-3 py-2">
                               <div className="flex flex-col gap-1.5">
@@ -2230,7 +2233,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
                         <td className="px-3 py-1.5">
                           <span className="font-mono text-muted-foreground text-[10px]">{l.codigo}</span>
                           {' '}{l.nombre}
-                          {costoCambio && (
+                          {debeMostrarInfoPvpEnResumen(costoCambio, l.pvp_editando) && (
                             <span className={`ml-1 text-[9px] font-bold ${
                               l.pvp_editando ? 'text-blue-600' : 'text-slate-500'
                             }`}>
@@ -2323,11 +2326,11 @@ export function CompraForm({ onClose }: CompraFormProps) {
           </div>
 
           {/* Resumen de cambios de costo/pvp */}
-          {lineas.some(lineaTieneCostoCambiado) && (
+          {lineas.some((l) => debeMostrarInfoPvpEnResumen(lineaTieneCostoCambiado(l), l.pvp_editando)) && (
             <div className="rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800 p-3 text-xs text-amber-800 dark:text-amber-300 space-y-1.5">
-              <p className="font-semibold text-sm">⚠ Cambios de costo en esta compra</p>
+              <p className="font-semibold text-sm">⚠ Cambios de costo/precios en esta compra</p>
               <ul className="space-y-1">
-                {lineas.filter(lineaTieneCostoCambiado).map((l) => {
+                {lineas.filter((l) => debeMostrarInfoPvpEnResumen(lineaTieneCostoCambiado(l), l.pvp_editando)).map((l) => {
                   return (
                     <li key={l.producto_id} className="space-y-0.5">
                       <div className="flex items-center gap-2 flex-wrap">

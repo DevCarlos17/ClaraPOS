@@ -7,6 +7,7 @@ import { localNow } from '@/lib/dates'
 import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
+import { resolverAccionesLineaCompra } from '@/features/inventario/lib/compra-precio-gating'
 
 export interface Compra {
   id: string
@@ -661,13 +662,21 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // pvpNuevoAudit: captura el pvp final para el registro de auditoria de precios
       let pvpNuevoAudit: Decimal | null = null
 
-      if (!linea.costo_cambio) {
-        // Costo no cambio: solo actualizar stock
+      // resolverAccionesLineaCompra: predicado unico que decide que se escribe en
+      // productos y si corresponde auditar en historico_precios, independiente
+      // entre si (un PVP editado sin cambio de costo tambien debe persistir/auditar).
+      const { actualizarCosto, actualizarPvp, registrarAuditoria } = resolverAccionesLineaCompra(
+        linea.costo_cambio === true,
+        linea.no_actualizar_pvp
+      )
+
+      if (!actualizarCosto && !actualizarPvp) {
+        // Costo no cambio y no se edito el pvp: solo actualizar stock
         await tx.execute(
           'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
           [toStorageString(stockNuevo), now, linea.producto_id]
         )
-      } else if (linea.no_actualizar_pvp) {
+      } else if (actualizarCosto && !actualizarPvp) {
         // Costo cambio pero usuario eligio mantener el pvp actual
         await tx.execute(
           'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
@@ -738,8 +747,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         }
       }
 
-      // 4g. Registrar historico de precios cuando el costo cambio
-      if (linea.costo_cambio && pvpNuevoAudit !== null) {
+      // 4g. Registrar historico de precios cuando cambio el costo o el pvp.
+      // `pvpNuevoAudit !== null` ya es estructuralmente equivalente a `registrarAuditoria`
+      // (solo se asigna en la rama "mantener pvp" o "recompute/apply pvp", nunca en la
+      // rama solo-stock), pero se mantiene explicito por claridad y para el null-narrowing
+      // de TypeScript. Si esa equivalencia cambia en un refactor futuro, este gate debe
+      // revisarse.
+      if (registrarAuditoria && pvpNuevoAudit !== null) {
         await tx.execute(
           `INSERT INTO historico_precios
              (id, empresa_id, factura_compra_id, producto_id, usuario_id,
