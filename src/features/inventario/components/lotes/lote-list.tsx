@@ -3,7 +3,7 @@ import { Plus, Printer } from '@phosphor-icons/react'
 import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useLotesPorProducto } from '@/features/inventario/hooks/use-lotes'
 import { formatDate } from '@/lib/format'
-import { todayStr } from '@/lib/dates'
+import { diasHastaVencimiento } from '@/lib/vencimientos'
 import { LoteForm } from './lote-form'
 
 type LoteStatus = 'ACTIVO' | 'AGOTADO' | 'VENCIDO'
@@ -44,11 +44,9 @@ function LotesTable({ productoId, productoNombre }: { productoId: string; produc
     const w = window.open('', '_blank')
     if (!w) return
 
-    const hoy = new Date(todayStr() + 'T00:00:00')
     const diasParaVencimiento = (fechaStr: string | null) => {
       if (!fechaStr) return null
-      const fecha = new Date(fechaStr)
-      return Math.ceil((fecha.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
+      return diasHastaVencimiento(fechaStr)
     }
 
     const filas = lotes
@@ -164,9 +162,8 @@ function LotesTable({ productoId, productoNombre }: { productoId: string; produc
             </thead>
             <tbody>
               {lotes.map((lote) => {
-                const hoy = new Date(todayStr() + 'T00:00:00')
                 const diasVence = lote.fecha_vencimiento
-                  ? Math.ceil((new Date(lote.fecha_vencimiento).getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
+                  ? diasHastaVencimiento(lote.fecha_vencimiento)
                   : null
                 const rowClass = diasVence !== null && diasVence < 0
                   ? 'border-b border-red-100 bg-red-50'
