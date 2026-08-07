@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { formatUsd } from '@/lib/currency'
 import { useVentasRango } from '@/features/dashboard/hooks/use-dashboard'
 import { todayStr, daysAgo, startOfMonth } from '@/lib/dates'
+import { buildVentasPorDia } from '@/features/dashboard/lib/ventas-chart-dias'
 
 type Periodo = '7d' | '15d' | 'mes'
 
@@ -29,18 +30,10 @@ export function DashboardVentasChart() {
   const { ventas, isLoading } = useVentasRango(fechaInicio, fechaFin)
 
   // Fill in missing days with zero
-  const allDays = useMemo(() => {
-    const days: { dia: string; totalUsd: number }[] = []
-    const ventasMap = new Map(ventas.map((v) => [v.dia, v.totalUsd]))
-    const start = new Date(fechaInicio)
-    const end = new Date(fechaFin)
-
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-      days.push({ dia: key, totalUsd: ventasMap.get(key) ?? 0 })
-    }
-    return days
-  }, [ventas, fechaInicio, fechaFin])
+  const allDays = useMemo(
+    () => buildVentasPorDia(fechaInicio, fechaFin, ventas),
+    [ventas, fechaInicio, fechaFin]
+  )
 
   const maxValue = allDays.reduce((max, d) => Math.max(max, d.totalUsd), 0)
 
