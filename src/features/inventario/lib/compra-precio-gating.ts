@@ -65,3 +65,24 @@ export function resolverAccionesLineaCompra(
 
   return { actualizarCosto, actualizarPvp, registrarAuditoria }
 }
+
+/**
+ * Resuelve que valor de costo debe escribirse en `productos.costo_usd` (y
+ * auditarse como `costo_nuevo` en `historico_precios`) para una linea de compra.
+ *
+ * Cuando el costo NO cambio (`actualizarCosto = false`, p. ej. una edicion de
+ * PVP sin cambio de costo), se debe preservar el costo actual EXACTO
+ * (`costoActual`, el valor ya almacenado) en lugar de re-derivar/re-escribir
+ * `costoSistema`. `costoSistema` se calcula en el frontend a partir de
+ * `costo_unitario_usd` * `tasaFactura` / `tasaInterna` (modo tasa paralela) y
+ * puede sufrir drift de punto flotante en decimales bajos aunque el usuario no
+ * haya tocado "Nuevo Costo" — ese drift violaria el invariante de auditoria
+ * inmutable (`historico_precios.costo_anterior === costo_nuevo` cuando el
+ * costo no cambio) y podria filtrarse a `productos.costo_usd`.
+ *
+ * Cuando el costo SI cambio (`actualizarCosto = true`), se usa `costoSistema`
+ * sin modificaciones — comportamiento identico al previo a este fix.
+ */
+export function resolverCostoAEscribir<T>(actualizarCosto: boolean, costoSistema: T, costoActual: T): T {
+  return actualizarCosto ? costoSistema : costoActual
+}

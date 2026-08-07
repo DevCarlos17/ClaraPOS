@@ -7,7 +7,7 @@ import { localNow } from '@/lib/dates'
 import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
-import { resolverAccionesLineaCompra } from '@/features/inventario/lib/compra-precio-gating'
+import { resolverAccionesLineaCompra, resolverCostoAEscribir } from '@/features/inventario/lib/compra-precio-gating'
 
 export interface Compra {
   id: string
@@ -669,6 +669,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         linea.costo_cambio === true,
         linea.no_actualizar_pvp
       )
+      // costoParaEscribir: valor a escribir en productos.costo_usd (y a auditar como
+      // costo_nuevo). Cuando el costo NO cambio, preserva costoActual EXACTO en vez de
+      // costoSistema (que puede sufrir drift de punto flotante bajo tasa paralela) —
+      // evita que una edicion de PVP sin cambio de costo introduzca drift en el costo
+      // guardado o rompa el invariante costo_anterior === costo_nuevo en la auditoria.
+      // Cuando el costo SI cambio, es exactamente costoSistema (sin cambios de comportamiento).
+      const costoParaEscribir = resolverCostoAEscribir(actualizarCosto, costoSistema, costoActual)
 
       if (!actualizarCosto && !actualizarPvp) {
         // Costo no cambio y no se edito el pvp: solo actualizar stock
@@ -680,7 +687,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         // Costo cambio pero usuario eligio mantener el pvp actual
         await tx.execute(
           'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-          [toStorageString(stockNuevo), toStorageString(costoSistema), now, linea.producto_id]
+          [toStorageString(stockNuevo), toStorageString(costoParaEscribir), now, linea.producto_id]
         )
         pvpNuevoAudit = pvpActual
       } else {
@@ -689,17 +696,17 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         if (linea.nuevo_precio_venta_usd !== undefined && linea.nuevo_precio_venta_usd > 0) {
           const dNuevoPvp = new Decimal(linea.nuevo_precio_venta_usd)
           // Guard: PVP no puede ser menor al costo
-          if (dNuevoPvp.lt(costoSistema)) {
+          if (dNuevoPvp.lt(costoParaEscribir)) {
             throw new Error(
-              `El PVP ($${dNuevoPvp.toFixed(2)}) es menor al costo ($${costoSistema.toFixed(2)}). Corrija el precio antes de guardar.`
+              `El PVP ($${dNuevoPvp.toFixed(2)}) es menor al costo ($${costoParaEscribir.toFixed(2)}). Corrija el precio antes de guardar.`
             )
           }
           nuevoPvp = dNuevoPvp
         } else if (costoActual.gt(0) && pvpActual.gt(0)) {
           const margen = pvpActual.minus(costoActual).dividedBy(costoActual)
-          nuevoPvp = Decimal.max(costoSistema, costoSistema.times(new Decimal(1).plus(margen)))
+          nuevoPvp = Decimal.max(costoParaEscribir, costoParaEscribir.times(new Decimal(1).plus(margen)))
         } else {
-          nuevoPvp = costoSistema
+          nuevoPvp = costoParaEscribir
         }
 
         pvpNuevoAudit = nuevoPvp
@@ -710,7 +717,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           nuevoMayor = new Decimal(linea.nuevo_precio_mayor_usd)
         } else if (mayorActual !== null && mayorActual.gt(0) && costoActual.gt(0)) {
           const margenMayor = mayorActual.minus(costoActual).dividedBy(costoActual)
-          nuevoMayor = costoSistema.times(new Decimal(1).plus(margenMayor))
+          nuevoMayor = costoParaEscribir.times(new Decimal(1).plus(margenMayor))
           if (nuevoMayor.lt(nuevoPvp)) nuevoMayor = nuevoPvp
         }
 
@@ -720,29 +727,29 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           nuevoEspecial = new Decimal(linea.nuevo_precio_especial_usd)
         } else if (especialActual !== null && especialActual.gt(0) && costoActual.gt(0)) {
           const margenEspecial = especialActual.minus(costoActual).dividedBy(costoActual)
-          nuevoEspecial = costoSistema.times(new Decimal(1).plus(margenEspecial))
+          nuevoEspecial = costoParaEscribir.times(new Decimal(1).plus(margenEspecial))
           if (nuevoEspecial.lt(nuevoPvp)) nuevoEspecial = nuevoPvp
         }
 
         if (nuevoMayor !== null && nuevoEspecial !== null) {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), toStorageString(nuevoMayor), toStorageString(nuevoEspecial), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else if (nuevoMayor !== null) {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), toStorageString(nuevoMayor), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), now, linea.producto_id]
           )
         } else if (nuevoEspecial !== null) {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), toStorageString(nuevoEspecial), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else {
           await tx.execute(
             'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoSistema), toStorageString(nuevoPvp), now, linea.producto_id]
+            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), now, linea.producto_id]
           )
         }
       }
@@ -766,7 +773,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             linea.producto_id,
             usuario_id,
             toStorageString(costoActual),
-            toStorageString(costoSistema),
+            toStorageString(costoParaEscribir),
             toStorageString(pvpActual),
             toStorageString(pvpNuevoAudit),
             now,

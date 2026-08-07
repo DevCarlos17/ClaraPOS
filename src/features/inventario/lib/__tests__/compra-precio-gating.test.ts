@@ -2,6 +2,7 @@ import {
   calcularNoActualizarPvp,
   debeMostrarInfoPvpEnResumen,
   resolverAccionesLineaCompra,
+  resolverCostoAEscribir,
 } from '../compra-precio-gating'
 
 describe('calcularNoActualizarPvp', () => {
@@ -79,5 +80,20 @@ describe('resolverAccionesLineaCompra', () => {
       actualizarPvp: true,
       registrarAuditoria: true,
     })
+  })
+})
+
+describe('resolverCostoAEscribir', () => {
+  it('preserva el costo actual EXACTO cuando el costo no cambio, aunque costoSistema haya sufrido drift por tasa paralela (edicion de PVP sin cambio de costo)', () => {
+    // Escenario real: costoUnitarioUsd=10 * tasaFactura=37.1234 / tasaInterna=37.1233
+    // produce un costoSistema con drift de punto flotante en el 5to decimal,
+    // aunque el usuario NO toco "Nuevo Costo".
+    const costoSistemaConDrift = 10.0000269441
+    const costoActualExacto = 10
+    expect(resolverCostoAEscribir(false, costoSistemaConDrift, costoActualExacto)).toBe(costoActualExacto)
+  })
+
+  it('usa costoSistema cuando el costo si cambio (comportamiento existente, sin regresion)', () => {
+    expect(resolverCostoAEscribir(true, 15.5, 12.34)).toBe(15.5)
   })
 })
