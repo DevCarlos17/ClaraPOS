@@ -1,6 +1,7 @@
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { todayStr, daysAgo, daysFromNow } from '@/lib/dates'
+import { diasHastaVencimiento } from '@/lib/vencimientos'
 
 export interface InventarioDepto {
   departamento: string
@@ -147,7 +148,6 @@ export function usePrestamosProximos(diasAdelanto = 7) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
-  const today = todayStr()
   const limitStr = daysFromNow(diasAdelanto)
 
   const { data, isLoading } = useQuery(
@@ -169,9 +169,7 @@ export function usePrestamosProximos(diasAdelanto = 7) {
 
   const items: VencimientoPrestamo[] = (data ?? []).map((row: Record<string, unknown>) => {
     const fechaVenc = String(row.fecha_vencimiento ?? '')
-    const diff = Math.floor(
-      (new Date(fechaVenc).getTime() - new Date(today + 'T00:00:00').getTime()) / 86400000
-    )
+    const diff = diasHastaVencimiento(fechaVenc)
     return {
       id: String(row.id ?? ''),
       venta_id: String(row.venta_id ?? ''),
