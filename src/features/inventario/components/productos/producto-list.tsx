@@ -36,6 +36,7 @@ import {
 } from '@/features/inventario/utils/productos-export'
 import { toast } from 'sonner'
 import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
+import { compararCodigos } from '@/features/inventario/lib/producto-sort'
 
 type SortKey =
   | 'codigo'
@@ -112,7 +113,7 @@ export function ProductoList() {
       let cmp = 0
       switch (sortKey) {
         case 'codigo':
-          cmp = a.codigo.localeCompare(b.codigo)
+          cmp = compararCodigos(a.codigo, b.codigo)
           break
         case 'tipo':
           cmp = a.tipo.localeCompare(b.tipo)
