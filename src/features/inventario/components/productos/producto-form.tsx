@@ -392,6 +392,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   )
   const lotes = (lotesData ?? []) as LoteRow[]
 
+  // Ultimo producto creado en el departamento seleccionado (solo modo alta)
+  const empresaId = user?.empresa_id ?? ''
+  const { data: ultimoProductoData } = useQuery(
+    !isEditing && empresaId && departamentoId
+      ? 'SELECT codigo, nombre FROM productos WHERE empresa_id = ? AND departamento_id = ? ORDER BY created_at DESC LIMIT 1'
+      : '',
+    !isEditing && empresaId && departamentoId ? [empresaId, departamentoId] : []
+  )
+  const ultimoProducto = (ultimoProductoData?.[0] ?? null) as { codigo: string; nombre: string } | null
+
   // === Reset form on open / populate on edit ===
   useEffect(() => {
     if (isOpen) {
@@ -1116,6 +1126,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               {errors.codigo && <p className="text-red-500 text-xs mt-0.5">{errors.codigo}</p>}
               {isEditing && (
                 <p className="text-gray-400 text-xs mt-0.5">El codigo no puede modificarse</p>
+              )}
+              {!isEditing && ultimoProducto && (
+                <p className="text-gray-400 text-xs mt-0.5">
+                  Último código creado en este departamento:{' '}
+                  <strong className="text-gray-500 font-medium">{ultimoProducto.codigo}</strong>
+                  {' — '}
+                  {ultimoProducto.nombre}
+                </p>
               )}
             </div>
             <div>
