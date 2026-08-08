@@ -1297,7 +1297,7 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
 
   function renderCell(item: CobranzaCxCItem) {
     const hora = formatHora(item.createdAt || item.fecha) || '—'
-    const fecha = formatDate(item.fecha)
+    const fecha = item.fecha && !isNaN(new Date(item.fecha).getTime()) ? formatDate(item.fecha) : '—'
     const tasa = parseFloat(item.tasa ?? '0')
     const montoNum = parseFloat(item.monto)
     const montoBs = item.metodoMoneda === 'BS' ? montoNum : (tasa > 0 ? montoNum * tasa : 0)
