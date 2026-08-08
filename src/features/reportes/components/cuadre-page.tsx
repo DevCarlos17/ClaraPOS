@@ -6,7 +6,7 @@ import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
 import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
-import { formatDateTime, formatHora } from '@/lib/format'
+import { formatDate, formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { cerrarSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { PagosResumen } from './pagos-resumen'
@@ -1296,22 +1296,8 @@ function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
   }
 
   function renderCell(item: CobranzaCxCItem) {
-    const hora = (() => {
-      const s = item.createdAt || item.fecha
-      try {
-        const d = new Date(s)
-        if (isNaN(d.getTime())) return '—'
-        return d.toLocaleTimeString('es-VE', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Caracas' })
-      } catch { return '—' }
-    })()
-    const fecha = (() => {
-      const s = item.fecha
-      try {
-        const d = new Date(s)
-        if (isNaN(d.getTime())) return '—'
-        return d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'America/Caracas' })
-      } catch { return '—' }
-    })()
+    const hora = formatHora(item.createdAt || item.fecha) || '—'
+    const fecha = formatDate(item.fecha)
     const tasa = parseFloat(item.tasa ?? '0')
     const montoNum = parseFloat(item.monto)
     const montoBs = item.metodoMoneda === 'BS' ? montoNum : (tasa > 0 ? montoNum * tasa : 0)

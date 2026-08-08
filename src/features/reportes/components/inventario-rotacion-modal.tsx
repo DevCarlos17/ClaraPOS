@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { Printer } from '@phosphor-icons/react'
 import { formatUsd } from '@/lib/currency'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import { useTopProductosRango } from '@/features/dashboard/hooks/use-dashboard'
 
 interface InventarioRotacionModalProps {
@@ -66,7 +67,7 @@ export function InventarioRotacionModal({ isOpen, onClose, tipo }: InventarioRot
 </head>
 <body>
   <h1>${titulo}</h1>
-  <p>${subtitulo} &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p>${subtitulo} &nbsp;|&nbsp; Generado: ${formatDateTime(localNow())}</p>
   <table>
     <thead>
       <tr>
