@@ -55,7 +55,7 @@ export function exportHistoricoPdf(params: {
     const saldo = parseFloat(m.saldo_nuevo)
     const estado = m.reversado === 1 ? 'Reversado' : m.validado === 1 ? 'Conciliado' : 'Pendiente'
     return [
-      formatFechaHoraMovimiento(m.created_at),
+      formatFechaHoraMovimiento(m.fecha, m.created_at),
       m.referencia ?? '-',
       m.origen,
       m.tipo === 'INGRESO' ? fmtAmount(monto, cuenta.moneda_codigo) : '',
@@ -123,7 +123,7 @@ export function exportHistoricoExcel(params: {
     const saldo = parseFloat(m.saldo_nuevo)
     const estado = m.reversado === 1 ? 'Reversado' : m.validado === 1 ? 'Conciliado' : 'Pendiente'
     return [
-      formatFechaHoraMovimiento(m.created_at),
+      formatFechaHoraMovimiento(m.fecha, m.created_at),
       m.referencia ?? '',
       m.origen,
       m.tipo,
@@ -162,7 +162,7 @@ export function exportPendientesPdf(params: {
   const rows = movimientos.map((m) => {
     const monto = parseFloat(m.monto)
     return [
-      formatFechaHoraMovimiento(m.created_at),
+      formatFechaHoraMovimiento(m.fecha, m.created_at),
       m.origen,
       m.referencia ?? '-',
       m.descripcion ?? '-',
@@ -212,7 +212,7 @@ export function exportPendientesExcel(params: {
   ]
   const cols = [['Fecha/Hora', 'Módulo', 'Referencia', 'Descripción', 'Monto', 'Tipo']]
   const rows = movimientos.map((m) => [
-    formatFechaHoraMovimiento(m.created_at),
+    formatFechaHoraMovimiento(m.fecha, m.created_at),
     m.origen,
     m.referencia ?? '',
     m.descripcion ?? '',
@@ -294,7 +294,7 @@ export async function exportConsolidadoPendientesPdf(params: {
     currentY += 2
 
     const rows = movs.map((m) => [
-      formatFechaHoraMovimiento(m.created_at),
+      formatFechaHoraMovimiento(m.fecha, m.created_at),
       m.origen,
       m.referencia ?? '-',
       m.descripcion ?? '-',
@@ -403,7 +403,7 @@ export async function exportConsolidadoPendientesExcel(params: {
     ]
     const cols = [['Fecha/Hora', 'Módulo', 'Referencia', 'Descripción', 'Monto', 'Tipo']]
     const rows = movs.map((m) => [
-      formatFechaHoraMovimiento(m.created_at),
+      formatFechaHoraMovimiento(m.fecha, m.created_at),
       m.origen,
       m.referencia ?? '',
       m.descripcion ?? '',

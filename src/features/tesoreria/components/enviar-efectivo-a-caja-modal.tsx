@@ -162,7 +162,7 @@ function FormEnviarEfectivo({
             <option value="">-- Selecciona una sesion --</option>
             {sesiones.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.usuario_nombre ?? 'Usuario'} — {s.caja_nombre ?? 'Caja'} ({formatFechaHoraMovimiento(s.created_at)})
+                {s.usuario_nombre ?? 'Usuario'} — {s.caja_nombre ?? 'Caja'} ({formatFechaHoraMovimiento(s.created_at, s.created_at)})
               </option>
             ))}
           </select>

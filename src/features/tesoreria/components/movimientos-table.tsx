@@ -207,7 +207,7 @@ function PendienteRow({
     <tr className={cn('hover:bg-muted/30 transition-colors', isReversado && 'opacity-50')}>
       {/* Fecha / Hora */}
       <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
-        {formatFechaHoraMovimiento(mov.created_at)}
+        {formatFechaHoraMovimiento(mov.fecha, mov.created_at)}
       </td>
 
       {/* Módulo */}
@@ -333,7 +333,7 @@ function HistoricoRow({
     <tr className={cn('hover:bg-muted/30 transition-colors', isReversado && 'opacity-50')}>
       {/* Fecha / Hora */}
       <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
-        {formatFechaHoraMovimiento(mov.created_at)}
+        {formatFechaHoraMovimiento(mov.fecha, mov.created_at)}
       </td>
 
       {/* Referencia */}
