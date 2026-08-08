@@ -69,6 +69,7 @@ export function ProductoList() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
   // Filtros
+  const [filtroTexto, setFiltroTexto] = useState('')
   const [filtroDepartamento, setFiltroDepartamento] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<'P' | 'S' | 'C' | ''>('')
   const [filtroActivo, setFiltroActivo] = useState(true)
@@ -91,9 +92,19 @@ export function ProductoList() {
       if (!filtroActivo && p.is_active === 1) return false
       if (filtroDepartamento && p.departamento_id !== filtroDepartamento) return false
       if (filtroTipo && p.tipo !== filtroTipo) return false
+      if (filtroTexto.trim()) {
+        const q = filtroTexto.toUpperCase()
+        if (
+          !p.nombre.includes(q) &&
+          !p.codigo.includes(q) &&
+          !(p.codigo_barras ?? '').includes(q)
+        ) {
+          return false
+        }
+      }
       return true
     })
-  }, [productos, filtroDepartamento, filtroTipo, filtroActivo])
+  }, [productos, filtroTexto, filtroDepartamento, filtroTipo, filtroActivo])
 
   const productosOrdenados = useMemo(() => {
     const items = [...productosFiltrados]
@@ -264,6 +275,14 @@ export function ProductoList() {
       <div className="rounded-2xl bg-card shadow-lg p-4 mb-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="flex flex-wrap gap-2">
+          <input
+            type="text"
+            placeholder="Buscar por nombre, código o código de barras..."
+            value={filtroTexto}
+            onChange={(e) => setFiltroTexto(e.target.value)}
+            className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring w-64"
+          />
+
           <select
             value={filtroDepartamento}
             onChange={(e) => setFiltroDepartamento(e.target.value)}
