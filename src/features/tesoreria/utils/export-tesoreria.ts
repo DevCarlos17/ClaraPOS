@@ -3,7 +3,8 @@ import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 import { db } from '@/core/db/powersync/db'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { todayStr } from '@/lib/dates'
+import { formatDate } from '@/lib/format'
+import { todayStr, localNow } from '@/lib/dates'
 import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 import type { MovimientoTableRow } from '../components/movimientos-table'
 
@@ -53,7 +54,7 @@ export function exportHistoricoPdf(params: {
   doc.text(`Estado de Cuenta — ${cuenta.nombre}`, 14, 22)
   doc.text(`Moneda: ${cuenta.moneda_codigo}`, 14, 28)
   doc.text(`Período: ${desde} al ${hasta}`, 14, 34)
-  doc.text(`Generado: ${new Date().toLocaleDateString('es-VE')}`, 14, 40)
+  doc.text(`Generado: ${formatDate(localNow())}`, 14, 40)
 
   const rows = movimientos.map((m) => {
     const monto = parseFloat(m.monto)
@@ -162,7 +163,7 @@ export function exportPendientesPdf(params: {
   doc.setFontSize(11)
   doc.setFont('helvetica', 'normal')
   doc.text(`Movimientos Pendientes — ${cuenta.nombre}`, 14, 22)
-  doc.text(`Generado: ${new Date().toLocaleDateString('es-VE')}`, 14, 28)
+  doc.text(`Generado: ${formatDate(localNow())}`, 14, 28)
 
   const rows = movimientos.map((m) => {
     const monto = parseFloat(m.monto)
@@ -212,7 +213,7 @@ export function exportPendientesExcel(params: {
   const header: (string | number | undefined)[][] = [
     ['Empresa:', empresaNombre],
     ['Cuenta:', cuenta.nombre],
-    ['Generado:', new Date().toLocaleDateString('es-VE')],
+    ['Generado:', formatDate(localNow())],
     [],
   ]
   const cols = [['Fecha/Hora', 'Módulo', 'Referencia', 'Descripción', 'Monto', 'Tipo']]
@@ -250,7 +251,7 @@ export async function exportConsolidadoPendientesPdf(params: {
   doc.setFontSize(11)
   doc.setFont('helvetica', 'normal')
   doc.text('Reporte Consolidado de Pendientes por Conciliar', 14, 22)
-  doc.text(`Generado: ${new Date().toLocaleDateString('es-VE')}`, 14, 28)
+  doc.text(`Generado: ${formatDate(localNow())}`, 14, 28)
 
   let currentY = 34
   let grandTotalUsd = 0

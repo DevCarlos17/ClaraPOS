@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Plus } from '@phosphor-icons/react'
 import { useNotasFiscalesCompra, type NotaFiscalCompra } from '@/features/compras/hooks/use-notas-fiscales-compra'
 import { NotaFiscalCompraForm } from './nota-fiscal-compra-form'
+import { formatDate } from '@/lib/format'
 
 type NotaFiscalConProveedor = NotaFiscalCompra & { proveedor_nombre: string }
 
@@ -67,7 +68,7 @@ export function NotaFiscalCompraList() {
                   className="border-b border-border hover:bg-muted/50 transition-colors"
                 >
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                    {new Date(nota.fecha).toLocaleDateString('es-VE')}
+                    {formatDate(nota.fecha)}
                   </td>
                   <td className="px-4 py-3 text-center">
                     {nota.tipo === 'NC' ? (

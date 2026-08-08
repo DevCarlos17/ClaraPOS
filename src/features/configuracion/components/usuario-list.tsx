@@ -9,6 +9,7 @@ import {
   type Usuario,
 } from '@/features/configuracion/hooks/use-usuarios'
 import { PageHeader } from '@/components/layout/page-header'
+import { formatDate } from '@/lib/format'
 
 function RolBadge({ rolNombre }: { rolNombre: string | null }) {
   return (
@@ -131,7 +132,7 @@ export function UsuarioList() {
                       )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">
-                      {new Date(usr.created_at).toLocaleDateString('es-VE')}
+                      {formatDate(usr.created_at)}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {(!isOwnerRow(usr) || isSelf(usr)) && (

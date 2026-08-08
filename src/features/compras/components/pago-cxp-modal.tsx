@@ -17,6 +17,7 @@ import Decimal from 'decimal.js'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
+import { formatHora } from '@/lib/format'
 import { NativeSelect } from '@/components/ui/native-select'
 
 interface PagoCxPModalProps {
@@ -65,9 +66,7 @@ export function PagoCxPModal({ open, onClose, factura, proveedorId, proveedorNom
       const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
       if (row) {
         setSesionActivaId(row.id)
-        const hora = new Date(row.fecha_apertura).toLocaleTimeString('es', {
-          hour: '2-digit', minute: '2-digit',
-        })
+        const hora = formatHora(row.fecha_apertura)
         setSesionActivaHora(hora)
         setDestinoCobro('CAJA')
       } else {

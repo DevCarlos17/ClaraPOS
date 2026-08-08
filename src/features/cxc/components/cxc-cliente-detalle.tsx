@@ -4,6 +4,7 @@ import { X, CurrencyDollar, CaretUp, CaretDown, ArrowDown } from '@phosphor-icon
 import { Button } from '@/components/ui/button'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 import { useFacturasPendientes, type ClienteConDeuda, type VentaPendiente } from '../hooks/use-cxc'
 import { AbonoGlobalModal } from './abono-global-modal'
 import { AplicarSafModal } from './aplicar-saf-modal'
@@ -239,11 +240,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                           #{f.nro_factura}
                         </td>
                         <td className="px-4 py-3 text-muted-foreground text-sm whitespace-nowrap">
-                          {new Date(f.fecha).toLocaleDateString('es-VE', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                          })}
+                          {formatDate(f.fecha)}
                         </td>
                         <td className="px-4 py-3">
                           <span

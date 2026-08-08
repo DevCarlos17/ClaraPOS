@@ -2,6 +2,8 @@ import { useRef, useEffect } from 'react'
 import { X, Printer } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import type { Deposito } from '@/features/inventario/hooks/use-depositos'
 
 interface ProductoDeposito {
@@ -90,7 +92,7 @@ export function DepositoProductosModal({ deposito, onClose }: DepositoProductosM
   ${deposito.direccion ? `<h2>${deposito.direccion}</h2>` : ''}
   <p>
     Total articulos con stock: ${productos.length}
-    &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}
+    &nbsp;|&nbsp; Generado: ${formatDateTime(localNow())}
   </p>
   <table>
     <thead>

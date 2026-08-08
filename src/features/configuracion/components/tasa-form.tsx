@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { useTasaActual, crearTasaRaw, useFetchTasaApi } from '../hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatTasa, formatBs } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
 
 export function TasaForm() {
   const { tasa, tasaValor } = useTasaActual()
@@ -64,7 +65,7 @@ export function TasaForm() {
               $1.00 = {formatBs(parseFloat(tasa.valor))}
             </p>
             <p className="text-xs text-muted-foreground mt-2">
-              Registrada: {new Date(tasa.fecha).toLocaleString('es-VE')}
+              Registrada: {formatDateTime(tasa.fecha)}
             </p>
           </div>
         ) : (

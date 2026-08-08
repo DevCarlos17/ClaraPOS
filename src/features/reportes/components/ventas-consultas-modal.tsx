@@ -13,6 +13,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDate, formatDateTime, formatNumber } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { useBuscarProductosVenta, type ProductoVenta } from '@/features/ventas/hooks/use-ventas'
 import { useDetalleFactura } from '@/features/ventas/hooks/use-notas-credito'
@@ -531,7 +532,7 @@ function FacturaDetalle({
       doc.setTextColor(150)
       const pageHeight = doc.internal.pageSize.getHeight()
       doc.text(
-        `Reimpresion generada el ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}`,
+        `Reimpresion generada el ${formatDateTime(localNow())}`,
         pageWidth / 2,
         pageHeight - 8,
         { align: 'center' }

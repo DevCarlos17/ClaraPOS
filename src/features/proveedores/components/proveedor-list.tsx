@@ -16,6 +16,8 @@ import {
   type Proveedor,
 } from '@/features/proveedores/hooks/use-proveedores'
 import { formatUsd } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 import { ProveedorForm } from './proveedor-form'
 import { ProveedorEstadoCuentaModal } from './proveedor-estado-cuenta-modal'
@@ -73,7 +75,7 @@ function printProveedores(list: Proveedor[], mostrarSaldo: boolean) {
     <tbody>${rows}</tbody>
   </table>
   <p style="margin-top:16px;font-size:11px;color:#9ca3af">
-    Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}
+    Generado: ${formatDateTime(localNow())}
   </p>
 </body>
 </html>`
