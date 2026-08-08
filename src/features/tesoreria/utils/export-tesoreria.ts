@@ -7,18 +7,12 @@ import { formatDate } from '@/lib/format'
 import { todayStr, localNow } from '@/lib/dates'
 import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 import type { MovimientoTableRow } from '../components/movimientos-table'
+import { formatFechaHoraMovimiento } from './format-movimiento-fecha'
 
 // ─── Helpers internos ─────────────────────────────────────────
 
 function fmtAmount(val: number, monedaCodigo: string): string {
   return monedaCodigo === 'USD' ? formatUsd(val) : formatBs(val)
-}
-
-function fmtFecha(fecha: string, createdAt: string): string {
-  const d = String(fecha).slice(0, 10)
-  const t = String(createdAt).slice(11, 16)
-  const [y, m, day] = d.split('-')
-  return `${day}/${m}/${y} ${t}`
 }
 
 // ─── Tipo interno para movimientos raw ────────────────────────
@@ -61,7 +55,7 @@ export function exportHistoricoPdf(params: {
     const saldo = parseFloat(m.saldo_nuevo)
     const estado = m.reversado === 1 ? 'Reversado' : m.validado === 1 ? 'Conciliado' : 'Pendiente'
     return [
-      fmtFecha(m.fecha, m.created_at),
+      formatFechaHoraMovimiento(m.created_at),
       m.referencia ?? '-',
       m.origen,
       m.tipo === 'INGRESO' ? fmtAmount(monto, cuenta.moneda_codigo) : '',
@@ -129,7 +123,7 @@ export function exportHistoricoExcel(params: {
     const saldo = parseFloat(m.saldo_nuevo)
     const estado = m.reversado === 1 ? 'Reversado' : m.validado === 1 ? 'Conciliado' : 'Pendiente'
     return [
-      fmtFecha(m.fecha, m.created_at),
+      formatFechaHoraMovimiento(m.created_at),
       m.referencia ?? '',
       m.origen,
       m.tipo,
@@ -168,7 +162,7 @@ export function exportPendientesPdf(params: {
   const rows = movimientos.map((m) => {
     const monto = parseFloat(m.monto)
     return [
-      fmtFecha(m.fecha, m.created_at),
+      formatFechaHoraMovimiento(m.created_at),
       m.origen,
       m.referencia ?? '-',
       m.descripcion ?? '-',
@@ -218,7 +212,7 @@ export function exportPendientesExcel(params: {
   ]
   const cols = [['Fecha/Hora', 'Módulo', 'Referencia', 'Descripción', 'Monto', 'Tipo']]
   const rows = movimientos.map((m) => [
-    fmtFecha(m.fecha, m.created_at),
+    formatFechaHoraMovimiento(m.created_at),
     m.origen,
     m.referencia ?? '',
     m.descripcion ?? '',
@@ -300,7 +294,7 @@ export async function exportConsolidadoPendientesPdf(params: {
     currentY += 2
 
     const rows = movs.map((m) => [
-      fmtFecha(m.fecha, m.created_at),
+      formatFechaHoraMovimiento(m.created_at),
       m.origen,
       m.referencia ?? '-',
       m.descripcion ?? '-',
@@ -409,7 +403,7 @@ export async function exportConsolidadoPendientesExcel(params: {
     ]
     const cols = [['Fecha/Hora', 'Módulo', 'Referencia', 'Descripción', 'Monto', 'Tipo']]
     const rows = movs.map((m) => [
-      fmtFecha(m.fecha, m.created_at),
+      formatFechaHoraMovimiento(m.created_at),
       m.origen,
       m.referencia ?? '',
       m.descripcion ?? '',
