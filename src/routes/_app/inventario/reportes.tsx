@@ -6,9 +6,9 @@ import { PageHeader } from '@/components/layout/page-header'
 import { RequirePermission } from '@/components/shared/require-permission'
 import { AccessDeniedPage } from '@/components/shared/access-denied-page'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
-import { startOfMonth, todayStr } from '@/lib/dates'
+import { startOfMonth, todayStr, localNow } from '@/lib/dates'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
-import { formatNumber } from '@/lib/format'
+import { formatNumber, formatDateTime } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
@@ -112,7 +112,7 @@ function InventarioReportesPage() {
     <div class="header-reporte">
       <h2>Reporte de Inventario</h2>
       <p>Periodo: ${fechaDesde} al ${fechaHasta}</p>
-      <p>Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+      <p>Generado: ${formatDateTime(localNow())}</p>
       <p>Usuario: ${user?.nombre ?? ''}</p>
     </div>
   </div>

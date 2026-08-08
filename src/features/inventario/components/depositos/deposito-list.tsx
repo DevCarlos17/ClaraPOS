@@ -8,6 +8,8 @@ import {
   type Deposito,
 } from '@/features/inventario/hooks/use-depositos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import { DepositoForm } from './deposito-form'
 import { DepositoProductosModal } from './deposito-productos-modal'
 
@@ -116,7 +118,7 @@ export function DepositoList() {
   <p>
     Total: ${depositos.length} depositos &nbsp;|&nbsp;
     Articulos totales: ${totalArticulos} &nbsp;|&nbsp;
-    Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}
+    Generado: ${formatDateTime(localNow())}
   </p>
   <table>
     <thead>

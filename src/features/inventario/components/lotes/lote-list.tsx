@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react'
 import { Plus, Printer } from '@phosphor-icons/react'
 import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useLotesPorProducto } from '@/features/inventario/hooks/use-lotes'
-import { formatDate } from '@/lib/format'
+import { formatDate, formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import { diasHastaVencimiento } from '@/lib/vencimientos'
 import { LoteForm } from './lote-form'
 
@@ -90,7 +91,7 @@ function LotesTable({ productoId, productoNombre }: { productoId: string; produc
 <body>
   <h1>Reporte de Lotes</h1>
   <h2>${productoNombre}</h2>
-  <p>Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p>Generado: ${formatDateTime(localNow())}</p>
   <table>
     <thead>
       <tr>
