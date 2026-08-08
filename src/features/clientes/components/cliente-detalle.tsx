@@ -14,6 +14,8 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatDate, formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 
 interface ClienteDetalleProps {
   onClose: () => void
@@ -30,29 +32,11 @@ const TIPO_LABELS: Record<string, { label: string; color: string }> = {
 }
 
 function formatFecha(fecha: string): string {
-  try {
-    return new Date(fecha).toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  } catch {
-    return fecha
-  }
+  return formatDateTime(fecha)
 }
 
 function formatFechaCorta(fecha: string): string {
-  try {
-    return new Date(fecha).toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    })
-  } catch {
-    return fecha
-  }
+  return formatDate(fecha)
 }
 
 // =============================================
@@ -173,7 +157,7 @@ function generarReporteEstadoCuenta(
   </table>
 
   <div class="footer">
-    Generado el ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })} · ClaraPOS
+    Generado el ${formatDateTime(localNow())} · ClaraPOS
   </div>
 
   <script>window.onload = () => window.print()</script>
