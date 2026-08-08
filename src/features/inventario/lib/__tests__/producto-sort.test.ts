@@ -12,4 +12,9 @@ describe('compararCodigos', () => {
       'P-FAC-010',
     ])
   })
+
+  it('ordena sufijos numericos sin relleno de ceros por valor, no lexicograficamente', () => {
+    // Sin el flag numeric, 'P10' < 'P2' (comparacion caracter a caracter): este caso lo prueba.
+    expect(['P10', 'P2', 'P1', 'P21'].sort(compararCodigos)).toEqual(['P1', 'P2', 'P10', 'P21'])
+  })
 })
