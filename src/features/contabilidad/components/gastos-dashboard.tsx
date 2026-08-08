@@ -11,9 +11,9 @@ import {
 } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
-import { todayStr, startOfMonth, daysAgo } from '@/lib/dates'
+import { todayStr, startOfMonth, daysAgo, localNow } from '@/lib/dates'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { formatDate } from '@/lib/format'
+import { formatDate, formatDateTime } from '@/lib/format'
 import { GastoForm } from './gasto-form'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
@@ -268,7 +268,7 @@ export function GastosDashboard() {
     const nombreEmpresa = company?.nombre ?? ''
     const rifEmpresa    = company?.rif ?? undefined
     const nombreUsuario = user?.nombre ?? user?.email ?? 'Sistema'
-    const ahora = new Date().toLocaleString('es-VE')
+    const ahora = formatDateTime(localNow())
 
     const criterioLabel =
       criterio === 'TODAS' ? 'Todas las cuentas'
