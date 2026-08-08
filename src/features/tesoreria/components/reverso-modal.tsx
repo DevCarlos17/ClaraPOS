@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatUsd } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { reversarMovBancario, reversarMovCajaFuerte } from '../hooks/use-conciliacion-tesoreria'
 import { reversarTraspaso } from '../hooks/use-traspasos'
@@ -125,7 +126,7 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, trasp
           <div className="rounded-lg border bg-muted/30 p-4 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Fecha</span>
-              <span>{String(movimiento.fecha).slice(0, 10)}</span>
+              <span>{formatDate(movimiento.fecha)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Origen</span>
