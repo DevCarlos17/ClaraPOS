@@ -11,7 +11,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { formatDateTime } from '@/lib/format'
+import { formatDateTime, formatHora } from '@/lib/format'
 import { todayStr, localNow } from '@/lib/dates'
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
@@ -374,7 +374,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
       const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
       if (row) {
         setSesionActivaId(row.id)
-        const hora = new Date(row.fecha_apertura).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+        const hora = formatHora(row.fecha_apertura)
         setSesionActivaHora(hora)
         setDestinoCobro('CAJA')
       } else {

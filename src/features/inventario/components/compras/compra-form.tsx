@@ -24,6 +24,7 @@ import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuesto
 import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { todayStr } from '@/lib/dates'
+import { formatHora } from '@/lib/format'
 import { db } from '@/core/db/powersync/db'
 import {
   Dialog,
@@ -316,7 +317,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
       if (row) {
         setSesionActivaId(row.id)
-        const hora = new Date(row.fecha_apertura).toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' })
+        const hora = formatHora(row.fecha_apertura)
         setSesionActivaHora(hora)
         setDestinoCobro('CAJA')
       } else {
