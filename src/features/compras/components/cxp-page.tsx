@@ -23,6 +23,8 @@ import { PagoGastoCxpModal } from './pago-gasto-cxp-modal'
 import { FacturaProveedorModal } from './factura-proveedor-modal'
 import Decimal from 'decimal.js'
 import { formatUsd } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 
 // ─── Sort ─────────────────────────────────────────────────────
 
@@ -122,7 +124,7 @@ function printReporteProveedor(
       </tr>
     </tbody>
   </table>
-  <p class="footer">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p class="footer">Generado: ${formatDateTime(localNow())}</p>
 </body>
 </html>`
 

@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { todayStr } from '@/lib/dates'
 import {
@@ -26,16 +27,7 @@ function getDiasRestantes(fechaVenc: string): number {
 }
 
 function formatFecha(fecha: string): string {
-  try {
-    const dateStr = fecha.length === 10 ? fecha + 'T00:00:00' : fecha
-    return new Date(dateStr).toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    })
-  } catch {
-    return fecha.slice(0, 10)
-  }
+  return formatDate(fecha)
 }
 
 function OrigenFondosBadge({ tipo }: { tipo: string }) {

@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react'
 import { Plus, Printer } from '@phosphor-icons/react'
 import { useAjustes } from '@/features/inventario/hooks/use-ajustes'
-import { formatDate } from '@/lib/format'
+import { formatDate, formatDateTime } from '@/lib/format'
 import { formatUsd } from '@/lib/currency'
-import { startOfMonth, todayStr } from '@/lib/dates'
+import { startOfMonth, todayStr, localNow } from '@/lib/dates'
 import { AjusteForm } from './ajuste-form'
 import { AjusteDetalleModal } from './ajuste-detalle-modal'
 
@@ -118,7 +118,7 @@ export function AjusteList({ ocultarNuevo = false }: AjusteListProps) {
 </head>
 <body>
   <h1>Historial de Ajustes de Inventario</h1>
-  <p>Período: ${fechaDesde} al ${fechaHasta} &nbsp;|&nbsp; Total: ${ajustesFiltrados.length} ajuste(s) &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p>Período: ${fechaDesde} al ${fechaHasta} &nbsp;|&nbsp; Total: ${ajustesFiltrados.length} ajuste(s) &nbsp;|&nbsp; Generado: ${formatDateTime(localNow())}</p>
   <table>
     <thead>
       <tr>

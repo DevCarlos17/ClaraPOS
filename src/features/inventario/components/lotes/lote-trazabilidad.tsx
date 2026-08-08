@@ -5,6 +5,7 @@ import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useLotesPorProducto, type Lote } from '@/features/inventario/hooks/use-lotes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatDate, formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 
 interface DespachoLote {
   id: string
@@ -103,7 +104,7 @@ function TrazabilidadDetalleTable({
   </p>
   ${lote.fecha_fabricacion ? `<p>Fabricacion: ${formatDate(lote.fecha_fabricacion)}</p>` : ''}
   ${lote.fecha_vencimiento ? `<p>Vencimiento: ${formatDate(lote.fecha_vencimiento)}</p>` : ''}
-  <p style="margin-top:4px">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p style="margin-top:4px">Generado: ${formatDateTime(localNow())}</p>
 
   <div class="resumen">
     <div class="kpi">

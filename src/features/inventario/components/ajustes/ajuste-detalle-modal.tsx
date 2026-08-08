@@ -3,8 +3,9 @@ import { toast } from 'sonner'
 import { Printer } from '@phosphor-icons/react'
 import { useAjusteDetalle, useAjuste, aplicarAjuste, anularAjuste } from '@/features/inventario/hooks/use-ajustes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { formatDate } from '@/lib/format'
+import { formatDate, formatDateTime } from '@/lib/format'
 import { formatUsd } from '@/lib/currency'
+import { localNow } from '@/lib/dates'
 
 interface AjusteDetalleModalProps {
   isOpen: boolean
@@ -158,7 +159,7 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
       </tr>
     </tfoot>
   </table>
-  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${formatDateTime(localNow())}</p>
 </body>
 </html>`)
     w.document.close()
