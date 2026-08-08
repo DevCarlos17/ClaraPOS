@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { formatMesAnio } from '@/lib/format'
+import { formatDate, formatMesAnio } from '@/lib/format'
 import { todayStr, startOfMonth } from '@/lib/dates'
 
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -99,7 +99,7 @@ function TraspasoRow({
       )}
     >
       <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
-        {String(traspaso.fecha).slice(0, 10)}
+        {formatDate(traspaso.fecha)}
       </td>
       <td className="py-3 px-4 text-sm">
         <p className="font-medium">{traspaso.nombre_origen}</p>

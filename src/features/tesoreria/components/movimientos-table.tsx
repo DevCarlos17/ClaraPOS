@@ -4,6 +4,7 @@ import { formatUsd, formatBs } from '@/lib/currency'
 import { Button } from '@/components/ui/button'
 import type { MovBancario } from '@/features/caja/hooks/use-mov-bancarios'
 import type { MovCajaFuerte } from '../hooks/use-mov-caja-fuerte'
+import { formatFechaHoraMovimiento } from '../utils/format-movimiento-fecha'
 
 // ─── Tipo legado (mantenido para retrocompatibilidad con ReversoModal) ──────
 
@@ -53,18 +54,6 @@ const ORIGEN_COLORS: Record<string, string> = {
   TRASPASO: 'bg-purple-100 text-purple-700',
   REVERSO: 'bg-gray-100 text-gray-600',
   MANUAL: 'bg-yellow-100 text-yellow-700',
-}
-
-// ─── Helpers ─────────────────────────────────────────────────
-
-function formatFechaHora(fecha: string, createdAt: string): string {
-  const datePart = String(fecha).slice(0, 10)   // "YYYY-MM-DD"
-  const timePart = String(createdAt).slice(11, 16) // "HH:mm"
-  const parts = datePart.split('-')
-  if (parts.length === 3) {
-    return `${parts[2]}/${parts[1]}/${parts[0]} ${timePart}`
-  }
-  return `${datePart} ${timePart}`
 }
 
 // ─── Props ────────────────────────────────────────────────────
@@ -218,7 +207,7 @@ function PendienteRow({
     <tr className={cn('hover:bg-muted/30 transition-colors', isReversado && 'opacity-50')}>
       {/* Fecha / Hora */}
       <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
-        {formatFechaHora(mov.fecha, mov.created_at)}
+        {formatFechaHoraMovimiento(mov.created_at)}
       </td>
 
       {/* Módulo */}
@@ -344,7 +333,7 @@ function HistoricoRow({
     <tr className={cn('hover:bg-muted/30 transition-colors', isReversado && 'opacity-50')}>
       {/* Fecha / Hora */}
       <td className="py-3 px-4 text-xs text-muted-foreground whitespace-nowrap">
-        {formatFechaHora(mov.fecha, mov.created_at)}
+        {formatFechaHoraMovimiento(mov.created_at)}
       </td>
 
       {/* Referencia */}

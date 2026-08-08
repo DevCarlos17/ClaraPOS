@@ -5,6 +5,7 @@ import { useQuery } from '@powersync/react'
 import { Button } from '@/components/ui/button'
 import { db } from '@/core/db/powersync/db'
 import { crearTraspasoTesoreriaASesion } from '@/features/tesoreria/hooks/use-traspasos'
+import { formatFechaHoraMovimiento } from '@/features/tesoreria/utils/format-movimiento-fecha'
 import type { CajaFuerte } from '@/features/tesoreria/hooks/use-caja-fuerte'
 
 // ─── Props ────────────────────────────────────────────────────
@@ -161,7 +162,7 @@ function FormEnviarEfectivo({
             <option value="">-- Selecciona una sesion --</option>
             {sesiones.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.usuario_nombre ?? 'Usuario'} — {s.caja_nombre ?? 'Caja'} ({String(s.created_at).substring(0, 16)})
+                {s.usuario_nombre ?? 'Usuario'} — {s.caja_nombre ?? 'Caja'} ({formatFechaHoraMovimiento(s.created_at)})
               </option>
             ))}
           </select>
