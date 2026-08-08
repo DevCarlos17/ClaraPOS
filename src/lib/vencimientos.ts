@@ -1,4 +1,4 @@
-const VE_TZ = 'America/Caracas'
+import { VE_TZ } from './dates'
 
 /** Extrae anio/mes/dia de una fecha en zona horaria Venezuela */
 function vePartsOf(date: Date): { year: number; month: number; day: number } {
