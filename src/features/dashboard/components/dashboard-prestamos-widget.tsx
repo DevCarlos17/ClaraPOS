@@ -1,17 +1,10 @@
 import { Warning, Clock, Handshake } from '@phosphor-icons/react'
 import { usePrestamosProximos } from '../hooks/use-dashboard'
 import { formatUsd } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 
 function formatFechaCorta(fecha: string): string {
-  try {
-    return new Date(fecha + 'T00:00:00').toLocaleDateString('es-VE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    })
-  } catch {
-    return fecha
-  }
+  return formatDate(fecha)
 }
 
 export function DashboardPrestamosWidget() {
