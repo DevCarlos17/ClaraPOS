@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { formatMesAnio } from '@/lib/format'
 import { todayStr, startOfMonth } from '@/lib/dates'
 
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -377,7 +378,7 @@ export function ConciliacionTesoreria() {
       const desde = `${year}-${String(month + 1).padStart(2, '0')}-01`
       const lastDay = new Date(year, month + 1, 0).getDate()
       const hasta = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
-      const label = d.toLocaleDateString('es-VE', { month: 'short', year: '2-digit' })
+      const label = formatMesAnio(desde)
       months.push({ label, desde, hasta })
     }
     return months

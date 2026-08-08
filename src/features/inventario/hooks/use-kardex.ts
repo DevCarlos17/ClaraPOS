@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
 import { toStorageString } from '@/lib/currency'
+import { buildMovimientosFiltradosSql } from './kardex-sql'
 
 export interface MovimientoInventario {
   id: string
@@ -49,18 +50,12 @@ export function useMovimientosFiltrados(fechaDesde: string, fechaHasta: string) 
   // (espacio, sin offset).  Comparar strings directamente falla porque 'T' > ' '.
   //
   // Solucion: datetime(mi.fecha) normaliza ambos formatos a UTC para la comparacion.
-  // Los bounds del filtro se expresan en hora venezolana (VET = UTC-4) usando el
-  // sufijo '-04:00', de modo que datetime() los convierte a UTC y la comparacion
+  // Los bounds del filtro se expresan en hora venezolana (VET = UTC-4) usando
+  // VE_OFFSET, de modo que datetime() los convierte a UTC y la comparacion
   // es consistente tanto para registros locales (pre-sync) como para los que ya
-  // sincronizaron (post-sync, almacenados en UTC).
+  // sincronizaron (post-sync, almacenados en UTC). Ver kardex-sql.ts.
   const { data, isLoading } = useQuery(
-    `SELECT mi.*, p.codigo as prod_codigo, p.nombre as prod_nombre, p.departamento_id
-     FROM movimientos_inventario mi
-     LEFT JOIN productos p ON p.id = mi.producto_id
-     WHERE mi.empresa_id = ?
-       AND datetime(mi.fecha) >= datetime(? || 'T00:00:00-04:00')
-       AND datetime(mi.fecha) <= datetime(? || 'T23:59:59-04:00')
-     ORDER BY mi.fecha DESC LIMIT 500`,
+    buildMovimientosFiltradosSql(),
     [empresaId, fechaDesde, fechaHasta]
   )
   return { movimientos: (data ?? []) as MovimientoConProducto[], isLoading }

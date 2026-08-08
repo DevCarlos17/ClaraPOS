@@ -4,7 +4,7 @@ import { useMovimientosFiltrados, useUltimosMovimientosKardex } from '@/features
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { formatDateTime } from '@/lib/format'
-import { startOfMonth, todayStr } from '@/lib/dates'
+import { startOfMonth, todayStr, localNow } from '@/lib/dates'
 import { KardexProductoBuscador } from './kardex-producto-buscador'
 
 export function KardexList() {
@@ -118,7 +118,7 @@ export function KardexList() {
 
     const rows = movimientosFiltrados.map((mov) => `
       <tr>
-        <td>${mov.fecha}</td>
+        <td>${formatDateTime(mov.fecha)}</td>
         <td>${mov.prod_codigo ?? ''} ${mov.prod_nombre ?? mov.producto_id}</td>
         <td>${mov.tipo === 'E' ? 'ENTRADA' : 'SALIDA'}</td>
         <td>${origenLabel(mov.origen)}</td>
@@ -151,7 +151,7 @@ export function KardexList() {
         Departamento: ${deptoNombre} |
         ${filtrosAplicados.busqueda && filtrosAplicados.busqueda !== '*' ? `Producto: ${filtrosAplicados.busqueda} |` : ''}
         Total: ${movimientosFiltrados.length} movimiento(s) |
-        Generado: ${new Date().toLocaleString('es-VE')}
+        Generado: ${formatDateTime(localNow())}
       </div>
       <table>
         <thead><tr>

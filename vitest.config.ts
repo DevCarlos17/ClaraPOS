@@ -5,6 +5,11 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
+    // Pinned to UTC (NOT 'America/Caracas') on purpose: testing timezone-sensitive
+    // code in the same TZ as production hides the class of double-cancellation bug
+    // where a mis-parsed UTC instant + a correct VET display conversion cancel out
+    // and produce a coincidentally-correct-looking result. See src/lib/format.ts.
+    env: { TZ: 'UTC' },
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     exclude: [

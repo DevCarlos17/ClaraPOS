@@ -9,7 +9,10 @@ describe('todayStr', () => {
   })
 
   it('formatea con ceros a la izquierda para mes y dia', () => {
-    vi.setSystemTime(new Date('2026-01-05T00:00:00'))
+    // Offset -04:00 explicito (medianoche VET) en vez de forma local ambigua:
+    // 'T00:00:00' sin offset se parsea como hora LOCAL del runtime, lo cual
+    // rompia este test bajo TZ=UTC (el mismo bug de clase que format.ts).
+    vi.setSystemTime(new Date('2026-01-05T00:00:00-04:00'))
     expect(todayStr()).toBe('2026-01-05')
     vi.useRealTimers()
   })
