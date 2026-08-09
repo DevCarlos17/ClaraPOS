@@ -28,6 +28,9 @@ yarn-error.log*
 Thumbs.db
 desktop.ini
 
+# Tests / coverage
+coverage/
+
 # TypeScript
 *.tsbuildinfo
 
