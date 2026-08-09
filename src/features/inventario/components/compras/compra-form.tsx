@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react'
 import Decimal from 'decimal.js'
 import { toast } from 'sonner'
+import { v4 as uuidv4 } from 'uuid'
 import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise, CashRegister, Vault } from '@phosphor-icons/react'
-import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema } from '@/features/inventario/schemas/compra-schema'
+import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema, lineaCargoSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
+import { totalizarLineasCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
 import {
   debeMostrarInfoPvpEnResumen,
   clasificarCasoLinea,
@@ -100,6 +102,19 @@ interface PagoUI {
   monto: number
   banco_empresa_id: string | null
   referencia?: string
+}
+
+/**
+ * Estado UI de una linea de cargo no-producto (Material de Empaque / Flete).
+ * `monto_input` se captura en la MONEDA YA SELECCIONADA del formulario (igual
+ * que `costo_input` de `LineaUI`) — la conversion a USD ocurre recien al
+ * calcular totales/submit, nunca al tipear.
+ */
+interface LineaCargoInputUI {
+  id: string
+  concepto: ConceptoCargo
+  monto_input: string
+  porcentaje_iva: 0 | 16
 }
 
 interface CompraFormProps {
@@ -245,6 +260,9 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   // Lines
   const [lineas, setLineas] = useState<LineaUI[]>([])
+  // Lineas de cargo no-producto (Material de Empaque / Flete) — array separado
+  // de `lineas`, la logica de producto no se toca.
+  const [lineasCargo, setLineasCargo] = useState<LineaCargoInputUI[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
@@ -470,13 +488,26 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const totalIvaDisplay = moneda === 'USD' ? totalIvaUsd : totalIvaBs
   const totalConIvaDisplay = new Decimal(totalDisplay).plus(totalIvaDisplay).toNumber()
 
-  // totalUsd: siempre a tasa del proveedor (para CxP), incluye IVA
-  const totalUsd = moneda === 'USD'
-    ? totalConIvaDisplay
-    : (tasaFacturaNum > 0 ? new Decimal(totalConIvaDisplay).dividedBy(tasaFacturaNum).toNumber() : 0)
-  const totalBs = moneda === 'BS'
-    ? totalConIvaDisplay
-    : new Decimal(totalConIvaDisplay).times(tasaFacturaNum).toNumber()
+  // Lineas de cargo (Material de Empaque / Flete) convertidas a USD + totalizadas.
+  // Se pliegan en totalUsd/totalBs (abajo) para que CxP, pendiente y "Max" de pago
+  // reflejen el total real de la factura, cargos incluidos.
+  const lineasCargoUsd = useMemo(
+    () => convertirLineasCargoAUsd(lineasCargo),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lineasCargo, moneda, tasaFacturaNum]
+  )
+  const cargoTotales = useMemo(() => totalizarLineasCargo(lineasCargoUsd), [lineasCargoUsd])
+  const totalCargoUsd = new Decimal(cargoTotales.exentoUsd).plus(cargoTotales.baseUsd).plus(cargoTotales.ivaUsd)
+
+  // totalUsd: siempre a tasa del proveedor (para CxP), incluye IVA + cargos (empaque/flete)
+  const totalUsd = (moneda === 'USD'
+    ? new Decimal(totalConIvaDisplay)
+    : (tasaFacturaNum > 0 ? new Decimal(totalConIvaDisplay).dividedBy(tasaFacturaNum) : new Decimal(0))
+  ).plus(totalCargoUsd).toNumber()
+  const totalBs = (moneda === 'BS'
+    ? new Decimal(totalConIvaDisplay).plus(totalCargoUsd.times(tasaFacturaNum))
+    : new Decimal(totalUsd).times(tasaFacturaNum)
+  ).toNumber()
 
   // totalUsdSistema: a tasa interna (para inventario y contabilidad, sin IVA)
   const totalUsdSistema = usaTasaParalela && tasaInternaNum > 0
@@ -566,6 +597,48 @@ export function CompraForm({ onClose }: CompraFormProps) {
       delete next['lineas']
       return next
     })
+  }
+
+  // ── Lineas de cargo (Material de Empaque / Flete) ────────────────────────────
+  function handleAddLineaCargo(concepto: ConceptoCargo) {
+    setLineasCargo((prev) => [...prev, { id: uuidv4(), concepto, monto_input: '', porcentaje_iva: 0 }])
+    setErrors((prev) => {
+      const next = { ...prev }
+      delete next['lineasCargo']
+      return next
+    })
+  }
+
+  function handleRemoveLineaCargo(id: string) {
+    setLineasCargo((prev) => prev.filter((l) => l.id !== id))
+    setErrors((prev) => {
+      const next = { ...prev }
+      delete next['lineasCargo']
+      return next
+    })
+  }
+
+  function handleLineaCargoMontoChange(id: string, value: string) {
+    const clamped = clampNumeric(value, NUMERIC_LIMITS.monto.max, NUMERIC_LIMITS.monto.decimals)
+    setLineasCargo((prev) => prev.map((l) => (l.id === id ? { ...l, monto_input: clamped } : l)))
+  }
+
+  function handleLineaCargoIvaChange(id: string, value: string) {
+    const pct: 0 | 16 = value === '16' ? 16 : 0
+    setLineasCargo((prev) => prev.map((l) => (l.id === id ? { ...l, porcentaje_iva: pct } : l)))
+  }
+
+  /** Convierte lineas de cargo a USD (mismo criterio que costo_unitario_usd de producto). Lineas con monto invalido/vacio se excluyen del preview. */
+  function convertirLineasCargoAUsd(input: LineaCargoInputUI[]): LineaCargoUI[] {
+    return input
+      .filter((l) => l.monto_input.trim() !== '' && parseFloat(l.monto_input) > 0)
+      .map((l) => {
+        const montoDisplay = parseFloat(l.monto_input)
+        const montoUsd = moneda === 'USD'
+          ? montoDisplay
+          : (tasaFacturaNum > 0 ? new Decimal(montoDisplay).dividedBy(tasaFacturaNum).toNumber() : 0)
+        return { id: l.id, concepto: l.concepto, monto: montoUsd, porcentaje_iva: l.porcentaje_iva }
+      })
   }
 
   function handleLineaChange(index: number, field: 'cantidad_input', value: string) {
@@ -1017,6 +1090,32 @@ export function CompraForm({ onClose }: CompraFormProps) {
       return
     }
 
+    // Bloquear envio mientras exista una linea de cargo incompleta (monto ausente/invalido)
+    const lineaCargoIncompleta = lineasCargo.find(
+      (l) => l.monto_input.trim() === '' || isNaN(parseFloat(l.monto_input)) || parseFloat(l.monto_input) <= 0
+    )
+    if (lineaCargoIncompleta) {
+      const nombreConcepto = lineaCargoIncompleta.concepto === 'EMPAQUE' ? 'material de empaque' : 'flete'
+      setErrors({ lineasCargo: `Completá el monto de la línea de ${nombreConcepto} o eliminala antes de procesar.` })
+      return
+    }
+
+    // Segunda barrera: validar cada linea de cargo con Zod (mismo patron que pagos)
+    const lineasCargoParam: LineaCargoUI[] = convertirLineasCargoAUsd(lineasCargo)
+    for (const l of lineasCargoParam) {
+      const parsedCargo = lineaCargoSchema.safeParse({
+        concepto: l.concepto,
+        monto: l.monto,
+        porcentaje_iva: l.porcentaje_iva,
+      })
+      if (!parsedCargo.success) {
+        const msg = parsedCargo.error.issues[0]?.message ?? 'Error en linea de cargo'
+        const nombreConcepto = l.concepto === 'EMPAQUE' ? 'Material de empaque' : 'Flete'
+        setErrors({ lineasCargo: `${nombreConcepto}: ${msg}` })
+        return
+      }
+    }
+
     // Validar que las líneas con decisión de PVP pendiente estén resueltas
     const lineasConConflictoValidacion = lineas.filter((l) =>
       lineaTieneDecisionBloqueante(lineaTieneCostoCambiado(l), l.pvp_niveles)
@@ -1155,6 +1254,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
       nro_control: headerParsed.data.nro_control,
       moneda: headerParsed.data.moneda,
       lineas: lineasValidas,
+      lineasCargo: lineasCargoParam,
       pagos: pagosParam,
       usuario_id: user.id,
       empresa_id: user.empresa_id!,
@@ -1853,6 +1953,84 @@ export function CompraForm({ onClose }: CompraFormProps) {
           )}
 
           {errors.lineas && <p className="text-destructive text-xs">{errors.lineas}</p>}
+        </div>
+
+        {/* Section: Cargos adicionales (Material de Empaque / Flete) */}
+        <div className="rounded-2xl border border-border bg-muted/20 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-foreground">Cargos adicionales</h3>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => handleAddLineaCargo('EMPAQUE')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-input bg-background text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Material de empaque
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAddLineaCargo('FLETE')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-input bg-background text-xs text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Flete
+              </button>
+            </div>
+          </div>
+
+          {lineasCargo.length === 0 ? (
+            <p className="text-xs text-muted-foreground">
+              Sin cargos adicionales. Usa los botones de arriba para agregar material de empaque o flete cobrado por el proveedor.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {lineasCargo.map((linea) => {
+                const incompleta = linea.monto_input.trim() === '' || parseFloat(linea.monto_input) <= 0
+                return (
+                  <li
+                    key={linea.id}
+                    className={`flex items-center gap-2 rounded-xl px-3 py-2 ${incompleta ? 'bg-amber-50 dark:bg-amber-950/20' : 'bg-muted/50'}`}
+                  >
+                    <span className="text-xs font-medium text-foreground w-32 shrink-0">
+                      {linea.concepto === 'EMPAQUE' ? 'Material de empaque' : 'Flete'}
+                    </span>
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={linea.monto_input}
+                        onChange={(e) => handleLineaCargoMontoChange(linea.id, e.target.value)}
+                        onKeyDown={handleNumericKeyDown}
+                        onPaste={handleNumericPaste}
+                        placeholder={`Monto (${monedaLabel})`}
+                        className={`w-full rounded border px-2 py-1 text-xs text-right focus:outline-none focus:ring-1 focus:ring-ring ${
+                          incompleta ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/20' : 'border-input bg-background'
+                        }`}
+                      />
+                    </div>
+                    <select
+                      value={linea.porcentaje_iva}
+                      onChange={(e) => handleLineaCargoIvaChange(linea.id, e.target.value)}
+                      className="rounded border border-input bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
+                    >
+                      <option value={0}>IVA 0%</option>
+                      <option value={16}>IVA 16%</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveLineaCargo(linea.id)}
+                      className="text-muted-foreground hover:text-destructive transition-colors"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+
+          {errors.lineasCargo && <p className="text-destructive text-xs">{errors.lineasCargo}</p>}
         </div>
 
         {/* Section: Pagos */}

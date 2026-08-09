@@ -8,6 +8,7 @@ import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
 import { resolverAccionesLineaCompra, resolverCostoAEscribir } from '@/features/inventario/lib/compra-precio-gating'
+import { totalizarLineasCargo, consolidarLineasCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
 
 export interface Compra {
   id: string
@@ -106,6 +107,8 @@ export interface CrearCompraParams {
   nro_control?: string
   moneda: 'USD' | 'BS'
   lineas: LineaCompra[]
+  /** Lineas de cargo no-producto (Material de Empaque / Flete). Opcional — [] = comportamiento identico al previo. */
+  lineasCargo?: LineaCargoUI[]
   pagos: PagoCompraParam[]
   usuario_id: string
   empresa_id: string
@@ -388,6 +391,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     nro_control,
     moneda,
     lineas,
+    lineasCargo = [],
     pagos,
     usuario_id,
     empresa_id,
@@ -509,6 +513,15 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         totalIvaUsd = totalIvaUsd.plus(subtotal.times(pct).dividedBy(100))
       }
     }
+
+    // 1b. Fold de lineas de cargo (Material de Empaque / Flete) en los mismos buckets
+    // fiscales que las lineas de producto — los totales de la factura (facturas_compra)
+    // ya incluyen los cargos. No altera el loop de lineas de producto de arriba.
+    const cargoTotales = totalizarLineasCargo(lineasCargo)
+    totalExentoUsd = totalExentoUsd.plus(cargoTotales.exentoUsd)
+    totalBaseUsd = totalBaseUsd.plus(cargoTotales.baseUsd)
+    totalIvaUsd = totalIvaUsd.plus(cargoTotales.ivaUsd)
+
     const totalUsd = totalExentoUsd.plus(totalBaseUsd).plus(totalIvaUsd)
     const totalBs = totalUsd.times(dTasa)
 
@@ -777,6 +790,85 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             toStorageString(pvpActual),
             toStorageString(pvpNuevoAudit),
             now,
+          ]
+        )
+      }
+    }
+
+    // 4b. Gastos consolidados por concepto (Material de Empaque / Flete).
+    // Se ejecuta DENTRO de la misma writeTransaction — PowerSync no permite tx
+    // anidada, por eso se hace INSERT crudo aqui en vez de llamar crearGasto().
+    // Mismo template que use-ajustes.ts (aplicarAjuste, rama RESTA con gasto por linea).
+    const gruposCargo = consolidarLineasCargo(lineasCargo)
+    if (gruposCargo.length > 0) {
+      const CLAVE_POR_CONCEPTO: Record<ConceptoCargo, string> = {
+        EMPAQUE: 'MATERIAL_EMPAQUE',
+        FLETE: 'FLETE_COMPRA',
+      }
+      const DESCRIPCION_POR_CONCEPTO: Record<ConceptoCargo, string> = {
+        EMPAQUE: 'Material de empaque',
+        FLETE: 'Flete',
+      }
+
+      const monedaUsdRes = await tx.execute("SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1", [])
+      const monedaUsdId = (monedaUsdRes.rows?.item(0) as { id: string } | undefined)?.id ?? ''
+
+      for (const grupo of gruposCargo) {
+        const clave = CLAVE_POR_CONCEPTO[grupo.concepto]
+        const cuentaRes = await tx.execute(
+          'SELECT cuenta_contable_id FROM cuentas_config WHERE empresa_id = ? AND clave = ? LIMIT 1',
+          [empresa_id, clave]
+        )
+        const cuentaId = (cuentaRes.rows?.item(0) as { cuenta_contable_id: string } | undefined)?.cuenta_contable_id
+        if (!cuentaId) {
+          // Fail loud: la migracion 0082 backfillea esta clave para toda empresa existente.
+          // Un null aqui significa que la migracion no fue aplicada — postear el cargo sin
+          // cuenta contable dejaria dinero en CxP sin gasto contable que lo respalde.
+          throw new Error(
+            `No hay cuenta contable configurada para "${clave}". Configure Contabilidad → Cuentas antes de registrar cargos de ${DESCRIPCION_POR_CONCEPTO[grupo.concepto].toLowerCase()}.`
+          )
+        }
+
+        const dBase = new Decimal(grupo.baseUsd)
+        const dIva = new Decimal(grupo.ivaUsd)
+        const dTotal = dBase.plus(dIva)
+        const pctEfectivo = dBase.gt(0) ? dIva.dividedBy(dBase).times(100) : new Decimal(0)
+        const tipoImpuestoCargo = dIva.gt(0) ? 'Gravable' : 'Exento'
+
+        await tx.execute(
+          `INSERT INTO gastos
+             (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
+              moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+              tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+              saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by,
+              doc_origen_id, doc_origen_tipo)
+           VALUES (?, ?, ?, ?, ?, ?, ?,
+                   ?, 'USD', 0, ?, ?, ?,
+                   ?, ?, ?, ?,
+                   '0.00', ?, 'REGISTRADO', ?, ?, ?,
+                   ?, ?)`,
+          [
+            uuidv4(),
+            empresa_id,
+            `FC-${compraId}-${grupo.concepto}`,
+            nro_factura,
+            cuentaId,
+            `${DESCRIPCION_POR_CONCEPTO[grupo.concepto]} - Factura de compra ${nro_factura}`,
+            fecha_factura,
+            monedaUsdId,
+            dTasa.toFixed(4),
+            toStorageString(dBase),
+            toStorageString(dTotal),
+            tipoImpuestoCargo,
+            pctEfectivo.toFixed(2),
+            toStorageString(dBase),
+            toStorageString(dIva),
+            `Generado automaticamente desde la factura de compra ${nro_factura}`,
+            now,
+            now,
+            usuario_id,
+            compraId,
+            'FACTURA_COMPRA',
           ]
         )
       }
