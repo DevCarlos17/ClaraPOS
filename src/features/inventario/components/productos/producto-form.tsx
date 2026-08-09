@@ -392,13 +392,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   )
   const lotes = (lotesData ?? []) as LoteRow[]
 
-  // Ultimo producto creado en el departamento seleccionado (solo modo alta)
+  // Ultimo producto creado en la empresa (solo modo alta) — ayuda al vuelo para
+  // elegir el siguiente codigo, independiente de la convencion (correlativo global
+  // o por departamento). El scope por departamento queda como mejora futura.
   const empresaId = user?.empresa_id ?? ''
   const { data: ultimoProductoData } = useQuery(
-    !isEditing && empresaId && departamentoId
-      ? 'SELECT codigo, nombre FROM productos WHERE empresa_id = ? AND departamento_id = ? ORDER BY created_at DESC LIMIT 1'
+    !isEditing && empresaId
+      ? 'SELECT codigo, nombre FROM productos WHERE empresa_id = ? ORDER BY created_at DESC LIMIT 1'
       : '',
-    !isEditing && empresaId && departamentoId ? [empresaId, departamentoId] : []
+    !isEditing && empresaId ? [empresaId] : []
   )
   const ultimoProducto = (ultimoProductoData?.[0] ?? null) as { codigo: string; nombre: string } | null
 
@@ -1129,7 +1131,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               )}
               {!isEditing && ultimoProducto && (
                 <p className="text-gray-400 text-xs mt-0.5">
-                  Último código creado en este departamento:{' '}
+                  Último código creado:{' '}
                   <strong className="text-gray-500 font-medium">{ultimoProducto.codigo}</strong>
                   {' — '}
                   {ultimoProducto.nombre}
