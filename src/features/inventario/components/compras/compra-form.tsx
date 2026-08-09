@@ -6,6 +6,7 @@ import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, C
 import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema, lineaCargoSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
 import { totalizarLineasCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
+import { convertirMontoRawEntreMonedas } from '@/features/inventario/lib/convertir-monto-moneda'
 import {
   debeMostrarInfoPvpEnResumen,
   clasificarCasoLinea,
@@ -996,6 +997,18 @@ export function CompraForm({ onClose }: CompraFormProps) {
         }
       })
     )
+
+    // Lineas de cargo (Material de Empaque / Flete): monto_input tambien esta
+    // en la moneda ACTUAL del formulario y debe reconvertirse igual que
+    // nuevo_costo_raw de producto, o de lo contrario los mismos digitos crudos
+    // quedan reinterpretados bajo la nueva moneda al procesar la compra.
+    setLineasCargo((prev) =>
+      prev.map((l) => ({
+        ...l,
+        monto_input: convertirMontoRawEntreMonedas(l.monto_input, newMoneda, tasaFacturaNum),
+      }))
+    )
+
     setMoneda(newMoneda)
   }
 

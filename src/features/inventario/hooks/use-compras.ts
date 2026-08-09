@@ -1030,6 +1030,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         compraId,
         nroFactura: nro_factura,
         totalUsd: totalUsd.toNumber(),
+        // El IVA de compra no es costo ni gasto: va a IVA_CREDITO (cuenta de
+        // credito fiscal), separado del monto que se capitaliza en INVENTARIO.
+        baseInventarioUsd: totalExentoUsd.plus(totalBaseUsd).toNumber(),
+        ivaUsd: totalIvaUsd.toNumber(),
         esContado: tipo === 'CONTADO',
         banco_empresa_id: null,
         pagos: pagosContabilidad,
