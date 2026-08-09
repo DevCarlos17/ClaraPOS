@@ -450,6 +450,76 @@ export async function generarAsientosPagoCxC(
 }
 
 /**
+ * Construye las lineas de DEBE de una compra de inventario, separando el
+ * monto BASE (exento + gravable, va a INVENTARIO) del IVA (va a IVA_CREDITO,
+ * cuenta de credito fiscal — el IVA de compra no es costo ni gasto).
+ *
+ * `baseInventarioUsd` y `ivaUsd` ya vienen plegados por el caller (incluyen
+ * tanto lineas de producto como lineas de cargo de empaque/flete, si las
+ * hay) — esta funcion solo decide a que cuenta va cada porcion.
+ *
+ * Si no existe la cuenta IVA_CREDITO configurada (`cuentas_config`), el IVA
+ * se pliega junto con la base en INVENTARIO como fallback — evita perder el
+ * monto de la partida doble en empresas que aun no aplicaron la migracion
+ * que siembra esa cuenta, en vez de fallar toda la compra.
+ */
+export function construirLineasDebitoCompra(params: {
+  baseInventarioUsd: number
+  ivaUsd: number
+  tasa: number
+  monedaContable: MonedaContable
+  cuentas: Record<string, string>
+  nroFactura: string
+}): LineaAsiento[] {
+  const { baseInventarioUsd, ivaUsd, tasa, monedaContable, cuentas, nroFactura } = params
+
+  const cuentaInventario = cuentas['INVENTARIO']
+  if (!cuentaInventario) return []
+
+  const cuentaIvaCredito = cuentas['IVA_CREDITO']
+  // El TOTAL se redondea UNA sola vez (mismo criterio que el lado HABER del
+  // asiento, que siempre redondea totalUsd de una vez). Redondear base e iva
+  // por separado y sumarlos puede diferir del total redondeado hasta 1
+  // centavo (uno redondea arriba, el otro abajo) y rompe la partida doble
+  // contra el HABER. Por eso la base se DERIVA como total - iva (remanente),
+  // nunca se redondea de forma independiente.
+  const montoTotal = montoContable(baseInventarioUsd + ivaUsd, tasa, monedaContable)
+  const montoIva = montoContable(ivaUsd, tasa, monedaContable)
+
+  if (montoIva > 0 && !cuentaIvaCredito) {
+    // Fallback: sin cuenta IVA_CREDITO configurada, todo pliega en INVENTARIO
+    // (comportamiento previo al fix, preserva el total sin perder monto).
+    return [
+      {
+        cuenta_contable_id: cuentaInventario,
+        monto: montoTotal,
+        detalle: `Compra mercancia ${nroFactura}`,
+      },
+    ]
+  }
+
+  const lineas: LineaAsiento[] = []
+  const montoBase = Number((montoTotal - montoIva).toFixed(2))
+  if (montoBase > 0) {
+    lineas.push({
+      cuenta_contable_id: cuentaInventario,
+      monto: montoBase,
+      detalle: `Compra mercancia ${nroFactura}`,
+    })
+  }
+
+  if (montoIva > 0 && cuentaIvaCredito) {
+    lineas.push({
+      cuenta_contable_id: cuentaIvaCredito,
+      monto: montoIva,
+      detalle: `IVA credito fiscal compra ${nroFactura}`,
+    })
+  }
+
+  return lineas
+}
+
+/**
  * Asientos para una compra de inventario.
  * La contabilidad siempre se genera en Bs (monedaContable='BS' por defecto).
  * Si se proveen pagos parciales/totales, se genera un HABER por cada pago;
@@ -462,6 +532,10 @@ export async function generarAsientosCompra(
     compraId: string
     nroFactura: string
     totalUsd: number
+    /** Base imponible + exenta de la factura (productos + cargos), en USD. Va a INVENTARIO. */
+    baseInventarioUsd: number
+    /** IVA total de la factura (productos + cargos), en USD. Va a IVA_CREDITO. */
+    ivaUsd: number
     esContado: boolean
     banco_empresa_id: string | null
     /** Pagos inmediatos registrados al momento de la compra */
@@ -473,24 +547,19 @@ export async function generarAsientosCompra(
   }
 ): Promise<string[]> {
   const {
-    empresaId, compraId, nroFactura, totalUsd, esContado, banco_empresa_id,
+    empresaId, compraId, nroFactura, totalUsd, baseInventarioUsd, ivaUsd, esContado, banco_empresa_id,
     pagos, cuentas, usuarioId, monedaContable = 'BS', tasa = 1,
   } = params
 
   if (totalUsd <= 0) return []
 
-  const cuentaInventario = cuentas['INVENTARIO']
-  if (!cuentaInventario) return []
+  if (!cuentas['INVENTARIO']) return []
 
   const montoTotal = montoContable(totalUsd, tasa, monedaContable)
 
-  const lineas: LineaAsiento[] = [
-    {
-      cuenta_contable_id: cuentaInventario,
-      monto: montoTotal,
-      detalle: `Compra mercancia ${nroFactura}`,
-    },
-  ]
+  const lineas: LineaAsiento[] = construirLineasDebitoCompra({
+    baseInventarioUsd, ivaUsd, tasa, monedaContable, cuentas, nroFactura,
+  })
 
   if (pagos && pagos.length > 0) {
     // Multi-pago: HABER por cada pago, HABER CxP por el restante
