@@ -481,8 +481,27 @@ export async function crearGasto(data: {
         tasa: data.tasa,
         saldoPendienteProveedorUsd: saldoPendiente.toNumber(),
       })
-    } catch {
-      // Si falla la contabilidad no bloqueamos el gasto
+    } catch (err: unknown) {
+      // Si falla la contabilidad no bloqueamos el gasto, pero registramos el
+      // fallo — antes este catch era 100% silencioso (ni siquiera un log),
+      // mismo patron de errores_contabilidad que use-compras.ts / use-ventas.ts.
+      console.warn('⚠️ contabilidad: fallo en asientos para gasto', gastoId, err)
+      try {
+        await tx.execute(
+          `INSERT INTO errores_contabilidad
+             (id, empresa_id, tabla_origen, doc_origen_id, error_msg, created_at)
+           VALUES (?, ?, 'gastos', ?, ?, ?)`,
+          [
+            uuidv4(),
+            data.empresa_id,
+            gastoId,
+            err instanceof Error ? err.message : String(err),
+            now,
+          ]
+        )
+      } catch {
+        // El log de errores_contabilidad es best-effort — nunca bloquea el gasto
+      }
     }
   })
 
