@@ -1,4 +1,11 @@
-import { construirLineasDebitoCompra, generarAsientosCompra, type LineaAsiento } from '../generar-asientos'
+import {
+  construirLineasDebitoCompra,
+  distribuirMontoConResiduo,
+  generarAsientosCompra,
+  generarAsientosGasto,
+  generarAsientosVenta,
+  type LineaAsiento,
+} from '../generar-asientos'
 
 describe('construirLineasDebitoCompra', () => {
   const cuentasCompletas = { INVENTARIO: 'cta-inventario', IVA_CREDITO: 'cta-iva-credito' }
@@ -212,5 +219,317 @@ describe('generarAsientosCompra (integracion): debitos balancean creditos', () =
 
     const suma = tx.inserted.reduce((acc, l) => acc + l.monto, 0)
     expect(suma).toBe(0)
+  })
+})
+
+describe('distribuirMontoConResiduo', () => {
+  it('repro exacto del bug: totalUsd=50, tasa=37.123, pagos=[5,45] -> las 2 partes suman EXACTO el total redondeado (1856.15), no 1856.14', () => {
+    const totalUsd = 50
+    const tasa = 37.123
+    const montoTotal = Number((totalUsd * tasa).toFixed(2))
+    expect(montoTotal).toBe(1856.15)
+
+    const partes = distribuirMontoConResiduo(montoTotal, [5, 45], tasa, 'BS')
+
+    const suma = partes.reduce((acc, v) => acc + v, 0)
+    expect(suma).toBe(1856.15)
+    // Redondeando cada parte por separado (comportamiento previo, bugueado)
+    // 5*37.123=185.615->185.62(o .61 según redondeo bancario) y 45*37.123=1670.535->1670.53/1670.54
+    // cualquiera sea el redondeo independiente, la suma derivada DEBE calzar exacto:
+    expect(partes).toHaveLength(2)
+  })
+
+  it('una sola parte: retorna el total tal cual, sin redondeo adicional', () => {
+    const montoTotal = 116
+    const partes = distribuirMontoConResiduo(montoTotal, [116], 1, 'BS')
+    expect(partes).toEqual([116])
+  })
+
+  it('cero partes: retorna array vacio', () => {
+    const partes = distribuirMontoConResiduo(0, [], 1, 'BS')
+    expect(partes).toEqual([])
+  })
+
+  it('N partes (3): las primeras N-1 se redondean normal, la ultima absorbe el residuo, suma exacta', () => {
+    const totalUsd = 100
+    const tasa = 33.333
+    const montoTotal = Number((totalUsd * tasa).toFixed(2))
+
+    const partes = distribuirMontoConResiduo(montoTotal, [10, 30, 60], tasa, 'BS')
+    const suma = partes.reduce((acc, v) => acc + v, 0)
+
+    expect(partes).toHaveLength(3)
+    expect(suma).toBe(montoTotal)
+  })
+
+  it('conversion USD (monedaContable=USD): montoContable es identidad, sigue calzando exacto', () => {
+    const montoTotal = 50
+    const partes = distribuirMontoConResiduo(montoTotal, [5, 45], 1, 'USD')
+    expect(partes).toEqual([5, 45])
+    expect(partes.reduce((acc, v) => acc + v, 0)).toBe(50)
+  })
+
+  it('caso residuo de centavo forzado: partes que individualmente redondean hacia el mismo lado igual calzan', () => {
+    // 3 partes que fuerzan redondeo hacia arriba en cada una si se hiciera independiente
+    const totalUsd = 0.03
+    const tasa = 1
+    const montoTotal = Number((totalUsd * tasa).toFixed(2)) // 0.03
+    const partes = distribuirMontoConResiduo(montoTotal, [0.011, 0.011, 0.008], tasa, 'BS')
+    const suma = partes.reduce((acc, v) => acc + v, 0)
+    expect(Number(suma.toFixed(2))).toBe(0.03)
+  })
+})
+
+describe('generarAsientosCompra multi-pago: regresion de drift de redondeo', () => {
+  function fakeTx(): { execute: (sql: string, params?: unknown[]) => Promise<{ rows?: { item: (i: number) => unknown; length: number } }>; inserted: LineaAsiento[] } {
+    const inserted: LineaAsiento[] = []
+    return {
+      inserted,
+      execute: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('COUNT(*)')) {
+          return { rows: { item: () => ({ cnt: 0 }), length: 1 } }
+        }
+        if (sql.includes('INSERT INTO libro_contable') && params) {
+          inserted.push({
+            cuenta_contable_id: params[7] as string,
+            monto: Number(params[9]),
+            detalle: params[10] as string,
+          })
+        }
+        return { rows: { item: () => undefined, length: 0 } }
+      },
+    }
+  }
+
+  it('repro: totalUsd=50, tasa=37.123, 2 pagos ($5 y $45) sin CxP -> no lanza partida doble, balancea exacto', async () => {
+    const tx = fakeTx()
+    const cuentas = { INVENTARIO: 'cta-inventario', BANCO_DEFAULT: 'cta-banco', CAJA_EFECTIVO: 'cta-caja' }
+
+    await expect(
+      generarAsientosCompra(tx, {
+        empresaId: 'e1',
+        compraId: 'c-drift',
+        nroFactura: 'F-DRIFT-PAGO',
+        totalUsd: 50,
+        baseInventarioUsd: 50,
+        ivaUsd: 0,
+        esContado: false,
+        banco_empresa_id: null,
+        pagos: [
+          { monto_usd: 5, banco_empresa_id: null },
+          { monto_usd: 45, banco_empresa_id: null },
+        ],
+        cuentas,
+        usuarioId: 'u1',
+        monedaContable: 'BS',
+        tasa: 37.123,
+      })
+    ).resolves.not.toThrow()
+
+    expect(tx.inserted).toEqual([
+      { cuenta_contable_id: 'cta-inventario', monto: 1856.15, detalle: 'Compra mercancia F-DRIFT-PAGO' },
+      { cuenta_contable_id: 'cta-caja', monto: -185.61, detalle: 'Pago compra F-DRIFT-PAGO' },
+      { cuenta_contable_id: 'cta-caja', monto: -1670.54, detalle: 'Pago compra F-DRIFT-PAGO' },
+    ])
+
+    const suma = tx.inserted.reduce((acc, l) => acc + l.monto, 0)
+    expect(suma).toBe(0)
+  })
+
+  it('multi-pago con residuo a CxP: 3 pagos + restante a credito, todo balancea exacto', async () => {
+    const tx = fakeTx()
+    const cuentas = { INVENTARIO: 'cta-inventario', BANCO_DEFAULT: 'cta-banco', CAJA_EFECTIVO: 'cta-caja', CXP_PROVEEDORES: 'cta-cxp' }
+
+    await generarAsientosCompra(tx, {
+      empresaId: 'e1',
+      compraId: 'c-residuo',
+      nroFactura: 'F-RESIDUO',
+      totalUsd: 100,
+      baseInventarioUsd: 100,
+      ivaUsd: 0,
+      esContado: false,
+      banco_empresa_id: null,
+      pagos: [
+        { monto_usd: 10, banco_empresa_id: null },
+        { monto_usd: 20, banco_empresa_id: null },
+        { monto_usd: 30, banco_empresa_id: null },
+      ],
+      cuentas,
+      usuarioId: 'u1',
+      monedaContable: 'BS',
+      tasa: 33.333,
+    })
+
+    expect(tx.inserted).toEqual([
+      { cuenta_contable_id: 'cta-inventario', monto: 3333.3, detalle: 'Compra mercancia F-RESIDUO' },
+      { cuenta_contable_id: 'cta-caja', monto: -333.33, detalle: 'Pago compra F-RESIDUO' },
+      { cuenta_contable_id: 'cta-caja', monto: -666.66, detalle: 'Pago compra F-RESIDUO' },
+      { cuenta_contable_id: 'cta-caja', monto: -999.99, detalle: 'Pago compra F-RESIDUO' },
+      { cuenta_contable_id: 'cta-cxp', monto: -1333.32, detalle: 'Credito compra F-RESIDUO' },
+    ])
+
+    // Ruido de punto flotante en la ultima cifra decimal (~1e-13), no drift
+    // de redondeo real — mismo criterio que el test de empaque/flete de
+    // construirLineasDebitoCompra (toBeCloseTo, no toBe exacto).
+    const suma = tx.inserted.reduce((acc, l) => acc + l.monto, 0)
+    expect(suma).toBeCloseTo(0, 8)
+  })
+})
+
+describe('generarAsientosGasto multi-pago: regresion de drift de redondeo', () => {
+  function fakeTx(): { execute: (sql: string, params?: unknown[]) => Promise<{ rows?: { item: (i: number) => unknown; length: number } }>; inserted: LineaAsiento[] } {
+    const inserted: LineaAsiento[] = []
+    return {
+      inserted,
+      execute: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('COUNT(*)')) {
+          return { rows: { item: () => ({ cnt: 0 }), length: 1 } }
+        }
+        if (sql.includes('INSERT INTO libro_contable') && params) {
+          inserted.push({
+            cuenta_contable_id: params[7] as string,
+            monto: Number(params[9]),
+            detalle: params[10] as string,
+          })
+        }
+        return { rows: { item: () => undefined, length: 0 } }
+      },
+    }
+  }
+
+  it('gasto totalmente pagado con 2 pagos y tasa que fuerza drift de redondeo: balancea exacto', async () => {
+    const tx = fakeTx()
+    const cuentas = { GASTO_GENERICO: 'cta-gasto', BANCO_DEFAULT: 'cta-banco', CAJA_EFECTIVO: 'cta-caja' }
+
+    await expect(
+      generarAsientosGasto(tx, {
+        empresaId: 'e1',
+        gastoId: 'g-drift',
+        nroGasto: 'G-DRIFT',
+        cuentaGastoId: cuentas['GASTO_GENERICO'],
+        monto_usd: 50,
+        pagos: [
+          { monto_usd: 5, banco_empresa_id: null },
+          { monto_usd: 45, banco_empresa_id: null },
+        ],
+        cuentas,
+        usuarioId: 'u1',
+        monedaContable: 'BS',
+        tasa: 37.123,
+        saldoPendienteProveedorUsd: 0,
+      })
+    ).resolves.not.toThrow()
+
+    expect(tx.inserted).toEqual([
+      { cuenta_contable_id: 'cta-gasto', monto: 1856.15, detalle: 'Gasto G-DRIFT' },
+      { cuenta_contable_id: 'cta-caja', monto: -185.61, detalle: 'Pago gasto G-DRIFT' },
+      { cuenta_contable_id: 'cta-caja', monto: -1670.54, detalle: 'Pago gasto G-DRIFT' },
+    ])
+
+    const suma = tx.inserted.reduce((acc, l) => acc + l.monto, 0)
+    expect(suma).toBe(0)
+  })
+})
+
+describe('generarAsientosVenta: regresion de drift de redondeo (multi-pago y split productos/servicios)', () => {
+  function fakeTx(): { execute: (sql: string, params?: unknown[]) => Promise<{ rows?: { item: (i: number) => unknown; length: number } }>; inserted: LineaAsiento[] } {
+    const inserted: LineaAsiento[] = []
+    return {
+      inserted,
+      execute: async (sql: string, params?: unknown[]) => {
+        if (sql.includes('COUNT(*)')) {
+          return { rows: { item: () => ({ cnt: 0 }), length: 1 } }
+        }
+        if (sql.includes('INSERT INTO libro_contable') && params) {
+          inserted.push({
+            cuenta_contable_id: params[7] as string,
+            monto: Number(params[9]),
+            detalle: params[10] as string,
+          })
+        }
+        return { rows: { item: () => undefined, length: 0 } }
+      },
+    }
+  }
+
+  it('venta con 2 pagos de contado + productos/servicios split, tasa que fuerza drift: balancea exacto', async () => {
+    const tx = fakeTx()
+    const cuentas = {
+      CAJA_EFECTIVO: 'cta-caja',
+      BANCO_DEFAULT: 'cta-banco',
+      CXC_CLIENTES: 'cta-cxc',
+      INGRESO_VENTA_PRODUCTO: 'cta-ingreso-prod',
+      INGRESO_VENTA_SERVICIO: 'cta-ingreso-serv',
+    }
+
+    await expect(
+      generarAsientosVenta(tx, {
+        empresaId: 'e1',
+        ventaId: 'v-drift',
+        nroFactura: 'V-DRIFT',
+        pagosContado: [
+          { monto_usd: 5, banco_empresa_id: null },
+          { monto_usd: 45, banco_empresa_id: null },
+        ],
+        montoCredito: 0,
+        montoProductos: 30,
+        montoServicios: 20,
+        cuentas,
+        usuarioId: 'u1',
+        monedaContable: 'BS',
+        tasa: 37.123,
+      })
+    ).resolves.not.toThrow()
+
+    expect(tx.inserted).toEqual([
+      { cuenta_contable_id: 'cta-caja', monto: 185.61, detalle: 'Cobro venta V-DRIFT' },
+      { cuenta_contable_id: 'cta-caja', monto: 1670.54, detalle: 'Cobro venta V-DRIFT' },
+      { cuenta_contable_id: 'cta-ingreso-prod', monto: -1113.69, detalle: 'Ingreso productos V-DRIFT' },
+      { cuenta_contable_id: 'cta-ingreso-serv', monto: -742.46, detalle: 'Ingreso servicios V-DRIFT' },
+    ])
+
+    const suma = tx.inserted.reduce((acc, l) => acc + l.monto, 0)
+    expect(suma).toBe(0)
+  })
+
+  it('venta con credito parcial: pagos de contado + CxC, balancea exacto', async () => {
+    const tx = fakeTx()
+    const cuentas = {
+      CAJA_EFECTIVO: 'cta-caja',
+      BANCO_DEFAULT: 'cta-banco',
+      CXC_CLIENTES: 'cta-cxc',
+      INGRESO_VENTA_PRODUCTO: 'cta-ingreso-prod',
+      INGRESO_VENTA_SERVICIO: 'cta-ingreso-serv',
+    }
+
+    await generarAsientosVenta(tx, {
+      empresaId: 'e1',
+      ventaId: 'v-credito',
+      nroFactura: 'V-CREDITO',
+      pagosContado: [
+        { monto_usd: 10, banco_empresa_id: null },
+        { monto_usd: 20, banco_empresa_id: null },
+      ],
+      montoCredito: 20,
+      montoProductos: 33.333,
+      montoServicios: 16.667,
+      cuentas,
+      usuarioId: 'u1',
+      monedaContable: 'BS',
+      tasa: 33.333,
+    })
+
+    expect(tx.inserted).toEqual([
+      { cuenta_contable_id: 'cta-caja', monto: 333.33, detalle: 'Cobro venta V-CREDITO' },
+      { cuenta_contable_id: 'cta-caja', monto: 666.66, detalle: 'Cobro venta V-CREDITO' },
+      { cuenta_contable_id: 'cta-cxc', monto: 666.66, detalle: 'Credito venta V-CREDITO' },
+      { cuenta_contable_id: 'cta-ingreso-prod', monto: -1111.09, detalle: 'Ingreso productos V-CREDITO' },
+      { cuenta_contable_id: 'cta-ingreso-serv', monto: -555.56, detalle: 'Ingreso servicios V-CREDITO' },
+    ])
+
+    // Ruido de punto flotante en la ultima cifra decimal (~1e-13), no drift
+    // de redondeo real — ver nota arriba.
+    const suma = tx.inserted.reduce((acc, l) => acc + l.monto, 0)
+    expect(suma).toBeCloseTo(0, 8)
   })
 })
