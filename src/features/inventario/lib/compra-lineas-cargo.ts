@@ -87,6 +87,48 @@ export function totalizarLineasCargo(lineas: LineaCargoUI[]): TotalLineasCargo {
  *
  * Solo los conceptos con >=1 linea aparecen en el resultado.
  */
+/** Desglose fiscal en USD del formulario de compra (`compra-form.tsx`), agrupado por alicuota. */
+export interface DesgloseFiscalUsd {
+  exentoUsd: number
+  gravableGroups: { pct: number; base: number; iva: number }[]
+  totalIvaUsd: number
+}
+
+/**
+ * Mezcla el total de lineas de cargo (empaque/flete) dentro del desglose fiscal
+ * de productos, para que el resumen en pantalla reconcilie con el total general
+ * (que ya incluye los cargos). Ver openspec/changes/gastos-base-iva-costo/design.md.
+ *
+ * - `cargo.exentoUsd` se suma directo a `exentoUsd`.
+ * - `cargo.baseUsd`/`ivaUsd` (siempre a 16%, unica alicuota gravable de cargos)
+ *   se suman al grupo 16% existente, o crean uno nuevo si no hay ninguno.
+ * - `totalIvaUsd` se recalcula como la suma de IVA de todos los grupos gravables.
+ */
+export function mergeDesgloseConCargo(
+  desglose: DesgloseFiscalUsd,
+  cargo: TotalLineasCargo
+): DesgloseFiscalUsd {
+  const exentoUsd = new Decimal(desglose.exentoUsd).plus(cargo.exentoUsd).toNumber()
+
+  const gravableGroups = desglose.gravableGroups.map((g) => ({ ...g }))
+  if (cargo.baseUsd > 0 || cargo.ivaUsd > 0) {
+    const existing = gravableGroups.find((g) => g.pct === 16)
+    if (existing) {
+      existing.base = new Decimal(existing.base).plus(cargo.baseUsd).toNumber()
+      existing.iva = new Decimal(existing.iva).plus(cargo.ivaUsd).toNumber()
+    } else {
+      gravableGroups.push({ pct: 16, base: cargo.baseUsd, iva: cargo.ivaUsd })
+    }
+  }
+
+  const totalIvaUsd = gravableGroups.reduce(
+    (sum, g) => new Decimal(sum).plus(g.iva).toNumber(),
+    0
+  )
+
+  return { exentoUsd, gravableGroups, totalIvaUsd }
+}
+
 export function consolidarLineasCargo(lineas: LineaCargoUI[]): ConsolidadoLineaCargo[] {
   const grupos = new Map<ConceptoCargo, { base: Decimal; iva: Decimal }>()
 
