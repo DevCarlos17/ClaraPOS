@@ -5,6 +5,7 @@ import type { Gasto } from '@/features/contabilidad/hooks/use-gastos'
 import { formatDate } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { montoCostoGasto, montoIvaGasto, montoTotalGasto } from '@/features/contabilidad/lib/gasto-montos'
 
 // ─── Tipos ────────────────────────────────────────────────────
 
@@ -44,17 +45,20 @@ interface ReportePorCuentaProps {
 function ReportePorCuenta({ gastos, tasaValor }: ReportePorCuentaProps) {
   const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
 
-  // Agrupar por cuenta
+  // Agrupar por cuenta — costo (base imponible), IVA y total (base+IVA) separados
   const porCuenta = registrados.reduce<
-    Record<string, { nombre: string; totalUsd: number; totalBs: number; cantidad: number }>
+    Record<string, { nombre: string; costoUsd: number; ivaUsd: number; totalUsd: number; totalBs: number; cantidad: number }>
   >((acc, g) => {
     const key = g.cuenta_id
     const nombre = g.cuenta_nombre ?? 'Sin cuenta'
     if (!acc[key]) {
-      acc[key] = { nombre, totalUsd: 0, totalBs: 0, cantidad: 0 }
+      acc[key] = { nombre, costoUsd: 0, ivaUsd: 0, totalUsd: 0, totalBs: 0, cantidad: 0 }
     }
-    acc[key].totalUsd += parseFloat(g.monto_usd) || 0
-    acc[key].totalBs += parseFloat(g.monto_usd) * tasaValor || 0
+    const totalUsd = montoTotalGasto(g)
+    acc[key].costoUsd += montoCostoGasto(g)
+    acc[key].ivaUsd += montoIvaGasto(g)
+    acc[key].totalUsd += totalUsd
+    acc[key].totalBs += totalUsd * tasaValor || 0
     acc[key].cantidad += 1
     return acc
   }, {})
@@ -63,6 +67,8 @@ function ReportePorCuenta({ gastos, tasaValor }: ReportePorCuentaProps) {
     a[1].nombre.localeCompare(b[1].nombre)
   )
 
+  const grandCostoUsd = filas.reduce((sum, [, v]) => sum + v.costoUsd, 0)
+  const grandIvaUsd = filas.reduce((sum, [, v]) => sum + v.ivaUsd, 0)
   const grandTotalUsd = filas.reduce((sum, [, v]) => sum + v.totalUsd, 0)
   const grandTotalBs = filas.reduce((sum, [, v]) => sum + v.totalBs, 0)
   const grandCantidad = filas.reduce((sum, [, v]) => sum + v.cantidad, 0)
@@ -81,6 +87,8 @@ function ReportePorCuenta({ gastos, tasaValor }: ReportePorCuentaProps) {
         <thead>
           <tr className="border-b border-border bg-muted/50">
             <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+            <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Costo USD</th>
+            <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">IVA USD</th>
             <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Total USD</th>
             <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Total Bs</th>
             <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cantidad</th>
@@ -91,6 +99,12 @@ function ReportePorCuenta({ gastos, tasaValor }: ReportePorCuentaProps) {
             <tr key={id} className="border-b border-border hover:bg-muted/30 transition-colors">
               <td className="px-4 py-3 text-foreground">{v.nombre}</td>
               <td className="px-4 py-3 text-right tabular-nums font-medium text-foreground">
+                {formatUsd(v.costoUsd)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
+                {formatUsd(v.ivaUsd)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
                 {formatUsd(v.totalUsd)}
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
@@ -105,6 +119,12 @@ function ReportePorCuenta({ gastos, tasaValor }: ReportePorCuentaProps) {
         <tfoot>
           <tr className="border-t-2 border-border bg-muted/50 font-semibold">
             <td className="px-4 py-3 text-foreground">Total General</td>
+            <td className="px-4 py-3 text-right tabular-nums text-foreground">
+              {formatUsd(grandCostoUsd)}
+            </td>
+            <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">
+              {formatUsd(grandIvaUsd)}
+            </td>
             <td className="px-4 py-3 text-right tabular-nums text-foreground">
               {formatUsd(grandTotalUsd)}
             </td>
@@ -147,8 +167,10 @@ function TablaDetallada({ gastos, tasaValor }: TablaDetalladaProps) {
             <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
             <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
             <th className="text-left px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Descripcion</th>
-            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto USD</th>
-            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto Bs</th>
+            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Costo USD</th>
+            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">IVA USD</th>
+            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Total USD</th>
+            <th className="text-right px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Total Bs</th>
             <th className="text-center px-3 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
           </tr>
         </thead>
@@ -168,10 +190,16 @@ function TablaDetallada({ gastos, tasaValor }: TablaDetalladaProps) {
                 {g.descripcion}
               </td>
               <td className="px-3 py-2 text-right tabular-nums font-medium text-foreground">
-                {formatUsd(g.monto_usd)}
+                {formatUsd(montoCostoGasto(g))}
               </td>
               <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
-                {formatBs(parseFloat(g.monto_usd) * tasaValor)}
+                {formatUsd(montoIvaGasto(g))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                {formatUsd(montoTotalGasto(g))}
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums text-muted-foreground">
+                {formatBs(montoTotalGasto(g) * tasaValor)}
               </td>
               <td className="px-3 py-2 text-center">
                 <span

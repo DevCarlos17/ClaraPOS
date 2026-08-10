@@ -14,6 +14,7 @@ import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { todayStr, startOfMonth, daysAgo, localNow } from '@/lib/dates'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate, formatDateTime } from '@/lib/format'
+import { montoCostoGasto, montoIvaGasto, montoTotalGasto } from '@/features/contabilidad/lib/gasto-montos'
 import { GastoForm } from './gasto-form'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
@@ -184,7 +185,7 @@ export function GastosDashboard() {
     const bucket: Record<string, number> = {}
     for (const g of gastosFiltrados) {
       const key = getXKey(g.fecha, intervalo)
-      bucket[key] = (bucket[key] ?? 0) + (parseFloat(g.monto_usd) || 0)
+      bucket[key] = (bucket[key] ?? 0) + montoCostoGasto(g)
     }
     return Object.entries(bucket)
       .sort(([a], [b]) => a.localeCompare(b))
@@ -202,7 +203,7 @@ export function GastosDashboard() {
         const ids = new Set(grupo.subcuentas.map((s) => s.id))
         const total = gastosFiltrados
           .filter((g) => ids.has(g.cuenta_id))
-          .reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+          .reduce((s, g) => s + montoCostoGasto(g), 0)
         return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, total }
       }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total)
     }
@@ -211,7 +212,7 @@ export function GastosDashboard() {
       return (grupo?.subcuentas ?? []).map((sub) => {
         const total = gastosFiltrados
           .filter((g) => g.cuenta_id === sub.id)
-          .reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+          .reduce((s, g) => s + montoCostoGasto(g), 0)
         return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, total }
       }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total)
     }
@@ -219,7 +220,7 @@ export function GastosDashboard() {
       const allSubs = grupos.flatMap((g) => g.subcuentas)
       const sub = allSubs.find((s) => s.id === cuentaId)
       if (!sub) return []
-      const total = gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+      const total = gastosFiltrados.reduce((s, g) => s + montoCostoGasto(g), 0)
       return [{ id: sub.id, nombre: sub.nombre, codigo: sub.codigo, total }]
     }
     return []
@@ -231,9 +232,17 @@ export function GastosDashboard() {
     [grupos]
   )
 
-  // ── Estadísticas del panel lateral ───────────────────────────
+  // ── Estadísticas del panel lateral (costo = base imponible, sin IVA) ─────
   const totalPeriodo = useMemo(
-    () => gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0),
+    () => gastosFiltrados.reduce((s, g) => s + montoCostoGasto(g), 0),
+    [gastosFiltrados]
+  )
+  const ivaPeriodo = useMemo(
+    () => gastosFiltrados.reduce((s, g) => s + montoIvaGasto(g), 0),
+    [gastosFiltrados]
+  )
+  const totalGeneralPeriodo = useMemo(
+    () => gastosFiltrados.reduce((s, g) => s + montoTotalGasto(g), 0),
     [gastosFiltrados]
   )
 
@@ -282,7 +291,7 @@ export function GastosDashboard() {
 
     const periodoLabel = `${queryDesde}  →  ${queryHasta}`
 
-    const totalGeneral = gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+    const totalGeneral = gastosFiltrados.reduce((s, g) => s + montoCostoGasto(g), 0)
 
     // Construir filas de la tabla según criterio
     let tableRows = ''
@@ -292,15 +301,15 @@ export function GastosDashboard() {
         const ids = new Set(grupo.subcuentas.map((s) => s.id))
         const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
         if (rowsGrupo.length === 0) continue
-        const subtotalGrupo = rowsGrupo.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        const subtotalGrupo = rowsGrupo.reduce((s, g) => s + montoCostoGasto(g), 0)
         tableRows += `<tr class="grupo-row"><td colspan="4">${grupo.codigo} — ${grupo.nombre}</td><td class="text-right">${formatUsd(subtotalGrupo)}</td></tr>`
         for (const sub of grupo.subcuentas) {
           const rowsCuenta = rowsGrupo.filter((g) => g.cuenta_id === sub.id).sort((a, b) => a.fecha.localeCompare(b.fecha))
           if (rowsCuenta.length === 0) continue
-          const subtotalCuenta = rowsCuenta.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+          const subtotalCuenta = rowsCuenta.reduce((s, g) => s + montoCostoGasto(g), 0)
           tableRows += `<tr class="cuenta-row"><td colspan="4">${sub.codigo} — ${sub.nombre}</td><td class="text-right">${formatUsd(subtotalCuenta)}</td></tr>`
           for (const g of rowsCuenta) {
-            tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(parseFloat(g.monto_usd))}</td></tr>`
+            tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(montoCostoGasto(g))}</td></tr>`
           }
         }
       }
@@ -310,16 +319,16 @@ export function GastosDashboard() {
       for (const sub of subcuentas) {
         const rows = gastosFiltrados.filter((g) => g.cuenta_id === sub.id).sort((a, b) => a.fecha.localeCompare(b.fecha))
         if (rows.length === 0) continue
-        const subtotal = rows.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        const subtotal = rows.reduce((s, g) => s + montoCostoGasto(g), 0)
         tableRows += `<tr class="cuenta-row"><td colspan="4">${sub.codigo} — ${sub.nombre}</td><td class="text-right">${formatUsd(subtotal)}</td></tr>`
         for (const g of rows) {
-          tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(parseFloat(g.monto_usd))}</td></tr>`
+          tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(montoCostoGasto(g))}</td></tr>`
         }
       }
     } else {
       const rows = gastosFiltrados.sort((a, b) => a.fecha.localeCompare(b.fecha))
       for (const g of rows) {
-        tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(parseFloat(g.monto_usd))}</td></tr>`
+        tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(montoCostoGasto(g))}</td></tr>`
       }
     }
 
@@ -342,7 +351,7 @@ export function GastosDashboard() {
             <th>Fecha</th>
             <th>Factura</th>
             <th>Descripcion</th>
-            <th class="text-right">Monto USD</th>
+            <th class="text-right">Base USD</th>
           </tr>
         </thead>
         <tbody>
@@ -371,7 +380,7 @@ export function GastosDashboard() {
           .filter((g) => g.cuenta_id === sub.id)
           .sort((a, b) => a.fecha.localeCompare(b.fecha))
         if (rowsCuenta.length === 0) return []
-        const subtotalCuenta = rowsCuenta.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+        const subtotalCuenta = rowsCuenta.reduce((s, g) => s + montoCostoGasto(g), 0)
         const cuentaExpanded = expandedCuentas.has(sub.id)
         const cuentaPaddingLeft = 16 + (depth + 1) * 24
         return [
@@ -402,7 +411,7 @@ export function GastosDashboard() {
     const ids = new Set(grupo.subcuentas.map((s) => s.id))
     const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
     if (rowsGrupo.length === 0) return []
-    const subtotalGrupo = rowsGrupo.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0)
+    const subtotalGrupo = rowsGrupo.reduce((s, g) => s + montoCostoGasto(g), 0)
     const grupoCollapsed = collapsedGroups.has(grupo.id)
     const paddingLeft = 16 + depth * 24
 
@@ -626,9 +635,12 @@ export function GastosDashboard() {
             {/* Total + promedio */}
             <div className="grid grid-cols-2 divide-x divide-border border-b border-border shrink-0">
               <div className="px-4 py-3">
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Total periodo</p>
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Costo periodo</p>
                 <p className="text-lg font-bold tabular-nums text-foreground">{formatUsd(totalPeriodo)}</p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">{formatBs(totalPeriodo * (gastosFiltrados[0] ? parseFloat(gastosFiltrados[0].tasa) : 1))}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
+                </p>
               </div>
               <div className="px-4 py-3">
                 <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-0.5">
@@ -749,7 +761,7 @@ export function GastosDashboard() {
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Costo</th>
                     <th className="text-center px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
                   </tr>
                 </thead>
@@ -772,9 +784,14 @@ export function GastosDashboard() {
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-border bg-muted/30">
-                    <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total periodo</td>
-                    <td className="px-4 py-2.5 text-right text-sm font-bold tabular-nums">
-                      {formatUsd(gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0))}
+                    <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
+                      Total periodo (costo · IVA · total)
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      <div className="text-sm font-bold">{formatUsd(totalPeriodo)}</div>
+                      <div className="text-[10px] font-normal text-muted-foreground">
+                        IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
+                      </div>
                     </td>
                     <td />
                   </tr>
@@ -842,7 +859,7 @@ export function GastosDashboard() {
                       <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Factura</th>
                       <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
                       <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Observaciones</th>
-                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto</th>
+                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Costo</th>
                       <th className="text-center px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
                     </tr>
                   </thead>
@@ -851,7 +868,7 @@ export function GastosDashboard() {
                       .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.created_at.localeCompare(a.created_at))
                       .map((g) => {
                         const anulado = g.status === 'ANULADO'
-                        const montoUsd = parseFloat(g.monto_usd)
+                        const montoUsd = montoCostoGasto(g)
                         const tasaGasto = parseFloat(g.tasa) || 1
                         const montoBs = montoUsd * tasaGasto
                         return (
@@ -877,9 +894,14 @@ export function GastosDashboard() {
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-border bg-muted/30">
-                      <td colSpan={6} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total</td>
-                      <td className="px-4 py-2.5 text-right text-sm font-bold tabular-nums">
-                        {formatUsd(gastosFiltrados.reduce((s, g) => s + (parseFloat(g.monto_usd) || 0), 0))}
+                      <td colSpan={6} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
+                        Total (costo · IVA · total)
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">
+                        <div className="text-sm font-bold">{formatUsd(totalPeriodo)}</div>
+                        <div className="text-[10px] font-normal text-muted-foreground">
+                          IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
+                        </div>
                       </td>
                       <td />
                     </tr>
@@ -912,11 +934,12 @@ type GastoConJoins = {
   id: string; nro_gasto: string; nro_factura: string | null; cuenta_nombre: string
   proveedor_nombre: string | null; fecha: string; monto_usd: string; tasa: string; status: string
   created_by_nombre?: string | null
+  base_imponible_usd: string; monto_iva_usd: string
 }
 
 function GastoRow({ g, onClick, indent = false }: { g: GastoConJoins; onClick: () => void; indent?: boolean }) {
   const anulado = g.status === 'ANULADO'
-  const montoUsd = parseFloat(g.monto_usd)
+  const montoUsd = montoCostoGasto(g)
   const tasaGasto = parseFloat(g.tasa) || 1
   const montoBs = montoUsd * tasaGasto
   return (
