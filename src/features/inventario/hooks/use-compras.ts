@@ -16,6 +16,8 @@ export interface Compra {
   nro_factura: string
   nro_control: string | null
   tasa: string
+  total_base_usd: string
+  total_iva_usd: string
   total_usd: string
   total_bs: string
   saldo_pend_usd: string

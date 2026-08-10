@@ -5,7 +5,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { ArrowLeft, Plus, Trash, MagnifyingGlass, Money, Package, UserPlus, X, CheckCircle, ArrowCounterClockwise, CashRegister, Vault } from '@phosphor-icons/react'
 import { compraHeaderSchema, lineaCompraSchema, pagoCompraSchema, lineaCargoSchema } from '@/features/inventario/schemas/compra-schema'
 import { crearCompra, type PagoCompraParam, type CrearCompraParams } from '@/features/inventario/hooks/use-compras'
-import { totalizarLineasCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
+import { totalizarLineasCargo, mergeDesgloseConCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
 import { convertirMontoRawEntreMonedas } from '@/features/inventario/lib/convertir-monto-moneda'
 import {
   debeMostrarInfoPvpEnResumen,
@@ -476,7 +476,7 @@ export function CompraForm({ onClose }: CompraFormProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineas, moneda, tasaFacturaNum])
 
-  const { exentoUsd, gravableGroups, totalIvaUsd } = desgloseUsd
+  const { totalIvaUsd } = desgloseUsd
 
   // IVA en moneda de visualizacion: cuando moneda=BS se calcula directo en Bs para evitar
   // doble conversion (Bs->USD->redondeo->Bs) que genera perdida de precision
@@ -499,6 +499,16 @@ export function CompraForm({ onClose }: CompraFormProps) {
   )
   const cargoTotales = useMemo(() => totalizarLineasCargo(lineasCargoUsd), [lineasCargoUsd])
   const totalCargoUsd = new Decimal(cargoTotales.exentoUsd).plus(cargoTotales.baseUsd).plus(cargoTotales.ivaUsd)
+
+  // Desglose fiscal para PANTALLA (resumen antes de confirmar): incluye el aporte
+  // de los cargos (empaque/flete) para que reconcilie con el Total mostrado, que
+  // ya los incluye. NO se usa para el calculo financiero de totalUsd/totalBs de
+  // arriba (ese ya suma totalCargoUsd por separado) — usar el merge ahi tambien
+  // duplicaria el IVA de cargo.
+  const desgloseConCargo = useMemo(
+    () => mergeDesgloseConCargo(desgloseUsd, cargoTotales),
+    [desgloseUsd, cargoTotales]
+  )
 
   // totalUsd: siempre a tasa del proveedor (para CxP), incluye IVA + cargos (empaque/flete)
   const totalUsd = (moneda === 'USD'
@@ -2265,19 +2275,19 @@ export function CompraForm({ onClose }: CompraFormProps) {
               </div>
             )}
 
-            {/* Desglose fiscal por alicuota de IVA */}
-            {totalIvaUsd > 0.001 && (
+            {/* Desglose fiscal por alicuota de IVA (incluye cargos de empaque/flete) */}
+            {desgloseConCargo.totalIvaUsd > 0.001 && (
               <div className="mt-3 pt-3 border-t border-border space-y-1 text-xs text-muted-foreground">
-                {exentoUsd > 0.001 && (
+                {desgloseConCargo.exentoUsd > 0.001 && (
                   <div className="flex justify-between">
                     <span>Base exenta:</span>
                     <div className="text-right tabular-nums">
-                      <div>{formatUsd(exentoUsd)}</div>
-                      <div className="text-muted-foreground/60">{formatBs(exentoUsd * tasaFacturaNum)}</div>
+                      <div>{formatUsd(desgloseConCargo.exentoUsd)}</div>
+                      <div className="text-muted-foreground/60">{formatBs(desgloseConCargo.exentoUsd * tasaFacturaNum)}</div>
                     </div>
                   </div>
                 )}
-                {gravableGroups.map((g) => (
+                {desgloseConCargo.gravableGroups.map((g) => (
                   <React.Fragment key={g.pct}>
                     <div className="flex justify-between">
                       <span>Base imponible ({g.pct}%):</span>
@@ -2295,12 +2305,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     </div>
                   </React.Fragment>
                 ))}
-                {gravableGroups.length > 1 && (
+                {desgloseConCargo.gravableGroups.length > 1 && (
                   <div className="flex justify-between font-semibold text-amber-700 dark:text-amber-400 border-t border-border pt-1 mt-1">
                     <span>Total IVA:</span>
                     <div className="text-right tabular-nums">
-                      <div>+ {formatUsd(totalIvaUsd)}</div>
-                      <div className="font-normal text-amber-600/70">+ {formatBs(totalIvaUsd * tasaFacturaNum)}</div>
+                      <div>+ {formatUsd(desgloseConCargo.totalIvaUsd)}</div>
+                      <div className="font-normal text-amber-600/70">+ {formatBs(desgloseConCargo.totalIvaUsd * tasaFacturaNum)}</div>
                     </div>
                   </div>
                 )}

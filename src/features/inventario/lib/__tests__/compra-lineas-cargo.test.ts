@@ -1,7 +1,9 @@
 import {
   totalizarLineasCargo,
   consolidarLineasCargo,
+  mergeDesgloseConCargo,
   type LineaCargoUI,
+  type DesgloseFiscalUsd,
 } from '../compra-lineas-cargo'
 
 function linea(overrides: Partial<LineaCargoUI> = {}): LineaCargoUI {
@@ -105,5 +107,60 @@ describe('consolidarLineasCargo', () => {
     ])
     // suma de los 3 tercios == 100 exacto (Decimal.js: no drift en la suma)
     expect(result[0]!.baseUsd).toBeCloseTo(100, 8)
+  })
+})
+
+describe('mergeDesgloseConCargo', () => {
+  function desglose(overrides: Partial<DesgloseFiscalUsd> = {}): DesgloseFiscalUsd {
+    return {
+      exentoUsd: 0,
+      gravableGroups: [],
+      totalIvaUsd: 0,
+      ...overrides,
+    }
+  }
+
+  it('cargo vacio (todo en cero): desglose queda sin cambios (caso de referencia)', () => {
+    const original = desglose({ exentoUsd: 50, gravableGroups: [{ pct: 16, base: 100, iva: 16 }], totalIvaUsd: 16 })
+    const result = mergeDesgloseConCargo(original, { exentoUsd: 0, baseUsd: 0, ivaUsd: 0 })
+    expect(result).toEqual(original)
+  })
+
+  it('cargo 0% (exento): se suma a exentoUsd, gravableGroups sin cambios', () => {
+    const original = desglose({ exentoUsd: 50, gravableGroups: [{ pct: 16, base: 100, iva: 16 }], totalIvaUsd: 16 })
+    const result = mergeDesgloseConCargo(original, { exentoUsd: 10, baseUsd: 0, ivaUsd: 0 })
+    expect(result.exentoUsd).toBe(60)
+    expect(result.gravableGroups).toEqual([{ pct: 16, base: 100, iva: 16 }])
+    expect(result.totalIvaUsd).toBe(16)
+  })
+
+  it('cargo 16% con grupo 16% ya existente: se suma dentro del mismo grupo', () => {
+    const original = desglose({ exentoUsd: 0, gravableGroups: [{ pct: 16, base: 100, iva: 16 }], totalIvaUsd: 16 })
+    const result = mergeDesgloseConCargo(original, { exentoUsd: 0, baseUsd: 30, ivaUsd: 4.8 })
+    expect(result.gravableGroups).toEqual([{ pct: 16, base: 130, iva: 20.8 }])
+    expect(result.totalIvaUsd).toBe(20.8)
+  })
+
+  it('cargo 16% sin grupo 16% previo: crea el grupo nuevo', () => {
+    const original = desglose({ exentoUsd: 20, gravableGroups: [], totalIvaUsd: 0 })
+    const result = mergeDesgloseConCargo(original, { exentoUsd: 0, baseUsd: 30, ivaUsd: 4.8 })
+    expect(result.gravableGroups).toEqual([{ pct: 16, base: 30, iva: 4.8 }])
+    expect(result.totalIvaUsd).toBe(4.8)
+    expect(result.exentoUsd).toBe(20)
+  })
+
+  it('cargo mixto (exento + 16%) contra desglose con otras alicuotas: preserva grupos no afectados', () => {
+    const original = desglose({
+      exentoUsd: 5,
+      gravableGroups: [{ pct: 8, base: 50, iva: 4 }, { pct: 16, base: 100, iva: 16 }],
+      totalIvaUsd: 20,
+    })
+    const result = mergeDesgloseConCargo(original, { exentoUsd: 10, baseUsd: 20, ivaUsd: 3.2 })
+    expect(result.exentoUsd).toBe(15)
+    expect(result.gravableGroups).toEqual([
+      { pct: 8, base: 50, iva: 4 },
+      { pct: 16, base: 120, iva: 19.2 },
+    ])
+    expect(result.totalIvaUsd).toBe(23.2)
   })
 })
