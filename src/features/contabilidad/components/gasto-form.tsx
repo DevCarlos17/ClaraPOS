@@ -209,11 +209,11 @@ function ResumenConfirm({
             <>
               <div className="flex justify-between font-medium">
                 <span>Total USD:</span>
-                <span>{formatUsd(montoFactura)}</span>
+                <span>{formatUsd(totalFactura)}</span>
               </div>
               <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
                 <span>Equivalente Bs (tasa proveedor):</span>
-                <span>{formatBs(montoFactura * tasaProveedor)}</span>
+                <span>{formatBs(totalFactura * tasaProveedor)}</span>
               </div>
               <div className="flex justify-between text-muted-foreground/70 text-xs mt-0.5">
                 <span>Total Contable USD:</span>
@@ -224,7 +224,7 @@ function ResumenConfirm({
             <>
               <div className="flex justify-between font-medium">
                 <span>Total Bs:</span>
-                <span>{formatBs(montoFactura)}</span>
+                <span>{formatBs(totalFactura)}</span>
               </div>
               <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
                 <span>Total USD (tasa proveedor):</span>
@@ -239,7 +239,7 @@ function ResumenConfirm({
             <>
               <div className="flex justify-between font-medium">
                 <span>Total Factura:</span>
-                <span>{montoFactura.toFixed(2)} {monedaFactura}</span>
+                <span>{totalFactura.toFixed(2)} {monedaFactura}</span>
               </div>
               <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
                 <span>Total Contable USD:</span>
