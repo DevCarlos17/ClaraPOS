@@ -3,6 +3,15 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { applyImpuesto, formatBs, formatUsd, usdToBs, type DecimalInput } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
+import {
+  agruparPagosPorMetodo,
+  construirCierreRecibo,
+  wrapCanvasText,
+  type ReciboPagoInput,
+  type ReciboPagoLinea,
+  type ReciboCierre,
+  type ReciboDiscrepancyInput,
+} from './recibo-pagos'
 
 // =============================================
 // TYPES
@@ -53,6 +62,8 @@ export interface ReciboData {
   cliente: ReciboCliente
   lineas: ReciboLinea[]
   totales: ReciboTotales
+  pagos: ReciboPagoLinea[]
+  cierre: ReciboCierre | null
 }
 
 export interface ReciboLineaInput {
@@ -72,6 +83,9 @@ export interface BuildReciboDataInput {
   lineas: ReciboLineaInput[]
   tasa: DecimalInput
   igtfUsd: number | null
+  pagos: ReciboPagoInput[]
+  discrepancy: ReciboDiscrepancyInput | null
+  saldoPendUsd: number
 }
 
 // =============================================
@@ -170,6 +184,9 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
   const totalGeneralUsd = montoExentoUsd.plus(baseImponibleUsd).plus(ivaTotal).plus(igtf)
   const totalGeneralBs = usdToBs(totalGeneralUsd, input.tasa)
 
+  const pagos = agruparPagosPorMetodo(input.pagos, input.tasa)
+  const cierre = construirCierreRecibo(input.discrepancy, input.saldoPendUsd, input.tasa)
+
   return {
     nroFactura: input.nroFactura,
     fecha: input.fecha,
@@ -184,6 +201,8 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
       totalGeneralUsd: totalGeneralUsd.toNumber(),
       totalGeneralBs: totalGeneralBs.toNumber(),
     },
+    pagos,
+    cierre,
   }
 }
 
@@ -199,16 +218,41 @@ interface LineaRecibo {
 
 const SEPARADOR = '-'.repeat(40)
 
+/** Monto de una linea de pago, formateado segun su moneda nativa (design: USD muestra $ + equiv Bs). */
+function formatMontoPago(linea: ReciboPagoLinea): string {
+  return linea.moneda === 'USD'
+    ? `${formatUsd(linea.montoUsd)} (${formatBs(linea.montoBs)})`
+    : formatBs(linea.montoBs)
+}
+
+/** Texto de cierre del recibo (excedente o saldo a credito). Sin acentos, consistente con el resto del archivo. */
+function formatearCierre(cierre: ReciboCierre): string {
+  const monto = `${formatBs(cierre.montoBs)} (${formatUsd(cierre.montoUsd)})`
+  switch (cierre.tipo) {
+    case 'VUELTO':
+      return `Vuelto entregado: ${monto}`
+    case 'SAF':
+      return `Saldo a favor del cliente: ${monto}`
+    case 'PROPINA':
+      return `Propina: ${monto}`
+    case 'DIFERENCIAL_SOBRANTE':
+      return `Diferencial cambiario (sobrante): ${monto}`
+    case 'CREDITO':
+      return `Quedo a credito: ${monto}`
+  }
+}
+
+// Orden de secciones (spec): emisor -> nro/fecha -> cliente -> articulos -> totales -> desglose de pagos.
 function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
   const lines: LineaRecibo[] = []
 
-  lines.push({ text: 'RECIBO', bold: true })
-  lines.push({ text: `Nro: ${recibo.nroFactura}` })
-  lines.push({ text: `Fecha: ${formatDateTime(recibo.fecha)}` })
-  lines.push({ text: '' })
   lines.push({ text: recibo.emisor.nombre, bold: true })
   if (recibo.emisor.rif) lines.push({ text: `RIF: ${recibo.emisor.rif}` })
   if (recibo.emisor.direccion) lines.push({ text: recibo.emisor.direccion })
+  lines.push({ text: '' })
+  lines.push({ text: 'RECIBO', bold: true })
+  lines.push({ text: `Nro: ${recibo.nroFactura}` })
+  lines.push({ text: `Fecha: ${formatDateTime(recibo.fecha)}` })
   lines.push({ text: '' })
   lines.push({ text: `Cliente: ${recibo.cliente.nombre}` })
   lines.push({ text: `Identificacion: ${recibo.cliente.identificacion}` })
@@ -242,6 +286,21 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
     bold: true,
   })
 
+  if (recibo.pagos.length > 0) {
+    lines.push({ text: '' })
+    lines.push({ text: 'Metodos de pago', bold: true })
+    lines.push({ text: SEPARADOR })
+    for (const pago of recibo.pagos) {
+      lines.push({ text: `${pago.metodoNombre}: ${formatMontoPago(pago)}` })
+    }
+    lines.push({ text: SEPARADOR })
+  }
+
+  if (recibo.cierre) {
+    lines.push({ text: '' })
+    lines.push({ text: formatearCierre(recibo.cierre), bold: true })
+  }
+
   return lines
 }
 
@@ -263,15 +322,23 @@ interface AutoTableDoc extends jsPDF {
   lastAutoTable: { finalY: number }
 }
 
+/** Ajusta texto largo a `maxWidth` mm usando el medidor real de jsPDF (evita desbordar el documento). */
+function wrapPdfText(doc: jsPDF, text: string, maxWidth: number): string[] {
+  return doc.splitTextToSize(text, maxWidth) as string[]
+}
+
 export function buildReciboPdfBlob(recibo: ReciboData): Blob {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'letter' })
   const pageWidth = doc.internal.pageSize.getWidth()
+  const anchoEmisor = pageWidth - 30
   let y = 15
 
   doc.setFontSize(14)
   doc.setFont('helvetica', 'bold')
-  doc.text(recibo.emisor.nombre, pageWidth / 2, y, { align: 'center' })
-  y += 5
+  for (const linea of wrapPdfText(doc, recibo.emisor.nombre, anchoEmisor)) {
+    doc.text(linea, pageWidth / 2, y, { align: 'center' })
+    y += 5
+  }
   if (recibo.emisor.rif) {
     doc.setFontSize(9)
     doc.setFont('helvetica', 'normal')
@@ -280,8 +347,11 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
   }
   if (recibo.emisor.direccion) {
     doc.setFontSize(8)
-    doc.text(recibo.emisor.direccion, pageWidth / 2, y, { align: 'center' })
-    y += 4
+    doc.setFont('helvetica', 'normal')
+    for (const linea of wrapPdfText(doc, recibo.emisor.direccion, anchoEmisor)) {
+      doc.text(linea, pageWidth / 2, y, { align: 'center' })
+      y += 4
+    }
   }
 
   y += 3
@@ -297,21 +367,19 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
 
   doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
+  const anchoCliente = pageWidth / 2 - 20
   const infoLeft = [
-    `Cliente: ${recibo.cliente.nombre}`,
+    ...wrapPdfText(doc, `Cliente: ${recibo.cliente.nombre}`, anchoCliente),
     `Identificacion: ${recibo.cliente.identificacion}`,
+    ...(recibo.cliente.direccion
+      ? wrapPdfText(doc, `Direccion: ${recibo.cliente.direccion}`, anchoCliente)
+      : []),
   ]
   const infoRight = [`Fecha: ${formatDateTime(recibo.fecha)}`]
-  infoLeft.forEach((txt) => {
-    doc.text(txt, 15, y)
-    y += 5
-  })
-  y -= infoLeft.length * 5
-  infoRight.forEach((txt) => {
-    doc.text(txt, pageWidth / 2 + 10, y)
-    y += 5
-  })
-  y += 5
+  const yInfoTop = y
+  infoLeft.forEach((txt, i) => doc.text(txt, 15, yInfoTop + i * 5))
+  infoRight.forEach((txt, i) => doc.text(txt, pageWidth / 2 + 10, yInfoTop + i * 5))
+  y = yInfoTop + Math.max(infoLeft.length, infoRight.length) * 5 + 5
 
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
@@ -369,6 +437,39 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
     tableWidth: 65,
   })
 
+  y = (doc as AutoTableDoc).lastAutoTable.finalY + 6
+
+  if (recibo.pagos.length > 0) {
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text('Metodos de pago', 15, y)
+    y += 4
+
+    const pagosBody = recibo.pagos.map((pago) => [pago.metodoNombre, formatMontoPago(pago)])
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Metodo', 'Monto']],
+      body: pagosBody,
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 1: { halign: 'right' } },
+      margin: { left: 15, right: 15 },
+    })
+
+    y = (doc as AutoTableDoc).lastAutoTable.finalY + 6
+  }
+
+  if (recibo.cierre) {
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'bold')
+    for (const linea of wrapPdfText(doc, formatearCierre(recibo.cierre), pageWidth - 30)) {
+      doc.text(linea, 15, y)
+      y += 5
+    }
+  }
+
   return doc.output('blob')
 }
 
@@ -389,16 +490,33 @@ const PNG_ESCALA = 2
  */
 export function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
   const lineas = construirLineasRecibo(recibo)
-  const alto = PNG_PADDING * 2 + lineas.length * PNG_LINE_HEIGHT
 
   const canvas = document.createElement('canvas')
-  canvas.width = PNG_ANCHO * PNG_ESCALA
-  canvas.height = alto * PNG_ESCALA
-
   const ctx = canvas.getContext('2d')
   if (!ctx) {
     return Promise.reject(new Error('No se pudo obtener el contexto 2D del canvas'))
   }
+
+  // Ajuste de texto (wrap) ANTES de fijar canvas.width/height: setear esas
+  // propiedades resetea el estado del contexto 2D, asi que medimos primero.
+  const maxWidthPx = PNG_ANCHO - PNG_PADDING * 2
+  const lineasAjustadas: LineaRecibo[] = []
+  for (const linea of lineas) {
+    ctx.font = linea.bold ? 'bold 13px monospace' : '13px monospace'
+    const wrapped = wrapCanvasText(ctx, linea.text, maxWidthPx)
+    if (wrapped.length === 0) {
+      // Linea en blanco (espaciador entre secciones): se preserva tal cual.
+      lineasAjustadas.push(linea)
+    } else {
+      for (const texto of wrapped) {
+        lineasAjustadas.push({ text: texto, bold: linea.bold })
+      }
+    }
+  }
+
+  const alto = PNG_PADDING * 2 + lineasAjustadas.length * PNG_LINE_HEIGHT
+  canvas.width = PNG_ANCHO * PNG_ESCALA
+  canvas.height = alto * PNG_ESCALA
 
   ctx.scale(PNG_ESCALA, PNG_ESCALA)
   ctx.fillStyle = '#ffffff'
@@ -407,7 +525,7 @@ export function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
   ctx.textBaseline = 'top'
 
   let y = PNG_PADDING
-  for (const linea of lineas) {
+  for (const linea of lineasAjustadas) {
     ctx.font = linea.bold ? 'bold 13px monospace' : '13px monospace'
     ctx.fillText(linea.text, PNG_PADDING, y)
     y += PNG_LINE_HEIGHT

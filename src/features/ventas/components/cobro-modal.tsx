@@ -513,6 +513,9 @@ export function CobroModal({
         igtfUsd: igtfUsd.toNumber(),
         igtfBs: igtfBs.toNumber(),
         tasaIgtfPct: tasaIgtf,
+        discrepancy: discrepancy
+          ? { mode: discrepancy.mode, montoUsd: discrepancy.montoUsd, montoBs: discrepancy.montoBs }
+          : null,
       })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Error al procesar la venta')
