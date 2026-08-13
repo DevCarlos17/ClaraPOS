@@ -10,6 +10,11 @@ import {
 } from '@/features/contabilidad/hooks/use-gastos'
 import { formatDate } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
+import {
+  montoCostoGasto,
+  montoIvaGasto,
+  montoTotalGasto,
+} from '@/features/contabilidad/lib/gasto-montos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -124,6 +129,10 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
   const tasa = parseFloat(gasto.tasa)
   const tasaProveedor = gasto.tasa_proveedor ? parseFloat(gasto.tasa_proveedor) : null
   const montoUsd = parseFloat(gasto.monto_usd)
+  const baseUsd = montoCostoGasto(gasto)
+  const ivaUsd = montoIvaGasto(gasto)
+  const totalUsd = montoTotalGasto(gasto)
+  const tieneIva = ivaUsd > 0.005
   const montoBs = montoUsd * tasaValor
   const saldoPendiente = parseFloat(gasto.saldo_pendiente_usd)
   const esAnulado = gasto.status === 'ANULADO'
@@ -253,6 +262,22 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
 
         {/* Totales */}
         <div className="rounded-lg border border-border bg-muted/30 p-4 mb-4 space-y-1.5">
+          {tieneIva && (
+            <>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Base Imponible:</span>
+                <span className="font-medium text-foreground">{formatUsd(baseUsd)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">IVA:</span>
+                <span className="font-medium text-foreground">{formatUsd(ivaUsd)}</span>
+              </div>
+              <div className="flex justify-between text-sm border-b border-border/50 pb-1.5 mb-0.5">
+                <span className="text-muted-foreground">Total (Base + IVA):</span>
+                <span className="font-semibold text-foreground">{formatUsd(totalUsd)}</span>
+              </div>
+            </>
+          )}
           {hayDualRate ? (
             <>
               <div className="flex justify-between text-sm">
