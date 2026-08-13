@@ -71,9 +71,17 @@ export interface GastoTotalesResult {
 /**
  * Deriva los totales de un `gasto` para mostrarlos en "Detalle de Gasto".
  *
- * `totalProveedorUsd` y `totalContableUsd` parten de `monto_usd` (el total,
- * base + IVA) — nunca de `monto_factura` (que solo representa la base, sin
- * IVA, y no debe usarse para mostrar el "Total Factura").
+ * `monto_usd` (leido via `montoTotalGasto`) ya es el total final en USD
+ * (base + IVA), convertido UNA sola vez al crear el gasto en
+ * `use-gastos.ts::crearGasto` (base_factura / tasaRef + IVA, para
+ * `moneda_factura === 'BS'`; o directo, para `moneda_factura === 'USD'`).
+ * A diferencia de `facturas_compra` (COMPRA), que si guarda representaciones
+ * separadas por tasa proveedor/interna, `gastos` persiste un UNICO total
+ * canonico en USD — no existe una segunda cifra "sin convertir" para
+ * volver a derivar. Por eso `totalProveedorUsd` y `totalContableUsd` son
+ * siempre el mismo valor (`monto_usd`); NUNCA se debe dividir por ninguna
+ * tasa a la hora de mostrarlo, sin importar `moneda_factura` ni
+ * `usa_tasa_paralela`.
  */
 export function deriveGastoTotales(gasto: GastoTotalesInput, tasaValor: number): GastoTotalesResult {
   const tasaInterna = parseOrNull(gasto.tasa) ?? 0
@@ -87,11 +95,9 @@ export function deriveGastoTotales(gasto: GastoTotalesInput, tasaValor: number):
   const totalContableUsd = montoTotalGasto(gasto)
   const totalBs = totalContableUsd * tasaValor
 
-  const totalProveedorUsd = (() => {
-    if (gasto.moneda_factura === 'USD') return totalContableUsd
-    const tasaRef = usaParalela && tasaFactura > 0 ? tasaFactura : tasaInterna
-    return tasaRef > 0 ? totalContableUsd / tasaRef : totalContableUsd
-  })()
+  // monto_usd ya esta convertido una unica vez al crear el gasto — no hay una
+  // segunda representacion "sin convertir" que derivar aqui (ver docblock).
+  const totalProveedorUsd = totalContableUsd
 
   const porcentajeIva = parseOrNull(gasto.porcentaje_iva) ?? 0
   const esGravable = gasto.tipo_impuesto === 'Gravable' && ivaUsd > 0.005
