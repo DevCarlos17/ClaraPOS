@@ -8,7 +8,9 @@ import { useDetalleFactura, useVentaFecha } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import {
   buildReciboData,
-  shareOrDownloadRecibo,
+  descargarReciboPdf,
+  compartirReciboImagen,
+  type ReciboData,
   type TipoImpuestoLinea,
 } from '../utils/factura-export'
 import type { PagoEntryForm } from '../schemas/venta-schema'
@@ -59,7 +61,8 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(data?.ventaId ?? null)
   const { fecha: fechaVenta, isLoading: loadingFecha } = useVentaFecha(data?.ventaId ?? null)
   const { company } = useCompany()
-  const [generandoRecibo, setGenerandoRecibo] = useState(false)
+  const [generandoDescarga, setGenerandoDescarga] = useState(false)
+  const [generandoCompartir, setGenerandoCompartir] = useState(false)
 
   if (!isOpen || !data) return null
 
@@ -69,42 +72,57 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
   }, 0)
   const saldoPendUsd = Math.max(0, Number((data.totalUsd - totalAbonadoUsd).toFixed(2)))
 
-  async function handleReciboAction() {
+  function construirRecibo(ventaData: VentaExitosaData): ReciboData {
+    return buildReciboData({
+      nroFactura: ventaData.nroFactura,
+      // Fecha persistida de la venta (ventas.fecha via useVentaFecha), no el
+      // momento del click. Fallback a localNow() solo en el caso extremo de
+      // que la fila aun no se haya sincronizado/leido localmente.
+      fecha: fechaVenta ?? localNow(),
+      emisor: {
+        nombre: company?.nombre ?? '',
+        rif: company?.rif ?? null,
+        direccion: company?.direccion ?? null,
+      },
+      cliente: {
+        nombre: ventaData.clienteNombre,
+        identificacion: ventaData.clienteIdentificacion,
+        direccion: ventaData.clienteDireccion,
+      },
+      lineas: detalle.map((d) => ({
+        codigo: d.producto_codigo,
+        nombre: d.producto_nombre,
+        cantidad: d.cantidad,
+        precioUnitarioUsd: d.precio_unitario_usd,
+        tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
+        impuestoPct: d.impuesto_pct,
+      })),
+      tasa: ventaData.tasa,
+      igtfUsd: ventaData.igtfUsd && ventaData.igtfUsd > 0 ? ventaData.igtfUsd : null,
+    })
+  }
+
+  function handleDescargar() {
     if (!data) return
-    setGenerandoRecibo(true)
+    setGenerandoDescarga(true)
     try {
-      const recibo = buildReciboData({
-        nroFactura: data.nroFactura,
-        // Fecha persistida de la venta (ventas.fecha via useVentaFecha), no el
-        // momento del click. Fallback a localNow() solo en el caso extremo de
-        // que la fila aun no se haya sincronizado/leido localmente.
-        fecha: fechaVenta ?? localNow(),
-        emisor: {
-          nombre: company?.nombre ?? '',
-          rif: company?.rif ?? null,
-          direccion: company?.direccion ?? null,
-        },
-        cliente: {
-          nombre: data.clienteNombre,
-          identificacion: data.clienteIdentificacion,
-          direccion: data.clienteDireccion,
-        },
-        lineas: detalle.map((d) => ({
-          codigo: d.producto_codigo,
-          nombre: d.producto_nombre,
-          cantidad: d.cantidad,
-          precioUnitarioUsd: d.precio_unitario_usd,
-          tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
-          impuestoPct: d.impuesto_pct,
-        })),
-        tasa: data.tasa,
-        igtfUsd: data.igtfUsd && data.igtfUsd > 0 ? data.igtfUsd : null,
-      })
-      await shareOrDownloadRecibo(recibo)
+      descargarReciboPdf(construirRecibo(data))
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al generar el recibo')
+      toast.error(err instanceof Error ? err.message : 'Error al generar el PDF del recibo')
     } finally {
-      setGenerandoRecibo(false)
+      setGenerandoDescarga(false)
+    }
+  }
+
+  async function handleCompartir() {
+    if (!data) return
+    setGenerandoCompartir(true)
+    try {
+      await compartirReciboImagen(construirRecibo(data))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al compartir el recibo')
+    } finally {
+      setGenerandoCompartir(false)
     }
   }
 
@@ -255,25 +273,31 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
             </div>
           )}
 
-          {/* Recibo */}
-          <Button
-            className="w-full"
-            size="lg"
-            variant="outline"
-            disabled={!data.ventaId || loadingDetalle || loadingFecha || generandoRecibo}
-            onClick={handleReciboAction}
-          >
-            {puedeCompartir ? (
-              <ShareNetwork className="size-4" />
-            ) : (
+          {/* Recibo: Descargar (PDF) + Compartir (imagen PNG, si el dispositivo lo soporta) */}
+          <div className={puedeCompartir ? 'grid grid-cols-2 gap-2' : ''}>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              disabled={!data.ventaId || loadingDetalle || loadingFecha || generandoDescarga}
+              onClick={handleDescargar}
+            >
               <DownloadSimple className="size-4" />
+              {generandoDescarga ? 'Generando...' : 'Descargar'}
+            </Button>
+            {puedeCompartir && (
+              <Button
+                className="w-full"
+                size="lg"
+                variant="outline"
+                disabled={!data.ventaId || loadingDetalle || loadingFecha || generandoCompartir}
+                onClick={handleCompartir}
+              >
+                <ShareNetwork className="size-4" />
+                {generandoCompartir ? 'Generando...' : 'Compartir'}
+              </Button>
             )}
-            {generandoRecibo
-              ? 'Generando recibo...'
-              : puedeCompartir
-                ? 'Compartir Recibo'
-                : 'Descargar Recibo'}
-          </Button>
+          </div>
 
           {/* CTA */}
           <Button
