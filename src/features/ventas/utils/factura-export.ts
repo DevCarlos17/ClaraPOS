@@ -93,6 +93,31 @@ function esExentoTipo(tipo: TipoImpuestoLinea): boolean {
   return tipo === 'Exento' || tipo === 'Exonerado'
 }
 
+// Caracteres invalidos en nombres de archivo (Windows + POSIX): / \ : * ? " < > |
+const CARACTERES_INVALIDOS_ARCHIVO_RE = /[/\\:*?"<>|]/g
+const GUIONES_REPETIDOS_RE = /-+/g
+const DIACRITICOS_RE = /[\u0300-\u036f]/g
+
+function sanitizarNombreCliente(nombre: string): string {
+  return nombre
+    .normalize('NFD')
+    .replace(DIACRITICOS_RE, '')
+    .toUpperCase()
+    .replace(CARACTERES_INVALIDOS_ARCHIVO_RE, '')
+    .replace(/\s+/g, '-')
+    .replace(GUIONES_REPETIDOS_RE, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+/** Nombre de archivo dinamico y sanitizado: RECIBO_{nro}_{CLIENTE-SANITIZADO}.{ext} */
+export function nombreArchivoRecibo(recibo: ReciboData, ext: 'pdf' | 'png'): string {
+  const clienteSanitizado = sanitizarNombreCliente(recibo.cliente.nombre)
+  const base = clienteSanitizado
+    ? `RECIBO_${recibo.nroFactura}_${clienteSanitizado}`
+    : `RECIBO_${recibo.nroFactura}`
+  return `${base}.${ext}`
+}
+
 // =============================================
 // buildReciboData — Totals-by-Alicuota Algorithm
 // =============================================
@@ -163,54 +188,71 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
 }
 
 // =============================================
-// buildReciboTextoPlano — texto monoespaciado
+// construirLineasRecibo — modelo de lineas compartido por
+// buildReciboTextoPlano (texto) y buildReciboImagenBlob (canvas)
 // =============================================
+
+interface LineaRecibo {
+  text: string
+  bold?: boolean
+}
 
 const SEPARADOR = '-'.repeat(40)
 
-export function buildReciboTextoPlano(recibo: ReciboData): string {
-  const lines: string[] = []
+function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
+  const lines: LineaRecibo[] = []
 
-  lines.push('RECIBO')
-  lines.push(`Nro: ${recibo.nroFactura}`)
-  lines.push(`Fecha: ${formatDateTime(recibo.fecha)}`)
-  lines.push('')
-  lines.push(recibo.emisor.nombre)
-  if (recibo.emisor.rif) lines.push(`RIF: ${recibo.emisor.rif}`)
-  if (recibo.emisor.direccion) lines.push(recibo.emisor.direccion)
-  lines.push('')
-  lines.push(`Cliente: ${recibo.cliente.nombre}`)
-  lines.push(`Identificacion: ${recibo.cliente.identificacion}`)
-  if (recibo.cliente.direccion) lines.push(`Direccion: ${recibo.cliente.direccion}`)
-  lines.push('')
-  lines.push('Articulos')
-  lines.push(SEPARADOR)
+  lines.push({ text: 'RECIBO', bold: true })
+  lines.push({ text: `Nro: ${recibo.nroFactura}` })
+  lines.push({ text: `Fecha: ${formatDateTime(recibo.fecha)}` })
+  lines.push({ text: '' })
+  lines.push({ text: recibo.emisor.nombre, bold: true })
+  if (recibo.emisor.rif) lines.push({ text: `RIF: ${recibo.emisor.rif}` })
+  if (recibo.emisor.direccion) lines.push({ text: recibo.emisor.direccion })
+  lines.push({ text: '' })
+  lines.push({ text: `Cliente: ${recibo.cliente.nombre}` })
+  lines.push({ text: `Identificacion: ${recibo.cliente.identificacion}` })
+  if (recibo.cliente.direccion) lines.push({ text: `Direccion: ${recibo.cliente.direccion}` })
+  lines.push({ text: '' })
+  lines.push({ text: 'Articulos', bold: true })
+  lines.push({ text: SEPARADOR })
   for (const linea of recibo.lineas) {
     const marca = linea.esExento ? ' (E)' : ''
-    lines.push(`${linea.codigo} ${linea.nombre}${marca}`)
-    lines.push(
-      `  ${linea.cantidad} x ${formatUsd(linea.precioUnitarioUsd)} = ${formatUsd(linea.totalUsd)}`
-    )
+    lines.push({ text: `${linea.codigo} ${linea.nombre}${marca}` })
+    lines.push({
+      text: `  ${linea.cantidad} x ${formatUsd(linea.precioUnitarioUsd)} = ${formatUsd(linea.totalUsd)}`,
+    })
   }
-  lines.push(SEPARADOR)
+  lines.push({ text: SEPARADOR })
 
   if (recibo.totales.montoExentoUsd > 0) {
-    lines.push(`Monto Exento: ${formatUsd(recibo.totales.montoExentoUsd)}`)
+    lines.push({ text: `Monto Exento: ${formatUsd(recibo.totales.montoExentoUsd)}` })
   }
   if (recibo.totales.baseImponibleUsd > 0) {
-    lines.push(`Base Imponible: ${formatUsd(recibo.totales.baseImponibleUsd)}`)
+    lines.push({ text: `Base Imponible: ${formatUsd(recibo.totales.baseImponibleUsd)}` })
   }
   for (const alicuota of recibo.totales.alicuotas) {
-    lines.push(`IVA ${alicuota.pct}%: ${formatUsd(alicuota.ivaUsd)}`)
+    lines.push({ text: `IVA ${alicuota.pct}%: ${formatUsd(alicuota.ivaUsd)}` })
   }
   if (recibo.totales.igtfUsd !== null) {
-    lines.push(`IGTF: ${formatUsd(recibo.totales.igtfUsd)}`)
+    lines.push({ text: `IGTF: ${formatUsd(recibo.totales.igtfUsd)}` })
   }
-  lines.push(
-    `TOTAL GENERAL: ${formatUsd(recibo.totales.totalGeneralUsd)} / ${formatBs(recibo.totales.totalGeneralBs)}`
-  )
+  lines.push({
+    text: `TOTAL GENERAL: ${formatUsd(recibo.totales.totalGeneralUsd)} / ${formatBs(recibo.totales.totalGeneralBs)}`,
+    bold: true,
+  })
 
-  return lines.join('\n')
+  return lines
+}
+
+// =============================================
+// buildReciboTextoPlano — texto monoespaciado
+// =============================================
+
+export function buildReciboTextoPlano(recibo: ReciboData): string {
+  return construirLineasRecibo(recibo)
+    .map((linea) => linea.text)
+    .join('\n')
 }
 
 // =============================================
@@ -331,7 +373,56 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
 }
 
 // =============================================
-// shareOrDownloadRecibo — feature-detection
+// buildReciboImagenBlob — dibujo manual en Canvas 2D
+// =============================================
+
+const PNG_ANCHO = 480
+const PNG_PADDING = 24
+const PNG_LINE_HEIGHT = 20
+// devicePixelRatio-style scaling fijo para que el PNG se vea nitido al compartirse
+// (no dependemos de window.devicePixelRatio porque el canvas es offscreen/oculto).
+const PNG_ESCALA = 2
+
+/**
+ * Dibuja el recibo completo (mismo contenido fiscal que buildReciboTextoPlano)
+ * sobre un canvas 2D y lo exporta como PNG. 100% local, sin dependencias nuevas.
+ */
+export function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
+  const lineas = construirLineasRecibo(recibo)
+  const alto = PNG_PADDING * 2 + lineas.length * PNG_LINE_HEIGHT
+
+  const canvas = document.createElement('canvas')
+  canvas.width = PNG_ANCHO * PNG_ESCALA
+  canvas.height = alto * PNG_ESCALA
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) {
+    return Promise.reject(new Error('No se pudo obtener el contexto 2D del canvas'))
+  }
+
+  ctx.scale(PNG_ESCALA, PNG_ESCALA)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, PNG_ANCHO, alto)
+  ctx.fillStyle = '#111111'
+  ctx.textBaseline = 'top'
+
+  let y = PNG_PADDING
+  for (const linea of lineas) {
+    ctx.font = linea.bold ? 'bold 13px monospace' : '13px monospace'
+    ctx.fillText(linea.text, PNG_PADDING, y)
+    y += PNG_LINE_HEIGHT
+  }
+
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('No se pudo generar la imagen del recibo'))
+    }, 'image/png')
+  })
+}
+
+// =============================================
+// descargarReciboPdf / compartirReciboImagen — feature-detection
 // =============================================
 
 function isAbortError(err: unknown): boolean {
@@ -340,25 +431,53 @@ function isAbortError(err: unknown): boolean {
   return false
 }
 
-function descargarPdf(recibo: ReciboData): void {
-  const blob = buildReciboPdfBlob(recibo)
+function descargarBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
-  anchor.download = `recibo-${recibo.nroFactura}.pdf`
+  anchor.download = filename
   document.body.appendChild(anchor)
   anchor.click()
   document.body.removeChild(anchor)
   URL.revokeObjectURL(url)
 }
 
-export async function shareOrDownloadRecibo(recibo: ReciboData): Promise<void> {
-  if (typeof navigator.share === 'function') {
+/** Boton "Descargar": genera el PDF y dispara la descarga con el nombre sanitizado. */
+export function descargarReciboPdf(recibo: ReciboData): void {
+  const blob = buildReciboPdfBlob(recibo)
+  descargarBlob(blob, nombreArchivoRecibo(recibo, 'pdf'))
+}
+
+/**
+ * Boton "Compartir": comparte una IMAGEN PNG del recibo via Web Share API Level 2.
+ * Cadena de fallback:
+ *   1. navigator.canShare({ files }) true  -> navigator.share({ files })
+ *   2. imagen no se pudo generar/compartir -> navigator.share({ text }) (texto plano)
+ *   3. navigator.share no existe en absoluto -> rechaza (el boton debe estar OCULTO
+ *      en la UI en ese caso — decision de UX: no tiene sentido mostrar "Compartir"
+ *      si el dispositivo no soporta Web Share API; ver venta-exitosa-modal.tsx).
+ * AbortError (usuario cancelo el share sheet) se traga en silencio.
+ *
+ * `construirImagen` es inyectable (default: buildReciboImagenBlob) para permitir
+ * testear la cadena de fallback sin depender de renderizado real de Canvas 2D.
+ */
+export async function compartirReciboImagen(
+  recibo: ReciboData,
+  construirImagen: (recibo: ReciboData) => Promise<Blob> = buildReciboImagenBlob
+): Promise<void> {
+  if (typeof navigator.share !== 'function') {
+    throw new Error('Compartir no esta disponible en este dispositivo')
+  }
+
+  const archivo = await construirImagen(recibo)
+    .then((blob) => new File([blob], nombreArchivoRecibo(recibo, 'png'), { type: 'image/png' }))
+    .catch(() => null)
+
+  const titulo = `RECIBO ${recibo.nroFactura}`
+
+  if (archivo && typeof navigator.canShare === 'function' && navigator.canShare({ files: [archivo] })) {
     try {
-      await navigator.share({
-        title: `RECIBO ${recibo.nroFactura}`,
-        text: buildReciboTextoPlano(recibo),
-      })
+      await navigator.share({ files: [archivo], title: titulo })
     } catch (err) {
       if (isAbortError(err)) return
       throw err
@@ -366,5 +485,10 @@ export async function shareOrDownloadRecibo(recibo: ReciboData): Promise<void> {
     return
   }
 
-  descargarPdf(recibo)
+  try {
+    await navigator.share({ title: titulo, text: buildReciboTextoPlano(recibo) })
+  } catch (err) {
+    if (isAbortError(err)) return
+    throw err
+  }
 }
