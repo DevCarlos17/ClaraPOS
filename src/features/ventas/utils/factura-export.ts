@@ -3,6 +3,14 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { applyImpuesto, formatBs, formatUsd, usdToBs, type DecimalInput } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
+import {
+  agruparPagosPorMetodo,
+  construirCierreRecibo,
+  type ReciboPagoInput,
+  type ReciboPagoLinea,
+  type ReciboCierre,
+  type ReciboDiscrepancyInput,
+} from './recibo-pagos'
 
 // =============================================
 // TYPES
@@ -53,6 +61,8 @@ export interface ReciboData {
   cliente: ReciboCliente
   lineas: ReciboLinea[]
   totales: ReciboTotales
+  pagos: ReciboPagoLinea[]
+  cierre: ReciboCierre | null
 }
 
 export interface ReciboLineaInput {
@@ -72,6 +82,9 @@ export interface BuildReciboDataInput {
   lineas: ReciboLineaInput[]
   tasa: DecimalInput
   igtfUsd: number | null
+  pagos: ReciboPagoInput[]
+  discrepancy: ReciboDiscrepancyInput | null
+  saldoPendUsd: number
 }
 
 // =============================================
@@ -170,6 +183,9 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
   const totalGeneralUsd = montoExentoUsd.plus(baseImponibleUsd).plus(ivaTotal).plus(igtf)
   const totalGeneralBs = usdToBs(totalGeneralUsd, input.tasa)
 
+  const pagos = agruparPagosPorMetodo(input.pagos, input.tasa)
+  const cierre = construirCierreRecibo(input.discrepancy, input.saldoPendUsd, input.tasa)
+
   return {
     nroFactura: input.nroFactura,
     fecha: input.fecha,
@@ -184,6 +200,8 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
       totalGeneralUsd: totalGeneralUsd.toNumber(),
       totalGeneralBs: totalGeneralBs.toNumber(),
     },
+    pagos,
+    cierre,
   }
 }
 

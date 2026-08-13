@@ -8,6 +8,7 @@ import {
   type BuildReciboDataInput,
   type ReciboData,
 } from '../factura-export'
+import type { ReciboPagoInput } from '../recibo-pagos'
 
 function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDataInput {
   return {
@@ -18,6 +19,9 @@ function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDa
     lineas: [],
     tasa: '40.5000',
     igtfUsd: null,
+    pagos: [],
+    discrepancy: null,
+    saldoPendUsd: 0,
     ...overrides,
   }
 }
@@ -166,6 +170,41 @@ describe('buildReciboData', () => {
       identificacion: 'V-12345678',
       direccion: 'Calle 5, Valencia',
     })
+  })
+
+  it('agrupa los pagos por metodo usando agruparPagosPorMetodo', () => {
+    const pagos: ReciboPagoInput[] = [
+      { metodo_cobro_id: 'pm-1', metodo_nombre: 'Pago Movil Mercantil', moneda: 'BS', monto: 100 },
+      { metodo_cobro_id: 'pm-1', metodo_nombre: 'Pago Movil Mercantil', moneda: 'BS', monto: 100 },
+      { metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 1 },
+    ]
+    const recibo = buildReciboData(baseInput({ tasa: '500', pagos }))
+
+    expect(recibo.pagos).toHaveLength(2)
+    const pagoMovil = recibo.pagos.find((p) => p.metodoCobroId === 'pm-1')
+    expect(pagoMovil?.montoBs).toBe(200)
+    const efectivo = recibo.pagos.find((p) => p.metodoCobroId === 'ef-usd')
+    expect(efectivo?.montoUsd).toBe(1)
+    expect(efectivo?.montoBs).toBe(500)
+  })
+
+  it('sin discrepancia ni saldo pendiente, cierre es null', () => {
+    const recibo = buildReciboData(baseInput())
+    expect(recibo.cierre).toBeNull()
+  })
+
+  it('con saldo_pend_usd > 0, cierre es CREDITO calculado con la tasa', () => {
+    const recibo = buildReciboData(baseInput({ tasa: '100', saldoPendUsd: 5 }))
+    expect(recibo.cierre).toEqual({ tipo: 'CREDITO', montoUsd: 5, montoBs: 500 })
+  })
+
+  it('con discrepancy VUELTO, cierre refleja el modo y montos de la discrepancia', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        discrepancy: { mode: 'VUELTO', montoUsd: 2, montoBs: 100 },
+      })
+    )
+    expect(recibo.cierre).toEqual({ tipo: 'VUELTO', montoUsd: 2, montoBs: 100 })
   })
 })
 
