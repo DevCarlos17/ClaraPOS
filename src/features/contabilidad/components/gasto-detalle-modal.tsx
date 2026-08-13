@@ -1,3 +1,9 @@
+// TODO(dead-code): This component is not imported anywhere in the app.
+// The live "Detalle de Gasto" modal is `FacturaProveedorModal`
+// (src/features/compras/components/factura-proveedor-modal.tsx, tipo='GASTO').
+// Kept only as reference for the Base/IVA/Total breakdown pattern
+// (see src/features/contabilidad/lib/gasto-montos.ts deriveGastoTotales).
+// No functional change made here.
 import { useRef, useState, useMemo } from 'react'
 import { X, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'

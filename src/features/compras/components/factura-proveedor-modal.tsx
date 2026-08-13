@@ -24,6 +24,7 @@ import {
 } from '@/features/contabilidad/hooks/use-gastos'
 import { PagoCxPModal } from './pago-cxp-modal'
 import { PagoGastoCxpModal } from './pago-gasto-cxp-modal'
+import { deriveGastoTotales } from '@/features/contabilidad/lib/gasto-montos'
 
 // ─── Tipos internos ──────────────────────────────────────────
 
@@ -71,6 +72,10 @@ interface GastoRow {
   proveedor_rif: string | null
   cuenta_nombre: string | null
   cuenta_codigo: string | null
+  tipo_impuesto: string
+  porcentaje_iva: string
+  base_imponible_usd: string
+  monto_iva_usd: string
 }
 
 interface DetalleRow {
@@ -222,29 +227,31 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
         totalContableUsd: totalContableUsd.toNumber(),
         totalBs: totalBs.toNumber(),
         saldo: saldo.toNumber(),
+        baseUsd: undefined,
+        ivaUsd: undefined,
+        porcentajeIva: undefined,
+        esGravable: false,
+        esExento: false,
+        esExonerado: false,
       }
     }
     if (tipo === 'GASTO' && gasto) {
-      const tasaInterna = new Decimal(gasto.tasa || '0')
-      const tasaFactura = gasto.tasa_proveedor ? new Decimal(gasto.tasa_proveedor) : tasaInterna
-      const usaParalela = gasto.usa_tasa_paralela === 1 && Boolean(gasto.tasa_proveedor)
-      const montoFactura = new Decimal(gasto.monto_factura || '0')
-      const totalContableUsd = new Decimal(gasto.monto_usd || '0')
-      const totalBs: Decimal = totalContableUsd.times(tasaValor)
-      const totalProveedorUsd: Decimal = (() => {
-        if (gasto.moneda_factura === 'USD') return montoFactura
-        const tasaRef = usaParalela && tasaFactura.greaterThan(0) ? tasaFactura : tasaInterna
-        return tasaRef.greaterThan(0) ? montoFactura.dividedBy(tasaRef) : totalContableUsd
-      })()
+      const totales = deriveGastoTotales(gasto, tasaValor)
       const saldo = new Decimal(gasto.saldo_pendiente_usd || '0')
       return {
-        tasaFactura: tasaFactura.toNumber(),
-        tasaInterna: tasaInterna.toNumber(),
-        usaParalela,
-        totalProveedorUsd: totalProveedorUsd.toNumber(),
-        totalContableUsd: totalContableUsd.toNumber(),
-        totalBs: totalBs.toNumber(),
+        tasaFactura: totales.tasaFactura,
+        tasaInterna: totales.tasaInterna,
+        usaParalela: totales.usaParalela,
+        totalProveedorUsd: totales.totalProveedorUsd,
+        totalContableUsd: totales.totalContableUsd,
+        totalBs: totales.totalBs,
         saldo: saldo.toNumber(),
+        baseUsd: totales.baseUsd,
+        ivaUsd: totales.ivaUsd,
+        porcentajeIva: totales.porcentajeIva,
+        esGravable: totales.esGravable,
+        esExento: totales.esExento,
+        esExonerado: totales.esExonerado,
       }
     }
     return null
@@ -634,6 +641,61 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
               {/* ── Totales ──────────────────────────────── */}
               {amounts && (
                 <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-1.5">
+                  {tipo === 'GASTO' && (
+                    amounts.esGravable ? (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Base imponible:</span>
+                          <div className="text-right">
+                            <div className="font-medium text-foreground">
+                              {formatUsd(amounts.baseUsd ?? 0)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatBs((amounts.baseUsd ?? 0) * tasaValor)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            IVA ({(amounts.porcentajeIva ?? 0).toFixed(2)}%):
+                          </span>
+                          <div className="text-right">
+                            <div className="font-medium text-foreground">
+                              {formatUsd(amounts.ivaUsd ?? 0)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatBs((amounts.ivaUsd ?? 0) * tasaValor)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-sm border-b border-border/50 pb-1.5">
+                          <span className="text-muted-foreground">Total con IVA:</span>
+                          <div className="text-right">
+                            <div className="font-semibold text-foreground">
+                              {formatUsd(amounts.totalContableUsd)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatBs(amounts.totalBs)}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex justify-between text-sm border-b border-border/50 pb-1.5">
+                        <span className="text-muted-foreground">
+                          Monto {amounts.esExonerado ? 'Exonerado' : 'Exento'} (sin IVA):
+                        </span>
+                        <div className="text-right">
+                          <div className="font-semibold text-foreground">
+                            {formatUsd(amounts.totalContableUsd)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {formatBs(amounts.totalBs)}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  )}
                   {amounts.usaParalela ? (
                     <>
                       <div className="flex justify-between text-sm">
