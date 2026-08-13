@@ -286,6 +286,76 @@ describe('buildReciboTextoPlano', () => {
     )
     expect(sinIgtf).not.toContain('IGTF')
   })
+
+  it('el emisor aparece antes que el numero/fecha de recibo (orden de secciones)', () => {
+    const texto = buildReciboTextoPlano(reciboConLineas())
+
+    const idxEmisor = texto.indexOf('ClaraPOS Estetica C.A.')
+    const idxNroFecha = texto.indexOf('RECIBO\nNro:')
+    expect(idxEmisor).toBeGreaterThanOrEqual(0)
+    expect(idxNroFecha).toBeGreaterThan(idxEmisor)
+  })
+
+  it('sin pagos, no incluye la seccion Metodos de pago', () => {
+    const texto = buildReciboTextoPlano(reciboConLineas())
+    expect(texto).not.toContain('Metodos de pago')
+  })
+
+  it('con pagos agrupados, incluye la seccion Metodos de pago con cada linea', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '40.5000',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '100.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        pagos: [
+          { metodo_cobro_id: 'pv-1', metodo_nombre: 'Punto de Venta Banesco', moneda: 'BS', monto: 300 },
+        ],
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain('Metodos de pago')
+    expect(texto).toContain('Punto de Venta Banesco')
+    expect(texto).toContain('Bs. 300,00')
+  })
+
+  it('sin cierre (sin discrepancia ni credito), no incluye linea de credito/vuelto', () => {
+    const texto = buildReciboTextoPlano(reciboConLineas())
+    expect(texto).not.toContain('Quedo a credito')
+  })
+
+  it('con saldo a credito, la ultima linea muestra "Quedo a credito"', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '100',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '100.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        saldoPendUsd: 10,
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+    const lineas = texto.split('\n').filter((l) => l.trim() !== '')
+
+    expect(lineas[lineas.length - 1]).toContain('Quedo a credito')
+    expect(lineas[lineas.length - 1]).toContain('Bs. 1.000,00')
+    expect(lineas[lineas.length - 1]).toContain('$10.00')
+  })
 })
 
 describe('contrato v1: recibo sin descuento comercial (decision #1470)', () => {
