@@ -7,7 +7,7 @@ import { toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
-import { reversarDiferencialEnTx } from '@/features/cxc/hooks/use-cxc'
+import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -118,17 +118,12 @@ export function useBuscarFacturaParaAnular(query: string) {
 }
 
 // ─── Detalle de factura (articulos + pagos) ─────────────────
+// La consulta de lineas (ventas_det + productos) vive en el hook canonico
+// de `use-cxc.ts` — aca solo se agrega la consulta de pagos, propia de este
+// flujo de anulacion/reimpresion.
 
 export function useDetalleFactura(ventaId: string | null) {
-  const { data: detalles, isLoading: loadingDetalles } = useQuery(
-    ventaId
-      ? `SELECT p.nombre as producto_nombre, p.codigo as producto_codigo, dv.cantidad, dv.precio_unitario_usd
-         FROM ventas_det dv
-         JOIN productos p ON dv.producto_id = p.id
-         WHERE dv.venta_id = ?`
-      : '',
-    ventaId ? [ventaId] : []
-  )
+  const { detalle, isLoading: loadingDetalles } = useDetalleFacturaCanonica(ventaId)
 
   const { data: pagos, isLoading: loadingPagos } = useQuery(
     ventaId
@@ -142,7 +137,7 @@ export function useDetalleFactura(ventaId: string | null) {
   )
 
   return {
-    detalles: (detalles ?? []) as DetalleFacturaItem[],
+    detalles: detalle,
     pagos: (pagos ?? []) as PagoFacturaItem[],
     isLoading: loadingDetalles || loadingPagos,
   }

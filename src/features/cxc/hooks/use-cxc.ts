@@ -142,6 +142,8 @@ export interface DetalleFacturaCxc {
   subtotal_bs: string
   producto_nombre: string
   producto_codigo: string
+  tipo_impuesto: string
+  impuesto_pct: string
 }
 
 export interface PagoFacturaCxc {
@@ -199,6 +201,7 @@ export function useDetalleFactura(ventaId: string | null) {
   const { data, isLoading } = useQuery(
     ventaId
       ? `SELECT vd.id, vd.venta_id, vd.producto_id, vd.cantidad, vd.precio_unitario_usd, vd.subtotal_usd, vd.subtotal_bs,
+           vd.tipo_impuesto, vd.impuesto_pct,
            p.nombre as producto_nombre, p.codigo as producto_codigo
          FROM ventas_det vd
          JOIN productos p ON vd.producto_id = p.id
@@ -207,6 +210,23 @@ export function useDetalleFactura(ventaId: string | null) {
     ventaId ? [ventaId] : []
   )
   return { detalle: (data ?? []) as DetalleFacturaCxc[], isLoading }
+}
+
+interface VentaFechaRow {
+  fecha: string
+}
+
+/**
+ * Fecha persistida de una venta (para documentos/recibos que deben reflejar
+ * el momento real de la transaccion, no el momento en que se genera el PDF/share).
+ */
+export function useVentaFecha(ventaId: string | null) {
+  const { data, isLoading } = useQuery(
+    ventaId ? 'SELECT fecha FROM ventas WHERE id = ?' : '',
+    ventaId ? [ventaId] : []
+  )
+  const row = (data?.[0] as VentaFechaRow | undefined) ?? null
+  return { fecha: row?.fecha ?? null, isLoading }
 }
 
 export interface CargoEspecialVenta {
