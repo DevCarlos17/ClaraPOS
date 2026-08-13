@@ -499,8 +499,11 @@ export function CobroModal({
       })
 
       onSuccess({
+        ventaId: result.ventaId,
         nroFactura: result.nroFactura,
         clienteNombre,
+        clienteIdentificacion: clienteData?.identificacion ?? '',
+        clienteDireccion: clienteData?.direccion ?? null,
         totalUsd: totalEfectivoUsd.toNumber(),
         totalBs: totalEfectivoBs.toNumber(),
         tipo: tipoDetectado,

@@ -1,13 +1,25 @@
-import { useEffect } from 'react'
-import { SealCheck } from '@phosphor-icons/react'
+import { useEffect, useState } from 'react'
+import { SealCheck, DownloadSimple, ShareNetwork } from '@phosphor-icons/react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { localNow } from '@/lib/dates'
+import { useDetalleFactura, useVentaFecha } from '@/features/cxc/hooks/use-cxc'
+import { useCompany } from '@/features/configuracion/hooks/use-company'
+import {
+  buildReciboData,
+  shareOrDownloadRecibo,
+  type TipoImpuestoLinea,
+} from '../utils/factura-export'
 import type { PagoEntryForm } from '../schemas/venta-schema'
 import type { CargoEspecial } from '../hooks/use-ventas'
 
 export interface VentaExitosaData {
+  ventaId: string
   nroFactura: string
   clienteNombre: string
+  clienteIdentificacion: string
+  clienteDireccion: string | null
   totalUsd: number
   totalBs: number
   tipo: 'CONTADO' | 'CREDITO'
@@ -18,6 +30,12 @@ export interface VentaExitosaData {
   igtfBs?: number
   tasaIgtfPct?: number
 }
+
+function toTipoImpuestoLinea(val: string): TipoImpuestoLinea {
+  return val === 'Gravable' || val === 'Exonerado' ? val : 'Exento'
+}
+
+const puedeCompartir = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
 interface VentaExitosaModalProps {
   isOpen: boolean
@@ -38,6 +56,11 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
     return () => document.removeEventListener('keydown', handleKey)
   }, [isOpen, onClose])
 
+  const { detalle, isLoading: loadingDetalle } = useDetalleFactura(data?.ventaId ?? null)
+  const { fecha: fechaVenta, isLoading: loadingFecha } = useVentaFecha(data?.ventaId ?? null)
+  const { company } = useCompany()
+  const [generandoRecibo, setGenerandoRecibo] = useState(false)
+
   if (!isOpen || !data) return null
 
   const totalAbonadoUsd = data.pagos.reduce((sum, p) => {
@@ -45,6 +68,45 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
     return sum + montoUsd
   }, 0)
   const saldoPendUsd = Math.max(0, Number((data.totalUsd - totalAbonadoUsd).toFixed(2)))
+
+  async function handleReciboAction() {
+    if (!data) return
+    setGenerandoRecibo(true)
+    try {
+      const recibo = buildReciboData({
+        nroFactura: data.nroFactura,
+        // Fecha persistida de la venta (ventas.fecha via useVentaFecha), no el
+        // momento del click. Fallback a localNow() solo en el caso extremo de
+        // que la fila aun no se haya sincronizado/leido localmente.
+        fecha: fechaVenta ?? localNow(),
+        emisor: {
+          nombre: company?.nombre ?? '',
+          rif: company?.rif ?? null,
+          direccion: company?.direccion ?? null,
+        },
+        cliente: {
+          nombre: data.clienteNombre,
+          identificacion: data.clienteIdentificacion,
+          direccion: data.clienteDireccion,
+        },
+        lineas: detalle.map((d) => ({
+          codigo: d.producto_codigo,
+          nombre: d.producto_nombre,
+          cantidad: d.cantidad,
+          precioUnitarioUsd: d.precio_unitario_usd,
+          tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
+          impuestoPct: d.impuesto_pct,
+        })),
+        tasa: data.tasa,
+        igtfUsd: data.igtfUsd && data.igtfUsd > 0 ? data.igtfUsd : null,
+      })
+      await shareOrDownloadRecibo(recibo)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al generar el recibo')
+    } finally {
+      setGenerandoRecibo(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -192,6 +254,26 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
               </div>
             </div>
           )}
+
+          {/* Recibo */}
+          <Button
+            className="w-full"
+            size="lg"
+            variant="outline"
+            disabled={!data.ventaId || loadingDetalle || loadingFecha || generandoRecibo}
+            onClick={handleReciboAction}
+          >
+            {puedeCompartir ? (
+              <ShareNetwork className="size-4" />
+            ) : (
+              <DownloadSimple className="size-4" />
+            )}
+            {generandoRecibo
+              ? 'Generando recibo...'
+              : puedeCompartir
+                ? 'Compartir Recibo'
+                : 'Descargar Recibo'}
+          </Button>
 
           {/* CTA */}
           <Button
