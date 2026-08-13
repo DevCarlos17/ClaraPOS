@@ -8,6 +8,7 @@ import {
   type BuildReciboDataInput,
   type ReciboData,
 } from '../factura-export'
+import type { ReciboPagoInput } from '../recibo-pagos'
 
 function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDataInput {
   return {
@@ -18,6 +19,9 @@ function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDa
     lineas: [],
     tasa: '40.5000',
     igtfUsd: null,
+    pagos: [],
+    discrepancy: null,
+    saldoPendUsd: 0,
     ...overrides,
   }
 }
@@ -167,6 +171,41 @@ describe('buildReciboData', () => {
       direccion: 'Calle 5, Valencia',
     })
   })
+
+  it('agrupa los pagos por metodo usando agruparPagosPorMetodo', () => {
+    const pagos: ReciboPagoInput[] = [
+      { metodo_cobro_id: 'pm-1', metodo_nombre: 'Pago Movil Mercantil', moneda: 'BS', monto: 100 },
+      { metodo_cobro_id: 'pm-1', metodo_nombre: 'Pago Movil Mercantil', moneda: 'BS', monto: 100 },
+      { metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 1 },
+    ]
+    const recibo = buildReciboData(baseInput({ tasa: '500', pagos }))
+
+    expect(recibo.pagos).toHaveLength(2)
+    const pagoMovil = recibo.pagos.find((p) => p.metodoCobroId === 'pm-1')
+    expect(pagoMovil?.montoBs).toBe(200)
+    const efectivo = recibo.pagos.find((p) => p.metodoCobroId === 'ef-usd')
+    expect(efectivo?.montoUsd).toBe(1)
+    expect(efectivo?.montoBs).toBe(500)
+  })
+
+  it('sin discrepancia ni saldo pendiente, cierre es null', () => {
+    const recibo = buildReciboData(baseInput())
+    expect(recibo.cierre).toBeNull()
+  })
+
+  it('con saldo_pend_usd > 0, cierre es CREDITO calculado con la tasa', () => {
+    const recibo = buildReciboData(baseInput({ tasa: '100', saldoPendUsd: 5 }))
+    expect(recibo.cierre).toEqual({ tipo: 'CREDITO', montoUsd: 5, montoBs: 500 })
+  })
+
+  it('con discrepancy VUELTO, cierre refleja el modo y montos de la discrepancia', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        discrepancy: { mode: 'VUELTO', montoUsd: 2, montoBs: 100 },
+      })
+    )
+    expect(recibo.cierre).toEqual({ tipo: 'VUELTO', montoUsd: 2, montoBs: 100 })
+  })
 })
 
 describe('buildReciboTextoPlano', () => {
@@ -246,6 +285,76 @@ describe('buildReciboTextoPlano', () => {
       )
     )
     expect(sinIgtf).not.toContain('IGTF')
+  })
+
+  it('el emisor aparece antes que el numero/fecha de recibo (orden de secciones)', () => {
+    const texto = buildReciboTextoPlano(reciboConLineas())
+
+    const idxEmisor = texto.indexOf('ClaraPOS Estetica C.A.')
+    const idxNroFecha = texto.indexOf('RECIBO\nNro:')
+    expect(idxEmisor).toBeGreaterThanOrEqual(0)
+    expect(idxNroFecha).toBeGreaterThan(idxEmisor)
+  })
+
+  it('sin pagos, no incluye la seccion Metodos de pago', () => {
+    const texto = buildReciboTextoPlano(reciboConLineas())
+    expect(texto).not.toContain('Metodos de pago')
+  })
+
+  it('con pagos agrupados, incluye la seccion Metodos de pago con cada linea', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '40.5000',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '100.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        pagos: [
+          { metodo_cobro_id: 'pv-1', metodo_nombre: 'Punto de Venta Banesco', moneda: 'BS', monto: 300 },
+        ],
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain('Metodos de pago')
+    expect(texto).toContain('Punto de Venta Banesco')
+    expect(texto).toContain('Bs. 300,00')
+  })
+
+  it('sin cierre (sin discrepancia ni credito), no incluye linea de credito/vuelto', () => {
+    const texto = buildReciboTextoPlano(reciboConLineas())
+    expect(texto).not.toContain('Quedo a credito')
+  })
+
+  it('con saldo a credito, la ultima linea muestra "Quedo a credito"', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '100',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '100.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        saldoPendUsd: 10,
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+    const lineas = texto.split('\n').filter((l) => l.trim() !== '')
+
+    expect(lineas[lineas.length - 1]).toContain('Quedo a credito')
+    expect(lineas[lineas.length - 1]).toContain('Bs. 1.000,00')
+    expect(lineas[lineas.length - 1]).toContain('$10.00')
   })
 })
 

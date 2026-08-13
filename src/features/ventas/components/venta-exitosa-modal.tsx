@@ -13,6 +13,7 @@ import {
   type ReciboData,
   type TipoImpuestoLinea,
 } from '../utils/factura-export'
+import type { ReciboDiscrepancyInput } from '../utils/recibo-pagos'
 import type { PagoEntryForm } from '../schemas/venta-schema'
 import type { CargoEspecial } from '../hooks/use-ventas'
 
@@ -31,6 +32,7 @@ export interface VentaExitosaData {
   igtfUsd?: number
   igtfBs?: number
   tasaIgtfPct?: number
+  discrepancy: ReciboDiscrepancyInput | null
 }
 
 function toTipoImpuestoLinea(val: string): TipoImpuestoLinea {
@@ -99,6 +101,14 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
       })),
       tasa: ventaData.tasa,
       igtfUsd: ventaData.igtfUsd && ventaData.igtfUsd > 0 ? ventaData.igtfUsd : null,
+      pagos: ventaData.pagos.map((p) => ({
+        metodo_cobro_id: p.metodo_cobro_id,
+        metodo_nombre: p.metodo_nombre,
+        moneda: p.moneda,
+        monto: p.monto,
+      })),
+      discrepancy: ventaData.discrepancy,
+      saldoPendUsd,
     })
   }
 
