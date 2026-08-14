@@ -6,6 +6,7 @@ import { formatDateTime } from '@/lib/format'
 import {
   agruparPagosPorMetodo,
   construirCierreRecibo,
+  formatearFacturasAplicadas,
   wrapCanvasText,
   type ReciboPagoInput,
   type ReciboPagoLinea,
@@ -298,7 +299,9 @@ function formatearCierre(cierre: ReciboCierre): string {
     case 'VUELTO':
       return `Vuelto entregado: ${monto}`
     case 'SAF':
-      return `Saldo a favor del cliente: ${monto}`
+      return cierre.facturasAplicadas?.length
+        ? `Abono aplicado a factura(s) ${formatearFacturasAplicadas(cierre.facturasAplicadas)}`
+        : `Saldo a favor del cliente: ${monto}`
     case 'PROPINA':
       return `Propina: ${monto}`
     case 'DIFERENCIAL_SOBRANTE':

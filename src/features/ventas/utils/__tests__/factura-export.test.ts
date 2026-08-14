@@ -454,6 +454,83 @@ describe('paridad: PDF vs texto en orden de totales', () => {
   })
 })
 
+describe('formatearCierre — SAF con referencia de factura(s) (B5)', () => {
+  function reciboConDiscrepancy(discrepancy: BuildReciboDataInput['discrepancy']): ReciboData {
+    return buildReciboData(
+      baseInput({
+        tasa: '500',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        discrepancy,
+      })
+    )
+  }
+
+  it('1 factura: la linea de cierre muestra "Abono aplicado a factura(s) {nro} por Bs X ($Y)"', () => {
+    const texto = buildReciboTextoPlano(
+      reciboConDiscrepancy({
+        mode: 'SAF',
+        montoUsd: 1,
+        montoBs: 500,
+        invoiceAssignments: [{ nroFactura: '1234', montoUsd: 1 }],
+      })
+    )
+
+    expect(texto).toContain('Abono aplicado a factura(s) 1234 por Bs 500 ($1)')
+  })
+
+  it('2 facturas (FIFO): la linea de cierre lista ambas con su monto aplicado', () => {
+    const texto = buildReciboTextoPlano(
+      reciboConDiscrepancy({
+        mode: 'SAF',
+        montoUsd: 1,
+        montoBs: 500,
+        invoiceAssignments: [
+          { nroFactura: '1234', montoUsd: 0.6 },
+          { nroFactura: '1235', montoUsd: 0.4 },
+        ],
+      })
+    )
+
+    expect(texto).toContain('Abono aplicado a factura(s) 1234 por Bs 300 ($0.6), 1235 por Bs 200 ($0.4)')
+  })
+
+  it('SAF sin invoiceAssignments (saldo a favor puro): conserva el texto actual', () => {
+    const texto = buildReciboTextoPlano(reciboConDiscrepancy({ mode: 'SAF', montoUsd: 1, montoBs: 500 }))
+
+    expect(texto).toContain('Saldo a favor del cliente: Bs. 500,00 ($1.00)')
+    expect(texto).not.toContain('Abono aplicado a factura')
+  })
+
+  it('VUELTO no cambia su texto/comportamiento (invoiceAssignments no aplica a este modo)', () => {
+    const texto = buildReciboTextoPlano(reciboConDiscrepancy({ mode: 'VUELTO', montoUsd: 1, montoBs: 500 }))
+
+    expect(texto).toContain('Vuelto entregado: Bs. 500,00 ($1.00)')
+  })
+
+  it('PROPINA no cambia su texto/comportamiento', () => {
+    const texto = buildReciboTextoPlano(reciboConDiscrepancy({ mode: 'PROPINA', montoUsd: 1, montoBs: 500 }))
+
+    expect(texto).toContain('Propina: Bs. 500,00 ($1.00)')
+  })
+
+  it('DIFERENCIAL_SOBRANTE no cambia su texto/comportamiento', () => {
+    const texto = buildReciboTextoPlano(
+      reciboConDiscrepancy({ mode: 'DIFERENCIAL_SOBRANTE', montoUsd: 1, montoBs: 500 })
+    )
+
+    expect(texto).toContain('Diferencial cambiario (sobrante): Bs. 500,00 ($1.00)')
+  })
+})
+
 describe('buildReciboTextoPlano', () => {
   function reciboConLineas(): ReciboData {
     return buildReciboData(

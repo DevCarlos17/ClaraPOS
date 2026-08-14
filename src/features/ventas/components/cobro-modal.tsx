@@ -514,7 +514,15 @@ export function CobroModal({
         igtfBs: igtfBs.toNumber(),
         tasaIgtfPct: tasaIgtf,
         discrepancy: discrepancy
-          ? { mode: discrepancy.mode, montoUsd: discrepancy.montoUsd, montoBs: discrepancy.montoBs }
+          ? {
+              mode: discrepancy.mode,
+              montoUsd: discrepancy.montoUsd,
+              montoBs: discrepancy.montoBs,
+              invoiceAssignments: discrepancy.invoiceAssignments?.map((a) => ({
+                nroFactura: a.nroFactura,
+                montoUsd: a.montoUsd,
+              })),
+            }
           : null,
       })
     } catch (error) {
