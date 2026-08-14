@@ -5,6 +5,9 @@ import {
   descargarReciboPdf,
   compartirReciboImagen,
   nombreArchivoRecibo,
+  RECIBO_ANCHO_CHARS,
+  generarSeparador,
+  medirAnchoPngDesdeSeparador,
   type BuildReciboDataInput,
   type ReciboData,
 } from '../factura-export'
@@ -25,6 +28,44 @@ function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDa
     ...overrides,
   }
 }
+
+describe('RECIBO_ANCHO_CHARS y generarSeparador', () => {
+  it('RECIBO_ANCHO_CHARS es 32 (58mm termico, fuente ESC/POS Font A)', () => {
+    expect(RECIBO_ANCHO_CHARS).toBe(32)
+  })
+
+  it('generarSeparador() sin argumentos retorna exactamente 32 guiones', () => {
+    const separador = generarSeparador()
+
+    expect(separador).toBe('-'.repeat(32))
+    expect(separador.length).toBe(RECIBO_ANCHO_CHARS)
+  })
+
+  it('generarSeparador(10) retorna exactamente 10 guiones', () => {
+    expect(generarSeparador(10)).toBe('----------')
+  })
+})
+
+describe('medirAnchoPngDesdeSeparador', () => {
+  /** Mock deterministico: 10px por caracter, igual convencion que recibo-pagos.test.ts. */
+  function mockCtx(): CanvasRenderingContext2D {
+    return {
+      measureText: (text: string) => ({ width: text.length * 10 }) as TextMetrics,
+    } as unknown as CanvasRenderingContext2D
+  }
+
+  it('mide el ancho del separador canonico de 32 caracteres + padding a cada lado', () => {
+    const separador = generarSeparador()
+
+    expect(medirAnchoPngDesdeSeparador(mockCtx(), separador, 24)).toBe(32 * 10 + 24 * 2)
+  })
+
+  it('con un separador mas corto, el ancho medido es proporcionalmente menor', () => {
+    const separador = generarSeparador(10)
+
+    expect(medirAnchoPngDesdeSeparador(mockCtx(), separador, 24)).toBe(10 * 10 + 24 * 2)
+  })
+})
 
 describe('buildReciboData', () => {
   it('single alicuota: una linea Gravable al 16% calcula base, iva y total general', () => {
