@@ -4,14 +4,26 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 
 export interface EmpresaConfig {
   moneda_contable?: 'USD' | 'BS'
+  moneda_presentacion_documentos?: 'USD' | 'BS'
+}
+
+const MONEDAS_PRESENTACION_VALIDAS = new Set(['USD', 'BS'])
+
+/** Resuelve `moneda_presentacion_documentos`: ausente o invalida siempre cae a 'USD'. */
+function resolveMonedaPresentacion(valor: unknown): 'USD' | 'BS' {
+  return typeof valor === 'string' && MONEDAS_PRESENTACION_VALIDAS.has(valor) ? (valor as 'USD' | 'BS') : 'USD'
 }
 
 export function parseEmpresaConfig(configJson: string | null | undefined): EmpresaConfig {
-  if (!configJson) return {}
+  if (!configJson) return { moneda_presentacion_documentos: 'USD' }
   try {
-    return JSON.parse(configJson) as EmpresaConfig
+    const parsed = JSON.parse(configJson) as EmpresaConfig
+    return {
+      ...parsed,
+      moneda_presentacion_documentos: resolveMonedaPresentacion(parsed.moneda_presentacion_documentos),
+    }
   } catch {
-    return {}
+    return { moneda_presentacion_documentos: 'USD' }
   }
 }
 
