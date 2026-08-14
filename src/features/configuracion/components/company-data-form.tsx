@@ -2,8 +2,14 @@ import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useCompany, updateCompany } from '../hooks/use-company'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useCompany, updateCompany, parseEmpresaConfig } from '../hooks/use-company'
 import { companySchema } from '../schemas/company-schema'
+
+const MONEDA_PRESENTACION_OPTIONS: { value: 'USD' | 'BS'; label: string }[] = [
+  { value: 'USD', label: 'Dolares (USD)' },
+  { value: 'BS', label: 'Bolivares (Bs)' },
+]
 
 export function CompanyDataForm() {
   const { company, isLoading } = useCompany()
@@ -14,6 +20,15 @@ export function CompanyDataForm() {
   const [direccion, setDireccion] = useState('')
   const [telefono, setTelefono] = useState('')
   const [email, setEmail] = useState('')
+  // Lazy initializer (no separate useEffect transition): el formulario solo se
+  // pinta cuando `company` ya esta disponible (gate `isLoading` mas abajo), asi
+  // que el valor correcto se fija en el PRIMER render. Esto evita una transicion
+  // 'USD' -> valor real que dispara un bug conocido de Radix Select (su <select>
+  // nativo oculto de sincronizacion de formulario resetea el valor a "" si la
+  // transicion ocurre antes de que sus <option> terminen de registrarse).
+  const [monedaPresentacion, setMonedaPresentacion] = useState<'USD' | 'BS'>(
+    () => parseEmpresaConfig(company?.config).moneda_presentacion_documentos ?? 'USD'
+  )
 
   useEffect(() => {
     if (!company) return
@@ -22,6 +37,7 @@ export function CompanyDataForm() {
     setDireccion(company.direccion ?? '')
     setTelefono(company.telefono ?? '')
     setEmail(company.email ?? '')
+    setMonedaPresentacion(parseEmpresaConfig(company.config).moneda_presentacion_documentos ?? 'USD')
   }, [company])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -42,6 +58,10 @@ export function CompanyDataForm() {
         direccion: result.data.direccion,
         telefono: result.data.telefono,
         email: result.data.email,
+        config: JSON.stringify({
+          ...parseEmpresaConfig(company.config),
+          moneda_presentacion_documentos: monedaPresentacion,
+        }),
       })
       toast.success('Datos de empresa actualizados')
     } catch {
@@ -128,6 +148,26 @@ export function CompanyDataForm() {
             disabled={isSubmitting}
           />
         </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="moneda-presentacion">Moneda de presentacion en documentos</Label>
+        <Select
+          value={monedaPresentacion}
+          onValueChange={(value) => setMonedaPresentacion(value as 'USD' | 'BS')}
+          disabled={isSubmitting}
+        >
+          <SelectTrigger id="moneda-presentacion" aria-label="Moneda de presentacion en documentos">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MONEDA_PRESENTACION_OPTIONS.map((opcion) => (
+              <SelectItem key={opcion.value} value={opcion.value}>
+                {opcion.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="pt-2">
