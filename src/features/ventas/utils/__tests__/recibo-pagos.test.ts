@@ -205,19 +205,19 @@ describe('construirCierreRecibo', () => {
 // ─── formatearFacturasAplicadas ──────────────────────────────────────
 
 describe('formatearFacturasAplicadas', () => {
-  it('1 factura: "{nro} por Bs X ($Y)"', () => {
+  it('1 factura: "{nro} por Bs X ($Y)" formateado con formatBs/formatUsd', () => {
     const texto = formatearFacturasAplicadas([{ nroFactura: '1234', montoUsd: 1, montoBs: 500 }])
 
-    expect(texto).toBe('1234 por Bs 500 ($1)')
+    expect(texto).toBe('1234 por Bs. 500,00 ($1.00)')
   })
 
-  it('2 facturas (FIFO): lista ambas separadas por coma', () => {
+  it('2 facturas (FIFO): lista ambas separadas por coma, cada una formateada', () => {
     const texto = formatearFacturasAplicadas([
       { nroFactura: '1234', montoUsd: 0.6, montoBs: 300 },
       { nroFactura: '1235', montoUsd: 0.4, montoBs: 200 },
     ])
 
-    expect(texto).toBe('1234 por Bs 300 ($0.6), 1235 por Bs 200 ($0.4)')
+    expect(texto).toBe('1234 por Bs. 300,00 ($0.60), 1235 por Bs. 200,00 ($0.40)')
   })
 })
 

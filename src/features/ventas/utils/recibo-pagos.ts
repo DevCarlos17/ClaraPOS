@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js'
-import { bsToUsd, usdToBs, type DecimalInput } from '@/lib/currency'
+import { bsToUsd, formatBs, formatUsd, usdToBs, type DecimalInput } from '@/lib/currency'
 
 // =============================================
 // TYPES
@@ -145,12 +145,14 @@ export function construirCierreRecibo(
 
 /**
  * Formatea la lista de facturas destino de un abono SAF para la línea de cierre del
- * recibo: "{nro} por Bs X ($Y)", una entrada por factura separada por coma. Usa los
- * montos crudos (sin miles/2-decimales fijos) — formato compacto especifico de esta
- * línea, distinto del resto del recibo que usa formatUsd/formatBs.
+ * recibo: "{nro} por Bs X ($Y)", una entrada por factura separada por coma. Usa
+ * formatBs/formatUsd, igual que el resto de las líneas del recibo, para mantener
+ * consistencia visual (miles, 2 decimales fijos, "Bs." con punto).
  */
 export function formatearFacturasAplicadas(facturas: ReciboFacturaAplicada[]): string {
-  return facturas.map((f) => `${f.nroFactura} por Bs ${f.montoBs} ($${f.montoUsd})`).join(', ')
+  return facturas
+    .map((f) => `${f.nroFactura} por ${formatBs(f.montoBs)} (${formatUsd(f.montoUsd)})`)
+    .join(', ')
 }
 
 /**

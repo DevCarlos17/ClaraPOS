@@ -484,7 +484,7 @@ describe('formatearCierre — SAF con referencia de factura(s) (B5)', () => {
       })
     )
 
-    expect(texto).toContain('Abono aplicado a factura(s) 1234 por Bs 500 ($1)')
+    expect(texto).toContain('Abono aplicado a factura(s) 1234 por Bs. 500,00 ($1.00)')
   })
 
   it('2 facturas (FIFO): la linea de cierre lista ambas con su monto aplicado', () => {
@@ -500,7 +500,9 @@ describe('formatearCierre — SAF con referencia de factura(s) (B5)', () => {
       })
     )
 
-    expect(texto).toContain('Abono aplicado a factura(s) 1234 por Bs 300 ($0.6), 1235 por Bs 200 ($0.4)')
+    expect(texto).toContain(
+      'Abono aplicado a factura(s) 1234 por Bs. 300,00 ($0.60), 1235 por Bs. 200,00 ($0.40)'
+    )
   })
 
   it('SAF sin invoiceAssignments (saldo a favor puro): conserva el texto actual', () => {
