@@ -216,7 +216,15 @@ interface LineaRecibo {
   bold?: boolean
 }
 
-const SEPARADOR = '-'.repeat(40)
+/** Ancho canonico del recibo en caracteres (58mm termico, fuente ESC/POS Font A). */
+export const RECIBO_ANCHO_CHARS = 32
+
+/** Genera un separador de `chars` guiones (default: RECIBO_ANCHO_CHARS). Funcion pura. */
+export function generarSeparador(chars: number = RECIBO_ANCHO_CHARS): string {
+  return '-'.repeat(chars)
+}
+
+const SEPARADOR = generarSeparador()
 
 /** Monto de una linea de pago, formateado segun su moneda nativa (design: USD muestra $ + equiv Bs). */
 function formatMontoPago(linea: ReciboPagoLinea): string {
@@ -477,12 +485,24 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
 // buildReciboImagenBlob — dibujo manual en Canvas 2D
 // =============================================
 
-const PNG_ANCHO = 480
 const PNG_PADDING = 24
 const PNG_LINE_HEIGHT = 20
 // devicePixelRatio-style scaling fijo para que el PNG se vea nitido al compartirse
 // (no dependemos de window.devicePixelRatio porque el canvas es offscreen/oculto).
 const PNG_ESCALA = 2
+
+/**
+ * Mide el ancho en px que ocupa el separador canonico + padding a cada lado.
+ * Funcion pura e inyectable: recibe el `ctx` para poder testearse sin canvas real
+ * (happy-dom no implementa `getContext('2d')`, ver DEUDA-3).
+ */
+export function medirAnchoPngDesdeSeparador(
+  ctx: CanvasRenderingContext2D,
+  separador: string,
+  padding: number
+): number {
+  return ctx.measureText(separador).width + padding * 2
+}
 
 /**
  * Dibuja el recibo completo (mismo contenido fiscal que buildReciboTextoPlano)
@@ -499,7 +519,12 @@ export function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
 
   // Ajuste de texto (wrap) ANTES de fijar canvas.width/height: setear esas
   // propiedades resetea el estado del contexto 2D, asi que medimos primero.
-  const maxWidthPx = PNG_ANCHO - PNG_PADDING * 2
+  // El ancho del PNG se DERIVA midiendo el separador canonico (mismo font que el
+  // resto del recibo), en vez de hardcodearse — asi separadores y texto envuelto
+  // comparten exactamente el mismo ancho (spec: recibo-ancho-termico-58mm).
+  ctx.font = '13px monospace'
+  const pngAncho = medirAnchoPngDesdeSeparador(ctx, SEPARADOR, PNG_PADDING)
+  const maxWidthPx = pngAncho - PNG_PADDING * 2
   const lineasAjustadas: LineaRecibo[] = []
   for (const linea of lineas) {
     ctx.font = linea.bold ? 'bold 13px monospace' : '13px monospace'
@@ -515,12 +540,12 @@ export function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
   }
 
   const alto = PNG_PADDING * 2 + lineasAjustadas.length * PNG_LINE_HEIGHT
-  canvas.width = PNG_ANCHO * PNG_ESCALA
+  canvas.width = pngAncho * PNG_ESCALA
   canvas.height = alto * PNG_ESCALA
 
   ctx.scale(PNG_ESCALA, PNG_ESCALA)
   ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, PNG_ANCHO, alto)
+  ctx.fillRect(0, 0, pngAncho, alto)
   ctx.fillStyle = '#111111'
   ctx.textBaseline = 'top'
 
