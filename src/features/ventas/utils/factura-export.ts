@@ -277,11 +277,15 @@ export function generarSeparador(chars: number = RECIBO_ANCHO_CHARS): string {
 
 const SEPARADOR = generarSeparador()
 
-/** Monto de una linea de pago, formateado segun su moneda nativa (design: USD muestra $ + equiv Bs). */
-function formatMontoPago(linea: ReciboPagoLinea): string {
+/**
+ * Monto de una linea de pago, formateado segun su moneda nativa (siempre primaria) con
+ * el equivalente de la otra moneda entre parentesis. Independiente de `monedaPresentacion`
+ * del recibo: cada metodo de pago conserva su propia moneda nativa como primaria.
+ */
+export function formatMontoPago(linea: ReciboPagoLinea): string {
   return linea.moneda === 'USD'
     ? `${formatUsd(linea.montoUsd)} (${formatBs(linea.montoBs)})`
-    : formatBs(linea.montoBs)
+    : `${formatBs(linea.montoBs)} (${formatUsd(linea.montoUsd)})`
 }
 
 /** Fila de la seccion de totales, ya formateada (bimonetaria o formato fijo, ver construirFilasTotales). */

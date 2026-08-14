@@ -13,11 +13,12 @@ import {
   construirFilasTotales,
   formatParPrimarioContraparte,
   formatMontoBimonetario,
+  formatMontoPago,
   type BuildReciboDataInput,
   type ReciboData,
   type ReciboTotales,
 } from '../factura-export'
-import type { ReciboPagoInput } from '../recibo-pagos'
+import type { ReciboPagoInput, ReciboPagoLinea } from '../recibo-pagos'
 
 // Envuelve la implementacion REAL de jspdf-autotable con un spy: preserva el
 // renderizado real (los tests de PDF existentes siguen generando un Blob valido)
@@ -638,6 +639,30 @@ describe('formatearCierre — SAF con referencia de factura(s) (B5)', () => {
     )
 
     expect(texto).toContain('Diferencial cambiario (sobrante): Bs. 500,00 ($1.00)')
+  })
+})
+
+describe('formatMontoPago (WU2: contraparte independiente del toggle del recibo)', () => {
+  function pagoFixture(overrides: Partial<ReciboPagoLinea> = {}): ReciboPagoLinea {
+    return {
+      metodoCobroId: 'pm-1',
+      metodoNombre: 'PDV Banesco',
+      moneda: 'BS',
+      montoNativo: 300,
+      montoBs: 300,
+      montoUsd: 0.6,
+      ...overrides,
+    }
+  }
+
+  it('pago nativo en USD: sin cambios — muestra $Y.YY (Bs. X,XX)', () => {
+    const linea = pagoFixture({ moneda: 'USD', montoNativo: 1, montoUsd: 1, montoBs: 500 })
+    expect(formatMontoPago(linea)).toBe('$1.00 (Bs. 500,00)')
+  })
+
+  it('pago nativo en BS: ahora tambien muestra su equivalente USD — Bs. X,XX ($Y.YY)', () => {
+    const linea = pagoFixture({ moneda: 'BS', montoNativo: 300, montoBs: 300, montoUsd: 0.6 })
+    expect(formatMontoPago(linea)).toBe('Bs. 300,00 ($0.60)')
   })
 })
 
