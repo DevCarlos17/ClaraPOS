@@ -86,6 +86,27 @@ describe('CompanyDataForm — selector de moneda de presentacion de documentos',
     expect(screen.getByRole('option', { name: /Dolares/i })).toHaveAttribute('aria-selected', 'false')
   })
 
+  it("transicion real isLoading:true -> false (company llega despues del mount): el Select refleja 'BS' persistido, no el fallback 'USD'", async () => {
+    const user = userEvent.setup()
+    mockedUseCompany.mockReturnValue({ company: null, isLoading: true })
+
+    const { rerender } = render(<CompanyDataForm />)
+
+    mockedUseCompany.mockReturnValue({
+      company: baseCompany({ config: '{"moneda_presentacion_documentos":"BS"}' }),
+      isLoading: false,
+    })
+    rerender(<CompanyDataForm />)
+
+    await user.click(screen.getByRole('combobox', { name: /moneda de presentacion/i }))
+
+    expect(await screen.findByRole('option', { name: /Bol.*var/i })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    expect(screen.getByRole('option', { name: /Dolares/i })).toHaveAttribute('aria-selected', 'false')
+  })
+
   it("seleccionar Bolivares y enviar llama a updateCompany con moneda_presentacion_documentos: 'BS', preservando otras claves de config", async () => {
     const user = userEvent.setup()
     mockedUseCompany.mockReturnValue({

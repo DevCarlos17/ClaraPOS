@@ -20,15 +20,25 @@ export function CompanyDataForm() {
   const [direccion, setDireccion] = useState('')
   const [telefono, setTelefono] = useState('')
   const [email, setEmail] = useState('')
-  // Lazy initializer (no separate useEffect transition): el formulario solo se
-  // pinta cuando `company` ya esta disponible (gate `isLoading` mas abajo), asi
-  // que el valor correcto se fija en el PRIMER render. Esto evita una transicion
-  // 'USD' -> valor real que dispara un bug conocido de Radix Select (su <select>
-  // nativo oculto de sincronizacion de formulario resetea el valor a "" si la
-  // transicion ocurre antes de que sus <option> terminen de registrarse).
-  const [monedaPresentacion, setMonedaPresentacion] = useState<'USD' | 'BS'>(
-    () => parseEmpresaConfig(company?.config).moneda_presentacion_documentos ?? 'USD'
-  )
+  const [monedaPresentacion, setMonedaPresentacion] = useState<'USD' | 'BS'>('USD')
+  // Sincronizacion durante el render (no via useEffect) para el Select de moneda:
+  // `useCompany()` (PowerSync `useQuery`) tiene `isLoading` en `true` en el primer
+  // render real (el Worker de wa-sqlite resuelve de forma asincrona), por lo que
+  // `company` NUNCA esta disponible de forma sincronica al montar. El formulario
+  // completo (incluido este Select) recien se pinta por primera vez en el render
+  // donde `isLoading` pasa a `false`. Si el valor correcto se aplicara via
+  // `useEffect` (un tick despues de ese commit), el Select de Radix montaria con
+  // el fallback 'USD' y luego recibiria un cambio de `value` sobre una instancia
+  // ya montada — su <select> nativo oculto de sincronizacion no siempre refleja
+  // ese cambio (bug conocido de Radix). Ajustar el estado EN el render, antes del
+  // `return`, hace que React descarte ese render intermedio y vuelva a ejecutar
+  // el componente con el valor correcto ya aplicado, por lo que el Select nunca
+  // llega a pintarse (ni montarse) con el valor incorrecto.
+  const [monedaSyncedForCompanyId, setMonedaSyncedForCompanyId] = useState<string | undefined>(undefined)
+  if (company && company.id !== monedaSyncedForCompanyId) {
+    setMonedaSyncedForCompanyId(company.id)
+    setMonedaPresentacion(parseEmpresaConfig(company.config).moneda_presentacion_documentos ?? 'USD')
+  }
 
   useEffect(() => {
     if (!company) return
@@ -37,7 +47,6 @@ export function CompanyDataForm() {
     setDireccion(company.direccion ?? '')
     setTelefono(company.telefono ?? '')
     setEmail(company.email ?? '')
-    setMonedaPresentacion(parseEmpresaConfig(company.config).moneda_presentacion_documentos ?? 'USD')
   }, [company])
 
   const handleSubmit = async (e: React.FormEvent) => {
