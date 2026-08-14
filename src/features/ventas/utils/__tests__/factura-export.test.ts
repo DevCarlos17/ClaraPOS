@@ -1,17 +1,30 @@
+import autoTable from 'jspdf-autotable'
 import {
   buildReciboData,
   buildReciboTextoPlano,
   buildReciboImagenBlob,
+  buildReciboPdfBlob,
   descargarReciboPdf,
   compartirReciboImagen,
   nombreArchivoRecibo,
   RECIBO_ANCHO_CHARS,
   generarSeparador,
   medirAnchoPngDesdeSeparador,
+  construirFilasTotales,
   type BuildReciboDataInput,
   type ReciboData,
+  type ReciboTotales,
 } from '../factura-export'
 import type { ReciboPagoInput } from '../recibo-pagos'
+
+// Envuelve la implementacion REAL de jspdf-autotable con un spy: preserva el
+// renderizado real (los tests de PDF existentes siguen generando un Blob valido)
+// mientras permite inspeccionar los argumentos (`body`) de cada llamada — usado
+// por el test de paridad PDF vs texto mas abajo.
+vi.mock('jspdf-autotable', async (importOriginal) => {
+  const actual = await importOriginal<{ default: (doc: unknown, opts: unknown) => void }>()
+  return { ...actual, default: vi.fn(actual.default) }
+})
 
 function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDataInput {
   return {
@@ -246,6 +259,198 @@ describe('buildReciboData', () => {
       })
     )
     expect(recibo.cierre).toEqual({ tipo: 'VUELTO', montoUsd: 2, montoBs: 100 })
+  })
+})
+
+describe('buildReciboData — totalFacturaUsd/totalFacturaBs (subtotal pre-IGTF)', () => {
+  function reciboConIgtf() {
+    return buildReciboData(
+      baseInput({
+        tasa: '10',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Exento',
+            cantidad: '1',
+            precioUnitarioUsd: '1.00',
+            tipoImpuesto: 'Exento',
+            impuestoPct: '0',
+          },
+          {
+            codigo: 'PROD-002',
+            nombre: 'Gravable 8%',
+            cantidad: '1',
+            precioUnitarioUsd: '1.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '8',
+          },
+          {
+            codigo: 'PROD-003',
+            nombre: 'Gravable 16%',
+            cantidad: '1',
+            precioUnitarioUsd: '1.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        igtfUsd: 0.06,
+      })
+    )
+  }
+
+  it('totalFacturaUsd = exento + base imponible + iva total, excluye IGTF', () => {
+    const recibo = reciboConIgtf()
+    // Exento $1 + Base $2 (dos lineas gravables) + IVA8% $0.08 + IVA16% $0.16 = $3.24
+    expect(recibo.totales.totalFacturaUsd).toBe(3.24)
+  })
+
+  it('con IGTF, totalGeneralUsd = totalFacturaUsd + igtf, pero totalFacturaUsd no cambia', () => {
+    const recibo = reciboConIgtf()
+    expect(recibo.totales.totalGeneralUsd).toBe(3.3)
+    expect(recibo.totales.totalFacturaUsd).toBe(3.24)
+  })
+
+  it('totalFacturaBs = totalFacturaUsd convertido a la tasa de la venta', () => {
+    const recibo = reciboConIgtf()
+    expect(recibo.totales.totalFacturaBs).toBe(32.4)
+  })
+
+  it('sin IGTF, totalFacturaUsd coincide con totalGeneralUsd (no hay IGTF que restar)', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '10',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Gravable 16%',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        igtfUsd: null,
+      })
+    )
+    expect(recibo.totales.totalFacturaUsd).toBe(recibo.totales.totalGeneralUsd)
+    expect(recibo.totales.totalFacturaUsd).toBe(11.6)
+  })
+})
+
+describe('construirFilasTotales', () => {
+  function totalesFixture(overrides: Partial<ReciboTotales> = {}): ReciboTotales {
+    return {
+      montoExentoUsd: 1,
+      baseImponibleUsd: 3,
+      alicuotas: [
+        { pct: 8, baseUsd: 1, ivaUsd: 0.08 },
+        { pct: 16, baseUsd: 2, ivaUsd: 0.16 },
+      ],
+      igtfUsd: 0.06,
+      totalFacturaUsd: 4.24,
+      totalFacturaBs: 4.24,
+      totalGeneralUsd: 4.3,
+      totalGeneralBs: 4.3,
+      ...overrides,
+    }
+  }
+
+  it('con IGTF > 0: orden Exento -> Base -> alicuotas -> TOTAL FACTURA (subtotal) -> IGTF -> TOTAL + IGTF (bold, final)', () => {
+    const filas = construirFilasTotales(totalesFixture())
+
+    expect(filas.map((f) => f.label)).toEqual([
+      'Monto Exento',
+      'Base Imponible',
+      'IVA 8%',
+      'IVA 16%',
+      'TOTAL FACTURA',
+      'IGTF',
+      'TOTAL + IGTF',
+    ])
+    expect(filas[4]).toEqual({ label: 'TOTAL FACTURA', usd: '$4.24', bold: false })
+    expect(filas[5]).toEqual({ label: 'IGTF', usd: '$0.06', bold: false })
+    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', usd: '$4.30', bs: 'Bs. 4,30', bold: true })
+  })
+
+  it('sin IGTF (null): TOTAL FACTURA es la fila final, bold, bimonetaria, sin fila de IGTF ni sufijo "+ IGTF"', () => {
+    const filas = construirFilasTotales(totalesFixture({ igtfUsd: null }))
+
+    expect(filas.map((f) => f.label)).not.toContain('IGTF')
+    expect(filas.map((f) => f.label)).not.toContain('TOTAL + IGTF')
+    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', usd: '$4.24', bs: 'Bs. 4,24', bold: true })
+  })
+
+  it('sin IGTF (0): mismo comportamiento que null — sin fila de IGTF', () => {
+    const filas = construirFilasTotales(totalesFixture({ igtfUsd: 0 }))
+
+    expect(filas.map((f) => f.label)).not.toContain('IGTF')
+    expect(filas.at(-1)?.bold).toBe(true)
+  })
+
+  it('sin monto exento ni base imponible: omite esas filas (no aparecen en 0)', () => {
+    const filas = construirFilasTotales(totalesFixture({ montoExentoUsd: 0, baseImponibleUsd: 0, alicuotas: [] }))
+
+    expect(filas.map((f) => f.label)).toEqual(['TOTAL FACTURA', 'IGTF', 'TOTAL + IGTF'])
+  })
+})
+
+describe('paridad: PDF vs texto en orden de totales', () => {
+  it('el body de la tabla de totales del PDF coincide exactamente con construirFilasTotales del mismo recibo', () => {
+    const mockedAutoTable = vi.mocked(autoTable)
+    mockedAutoTable.mockClear()
+
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '10',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Exento',
+            cantidad: '1',
+            precioUnitarioUsd: '1.00',
+            tipoImpuesto: 'Exento',
+            impuestoPct: '0',
+          },
+          {
+            codigo: 'PROD-002',
+            nombre: 'Gravable 8%',
+            cantidad: '1',
+            precioUnitarioUsd: '1.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '8',
+          },
+          {
+            codigo: 'PROD-003',
+            nombre: 'Gravable 16%',
+            cantidad: '1',
+            precioUnitarioUsd: '1.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        igtfUsd: 0.06,
+      })
+    )
+
+    buildReciboPdfBlob(recibo)
+
+    // 1ra llamada a autoTable: tabla de articulos. 2da llamada: tabla de totales
+    // (orden fijo dentro de buildReciboPdfBlob).
+    const totalesCall = mockedAutoTable.mock.calls[1]
+    const totalesBody = (totalesCall[1] as { body: string[][] }).body
+
+    const filasEsperadas = construirFilasTotales(recibo.totales).map((f) => [
+      f.label,
+      f.bs ? `${f.usd} / ${f.bs}` : f.usd,
+    ])
+
+    expect(totalesBody).toEqual(filasEsperadas)
+
+    const texto = buildReciboTextoPlano(recibo)
+    for (const fila of construirFilasTotales(recibo.totales)) {
+      const lineaEsperada = fila.bs ? `${fila.label}: ${fila.usd} / ${fila.bs}` : `${fila.label}: ${fila.usd}`
+      expect(texto).toContain(lineaEsperada)
+    }
   })
 })
 

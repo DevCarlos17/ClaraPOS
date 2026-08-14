@@ -39,6 +39,9 @@ export interface ReciboTotales {
   baseImponibleUsd: number
   alicuotas: ReciboAlicuota[]
   igtfUsd: number | null
+  /** Subtotal de factura SIN IGTF (exento + base imponible + iva total). */
+  totalFacturaUsd: number
+  totalFacturaBs: number
   totalGeneralUsd: number
   totalGeneralBs: number
 }
@@ -181,7 +184,9 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
 
   const ivaTotal = alicuotas.reduce((sum, a) => sum.plus(a.ivaUsd), new Decimal(0))
   const igtf = input.igtfUsd ?? 0
-  const totalGeneralUsd = montoExentoUsd.plus(baseImponibleUsd).plus(ivaTotal).plus(igtf)
+  const totalFacturaUsd = montoExentoUsd.plus(baseImponibleUsd).plus(ivaTotal)
+  const totalFacturaBs = usdToBs(totalFacturaUsd, input.tasa)
+  const totalGeneralUsd = totalFacturaUsd.plus(igtf)
   const totalGeneralBs = usdToBs(totalGeneralUsd, input.tasa)
 
   const pagos = agruparPagosPorMetodo(input.pagos, input.tasa)
@@ -198,6 +203,8 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
       baseImponibleUsd: baseImponibleUsd.toNumber(),
       alicuotas,
       igtfUsd: input.igtfUsd,
+      totalFacturaUsd: totalFacturaUsd.toNumber(),
+      totalFacturaBs: totalFacturaBs.toNumber(),
       totalGeneralUsd: totalGeneralUsd.toNumber(),
       totalGeneralBs: totalGeneralBs.toNumber(),
     },
@@ -231,6 +238,57 @@ function formatMontoPago(linea: ReciboPagoLinea): string {
   return linea.moneda === 'USD'
     ? `${formatUsd(linea.montoUsd)} (${formatBs(linea.montoBs)})`
     : formatBs(linea.montoBs)
+}
+
+/** Fila de la seccion de totales, ya formateada. `bs` solo esta presente en filas bimonetarias. */
+export interface FilaTotal {
+  label: string
+  usd: string
+  bs?: string
+  bold: boolean
+}
+
+/**
+ * Orden fiscal de totales (spec): Exento -> Base Imponible -> alicuotas de IVA ->
+ * TOTAL FACTURA (subtotal sin IGTF) -> IGTF (si aplica) -> TOTAL + IGTF (final).
+ * Sin IGTF, TOTAL FACTURA es la fila final (bold, bimonetaria), sin fila de IGTF
+ * ni sufijo "+ IGTF". Funcion pura, compartida por construirLineasRecibo (PNG/texto)
+ * y buildReciboPdfBlob (PDF) para que ambas rutas de render sean estructuralmente
+ * imposibles de divergir (motivo del bug original de orden inconsistente).
+ */
+export function construirFilasTotales(totales: ReciboTotales): FilaTotal[] {
+  const filas: FilaTotal[] = []
+
+  if (totales.montoExentoUsd > 0) {
+    filas.push({ label: 'Monto Exento', usd: formatUsd(totales.montoExentoUsd), bold: false })
+  }
+  if (totales.baseImponibleUsd > 0) {
+    filas.push({ label: 'Base Imponible', usd: formatUsd(totales.baseImponibleUsd), bold: false })
+  }
+  for (const alicuota of totales.alicuotas) {
+    filas.push({ label: `IVA ${alicuota.pct}%`, usd: formatUsd(alicuota.ivaUsd), bold: false })
+  }
+
+  const igtf = totales.igtfUsd ?? 0
+  if (igtf > 0) {
+    filas.push({ label: 'TOTAL FACTURA', usd: formatUsd(totales.totalFacturaUsd), bold: false })
+    filas.push({ label: 'IGTF', usd: formatUsd(igtf), bold: false })
+    filas.push({
+      label: 'TOTAL + IGTF',
+      usd: formatUsd(totales.totalGeneralUsd),
+      bs: formatBs(totales.totalGeneralBs),
+      bold: true,
+    })
+  } else {
+    filas.push({
+      label: 'TOTAL FACTURA',
+      usd: formatUsd(totales.totalFacturaUsd),
+      bs: formatBs(totales.totalFacturaBs),
+      bold: true,
+    })
+  }
+
+  return filas
 }
 
 /** Texto de cierre del recibo (excedente o saldo a credito). Sin acentos, consistente con el resto del archivo. */
@@ -277,22 +335,12 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
   }
   lines.push({ text: SEPARADOR })
 
-  if (recibo.totales.montoExentoUsd > 0) {
-    lines.push({ text: `Monto Exento: ${formatUsd(recibo.totales.montoExentoUsd)}` })
+  for (const fila of construirFilasTotales(recibo.totales)) {
+    lines.push({
+      text: fila.bs ? `${fila.label}: ${fila.usd} / ${fila.bs}` : `${fila.label}: ${fila.usd}`,
+      bold: fila.bold,
+    })
   }
-  if (recibo.totales.baseImponibleUsd > 0) {
-    lines.push({ text: `Base Imponible: ${formatUsd(recibo.totales.baseImponibleUsd)}` })
-  }
-  for (const alicuota of recibo.totales.alicuotas) {
-    lines.push({ text: `IVA ${alicuota.pct}%: ${formatUsd(alicuota.ivaUsd)}` })
-  }
-  if (recibo.totales.igtfUsd !== null) {
-    lines.push({ text: `IGTF: ${formatUsd(recibo.totales.igtfUsd)}` })
-  }
-  lines.push({
-    text: `TOTAL GENERAL: ${formatUsd(recibo.totales.totalGeneralUsd)} / ${formatBs(recibo.totales.totalGeneralBs)}`,
-    bold: true,
-  })
 
   if (recibo.pagos.length > 0) {
     lines.push({ text: '' })
@@ -415,22 +463,9 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
 
   y = (doc as AutoTableDoc).lastAutoTable.finalY + 6
 
-  const totalesBody: string[][] = []
-  if (recibo.totales.montoExentoUsd > 0) {
-    totalesBody.push(['Monto Exento', formatUsd(recibo.totales.montoExentoUsd)])
-  }
-  if (recibo.totales.baseImponibleUsd > 0) {
-    totalesBody.push(['Base Imponible', formatUsd(recibo.totales.baseImponibleUsd)])
-  }
-  for (const alicuota of recibo.totales.alicuotas) {
-    totalesBody.push([`IVA ${alicuota.pct}%`, formatUsd(alicuota.ivaUsd)])
-  }
-  if (recibo.totales.igtfUsd !== null) {
-    totalesBody.push(['IGTF', formatUsd(recibo.totales.igtfUsd)])
-  }
-  totalesBody.push([
-    'Total General',
-    `${formatUsd(recibo.totales.totalGeneralUsd)} / ${formatBs(recibo.totales.totalGeneralBs)}`,
+  const totalesBody: string[][] = construirFilasTotales(recibo.totales).map((fila) => [
+    fila.label,
+    fila.bs ? `${fila.usd} / ${fila.bs}` : fila.usd,
   ])
 
   autoTable(doc, {
