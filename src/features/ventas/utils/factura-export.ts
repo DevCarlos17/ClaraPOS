@@ -520,8 +520,8 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
     linea.codigo,
     `${linea.nombre}${linea.esExento ? ' (E)' : ''}`,
     String(linea.cantidad),
-    formatUsd(linea.precioUnitarioUsd),
-    formatUsd(linea.totalUsd),
+    formatMontoBimonetario(linea.precioUnitarioUsd, linea.precioUnitarioBs, recibo.monedaPresentacion),
+    formatMontoBimonetario(linea.totalUsd, linea.totalBs, recibo.monedaPresentacion),
   ])
 
   autoTable(doc, {
