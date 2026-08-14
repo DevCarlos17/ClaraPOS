@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js'
-import { bsToUsd, usdToBs, type DecimalInput } from '@/lib/currency'
+import { bsToUsd, formatBs, formatUsd, usdToBs, type DecimalInput } from '@/lib/currency'
 
 // =============================================
 // TYPES
@@ -23,16 +23,31 @@ export interface ReciboPagoLinea {
 
 export type ReciboCierreTipo = 'VUELTO' | 'SAF' | 'PROPINA' | 'DIFERENCIAL_SOBRANTE' | 'CREDITO'
 
+export interface ReciboFacturaAplicada {
+  nroFactura: string
+  montoUsd: number
+  montoBs: number
+}
+
 export interface ReciboCierre {
   tipo: ReciboCierreTipo
   montoUsd: number
   montoBs: number
+  /** Solo presente en cierres SAF con abono aplicado a factura(s) via FIFO. */
+  facturasAplicadas?: ReciboFacturaAplicada[]
+}
+
+export interface ReciboInvoiceAssignment {
+  nroFactura: string
+  montoUsd: number
 }
 
 export interface ReciboDiscrepancyInput {
   mode: ReciboCierreTipo | 'ABSORBER' | 'DIFERENCIAL_FALTANTE' | null
   montoUsd: number
   montoBs: number
+  /** Solo aplica a mode === 'SAF': facturas destino del abono, calculadas via FIFO. */
+  invoiceAssignments?: ReciboInvoiceAssignment[]
 }
 
 export interface ReciboReconciliacion {
@@ -100,10 +115,20 @@ export function construirCierreRecibo(
   tasa: DecimalInput,
 ): ReciboCierre | null {
   if (discrepancy && CIERRE_TIPOS_EXCEDENTE.has(discrepancy.mode ?? '')) {
+    const facturasAplicadas =
+      discrepancy.mode === 'SAF' && discrepancy.invoiceAssignments?.length
+        ? discrepancy.invoiceAssignments.map((asignacion) => ({
+            nroFactura: asignacion.nroFactura,
+            montoUsd: asignacion.montoUsd,
+            montoBs: usdToBs(asignacion.montoUsd, tasa).toNumber(),
+          }))
+        : undefined
+
     return {
       tipo: discrepancy.mode as ReciboCierreTipo,
       montoUsd: discrepancy.montoUsd,
       montoBs: discrepancy.montoBs,
+      ...(facturasAplicadas ? { facturasAplicadas } : {}),
     }
   }
 
@@ -116,6 +141,18 @@ export function construirCierreRecibo(
   }
 
   return null
+}
+
+/**
+ * Formatea la lista de facturas destino de un abono SAF para la línea de cierre del
+ * recibo: "{nro} por Bs X ($Y)", una entrada por factura separada por coma. Usa
+ * formatBs/formatUsd, igual que el resto de las líneas del recibo, para mantener
+ * consistencia visual (miles, 2 decimales fijos, "Bs." con punto).
+ */
+export function formatearFacturasAplicadas(facturas: ReciboFacturaAplicada[]): string {
+  return facturas
+    .map((f) => `${f.nroFactura} por ${formatBs(f.montoBs)} (${formatUsd(f.montoUsd)})`)
+    .join(', ')
 }
 
 /**

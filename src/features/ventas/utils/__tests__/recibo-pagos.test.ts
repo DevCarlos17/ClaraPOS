@@ -1,6 +1,7 @@
 import {
   agruparPagosPorMetodo,
   construirCierreRecibo,
+  formatearFacturasAplicadas,
   reconciliarTotalBs,
   wrapCanvasText,
   type ReciboCierreTipo,
@@ -137,6 +138,86 @@ describe('construirCierreRecibo', () => {
     const cierre = construirCierreRecibo(input, 0, 500)
 
     expect(cierre).toBeNull()
+  })
+
+  it('modo SAF con invoiceAssignments de 1 factura: facturasAplicadas tiene 1 entrada con montoBs = montoUsd × tasa', () => {
+    const input = discrepancy({
+      mode: 'SAF',
+      montoUsd: 1,
+      montoBs: 500,
+      invoiceAssignments: [{ nroFactura: '1234', montoUsd: 1 }],
+    })
+
+    const cierre = construirCierreRecibo(input, 0, 500)
+
+    expect(cierre?.facturasAplicadas).toEqual([{ nroFactura: '1234', montoUsd: 1, montoBs: 500 }])
+  })
+
+  it('modo SAF con invoiceAssignments de 2 facturas: facturasAplicadas tiene 2 entradas, cada una con su montoBs propio', () => {
+    const input = discrepancy({
+      mode: 'SAF',
+      montoUsd: 1,
+      montoBs: 500,
+      invoiceAssignments: [
+        { nroFactura: '1234', montoUsd: 0.6 },
+        { nroFactura: '1235', montoUsd: 0.4 },
+      ],
+    })
+
+    const cierre = construirCierreRecibo(input, 0, 500)
+
+    expect(cierre?.facturasAplicadas).toEqual([
+      { nroFactura: '1234', montoUsd: 0.6, montoBs: 300 },
+      { nroFactura: '1235', montoUsd: 0.4, montoBs: 200 },
+    ])
+  })
+
+  it('modo SAF sin invoiceAssignments (ausente): facturasAplicadas queda undefined', () => {
+    const input = discrepancy({ mode: 'SAF', montoUsd: 1, montoBs: 500 })
+
+    const cierre = construirCierreRecibo(input, 0, 500)
+
+    expect(cierre?.facturasAplicadas).toBeUndefined()
+  })
+
+  it('modo SAF con invoiceAssignments vacio ([]): facturasAplicadas queda undefined', () => {
+    const input = discrepancy({ mode: 'SAF', montoUsd: 1, montoBs: 500, invoiceAssignments: [] })
+
+    const cierre = construirCierreRecibo(input, 0, 500)
+
+    expect(cierre?.facturasAplicadas).toBeUndefined()
+  })
+
+  it('modo VUELTO con invoiceAssignments (caso invalido/no aplicable): facturasAplicadas queda undefined', () => {
+    const input = discrepancy({
+      mode: 'VUELTO',
+      montoUsd: 1,
+      montoBs: 500,
+      invoiceAssignments: [{ nroFactura: '1234', montoUsd: 1 }],
+    })
+
+    const cierre = construirCierreRecibo(input, 0, 500)
+
+    expect(cierre?.facturasAplicadas).toBeUndefined()
+  })
+})
+
+// ─── formatearFacturasAplicadas ──────────────────────────────────────
+
+describe('formatearFacturasAplicadas', () => {
+  it('1 factura: "{nro} por Bs X ($Y)" formateado con formatBs/formatUsd', () => {
+    const texto = formatearFacturasAplicadas([{ nroFactura: '1234', montoUsd: 1, montoBs: 500 }])
+
+    expect(texto).toBe('1234 por Bs. 500,00 ($1.00)')
+  })
+
+  it('2 facturas (FIFO): lista ambas separadas por coma, cada una formateada', () => {
+    const texto = formatearFacturasAplicadas([
+      { nroFactura: '1234', montoUsd: 0.6, montoBs: 300 },
+      { nroFactura: '1235', montoUsd: 0.4, montoBs: 200 },
+    ])
+
+    expect(texto).toBe('1234 por Bs. 300,00 ($0.60), 1235 por Bs. 200,00 ($0.40)')
   })
 })
 
