@@ -20,6 +20,9 @@ import {
 
 export type TipoImpuestoLinea = 'Gravable' | 'Exento' | 'Exonerado'
 
+/** Moneda en la que se presentan primero los montos del recibo (config por empresa). */
+export type MonedaPresentacion = 'USD' | 'BS'
+
 export interface ReciboLinea {
   codigo: string
   nombre: string
@@ -109,6 +112,31 @@ function toD(val: DecimalInput): Decimal {
 
 function esExentoTipo(tipo: TipoImpuestoLinea): boolean {
   return tipo === 'Exento' || tipo === 'Exonerado'
+}
+
+// =============================================
+// CURRENCY MAPPING SEAM
+// La UNICA funcion que decide cual moneda va primero. Futuras monedas de
+// presentacion solo tocan este mapa — el resto del archivo formatea, no convierte.
+// =============================================
+
+type ParPrimarioContraparte = { primario: string; contraparte: string }
+
+/** Dado un par usd/bs ya calculado, retorna { primario, contraparte } segun la moneda elegida. */
+export function formatParPrimarioContraparte(
+  usd: number,
+  bs: number,
+  monedaPrimaria: MonedaPresentacion
+): ParPrimarioContraparte {
+  return monedaPrimaria === 'BS'
+    ? { primario: formatBs(bs), contraparte: formatUsd(usd) }
+    : { primario: formatUsd(usd), contraparte: formatBs(bs) }
+}
+
+/** Formato compacto `primario (contraparte)` para lineas de articulo y totales intermedios. */
+export function formatMontoBimonetario(usd: number, bs: number, monedaPrimaria: MonedaPresentacion): string {
+  const { primario, contraparte } = formatParPrimarioContraparte(usd, bs, monedaPrimaria)
+  return `${primario} (${contraparte})`
 }
 
 // Caracteres invalidos en nombres de archivo (Windows + POSIX): / \ : * ? " < > |

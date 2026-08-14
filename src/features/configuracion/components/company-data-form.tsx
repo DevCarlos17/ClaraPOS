@@ -2,8 +2,14 @@ import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { useCompany, updateCompany } from '../hooks/use-company'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { useCompany, updateCompany, parseEmpresaConfig } from '../hooks/use-company'
 import { companySchema } from '../schemas/company-schema'
+
+const MONEDA_PRESENTACION_OPTIONS: { value: 'USD' | 'BS'; label: string }[] = [
+  { value: 'USD', label: 'Dolares (USD)' },
+  { value: 'BS', label: 'Bolivares (Bs)' },
+]
 
 export function CompanyDataForm() {
   const { company, isLoading } = useCompany()
@@ -14,6 +20,25 @@ export function CompanyDataForm() {
   const [direccion, setDireccion] = useState('')
   const [telefono, setTelefono] = useState('')
   const [email, setEmail] = useState('')
+  const [monedaPresentacion, setMonedaPresentacion] = useState<'USD' | 'BS'>('USD')
+  // Sincronizacion durante el render (no via useEffect) para el Select de moneda:
+  // `useCompany()` (PowerSync `useQuery`) tiene `isLoading` en `true` en el primer
+  // render real (el Worker de wa-sqlite resuelve de forma asincrona), por lo que
+  // `company` NUNCA esta disponible de forma sincronica al montar. El formulario
+  // completo (incluido este Select) recien se pinta por primera vez en el render
+  // donde `isLoading` pasa a `false`. Si el valor correcto se aplicara via
+  // `useEffect` (un tick despues de ese commit), el Select de Radix montaria con
+  // el fallback 'USD' y luego recibiria un cambio de `value` sobre una instancia
+  // ya montada — su <select> nativo oculto de sincronizacion no siempre refleja
+  // ese cambio (bug conocido de Radix). Ajustar el estado EN el render, antes del
+  // `return`, hace que React descarte ese render intermedio y vuelva a ejecutar
+  // el componente con el valor correcto ya aplicado, por lo que el Select nunca
+  // llega a pintarse (ni montarse) con el valor incorrecto.
+  const [monedaSyncedForCompanyId, setMonedaSyncedForCompanyId] = useState<string | undefined>(undefined)
+  if (company && company.id !== monedaSyncedForCompanyId) {
+    setMonedaSyncedForCompanyId(company.id)
+    setMonedaPresentacion(parseEmpresaConfig(company.config).moneda_presentacion_documentos ?? 'USD')
+  }
 
   useEffect(() => {
     if (!company) return
@@ -42,6 +67,10 @@ export function CompanyDataForm() {
         direccion: result.data.direccion,
         telefono: result.data.telefono,
         email: result.data.email,
+        config: JSON.stringify({
+          ...parseEmpresaConfig(company.config),
+          moneda_presentacion_documentos: monedaPresentacion,
+        }),
       })
       toast.success('Datos de empresa actualizados')
     } catch {
@@ -128,6 +157,26 @@ export function CompanyDataForm() {
             disabled={isSubmitting}
           />
         </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="moneda-presentacion">Moneda de presentacion en documentos</Label>
+        <Select
+          value={monedaPresentacion}
+          onValueChange={(value) => setMonedaPresentacion(value as 'USD' | 'BS')}
+          disabled={isSubmitting}
+        >
+          <SelectTrigger id="moneda-presentacion" aria-label="Moneda de presentacion en documentos">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {MONEDA_PRESENTACION_OPTIONS.map((opcion) => (
+              <SelectItem key={opcion.value} value={opcion.value}>
+                {opcion.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="pt-2">
