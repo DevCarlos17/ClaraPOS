@@ -119,7 +119,7 @@ describe('buildReciboData', () => {
 
     expect(recibo.totales.baseImponibleUsd).toBe(20)
     expect(recibo.totales.montoExentoUsd).toBe(0)
-    expect(recibo.totales.alicuotas).toEqual([{ pct: 16, baseUsd: 20, ivaUsd: 3.2 }])
+    expect(recibo.totales.alicuotas).toEqual([{ pct: 16, baseUsd: 20, ivaUsd: 3.2, ivaBs: 129.6 }])
     expect(recibo.totales.totalGeneralUsd).toBe(23.2)
     expect(recibo.totales.totalGeneralBs).toBeCloseTo(23.2 * 40.5, 5)
   })
@@ -150,8 +150,8 @@ describe('buildReciboData', () => {
 
     expect(recibo.totales.baseImponibleUsd).toBe(150)
     expect(recibo.totales.alicuotas).toEqual([
-      { pct: 8, baseUsd: 50, ivaUsd: 4 },
-      { pct: 16, baseUsd: 100, ivaUsd: 16 },
+      { pct: 8, baseUsd: 50, ivaUsd: 4, ivaBs: 162 },
+      { pct: 16, baseUsd: 100, ivaUsd: 16, ivaBs: 648 },
     ])
     expect(recibo.totales.totalGeneralUsd).toBe(170)
   })
@@ -282,6 +282,76 @@ describe('buildReciboData', () => {
   })
 })
 
+describe('buildReciboData — campos Bs y monedaPresentacion (WU2)', () => {
+  it('lineas[].precioUnitarioBs y totalBs se calculan como usd * tasa (tasa 40.5)', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '40.5000',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '2',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+      })
+    )
+
+    expect(recibo.lineas[0].precioUnitarioBs).toBe(405)
+    expect(recibo.lineas[0].totalBs).toBe(810)
+  })
+
+  it('totales.montoExentoBs, baseImponibleBs, igtfBs y alicuotas[].ivaBs se calculan como usd * tasa (tasa 10)', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '10',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Exento',
+            cantidad: '1',
+            precioUnitarioUsd: '1.00',
+            tipoImpuesto: 'Exento',
+            impuestoPct: '0',
+          },
+          {
+            codigo: 'PROD-002',
+            nombre: 'Gravable 16%',
+            cantidad: '1',
+            precioUnitarioUsd: '2.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        igtfUsd: 0.5,
+      })
+    )
+
+    expect(recibo.totales.montoExentoBs).toBe(10)
+    expect(recibo.totales.baseImponibleBs).toBe(20)
+    expect(recibo.totales.alicuotas[0]).toEqual({ pct: 16, baseUsd: 2, ivaUsd: 0.32, ivaBs: 3.2 })
+    expect(recibo.totales.igtfBs).toBe(5)
+  })
+
+  it('totales.igtfBs es null cuando igtfUsd es null', () => {
+    const recibo = buildReciboData(baseInput({ tasa: '10', igtfUsd: null }))
+    expect(recibo.totales.igtfBs).toBeNull()
+  })
+
+  it("monedaPresentacion por defecto es 'USD' cuando se omite en el input", () => {
+    const recibo = buildReciboData(baseInput())
+    expect(recibo.monedaPresentacion).toBe('USD')
+  })
+
+  it("monedaPresentacion 'BS' explicita se propaga sin logica ad-hoc", () => {
+    const recibo = buildReciboData(baseInput({ monedaPresentacion: 'BS' }))
+    expect(recibo.monedaPresentacion).toBe('BS')
+  })
+})
+
 describe('buildReciboData — totalFacturaUsd/totalFacturaBs (subtotal pre-IGTF)', () => {
   function reciboConIgtf() {
     return buildReciboData(
@@ -361,22 +431,25 @@ describe('construirFilasTotales', () => {
   function totalesFixture(overrides: Partial<ReciboTotales> = {}): ReciboTotales {
     return {
       montoExentoUsd: 1,
+      montoExentoBs: 10,
       baseImponibleUsd: 3,
+      baseImponibleBs: 30,
       alicuotas: [
-        { pct: 8, baseUsd: 1, ivaUsd: 0.08 },
-        { pct: 16, baseUsd: 2, ivaUsd: 0.16 },
+        { pct: 8, baseUsd: 1, ivaUsd: 0.08, ivaBs: 0.8 },
+        { pct: 16, baseUsd: 2, ivaUsd: 0.16, ivaBs: 1.6 },
       ],
       igtfUsd: 0.06,
+      igtfBs: 0.6,
       totalFacturaUsd: 4.24,
-      totalFacturaBs: 4.24,
+      totalFacturaBs: 42.4,
       totalGeneralUsd: 4.3,
-      totalGeneralBs: 4.3,
+      totalGeneralBs: 43,
       ...overrides,
     }
   }
 
-  it('con IGTF > 0: orden Exento -> Base -> alicuotas -> TOTAL FACTURA (subtotal) -> IGTF -> TOTAL + IGTF (bold, final)', () => {
-    const filas = construirFilasTotales(totalesFixture())
+  it("con IGTF > 0 y moneda 'USD': orden Exento -> Base -> alicuotas -> TOTAL FACTURA (subtotal) -> IGTF -> TOTAL + IGTF (bold, final); intermedias muestran USD primario", () => {
+    const filas = construirFilasTotales(totalesFixture(), 'USD')
 
     expect(filas.map((f) => f.label)).toEqual([
       'Monto Exento',
@@ -387,28 +460,44 @@ describe('construirFilasTotales', () => {
       'IGTF',
       'TOTAL + IGTF',
     ])
-    expect(filas[4]).toEqual({ label: 'TOTAL FACTURA', usd: '$4.24', bold: false })
-    expect(filas[5]).toEqual({ label: 'IGTF', usd: '$0.06', bold: false })
-    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', usd: '$4.30', bs: 'Bs. 4,30', bold: true })
+    expect(filas[0]).toEqual({ label: 'Monto Exento', monto: '$1.00 (Bs. 10,00)', bold: false })
+    expect(filas[1]).toEqual({ label: 'Base Imponible', monto: '$3.00 (Bs. 30,00)', bold: false })
+    expect(filas[2]).toEqual({ label: 'IVA 8%', monto: '$0.08 (Bs. 0,80)', bold: false })
+    expect(filas[4]).toEqual({ label: 'TOTAL FACTURA', monto: '$4.24 (Bs. 42,40)', bold: false })
+    expect(filas[5]).toEqual({ label: 'IGTF', monto: '$0.06 (Bs. 0,60)', bold: false })
+    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', monto: '$4.30 / Bs. 43,00', bold: true })
   })
 
-  it('sin IGTF (null): TOTAL FACTURA es la fila final, bold, bimonetaria, sin fila de IGTF ni sufijo "+ IGTF"', () => {
-    const filas = construirFilasTotales(totalesFixture({ igtfUsd: null }))
+  it("con moneda 'BS': las filas intermedias muestran Bs primario, USD entre parentesis; la fila final NO cambia (formato fijo pese al toggle)", () => {
+    const filas = construirFilasTotales(totalesFixture(), 'BS')
+
+    expect(filas[0]).toEqual({ label: 'Monto Exento', monto: 'Bs. 10,00 ($1.00)', bold: false })
+    expect(filas[4]).toEqual({ label: 'TOTAL FACTURA', monto: 'Bs. 42,40 ($4.24)', bold: false })
+    expect(filas[5]).toEqual({ label: 'IGTF', monto: 'Bs. 0,60 ($0.06)', bold: false })
+    // Fila final bold: formato FIJO usd / bs, ignora el toggle (design decision)
+    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', monto: '$4.30 / Bs. 43,00', bold: true })
+  })
+
+  it('sin IGTF (null): TOTAL FACTURA es la fila final, bold, formato fijo usd/bs, sin fila de IGTF ni sufijo "+ IGTF"', () => {
+    const filas = construirFilasTotales(totalesFixture({ igtfUsd: null, igtfBs: null }), 'USD')
 
     expect(filas.map((f) => f.label)).not.toContain('IGTF')
     expect(filas.map((f) => f.label)).not.toContain('TOTAL + IGTF')
-    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', usd: '$4.24', bs: 'Bs. 4,24', bold: true })
+    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', monto: '$4.24 / Bs. 42,40', bold: true })
   })
 
   it('sin IGTF (0): mismo comportamiento que null — sin fila de IGTF', () => {
-    const filas = construirFilasTotales(totalesFixture({ igtfUsd: 0 }))
+    const filas = construirFilasTotales(totalesFixture({ igtfUsd: 0, igtfBs: 0 }), 'USD')
 
     expect(filas.map((f) => f.label)).not.toContain('IGTF')
     expect(filas.at(-1)?.bold).toBe(true)
   })
 
   it('sin monto exento ni base imponible: omite esas filas (no aparecen en 0)', () => {
-    const filas = construirFilasTotales(totalesFixture({ montoExentoUsd: 0, baseImponibleUsd: 0, alicuotas: [] }))
+    const filas = construirFilasTotales(
+      totalesFixture({ montoExentoUsd: 0, montoExentoBs: 0, baseImponibleUsd: 0, baseImponibleBs: 0, alicuotas: [] }),
+      'USD'
+    )
 
     expect(filas.map((f) => f.label)).toEqual(['TOTAL FACTURA', 'IGTF', 'TOTAL + IGTF'])
   })
@@ -459,17 +548,16 @@ describe('paridad: PDF vs texto en orden de totales', () => {
     const totalesCall = mockedAutoTable.mock.calls[1]
     const totalesBody = (totalesCall[1] as { body: string[][] }).body
 
-    const filasEsperadas = construirFilasTotales(recibo.totales).map((f) => [
+    const filasEsperadas = construirFilasTotales(recibo.totales, recibo.monedaPresentacion).map((f) => [
       f.label,
-      f.bs ? `${f.usd} / ${f.bs}` : f.usd,
+      f.monto,
     ])
 
     expect(totalesBody).toEqual(filasEsperadas)
 
     const texto = buildReciboTextoPlano(recibo)
-    for (const fila of construirFilasTotales(recibo.totales)) {
-      const lineaEsperada = fila.bs ? `${fila.label}: ${fila.usd} / ${fila.bs}` : `${fila.label}: ${fila.usd}`
-      expect(texto).toContain(lineaEsperada)
+    for (const fila of construirFilasTotales(recibo.totales, recibo.monedaPresentacion)) {
+      expect(texto).toContain(`${fila.label}: ${fila.monto}`)
     }
   })
 })
@@ -639,6 +727,49 @@ describe('buildReciboTextoPlano', () => {
     const idxNroFecha = texto.indexOf('RECIBO\nNro:')
     expect(idxEmisor).toBeGreaterThanOrEqual(0)
     expect(idxNroFecha).toBeGreaterThan(idxEmisor)
+  })
+
+  it("linea de articulo con moneda 'USD' (default): muestra USD primario y Bs entre parentesis en precio unitario y total", () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '500',
+        lineas: [
+          {
+            codigo: 'PROD-999',
+            nombre: 'Item Bimonetario',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain('1 x $10.00 (Bs. 5.000,00) = $10.00 (Bs. 5.000,00)')
+  })
+
+  it("linea de articulo con moneda 'BS': muestra Bs primario y USD entre parentesis en precio unitario y total", () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '500',
+        monedaPresentacion: 'BS',
+        lineas: [
+          {
+            codigo: 'PROD-999',
+            nombre: 'Item Bimonetario',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain('1 x Bs. 5.000,00 ($10.00) = Bs. 5.000,00 ($10.00)')
   })
 
   it('sin pagos, no incluye la seccion Metodos de pago', () => {
