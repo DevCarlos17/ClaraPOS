@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { useDetalleFactura, useVentaFecha } from '@/features/cxc/hooks/use-cxc'
-import { useCompany } from '@/features/configuracion/hooks/use-company'
+import { useCompany, parseEmpresaConfig } from '@/features/configuracion/hooks/use-company'
 import {
   buildReciboData,
   descargarReciboPdf,
@@ -109,6 +109,7 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
       })),
       discrepancy: ventaData.discrepancy,
       saldoPendUsd,
+      monedaPresentacion: parseEmpresaConfig(company?.config).moneda_presentacion_documentos ?? 'USD',
     })
   }
 
