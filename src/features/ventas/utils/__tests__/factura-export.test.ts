@@ -11,6 +11,8 @@ import {
   generarSeparador,
   medirAnchoPngDesdeSeparador,
   construirFilasTotales,
+  formatParPrimarioContraparte,
+  formatMontoBimonetario,
   type BuildReciboDataInput,
   type ReciboData,
   type ReciboTotales,
@@ -77,6 +79,24 @@ describe('medirAnchoPngDesdeSeparador', () => {
     const separador = generarSeparador(10)
 
     expect(medirAnchoPngDesdeSeparador(mockCtx(), separador, 24)).toBe(10 * 10 + 24 * 2)
+  })
+})
+
+describe('formatParPrimarioContraparte y formatMontoBimonetario', () => {
+  it("moneda 'USD': USD es primario, Bs entre parentesis", () => {
+    expect(formatParPrimarioContraparte(10, 5000, 'USD')).toEqual({
+      primario: '$10.00',
+      contraparte: 'Bs. 5.000,00',
+    })
+    expect(formatMontoBimonetario(10, 5000, 'USD')).toBe('$10.00 (Bs. 5.000,00)')
+  })
+
+  it("moneda 'BS': Bs es primario, USD entre parentesis", () => {
+    expect(formatParPrimarioContraparte(10, 5000, 'BS')).toEqual({
+      primario: 'Bs. 5.000,00',
+      contraparte: '$10.00',
+    })
+    expect(formatMontoBimonetario(10, 5000, 'BS')).toBe('Bs. 5.000,00 ($10.00)')
   })
 })
 
