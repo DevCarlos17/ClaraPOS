@@ -859,6 +859,41 @@ describe('buildReciboTextoPlano', () => {
   })
 })
 
+describe('backward-compat guard (WU2, task 4.1): moneda_presentacion_documentos ausente', () => {
+  it('formatMontoPago rama USD-nativa, formatearCierre y las 2 filas finales bold no cambian frente al comportamiento pre-WU2', () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '500',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        igtfUsd: null,
+        pagos: [{ metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 1 }],
+        discrepancy: { mode: 'VUELTO', montoUsd: 1, montoBs: 500 },
+        // monedaPresentacion omitida a proposito: simula empresas sin config (default 'USD')
+      })
+    )
+
+    expect(recibo.monedaPresentacion).toBe('USD')
+
+    const texto = buildReciboTextoPlano(recibo)
+    // Pago USD-nativo: formato sin cambios ($Y.YY (Bs. X,XX))
+    expect(texto).toContain('Efectivo Dolares: $1.00 (Bs. 500,00)')
+    // Cierre (formatearCierre, no tocado en WU2): formato sin cambios
+    expect(texto).toContain('Vuelto entregado: Bs. 500,00 ($1.00)')
+    // Fila final bold (sin IGTF -> TOTAL FACTURA es la final): formato fijo usd / bs sin cambios
+    const filas = construirFilasTotales(recibo.totales, recibo.monedaPresentacion)
+    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', monto: '$11.60 / Bs. 5.800,00', bold: true })
+  })
+})
+
 describe('contrato v1: recibo sin descuento comercial (decision #1470)', () => {
   it('totalGeneralUsd = exento + base imponible + suma(iva) + igtf, sin restar ningun descuento', () => {
     const recibo = buildReciboData(
