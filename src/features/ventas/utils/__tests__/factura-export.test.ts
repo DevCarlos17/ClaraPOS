@@ -563,6 +563,76 @@ describe('paridad: PDF vs texto en orden de totales', () => {
   })
 })
 
+describe('paridad: PDF vs texto en linea de articulos (WU3)', () => {
+  it('con moneda "USD" (default), la tabla de articulos del PDF muestra USD primario y Bs entre parentesis, igual que el texto/PNG', () => {
+    const mockedAutoTable = vi.mocked(autoTable)
+    mockedAutoTable.mockClear()
+
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '500',
+        lineas: [
+          {
+            codigo: 'PROD-999',
+            nombre: 'Item Bimonetario',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+      })
+    )
+
+    buildReciboPdfBlob(recibo)
+
+    // 1ra llamada a autoTable: tabla de articulos (orden fijo dentro de buildReciboPdfBlob).
+    const articulosCall = mockedAutoTable.mock.calls[0]
+    const articulosBody = (articulosCall[1] as { body: string[][] }).body
+
+    expect(articulosBody).toEqual([
+      ['PROD-999', 'Item Bimonetario', '1', '$10.00 (Bs. 5.000,00)', '$10.00 (Bs. 5.000,00)'],
+    ])
+
+    const texto = buildReciboTextoPlano(recibo)
+    expect(texto).toContain('1 x $10.00 (Bs. 5.000,00) = $10.00 (Bs. 5.000,00)')
+  })
+
+  it('con moneda "BS", la tabla de articulos del PDF invierte el orden (Bs primario, USD entre parentesis), igual que el texto/PNG', () => {
+    const mockedAutoTable = vi.mocked(autoTable)
+    mockedAutoTable.mockClear()
+
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '500',
+        monedaPresentacion: 'BS',
+        lineas: [
+          {
+            codigo: 'PROD-999',
+            nombre: 'Item Bimonetario',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+      })
+    )
+
+    buildReciboPdfBlob(recibo)
+
+    const articulosCall = mockedAutoTable.mock.calls[0]
+    const articulosBody = (articulosCall[1] as { body: string[][] }).body
+
+    expect(articulosBody).toEqual([
+      ['PROD-999', 'Item Bimonetario', '1', 'Bs. 5.000,00 ($10.00)', 'Bs. 5.000,00 ($10.00)'],
+    ])
+
+    const texto = buildReciboTextoPlano(recibo)
+    expect(texto).toContain('1 x Bs. 5.000,00 ($10.00) = Bs. 5.000,00 ($10.00)')
+  })
+})
+
 describe('formatearCierre — SAF con referencia de factura(s) (B5)', () => {
   function reciboConDiscrepancy(discrepancy: BuildReciboDataInput['discrepancy']): ReciboData {
     return buildReciboData(
