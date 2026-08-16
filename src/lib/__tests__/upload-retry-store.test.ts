@@ -102,3 +102,40 @@ describe('UploadRetryStore — persistencia durable entre instancias (simula rel
     expect(store.get('tx1')).toBe(0)
   })
 })
+
+describe('UploadRetryStore — degradación cuando el storage falla al escribir (quota excedida, modo privado/kiosk)', () => {
+  /**
+   * Storage cuyo setItem siempre lanza, simulando localStorage.setItem
+   * fallando por QuotaExceededError o restricciones de modo privado/kiosk.
+   */
+  function createThrowingWriteStorage(): Storage {
+    const map = new Map<string, string>()
+    return {
+      getItem: (key: string) => map.get(key) ?? null,
+      setItem: () => {
+        throw new DOMException('QuotaExceededError', 'QuotaExceededError')
+      },
+      removeItem: (key: string) => {
+        map.delete(key)
+      },
+      clear: () => map.clear(),
+      key: () => null,
+      get length() {
+        return map.size
+      },
+    } as Storage
+  }
+
+  it('bump() no lanza cuando setItem falla, y get() sigue retornando un número sano', () => {
+    const store = new UploadRetryStore(createThrowingWriteStorage())
+
+    expect(() => store.bump('tx1')).not.toThrow()
+    expect(store.get('tx1')).toBe(0)
+  })
+
+  it('clear() no lanza cuando setItem falla', () => {
+    const store = new UploadRetryStore(createThrowingWriteStorage())
+
+    expect(() => store.clear('tx1')).not.toThrow()
+  })
+})

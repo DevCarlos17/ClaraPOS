@@ -53,8 +53,22 @@ export class UploadRetryStore {
     }
   }
 
+  /**
+   * Persiste `map` en el storage. Si `setItem` falla (cuota excedida, modo
+   * privado/kiosk), degrada silenciosamente en vez de propagar la excepción:
+   * el conteo de reintentos es best-effort, y una falla de escritura NUNCA
+   * debe interrumpir el flujo de upload/descarte de PowerSync (ver
+   * `connector.ts`, que llama a `bump()`/`clear()` antes de
+   * `transaction.complete()`).
+   */
   private writeMap(map: RetryCountMap): void {
-    this.storage.setItem(STORAGE_KEY, JSON.stringify(map))
+    try {
+      this.storage.setItem(STORAGE_KEY, JSON.stringify(map))
+    } catch (error) {
+      if (import.meta.env.DEV) {
+        console.warn('[upload-retry-store] No se pudo persistir el conteo de reintentos:', error)
+      }
+    }
   }
 
   /** Conteo actual de reintentos para `txKey` (0 si no hay ninguno registrado). */
