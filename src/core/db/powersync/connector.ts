@@ -9,6 +9,7 @@ import {
 
 import { type Session, SupabaseClient, createClient } from '@supabase/supabase-js'
 import { isValidCedula, isValidRif } from '@/lib/identity'
+import { uploadRetryStore } from '@/lib/upload-retry-store'
 
 /**
  * Logging de la capa de sincronización, solo en desarrollo.
@@ -139,9 +140,13 @@ export class SupabaseConnector
    * Reintentos por transacción (clave = ID del primer op de la tx).
    * Permite abandonar transacciones que fallan repetidamente con errores
    * transitorios (red caída, token expirado) en lugar de bloquear la cola.
+   *
+   * El conteo se persiste vía `uploadRetryStore` (localStorage) en lugar de
+   * memoria: PowerSync re-invoca `uploadData` en cada arranque de la app,
+   * y un contador en memoria se resetearía en cada reload, permitiendo que
+   * un error transitorio recurrente bloquee la cola de sync para siempre.
    */
   private readonly MAX_UPLOAD_RETRIES = 5
-  private readonly uploadRetries = new Map<string, number>()
 
   constructor() {
     super()
@@ -330,7 +335,7 @@ export class SupabaseConnector
 
     // Clave estable para esta transacción a través de reintentos
     const txKey = transaction.crud[0]?.id ?? 'tx_unknown'
-    const retryCount = this.uploadRetries.get(txKey) ?? 0
+    const retryCount = uploadRetryStore.get(txKey)
 
     let lastOp: CrudEntry | null = null
     try {
@@ -349,7 +354,7 @@ export class SupabaseConnector
                 code: 'VALIDATION', message: `Cédula inválida: ${identificacion}`,
                 reason: 'validation',
               }))
-              this.uploadRetries.delete(txKey)
+              uploadRetryStore.clear(txKey)
               await transaction.complete()
               return
             }
@@ -363,7 +368,7 @@ export class SupabaseConnector
                 code: 'VALIDATION', message: `RIF inválido: ${rif}`,
                 reason: 'validation',
               }))
-              this.uploadRetries.delete(txKey)
+              uploadRetryStore.clear(txKey)
               await transaction.complete()
               return
             }
@@ -377,7 +382,7 @@ export class SupabaseConnector
                 code: 'VALIDATION', message: 'Venta sin depósito asignado',
                 reason: 'validation',
               }))
-              this.uploadRetries.delete(txKey)
+              uploadRetryStore.clear(txKey)
               await transaction.complete()
               return
             }
@@ -556,7 +561,7 @@ export class SupabaseConnector
       }
 
       await transaction.complete()
-      this.uploadRetries.delete(txKey)  // éxito — limpiar contador
+      uploadRetryStore.clear(txKey)  // éxito — limpiar contador
     } catch (ex: unknown) {
       const error = ex as { code?: string; message?: string }
       const isFatal =
@@ -575,7 +580,7 @@ export class SupabaseConnector
           message: error.message ?? 'Error desconocido',
           reason: 'db_error',
         }))
-        this.uploadRetries.delete(txKey)
+        uploadRetryStore.clear(txKey)
         await transaction.complete()
       } else {
         const attempts = retryCount + 1
@@ -594,10 +599,10 @@ export class SupabaseConnector
             message: error.message ?? 'Error desconocido',
             reason: 'max_retries',
           }))
-          this.uploadRetries.delete(txKey)
+          uploadRetryStore.clear(txKey)
           await transaction.complete()
         } else {
-          this.uploadRetries.set(txKey, attempts)
+          uploadRetryStore.bump(txKey)
           console.error(`[PowerSync upload] Error transitorio - reintentando (${attempts}/${this.MAX_UPLOAD_RETRIES}):`, {
             op: lastOp, code: error.code, message: error.message,
           })
