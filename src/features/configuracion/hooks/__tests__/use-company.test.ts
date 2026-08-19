@@ -7,7 +7,7 @@ vi.mock('@powersync/web', async (importOriginal) => {
   return { ...actual, PowerSyncDatabase: vi.fn().mockImplementation(() => ({})) }
 })
 
-import { parseEmpresaConfig, serializeEmpresaConfig } from '../use-company'
+import { parseEmpresaConfig, serializeEmpresaConfig, readConfigNamespace, serializeConfigNamespace } from '../use-company'
 
 describe('parseEmpresaConfig — moneda_presentacion_documentos', () => {
   it("config ausente (null): default 'USD'", () => {
@@ -130,5 +130,91 @@ describe('round-trip parse + serialize — converge a un punto fijo, nunca crece
     const second = serializeEmpresaConfig(first, {})
 
     expect(second).toBe(first)
+  })
+})
+
+// `readConfigNamespace`/`serializeConfigNamespace` son el helper generico que reutiliza
+// `use-agenda-config.ts` (namespace "agenda") para no duplicar la logica de saneamiento
+// que ya usa `parseEmpresaConfig`/`serializeEmpresaConfig` para las claves tipadas de
+// EmpresaConfig. Ambos pares DEBEN compartir el mismo `sanitizeConfigRecord` interno.
+describe('readConfigNamespace — lee un namespace arbitrario ya saneado', () => {
+  it('config ausente: retorna los defaults', () => {
+    expect(readConfigNamespace(null, 'agenda', { mostrar_agenda: true })).toEqual({ mostrar_agenda: true })
+  })
+
+  it('config presente sin el namespace: retorna los defaults', () => {
+    expect(
+      readConfigNamespace('{"moneda_presentacion_documentos":"BS"}', 'agenda', { mostrar_agenda: true })
+    ).toEqual({ mostrar_agenda: true })
+  })
+
+  it('config con el namespace presente: mergea sobre los defaults', () => {
+    const configJson = JSON.stringify({ agenda: { mostrar_agenda: false, limite_futuro_dias: 7 } })
+    expect(readConfigNamespace(configJson, 'agenda', { mostrar_agenda: true, limite_futuro_dias: 30 })).toEqual({
+      mostrar_agenda: false,
+      limite_futuro_dias: 7,
+    })
+  })
+
+  it('config char-indexed corrupto (bug de spread caracter por caracter): recupera el namespace en vez de caer a defaults', () => {
+    const originalCleanJson = JSON.stringify({ agenda: { mostrar_agenda: false, limite_futuro_dias: 7 } })
+    const corrupt = buildCharIndexedCorruptString(originalCleanJson)
+
+    expect(readConfigNamespace(corrupt, 'agenda', { mostrar_agenda: true, limite_futuro_dias: 30 })).toEqual({
+      mostrar_agenda: false,
+      limite_futuro_dias: 7,
+    })
+  })
+})
+
+describe('serializeConfigNamespace — escribe un namespace arbitrario sin perder otros namespaces ni EmpresaConfig', () => {
+  it('mergea updates sobre el namespace existente y preserva otros namespaces/campos conocidos', () => {
+    const configJson = JSON.stringify({
+      agenda: { mostrar_agenda: false, limite_futuro_dias: 7 },
+      moneda_presentacion_documentos: 'BS',
+    })
+
+    const serialized = serializeConfigNamespace(configJson, 'agenda', { duracion_slot_default: 45 })
+
+    expect(JSON.parse(serialized)).toEqual({
+      agenda: { mostrar_agenda: false, limite_futuro_dias: 7, duracion_slot_default: 45 },
+      moneda_presentacion_documentos: 'BS',
+    })
+  })
+
+  it('sobre config corrupto char-indexed: recupera el namespace y moneda existentes, sin claves numericas, y converge (no crece)', () => {
+    const originalCleanJson = JSON.stringify({
+      agenda: { mostrar_agenda: false, limite_futuro_dias: 7, tolerancia_noshow_min: 45 },
+      moneda_presentacion_documentos: 'BS',
+    })
+    const corrupt = buildCharIndexedCorruptString(originalCleanJson)
+
+    const serialized = serializeConfigNamespace(corrupt, 'agenda', { duracion_slot_default: 45 })
+    const parsed = JSON.parse(serialized) as Record<string, unknown>
+
+    expect(parsed).toEqual({
+      agenda: {
+        mostrar_agenda: false,
+        limite_futuro_dias: 7,
+        tolerancia_noshow_min: 45,
+        duracion_slot_default: 45,
+      },
+      moneda_presentacion_documentos: 'BS',
+    })
+    expect(Object.keys(parsed).every((key) => Number.isNaN(Number(key)))).toBe(true)
+    expect(serialized.length).toBeLessThan(corrupt.length)
+  })
+
+  it('repetir serializeConfigNamespace converge a un punto fijo (no crece nunca)', () => {
+    const configJson = JSON.stringify({ agenda: { mostrar_agenda: true } })
+    let current = configJson
+    const lengths: number[] = []
+    for (let i = 0; i < 5; i++) {
+      current = serializeConfigNamespace(current, 'agenda', {})
+      lengths.push(current.length)
+    }
+    for (let i = 1; i < lengths.length; i++) {
+      expect(lengths[i]).toBeLessThanOrEqual(lengths[i - 1])
+    }
   })
 })

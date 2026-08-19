@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { localNow } from '@/lib/dates'
+import { readConfigNamespace, serializeConfigNamespace } from '@/features/configuracion/hooks/use-company'
 
 export interface AgendaConfig {
   mostrar_agenda: boolean
@@ -25,15 +26,15 @@ const DEFAULTS: AgendaConfig = {
   inicio_semana: 'lunes',
 }
 
-function parseAgendaConfig(configStr: string): AgendaConfig {
-  try {
-    let raw = JSON.parse(configStr)
-    if (typeof raw === 'string') raw = JSON.parse(raw)
-    const agenda = (raw?.agenda ?? {}) as Partial<AgendaConfig>
-    return { ...DEFAULTS, ...agenda }
-  } catch {
-    return { ...DEFAULTS }
-  }
+/**
+ * Lee el namespace `agenda` de `empresas.config` via el helper corruption-proof
+ * compartido con `use-company.ts` (`readConfigNamespace`). Esto sanea/auto-repara
+ * el mismo patron de corrupcion (char-indexed / doble codificacion) que afecta a
+ * `moneda_presentacion_documentos` en la misma columna, en vez de caer a `{}` y
+ * perder silenciosamente la configuracion de agenda existente.
+ */
+export function parseAgendaConfig(configStr: string): AgendaConfig {
+  return readConfigNamespace(configStr, 'agenda', DEFAULTS)
 }
 
 export function useAgendaConfig() {
@@ -56,6 +57,15 @@ export function useAgendaConfig() {
   }
 }
 
+/**
+ * Persiste `updates` sobre el namespace `agenda` de `empresas.config` via el mismo
+ * camino corruption-proof que `serializeEmpresaConfig` usa para las claves tipadas
+ * de `EmpresaConfig` (`serializeConfigNamespace`, compartido en `use-company.ts`).
+ * Al leer con `sanitizeConfigRecord` internamente, un config ya corrupto se
+ * auto-repara: preserva el `agenda` preexistente Y cualquier otro namespace (ej.
+ * `moneda_presentacion_documentos`) en vez de dropearlos, y descarta las claves
+ * numericas de corrupcion en cada escritura para que la fila nunca vuelva a crecer.
+ */
 export async function guardarAgendaConfig(
   empresaId: string,
   updates: Partial<AgendaConfig>
@@ -65,24 +75,12 @@ export async function guardarAgendaConfig(
     [empresaId]
   )
 
-  let parsed: Record<string, unknown> = {}
-  try {
-    let rawParsed: unknown = JSON.parse(rows[0]?.config ?? '{}')
-    if (typeof rawParsed === 'string') rawParsed = JSON.parse(rawParsed)
-    if (typeof rawParsed === 'object' && rawParsed !== null) {
-      parsed = rawParsed as Record<string, unknown>
-    }
-  } catch {
-    // keep empty object
-  }
-
-  const existingAgenda = (parsed.agenda as object | undefined) ?? {}
-  parsed.agenda = { ...existingAgenda, ...updates }
+  const newConfig = serializeConfigNamespace(rows[0]?.config ?? null, 'agenda', updates)
 
   await db.writeTransaction(async (tx) => {
     await tx.execute(
       'UPDATE empresas SET config = ?, updated_at = ? WHERE id = ?',
-      [JSON.stringify(parsed), localNow(), empresaId]
+      [newConfig, localNow(), empresaId]
     )
   })
 }

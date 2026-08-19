@@ -125,6 +125,46 @@ export function serializeEmpresaConfig(
   return JSON.stringify({ ...record, ...knownFields })
 }
 
+/**
+ * Lee un namespace arbitrario (ej. `agenda`) desde `empresas.config`, saneado con el
+ * mismo `sanitizeConfigRecord` que usa `parseEmpresaConfig`. Esto es lo que permite que
+ * un config ya corrupto (char-indexed / doblemente codificado) se auto-repare tambien
+ * para namespaces que no son las claves tipadas de `EmpresaConfig` — antes de este
+ * helper, `use-agenda-config.ts` tenia su propio parser debil que, sobre un config
+ * corrupto, no encontraba `agenda` dentro del blob y perdia silenciosamente esa config.
+ */
+export function readConfigNamespace<T extends object>(
+  configJson: string | null | undefined,
+  namespace: string,
+  defaults: T
+): T {
+  const record = sanitizeConfigRecord(configJson)
+  const namespaceValue = record[namespace]
+  const raw = isPlainObject(namespaceValue) ? (namespaceValue as Partial<T>) : {}
+  return { ...defaults, ...raw }
+}
+
+/**
+ * Escribe `updates` sobre un namespace arbitrario (ej. `agenda`) de `empresas.config`,
+ * mergeando con el valor existente de ese namespace y preservando intactos cualquier
+ * otro namespace y las claves tipadas de `EmpresaConfig` presentes en el config original.
+ * Comparte `sanitizeConfigRecord` con `serializeEmpresaConfig`: es el MISMO camino
+ * corruption-proof, asi que cualquier escritura a `empresas.config` (sea desde
+ * `company-data-form.tsx` o desde `use-agenda-config.ts`) sanea las claves numericas
+ * de corrupcion y converge a un punto fijo, sin importar que namespace escriba.
+ */
+export function serializeConfigNamespace(
+  configJson: string | null | undefined,
+  namespace: string,
+  updates: object
+): string {
+  const record = sanitizeConfigRecord(configJson)
+  const existingNamespace = isPlainObject(record[namespace]) ? (record[namespace] as Record<string, unknown>) : {}
+  const mergedNamespace = { ...existingNamespace, ...updates }
+  const knownFields = pickKnownFields(record)
+  return JSON.stringify({ ...record, ...knownFields, [namespace]: mergedNamespace })
+}
+
 export interface Company {
   id: string
   tenant_id: string
