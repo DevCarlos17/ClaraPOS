@@ -141,10 +141,15 @@ export function formatParPrimarioContraparte(
     : { primario: formatUsd(usd), contraparte: formatBs(bs) }
 }
 
-/** Formato compacto `primario (contraparte)` para lineas de articulo y totales intermedios. */
+/** Formato compacto `primario (contraparte)`, usado SOLO en las 2 filas finales bold (TOTAL FACTURA / TOTAL + IGTF) y en pagos cuya moneda nativa no coincide con `monedaPresentacion`. */
 export function formatMontoBimonetario(usd: number, bs: number, monedaPrimaria: MonedaPresentacion): string {
   const { primario, contraparte } = formatParPrimarioContraparte(usd, bs, monedaPrimaria)
   return `${primario} (${contraparte})`
+}
+
+/** Formato de una sola moneda (sin contraparte), usado en lineas de articulo y totales intermedios. */
+export function formatMontoPrimario(usd: number, bs: number, monedaPrimaria: MonedaPresentacion): string {
+  return formatParPrimarioContraparte(usd, bs, monedaPrimaria).primario
 }
 
 // Caracteres invalidos en nombres de archivo (Windows + POSIX): / \ : * ? " < > |
@@ -278,14 +283,31 @@ export function generarSeparador(chars: number = RECIBO_ANCHO_CHARS): string {
 const SEPARADOR = generarSeparador()
 
 /**
- * Monto de una linea de pago, formateado segun su moneda nativa (siempre primaria) con
- * el equivalente de la otra moneda entre parentesis. Independiente de `monedaPresentacion`
- * del recibo: cada metodo de pago conserva su propia moneda nativa como primaria.
+ * Monto de una linea de pago. Si la moneda nativa del pago coincide con `monedaPresentacion`
+ * (M), se muestra SOLO esa moneda (sin equivalente). Si no coincide, la moneda nativa del
+ * pago se mantiene como primaria y se agrega el equivalente de la otra moneda entre
+ * parentesis (comportamiento historico para el caso de no-coincidencia).
  */
-export function formatMontoPago(linea: ReciboPagoLinea): string {
+export function formatMontoPago(linea: ReciboPagoLinea, monedaPresentacion: MonedaPresentacion): string {
+  if (linea.moneda === monedaPresentacion) {
+    return linea.moneda === 'USD' ? formatUsd(linea.montoUsd) : formatBs(linea.montoBs)
+  }
   return linea.moneda === 'USD'
     ? `${formatUsd(linea.montoUsd)} (${formatBs(linea.montoBs)})`
     : `${formatBs(linea.montoBs)} (${formatUsd(linea.montoUsd)})`
+}
+
+/**
+ * Suma el total de TODOS los pagos (todas las lineas de `ReciboPagoLinea`), en USD y en Bs
+ * de forma independiente (cada lado se acumula desde el valor ya calculado por linea, sin
+ * derivar uno del otro, para quedar consistente con como se computo cada linea individual).
+ * Funcion pura, compartida por construirLineasRecibo (texto/PNG) y buildReciboPdfBlob (PDF)
+ * para que ambas rutas de render sean estructuralmente imposibles de divergir.
+ */
+export function sumarAbonos(pagos: ReciboPagoLinea[]): { usd: number; bs: number } {
+  const totalUsd = pagos.reduce((acc, pago) => acc.plus(pago.montoUsd), new Decimal(0))
+  const totalBs = pagos.reduce((acc, pago) => acc.plus(pago.montoBs), new Decimal(0))
+  return { usd: totalUsd.toNumber(), bs: totalBs.toNumber() }
 }
 
 /** Fila de la seccion de totales, ya formateada (bimonetaria o formato fijo, ver construirFilasTotales). */
@@ -299,12 +321,13 @@ export interface FilaTotal {
  * Orden fiscal de totales (spec): Exento -> Base Imponible -> alicuotas de IVA ->
  * TOTAL FACTURA (subtotal sin IGTF) -> IGTF (si aplica) -> TOTAL + IGTF (final).
  * Sin IGTF, TOTAL FACTURA es la fila final (bold), sin fila de IGTF ni sufijo "+ IGTF".
- * Las filas intermedias son toggle-aware via `formatMontoBimonetario` (moneda primaria
- * segun `monedaPresentacion`). Las 2 filas finales bold (TOTAL FACTURA sin IGTF / TOTAL +
- * IGTF) mantienen el formato FIJO `usd / bs` sin importar el toggle (design decision:
- * preserva compatibilidad hacia atras). Funcion pura, compartida por construirLineasRecibo
- * (PNG/texto) y buildReciboPdfBlob (PDF) para que ambas rutas de render sean
- * estructuralmente imposibles de divergir (motivo del bug original de orden inconsistente).
+ * Las filas intermedias (Monto Exento, Base Imponible, IVA %, IGTF) muestran SOLO la
+ * moneda de presentacion (`formatMontoPrimario`), sin contraparte. Las 2 filas finales
+ * (TOTAL FACTURA sin IGTF / TOTAL + IGTF) muestran la moneda de presentacion como
+ * primaria MAS el equivalente de la otra moneda entre parentesis (`formatMontoBimonetario`,
+ * toggle-aware). Funcion pura, compartida por construirLineasRecibo (PNG/texto) y
+ * buildReciboPdfBlob (PDF) para que ambas rutas de render sean estructuralmente
+ * imposibles de divergir (motivo del bug original de orden inconsistente).
  */
 export function construirFilasTotales(totales: ReciboTotales, monedaPresentacion: MonedaPresentacion): FilaTotal[] {
   const filas: FilaTotal[] = []
@@ -312,21 +335,21 @@ export function construirFilasTotales(totales: ReciboTotales, monedaPresentacion
   if (totales.montoExentoUsd > 0) {
     filas.push({
       label: 'Monto Exento',
-      monto: formatMontoBimonetario(totales.montoExentoUsd, totales.montoExentoBs, monedaPresentacion),
+      monto: formatMontoPrimario(totales.montoExentoUsd, totales.montoExentoBs, monedaPresentacion),
       bold: false,
     })
   }
   if (totales.baseImponibleUsd > 0) {
     filas.push({
       label: 'Base Imponible',
-      monto: formatMontoBimonetario(totales.baseImponibleUsd, totales.baseImponibleBs, monedaPresentacion),
+      monto: formatMontoPrimario(totales.baseImponibleUsd, totales.baseImponibleBs, monedaPresentacion),
       bold: false,
     })
   }
   for (const alicuota of totales.alicuotas) {
     filas.push({
       label: `IVA ${alicuota.pct}%`,
-      monto: formatMontoBimonetario(alicuota.ivaUsd, alicuota.ivaBs, monedaPresentacion),
+      monto: formatMontoPrimario(alicuota.ivaUsd, alicuota.ivaBs, monedaPresentacion),
       bold: false,
     })
   }
@@ -340,18 +363,18 @@ export function construirFilasTotales(totales: ReciboTotales, monedaPresentacion
     })
     filas.push({
       label: 'IGTF',
-      monto: formatMontoBimonetario(igtf, totales.igtfBs ?? 0, monedaPresentacion),
+      monto: formatMontoPrimario(igtf, totales.igtfBs ?? 0, monedaPresentacion),
       bold: false,
     })
     filas.push({
       label: 'TOTAL + IGTF',
-      monto: `${formatUsd(totales.totalGeneralUsd)} / ${formatBs(totales.totalGeneralBs)}`,
+      monto: formatMontoBimonetario(totales.totalGeneralUsd, totales.totalGeneralBs, monedaPresentacion),
       bold: true,
     })
   } else {
     filas.push({
       label: 'TOTAL FACTURA',
-      monto: `${formatUsd(totales.totalFacturaUsd)} / ${formatBs(totales.totalFacturaBs)}`,
+      monto: formatMontoBimonetario(totales.totalFacturaUsd, totales.totalFacturaBs, monedaPresentacion),
       bold: true,
     })
   }
@@ -399,12 +422,12 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
   for (const linea of recibo.lineas) {
     const marca = linea.esExento ? ' (E)' : ''
     lines.push({ text: `${linea.codigo} ${linea.nombre}${marca}` })
-    const precioUnitario = formatMontoBimonetario(
+    const precioUnitario = formatMontoPrimario(
       linea.precioUnitarioUsd,
       linea.precioUnitarioBs,
       recibo.monedaPresentacion
     )
-    const total = formatMontoBimonetario(linea.totalUsd, linea.totalBs, recibo.monedaPresentacion)
+    const total = formatMontoPrimario(linea.totalUsd, linea.totalBs, recibo.monedaPresentacion)
     lines.push({ text: `  ${linea.cantidad} x ${precioUnitario} = ${total}` })
   }
   lines.push({ text: SEPARADOR })
@@ -421,8 +444,13 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
     lines.push({ text: 'Metodos de pago', bold: true })
     lines.push({ text: SEPARADOR })
     for (const pago of recibo.pagos) {
-      lines.push({ text: `${pago.metodoNombre}: ${formatMontoPago(pago)}` })
+      lines.push({ text: `${pago.metodoNombre}: ${formatMontoPago(pago, recibo.monedaPresentacion)}` })
     }
+    const totalAbonos = sumarAbonos(recibo.pagos)
+    lines.push({
+      text: `Total abonos: ${formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}`,
+      bold: true,
+    })
     lines.push({ text: SEPARADOR })
   }
 
@@ -520,8 +548,8 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
     linea.codigo,
     `${linea.nombre}${linea.esExento ? ' (E)' : ''}`,
     String(linea.cantidad),
-    formatMontoBimonetario(linea.precioUnitarioUsd, linea.precioUnitarioBs, recibo.monedaPresentacion),
-    formatMontoBimonetario(linea.totalUsd, linea.totalBs, recibo.monedaPresentacion),
+    formatMontoPrimario(linea.precioUnitarioUsd, linea.precioUnitarioBs, recibo.monedaPresentacion),
+    formatMontoPrimario(linea.totalUsd, linea.totalBs, recibo.monedaPresentacion),
   ])
 
   autoTable(doc, {
@@ -562,7 +590,12 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
     doc.text('Metodos de pago', 15, y)
     y += 4
 
-    const pagosBody = recibo.pagos.map((pago) => [pago.metodoNombre, formatMontoPago(pago)])
+    const pagosBody = recibo.pagos.map((pago) => [
+      pago.metodoNombre,
+      formatMontoPago(pago, recibo.monedaPresentacion),
+    ])
+    const totalAbonos = sumarAbonos(recibo.pagos)
+    pagosBody.push(['Total abonos', formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)])
 
     autoTable(doc, {
       startY: y,
@@ -614,10 +647,36 @@ export function medirAnchoPngDesdeSeparador(
 }
 
 /**
+ * Espera a que la fuente monospace (normal y bold, ambas usadas en el recibo)
+ * este lista antes de medir/dibujar texto en canvas. Usa la CSS Font Loading
+ * API (`document.fonts`), Baseline widely available.
+ *
+ * Bug que soluciona: en el primer render del canvas, si la fuente monospace
+ * todavia no cargo, `ctx.measureText()` mide con la fuente fallback del
+ * navegador (de ancho distinto), lo que rompe el wrapping y hace que se
+ * pierdan lineas de detalle en el PNG. En el segundo intento la fuente ya
+ * esta cacheada y el bug "desaparece" — clasica race condition de fuentes
+ * en canvas.
+ *
+ * `fonts` es inyectable (default: `document.fonts`) para poder testearse sin
+ * un DOM real con CSS Font Loading API. Si `fonts` es `undefined` (entorno
+ * sin soporte, ej. navegadores viejos o happy-dom), es un no-op — se degrada
+ * de forma elegante en vez de lanzar.
+ */
+export async function esperarFuentesRecibo(fonts?: FontFaceSet): Promise<void> {
+  if (!fonts) return
+  await Promise.all([fonts.load('13px monospace'), fonts.load('bold 13px monospace')])
+}
+
+/**
  * Dibuja el recibo completo (mismo contenido fiscal que buildReciboTextoPlano)
  * sobre un canvas 2D y lo exporta como PNG. 100% local, sin dependencias nuevas.
  */
-export function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
+export async function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
+  if (typeof document !== 'undefined' && document.fonts) {
+    await esperarFuentesRecibo(document.fonts)
+  }
+
   const lineas = construirLineasRecibo(recibo)
 
   const canvas = document.createElement('canvas')
