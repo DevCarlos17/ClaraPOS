@@ -647,10 +647,36 @@ export function medirAnchoPngDesdeSeparador(
 }
 
 /**
+ * Espera a que la fuente monospace (normal y bold, ambas usadas en el recibo)
+ * este lista antes de medir/dibujar texto en canvas. Usa la CSS Font Loading
+ * API (`document.fonts`), Baseline widely available.
+ *
+ * Bug que soluciona: en el primer render del canvas, si la fuente monospace
+ * todavia no cargo, `ctx.measureText()` mide con la fuente fallback del
+ * navegador (de ancho distinto), lo que rompe el wrapping y hace que se
+ * pierdan lineas de detalle en el PNG. En el segundo intento la fuente ya
+ * esta cacheada y el bug "desaparece" — clasica race condition de fuentes
+ * en canvas.
+ *
+ * `fonts` es inyectable (default: `document.fonts`) para poder testearse sin
+ * un DOM real con CSS Font Loading API. Si `fonts` es `undefined` (entorno
+ * sin soporte, ej. navegadores viejos o happy-dom), es un no-op — se degrada
+ * de forma elegante en vez de lanzar.
+ */
+export async function esperarFuentesRecibo(fonts?: FontFaceSet): Promise<void> {
+  if (!fonts) return
+  await Promise.all([fonts.load('13px monospace'), fonts.load('bold 13px monospace')])
+}
+
+/**
  * Dibuja el recibo completo (mismo contenido fiscal que buildReciboTextoPlano)
  * sobre un canvas 2D y lo exporta como PNG. 100% local, sin dependencias nuevas.
  */
-export function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
+export async function buildReciboImagenBlob(recibo: ReciboData): Promise<Blob> {
+  if (typeof document !== 'undefined' && document.fonts) {
+    await esperarFuentesRecibo(document.fonts)
+  }
+
   const lineas = construirLineasRecibo(recibo)
 
   const canvas = document.createElement('canvas')

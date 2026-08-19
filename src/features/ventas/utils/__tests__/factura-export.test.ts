@@ -10,6 +10,7 @@ import {
   RECIBO_ANCHO_CHARS,
   generarSeparador,
   medirAnchoPngDesdeSeparador,
+  esperarFuentesRecibo,
   construirFilasTotales,
   formatParPrimarioContraparte,
   formatMontoBimonetario,
@@ -1244,6 +1245,33 @@ describe('buildReciboImagenBlob', () => {
     // siempre retorna null. Este test documenta la ruta de degradacion elegante ante esa
     // limitacion (o ante un fallo real de contexto 2D en un dispositivo de baja memoria).
     await expect(buildReciboImagenBlob(reciboMinimo())).rejects.toThrow(/contexto 2D/i)
+  })
+})
+
+describe('esperarFuentesRecibo', () => {
+  /**
+   * Mock deterministico de FontFaceSet: solo se espia `.load()`, que es el unico
+   * metodo que usa el gate de fuentes (ver bug de wrapping con fuente fallback en
+   * DEUDA-3 / buildReciboImagenBlob).
+   */
+  function mockFontFaceSet(): FontFaceSet {
+    return {
+      load: vi.fn().mockResolvedValue([]),
+    } as unknown as FontFaceSet
+  }
+
+  it('con un FontFaceSet real, carga la fuente monospace normal Y bold 13px antes de resolver', async () => {
+    const fonts = mockFontFaceSet()
+
+    await esperarFuentesRecibo(fonts)
+
+    expect(fonts.load).toHaveBeenCalledWith('13px monospace')
+    expect(fonts.load).toHaveBeenCalledWith('bold 13px monospace')
+    expect(fonts.load).toHaveBeenCalledTimes(2)
+  })
+
+  it('sin FontFaceSet (entorno sin CSS Font Loading API), resuelve sin lanzar y sin llamar load', async () => {
+    await expect(esperarFuentesRecibo(undefined)).resolves.toBeUndefined()
   })
 })
 
