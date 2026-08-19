@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { useCompany, updateCompany, parseEmpresaConfig } from '../hooks/use-company'
+import { useCompany, updateCompany, parseEmpresaConfig, serializeEmpresaConfig } from '../hooks/use-company'
 import { companySchema } from '../schemas/company-schema'
 
 const MONEDA_PRESENTACION_OPTIONS: { value: 'USD' | 'BS'; label: string }[] = [
@@ -67,8 +67,7 @@ export function CompanyDataForm() {
         direccion: result.data.direccion,
         telefono: result.data.telefono,
         email: result.data.email,
-        config: JSON.stringify({
-          ...parseEmpresaConfig(company.config),
+        config: serializeEmpresaConfig(company.config, {
           moneda_presentacion_documentos: monedaPresentacion,
         }),
       })
