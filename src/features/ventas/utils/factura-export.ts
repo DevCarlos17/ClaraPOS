@@ -297,6 +297,19 @@ export function formatMontoPago(linea: ReciboPagoLinea, monedaPresentacion: Mone
     : `${formatBs(linea.montoBs)} (${formatUsd(linea.montoUsd)})`
 }
 
+/**
+ * Suma el total de TODOS los pagos (todas las lineas de `ReciboPagoLinea`), en USD y en Bs
+ * de forma independiente (cada lado se acumula desde el valor ya calculado por linea, sin
+ * derivar uno del otro, para quedar consistente con como se computo cada linea individual).
+ * Funcion pura, compartida por construirLineasRecibo (texto/PNG) y buildReciboPdfBlob (PDF)
+ * para que ambas rutas de render sean estructuralmente imposibles de divergir.
+ */
+export function sumarAbonos(pagos: ReciboPagoLinea[]): { usd: number; bs: number } {
+  const totalUsd = pagos.reduce((acc, pago) => acc.plus(pago.montoUsd), new Decimal(0))
+  const totalBs = pagos.reduce((acc, pago) => acc.plus(pago.montoBs), new Decimal(0))
+  return { usd: totalUsd.toNumber(), bs: totalBs.toNumber() }
+}
+
 /** Fila de la seccion de totales, ya formateada (bimonetaria o formato fijo, ver construirFilasTotales). */
 export interface FilaTotal {
   label: string
@@ -433,6 +446,11 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
     for (const pago of recibo.pagos) {
       lines.push({ text: `${pago.metodoNombre}: ${formatMontoPago(pago, recibo.monedaPresentacion)}` })
     }
+    const totalAbonos = sumarAbonos(recibo.pagos)
+    lines.push({
+      text: `Total abonos: ${formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}`,
+      bold: true,
+    })
     lines.push({ text: SEPARADOR })
   }
 
@@ -576,6 +594,8 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
       pago.metodoNombre,
       formatMontoPago(pago, recibo.monedaPresentacion),
     ])
+    const totalAbonos = sumarAbonos(recibo.pagos)
+    pagosBody.push(['Total abonos', formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)])
 
     autoTable(doc, {
       startY: y,

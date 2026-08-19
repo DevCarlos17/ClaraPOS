@@ -15,6 +15,7 @@ import {
   formatMontoBimonetario,
   formatMontoPrimario,
   formatMontoPago,
+  sumarAbonos,
   type BuildReciboDataInput,
   type ReciboData,
   type ReciboTotales,
@@ -641,6 +642,41 @@ describe('paridad: PDF vs texto en linea de articulos (WU3)', () => {
   })
 })
 
+describe('buildReciboPdfBlob — Total abonos en tabla de pagos (paridad con texto)', () => {
+  it('el body de la tabla de pagos del PDF termina con la fila Total abonos, igual que el texto', () => {
+    const mockedAutoTable = vi.mocked(autoTable)
+    mockedAutoTable.mockClear()
+
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '100',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        pagos: [
+          { metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 10 },
+          { metodo_cobro_id: 'pv-bs', metodo_nombre: 'Punto de Venta Banesco', moneda: 'BS', monto: 200 },
+        ],
+      })
+    )
+
+    buildReciboPdfBlob(recibo)
+
+    // 1ra llamada: articulos, 2da: totales, 3ra: pagos (orden fijo dentro de buildReciboPdfBlob).
+    const pagosCall = mockedAutoTable.mock.calls[2]
+    const pagosBody = (pagosCall[1] as { body: string[][] }).body
+
+    expect(pagosBody.at(-1)).toEqual(['Total abonos', '$12.00 (Bs. 1.200,00)'])
+  })
+})
+
 describe('formatearCierre — SAF con referencia de factura(s) (B5)', () => {
   function reciboConDiscrepancy(discrepancy: BuildReciboDataInput['discrepancy']): ReciboData {
     return buildReciboData(
@@ -751,6 +787,46 @@ describe('formatMontoPago (moneda del pago coincide con M -> solo M; si no coinc
   it("pago nativo BS y M='USD' (no coinciden): Bs sigue siendo primario, con USD entre parentesis", () => {
     const linea = pagoFixture({ moneda: 'BS', montoNativo: 300, montoBs: 300, montoUsd: 0.6 })
     expect(formatMontoPago(linea, 'USD')).toBe('Bs. 300,00 ($0.60)')
+  })
+})
+
+describe('sumarAbonos', () => {
+  it('suma montoUsd y montoBs de todas las lineas de pago (USD + BS mezclados)', () => {
+    const pagos: ReciboPagoLinea[] = [
+      {
+        metodoCobroId: 'ef-usd',
+        metodoNombre: 'Efectivo Dolares',
+        moneda: 'USD',
+        montoNativo: 10,
+        montoUsd: 10,
+        montoBs: 1000,
+      },
+      {
+        metodoCobroId: 'pv-bs',
+        metodoNombre: 'Punto de Venta Banesco',
+        moneda: 'BS',
+        montoNativo: 200,
+        montoUsd: 2,
+        montoBs: 200,
+      },
+    ]
+
+    expect(sumarAbonos(pagos)).toEqual({ usd: 12, bs: 1200 })
+  })
+
+  it('con un solo metodo de pago, retorna exactamente su monto (sin duplicar)', () => {
+    const pagos: ReciboPagoLinea[] = [
+      {
+        metodoCobroId: 'ef-usd',
+        metodoNombre: 'Efectivo Dolares',
+        moneda: 'USD',
+        montoNativo: 5,
+        montoUsd: 5,
+        montoBs: 500,
+      },
+    ]
+
+    expect(sumarAbonos(pagos)).toEqual({ usd: 5, bs: 500 })
   })
 })
 
@@ -916,9 +992,65 @@ describe('buildReciboTextoPlano', () => {
     expect(texto).toContain('Bs. 300,00')
   })
 
+  it("con pagos mixtos (USD + BS) y monedaPresentacion 'USD' (default), la seccion de pagos termina con 'Total abonos: $12.00 (Bs. 1.200,00)'", () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '100',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        pagos: [
+          { metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 10 },
+          { metodo_cobro_id: 'pv-bs', metodo_nombre: 'Punto de Venta Banesco', moneda: 'BS', monto: 200 },
+        ],
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain('Total abonos: $12.00 (Bs. 1.200,00)')
+  })
+
+  it("con pagos mixtos (USD + BS) y monedaPresentacion 'BS', la seccion de pagos termina con 'Total abonos: Bs. 1.200,00 ($12.00)'", () => {
+    const recibo = buildReciboData(
+      baseInput({
+        tasa: '100',
+        monedaPresentacion: 'BS',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        pagos: [
+          { metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 10 },
+          { metodo_cobro_id: 'pv-bs', metodo_nombre: 'Punto de Venta Banesco', moneda: 'BS', monto: 200 },
+        ],
+      })
+    )
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain('Total abonos: Bs. 1.200,00 ($12.00)')
+  })
+
   it('sin cierre (sin discrepancia ni credito), no incluye linea de credito/vuelto', () => {
     const texto = buildReciboTextoPlano(reciboConLineas())
     expect(texto).not.toContain('Quedo a credito')
+  })
+
+  it('sin pagos, no incluye la linea Total abonos', () => {
+    const texto = buildReciboTextoPlano(reciboConLineas())
+    expect(texto).not.toContain('Total abonos')
   })
 
   it('con saldo a credito, la ultima linea muestra "Quedo a credito"', () => {
