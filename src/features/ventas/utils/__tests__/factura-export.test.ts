@@ -13,6 +13,7 @@ import {
   construirFilasTotales,
   formatParPrimarioContraparte,
   formatMontoBimonetario,
+  formatMontoPrimario,
   formatMontoPago,
   type BuildReciboDataInput,
   type ReciboData,
@@ -98,6 +99,16 @@ describe('formatParPrimarioContraparte y formatMontoBimonetario', () => {
       contraparte: '$10.00',
     })
     expect(formatMontoBimonetario(10, 5000, 'BS')).toBe('Bs. 5.000,00 ($10.00)')
+  })
+})
+
+describe('formatMontoPrimario', () => {
+  it("moneda 'USD': retorna SOLO el monto en USD, sin contraparte", () => {
+    expect(formatMontoPrimario(10, 5000, 'USD')).toBe('$10.00')
+  })
+
+  it("moneda 'BS': retorna SOLO el monto en Bs, sin contraparte", () => {
+    expect(formatMontoPrimario(10, 5000, 'BS')).toBe('Bs. 5.000,00')
   })
 })
 
@@ -449,7 +460,7 @@ describe('construirFilasTotales', () => {
     }
   }
 
-  it("con IGTF > 0 y moneda 'USD': orden Exento -> Base -> alicuotas -> TOTAL FACTURA (subtotal) -> IGTF -> TOTAL + IGTF (bold, final); intermedias muestran USD primario", () => {
+  it("con IGTF > 0 y moneda 'USD': orden Exento -> Base -> alicuotas -> TOTAL FACTURA (subtotal) -> IGTF -> TOTAL + IGTF (bold, final); intermedias muestran SOLO USD, las 2 filas finales muestran USD + equivalente Bs entre parentesis", () => {
     const filas = construirFilasTotales(totalesFixture(), 'USD')
 
     expect(filas.map((f) => f.label)).toEqual([
@@ -461,30 +472,31 @@ describe('construirFilasTotales', () => {
       'IGTF',
       'TOTAL + IGTF',
     ])
-    expect(filas[0]).toEqual({ label: 'Monto Exento', monto: '$1.00 (Bs. 10,00)', bold: false })
-    expect(filas[1]).toEqual({ label: 'Base Imponible', monto: '$3.00 (Bs. 30,00)', bold: false })
-    expect(filas[2]).toEqual({ label: 'IVA 8%', monto: '$0.08 (Bs. 0,80)', bold: false })
+    expect(filas[0]).toEqual({ label: 'Monto Exento', monto: '$1.00', bold: false })
+    expect(filas[1]).toEqual({ label: 'Base Imponible', monto: '$3.00', bold: false })
+    expect(filas[2]).toEqual({ label: 'IVA 8%', monto: '$0.08', bold: false })
     expect(filas[4]).toEqual({ label: 'TOTAL FACTURA', monto: '$4.24 (Bs. 42,40)', bold: false })
-    expect(filas[5]).toEqual({ label: 'IGTF', monto: '$0.06 (Bs. 0,60)', bold: false })
-    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', monto: '$4.30 / Bs. 43,00', bold: true })
+    expect(filas[5]).toEqual({ label: 'IGTF', monto: '$0.06', bold: false })
+    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', monto: '$4.30 (Bs. 43,00)', bold: true })
   })
 
-  it("con moneda 'BS': las filas intermedias muestran Bs primario, USD entre parentesis; la fila final NO cambia (formato fijo pese al toggle)", () => {
+  it("con moneda 'BS': las filas intermedias muestran SOLO Bs; las 2 filas finales (TOTAL FACTURA e TOTAL + IGTF) muestran Bs primario + USD entre parentesis (toggle-aware)", () => {
     const filas = construirFilasTotales(totalesFixture(), 'BS')
 
-    expect(filas[0]).toEqual({ label: 'Monto Exento', monto: 'Bs. 10,00 ($1.00)', bold: false })
+    expect(filas[0]).toEqual({ label: 'Monto Exento', monto: 'Bs. 10,00', bold: false })
+    expect(filas[1]).toEqual({ label: 'Base Imponible', monto: 'Bs. 30,00', bold: false })
+    expect(filas[2]).toEqual({ label: 'IVA 8%', monto: 'Bs. 0,80', bold: false })
     expect(filas[4]).toEqual({ label: 'TOTAL FACTURA', monto: 'Bs. 42,40 ($4.24)', bold: false })
-    expect(filas[5]).toEqual({ label: 'IGTF', monto: 'Bs. 0,60 ($0.06)', bold: false })
-    // Fila final bold: formato FIJO usd / bs, ignora el toggle (design decision)
-    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', monto: '$4.30 / Bs. 43,00', bold: true })
+    expect(filas[5]).toEqual({ label: 'IGTF', monto: 'Bs. 0,60', bold: false })
+    expect(filas[6]).toEqual({ label: 'TOTAL + IGTF', monto: 'Bs. 43,00 ($4.30)', bold: true })
   })
 
-  it('sin IGTF (null): TOTAL FACTURA es la fila final, bold, formato fijo usd/bs, sin fila de IGTF ni sufijo "+ IGTF"', () => {
+  it('sin IGTF (null): TOTAL FACTURA es la fila final, bold, muestra USD + equivalente Bs entre parentesis (toggle-aware), sin fila de IGTF ni sufijo "+ IGTF"', () => {
     const filas = construirFilasTotales(totalesFixture({ igtfUsd: null, igtfBs: null }), 'USD')
 
     expect(filas.map((f) => f.label)).not.toContain('IGTF')
     expect(filas.map((f) => f.label)).not.toContain('TOTAL + IGTF')
-    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', monto: '$4.24 / Bs. 42,40', bold: true })
+    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', monto: '$4.24 (Bs. 42,40)', bold: true })
   })
 
   it('sin IGTF (0): mismo comportamiento que null — sin fila de IGTF', () => {
@@ -564,7 +576,7 @@ describe('paridad: PDF vs texto en orden de totales', () => {
 })
 
 describe('paridad: PDF vs texto en linea de articulos (WU3)', () => {
-  it('con moneda "USD" (default), la tabla de articulos del PDF muestra USD primario y Bs entre parentesis, igual que el texto/PNG', () => {
+  it('con moneda "USD" (default), la tabla de articulos del PDF muestra SOLO USD (sin contraparte), igual que el texto/PNG', () => {
     const mockedAutoTable = vi.mocked(autoTable)
     mockedAutoTable.mockClear()
 
@@ -590,15 +602,13 @@ describe('paridad: PDF vs texto en linea de articulos (WU3)', () => {
     const articulosCall = mockedAutoTable.mock.calls[0]
     const articulosBody = (articulosCall[1] as { body: string[][] }).body
 
-    expect(articulosBody).toEqual([
-      ['PROD-999', 'Item Bimonetario', '1', '$10.00 (Bs. 5.000,00)', '$10.00 (Bs. 5.000,00)'],
-    ])
+    expect(articulosBody).toEqual([['PROD-999', 'Item Bimonetario', '1', '$10.00', '$10.00']])
 
     const texto = buildReciboTextoPlano(recibo)
-    expect(texto).toContain('1 x $10.00 (Bs. 5.000,00) = $10.00 (Bs. 5.000,00)')
+    expect(texto).toContain('1 x $10.00 = $10.00')
   })
 
-  it('con moneda "BS", la tabla de articulos del PDF invierte el orden (Bs primario, USD entre parentesis), igual que el texto/PNG', () => {
+  it('con moneda "BS", la tabla de articulos del PDF muestra SOLO Bs (sin contraparte), igual que el texto/PNG', () => {
     const mockedAutoTable = vi.mocked(autoTable)
     mockedAutoTable.mockClear()
 
@@ -624,12 +634,10 @@ describe('paridad: PDF vs texto en linea de articulos (WU3)', () => {
     const articulosCall = mockedAutoTable.mock.calls[0]
     const articulosBody = (articulosCall[1] as { body: string[][] }).body
 
-    expect(articulosBody).toEqual([
-      ['PROD-999', 'Item Bimonetario', '1', 'Bs. 5.000,00 ($10.00)', 'Bs. 5.000,00 ($10.00)'],
-    ])
+    expect(articulosBody).toEqual([['PROD-999', 'Item Bimonetario', '1', 'Bs. 5.000,00', 'Bs. 5.000,00']])
 
     const texto = buildReciboTextoPlano(recibo)
-    expect(texto).toContain('1 x Bs. 5.000,00 ($10.00) = Bs. 5.000,00 ($10.00)')
+    expect(texto).toContain('1 x Bs. 5.000,00 = Bs. 5.000,00')
   })
 })
 
@@ -712,7 +720,7 @@ describe('formatearCierre — SAF con referencia de factura(s) (B5)', () => {
   })
 })
 
-describe('formatMontoPago (WU2: contraparte independiente del toggle del recibo)', () => {
+describe('formatMontoPago (moneda del pago coincide con M -> solo M; si no coincide -> nativa primaria + equivalente)', () => {
   function pagoFixture(overrides: Partial<ReciboPagoLinea> = {}): ReciboPagoLinea {
     return {
       metodoCobroId: 'pm-1',
@@ -725,14 +733,24 @@ describe('formatMontoPago (WU2: contraparte independiente del toggle del recibo)
     }
   }
 
-  it('pago nativo en USD: sin cambios — muestra $Y.YY (Bs. X,XX)', () => {
+  it("pago nativo USD y M='USD' (coinciden): muestra SOLO USD, sin equivalente", () => {
     const linea = pagoFixture({ moneda: 'USD', montoNativo: 1, montoUsd: 1, montoBs: 500 })
-    expect(formatMontoPago(linea)).toBe('$1.00 (Bs. 500,00)')
+    expect(formatMontoPago(linea, 'USD')).toBe('$1.00')
   })
 
-  it('pago nativo en BS: ahora tambien muestra su equivalente USD — Bs. X,XX ($Y.YY)', () => {
+  it("pago nativo USD y M='BS' (no coinciden): USD sigue siendo primario, con Bs entre parentesis", () => {
+    const linea = pagoFixture({ moneda: 'USD', montoNativo: 1, montoUsd: 1, montoBs: 500 })
+    expect(formatMontoPago(linea, 'BS')).toBe('$1.00 (Bs. 500,00)')
+  })
+
+  it("pago nativo BS y M='BS' (coinciden): muestra SOLO Bs, sin equivalente", () => {
     const linea = pagoFixture({ moneda: 'BS', montoNativo: 300, montoBs: 300, montoUsd: 0.6 })
-    expect(formatMontoPago(linea)).toBe('Bs. 300,00 ($0.60)')
+    expect(formatMontoPago(linea, 'BS')).toBe('Bs. 300,00')
+  })
+
+  it("pago nativo BS y M='USD' (no coinciden): Bs sigue siendo primario, con USD entre parentesis", () => {
+    const linea = pagoFixture({ moneda: 'BS', montoNativo: 300, montoBs: 300, montoUsd: 0.6 })
+    expect(formatMontoPago(linea, 'USD')).toBe('Bs. 300,00 ($0.60)')
   })
 })
 
@@ -824,7 +842,7 @@ describe('buildReciboTextoPlano', () => {
     expect(idxNroFecha).toBeGreaterThan(idxEmisor)
   })
 
-  it("linea de articulo con moneda 'USD' (default): muestra USD primario y Bs entre parentesis en precio unitario y total", () => {
+  it("linea de articulo con moneda 'USD' (default): muestra SOLO USD (sin contraparte) en precio unitario y total", () => {
     const recibo = buildReciboData(
       baseInput({
         tasa: '500',
@@ -842,10 +860,10 @@ describe('buildReciboTextoPlano', () => {
     )
     const texto = buildReciboTextoPlano(recibo)
 
-    expect(texto).toContain('1 x $10.00 (Bs. 5.000,00) = $10.00 (Bs. 5.000,00)')
+    expect(texto).toContain('1 x $10.00 = $10.00')
   })
 
-  it("linea de articulo con moneda 'BS': muestra Bs primario y USD entre parentesis en precio unitario y total", () => {
+  it("linea de articulo con moneda 'BS': muestra SOLO Bs (sin contraparte) en precio unitario y total", () => {
     const recibo = buildReciboData(
       baseInput({
         tasa: '500',
@@ -864,7 +882,7 @@ describe('buildReciboTextoPlano', () => {
     )
     const texto = buildReciboTextoPlano(recibo)
 
-    expect(texto).toContain('1 x Bs. 5.000,00 ($10.00) = Bs. 5.000,00 ($10.00)')
+    expect(texto).toContain('1 x Bs. 5.000,00 = Bs. 5.000,00')
   })
 
   it('sin pagos, no incluye la seccion Metodos de pago', () => {
@@ -930,7 +948,7 @@ describe('buildReciboTextoPlano', () => {
 })
 
 describe('backward-compat guard (WU2, task 4.1): moneda_presentacion_documentos ausente', () => {
-  it('formatMontoPago rama USD-nativa, formatearCierre y las 2 filas finales bold no cambian frente al comportamiento pre-WU2', () => {
+  it('con monedaPresentacion default USD: pago nativo USD coincide con M (solo USD), formatearCierre sin cambios y fila final bold muestra USD + equivalente Bs', () => {
     const recibo = buildReciboData(
       baseInput({
         tasa: '500',
@@ -954,13 +972,13 @@ describe('backward-compat guard (WU2, task 4.1): moneda_presentacion_documentos 
     expect(recibo.monedaPresentacion).toBe('USD')
 
     const texto = buildReciboTextoPlano(recibo)
-    // Pago USD-nativo: formato sin cambios ($Y.YY (Bs. X,XX))
-    expect(texto).toContain('Efectivo Dolares: $1.00 (Bs. 500,00)')
-    // Cierre (formatearCierre, no tocado en WU2): formato sin cambios
+    // Pago USD-nativo con M='USD' (default): coinciden -> SOLO USD, sin equivalente
+    expect(texto).toContain('Efectivo Dolares: $1.00')
+    // Cierre (formatearCierre, no tocado en esta regla): formato sin cambios
     expect(texto).toContain('Vuelto entregado: Bs. 500,00 ($1.00)')
-    // Fila final bold (sin IGTF -> TOTAL FACTURA es la final): formato fijo usd / bs sin cambios
+    // Fila final bold (sin IGTF -> TOTAL FACTURA es la final): USD primario + Bs entre parentesis (toggle-aware)
     const filas = construirFilasTotales(recibo.totales, recibo.monedaPresentacion)
-    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', monto: '$11.60 / Bs. 5.800,00', bold: true })
+    expect(filas.at(-1)).toEqual({ label: 'TOTAL FACTURA', monto: '$11.60 (Bs. 5.800,00)', bold: true })
   })
 })
 
