@@ -8,23 +8,161 @@ export interface EmpresaConfig {
 }
 
 const MONEDAS_PRESENTACION_VALIDAS = new Set(['USD', 'BS'])
+const MONEDAS_CONTABLE_VALIDAS = new Set(['USD', 'BS'])
+/** Profundidad maxima de re-parseo al intentar recuperar config corrupto/doblemente codificado. */
+const MAX_RECOVERY_DEPTH = 3
+/** Claves puramente numericas (ej. "0", "1", "12"): SIEMPRE son residuo del bug de spread caracter por caracter, nunca una clave legitima de config. */
+const CLAVE_NUMERICA = /^\d+$/
 
 /** Resuelve `moneda_presentacion_documentos`: ausente o invalida siempre cae a 'USD'. */
 function resolveMonedaPresentacion(valor: unknown): 'USD' | 'BS' {
   return typeof valor === 'string' && MONEDAS_PRESENTACION_VALIDAS.has(valor) ? (valor as 'USD' | 'BS') : 'USD'
 }
 
-export function parseEmpresaConfig(configJson: string | null | undefined): EmpresaConfig {
-  if (!configJson) return { moneda_presentacion_documentos: 'USD' }
-  try {
-    const parsed = JSON.parse(configJson) as EmpresaConfig
-    return {
-      ...parsed,
-      moneda_presentacion_documentos: resolveMonedaPresentacion(parsed.moneda_presentacion_documentos),
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Detecta el patron de corrupcion observado en produccion: un objeto cuyas claves
+ * son indices numericos consecutivos ("0", "1", "2", ...) con valores de 1 caracter,
+ * producto de haber hecho `{ ...unStringJSON }` (spread caracter por caracter).
+ */
+function isCharIndexedObject(value: Record<string, unknown>): boolean {
+  const keys = Object.keys(value)
+  if (keys.length === 0) return false
+  return keys.every((key, index) => key === String(index) && typeof value[key] === 'string' && value[key].length === 1)
+}
+
+/** Reconstruye el string original a partir de un objeto indexado por caracter. */
+function reconstructFromCharIndexed(value: Record<string, unknown>): string {
+  return Object.keys(value)
+    .sort((a, b) => Number(a) - Number(b))
+    .map((key) => value[key] as string)
+    .join('')
+}
+
+/**
+ * Normaliza el resultado de `JSON.parse` a un Record plano libre de corrupcion,
+ * sanando los patrones conocidos en lugar de propagarlos:
+ * - Si el parseo dio un string (config doblemente codificado), reintenta parsear ese string.
+ * - Si el parseo dio un objeto indexado por caracter (spread de un string), reconstruye
+ *   el string original y lo vuelve a parsear.
+ * - Cualquier otro valor no-objeto (numero, array, null) cae a un record vacio.
+ * - En un objeto "normal", descarta SOLO las claves puramente numericas (residuo de
+ *   corrupciones parciales); preserva intacto cualquier otro namespace legitimo
+ *   (ej. `agenda`, usado por `use-agenda-config.ts` en la misma columna `config`).
+ */
+function normalizeConfigRecord(parsed: unknown, depth = 0): Record<string, unknown> {
+  if (depth > MAX_RECOVERY_DEPTH) return {}
+
+  if (typeof parsed === 'string') {
+    try {
+      return normalizeConfigRecord(JSON.parse(parsed), depth + 1)
+    } catch {
+      return {}
     }
-  } catch {
-    return { moneda_presentacion_documentos: 'USD' }
   }
+
+  if (!isPlainObject(parsed)) return {}
+
+  if (isCharIndexedObject(parsed)) {
+    try {
+      return normalizeConfigRecord(JSON.parse(reconstructFromCharIndexed(parsed)), depth + 1)
+    } catch {
+      return {}
+    }
+  }
+
+  const clean: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    if (CLAVE_NUMERICA.test(key)) continue
+    clean[key] = value
+  }
+  return clean
+}
+
+/** Parsea y sanea `configJson` a un Record plano, sin filtrar por claves conocidas. */
+function sanitizeConfigRecord(configJson: string | null | undefined): Record<string, unknown> {
+  if (!configJson) return {}
+  try {
+    return normalizeConfigRecord(JSON.parse(configJson))
+  } catch {
+    return {}
+  }
+}
+
+/** Extrae y valida SOLO las claves tipadas de `EmpresaConfig` desde un record ya saneado. */
+function pickKnownFields(record: Record<string, unknown>): EmpresaConfig {
+  const config: EmpresaConfig = {
+    moneda_presentacion_documentos: resolveMonedaPresentacion(record.moneda_presentacion_documentos),
+  }
+  if (typeof record.moneda_contable === 'string' && MONEDAS_CONTABLE_VALIDAS.has(record.moneda_contable)) {
+    config.moneda_contable = record.moneda_contable as 'USD' | 'BS'
+  }
+  return config
+}
+
+export function parseEmpresaConfig(configJson: string | null | undefined): EmpresaConfig {
+  return pickKnownFields(sanitizeConfigRecord(configJson))
+}
+
+/**
+ * Reserializa `configJson` a un string JSON limpio, aplicando `updates` sobre las
+ * claves tipadas conocidas (`moneda_contable`, `moneda_presentacion_documentos`).
+ *
+ * Preserva cualquier otro namespace presente en el config original (ej. `agenda`)
+ * sin tocarlo, pero SIEMPRE descarta claves puramente numericas — el patron de
+ * corrupcion — cerrando el ciclo en el punto de escritura: el string persistido
+ * nunca puede volver a crecer por el bug de spread caracter por caracter.
+ */
+export function serializeEmpresaConfig(
+  configJson: string | null | undefined,
+  updates: Partial<EmpresaConfig> = {}
+): string {
+  const record = sanitizeConfigRecord(configJson)
+  const knownFields = pickKnownFields({ ...record, ...updates })
+  return JSON.stringify({ ...record, ...knownFields })
+}
+
+/**
+ * Lee un namespace arbitrario (ej. `agenda`) desde `empresas.config`, saneado con el
+ * mismo `sanitizeConfigRecord` que usa `parseEmpresaConfig`. Esto es lo que permite que
+ * un config ya corrupto (char-indexed / doblemente codificado) se auto-repare tambien
+ * para namespaces que no son las claves tipadas de `EmpresaConfig` — antes de este
+ * helper, `use-agenda-config.ts` tenia su propio parser debil que, sobre un config
+ * corrupto, no encontraba `agenda` dentro del blob y perdia silenciosamente esa config.
+ */
+export function readConfigNamespace<T extends object>(
+  configJson: string | null | undefined,
+  namespace: string,
+  defaults: T
+): T {
+  const record = sanitizeConfigRecord(configJson)
+  const namespaceValue = record[namespace]
+  const raw = isPlainObject(namespaceValue) ? (namespaceValue as Partial<T>) : {}
+  return { ...defaults, ...raw }
+}
+
+/**
+ * Escribe `updates` sobre un namespace arbitrario (ej. `agenda`) de `empresas.config`,
+ * mergeando con el valor existente de ese namespace y preservando intactos cualquier
+ * otro namespace y las claves tipadas de `EmpresaConfig` presentes en el config original.
+ * Comparte `sanitizeConfigRecord` con `serializeEmpresaConfig`: es el MISMO camino
+ * corruption-proof, asi que cualquier escritura a `empresas.config` (sea desde
+ * `company-data-form.tsx` o desde `use-agenda-config.ts`) sanea las claves numericas
+ * de corrupcion y converge a un punto fijo, sin importar que namespace escriba.
+ */
+export function serializeConfigNamespace(
+  configJson: string | null | undefined,
+  namespace: string,
+  updates: object
+): string {
+  const record = sanitizeConfigRecord(configJson)
+  const existingNamespace = isPlainObject(record[namespace]) ? (record[namespace] as Record<string, unknown>) : {}
+  const mergedNamespace = { ...existingNamespace, ...updates }
+  const knownFields = pickKnownFields(record)
+  return JSON.stringify({ ...record, ...knownFields, [namespace]: mergedNamespace })
 }
 
 export interface Company {
