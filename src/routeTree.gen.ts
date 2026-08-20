@@ -31,6 +31,7 @@ import { Route as AppVentasNotasCreditoRouteImport } from './routes/_app/ventas/
 import { Route as AppVentasCuadreDeCajaRouteImport } from './routes/_app/ventas/cuadre-de-caja'
 import { Route as AppProveedoresGestionRouteImport } from './routes/_app/proveedores/gestion'
 import { Route as AppInventarioUnidadesRouteImport } from './routes/_app/inventario/unidades'
+import { Route as AppInventarioTraspasosRouteImport } from './routes/_app/inventario/traspasos'
 import { Route as AppInventarioReportesRouteImport } from './routes/_app/inventario/reportes'
 import { Route as AppInventarioRecetasRouteImport } from './routes/_app/inventario/recetas'
 import { Route as AppInventarioProductosRouteImport } from './routes/_app/inventario/productos'
@@ -183,6 +184,11 @@ const AppProveedoresGestionRoute = AppProveedoresGestionRouteImport.update({
 const AppInventarioUnidadesRoute = AppInventarioUnidadesRouteImport.update({
   id: '/inventario/unidades',
   path: '/inventario/unidades',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppInventarioTraspasosRoute = AppInventarioTraspasosRouteImport.update({
+  id: '/inventario/traspasos',
+  path: '/inventario/traspasos',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const AppInventarioReportesRoute = AppInventarioReportesRouteImport.update({
@@ -482,6 +488,7 @@ export interface FileRoutesByFullPath {
   '/inventario/productos': typeof AppInventarioProductosRoute
   '/inventario/recetas': typeof AppInventarioRecetasRoute
   '/inventario/reportes': typeof AppInventarioReportesRoute
+  '/inventario/traspasos': typeof AppInventarioTraspasosRoute
   '/inventario/unidades': typeof AppInventarioUnidadesRoute
   '/proveedores/gestion': typeof AppProveedoresGestionRoute
   '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
@@ -546,6 +553,7 @@ export interface FileRoutesByTo {
   '/inventario/productos': typeof AppInventarioProductosRoute
   '/inventario/recetas': typeof AppInventarioRecetasRoute
   '/inventario/reportes': typeof AppInventarioReportesRoute
+  '/inventario/traspasos': typeof AppInventarioTraspasosRoute
   '/inventario/unidades': typeof AppInventarioUnidadesRoute
   '/proveedores/gestion': typeof AppProveedoresGestionRoute
   '/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
@@ -616,6 +624,7 @@ export interface FileRoutesById {
   '/_app/inventario/productos': typeof AppInventarioProductosRoute
   '/_app/inventario/recetas': typeof AppInventarioRecetasRoute
   '/_app/inventario/reportes': typeof AppInventarioReportesRoute
+  '/_app/inventario/traspasos': typeof AppInventarioTraspasosRoute
   '/_app/inventario/unidades': typeof AppInventarioUnidadesRoute
   '/_app/proveedores/gestion': typeof AppProveedoresGestionRoute
   '/_app/ventas/cuadre-de-caja': typeof AppVentasCuadreDeCajaRoute
@@ -685,6 +694,7 @@ export interface FileRouteTypes {
     | '/inventario/productos'
     | '/inventario/recetas'
     | '/inventario/reportes'
+    | '/inventario/traspasos'
     | '/inventario/unidades'
     | '/proveedores/gestion'
     | '/ventas/cuadre-de-caja'
@@ -749,6 +759,7 @@ export interface FileRouteTypes {
     | '/inventario/productos'
     | '/inventario/recetas'
     | '/inventario/reportes'
+    | '/inventario/traspasos'
     | '/inventario/unidades'
     | '/proveedores/gestion'
     | '/ventas/cuadre-de-caja'
@@ -818,6 +829,7 @@ export interface FileRouteTypes {
     | '/_app/inventario/productos'
     | '/_app/inventario/recetas'
     | '/_app/inventario/reportes'
+    | '/_app/inventario/traspasos'
     | '/_app/inventario/unidades'
     | '/_app/proveedores/gestion'
     | '/_app/ventas/cuadre-de-caja'
@@ -993,6 +1005,13 @@ declare module '@tanstack/react-router' {
       path: '/inventario/unidades'
       fullPath: '/inventario/unidades'
       preLoaderRoute: typeof AppInventarioUnidadesRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/inventario/traspasos': {
+      id: '/_app/inventario/traspasos'
+      path: '/inventario/traspasos'
+      fullPath: '/inventario/traspasos'
+      preLoaderRoute: typeof AppInventarioTraspasosRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/_app/inventario/reportes': {
@@ -1427,6 +1446,7 @@ interface AppRouteRouteChildren {
   AppInventarioProductosRoute: typeof AppInventarioProductosRoute
   AppInventarioRecetasRoute: typeof AppInventarioRecetasRoute
   AppInventarioReportesRoute: typeof AppInventarioReportesRoute
+  AppInventarioTraspasosRoute: typeof AppInventarioTraspasosRoute
   AppInventarioUnidadesRoute: typeof AppInventarioUnidadesRoute
   AppProveedoresGestionRoute: typeof AppProveedoresGestionRoute
   AppVentasCuadreDeCajaRoute: typeof AppVentasCuadreDeCajaRoute
@@ -1481,6 +1501,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppInventarioProductosRoute: AppInventarioProductosRoute,
   AppInventarioRecetasRoute: AppInventarioRecetasRoute,
   AppInventarioReportesRoute: AppInventarioReportesRoute,
+  AppInventarioTraspasosRoute: AppInventarioTraspasosRoute,
   AppInventarioUnidadesRoute: AppInventarioUnidadesRoute,
   AppProveedoresGestionRoute: AppProveedoresGestionRoute,
   AppVentasCuadreDeCajaRoute: AppVentasCuadreDeCajaRoute,

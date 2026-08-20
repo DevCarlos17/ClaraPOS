@@ -121,9 +121,9 @@ Pure fn: `resolveDepositoIngreso`. Swaps the resolution INPUT feeding 1b's `upse
 
 ## Slice 3c — Traspasos: UI
 
-- [ ] 3c.1 New `src/features/inventario/components/traspasos/traspaso-form.tsx`: single form, dynamic lines array (mirrors `ajustes` pattern), deposito origen/destino selects, client-side same-deposito rejection.
-- [ ] 3c.2 New route `src/routes/_app/inventario/traspasos.tsx`: list + create modal, same shape as existing `ajustes` route.
-- [ ] 3c.3 Integration/UI test: form blocks submit when origen===destino; individual and batch (N lines) both submit through `crearTraspaso`.
+- [x] 3c.1 New `src/features/inventario/components/traspasos/traspaso-form.tsx`: single form, dynamic lines array (mirrors `ajustes` pattern), deposito origen/destino selects, client-side same-deposito rejection. — tambien `traspaso-schema.ts` (Zod, refine origen!==destino) y `traspaso-list.tsx` (mirror `ajuste-list.tsx`, usa `useTraspasos` de 3b).
+- [x] 3c.2 New route `src/routes/_app/inventario/traspasos.tsx`: list + create modal, same shape as existing `ajustes` route. — entrada "Traspasos" agregada al sidebar (permiso `INVENTORY_ADJUST`).
+- [x] 3c.3 Integration/UI test: form blocks submit when origen===destino; individual and batch (N lines) both submit through `crearTraspaso`. — RTL en `traspaso-form.test.tsx` (4 tests) + `traspaso-schema.test.ts` (9 tests, TDD RED/GREEN).
 
 ## Slice 4 — Company Bootstrap + Notas de Credito
 
