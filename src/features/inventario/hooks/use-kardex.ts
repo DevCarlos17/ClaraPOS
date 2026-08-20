@@ -6,6 +6,7 @@ import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
 import { toStorageString } from '@/lib/currency'
 import { buildMovimientosFiltradosSql } from './kardex-sql'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 
 export interface MovimientoInventario {
   id: string
@@ -273,12 +274,19 @@ export async function registrarMovimiento(params: {
       ]
     )
 
-    // 7. Actualizar stock del producto
-    await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-      stockNuevo.toFixed(3),
-      now,
+    // 7. Actualizar inventario_stock (por deposito) + productos.stock (total desnormalizado)
+    // en la MISMA transaccion — usa el deposito ya resuelto en el paso 0 (sin cambio de
+    // resolucion en este slice; ver stock-deposito.ts).
+    const deltaStock = tipo === 'E' ? new Decimal(cantidad) : new Decimal(cantidad).negated()
+    await upsertStockDeposito(tx, {
+      empresa_id,
       producto_id,
-    ])
+      deposito_id: depositoId,
+      delta: deltaStock,
+      usuario_id,
+      now,
+      movimientoInventarioId: id,
+    })
 
     // 8. Gasto contable automatico para salidas tipificadas
     if (tipo === 'S' && tipoSalida && totalUsd > 0) {

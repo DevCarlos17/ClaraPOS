@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
 import { productoSchema } from '@/features/inventario/schemas/producto-schema'
 import {
   crearProducto,
@@ -23,6 +24,7 @@ import {
   calcularViolacionCostoPvp,
 } from '@/features/inventario/lib/producto-precio-gating'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 import { useDebounce } from '@/hooks/use-debounce'
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
@@ -980,30 +982,30 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           const now = localNow()
           const fecha = now.split('T')[0] ?? now.substring(0, 10)
           await db.writeTransaction(async (tx) => {
+            const movInicialId = uuidv4()
             await tx.execute(
               `INSERT INTO movimientos_inventario
                (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad,
                 stock_anterior, stock_nuevo, motivo, usuario_id, fecha, created_at)
                VALUES (?, ?, ?, ?, 'E', 'MAN', ?, '0.000', ?, 'Stock inicial', ?, ?, ?)`,
               [
-                uuidv4(), user!.empresa_id!, productoId, depositoId,
+                movInicialId, user!.empresa_id!, productoId, depositoId,
                 stockInicialNum.toFixed(3), stockInicialNum.toFixed(3),
                 user!.id, fecha, now,
               ]
             )
-            await tx.execute(
-              'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-              [stockInicialNum.toFixed(3), now, productoId]
-            )
-            await tx.execute(
-              `INSERT INTO inventario_stock
-               (id, empresa_id, producto_id, deposito_id, cantidad_actual, stock_reservado, updated_at, updated_by)
-               VALUES (?, ?, ?, ?, ?, '0.000', ?, ?)`,
-              [
-                uuidv4(), user!.empresa_id!, productoId, depositoId,
-                stockInicialNum.toFixed(3), now, user!.id,
-              ]
-            )
+            // inventario_stock (por deposito) + productos.stock (total) — un unico camino
+            // de escritura compartido con compras/kardex/ajustes/ventas (stock-deposito.ts).
+            // El producto recien creado arranca en 0, asi que el delta = stock inicial.
+            await upsertStockDeposito(tx, {
+              empresa_id: user!.empresa_id!,
+              producto_id: productoId,
+              deposito_id: depositoId,
+              delta: new Decimal(stockInicialNum),
+              usuario_id: user!.id,
+              now,
+              movimientoInventarioId: movInicialId,
+            })
           })
         }
         toast.success('Producto creado correctamente')

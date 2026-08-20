@@ -9,6 +9,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
 import { resolverAccionesLineaCompra, resolverCostoAEscribir } from '@/features/inventario/lib/compra-precio-gating'
 import { totalizarLineasCargo, consolidarLineasCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 
 export interface Compra {
   id: string
@@ -693,16 +694,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       const costoParaEscribir = resolverCostoAEscribir(actualizarCosto, costoSistema, costoActual)
 
       if (!actualizarCosto && !actualizarPvp) {
-        // Costo no cambio y no se edito el pvp: solo actualizar stock
-        await tx.execute(
-          'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-          [toStorageString(stockNuevo), now, linea.producto_id]
-        )
+        // Costo no cambio y no se edito el pvp: nada que actualizar aqui ademas
+        // del stock (ver upsertStockDeposito luego de este bloque).
       } else if (actualizarCosto && !actualizarPvp) {
         // Costo cambio pero usuario eligio mantener el pvp actual
         await tx.execute(
-          'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-          [toStorageString(stockNuevo), toStorageString(costoParaEscribir), now, linea.producto_id]
+          'UPDATE productos SET costo_usd = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(costoParaEscribir), now, linea.producto_id]
         )
         pvpNuevoAudit = pvpActual
       } else {
@@ -748,26 +746,39 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
         if (nuevoMayor !== null && nuevoEspecial !== null) {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), toStorageString(nuevoEspecial), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else if (nuevoMayor !== null) {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), now, linea.producto_id]
           )
         } else if (nuevoEspecial !== null) {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoEspecial), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(stockNuevo), toStorageString(costoParaEscribir), toStorageString(nuevoPvp), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), now, linea.producto_id]
           )
         }
       }
+
+      // inventario_stock (por deposito) + productos.stock (total) — usa el deposito ya
+      // pre-resuelto (unico prefetch) al inicio de crearCompra (sin cambio de resolucion
+      // en este slice; ver stock-deposito.ts).
+      await upsertStockDeposito(tx, {
+        empresa_id,
+        producto_id: linea.producto_id,
+        deposito_id: depositoId,
+        delta: dCantidad,
+        usuario_id: usuario_id,
+        now,
+        movimientoInventarioId: movId,
+      })
 
       // 4g. Registrar historico de precios cuando cambio el costo o el pvp.
       // `pvpNuevoAudit !== null` ya es estructuralmente equivalente a `registrarAuditoria`
