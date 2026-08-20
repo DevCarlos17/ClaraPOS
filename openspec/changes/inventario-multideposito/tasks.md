@@ -112,12 +112,12 @@ Pure fn: `resolveDepositoIngreso`. Swaps the resolution INPUT feeding 1b's `upse
 
 ## Slice 3b — Traspasos: Atomic Hook
 
-- [ ] 3b.1 New `src/features/inventario/hooks/use-traspasos.ts` `crearTraspaso(params)`: reject same-deposito client-side; `computeCorrelativoUsuario` from `COUNT(*)`; `INSERT traspasos_inventario` header (`autorizado_por`/`verificado_por` NULL); per line `SELECT inventario_stock` origen, throw if `< cantidad`; `buildTraspasoKardexPair` + 2x `INSERT movimientos_inventario`; `upsertStockDeposito` origen(-)/destino(+); `INSERT traspasos_inventario_det`. ALL inside one `writeTransaction`.
-- [ ] 3b.2 Integration test: individual traspaso A→B moves stock atomically, `inventario_stock` reflects both sides in one tx. (TRI/Traspaso individual mueve stock A→B)
-- [ ] 3b.3 Integration test: batch of 3 productos creates 3 det rows + 6 paired kardex rows atomically under one header. (TRI/Traspaso batch de varios productos)
-- [ ] 3b.4 Integration test: `correlativo_usuario` increments per user, independent of other users' counts. (TRI/Correlativo incrementa por usuario)
-- [ ] 3b.5 Integration test: insufficient origen stock blocks the whole tx (individual + batch line), no partial commit. (TRI/Traspaso bloqueado por falta de stock)
-- [ ] 3b.6 Integration test: traspaso created with `autorizado_por`/`verificado_por` NULL, fully effective immediately. (TRI/Traspaso creado sin autorizacion)
+- [x] 3b.1 New `src/features/inventario/hooks/use-traspasos.ts` `crearTraspaso(params)`: reject same-deposito client-side; `computeCorrelativoUsuario` from `COUNT(*)`; `INSERT traspasos_inventario` header (`autorizado_por`/`verificado_por` NULL); per line `SELECT inventario_stock` origen, throw if `< cantidad`; `buildTraspasoKardexPair` + 2x `INSERT movimientos_inventario`; `upsertStockDeposito` origen(-)/destino(+); `INSERT traspasos_inventario_det`. ALL inside one `writeTransaction`. — nota: tambien se agrego `useTraspasos()` (read hook, listado, mismo shape que `useAjustes()`) para reuso trivial en 3c; `stock_anterior`/`stock_nuevo` del kardex de cada leg se llenan con lecturas per-deposito (`leerStockDeposito`) en vez de `productos.stock` global, tal como documenta el comentario de `buildTraspasoKardexPair` en `traspasos.ts` (un traspaso no cambia el total cross-deposito, por lo que el snapshot global seria identico antes/despues y no informativo).
+- [x] 3b.2 Integration test: individual traspaso A→B moves stock atomically, `inventario_stock` reflects both sides in one tx. (TRI/Traspaso individual mueve stock A→B)
+- [x] 3b.3 Integration test: batch of 3 productos creates 3 det rows + 6 paired kardex rows atomically under one header. (TRI/Traspaso batch de varios productos)
+- [x] 3b.4 Integration test: `correlativo_usuario` increments per user, independent of other users' counts. (TRI/Correlativo incrementa por usuario)
+- [x] 3b.5 Integration test: insufficient origen stock blocks the whole tx (individual + batch line), no partial commit. (TRI/Traspaso bloqueado por falta de stock)
+- [x] 3b.6 Integration test: traspaso created with `autorizado_por`/`verificado_por` NULL, fully effective immediately. (TRI/Traspaso creado sin autorizacion)
 
 ## Slice 3c — Traspasos: UI
 
