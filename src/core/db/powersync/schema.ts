@@ -375,6 +375,7 @@ const productos = new Table(
     presentacion: column.text,
     codigo_barras: column.text,
     duracion_min: column.integer,
+    deposito_id: column.text,
   },
   { indexes: {} }
 )
