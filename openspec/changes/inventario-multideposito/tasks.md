@@ -101,14 +101,14 @@ Pure fn: `resolveDepositoIngreso`. Swaps the resolution INPUT feeding 1b's `upse
 
 ## Slice 3a — Traspasos: Schema + Pure Functions
 
-- [ ] 3a.1 Write `migrations/0084_traspasos_inventario.sql`: `traspasos_inventario` (header, `autorizado_por`/`verificado_por` nullable, `correlativo_usuario`) + `traspasos_inventario_det` (detail), `CHECK deposito_origen<>destino`, RLS SELECT+INSERT-only (no UPDATE/DELETE policy). (TRI/Migracion en Lockstep, TRI/Placeholders de Autorizacion)
-- [ ] 3a.2 `schema.ts`: add `traspasos_inventario`/`traspasos_inventario_det` Table defs (`cantidad: column.text`), register in exported table list. Lockstep w/ 3a.1.
-- [ ] 3a.3 `kysely/types.ts`: add `TraspasosInventario`/`TraspasosInventarioDet` interfaces. Lockstep w/ 3a.1-3a.2.
-- [ ] 3a.4 `backend/powersync-sync-rules.yaml`: add 2 `SELECT *` rules for the new tables in the INVENTARIO block (~line 94). Lockstep w/ 3a.1-3a.3, same PR. (TRI/Lockstep verificado antes de mergear)
-- [ ] 3a.5 [RED] Failing test for `computeCorrelativoUsuario(count)` — returns `count+1`. (TRI/Correlativo incrementa por usuario)
-- [ ] 3a.6 [GREEN] New `src/features/inventario/lib/traspasos.ts`: implement `computeCorrelativoUsuario`.
-- [ ] 3a.7 [RED] Failing test for `buildTraspasoKardexPair(...)` — returns salida (`tipo='S', origen='TRA'`) + entrada (`tipo='E', origen='TRA'`) row objects sharing `doc_origen_id`, no SQL executed.
-- [ ] 3a.8 [GREEN] Implement `buildTraspasoKardexPair` in `traspasos.ts`.
+- [x] 3a.1 Write `migrations/0084_traspasos_inventario.sql`: `traspasos_inventario` (header, `autorizado_por`/`verificado_por` nullable, `correlativo_usuario`) + `traspasos_inventario_det` (detail), `CHECK deposito_origen<>destino`, RLS SELECT+INSERT-only (no UPDATE/DELETE policy). (TRI/Migracion en Lockstep, TRI/Placeholders de Autorizacion) — nota: tambien amplia el CHECK `movimientos_inventario_origen_check` para incluir `'TRA'` (no explicito en design.md pero requerido para que el INSERT del kardex de traspasos no viole el constraint existente `('MAN','FAC','VEN','AJU','NCR','COM','NDB','DEV')`).
+- [x] 3a.2 `schema.ts`: add `traspasos_inventario`/`traspasos_inventario_det` Table defs (`cantidad: column.text`), register in exported table list. Lockstep w/ 3a.1.
+- [x] 3a.3 `kysely/types.ts`: add `TraspasosInventario`/`TraspasosInventarioDet` interfaces. Lockstep w/ 3a.1-3a.2.
+- [x] 3a.4 `backend/powersync-sync-rules.yaml`: add 2 `SELECT *` rules for the new tables in the INVENTARIO block (~line 94). Lockstep w/ 3a.1-3a.3, same PR. (TRI/Lockstep verificado antes de mergear)
+- [x] 3a.5 [RED] Failing test for `computeCorrelativoUsuario(count)` — returns `count+1`. (TRI/Correlativo incrementa por usuario)
+- [x] 3a.6 [GREEN] New `src/features/inventario/lib/traspasos.ts`: implement `computeCorrelativoUsuario`.
+- [x] 3a.7 [RED] Failing test for `buildTraspasoKardexPair(...)` — returns salida (`tipo='S', origen='TRA'`) + entrada (`tipo='E', origen='TRA'`) row objects sharing `doc_origen_id`, no SQL executed.
+- [x] 3a.8 [GREEN] Implement `buildTraspasoKardexPair` in `traspasos.ts`.
 
 ## Slice 3b — Traspasos: Atomic Hook
 
