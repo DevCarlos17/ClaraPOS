@@ -316,6 +316,7 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
       }
 
       // Kardex: salida por devolucion de compra
+      const movId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_inventario
            (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
@@ -323,7 +324,7 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
             usuario_id, fecha, empresa_id, created_at)
          VALUES (?, ?, ?, 'S', 'DEV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          uuidv4(),
+          movId,
           linea.producto_id,
           linea.deposito_id,
           toStorageString(qty),
@@ -341,11 +342,31 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
         ]
       )
 
-      // Actualizar stock y costo del producto
-      await tx.execute(
-        'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-        [toStorageString(newStock), toStorageString(newCosto), now, linea.producto_id]
-      )
+      // inventario_stock (por deposito) + productos.stock (total cross-deposito)
+      // via el helper compartido — reemplaza el UPDATE manual anterior, que
+      // bypasseaba inventario_stock y lo dejaba desactualizado tras cada
+      // reversion (CRITICAL detectado en el verify final). El deposito usado
+      // es el MISMO de la linea original (facturas_compra_det.deposito_id,
+      // NOT NULL desde el schema original 0007_compras.sql — la compra ya
+      // enruto esta linea a ese deposito en 1c), asi una devolucion
+      // multi-deposito reversa cada linea contra su deposito correcto.
+      await upsertStockDeposito(tx, {
+        empresa_id: empresaId,
+        producto_id: linea.producto_id,
+        deposito_id: linea.deposito_id,
+        delta: qty.negated(),
+        usuario_id: usuarioId,
+        now,
+        movimientoInventarioId: movId,
+      })
+
+      // costo_usd (promedio ponderado) sigue siendo responsabilidad de este
+      // flujo — upsertStockDeposito solo mantiene stock (por-deposito y total).
+      await tx.execute('UPDATE productos SET costo_usd = ?, updated_at = ? WHERE id = ?', [
+        toStorageString(newCosto),
+        now,
+        linea.producto_id,
+      ])
     }
 
     // 6. Movimiento CxP: cancelar deuda pendiente (CREDITO sin abonos)

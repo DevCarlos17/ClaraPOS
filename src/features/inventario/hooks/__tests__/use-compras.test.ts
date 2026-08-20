@@ -20,7 +20,7 @@ vi.mock('@/features/contabilidad/lib/generar-asientos', () => ({
 
 import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
-import { crearCompra, type LineaCompra, type CrearCompraParams } from '../use-compras'
+import { crearCompra, reversarCompra, type LineaCompra, type CrearCompraParams, type ReversarCompraParams } from '../use-compras'
 
 const mockedDb = vi.mocked(db, true)
 
@@ -278,5 +278,222 @@ describe('crearCompra — enrutamiento de ingreso por linea (Slice 1c, CPD/Enrut
         })
       )
     ).rejects.toThrow(/Fallo simulado/)
+  })
+})
+
+// ─── reversarCompra — CRITICAL: bypasseaba upsertStockDeposito ─────────────
+
+interface ReversarCompraFixtures {
+  compra: {
+    id: string
+    proveedor_id: string
+    nro_factura: string
+    tipo: string
+    status: string
+    total_usd: string
+    saldo_pend_usd: string
+  }
+  /** Cada linea trae su propio deposito_id — persistido por la compra original (Slice 1c). */
+  detLineas: Array<{
+    id: string
+    producto_id: string
+    deposito_id: string
+    cantidad: string
+    costo_usd_sistema: string | null
+    costo_unitario_usd: string
+    lote_id: string | null
+  }>
+  /** producto_id -> stock GLOBAL (cross-deposito) previo. */
+  stockPorProducto: Record<string, string>
+  /** key `${producto_id}::${deposito_id}` -> cantidad_actual previa en inventario_stock. Ausente = sin fila (baseline 0). */
+  inventarioStock?: Record<string, string>
+  /** Historial de kardex usado por upsertStockDeposito para reconstruir el baseline cuando NO hay fila previa en inventario_stock. */
+  historialKardex?: Array<{ producto_id: string; deposito_id: string; tipo: 'E' | 'S'; cantidad: string }>
+}
+
+function mockReversarCompraTx(opts: ReversarCompraFixtures) {
+  const calls: Call[] = []
+  mockedDb.writeTransaction.mockImplementation(async (callback) => {
+    const tx = {
+      execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+        calls.push({ sql, params })
+
+        if (sql.startsWith('SELECT * FROM facturas_compra WHERE id')) {
+          return { rows: { length: 1, item: () => opts.compra } }
+        }
+        if (sql.startsWith("SELECT COUNT(*) as cnt FROM movimientos_cuenta_proveedor")) {
+          return { rows: { length: 1, item: () => ({ cnt: 0 }) } }
+        }
+        if (sql.startsWith('SELECT * FROM facturas_compra_det WHERE factura_compra_id')) {
+          return { rows: { length: opts.detLineas.length, item: (i: number) => opts.detLineas[i] } }
+        }
+        if (sql.startsWith('SELECT stock, costo_usd FROM productos')) {
+          const productoId = params[0] as string
+          return {
+            rows: {
+              length: 1,
+              item: () => ({ stock: opts.stockPorProducto[productoId] ?? '0.000', costo_usd: '5.00000000' }),
+            },
+          }
+        }
+        if (sql.startsWith('SELECT id, cantidad_actual FROM inventario_stock')) {
+          const productoId = params[1] as string
+          const depositoId = params[2] as string
+          const cant = opts.inventarioStock?.[`${productoId}::${depositoId}`]
+          return cant !== undefined
+            ? {
+                rows: {
+                  length: 1,
+                  item: () => ({ id: `stock-row-${productoId}-${depositoId}`, cantidad_actual: cant }),
+                },
+              }
+            : { rows: { length: 0, item: () => undefined } }
+        }
+        if (sql.startsWith('SELECT producto_id, deposito_id, tipo, cantidad FROM movimientos_inventario')) {
+          const historial = opts.historialKardex ?? []
+          return { rows: { length: historial.length, item: (i: number) => historial[i] } }
+        }
+        if (sql.startsWith('SELECT stock FROM productos')) {
+          const productoId = params[0] as string
+          return { rows: { length: 1, item: () => ({ stock: opts.stockPorProducto[productoId] ?? '0.000' }) } }
+        }
+        if (sql.startsWith('SELECT saldo_actual FROM proveedores')) {
+          return { rows: { length: 1, item: () => ({ saldo_actual: '0.00' }) } }
+        }
+        return { rows: { length: 0, item: () => undefined } }
+      }),
+    } as unknown as Transaction
+
+    return callback(tx)
+  })
+  return calls
+}
+
+function reversarParams(overrides: Partial<ReversarCompraParams> = {}): ReversarCompraParams {
+  return {
+    compraId: 'compra-1',
+    usuarioId: 'user-1',
+    empresaId: 'emp-1',
+    ...overrides,
+  }
+}
+
+describe('reversarCompra — CRITICAL cerrado: inventario_stock mantenido via upsertStockDeposito (no UPDATE manual)', () => {
+  it('reversa UNA linea: usa el deposito de la LINEA ORIGINAL (facturas_compra_det.deposito_id), delta NEGATIVO, y NO hay ningun UPDATE manual de productos.stock', async () => {
+    const calls = mockReversarCompraTx({
+      compra: {
+        id: 'compra-1', proveedor_id: 'prov-1', nro_factura: 'F-001', tipo: 'CONTADO',
+        status: 'PROCESADA', total_usd: '50.00', saldo_pend_usd: '0.00',
+      },
+      detLineas: [
+        { id: 'det-1', producto_id: 'prod-1', deposito_id: 'dep-B', cantidad: '3.000', costo_usd_sistema: '5.00', costo_unitario_usd: '5.00', lote_id: null },
+      ],
+      stockPorProducto: { 'prod-1': '20.000' },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+    })
+
+    await reversarCompra(reversarParams())
+
+    const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(kardexInsert).toBeDefined()
+    expect(kardexInsert!.params).toContain('dep-B')
+
+    // El unico UPDATE a productos que debe quedar es el de costo_usd — el
+    // stock ahora lo escribe upsertStockDeposito.
+    const productoStockUpdates = calls.filter(
+      (c) => c.sql.startsWith('UPDATE productos SET stock = ?, costo_usd')
+    )
+    expect(productoStockUpdates).toHaveLength(0)
+
+    const costoUpdate = calls.find((c) => c.sql.startsWith('UPDATE productos SET costo_usd'))
+    expect(costoUpdate).toBeDefined()
+
+    // upsertStockDeposito: lectura de inventario_stock escopeada al deposito de la LINEA
+    const stockUpsertRead = calls.find((c) => c.sql.startsWith('SELECT id, cantidad_actual FROM inventario_stock'))
+    expect(stockUpsertRead).toBeDefined()
+    expect(stockUpsertRead!.params).toContain('dep-B')
+
+    // Escritura resultante: 10 (previo en dep-B) - 3 (reversado) = 7 — delta NEGATIVO
+    const stockWrite = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO inventario_stock') || c.sql.startsWith('UPDATE inventario_stock')
+    )
+    expect(stockWrite).toBeDefined()
+    expect(stockWrite!.params).toContain('7.000')
+
+    // productos.stock (total cross-deposito) actualizado EXACTAMENTE UNA VEZ por upsertStockDeposito
+    const productoStockUpdatesViaHelper = calls.filter((c) => c.sql.startsWith('UPDATE productos SET stock ='))
+    expect(productoStockUpdatesViaHelper).toHaveLength(1)
+    expect(productoStockUpdatesViaHelper[0]!.params).toContain('17.000') // 20 (global previo) - 3
+  })
+
+  it('el movimientoInventarioId pasado a upsertStockDeposito es el DEV kardex recien insertado (baseline reconstruido excluye ese mismo id)', async () => {
+    const calls = mockReversarCompraTx({
+      compra: {
+        id: 'compra-1', proveedor_id: 'prov-1', nro_factura: 'F-001', tipo: 'CONTADO',
+        status: 'PROCESADA', total_usd: '50.00', saldo_pend_usd: '0.00',
+      },
+      detLineas: [
+        { id: 'det-1', producto_id: 'prod-1', deposito_id: 'dep-B', cantidad: '3.000', costo_usd_sistema: '5.00', costo_unitario_usd: '5.00', lote_id: null },
+      ],
+      stockPorProducto: { 'prod-1': '20.000' },
+      // Sin fila previa en inventario_stock para prod-1::dep-B — fuerza el
+      // camino de reconstruccion de baseline desde kardex. El historial
+      // simula la entrada original de la compra (10 unidades) para que el
+      // baseline reconstruido alcance para la reversion de 3.
+      historialKardex: [{ producto_id: 'prod-1', deposito_id: 'dep-B', tipo: 'E', cantidad: '10.000' }],
+    })
+
+    await reversarCompra(reversarParams())
+
+    const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    const movId = kardexInsert!.params[0] as string
+    expect(movId).toBeTruthy()
+
+    const baselineRebuild = calls.find((c) =>
+      c.sql.startsWith('SELECT producto_id, deposito_id, tipo, cantidad FROM movimientos_inventario')
+    )
+    expect(baselineRebuild).toBeDefined()
+    expect(baselineRebuild!.params[baselineRebuild!.params.length - 1]).toBe(movId)
+  })
+
+  it('reversa MULTIPLES lineas en DEPOSITOS DISTINTOS: cada linea usa SU PROPIO deposito y su PROPIO movimientoInventarioId, sin cruzarse', async () => {
+    const calls = mockReversarCompraTx({
+      compra: {
+        id: 'compra-1', proveedor_id: 'prov-1', nro_factura: 'F-002', tipo: 'CONTADO',
+        status: 'PROCESADA', total_usd: '90.00', saldo_pend_usd: '0.00',
+      },
+      detLineas: [
+        { id: 'det-1', producto_id: 'prod-X', deposito_id: 'dep-A', cantidad: '3.000', costo_usd_sistema: '5.00', costo_unitario_usd: '5.00', lote_id: null },
+        { id: 'det-2', producto_id: 'prod-Y', deposito_id: 'dep-B', cantidad: '7.000', costo_usd_sistema: '5.00', costo_unitario_usd: '5.00', lote_id: null },
+      ],
+      stockPorProducto: { 'prod-X': '10.000', 'prod-Y': '20.000' },
+      inventarioStock: { 'prod-X::dep-A': '5.000', 'prod-Y::dep-B': '15.000' },
+    })
+
+    await reversarCompra(reversarParams())
+
+    const kardexInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(kardexInserts).toHaveLength(2)
+    const kardexX = kardexInserts.find((c) => c.params.includes('prod-X'))
+    const kardexY = kardexInserts.find((c) => c.params.includes('prod-Y'))
+    expect(kardexX!.params).toContain('dep-A')
+    expect(kardexY!.params).toContain('dep-B')
+
+    const stockWrites = calls.filter(
+      (c) => c.sql.startsWith('INSERT INTO inventario_stock') || c.sql.startsWith('UPDATE inventario_stock')
+    )
+    expect(stockWrites).toHaveLength(2)
+    const stockX = stockWrites.find((c) => c.params.includes('2.000')) // 5 (dep-A) - 3
+    const stockY = stockWrites.find((c) => c.params.includes('8.000')) // 15 (dep-B) - 7
+    expect(stockX).toBeDefined()
+    expect(stockY).toBeDefined()
+
+    // movimientoInventarioId de cada linea no se cruza con el de la otra
+    const movIdX = kardexX!.params[0] as string
+    const movIdY = kardexY!.params[0] as string
+    expect(movIdX).not.toBe(movIdY)
+
+    const productoStockUpdatesViaHelper = calls.filter((c) => c.sql.startsWith('UPDATE productos SET stock ='))
+    expect(productoStockUpdatesViaHelper).toHaveLength(2)
   })
 })
