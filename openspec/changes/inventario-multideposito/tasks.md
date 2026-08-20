@@ -66,15 +66,15 @@ Pure fn: `computeStockDelta`. Wires compras/kardex/ajustes into the new helper W
 
 Pure fn: `resolveDepositoIngreso`. Swaps the resolution INPUT feeding 1b's `upsertStockDeposito` calls.
 
-- [ ] 1c.1 [RED] Failing test for `resolveDepositoIngreso(productoDepositoId, empresaPrincipalId)` — `??` fallback. (PDD/Fallback a Deposito Principal, CPD/Enrutamiento de Ingreso por Linea)
-- [ ] 1c.2 [GREEN] Implement `resolveDepositoIngreso` in `stock-deposito.ts`.
-- [ ] 1c.3 `producto-form.tsx`: persist `depositoId` local state to `productos.deposito_id` on create; add deposito select to edit mode (currently create-only). (PDD/Crear producto, PDD/Editar deposito default)
-- [ ] 1c.4 Integration test: producto-form create persists `deposito_id`; edit updates it without moving existing stock.
-- [ ] 1c.5 `use-compras.ts`: swap the depositoId feeding 1b.6's `upsertStockDeposito` call from single-prefetch to per-line `resolveDepositoIngreso(producto.deposito_id, principal)` at each `factura_compra_det` line (~432-448). (CPD/Enrutamiento de Ingreso por Linea)
-- [ ] 1c.6 Integration test (upgrade of 1b.7): compra with 2 products in 2 depositos writes kardex+`inventario_stock` correctly per line; failing line reverts entire invoice atomically. (CPD/Compra multi-producto en 2 depositos, CPD/Fallo parcial revierte todo)
-- [ ] 1c.7 `use-kardex.ts` `registrarMovimiento`: swap 1b.8's fallback from principal-only to `resolveDepositoIngreso(producto.deposito_id, principal)`.
-- [ ] 1c.8 `movimiento-form.tsx`: pre-select deposito with product's `deposito_id`, overridable; batch rows default independently per own product. (KDS/Sugerencia por defecto, KDS/Usuario sobrescribe, KDS/Registro por lote)
-- [ ] 1c.9 Integration test (upgrade of 1b.9): kardex ingreso defaults to product's deposito; override persists; batch rows default independently.
+- [x] 1c.1 [RED] Failing test for `resolveDepositoIngreso(productoDepositoId, empresaPrincipalId)` — `??` fallback. (PDD/Fallback a Deposito Principal, CPD/Enrutamiento de Ingreso por Linea)
+- [x] 1c.2 [GREEN] Implement `resolveDepositoIngreso` in `stock-deposito.ts`.
+- [x] 1c.3 `producto-form.tsx`: persist `depositoId` local state to `productos.deposito_id` on create; add deposito select to edit mode (currently create-only). (PDD/Crear producto, PDD/Editar deposito default)
+- [x] 1c.4 Integration test: producto-form create persists `deposito_id`; edit updates it without moving existing stock. (Implementado a nivel de data-layer: `use-productos.test.ts` prueba `crearProducto`/`actualizarProducto` directamente — mismo criterio que 1b, sin RTL de `producto-form.tsx` completo)
+- [x] 1c.5 `use-compras.ts`: swap the depositoId feeding 1b.6's `upsertStockDeposito` call from single-prefetch to per-line `resolveDepositoIngreso(producto.deposito_id, principal)` at each `factura_compra_det` line (~432-448). (CPD/Enrutamiento de Ingreso por Linea)
+- [x] 1c.6 Integration test (upgrade of 1b.7): compra con 2 products in 2 depositos writes kardex+`inventario_stock` correctly per line; failing line reverts entire invoice atomically. (CPD/Compra multi-producto en 2 depositos, CPD/Fallo parcial revierte todo)
+- [x] 1c.7 `use-kardex.ts` `registrarMovimiento`: swap 1b.8's fallback from principal-only to `resolveDepositoIngreso(producto.deposito_id, principal)`.
+- [x] 1c.8 `movimiento-form.tsx`: pre-select deposito with product's `deposito_id`, overridable; batch rows default independently per own product. (KDS/Sugerencia por defecto, KDS/Usuario sobrescribe, KDS/Registro por lote — nota: no existe UI de "batch rows" en este formulario single-entry; la sugerencia es por-producto vía el mismo estado, cumple el criterio en el unico flujo existente)
+- [x] 1c.9 Integration test (upgrade of 1b.9): kardex ingreso defaults to product's deposito; override persists; batch rows default independently. (RTL en `movimiento-form.test.tsx`)
 
 ## Slice 2a — Ventas: Read-Path + POS Threading
 

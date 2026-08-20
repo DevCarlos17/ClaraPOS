@@ -19,10 +19,25 @@ import {
   agregarMovimientosPorDeposito,
   calcularStockDepositoDesdeKardex,
   recalcularStockDesdeKardex,
+  resolveDepositoIngreso,
   type MovimientoParaRecalculo,
 } from '../stock-deposito'
 
 const mockedDb = vi.mocked(db, true)
+
+describe('resolveDepositoIngreso (Slice 1c — enrutamiento de ingreso)', () => {
+  it('producto con deposito default: usa el deposito del producto, ignora el principal', () => {
+    expect(resolveDepositoIngreso('dep-producto-A', 'dep-principal')).toBe('dep-producto-A')
+  })
+
+  it('producto sin deposito default (null): cae al deposito principal de la empresa', () => {
+    expect(resolveDepositoIngreso(null, 'dep-principal')).toBe('dep-principal')
+  })
+
+  it('producto y principal ambos null: retorna null (el llamador debe manejarlo)', () => {
+    expect(resolveDepositoIngreso(null, null)).toBeNull()
+  })
+})
 
 describe('computeStockDelta', () => {
   it('entrada (delta positivo): suma exacta sin drift de punto flotante (0.125 + 0.125 = 0.250)', () => {

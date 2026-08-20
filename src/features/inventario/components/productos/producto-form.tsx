@@ -429,7 +429,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setImpuestoIvaId(producto.impuesto_iva_id ?? '')
         setUbicacion(producto.ubicacion ?? '')
         setManejaLotes(producto.maneja_lotes === 1)
-        setDepositoId('')
+        setDepositoId(producto.deposito_id ?? '')
         setStockInicial('')
         if (tasaValor > 0) {
           const costoN = parseFloat(producto.costo_usd) || 0
@@ -888,7 +888,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const esServicioOCombo = tipo === 'S' || tipo === 'C'
 
     const newErrors: Record<string, string> = {}
-    if (!isEditing && tipo === 'P' && !depositoId) {
+    if (tipo === 'P' && !depositoId) {
       newErrors.deposito_id = 'Selecciona un deposito'
     }
     if (Object.keys(newErrors).length > 0) {
@@ -953,6 +953,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           presentacion: esServicioOCombo ? null : (parsed.data.presentacion || null),
           codigo_barras: parsed.data.codigo_barras?.trim() || null,
           duracion_min: tipo === 'S' ? duracionMin : null,
+          deposito_id: esServicioOCombo ? null : (depositoId || null),
         })
         toast.success('Producto actualizado correctamente')
       } else {
@@ -975,6 +976,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           presentacion: esServicioOCombo ? undefined : (parsed.data.presentacion || undefined),
           codigo_barras: parsed.data.codigo_barras?.trim() || undefined,
           duracion_min: tipo === 'S' ? duracionMin : undefined,
+          deposito_id: esServicioOCombo ? null : (depositoId || null),
         })
 
         const stockInicialNum = parseNumOrZero(stockInicial)
@@ -1935,6 +1937,34 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       Los movimientos posteriores se gestionan via Compras o Ajustes
                     </p>
                   </div>
+                </div>
+              )}
+
+              {/* Deposito por Defecto — editable, solo edicion tipo P */}
+              {isEditing && producto && tipo === 'P' && (
+                <div className="border border-gray-200 rounded-md p-3 space-y-2 bg-gray-50">
+                  <p className="text-xs font-medium text-gray-600">Deposito por Defecto</p>
+                  <div>
+                    <label htmlFor="prod-deposito-edit" className="block text-sm font-medium text-gray-700 mb-1">
+                      Deposito <span className="text-red-500">*</span>
+                    </label>
+                    <SearchSelect
+                      id="prod-deposito-edit"
+                      options={depositoOptions}
+                      value={depositoId}
+                      onChange={setDepositoId}
+                      placeholder="Seleccionar deposito"
+                      searchPlaceholder="Buscar deposito..."
+                      error={errors.deposito_id}
+                      container={dialogRef.current}
+                    />
+                    {errors.deposito_id && (
+                      <p className="text-red-500 text-xs mt-1">{errors.deposito_id}</p>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400">
+                    Deposito donde ingresa stock nuevo por defecto (compras, kardex). Cambiarlo no mueve el stock existente.
+                  </p>
                 </div>
               )}
 

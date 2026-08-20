@@ -30,6 +30,7 @@ export interface Producto {
   presentacion: string | null
   codigo_barras: string | null
   duracion_min: number | null
+  deposito_id: string | null
 }
 
 export function useProductos() {
@@ -106,6 +107,8 @@ export async function crearProducto(data: {
   presentacion?: string
   codigo_barras?: string
   duracion_min?: number | null
+  /** Deposito por defecto donde ingresa stock nuevo (compras, kardex). NULL = sin definir (cae al principal en tiempo de resolucion). */
+  deposito_id?: string | null
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -139,6 +142,7 @@ export async function crearProducto(data: {
       presentacion: isServicioOCombo ? null : (data.presentacion?.toUpperCase() || null),
       codigo_barras: data.codigo_barras?.trim() || null,
       duracion_min: data.tipo === 'S' ? (data.duracion_min ?? null) : null,
+      deposito_id: data.deposito_id ?? null,
     })
     .execute()
 
@@ -165,6 +169,8 @@ export async function actualizarProducto(
     presentacion?: string | null
     codigo_barras?: string | null
     duracion_min?: number | null
+    /** Deposito por defecto (editable). Solo se toca si se provee explicitamente. */
+    deposito_id?: string | null
   }
 ) {
   const now = localNow()
@@ -188,6 +194,7 @@ export async function actualizarProducto(
   if (data.presentacion !== undefined) updates.presentacion = data.presentacion ? data.presentacion.toUpperCase() : null
   if (data.codigo_barras !== undefined) updates.codigo_barras = data.codigo_barras?.trim() || null
   if (data.duracion_min !== undefined) updates.duracion_min = data.duracion_min ?? null
+  if (data.deposito_id !== undefined) updates.deposito_id = data.deposito_id ?? null
 
   // Servicios y Combos no manejan stock ni presentacion fisica
   if (data.tipo === 'S' || data.tipo === 'C') {

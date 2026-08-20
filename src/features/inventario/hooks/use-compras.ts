@@ -9,7 +9,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
 import { resolverAccionesLineaCompra, resolverCostoAEscribir } from '@/features/inventario/lib/compra-precio-gating'
 import { totalizarLineasCargo, consolidarLineasCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
-import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
+import { upsertStockDeposito, resolveDepositoIngreso } from '@/features/inventario/lib/stock-deposito'
 
 export interface Compra {
   id: string
@@ -429,14 +429,16 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   // lecturas y escrituras dentro del loop, lo que puede causar que solo
   // el primer producto se procese en algunas implementaciones de wa-sqlite.
 
-  // 0. Deposito principal
-  let depositoId: string
+  // 0. Deposito principal — usado como header de la factura (concepto de un solo
+  // campo) y como FALLBACK por linea cuando el producto no tiene deposito_id
+  // propio (ver resolveDepositoIngreso mas abajo, Slice 1c).
+  let depositoPrincipalId: string
   const depResult = await db.execute(
     'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
     [empresa_id]
   )
   if (depResult.rows && depResult.rows.length > 0) {
-    depositoId = (depResult.rows.item(0) as { id: string }).id
+    depositoPrincipalId = (depResult.rows.item(0) as { id: string }).id
   } else {
     const depFallback = await db.execute(
       'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
@@ -445,7 +447,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     if (!depFallback.rows || depFallback.rows.length === 0) {
       throw new Error('No hay depositos configurados. Cree un deposito primero.')
     }
-    depositoId = (depFallback.rows.item(0) as { id: string }).id
+    depositoPrincipalId = (depFallback.rows.item(0) as { id: string }).id
   }
 
   // 0b. Moneda
@@ -468,10 +470,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     precio_especial_usd: Decimal | null
   }
   const preciosMap = new Map<string, PreciosActuales>()
+  // deposito_id default de cada producto (Slice 1c) — resuelto por linea via
+  // resolveDepositoIngreso mas abajo, con fallback al deposito principal.
+  const productoDepositoMap = new Map<string, string | null>()
 
   for (const linea of lineas) {
     const prodRes = await db.execute(
-      'SELECT stock, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd FROM productos WHERE id = ? LIMIT 1',
+      'SELECT stock, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, deposito_id FROM productos WHERE id = ? LIMIT 1',
       [linea.producto_id]
     )
     if (!prodRes.rows || prodRes.rows.length === 0) {
@@ -483,6 +488,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       precio_venta_usd: string
       precio_mayor_usd: string | null
       precio_especial_usd: string | null
+      deposito_id: string | null
     }
     stocksMap.set(linea.producto_id, new Decimal(p.stock || '0'))
     preciosMap.set(linea.producto_id, {
@@ -491,6 +497,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       precio_mayor_usd: p.precio_mayor_usd != null ? new Decimal(p.precio_mayor_usd) : null,
       precio_especial_usd: p.precio_especial_usd != null ? new Decimal(p.precio_especial_usd) : null,
     })
+    productoDepositoMap.set(linea.producto_id, p.deposito_id ?? null)
   }
 
   let compraId = ''
@@ -551,7 +558,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         proveedor_id,
         nro_factura,
         nro_control ?? null,
-        depositoId,
+        depositoPrincipalId,
         monedaId,
         toStorageString(tasa),
         tasa_costo ? toStorageString(tasa_costo) : null,
@@ -578,6 +585,16 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     for (const linea of lineas) {
       const detalleId = uuidv4()
       const dCantidad = new Decimal(linea.cantidad)
+      // Enrutamiento de ingreso por linea (Slice 1c): prioriza el deposito
+      // default DEL PRODUCTO de esta linea; si es NULL, cae al deposito
+      // principal de la empresa. Una misma factura puede escribir a
+      // MULTIPLES depositos (uno por linea), a diferencia del header
+      // (facturas_compra.deposito_id) que conserva el deposito principal
+      // pre-resuelto (concepto de un solo campo). (CPD/Enrutamiento de
+      // Ingreso por Linea)
+      const lineaDepositoId =
+        resolveDepositoIngreso(productoDepositoMap.get(linea.producto_id) ?? null, depositoPrincipalId) ??
+        depositoPrincipalId
       const dCostoUnit = new Decimal(linea.costo_unitario_usd)
       const subtotalUsd = dCantidad.times(dCostoUnit)
       const subtotalBs = subtotalUsd.times(dTasa)
@@ -596,7 +613,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             loteId,
             empresa_id,
             linea.producto_id,
-            depositoId,
+            lineaDepositoId,
             linea.lote_nro.trim().toUpperCase(),
             linea.lote_fecha_fab ?? null,
             linea.lote_fecha_venc ?? null,
@@ -619,7 +636,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           detalleId,
           compraId,
           linea.producto_id,
-          depositoId,
+          lineaDepositoId,
           toStorageString(dCantidad),
           toStorageString(dCostoUnit),
           toStorageString(costoSistema),
@@ -648,7 +665,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         [
           movId,
           linea.producto_id,
-          depositoId,
+          lineaDepositoId,
           toStorageString(dCantidad),
           toStorageString(stockActual),
           toStorageString(stockNuevo),
@@ -767,13 +784,15 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         }
       }
 
-      // inventario_stock (por deposito) + productos.stock (total) — usa el deposito ya
-      // pre-resuelto (unico prefetch) al inicio de crearCompra (sin cambio de resolucion
-      // en este slice; ver stock-deposito.ts).
+      // inventario_stock (por deposito) + productos.stock (total) — usa el deposito
+      // RESUELTO POR LINEA (lineaDepositoId, Slice 1c), no un unico deposito
+      // prefetched para toda la factura. Una factura con productos en distintos
+      // depositos ahora escribe a MULTIPLES depositos, cada uno en la MISMA
+      // writeTransaction (atomicidad preservada).
       await upsertStockDeposito(tx, {
         empresa_id,
         producto_id: linea.producto_id,
-        deposito_id: depositoId,
+        deposito_id: lineaDepositoId,
         delta: dCantidad,
         usuario_id: usuario_id,
         now,

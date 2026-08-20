@@ -38,7 +38,11 @@ interface Call {
  * escribe `inventario_stock` en la MISMA transaccion que el INSERT de kardex,
  * una vez POR LINEA.
  */
-function mockCrearCompraTx(opts: { stockPorProducto: Record<string, string> }) {
+function mockCrearCompraTx(opts: {
+  stockPorProducto: Record<string, string>
+  /** deposito_id default de cada producto (Slice 1c). Ausente/undefined = NULL (cae al principal). */
+  depositoPorProducto?: Record<string, string | null>
+}) {
   mockedDb.execute.mockImplementation((async (sql: string, params: unknown[] = []) => {
     if (sql.startsWith('SELECT id FROM facturas_compra')) {
       return { rows: { length: 0, item: () => undefined } } // sin duplicado
@@ -60,6 +64,7 @@ function mockCrearCompraTx(opts: { stockPorProducto: Record<string, string> }) {
             precio_venta_usd: '8.00000000',
             precio_mayor_usd: null,
             precio_especial_usd: null,
+            deposito_id: opts.depositoPorProducto?.[productoId] ?? null,
           }),
         },
       }
@@ -180,5 +185,98 @@ describe('crearCompra — wiring de inventario_stock (Slice 1b, sin cambio de re
     const updateProd2 = productoUpdates.find((c) => c.params.includes('prod-2'))
     expect(updateProd1!.params).toContain('9.000') // 5 + 4
     expect(updateProd2!.params).toContain('6.000') // 0 + 6
+  })
+})
+
+describe('crearCompra — enrutamiento de ingreso por linea (Slice 1c, CPD/Enrutamiento de Ingreso por Linea)', () => {
+  it('compra con 2 productos en 2 depositos distintos: cada linea enruta kardex + inventario_stock a SU PROPIO deposito, no al deposito unico prefetched', async () => {
+    const calls = mockCrearCompraTx({
+      stockPorProducto: { 'prod-X': '0.000', 'prod-Y': '0.000' },
+      depositoPorProducto: { 'prod-X': 'dep-A', 'prod-Y': 'dep-B' },
+    })
+
+    await crearCompra(
+      baseParams({
+        lineas: [
+          linea({ producto_id: 'prod-X', cantidad: 3 }),
+          linea({ producto_id: 'prod-Y', cantidad: 7 }),
+        ],
+      })
+    )
+
+    const kardexInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    const kardexX = kardexInserts.find((c) => c.params.includes('prod-X'))
+    const kardexY = kardexInserts.find((c) => c.params.includes('prod-Y'))
+    expect(kardexX!.params).toContain('dep-A')
+    expect(kardexY!.params).toContain('dep-B')
+
+    const stockInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO inventario_stock'))
+    const stockX = stockInserts.find((c) => c.params.includes('prod-X'))
+    const stockY = stockInserts.find((c) => c.params.includes('prod-Y'))
+    expect(stockX!.params).toContain('dep-A')
+    expect(stockY!.params).toContain('dep-B')
+
+    const detInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO facturas_compra_det'))
+    const detX = detInserts.find((c) => c.params.includes('prod-X'))
+    const detY = detInserts.find((c) => c.params.includes('prod-Y'))
+    expect(detX!.params).toContain('dep-A')
+    expect(detY!.params).toContain('dep-B')
+
+    // El header de la factura sigue usando el deposito principal pre-resuelto (concepto de un solo campo)
+    const facturaInsert = calls.find((c) => c.sql.startsWith('INSERT INTO facturas_compra ('))
+    expect(facturaInsert!.params).toContain('dep-principal')
+  })
+
+  it('linea cuyo producto tiene deposito_id NULL: cae al deposito principal de la empresa (fallback, PDD/Fallback a Deposito Principal)', async () => {
+    const calls = mockCrearCompraTx({
+      stockPorProducto: { 'prod-Z': '0.000' },
+      depositoPorProducto: { 'prod-Z': null },
+    })
+
+    await crearCompra(baseParams({ lineas: [linea({ producto_id: 'prod-Z', cantidad: 5 })] }))
+
+    const stockInsert = calls.find((c) => c.sql.startsWith('INSERT INTO inventario_stock'))
+    expect(stockInsert!.params).toContain('dep-principal')
+  })
+
+  it('fallo en una linea de una compra multi-deposito revierte TODA la transaccion (ninguna linea de ningun deposito queda comprometida)', async () => {
+    mockedDb.execute.mockImplementation((async (sql: string, params: unknown[] = []) => {
+      if (sql.startsWith('SELECT id FROM facturas_compra')) return { rows: { length: 0, item: () => undefined } }
+      if (sql.startsWith('SELECT id FROM depositos')) return { rows: { length: 1, item: () => ({ id: 'dep-principal' }) } }
+      if (sql.startsWith('SELECT id FROM monedas')) return { rows: { length: 1, item: () => ({ id: 'moneda-usd' }) } }
+      if (sql.startsWith('SELECT stock, costo_usd, precio_venta_usd')) {
+        const productoId = params[0] as string
+        return {
+          rows: {
+            length: 1,
+            item: () => ({
+              stock: '0.000',
+              costo_usd: '5.00000000',
+              precio_venta_usd: '8.00000000',
+              precio_mayor_usd: null,
+              precio_especial_usd: null,
+              deposito_id: productoId === 'prod-A' ? 'dep-A' : 'dep-B',
+            }),
+          },
+        }
+      }
+      return { rows: { length: 0, item: () => undefined } }
+    }) as unknown as typeof db.execute)
+
+    // La tx entera falla (simula un error a mitad de camino, p.ej. stock insuficiente en un guard).
+    mockedDb.writeTransaction.mockImplementation(async () => {
+      throw new Error('Fallo simulado en linea 2')
+    })
+
+    await expect(
+      crearCompra(
+        baseParams({
+          lineas: [
+            linea({ producto_id: 'prod-A', cantidad: 3 }),
+            linea({ producto_id: 'prod-B', cantidad: 4 }),
+          ],
+        })
+      )
+    ).rejects.toThrow(/Fallo simulado/)
   })
 })

@@ -36,6 +36,22 @@ export function computeStockDelta(current: Decimal, delta: Decimal): Decimal {
   return new Decimal(nuevo.toFixed(3))
 }
 
+/**
+ * Resuelve el deposito de INGRESO para una linea de compra o un movimiento
+ * manual de kardex: prioriza el deposito default del producto
+ * (`productos.deposito_id`); si es NULL (producto no migrado o nunca
+ * configurado), cae al deposito `es_principal` de la empresa. Si ambos son
+ * NULL (empresa sin deposito principal configurado — caso borde), retorna
+ * `null` y el llamador decide como manejarlo (spec PDD/Fallback a Deposito
+ * Principal, CPD/Enrutamiento de Ingreso por Linea).
+ */
+export function resolveDepositoIngreso(
+  productoDepositoId: string | null,
+  empresaPrincipalId: string | null
+): string | null {
+  return productoDepositoId ?? empresaPrincipalId
+}
+
 export interface UpsertStockDepositoParams {
   empresa_id: string
   producto_id: string
