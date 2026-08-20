@@ -127,10 +127,10 @@ Pure fn: `resolveDepositoIngreso`. Swaps the resolution INPUT feeding 1b's `upse
 
 ## Slice 4 — Company Bootstrap + Notas de Credito
 
-- [ ] 4.1 `supabase/functions/register-owner/index.ts`: insert 1 `depositos` row (`es_principal:true, permite_venta:true`) + 1 `cajas` row (`deposito_id`=that id, `nro_caja` omitted) after step-9 block (~line 461), before final response. (EBD/Deposito y Caja Sembrados, EBD/Numeracion de Caja No Manual)
-- [ ] 4.2 Integration test: new empresa registration yields exactly 1 `es_principal` deposito + 1 linked caja, `nro_caja=1` assigned by trigger.
-- [ ] 4.3 `use-notas-credito.ts` (~160-180): replace `es_principal` re-derivation with `venta.deposito_id` (already selected via existing `SELECT * FROM ventas`); use in `upsertStockDeposito` call for kardex entrada. (NCD/Reingreso al Deposito de Origen)
-- [ ] 4.4 Integration test: credit note returns stock to `venta.deposito_id`; `inventario_stock` for `(producto, deposito B)` = N + cantidad_devuelta within the same `writeTransaction` as the kardex entrada. (NCD/inventario_stock incrementado correctamente)
+- [x] 4.1 `supabase/functions/register-owner/index.ts`: insert 1 `depositos` row (`es_principal:true, permite_venta:true`) + 1 `cajas` row (`deposito_id`=that id, `nro_caja` omitted) after step-9 block (~line 461), before final response. (EBD/Deposito y Caja Sembrados, EBD/Numeracion de Caja No Manual)
+- [~] 4.2 Integration test: new empresa registration yields exactly 1 `es_principal` deposito + 1 linked caja, `nro_caja=1` assigned by trigger. — sin test automatizado (no existe infra de test para Supabase Edge Functions/Deno en este repo, verificado via grep; mismo gap que toda funcion existente, incl. `validar-stock` en 2b.6). Verificado por lectura de codigo: mismo patron `supabaseAdmin.from(...).insert(...)` que `caja_fuerte`/`metodos_cobro` (paso 9, ya en produccion); `nro_caja` deliberadamente omitido del insert para que `trg_assign_nro_caja` (0040_nro_caja.sql) lo asigne.
+- [x] 4.3 `use-notas-credito.ts` (~160-180): replace `es_principal` re-derivation with `venta.deposito_id` (already selected via existing `SELECT * FROM ventas`); use in `upsertStockDeposito` call for kardex entrada. (NCD/Reingreso al Deposito de Origen)
+- [x] 4.4 Integration test: credit note returns stock to `venta.deposito_id`; `inventario_stock` for `(producto, deposito B)` = N + cantidad_devuelta within the same `writeTransaction` as the kardex entrada. (NCD/inventario_stock incrementado correctamente) — `use-notas-credito.test.ts` (5 tests nuevos: deposito de origen usado en vez de principal, inventario_stock incrementado con delta positivo, productos.stock incrementado UNA sola vez, movimientoInventarioId correcto pasado a upsertStockDeposito con reconstruccion de baseline, reintegro de ingrediente de receta al deposito de origen).
 
 ## Dependency Order
 
