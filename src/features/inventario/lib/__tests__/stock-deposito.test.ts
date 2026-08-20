@@ -15,6 +15,8 @@ import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import {
   computeStockDelta,
+  evaluarStockDepositoSuficiente,
+  leerStockDeposito,
   upsertStockDeposito,
   agregarMovimientosPorDeposito,
   calcularStockDepositoDesdeKardex,
@@ -57,6 +59,24 @@ describe('computeStockDelta', () => {
 
   it('salida que dejaria stock negativo: lanza error y NO retorna', () => {
     expect(() => computeStockDelta(new Decimal('2'), new Decimal('-3'))).toThrow(/insuficiente/i)
+  })
+})
+
+describe('evaluarStockDepositoSuficiente (cierre de WARNING — decision compartida por los re-chequeos locales de ventas: producto directo e ingrediente de receta)', () => {
+  it('stock del deposito mayor que lo solicitado: suficiente', () => {
+    expect(evaluarStockDepositoSuficiente(new Decimal('10.000'), new Decimal('3'))).toBe(true)
+  })
+
+  it('stock del deposito exactamente igual a lo solicitado: suficiente (limite inclusivo)', () => {
+    expect(evaluarStockDepositoSuficiente(new Decimal('5.000'), new Decimal('5'))).toBe(true)
+  })
+
+  it('stock del deposito menor que lo solicitado: insuficiente', () => {
+    expect(evaluarStockDepositoSuficiente(new Decimal('1.000'), new Decimal('2'))).toBe(false)
+  })
+
+  it('stock del deposito en 0 (sin fila en inventario_stock): insuficiente para cualquier cantidad positiva', () => {
+    expect(evaluarStockDepositoSuficiente(new Decimal('0'), new Decimal('0.001'))).toBe(false)
   })
 })
 
@@ -161,6 +181,29 @@ function createFakeTx(responses: Record<string, unknown[]>) {
   } as unknown as Transaction
   return { tx, calls }
 }
+
+describe('leerStockDeposito (cierre de WARNING — lectura compartida por los re-chequeos locales de ventas)', () => {
+  it('fila existente en inventario_stock: retorna cantidad_actual como Decimal', async () => {
+    const { tx, calls } = createFakeTx({
+      'FROM inventario_stock': [{ cantidad_actual: '7.500' }],
+    })
+
+    const result = await leerStockDeposito(tx, 'prod-1', 'dep-A')
+
+    expect(result.toFixed(3)).toBe('7.500')
+    const readCall = calls.find((c) => c.sql.startsWith('SELECT cantidad_actual FROM inventario_stock'))
+    expect(readCall).toBeDefined()
+    expect(readCall!.params).toEqual(['prod-1', 'dep-A'])
+  })
+
+  it('sin fila en inventario_stock para ese (producto,deposito): retorna 0 (mismo criterio de baseline que upsertStockDeposito)', async () => {
+    const { tx } = createFakeTx({ 'FROM inventario_stock': [] })
+
+    const result = await leerStockDeposito(tx, 'prod-1', 'dep-A')
+
+    expect(result.toFixed(3)).toBe('0.000')
+  })
+})
 
 describe('upsertStockDeposito', () => {
   it('sin fila previa en inventario_stock Y sin historial de kardex para ese par: baseline reconstruido es 0 (equivalente al comportamiento previo cuando no hay historia)', async () => {

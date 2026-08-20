@@ -37,6 +37,45 @@ export function computeStockDelta(current: Decimal, delta: Decimal): Decimal {
 }
 
 /**
+ * Decision PURA (sin I/O): determina si el stock disponible en UN deposito
+ * alcanza para la cantidad solicitada. Extraida para que los distintos
+ * re-chequeos locales de disponibilidad (ventas: linea de producto directo,
+ * consumo de ingrediente de receta; y cualquier otro write-path futuro)
+ * compartan una unica fuente de la logica de suficiencia en vez de comparar
+ * `<`/`>=` de forma duplicada en cada call site (spec VSD/Re-chequeo local
+ * rechaza stock insuficiente).
+ */
+export function evaluarStockDepositoSuficiente(
+  stockDeposito: Decimal,
+  cantidadSolicitada: Decimal
+): boolean {
+  return stockDeposito.gte(cantidadSolicitada)
+}
+
+/**
+ * Lee `inventario_stock.cantidad_actual` para UN (producto, deposito) DENTRO
+ * de la `writeTransaction` del llamador — usado por los re-chequeos locales
+ * de disponibilidad (guard previo a cualquier INSERT de kardex). Sin fila =
+ * sin stock registrado para ese par = `0` (mismo criterio de baseline que
+ * `upsertStockDeposito`/`recalcularStockDesdeKardex`). Solo LEE, nunca
+ * escribe — la escritura sigue siendo responsabilidad exclusiva de
+ * `upsertStockDeposito`.
+ */
+export async function leerStockDeposito(
+  tx: Transaction,
+  producto_id: string,
+  deposito_id: string
+): Promise<Decimal> {
+  const result = await tx.execute(
+    'SELECT cantidad_actual FROM inventario_stock WHERE producto_id = ? AND deposito_id = ?',
+    [producto_id, deposito_id]
+  )
+  return result.rows?.length
+    ? new Decimal((result.rows.item(0) as { cantidad_actual: string }).cantidad_actual)
+    : new Decimal(0)
+}
+
+/**
  * Resuelve el deposito de INGRESO para una linea de compra o un movimiento
  * manual de kardex: prioriza el deposito default del producto
  * (`productos.deposito_id`); si es NULL (producto no migrado o nunca

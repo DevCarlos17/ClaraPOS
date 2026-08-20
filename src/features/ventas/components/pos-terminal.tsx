@@ -1314,6 +1314,7 @@ export function PosTerminal() {
         usuarioId={user?.id ?? ''}
         empresaId={user?.empresa_id ?? ''}
         metodos={metodos}
+        depositoId={depositoId}
         onSuccess={(data) => {
           setVentaExitosa(data)
           setShowCobroModal(false)
