@@ -9,6 +9,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import { connector } from '@/core/db/powersync/connector'
 import { aplicarPagoFacturaEnTx } from '@/features/cxc/hooks/use-cxc'
+import { buildStockPorDepositoFragments } from '../lib/deposito-venta'
 
 // ============================================================
 // Validacion de stock en servidor antes de escribir localmente.
@@ -181,7 +182,15 @@ export interface CrearVentaResult {
   nroFactura: string
 }
 
-export function useBuscarProductosVenta(query: string) {
+/**
+ * `depositoId`: cuando se provee (incluso `null`), el stock se lee escopeado
+ * al deposito de la caja activa via `inventario_stock` en vez del total
+ * cross-deposito `productos.stock` (Slice 2a, VSD/Validacion de Stock
+ * Escopeada por Deposito). Omitir el parametro preserva el comportamiento
+ * legado — usado por consumidores fuera del POS que no validan stock contra
+ * una caja (ej. `ventas-consultas-modal.tsx`).
+ */
+export function useBuscarProductosVenta(query: string, depositoId?: string | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
   // Normalizar a minúsculas + NFC para que ñ/Ñ y acentos sean case-insensitive
@@ -189,25 +198,28 @@ export function useBuscarProductosVenta(query: string) {
   const searchTerm = query.trim().toLowerCase().normalize('NFC')
   const shouldSearch = searchTerm.length >= 2
   const pattern = `%${searchTerm}%`
+  const frag = buildStockPorDepositoFragments(depositoId)
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock,
+      ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd,
+                ${frag.stockExpr} as stock,
                 p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
                 p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
          FROM productos p
          LEFT JOIN unidades u ON p.unidad_base_id = u.id
          LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
+         ${frag.joinInventarioStock}
          WHERE p.empresa_id = ? AND p.is_active = 1
          AND (
            LOWER(REPLACE(REPLACE(p.nombre, 'Ñ', 'n'), 'ñ', 'n')) LIKE REPLACE(LOWER(?), 'ñ', 'n')
            OR p.codigo LIKE ?
            OR p.codigo_barras LIKE ?
          )
-         AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
+         AND (p.tipo = 'S' OR CAST(${frag.stockExpr} AS REAL) > 0)
          ORDER BY p.nombre ASC LIMIT 10`
       : '',
-    shouldSearch ? [empresaId, pattern, pattern, pattern] : []
+    shouldSearch ? [...frag.paramsPrefix, empresaId, pattern, pattern, pattern] : []
   )
 
   return { productos: (data ?? []) as ProductoVenta[], isLoading }
@@ -228,23 +240,32 @@ export interface ProductoVenta {
   impuesto_pct?: number
 }
 
+/**
+ * `depositoId`: mismo contrato que `useBuscarProductosVenta` — omitido
+ * preserva la lectura legada de `productos.stock`; provisto (incluso `null`)
+ * escopea a `inventario_stock` del deposito de la caja activa.
+ */
 export async function buscarProductoPorCodigoBarras(
   barcode: string,
-  empresaId: string
+  empresaId: string,
+  depositoId?: string | null
 ): Promise<ProductoVenta | null> {
+  const frag = buildStockPorDepositoFragments(depositoId)
   const result = await db.execute(
-    `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock,
+    `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd,
+            ${frag.stockExpr} as stock,
             p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
             p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
      FROM productos p
      LEFT JOIN unidades u ON p.unidad_base_id = u.id
      LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
+     ${frag.joinInventarioStock}
      WHERE p.empresa_id = ?
        AND p.codigo_barras = ?
        AND p.is_active = 1
-       AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
+       AND (p.tipo = 'S' OR CAST(${frag.stockExpr} AS REAL) > 0)
      LIMIT 1`,
-    [empresaId, barcode]
+    [...frag.paramsPrefix, empresaId, barcode]
   )
   if (!result.rows || result.rows.length === 0) return null
   return result.rows.item(0) as ProductoVenta

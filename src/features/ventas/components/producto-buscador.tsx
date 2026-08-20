@@ -12,6 +12,8 @@ interface ProductoBuscadorProps {
   onSelect: (producto: ProductoVenta) => void
   tasa: number
   nivelActivo?: NivelPrecio | null
+  /** Deposito de la caja activa (Slice 2a) — escopea la busqueda/barcode a su stock. */
+  depositoId?: string | null
 }
 
 export interface ProductoBuscadorHandle {
@@ -20,11 +22,11 @@ export interface ProductoBuscadorHandle {
 }
 
 export const ProductoBuscador = forwardRef<ProductoBuscadorHandle, ProductoBuscadorProps>(
-function ProductoBuscador({ onSelect, tasa, nivelActivo = null }, ref) {
+function ProductoBuscador({ onSelect, tasa, nivelActivo = null, depositoId }, ref) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
-  const { productos, isLoading } = useBuscarProductosVenta(query)
+  const { productos, isLoading } = useBuscarProductosVenta(query, depositoId)
   const { user } = useCurrentUser()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -75,7 +77,7 @@ function ProductoBuscador({ onSelect, tasa, nivelActivo = null }, ref) {
 
   const buscarYAgregarPorCodigoBarras = useCallback(async (barcode: string) => {
     if (!user?.empresa_id) return
-    const producto = await buscarProductoPorCodigoBarras(barcode, user.empresa_id)
+    const producto = await buscarProductoPorCodigoBarras(barcode, user.empresa_id, depositoId)
     if (producto) {
       onSelect(producto)
       setQuery('')
@@ -85,7 +87,7 @@ function ProductoBuscador({ onSelect, tasa, nivelActivo = null }, ref) {
       toast.error(`Producto no encontrado: ${barcode}`)
       setQuery('')
     }
-  }, [user?.empresa_id, onSelect])
+  }, [user?.empresa_id, onSelect, depositoId])
 
   const dropdownVisible = open && query.trim().length >= 2
   const totalItems = productos.length

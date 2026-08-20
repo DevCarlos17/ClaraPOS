@@ -6,6 +6,7 @@ import { TopBar } from '@/components/layout/top-bar'
 import { GlobalContextMenu } from '@/components/shared/global-context-menu'
 import { useSidebarStore } from '@/stores/sidebar-store'
 import { connector } from '@/core/db/powersync/connector'
+import { useInventarioStockBackfill } from '@/features/inventario/hooks/use-inventario-stock-backfill'
 
 export const Route = createFileRoute('/_app')({
   component: AppLayout,
@@ -23,6 +24,9 @@ function AppLayout() {
   const { isOpen: sidebarOpen, setOpen: setSidebarOpen, toggle, isMobile } = useSidebarStore()
   const router = useRouterState()
   const _pathname = router.location.pathname
+  // Backfill unico de inventario_stock (Slice 2a, fix CRITICAL) — fire-and-forget,
+  // no bloquea el render. Ver use-inventario-stock-backfill.ts para el detalle.
+  useInventarioStockBackfill()
 
   useEffect(() => {
     // Auto-collapse not needed for now but keeping the pattern
