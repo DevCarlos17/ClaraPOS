@@ -1,5 +1,14 @@
+import { useMemo } from 'react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import {
+  pivotExistencias,
+  buildExistenciasPorDepositoSql,
+  type ExistenciaRawRow,
+  type ExistenciaRow,
+} from '@/features/inventario/lib/existencias-pivot'
+
+export type { ExistenciaRawRow, ExistenciaRow }
 
 export interface StockItem {
   id: string
@@ -57,4 +66,21 @@ export function useStockPorDeposito(depositoId: string) {
     })[],
     isLoading,
   }
+}
+
+/**
+ * Matriz de existencias producto x deposito para la empresa actual: una sola
+ * query plana (JOIN `productos` LEFT JOIN `inventario_stock`, filtrada por
+ * `empresa_id` y `tipo='P'`) pivotada por la funcion pura `pivotExistencias`.
+ * READ-ONLY — usada por la vista "Existencias por deposito" (Traspasos).
+ */
+export function useExistenciasPorDeposito() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(buildExistenciasPorDepositoSql(), [empresaId])
+
+  const rows = useMemo(() => pivotExistencias((data ?? []) as ExistenciaRawRow[]), [data])
+
+  return { rows, isLoading }
 }
