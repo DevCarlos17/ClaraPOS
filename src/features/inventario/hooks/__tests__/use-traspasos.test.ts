@@ -62,6 +62,11 @@ function mockCrearTraspasoTx(opts: {
           const row = stockMap[`${productoId}::${depositoId}`]
           return { rows: { length: row ? 1 : 0, item: () => row } }
         }
+        // INSERT guardado (WHERE NOT EXISTS + RETURNING id) — simula insercion exitosa,
+        // sin carrera (no hay otra escritura concurrente en estos tests).
+        if (sql.startsWith('INSERT INTO inventario_stock')) {
+          return { rows: { length: 1, item: () => ({ id: 'stock-insert-fake-id' }) } }
+        }
         if (sql.startsWith('SELECT producto_id, deposito_id, tipo, cantidad FROM movimientos_inventario')) {
           // reconstruirBaselineDesdeKardex — sin historia previa en estos tests, baseline 0.
           return { rows: { length: 0, item: () => undefined } }

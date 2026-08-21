@@ -82,6 +82,11 @@ function mockCrearCompraTx(opts: {
         if (sql.startsWith('SELECT id, cantidad_actual FROM inventario_stock')) {
           return { rows: { length: 0, item: () => undefined } }
         }
+        // INSERT guardado (WHERE NOT EXISTS + RETURNING id) — simula insercion exitosa,
+        // sin carrera (no hay otra escritura concurrente en estos tests).
+        if (sql.startsWith('INSERT INTO inventario_stock')) {
+          return { rows: { length: 1, item: () => ({ id: 'stock-insert-fake-id' }) } }
+        }
         // productos.stock leido por upsertStockDeposito (total cross-deposito)
         if (sql.startsWith('SELECT stock FROM productos')) {
           const productoId = params[0] as string
@@ -348,6 +353,11 @@ function mockReversarCompraTx(opts: ReversarCompraFixtures) {
                 },
               }
             : { rows: { length: 0, item: () => undefined } }
+        }
+        // INSERT guardado (WHERE NOT EXISTS + RETURNING id) — simula insercion exitosa,
+        // sin carrera (no hay otra escritura concurrente en estos tests).
+        if (sql.startsWith('INSERT INTO inventario_stock')) {
+          return { rows: { length: 1, item: () => ({ id: 'stock-insert-fake-id' }) } }
         }
         if (sql.startsWith('SELECT producto_id, deposito_id, tipo, cantidad FROM movimientos_inventario')) {
           const historial = opts.historialKardex ?? []

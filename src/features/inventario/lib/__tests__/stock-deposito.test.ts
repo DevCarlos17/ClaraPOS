@@ -163,12 +163,23 @@ describe('calcularStockDepositoDesdeKardex (Correction 2 — reconstruye baselin
   })
 })
 
-/** Fake Transaction — captures every tx.execute(sql, params) call for assertions. */
+/**
+ * Fake Transaction — captures every tx.execute(sql, params) call for assertions.
+ *
+ * `responses` describe SELECT sources por substring (comportamiento original, sin
+ * cambios). Los INSERT/UPDATE no son fuentes de lectura — devuelven éxito por defecto
+ * (1 fila, vía RETURNING/rows) salvo que un test los sobre-escriba con un fake tx propio
+ * (ver el describe de "carrera" mas abajo, que necesita respuestas dependientes de la
+ * secuencia de llamadas y no usa este helper).
+ */
 function createFakeTx(responses: Record<string, unknown[]>) {
   const calls: { sql: string; params: unknown[] }[] = []
   const tx = {
     execute: vi.fn(async (sql: string, params: unknown[] = []) => {
       calls.push({ sql, params })
+      if (!sql.trimStart().startsWith('SELECT')) {
+        return { rows: { length: 1, item: () => undefined }, rowsAffected: 1 }
+      }
       const key = Object.keys(responses).find((k) => sql.includes(k))
       const rows = key ? responses[key]! : []
       return {
@@ -176,6 +187,7 @@ function createFakeTx(responses: Record<string, unknown[]>) {
           length: rows.length,
           item: (i: number) => rows[i],
         },
+        rowsAffected: rows.length,
       }
     }),
   } as unknown as Transaction
@@ -369,6 +381,104 @@ describe('upsertStockDeposito', () => {
       })
 
       expect(result.stockDepositoNuevo.toFixed(3)).toBe('7.000')
+    })
+  })
+
+  describe('escritura local idempotente contra una carrera (PART 2 — defensa en profundidad del fix de 23505 uq_stock_empresa_producto_deposito en el connector)', () => {
+    it('el INSERT guardado (WHERE NOT EXISTS) no inserta porque otra escritura ya creo la fila entre el SELECT inicial y este INSERT: NO crea una segunda fila, hace fallback SELECT+UPDATE aplicando el delta sobre el valor REAL recien observado (no sobre el baseline de kardex de la lectura inicial)', async () => {
+      const calls: { sql: string; params: unknown[] }[] = []
+      let selectStockCalls = 0
+
+      const tx = {
+        execute: vi.fn(async (sql: string, params: unknown[] = []) => {
+          calls.push({ sql, params })
+          const trimmed = sql.trimStart()
+
+          if (trimmed.startsWith('SELECT id, cantidad_actual FROM inventario_stock')) {
+            selectStockCalls++
+            if (selectStockCalls === 1) {
+              // Lectura inicial: sin fila propia todavia (dispara reconstruccion de
+              // baseline via kardex y, luego, el INSERT guardado).
+              return { rows: { length: 0, item: () => undefined }, rowsAffected: 0 }
+            }
+            // Fallback tras el INSERT guardado devolver 0 filas: otra tx ya inserto
+            // la fila con este valor — la relectura debe verla.
+            return {
+              rows: { length: 1, item: () => ({ id: 'fila-ganadora-otra-tx', cantidad_actual: '12.000' }) },
+              rowsAffected: 1,
+            }
+          }
+          if (trimmed.startsWith('SELECT producto_id, deposito_id, tipo, cantidad FROM movimientos_inventario')) {
+            // Sin historial de kardex relevante — el baseline reconstruido (irrelevante,
+            // se descarta en la rama de carrera) seria 0.
+            return { rows: { length: 0, item: () => undefined }, rowsAffected: 0 }
+          }
+          if (trimmed.startsWith('INSERT INTO inventario_stock')) {
+            // WHERE NOT EXISTS no inserto nada: la fila ya existe (carrera simulada).
+            return { rows: { length: 0, item: () => undefined }, rowsAffected: 0 }
+          }
+          if (trimmed.startsWith('UPDATE inventario_stock')) {
+            return { rows: { length: 0, item: () => undefined }, rowsAffected: 1 }
+          }
+          if (trimmed.startsWith('SELECT stock FROM productos')) {
+            return { rows: { length: 1, item: () => ({ stock: '40.000' }) }, rowsAffected: 0 }
+          }
+          if (trimmed.startsWith('UPDATE productos')) {
+            return { rows: { length: 0, item: () => undefined }, rowsAffected: 1 }
+          }
+          throw new Error(`SQL no mockeado en el fake tx de carrera: ${sql}`)
+        }),
+      } as unknown as Transaction
+
+      const result = await upsertStockDeposito(tx, {
+        empresa_id: 'emp-1',
+        producto_id: 'prod-1',
+        deposito_id: 'dep-A',
+        delta: new Decimal('3.000'),
+        usuario_id: 'user-1',
+        now: '2026-08-20T10:00:00-04:00',
+        movimientoInventarioId: 'mov-race-1',
+      })
+
+      // Delta aplicado sobre el valor REAL observado en el fallback (12.000 + 3.000),
+      // NO sobre el baseline reconstruido de kardex de la lectura inicial (0 + 3.000 = 3.000
+      // hubiera sido el resultado incorrecto si se ignorara la carrera).
+      expect(result.stockDepositoNuevo.toFixed(3)).toBe('15.000')
+      expect(result.stockTotalNuevo.toFixed(3)).toBe('43.000')
+
+      const insertCalls = calls.filter((c) => c.sql.trimStart().startsWith('INSERT INTO inventario_stock'))
+      expect(insertCalls).toHaveLength(1) // Nunca reintenta el INSERT ni crea una segunda fila
+
+      const updateStockCalls = calls.filter((c) => c.sql.trimStart().startsWith('UPDATE inventario_stock'))
+      expect(updateStockCalls).toHaveLength(1)
+      expect(updateStockCalls[0]!.params).toContain('15.000')
+      expect(updateStockCalls[0]!.params).toContain('fila-ganadora-otra-tx')
+    })
+
+    it('INSERT guardado inserta normalmente (sin carrera): NO ejecuta el fallback SELECT+UPDATE de reconciliacion', async () => {
+      const { tx, calls } = createFakeTx({
+        'FROM inventario_stock': [],
+        'FROM movimientos_inventario': [],
+        'FROM productos': [{ stock: '10.000' }],
+      })
+
+      await upsertStockDeposito(tx, {
+        empresa_id: 'emp-1',
+        producto_id: 'prod-1',
+        deposito_id: 'dep-A',
+        delta: new Decimal('5.000'),
+        usuario_id: 'user-1',
+        now: '2026-08-20T10:00:00-04:00',
+        movimientoInventarioId: 'mov-no-race',
+      })
+
+      // Solo el SELECT inicial (que resuelve "sin fila") ejecuta contra
+      // 'SELECT id, cantidad_actual FROM inventario_stock' — el fallback de carrera
+      // agregaria una SEGUNDA llamada con ese mismo prefijo.
+      const stockReadCalls = calls.filter((c) =>
+        c.sql.trimStart().startsWith('SELECT id, cantidad_actual FROM inventario_stock')
+      )
+      expect(stockReadCalls).toHaveLength(1)
     })
   })
 })

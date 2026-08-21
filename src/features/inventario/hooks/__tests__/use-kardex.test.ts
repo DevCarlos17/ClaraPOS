@@ -60,6 +60,11 @@ function mockRegistrarMovimientoTx(opts: {
           const row = opts.inventarioStockExistente
           return { rows: { length: row ? 1 : 0, item: () => row } }
         }
+        // INSERT guardado (WHERE NOT EXISTS + RETURNING id) — simula insercion exitosa,
+        // sin carrera (no hay otra escritura concurrente en estos tests).
+        if (sql.startsWith('INSERT INTO inventario_stock')) {
+          return { rows: { length: 1, item: () => ({ id: 'stock-insert-fake-id' }) } }
+        }
         if (sql.startsWith('SELECT stock FROM productos')) {
           return { rows: { length: 1, item: () => ({ stock: opts.stockProductoActual }) } }
         }

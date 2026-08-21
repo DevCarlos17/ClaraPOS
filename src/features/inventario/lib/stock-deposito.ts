@@ -178,7 +178,7 @@ export async function upsertStockDeposito(
   const currentDeposito = stockRow
     ? new Decimal(stockRow.cantidad_actual)
     : await reconstruirBaselineDesdeKardex(tx, empresa_id, producto_id, deposito_id, movimientoInventarioId)
-  const stockDepositoNuevo = computeStockDelta(currentDeposito, delta)
+  let stockDepositoNuevo = computeStockDelta(currentDeposito, delta)
 
   if (stockRow) {
     await tx.execute(
@@ -186,12 +186,67 @@ export async function upsertStockDeposito(
       [stockDepositoNuevo.toFixed(3), now, usuario_id, stockRow.id]
     )
   } else {
-    await tx.execute(
+    // INSERT guardado por WHERE NOT EXISTS — defensa en profundidad del fix real
+    // (connector.ts, TABLE_NATURAL_KEYS['inventario_stock']) para el 23505 duplicate key
+    // sobre `uq_stock_empresa_producto_deposito`. El SELECT de arriba vio "sin fila", pero
+    // entre ese SELECT y este INSERT otra escritura (el backfill de arranque, u otra tx casi
+    // simultánea) pudo haber creado la fila para esta MISMA clave natural — un INSERT ciego
+    // crearía una SEGUNDA fila local con la misma (empresa,producto,deposito), cada una
+    // generando su propio PUT para que el connector reconcilie en el upload.
+    //
+    // PowerSync no soporta declarar una UNIQUE constraint local (Table/Index no expone
+    // `unique` — ver @powersync/common Table.d.ts/Index.d.ts), así que `INSERT ... ON
+    // CONFLICT` no es viable aquí. `WHERE NOT EXISTS` es el equivalente alcanzable: la
+    // decisión de insertar-o-no ocurre atómicamente dentro del mismo statement SQL, no en
+    // un SELECT previo separado.
+    //
+    // `RETURNING id` (no `rowsAffected`) para detectar si el INSERT realmente insertó: la
+    // capa de vistas JSON de PowerSync puede reportar `rowsAffected: 0` incluso en updates
+    // exitosos (documentado en QueryResult de @powersync/common) — `rows` vía RETURNING es
+    // la señal confiable.
+    const insertResult = await tx.execute(
       `INSERT INTO inventario_stock
          (id, empresa_id, producto_id, deposito_id, cantidad_actual, stock_reservado, updated_at, updated_by)
-       VALUES (?, ?, ?, ?, ?, '0.000', ?, ?)`,
-      [uuidv4(), empresa_id, producto_id, deposito_id, stockDepositoNuevo.toFixed(3), now, usuario_id]
+       SELECT ?, ?, ?, ?, ?, '0.000', ?, ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM inventario_stock WHERE empresa_id = ? AND producto_id = ? AND deposito_id = ?
+       )
+       RETURNING id`,
+      [
+        uuidv4(),
+        empresa_id,
+        producto_id,
+        deposito_id,
+        stockDepositoNuevo.toFixed(3),
+        now,
+        usuario_id,
+        empresa_id,
+        producto_id,
+        deposito_id,
+      ]
     )
+
+    if ((insertResult.rows?.length ?? 0) === 0) {
+      // Carrera detectada: otra escritura ganó entre el SELECT inicial y este INSERT.
+      // Releer el valor REAL ya presente y aplicar el delta sobre él — el baseline
+      // reconstruido de kardex de la lectura inicial ya no es válido una vez que existe
+      // una fila propia (evita perder el delta de esta llamada silenciosamente).
+      const raceRes = await tx.execute(
+        'SELECT id, cantidad_actual FROM inventario_stock WHERE empresa_id = ? AND producto_id = ? AND deposito_id = ?',
+        [empresa_id, producto_id, deposito_id]
+      )
+      const raceRow = raceRes.rows?.item(0) as { id: string; cantidad_actual: string } | undefined
+      if (!raceRow) {
+        throw new Error(
+          'inventario_stock: INSERT guardado (WHERE NOT EXISTS) no insertó y la relectura tampoco encontró fila — estado inconsistente'
+        )
+      }
+      stockDepositoNuevo = computeStockDelta(new Decimal(raceRow.cantidad_actual), delta)
+      await tx.execute(
+        'UPDATE inventario_stock SET cantidad_actual = ?, updated_at = ?, updated_by = ? WHERE id = ?',
+        [stockDepositoNuevo.toFixed(3), now, usuario_id, raceRow.id]
+      )
+    }
   }
 
   // 2. productos.stock (total desnormalizado cross-deposito)
