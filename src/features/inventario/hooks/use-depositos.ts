@@ -1,8 +1,9 @@
 import { useQuery } from '@powersync/react'
-import { kysely } from '@/core/db/kysely/kysely'
+import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { buildUnsetOtrosPrincipalesQuery } from '@/features/inventario/lib/deposito-principal'
 
 export interface Deposito {
   id: string
@@ -57,6 +58,13 @@ export function useDepositosVentaActivos() {
   return { depositos: (data ?? []) as Deposito[], isLoading }
 }
 
+/**
+ * Crea un deposito. Si `es_principal=true`, desmarca (dentro de la MISMA
+ * `writeTransaction`) cualquier OTRO deposito principal de la empresa antes
+ * de insertar, para garantizar la invariante "a lo sumo un es_principal por
+ * empresa" de forma atomica (nunca hay una ventana con 0 o 2+ principales).
+ * Ver `buildUnsetOtrosPrincipalesQuery` para el detalle de la query.
+ */
 export async function crearDeposito(data: {
   nombre: string
   direccion?: string
@@ -68,25 +76,49 @@ export async function crearDeposito(data: {
   const id = uuidv4()
   const now = localNow()
 
-  await kysely
-    .insertInto('depositos')
-    .values({
-      id,
-      nombre: data.nombre.toUpperCase(),
-      direccion: data.direccion ?? null,
-      es_principal: data.es_principal ? 1 : 0,
-      permite_venta: data.permite_venta ? 1 : 0,
-      is_active: 1,
-      empresa_id: data.empresa_id,
-      created_at: now,
-      updated_at: now,
-      created_by: data.created_by ?? null,
-    })
-    .execute()
+  await db.writeTransaction(async (tx) => {
+    if (data.es_principal) {
+      const { sql, params } = buildUnsetOtrosPrincipalesQuery(data.empresa_id, now)
+      await tx.execute(sql, params)
+    }
+
+    await tx.execute(
+      `INSERT INTO depositos
+         (id, nombre, direccion, es_principal, permite_venta, is_active, empresa_id, created_at, updated_at, created_by)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+      [
+        id,
+        data.nombre.toUpperCase(),
+        data.direccion ?? null,
+        data.es_principal ? 1 : 0,
+        data.permite_venta ? 1 : 0,
+        data.empresa_id,
+        now,
+        now,
+        data.created_by ?? null,
+      ]
+    )
+  })
 
   return id
 }
 
+/**
+ * Actualiza un deposito. Si `es_principal` pasa a `true`, desmarca (dentro
+ * de la MISMA `writeTransaction`) los OTROS depositos principales de la
+ * empresa antes de actualizar este, para preservar la misma invariante que
+ * `crearDeposito`. El `empresa_id` se pre-lee fuera de la transaccion (mismo
+ * patron que el resto del codebase — ver `crearCompra`) porque el caller solo
+ * pasa el `id` del deposito, no su `empresa_id`.
+ *
+ * NOTA (flag para el usuario): esto implementa "a lo sumo uno" (at-most-one).
+ * NO fuerza "al menos uno" — si el unico deposito principal de una empresa se
+ * desmarca (es_principal=false), la empresa queda sin principal y el fallback
+ * de `resolveDepositoIngreso`/`resolveDepositoEgresoVenta` deja de tener un
+ * candidato via ese camino. Si se quiere esa garantia adicional, es una
+ * decision de UX/negocio separada (bloquear el desmarcado del ultimo
+ * principal, o auto-promover otro deposito) — no implementada aqui a proposito.
+ */
 export async function actualizarDeposito(
   id: string,
   data: {
@@ -108,5 +140,26 @@ export async function actualizarDeposito(
   if (data.is_active !== undefined) updates.is_active = data.is_active ? 1 : 0
   if (data.updated_by !== undefined) updates.updated_by = data.updated_by
 
-  await kysely.updateTable('depositos').set(updates).where('id', '=', id).execute()
+  let empresaId: string | undefined
+  if (data.es_principal === true) {
+    const rows = await db.getAll<{ empresa_id: string }>(
+      'SELECT empresa_id FROM depositos WHERE id = ?',
+      [id]
+    )
+    empresaId = rows[0]?.empresa_id
+  }
+
+  const setClauses = Object.keys(updates)
+    .map((key) => `${key} = ?`)
+    .join(', ')
+  const setValues = Object.values(updates)
+
+  await db.writeTransaction(async (tx) => {
+    if (data.es_principal === true && empresaId) {
+      const { sql, params } = buildUnsetOtrosPrincipalesQuery(empresaId, now, id)
+      await tx.execute(sql, params)
+    }
+
+    await tx.execute(`UPDATE depositos SET ${setClauses} WHERE id = ?`, [...setValues, id])
+  })
 }
