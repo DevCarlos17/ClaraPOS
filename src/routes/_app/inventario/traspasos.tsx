@@ -6,6 +6,7 @@ import { PERMISSIONS } from '@/core/hooks/use-permissions'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ExistenciasPorDeposito } from '@/features/inventario/components/existencias/existencias-por-deposito'
 import { TraspasoList } from '@/features/inventario/components/traspasos/traspaso-list'
+import { PlantillaList } from '@/features/inventario/components/plantillas/plantilla-list'
 
 export const Route = createFileRoute('/_app/inventario/traspasos')({
   component: TraspasosPage,
@@ -26,6 +27,9 @@ export function TraspasosPage() {
             <TabsTrigger value="historico" className="rounded-none px-4 py-2 h-auto">
               Historico de traspasos
             </TabsTrigger>
+            <TabsTrigger value="plantillas" className="rounded-none px-4 py-2 h-auto">
+              Plantillas
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="existencias" className="mt-0">
@@ -34,6 +38,10 @@ export function TraspasosPage() {
 
           <TabsContent value="historico" className="mt-0">
             <TraspasoList />
+          </TabsContent>
+
+          <TabsContent value="plantillas" className="mt-0">
+            <PlantillaList />
           </TabsContent>
         </Tabs>
       </div>
