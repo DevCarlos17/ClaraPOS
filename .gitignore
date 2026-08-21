@@ -54,3 +54,9 @@ workbox-*.js
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# Notas de trabajo efimeras (no versionar)
+task.md
+
+# Archivo reservado de Windows creado por accidente (device name)
+NUL
