@@ -489,6 +489,29 @@ export interface TraspasosInventarioDet {
   created_at: string
 }
 
+// Plantillas de Traslado: sets reutilizables de productos (sin cantidad)
+// para pre-llenar el formulario de traspasos — ver
+// migrations/0085_traspaso_plantillas.sql.
+export interface TraspasoPlantillas {
+  id: string
+  empresa_id: string
+  nombre: string
+  descripcion: string | null
+  is_active: number
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export interface TraspasoPlantillasDet {
+  id: string
+  empresa_id: string
+  plantilla_id: string
+  producto_id: string
+  created_at: string
+}
+
 // =============================================
 // CLIENTES / CXC
 // =============================================
@@ -1328,6 +1351,8 @@ export interface DB {
   lotes: Lotes
   traspasos_inventario: TraspasosInventario
   traspasos_inventario_det: TraspasosInventarioDet
+  traspaso_plantillas: TraspasoPlantillas
+  traspaso_plantillas_det: TraspasoPlantillasDet
   // Clientes / CxC
   clientes: Clientes
   movimientos_cuenta: MovimientosCuenta
