@@ -10,7 +10,10 @@
 // construye el UPDATE que desmarca a los demas. Se testea sin mocks porque no
 // toca la DB — el caller (`crearDeposito`/`actualizarDeposito`) es quien la
 // ejecuta dentro de `db.writeTransaction`.
-import { buildUnsetOtrosPrincipalesQuery } from '../deposito-principal'
+import {
+  buildUnsetOtrosPrincipalesQuery,
+  debeBloquearQuitarUltimoPrincipal,
+} from '../deposito-principal'
 
 describe('buildUnsetOtrosPrincipalesQuery', () => {
   it('CREATE (sin excludeId): desmarca todos los principales existentes de la empresa', () => {
@@ -37,5 +40,53 @@ describe('buildUnsetOtrosPrincipalesQuery', () => {
       'empresa-2',
       'deposito-actual',
     ])
+  })
+})
+
+// Invariante "al menos un deposito principal por empresa" (at-least-one,
+// cierra la decision de producto abierta en Lote B): la empresa nunca puede
+// quedar con CERO depositos activos con es_principal=1. Se bloquea SOLO la
+// transicion que quitaria al ULTIMO principal activo — marcar OTRO deposito
+// como principal sigue permitido siempre (el camino at-most-one garantiza que
+// ese otro deposito ya cubre el rol antes de desmarcar este).
+describe('debeBloquearQuitarUltimoPrincipal', () => {
+  it('es el unico principal activo Y la operacion lo esta quitando Y no hay otro principal activo: BLOQUEA', () => {
+    const bloqueado = debeBloquearQuitarUltimoPrincipal({
+      esPrincipalActivoActual: true,
+      seEstaQuitando: true,
+      existeOtroPrincipalActivo: false,
+    })
+
+    expect(bloqueado).toBe(true)
+  })
+
+  it('es principal activo y se esta quitando, PERO otro deposito de la empresa ya es principal activo: PERMITE', () => {
+    const bloqueado = debeBloquearQuitarUltimoPrincipal({
+      esPrincipalActivoActual: true,
+      seEstaQuitando: true,
+      existeOtroPrincipalActivo: true,
+    })
+
+    expect(bloqueado).toBe(false)
+  })
+
+  it('el deposito NO es actualmente el principal activo (ej: es secundario): PERMITE, sin importar el resto', () => {
+    const bloqueado = debeBloquearQuitarUltimoPrincipal({
+      esPrincipalActivoActual: false,
+      seEstaQuitando: true,
+      existeOtroPrincipalActivo: false,
+    })
+
+    expect(bloqueado).toBe(false)
+  })
+
+  it('es el principal activo pero la operacion NO lo esta quitando (ej: solo renombrar): PERMITE', () => {
+    const bloqueado = debeBloquearQuitarUltimoPrincipal({
+      esPrincipalActivoActual: true,
+      seEstaQuitando: false,
+      existeOtroPrincipalActivo: false,
+    })
+
+    expect(bloqueado).toBe(false)
   })
 })

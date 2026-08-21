@@ -36,3 +36,36 @@ export function buildUnsetOtrosPrincipalesQuery(
     params: [now, empresaId],
   }
 }
+
+export interface UltimoPrincipalGuardParams {
+  /** El deposito, ANTES de aplicar la actualizacion, es el principal activo de la empresa (es_principal=1 AND is_active=1). */
+  esPrincipalActivoActual: boolean
+  /** La actualizacion que se esta aplicando le quita el estado de principal activo (es_principal->false, o is_active->false mientras sigue siendo es_principal=1). */
+  seEstaQuitando: boolean
+  /** Otro deposito de la misma empresa (excluyendo este) YA es principal activo. */
+  existeOtroPrincipalActivo: boolean
+}
+
+/**
+ * Invariante "al menos un deposito principal activo por empresa" (at-least-one
+ * — cierra la decision de producto que quedo abierta al implementar
+ * at-most-one en `buildUnsetOtrosPrincipalesQuery`). Determina si el guardado
+ * debe BLOQUEARSE porque dejaria a la empresa sin ningun deposito activo con
+ * es_principal=1, lo que rompe el fallback de `resolveDepositoIngreso`/
+ * `resolveDepositoEgresoVenta` (`... WHERE es_principal=1 AND is_active=1
+ * LIMIT 1`).
+ *
+ * Bloquea SOLO cuando las 3 condiciones se cumplen a la vez: el deposito es
+ * ACTUALMENTE el principal activo, la operacion se lo esta quitando, y no hay
+ * OTRO deposito de la empresa que ya cubra ese rol. Si existe otro principal
+ * activo (ej: se acaba de marcar otro como principal, lo que via
+ * `buildUnsetOtrosPrincipalesQuery` ya desmarco a este), NUNCA se bloquea —
+ * la invariante at-most-one ya garantiza que queda exactamente uno.
+ */
+export function debeBloquearQuitarUltimoPrincipal(params: UltimoPrincipalGuardParams): boolean {
+  return (
+    params.esPrincipalActivoActual &&
+    params.seEstaQuitando &&
+    !params.existeOtroPrincipalActivo
+  )
+}

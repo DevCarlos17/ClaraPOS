@@ -108,3 +108,83 @@ describe('actualizarDeposito — invariante single es_principal por empresa', ()
     expect(calls[0].sql).toContain('UPDATE depositos SET')
   })
 })
+
+// Invariante "al menos un deposito principal activo por empresa" (at-least-one
+// — cierra la decision de producto que quedo abierta en Lote B). El unico
+// principal de la empresa NO puede quitarse (ni via es_principal:false, ni
+// desactivandolo) sin antes marcar otro deposito como principal.
+describe('actualizarDeposito — invariante al menos un principal por empresa (at-least-one)', () => {
+  it('unset del UNICO principal activo (es_principal:false, sin otro principal en la empresa): BLOQUEA con error en espanol y NO escribe nada', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-1', es_principal: 1, is_active: 1 }]
+      }
+      if (sql.startsWith('SELECT COUNT(*) as cnt FROM depositos')) {
+        return [{ cnt: 0 }]
+      }
+      return []
+    }) as typeof db.getAll)
+    const calls = mockWriteTransaction()
+
+    await expect(
+      actualizarDeposito('deposito-unico-principal', { es_principal: false })
+    ).rejects.toThrow('Debe existir al menos un deposito principal')
+
+    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('unset de un principal cuando OTRO deposito de la empresa YA es principal activo: PERMITE y escribe normalmente', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-1', es_principal: 1, is_active: 1 }]
+      }
+      if (sql.startsWith('SELECT COUNT(*) as cnt FROM depositos')) {
+        return [{ cnt: 1 }]
+      }
+      return []
+    }) as typeof db.getAll)
+    const calls = mockWriteTransaction()
+
+    await actualizarDeposito('deposito-a', { es_principal: false })
+
+    expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].sql).toContain('UPDATE depositos SET')
+  })
+
+  it('desactivar (is_active:false) el UNICO deposito principal activo TAMBIEN bloquea, aunque es_principal no se toque explicitamente', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-1', es_principal: 1, is_active: 1 }]
+      }
+      if (sql.startsWith('SELECT COUNT(*) as cnt FROM depositos')) {
+        return [{ cnt: 0 }]
+      }
+      return []
+    }) as typeof db.getAll)
+    const calls = mockWriteTransaction()
+
+    await expect(
+      actualizarDeposito('deposito-unico-principal', { is_active: false })
+    ).rejects.toThrow('Debe existir al menos un deposito principal')
+
+    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('desactivar un deposito que NO es principal: PERMITE (el guard ni siquiera cuenta otros principales)', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-1', es_principal: 0, is_active: 1 }]
+      }
+      return []
+    }) as typeof db.getAll)
+    const calls = mockWriteTransaction()
+
+    await actualizarDeposito('deposito-secundario', { is_active: false })
+
+    expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
+    expect(calls).toHaveLength(1)
+  })
+})

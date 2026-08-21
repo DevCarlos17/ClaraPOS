@@ -3,7 +3,10 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
-import { buildUnsetOtrosPrincipalesQuery } from '@/features/inventario/lib/deposito-principal'
+import {
+  buildUnsetOtrosPrincipalesQuery,
+  debeBloquearQuitarUltimoPrincipal,
+} from '@/features/inventario/lib/deposito-principal'
 
 export interface Deposito {
   id: string
@@ -111,13 +114,12 @@ export async function crearDeposito(data: {
  * patron que el resto del codebase — ver `crearCompra`) porque el caller solo
  * pasa el `id` del deposito, no su `empresa_id`.
  *
- * NOTA (flag para el usuario): esto implementa "a lo sumo uno" (at-most-one).
- * NO fuerza "al menos uno" — si el unico deposito principal de una empresa se
- * desmarca (es_principal=false), la empresa queda sin principal y el fallback
- * de `resolveDepositoIngreso`/`resolveDepositoEgresoVenta` deja de tener un
- * candidato via ese camino. Si se quiere esa garantia adicional, es una
- * decision de UX/negocio separada (bloquear el desmarcado del ultimo
- * principal, o auto-promover otro deposito) — no implementada aqui a proposito.
+ * Ademas aplica "al menos uno" (at-least-one): si esta actualizacion le
+ * quitaria a este deposito su estado de principal activo (es_principal->false,
+ * o is_active->false mientras sigue siendo es_principal=1) Y es actualmente
+ * el UNICO deposito principal activo de la empresa, se RECHAZA — fail-fast,
+ * antes de abrir la transaccion, sin escribir nada. Ver
+ * `debeBloquearQuitarUltimoPrincipal` para el detalle de la decision.
  */
 export async function actualizarDeposito(
   id: string,
@@ -141,6 +143,47 @@ export async function actualizarDeposito(
   if (data.updated_by !== undefined) updates.updated_by = data.updated_by
 
   let empresaId: string | undefined
+
+  // Pre-check fuera de la tx (fail-fast, mismo patron que el dup-check de
+  // `crearCompra`): solo consultamos el estado actual cuando la actualizacion
+  // PODRIA quitarle a este deposito su estado de principal activo.
+  const podriaQuitarPrincipal = data.es_principal === false || data.is_active === false
+  if (podriaQuitarPrincipal) {
+    const actualRows = await db.getAll<{
+      empresa_id: string
+      es_principal: number
+      is_active: number
+    }>('SELECT empresa_id, es_principal, is_active FROM depositos WHERE id = ?', [id])
+    const actual = actualRows[0]
+
+    if (actual) {
+      empresaId = actual.empresa_id
+      const esPrincipalActivoActual = actual.es_principal === 1 && actual.is_active === 1
+      const seEstaQuitando =
+        data.es_principal === false || (data.is_active === false && actual.es_principal === 1)
+
+      if (esPrincipalActivoActual && seEstaQuitando) {
+        const otrosRows = await db.getAll<{ cnt: number }>(
+          'SELECT COUNT(*) as cnt FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 AND id != ?',
+          [empresaId, id]
+        )
+        const existeOtroPrincipalActivo = Number(otrosRows[0]?.cnt ?? 0) > 0
+
+        if (
+          debeBloquearQuitarUltimoPrincipal({
+            esPrincipalActivoActual,
+            seEstaQuitando,
+            existeOtroPrincipalActivo,
+          })
+        ) {
+          throw new Error(
+            'Debe existir al menos un deposito principal. Marca otro deposito como principal antes de quitar este.'
+          )
+        }
+      }
+    }
+  }
+
   if (data.es_principal === true) {
     const rows = await db.getAll<{ empresa_id: string }>(
       'SELECT empresa_id FROM depositos WHERE id = ?',
