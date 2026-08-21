@@ -40,6 +40,23 @@ export function useDepositosActivos() {
   return { depositos: (data ?? []) as Deposito[], isLoading }
 }
 
+/**
+ * Depositos activos que ademas permiten venta (permite_venta = 1).
+ * Usar en formularios donde el deposito seleccionado debe habilitar ventas,
+ * como la caja (Validacion 3: caja.deposito_id debe apuntar a un deposito
+ * con permite_venta = true).
+ */
+export function useDepositosVentaActivos() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    'SELECT * FROM depositos WHERE empresa_id = ? AND is_active = 1 AND permite_venta = 1 ORDER BY nombre ASC',
+    [empresaId]
+  )
+  return { depositos: (data ?? []) as Deposito[], isLoading }
+}
+
 export async function crearDeposito(data: {
   nombre: string
   direccion?: string
