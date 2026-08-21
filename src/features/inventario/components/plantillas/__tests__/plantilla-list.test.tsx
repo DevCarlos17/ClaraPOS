@@ -26,6 +26,16 @@ vi.mock('@/core/hooks/use-current-user', () => ({
   }),
 }))
 
+// Aislamos el test del list de la implementacion interna del dialog
+// (`PlantillaForm`, Slice B2) — solo verificamos que se abre con el modo
+// (crear/editar) correcto.
+vi.mock('../plantilla-form', () => ({
+  PlantillaForm: ({ isOpen, plantilla }: { isOpen: boolean; plantilla?: PlantillaConProductos }) =>
+    isOpen ? (
+      <div data-testid="plantilla-form-dialog">{plantilla ? `Editando ${plantilla.nombre}` : 'Nueva plantilla'}</div>
+    ) : null,
+}))
+
 const mockedUsePlantillasTraspaso = vi.mocked(usePlantillasTraspaso)
 const mockedDesactivarPlantilla = vi.mocked(desactivarPlantilla)
 
@@ -97,5 +107,30 @@ describe('PlantillaList — desactivar (Desactivar Plantilla/Desactivacion no bo
     await waitFor(() => {
       expect(mockedDesactivarPlantilla).toHaveBeenCalledWith('plant-1')
     })
+  })
+})
+
+describe('PlantillaList — dialog de creacion/edicion (Crear Plantilla, Editar Plantilla)', () => {
+  it('el boton "Nueva Plantilla" abre el dialog en modo creacion', async () => {
+    const user = userEvent.setup()
+    mockedUsePlantillasTraspaso.mockReturnValue({ plantillas: PLANTILLAS, isLoading: false })
+    render(<PlantillaList />)
+
+    expect(screen.queryByTestId('plantilla-form-dialog')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /nueva plantilla/i }))
+
+    expect(screen.getByTestId('plantilla-form-dialog')).toHaveTextContent('Nueva plantilla')
+  })
+
+  it('el boton "Editar" abre el dialog en modo edicion con la plantilla correcta', async () => {
+    const user = userEvent.setup()
+    mockedUsePlantillasTraspaso.mockReturnValue({ plantillas: PLANTILLAS, isLoading: false })
+    render(<PlantillaList />)
+
+    const editarButtons = screen.getAllByRole('button', { name: /editar/i })
+    await user.click(editarButtons[1]!)
+
+    expect(screen.getByTestId('plantilla-form-dialog')).toHaveTextContent('Editando REPOSICION SEMANAL')
   })
 })

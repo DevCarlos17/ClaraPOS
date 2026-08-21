@@ -6,19 +6,27 @@ import {
   desactivarPlantilla,
   type PlantillaConProductos,
 } from '@/features/inventario/hooks/use-plantillas-traspaso'
+import { PlantillaForm } from './plantilla-form'
 
 export function PlantillaList() {
   const { plantillas, isLoading } = usePlantillasTraspaso()
   const [desactivandoId, setDesactivandoId] = useState<string | null>(null)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingPlantilla, setEditingPlantilla] = useState<PlantillaConProductos | undefined>(undefined)
 
-  // `handleNuevo`/`handleEditar` se conectan al dialog `PlantillaForm` en
-  // Slice B2 (ver openspec/changes/plantillas-de-traslado/tasks.md B2.3).
   function handleNuevo() {
-    // Dialog wiring en Slice B2.
+    setEditingPlantilla(undefined)
+    setFormOpen(true)
   }
 
-  function handleEditar(_plantilla: PlantillaConProductos) {
-    // Dialog wiring en Slice B2.
+  function handleEditar(plantilla: PlantillaConProductos) {
+    setEditingPlantilla(plantilla)
+    setFormOpen(true)
+  }
+
+  function handleCloseForm() {
+    setFormOpen(false)
+    setEditingPlantilla(undefined)
   }
 
   async function handleDesactivar(plantilla: PlantillaConProductos) {
@@ -108,6 +116,8 @@ export function PlantillaList() {
           </table>
         </div>
       )}
+
+      <PlantillaForm isOpen={formOpen} onClose={handleCloseForm} plantilla={editingPlantilla} />
     </div>
   )
 }

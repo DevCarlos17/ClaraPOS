@@ -65,24 +65,24 @@ No pure functions; no behavior change. Verified via lockstep review + `yarn type
 
 ## Slice B1 — Plantillas List + Route Wiring
 
-- [ ] B1.1 [RED] `components/plantillas/__tests__/plantilla-list.test.tsx`: mock `usePlantillasTraspaso`/`useCurrentUser` (`traspaso-form.test.tsx` mock boilerplate) — renders one row per plantilla with `items_count`; empty state with zero plantillas. (Estado Vacio sin Plantillas)
-- [ ] B1.2 [GREEN] New `components/plantillas/plantilla-list.tsx`: hand-rolled table mirroring `marca-list.tsx` — columns nombre/descripcion/items_count/estado, "Nueva Plantilla" button, edit + desactivar actions.
-- [ ] B1.3 [RED] Failing test — desactivar action calls `desactivarPlantilla(id)`, row disappears from active list.
-- [ ] B1.4 [GREEN] Wire desactivar button to `desactivarPlantilla` with a confirm toast/action (mirrors `marca-list.tsx` toggle pattern).
-- [ ] B1.5 `routes/_app/inventario/traspasos.tsx`: add 3rd `TabsTrigger`/`TabsContent` ("Plantillas" -> `PlantillaList`), alongside the existing "Existencias por deposito"/"Traspasos" tabs.
-- [ ] B1.6 [RED] `routes/_app/inventario/__tests__/traspasos.test.tsx`: failing assertion — 3rd `TabsTrigger` ("Plantillas") renders alongside the existing 2.
-- [ ] B1.7 [GREEN] Confirm B1.5 satisfies B1.6. Verify: `yarn test:run`, `yarn type-check:test`.
+- [x] B1.1 [RED] `components/plantillas/__tests__/plantilla-list.test.tsx`: mock `usePlantillasTraspaso`/`useCurrentUser` (`traspaso-form.test.tsx` mock boilerplate) — renders one row per plantilla with `items_count`; empty state with zero plantillas. (Estado Vacio sin Plantillas)
+- [x] B1.2 [GREEN] New `components/plantillas/plantilla-list.tsx`: hand-rolled table mirroring `marca-list.tsx` — columns nombre/descripcion/items_count/estado, "Nueva Plantilla" button, edit + desactivar actions.
+- [x] B1.3 [RED] Failing test — desactivar action calls `desactivarPlantilla(id)`, row disappears from active list.
+- [x] B1.4 [GREEN] Wire desactivar button to `desactivarPlantilla` with a confirm toast/action (mirrors `marca-list.tsx` toggle pattern).
+- [x] B1.5 `routes/_app/inventario/traspasos.tsx`: add 3rd `TabsTrigger`/`TabsContent` ("Plantillas" -> `PlantillaList`), alongside the existing "Existencias por deposito"/"Traspasos" tabs.
+- [x] B1.6 [RED] `routes/_app/inventario/__tests__/traspasos.test.tsx`: failing assertion — 3rd `TabsTrigger` ("Plantillas") renders alongside the existing 2.
+- [x] B1.7 [GREEN] Confirm B1.5 satisfies B1.6. Verify: `yarn test:run`, `yarn type-check:test`.
 
 ## Slice B2 — Plantilla Form (Create/Edit)
 
-- [ ] B2.1 New `features/inventario/schemas/plantilla-schema.ts`: Zod `nombre` required non-empty, `descripcion` optional, `productoIds` array `min(1)`. (Rechazo sin nombre, Rechazo sin productos)
-- [ ] B2.2 [RED] `components/plantillas/__tests__/plantilla-form.test.tsx`: failing test — submitting with empty `nombre` or zero productos surfaces Zod error, no `crearPlantilla` call.
-- [ ] B2.3 [GREEN] New `components/plantillas/plantilla-form.tsx`: dialog mirroring `marca-form.tsx` (nombre/descripcion inputs) + product multi-select (checkbox list, filterable by nombre/codigo, no portal — dialog already scrolls).
-- [ ] B2.4 [RED] Failing test — submit with valid nombre + N selected productos calls `crearPlantilla` with the exact `productoIds` array.
-- [ ] B2.5 [GREEN] Wire submit to `crearPlantilla`/`actualizarPlantilla` (edit mode via `plantilla` prop, same pattern as `marca-form.tsx`'s `isEditing`).
-- [ ] B2.6 [RED] Failing test — editing a plantilla pre-selects its current productos (from `usePlantillaProductos`); adding/removing a checkbox updates the submitted `productoIds`.
-- [ ] B2.7 [GREEN] Wire edit-mode initial state from `usePlantillaProductos(plantilla.id)`.
-- [ ] B2.8 Verify: `yarn test:run`, `yarn type-check:test`. Review gate: if actual diff exceeds ~400 lines, split product-multi-select into its own sub-component/PR before merging (flagged risk, see forecast).
+- [x] B2.1 New `features/inventario/schemas/plantilla-schema.ts`: Zod `nombre` required non-empty, `descripcion` optional, `productoIds` array `min(1)`. (Rechazo sin nombre, Rechazo sin productos)
+- [x] B2.2 [RED] `components/plantillas/__tests__/plantilla-form.test.tsx`: failing test — submitting with empty `nombre` or zero productos surfaces Zod error, no `crearPlantilla` call.
+- [x] B2.3 [GREEN] New `components/plantillas/plantilla-form.tsx`: dialog mirroring `marca-form.tsx` (nombre/descripcion inputs) + product multi-select (checkbox list, filterable by nombre/codigo, no portal — dialog already scrolls).
+- [x] B2.4 [RED] Failing test — submit with valid nombre + N selected productos calls `crearPlantilla` with the exact `productoIds` array.
+- [x] B2.5 [GREEN] Wire submit to `crearPlantilla`/`actualizarPlantilla` (edit mode via `plantilla` prop, same pattern as `marca-form.tsx`'s `isEditing`).
+- [x] B2.6 [RED] Failing test — editing a plantilla pre-selects its current productos (from `usePlantillaProductos`); adding/removing a checkbox updates the submitted `productoIds`.
+- [x] B2.7 [GREEN] Wire edit-mode initial state from `usePlantillaProductos(plantilla.id)`.
+- [x] B2.8 Verify: `yarn test:run`, `yarn type-check:test`. Review gate: if actual diff exceeds ~400 lines, split product-multi-select into its own sub-component/PR before merging (flagged risk, see forecast). Deviation noted below — actual diff came in under budget, no split needed. Also wired `PlantillaForm` into `plantilla-list.tsx` (Nueva/Editar buttons -> dialog), completing the B1 placeholder handlers.
 
 ## Slice C — Traspaso-Form Integration ("Cargar Plantilla")
 
