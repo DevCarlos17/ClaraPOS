@@ -29,6 +29,9 @@ vi.mock('@/features/inventario/components/existencias/existencias-por-deposito',
 vi.mock('@/features/inventario/components/traspasos/traspaso-list', () => ({
   TraspasoList: () => <div data-testid="traspaso-list-tab-content">Contenido Historico</div>,
 }))
+vi.mock('@/features/inventario/components/plantillas/plantilla-list', () => ({
+  PlantillaList: () => <div data-testid="plantilla-list-tab-content">Contenido Plantillas</div>,
+}))
 
 const mockedUsePermissions = vi.mocked(usePermissions)
 
@@ -64,5 +67,16 @@ describe('TraspasosPage — pestanas (EPD/Pestanas sin Alterar el Historico de T
     await user.click(screen.getByRole('tab', { name: /historico de traspasos/i }))
 
     expect(screen.getByTestId('traspaso-list-tab-content')).toBeInTheDocument()
+  })
+
+  it('la pestana "Plantillas" se renderiza junto a las otras dos y al hacer click muestra PlantillaList', async () => {
+    const user = userEvent.setup()
+    render(<TraspasosPage />)
+
+    expect(screen.getByRole('tab', { name: /^plantillas$/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('tab', { name: /^plantillas$/i }))
+
+    expect(screen.getByTestId('plantilla-list-tab-content')).toBeInTheDocument()
   })
 })
