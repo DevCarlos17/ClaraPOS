@@ -31,11 +31,17 @@ function ProductoBuscador({
   onSelect,
   productos,
   portalTarget,
+  origenSeleccionado,
+  stockDisponiblePorProducto,
 }: {
   value: { id: string; nombre: string; codigo: string } | null
   onSelect: (p: { id: string; nombre: string; codigo: string }) => void
   productos: Array<{ id: string; nombre: string; codigo: string; tipo: string; is_active: number }>
   portalTarget: HTMLElement | null
+  /** Si no hay deposito origen elegido, el buscador no ofrece productos: primero se elige el origen. */
+  origenSeleccionado: boolean
+  /** Stock por producto en el deposito origen; solo se sugieren productos con stock > 0. */
+  stockDisponiblePorProducto: Map<string, string>
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
@@ -44,15 +50,23 @@ function ProductoBuscador({
   const wrapperRef = useRef<HTMLDivElement>(null)
 
   const sugerencias = useMemo(() => {
+    // Sin deposito origen no hay universo de stock: no se ofrece nada hasta elegir origen.
+    if (!origenSeleccionado) return []
     const q = query.trim().toLowerCase()
     if (!q) return []
     const isWild = q === '*'
-    const lista = productos.filter((p) => p.tipo === 'P' && p.is_active === 1)
+    const conStockEnOrigen = (p: { id: string }) => {
+      const disp = stockDisponiblePorProducto.get(p.id)
+      return disp !== undefined && parseFloat(disp) > 0
+    }
+    const lista = productos.filter(
+      (p) => p.tipo === 'P' && p.is_active === 1 && conStockEnOrigen(p)
+    )
     if (isWild) return lista.slice(0, 50)
     return lista.filter(
       (p) => p.nombre.toLowerCase().includes(q) || p.codigo.toLowerCase().includes(q)
     ).slice(0, 15)
-  }, [query, productos])
+  }, [query, productos, origenSeleccionado, stockDisponiblePorProducto])
 
   function calcularPosicion() {
     if (inputRef.current) {
@@ -112,8 +126,9 @@ function ProductoBuscador({
           onChange={(e) => { setQuery(e.target.value); calcularPosicion(); setOpen(true) }}
           onFocus={() => { calcularPosicion(); setOpen(true) }}
           onKeyDown={(e) => e.key === 'Escape' && setOpen(false)}
-          placeholder="Buscar producto (* = todos)"
-          className="w-full h-8 pl-6 pr-2 text-sm border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary"
+          disabled={!origenSeleccionado}
+          placeholder={origenSeleccionado ? 'Buscar producto (* = todos)' : 'Elegi un deposito origen primero'}
+          className="w-full h-8 pl-6 pr-2 text-sm border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-muted/40 disabled:cursor-not-allowed disabled:placeholder:text-muted-foreground/60"
         />
       </div>
       {open && sugerencias.length > 0 && createPortal(
@@ -342,13 +357,29 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
 
                 {lineas.map((linea, index) => {
                   const disponible = linea.producto_id ? stockDisponiblePorProducto.get(linea.producto_id) : undefined
+                  const disponibleNum = disponible !== undefined ? parseFloat(disponible) : null
+                  const cantidadNum = parseFloat(linea.cantidad)
+                  // Feedback visual (no bloquea el submit por si mismo; `crearTraspaso`
+                  // es la guarda real). Mismo patron que linea-items.tsx del POS.
+                  const stockExcedido =
+                    !!linea.producto_id &&
+                    disponibleNum !== null &&
+                    Number.isFinite(cantidadNum) &&
+                    cantidadNum > disponibleNum
                   return (
-                    <div key={index} className="grid grid-cols-[1fr_100px_110px_32px] gap-2 items-center px-3 py-2 border border-border rounded-lg bg-white hover:bg-muted/20">
+                    <div
+                      key={index}
+                      className={`grid grid-cols-[1fr_100px_110px_32px] gap-2 items-center px-3 py-2 border rounded-lg hover:bg-muted/20 ${
+                        stockExcedido ? 'border-destructive/50 bg-destructive/5' : 'border-border bg-white'
+                      }`}
+                    >
                       <ProductoBuscador
                         value={linea.producto_id ? { id: linea.producto_id, nombre: linea.producto_nombre, codigo: linea.producto_codigo } : null}
                         onSelect={(p) => actualizarProducto(index, p)}
                         productos={productosActivos as never}
                         portalTarget={dialogRef.current}
+                        origenSeleccionado={!!depositoOrigenId}
+                        stockDisponiblePorProducto={stockDisponiblePorProducto}
                       />
                       <input
                         type="number"
@@ -358,10 +389,19 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
                         onChange={(e) => actualizarCantidad(index, e.target.value)}
                         onWheel={(e) => e.currentTarget.blur()}
                         placeholder="0.000"
-                        className="h-8 px-2 text-sm text-right border border-input bg-white rounded focus:outline-none focus:ring-2 focus:ring-primary w-full"
+                        aria-invalid={stockExcedido}
+                        className={`h-8 px-2 text-sm text-right border bg-white rounded focus:outline-none focus:ring-2 w-full ${
+                          stockExcedido
+                            ? 'border-destructive text-destructive focus:ring-destructive'
+                            : 'border-input focus:ring-primary'
+                        }`}
                       />
-                      <div className="text-right tabular-nums text-sm text-muted-foreground whitespace-nowrap">
-                        {disponible !== undefined ? parseFloat(disponible).toFixed(3) : '—'}
+                      <div
+                        className={`text-right tabular-nums text-sm whitespace-nowrap ${
+                          stockExcedido ? 'text-destructive font-medium' : 'text-muted-foreground'
+                        }`}
+                      >
+                        {disponibleNum !== null ? disponibleNum.toFixed(3) : '—'}
                       </div>
                       <button
                         type="button"

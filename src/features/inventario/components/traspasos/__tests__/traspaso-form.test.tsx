@@ -50,10 +50,18 @@ const DEPOSITOS = [
   { id: 'dep-B', nombre: 'Deposito B', es_principal: 0 },
 ]
 
-function setupMocks() {
+// Stock por defecto en el deposito origen: ambos productos con existencia
+// holgada, de modo que el buscador (que ahora solo ofrece productos con stock
+// en origen) los siga sugiriendo en los tests de payload.
+const STOCK_ORIGEN_DEFAULT = [
+  { producto_id: 'prod-1', cantidad_actual: '10.000' },
+  { producto_id: 'prod-2', cantidad_actual: '10.000' },
+]
+
+function setupMocks(stockOrigen: Array<{ producto_id: string; cantidad_actual: string }> = STOCK_ORIGEN_DEFAULT) {
   mockedUseProductos.mockReturnValue({ productos: PRODUCTOS as never, isLoading: false })
   mockedUseDepositosActivos.mockReturnValue({ depositos: DEPOSITOS as never, isLoading: false })
-  mockedUseStockPorDeposito.mockReturnValue({ stock: [], isLoading: false })
+  mockedUseStockPorDeposito.mockReturnValue({ stock: stockOrigen as never, isLoading: false })
   mockedUseCurrentUser.mockReturnValue({
     user: { id: 'user-1', email: 'a@a.com', nombre: 'Test', level: 1, rol_id: null, rol_nombre: null, empresa_id: 'emp-1' },
     loading: false,
@@ -158,12 +166,105 @@ describe('TraspasoForm — deposito origen/destino (TRI/Traspaso Atomico Individ
     setupMocks()
     render(<TraspasoForm isOpen onClose={() => {}} />)
 
+    // Con origen elegido el buscador se habilita (placeholder "Buscar producto...").
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+
     await user.click(screen.getByRole('button', { name: /agregar producto/i }))
-    expect(screen.getAllByPlaceholderText(/buscar/i)).toHaveLength(2)
+    expect(screen.getAllByPlaceholderText(/buscar producto/i)).toHaveLength(2)
 
     const removeButtons = screen.getAllByRole('button', { name: /quitar linea/i })
     await user.click(removeButtons[0]!)
 
-    expect(screen.getAllByPlaceholderText(/buscar/i)).toHaveLength(1)
+    expect(screen.getAllByPlaceholderText(/buscar producto/i)).toHaveLength(1)
+  })
+})
+
+describe('TraspasoForm — buscador filtrado por stock en origen (Mejora 1)', () => {
+  it('sin deposito origen seleccionado, el buscador esta deshabilitado y no ofrece productos', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    // No se elige deposito origen: el input de busqueda queda deshabilitado.
+    const buscador = screen.getByPlaceholderText(/elegi un deposito origen primero/i)
+    expect(buscador).toBeDisabled()
+
+    // Aun forzando texto, no aparece ninguna sugerencia de producto.
+    await user.type(buscador, 'Producto').catch(() => {})
+    expect(screen.queryByText('Producto Uno')).not.toBeInTheDocument()
+    expect(screen.queryByText('Producto Dos')).not.toBeInTheDocument()
+  })
+
+  it('con origen elegido, solo sugiere productos con stock > 0 en el deposito origen', async () => {
+    const user = userEvent.setup()
+    // Solo prod-1 tiene stock en origen; prod-2 tiene 0 -> no debe aparecer.
+    setupMocks([
+      { producto_id: 'prod-1', cantidad_actual: '5.000' },
+      { producto_id: 'prod-2', cantidad_actual: '0.000' },
+    ])
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+
+    const buscador = screen.getByPlaceholderText(/buscar producto/i)
+    await user.type(buscador, '*')
+
+    expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+    expect(screen.queryByText('Producto Dos')).not.toBeInTheDocument()
+  })
+
+  it('un producto sin fila de stock en origen tampoco aparece', async () => {
+    const user = userEvent.setup()
+    // prod-1 con stock; prod-2 sin fila alguna en el stock del origen.
+    setupMocks([{ producto_id: 'prod-1', cantidad_actual: '3.000' }])
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+
+    const buscador = screen.getByPlaceholderText(/buscar producto/i)
+    await user.type(buscador, '*')
+
+    expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+    expect(screen.queryByText('Producto Dos')).not.toBeInTheDocument()
+  })
+})
+
+describe('TraspasoForm — feedback de cantidad > disponible (Mejora 2)', () => {
+  it('marca el input de cantidad como invalido cuando supera el stock disponible en origen', async () => {
+    const user = userEvent.setup()
+    setupMocks([{ producto_id: 'prod-1', cantidad_actual: '5.000' }])
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+
+    const cantidadInput = screen.getByPlaceholderText('0.000') as HTMLInputElement
+    // Disponible = 5, pedimos 8 -> excedido.
+    await user.type(cantidadInput, '8')
+
+    expect(cantidadInput).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('no marca el input cuando la cantidad esta dentro del stock disponible', async () => {
+    const user = userEvent.setup()
+    setupMocks([{ producto_id: 'prod-1', cantidad_actual: '5.000' }])
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+
+    const cantidadInput = screen.getByPlaceholderText('0.000') as HTMLInputElement
+    await user.type(cantidadInput, '3')
+
+    expect(cantidadInput).toHaveAttribute('aria-invalid', 'false')
   })
 })
