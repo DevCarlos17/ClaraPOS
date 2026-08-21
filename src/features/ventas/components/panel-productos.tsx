@@ -5,21 +5,38 @@ import { useQuery } from '@powersync/react'
 import { useBuscarProductosVenta, buscarProductoPorCodigoBarras, type ProductoVenta } from '../hooks/use-ventas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd } from '@/lib/currency'
+import { buildStockPorDepositoFragments } from '../lib/deposito-venta'
 
 const SCANNER_THRESHOLD_MS = 50
 
-const ALL_PRODUCTS_QUERY = `
-  SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.stock,
-         p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal
-  FROM productos p
-  LEFT JOIN unidades u ON p.unidad_base_id = u.id
-  WHERE p.empresa_id = ? AND p.is_active = 1
-    AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
-  ORDER BY p.nombre ASC LIMIT 50
-`
+/**
+ * `depositoId`: escopea el stock del grid al deposito de la caja activa
+ * (Slice 2a, VSD/Producto sin stock en el deposito de la caja queda
+ * oculto/bloqueado) — igual contrato que `useBuscarProductosVenta`/
+ * `buscarProductoPorCodigoBarras`.
+ */
+function buildAllProductsQuery(depositoId: string | null) {
+  const frag = buildStockPorDepositoFragments(depositoId)
+  return {
+    sql: `
+      SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd,
+             ${frag.stockExpr} as stock,
+             p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal
+      FROM productos p
+      LEFT JOIN unidades u ON p.unidad_base_id = u.id
+      ${frag.joinInventarioStock}
+      WHERE p.empresa_id = ? AND p.is_active = 1
+        AND (p.tipo = 'S' OR CAST(${frag.stockExpr} AS REAL) > 0)
+      ORDER BY p.nombre ASC LIMIT 50
+    `,
+    paramsPrefix: frag.paramsPrefix,
+  }
+}
 
 interface PanelProductosProps {
   onSelect: (producto: ProductoVenta) => void
+  /** Deposito de la caja activa (Slice 2a) — escopea grid/busqueda/barcode a su stock. */
+  depositoId: string | null
 }
 
 export interface PanelProductosHandle {
@@ -27,7 +44,7 @@ export interface PanelProductosHandle {
 }
 
 export const PanelProductos = forwardRef<PanelProductosHandle, PanelProductosProps>(
-function PanelProductos({ onSelect }, ref) {
+function PanelProductos({ onSelect, depositoId }, ref) {
   const [query, setQuery] = useState('')
   const { user } = useCurrentUser()
   const inputRef = useRef<HTMLInputElement>(null)
@@ -36,13 +53,14 @@ function PanelProductos({ onSelect }, ref) {
 
   // All products (shown when query < 2 chars)
   const empresaId = user?.empresa_id ?? ''
+  const { sql: allProductsSql, paramsPrefix } = buildAllProductsQuery(depositoId)
   const { data: allProductsRaw } = useQuery(
-    empresaId ? ALL_PRODUCTS_QUERY : '',
-    empresaId ? [empresaId] : []
+    empresaId ? allProductsSql : '',
+    empresaId ? [...paramsPrefix, empresaId] : []
   )
 
   // Search results (shown when query >= 2 chars)
-  const { productos: searchResults, isLoading: searchLoading } = useBuscarProductosVenta(query)
+  const { productos: searchResults, isLoading: searchLoading } = useBuscarProductosVenta(query, depositoId)
 
   useImperativeHandle(ref, () => ({
     focus: () => inputRef.current?.focus(),
@@ -67,7 +85,7 @@ function PanelProductos({ onSelect }, ref) {
 
   const buscarYAgregarPorCodigoBarras = useCallback(async (barcode: string) => {
     if (!user?.empresa_id) return
-    const produto = await buscarProductoPorCodigoBarras(barcode, user.empresa_id)
+    const produto = await buscarProductoPorCodigoBarras(barcode, user.empresa_id, depositoId)
     if (produto) {
       onSelect(produto)
       setQuery('')
@@ -76,7 +94,7 @@ function PanelProductos({ onSelect }, ref) {
       toast.error(`Producto no encontrado: ${barcode}`)
       setQuery('')
     }
-  }, [user?.empresa_id, onSelect])
+  }, [user?.empresa_id, onSelect, depositoId])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     const now = Date.now()

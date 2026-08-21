@@ -92,6 +92,8 @@ bucket_definitions:
       - SELECT * FROM ajustes WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM ajustes_det WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM lotes WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM traspasos_inventario WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM traspasos_inventario_det WHERE empresa_id = bucket.empresa_id
 
       # --- CLIENTES / CXC ---
       - SELECT * FROM clientes WHERE empresa_id = bucket.empresa_id

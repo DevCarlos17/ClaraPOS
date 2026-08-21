@@ -8,6 +8,7 @@ import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
 import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -157,26 +158,10 @@ export async function crearNotaCredito(
     const now = localNow()
     ncrId = uuidv4()
 
-    // 0. Obtener deposito principal de la empresa
-    const depResult = await tx.execute(
-      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
-      [empresa_id]
-    )
-    let depositoId: string
-    if (depResult.rows && depResult.rows.length > 0) {
-      depositoId = (depResult.rows.item(0) as { id: string }).id
-    } else {
-      const depFallback = await tx.execute(
-        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
-        [empresa_id]
-      )
-      if (!depFallback.rows || depFallback.rows.length === 0) {
-        throw new Error('No hay depositos configurados. Cree un deposito primero.')
-      }
-      depositoId = (depFallback.rows.item(0) as { id: string }).id
-    }
-
-    // 1. Leer factura y validar
+    // 1. Leer factura y validar. El reingreso de stock vuelve al deposito
+    //    de ORIGEN de la venta (`venta.deposito_id`, NOT NULL desde
+    //    0006_ventas.sql) — NUNCA se re-deriva el deposito principal de la
+    //    empresa (spec NCD/Reingreso al Deposito de Origen).
     const ventaResult = await tx.execute('SELECT * FROM ventas WHERE id = ?', [venta_id])
     if (!ventaResult.rows || ventaResult.rows.length === 0) {
       throw new Error('Factura no encontrada')
@@ -191,7 +176,9 @@ export async function crearNotaCredito(
       saldo_pend_usd: string
       tipo: string
       status: string
+      deposito_id: string
     }
+    const depositoId = venta.deposito_id
 
     if (venta.status === 'ANULADA') {
       throw new Error('Esta factura ya fue anulada')
@@ -284,11 +271,15 @@ export async function crearNotaCredito(
             ]
           )
 
-          await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-            stockNuevo.toFixed(3),
+          await upsertStockDeposito(tx, {
+            empresa_id,
+            producto_id: linea.producto_id,
+            deposito_id: depositoId,
+            delta: new Decimal(cantidadVendida),
+            usuario_id,
             now,
-            linea.producto_id,
-          ])
+            movimientoInventarioId: movId,
+          })
 
           // Si la linea tenia lote, restaurar cantidad en el lote
           if (linea.lote_id) {
@@ -351,11 +342,15 @@ export async function crearNotaCredito(
                 ]
               )
 
-              await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-                stockNuevoIng.toFixed(3),
+              await upsertStockDeposito(tx, {
+                empresa_id,
+                producto_id: ingrediente.producto_id,
+                deposito_id: depositoId,
+                delta: new Decimal(cantidadConsumida),
+                usuario_id,
                 now,
-                ingrediente.producto_id,
-              ])
+                movimientoInventarioId: movIngId,
+              })
             }
           }
         }

@@ -6,6 +6,7 @@ import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
 import { toStorageString } from '@/lib/currency'
 import { buildMovimientosFiltradosSql } from './kardex-sql'
+import { upsertStockDeposito, resolveDepositoIngreso } from '@/features/inventario/lib/stock-deposito'
 
 export interface MovimientoInventario {
   id: string
@@ -118,7 +119,29 @@ export async function registrarMovimiento(params: {
     const now = localNow()
     const fechaHoy = now.split('T')[0] ?? now.substring(0, 10)
 
-    // 0. Resolver deposito
+    // 0. Leer stock, costo, nombre y deposito_id del producto — el deposito_id
+    // se lee ANTES de resolver el deposito destino porque, para INGRESO, es
+    // la primera opcion de enrutamiento (Slice 1c, KDS/Deposito Sugerido en
+    // Ingreso Manual), antes de caer al principal de la empresa.
+    const result = await tx.execute(
+      'SELECT stock, costo_usd, nombre, deposito_id FROM productos WHERE id = ?',
+      [producto_id]
+    )
+    if (!result.rows || result.rows.length === 0) {
+      throw new Error('Producto no encontrado')
+    }
+    const prodRow = result.rows.item(0) as {
+      stock: string
+      costo_usd: string
+      nombre: string
+      deposito_id: string | null
+    }
+    const stockActual = parseFloat(prodRow.stock)
+    const costoUsdStr = prodRow.costo_usd ?? '0'
+    const productoNombre = prodRow.nombre ?? ''
+
+    // 1. Resolver deposito destino: explicito (form) > (INGRESO: deposito default
+    // del producto, fallback principal) > (EGRESO: solo principal, sin cambios).
     let depositoId: string
     if (params.deposito_id) {
       depositoId = params.deposito_id
@@ -127,8 +150,9 @@ export async function registrarMovimiento(params: {
         'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
         [empresa_id]
       )
+      let principalId: string
       if (depResult.rows && depResult.rows.length > 0) {
-        depositoId = (depResult.rows.item(0) as { id: string }).id
+        principalId = (depResult.rows.item(0) as { id: string }).id
       } else {
         const depFallback = await tx.execute(
           'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
@@ -137,22 +161,10 @@ export async function registrarMovimiento(params: {
         if (!depFallback.rows || depFallback.rows.length === 0) {
           throw new Error('No hay depositos configurados. Cree un deposito primero.')
         }
-        depositoId = (depFallback.rows.item(0) as { id: string }).id
+        principalId = (depFallback.rows.item(0) as { id: string }).id
       }
+      depositoId = tipo === 'E' ? (resolveDepositoIngreso(prodRow.deposito_id, principalId) ?? principalId) : principalId
     }
-
-    // 1. Leer stock, costo y nombre del producto
-    const result = await tx.execute(
-      'SELECT stock, costo_usd, nombre FROM productos WHERE id = ?',
-      [producto_id]
-    )
-    if (!result.rows || result.rows.length === 0) {
-      throw new Error('Producto no encontrado')
-    }
-    const prodRow = result.rows.item(0) as { stock: string; costo_usd: string; nombre: string }
-    const stockActual = parseFloat(prodRow.stock)
-    const costoUsdStr = prodRow.costo_usd ?? '0'
-    const productoNombre = prodRow.nombre ?? ''
 
     // 2. Calcular nuevo stock
     const stockNuevo = tipo === 'E' ? stockActual + cantidad : stockActual - cantidad
@@ -273,12 +285,19 @@ export async function registrarMovimiento(params: {
       ]
     )
 
-    // 7. Actualizar stock del producto
-    await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-      stockNuevo.toFixed(3),
-      now,
+    // 7. Actualizar inventario_stock (por deposito) + productos.stock (total desnormalizado)
+    // en la MISMA transaccion — usa el deposito ya resuelto en el paso 0 (sin cambio de
+    // resolucion en este slice; ver stock-deposito.ts).
+    const deltaStock = tipo === 'E' ? new Decimal(cantidad) : new Decimal(cantidad).negated()
+    await upsertStockDeposito(tx, {
+      empresa_id,
       producto_id,
-    ])
+      deposito_id: depositoId,
+      delta: deltaStock,
+      usuario_id,
+      now,
+      movimientoInventarioId: id,
+    })
 
     // 8. Gasto contable automatico para salidas tipificadas
     if (tipo === 'S' && tipoSalida && totalUsd > 0) {

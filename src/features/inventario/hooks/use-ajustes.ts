@@ -6,6 +6,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
 import Decimal from 'decimal.js'
 import { toStorageString } from '@/lib/currency'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 
 export interface Ajuste {
   id: string
@@ -333,23 +334,31 @@ export async function aplicarAjuste(
           )
         }
 
+        const movSumaId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_inventario
            (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
             costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
            VALUES (?, ?, ?, ?, 'E', 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?)`,
           [
-            uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
+            movSumaId, empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
             linea.costo_unitario ?? null, loteIdParaMovimiento,
             ajusteId, ajuste.num_ajuste,
             userId, now, now,
           ]
         )
-        await tx.execute(
-          'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), now, linea.producto_id]
-        )
+        // inventario_stock (por deposito) + productos.stock (total) — usa linea.deposito_id,
+        // que ya viene deposit-scoped desde el formulario (sin cambio de resolucion en este slice).
+        await upsertStockDeposito(tx, {
+          empresa_id: empresaId,
+          producto_id: linea.producto_id,
+          deposito_id: linea.deposito_id,
+          delta: new Decimal(cantidad),
+          usuario_id: userId,
+          now,
+          movimientoInventarioId: movSumaId,
+        })
       } else if (operacion === 'RESTA') {
         stockNuevo = stockAnterior - cantidad
         if (stockNuevo < 0) {
@@ -421,6 +430,7 @@ export async function aplicarAjuste(
             [costoParaMovimiento, ajusteId, linea.producto_id]
           )
         }
+        const movRestaId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_inventario
            (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
@@ -428,7 +438,7 @@ export async function aplicarAjuste(
             tipo_salida)
            VALUES (?, ?, ?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?, ?)`,
           [
-            uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
+            movRestaId, empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
             costoParaMovimiento, loteIdMovimiento,
             ajusteId, ajuste.num_ajuste,
@@ -436,10 +446,17 @@ export async function aplicarAjuste(
             tipoSalidaAjuste,
           ]
         )
-        await tx.execute(
-          'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), now, linea.producto_id]
-        )
+        // inventario_stock (por deposito) + productos.stock (total) — usa linea.deposito_id,
+        // que ya viene deposit-scoped desde el formulario (sin cambio de resolucion en este slice).
+        await upsertStockDeposito(tx, {
+          empresa_id: empresaId,
+          producto_id: linea.producto_id,
+          deposito_id: linea.deposito_id,
+          delta: new Decimal(cantidad).negated(),
+          usuario_id: userId,
+          now,
+          movimientoInventarioId: movRestaId,
+        })
 
         // Per-line gasto contable (W-02: un gasto por linea, no agregado; W-03: sin try/catch — fallo revierte todo el tx)
         if (tipoSalidaAjuste && cuentaIdPorLinea && monedaUsdIdPorLinea) {
@@ -614,23 +631,31 @@ export async function anularAjuste(
         }
       }
 
+      const movAnulId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_inventario
          (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
           costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
          VALUES (?, ?, ?, ?, ?, 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Anulacion de ajuste', ?, ?, ?)`,
         [
-          uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
+          movAnulId, empresaId, linea.producto_id, linea.deposito_id,
           tipoInverso, linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
           linea.costo_unitario ?? null, loteId,
           ajusteId, ajuste.num_ajuste,
           userId, now, now,
         ]
       )
-      await tx.execute(
-        'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-        [stockNuevo.toFixed(3), now, linea.producto_id]
-      )
+      // inventario_stock (por deposito) + productos.stock (total) — mismo deposito que el
+      // movimiento original (linea.deposito_id), delta inverso al de la aplicacion original.
+      await upsertStockDeposito(tx, {
+        empresa_id: empresaId,
+        producto_id: linea.producto_id,
+        deposito_id: linea.deposito_id,
+        delta: operacion === 'SUMA' ? new Decimal(cantidad).negated() : new Decimal(cantidad),
+        usuario_id: userId,
+        movimientoInventarioId: movAnulId,
+        now,
+      })
     }
 
     await tx.execute(

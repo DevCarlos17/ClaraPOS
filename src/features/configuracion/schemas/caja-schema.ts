@@ -6,7 +6,7 @@ export const cajaSchema = z.object({
     .min(2, 'Minimo 2 caracteres')
     .transform((v) => v.toUpperCase()),
   ubicacion: z.string().optional(),
-  deposito_id: z.string().optional(),
+  deposito_id: z.string().min(1, 'Selecciona un deposito'),
   is_active: z.boolean().default(true),
 })
 

@@ -9,6 +9,7 @@ import { useUnidades } from '@/features/inventario/hooks/use-unidades'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { resolveDepositoIngreso } from '@/features/inventario/lib/stock-deposito'
 import Decimal from 'decimal.js'
 
 interface MovimientoFormProps {
@@ -92,11 +93,29 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
     setLoteModo('existente')
   }
 
+  /** Deposito `es_principal` de la empresa, o null si no hay ninguno configurado. */
+  function resolverPrincipalId(): string | null {
+    return depositos.find((d) => d.es_principal === 1)?.id ?? null
+  }
+
+  /**
+   * Sugerencia de deposito para INGRESO (Slice 1c, KDS/Deposito Sugerido en
+   * Ingreso Manual): prioriza el deposito default del producto, cae al
+   * principal de la empresa. Solo se aplica a INGRESO — la SALIDA no cambia.
+   */
+  function sugerirDepositoIngreso(productoDepositoId: string | null) {
+    setDepositoId(resolveDepositoIngreso(productoDepositoId, resolverPrincipalId()) ?? '')
+  }
+
   function handleSelectProducto(id: string, nombre: string) {
     setProductoId(id)
     setBusqueda(nombre)
     setDropdownOpen(false)
     resetLoteState()
+    if (tipo === 'E') {
+      const prod = productos.find((p) => p.id === id)
+      sugerirDepositoIngreso(prod?.deposito_id ?? null)
+    }
   }
 
   function handleBusquedaChange(value: string) {
@@ -113,6 +132,11 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
     setLoteId('')
     setTipoSalida('')
     setErrors({})
+    if (nuevoTipo === 'E' && productoSeleccionado) {
+      sugerirDepositoIngreso(productoSeleccionado.deposito_id)
+    } else if (nuevoTipo === 'S') {
+      setDepositoId('')
+    }
   }
 
   // Preview de costo estimado para salidas tipificadas
@@ -176,6 +200,10 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
           newErrors.deposito = 'Debe seleccionar el deposito para el nuevo lote'
         }
       }
+    } else if (tipo === 'E' && !depositoId) {
+      // Producto sin manejo de lotes, INGRESO: el deposito sugerido (o su
+      // sobreescritura) es obligatorio (Slice 1c, KDS/Deposito Sugerido en Ingreso Manual).
+      newErrors.deposito = 'Debe seleccionar el deposito'
     }
 
     if (Object.keys(newErrors).length > 0) {
@@ -185,8 +213,11 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
 
     setSubmitting(true)
     try {
-      // Deposito: viene del lote seleccionado o del selector (lote nuevo)
-      const movDepositoId = loteSeleccionado?.deposito_id ?? (loteModo === 'nuevo' ? depositoId : undefined)
+      // Deposito: SALIDA desde lote existente usa el deposito DEL LOTE (de donde
+      // fisicamente sale el stock); INGRESO usa el deposito sugerido/seleccionado
+      // (lote nuevo o el selector general, Slice 1c) — nunca ambos a la vez.
+      const movDepositoId =
+        tipo === 'S' ? loteSeleccionado?.deposito_id : (depositoId || undefined)
 
       const { gastoCreado } = await registrarMovimiento({
         producto_id: parsed.data!.producto_id,
@@ -195,7 +226,7 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
         motivo: parsed.data!.motivo,
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
-        ...(manejaLotes && movDepositoId ? { deposito_id: movDepositoId } : {}),
+        ...(movDepositoId ? { deposito_id: movDepositoId } : {}),
         ...(manejaLotes && loteId ? { lote_id: loteId } : {}),
         ...(manejaLotes && tipo === 'E' && loteModo === 'nuevo' && loteNro.trim()
           ? { lote_nro: loteNro.trim() }
@@ -345,6 +376,34 @@ export function MovimientoForm({ isOpen, onClose }: MovimientoFormProps) {
             </div>
             {errors.tipo && <p className="text-red-500 text-xs mt-1">{errors.tipo}</p>}
           </div>
+
+          {/* Deposito de ingreso — sugerido desde el deposito default del producto,
+              sobreescribible (Slice 1c, KDS/Deposito Sugerido en Ingreso Manual).
+              Solo para productos que NO manejan lotes: el flujo con lotes tiene su
+              propio selector de deposito (lote nuevo) mas abajo. */}
+          {tipo === 'E' && productoId && !manejaLotes && (
+            <div>
+              <label htmlFor="mov-deposito" className="block text-sm font-medium text-gray-700 mb-1">
+                Deposito <span className="text-red-500">*</span>
+              </label>
+              <select
+                id="mov-deposito"
+                value={depositoId}
+                onChange={(e) => setDepositoId(e.target.value)}
+                className={`w-full rounded-md border bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  errors.deposito ? 'border-red-500' : 'border-gray-300'
+                }`}
+              >
+                <option value="">Seleccionar deposito...</option>
+                {depositos.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.nombre}
+                  </option>
+                ))}
+              </select>
+              {errors.deposito && <p className="text-red-500 text-xs mt-1">{errors.deposito}</p>}
+            </div>
+          )}
 
           {/* Seccion de lotes (solo si el producto maneja lotes) */}
           {manejaLotes && productoId && (

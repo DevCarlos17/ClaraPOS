@@ -58,6 +58,9 @@ interface CobroModalProps {
   usuarioId: string
   empresaId: string
   metodos: PaymentMethod[]
+  /** Deposito de la caja activa (resuelto en `pos-terminal.tsx` via `useDepositoActivoVenta`) —
+   *  enviado al servidor para el re-chequeo de stock por deposito (Slice 2b). */
+  depositoId: string | null
   onSuccess: (data: VentaExitosaData) => void
 }
 
@@ -77,6 +80,7 @@ export function CobroModal({
   usuarioId,
   empresaId,
   metodos,
+  depositoId,
   onSuccess,
 }: CobroModalProps) {
   const tasaFrozen = useRef<number>(0)
@@ -458,6 +462,7 @@ export function CobroModal({
             tipo: l.tipo,
           })),
         empresaId,
+        depositoId,
       )
 
       // Build SAF entry if client is using their credit balance as payment method
