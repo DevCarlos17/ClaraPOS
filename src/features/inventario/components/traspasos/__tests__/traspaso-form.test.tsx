@@ -408,4 +408,35 @@ describe('TraspasoForm — Cargar plantilla (Slice C)', () => {
       lineas: [{ producto_id: 'prod-1', cantidad: 4 }],
     })
   })
+
+  it('carga los productos aunque usePlantillaProductos resuelva ASINCRONO (query vacia en el 1er render, datos despues)', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    // Simula el comportamiento real de useQuery de PowerSync: la data NO llega
+    // en el mismo render de la seleccion — primero vacio, luego poblado. Si el
+    // effect solo dependiera de plantillaSeleccionadaId, correria con la lista
+    // vacia y nunca recargaria al llegar los datos (el bug que rompe la feature
+    // en produccion). El effect debe depender tambien de productosPlantilla.
+    let entregarDatos = false
+    mockedUsePlantillaProductos.mockImplementation((plantillaId: string) => ({
+      productos: (entregarDatos ? (PLANTILLA_PRODUCTOS[plantillaId] ?? []) : []) as never,
+      isLoading: !entregarDatos,
+    }))
+
+    const { rerender } = render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    // En el render de la seleccion la query aun esta vacia: no debe haber
+    // cargado el producto todavia.
+    expect(screen.queryByText('Producto Uno')).not.toBeInTheDocument()
+
+    // Llegan los datos (PowerSync resolvio la query) y el componente re-renderiza.
+    entregarDatos = true
+    rerender(<TraspasoForm isOpen onClose={() => {}} />)
+
+    // Ahora el effect debe re-dispararse y cargar el producto.
+    expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+  })
 })
