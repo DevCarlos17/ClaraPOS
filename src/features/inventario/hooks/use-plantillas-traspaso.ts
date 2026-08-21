@@ -153,7 +153,13 @@ export async function actualizarPlantilla(id: string, params: ActualizarPlantill
     )
 
     if (productoIds !== undefined) {
-      await tx.execute('DELETE FROM traspaso_plantillas_det WHERE plantilla_id = ?', [id])
+      // DELETE scopeado por empresa_id (defensa en profundidad multi-tenant,
+      // igual que el UPDATE del header): nunca tocar el detalle de una
+      // plantilla de otra empresa aunque el plantilla_id coincidiera.
+      await tx.execute(
+        'DELETE FROM traspaso_plantillas_det WHERE plantilla_id = ? AND empresa_id = ?',
+        [id, empresa_id]
+      )
 
       for (const productoId of productoIds) {
         const detId = uuidv4()

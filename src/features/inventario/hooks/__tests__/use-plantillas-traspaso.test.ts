@@ -121,7 +121,9 @@ describe('actualizarPlantilla — reemplazo de detalle (Editar Plantilla/Edicion
 
     const deleteDet = calls.find((c) => c.sql.startsWith('DELETE FROM traspaso_plantillas_det'))
     expect(deleteDet).toBeDefined()
-    expect(deleteDet!.params).toEqual(['plantilla-1'])
+    // El DELETE del detalle tambien filtra por empresa_id (aislamiento multi-tenant).
+    expect(deleteDet!.sql).toContain('empresa_id = ?')
+    expect(deleteDet!.params).toEqual(['plantilla-1', 'emp-1'])
 
     // El DELETE debe ejecutarse ANTES de los nuevos INSERT (reemplazo completo del set).
     const deleteIdx = calls.indexOf(deleteDet!)
