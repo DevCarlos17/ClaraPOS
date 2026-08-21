@@ -6,6 +6,7 @@ import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { crearTraspaso } from '@/features/inventario/hooks/use-traspasos'
 import { useStockPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePlantillasTraspaso, usePlantillaProductos } from '@/features/inventario/hooks/use-plantillas-traspaso'
 
 // Mismo patron que movimiento-form.test.tsx: mockeamos `@/core/db/powersync/db`
 // primero porque los modulos reales importados transitivamente (via
@@ -33,12 +34,18 @@ vi.mock('@/features/inventario/hooks/use-inventario-stock', async (importOrigina
   return { ...actual, useStockPorDeposito: vi.fn() }
 })
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
+vi.mock('@/features/inventario/hooks/use-plantillas-traspaso', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/inventario/hooks/use-plantillas-traspaso')>()
+  return { ...actual, usePlantillasTraspaso: vi.fn(), usePlantillaProductos: vi.fn() }
+})
 
 const mockedUseProductos = vi.mocked(useProductos)
 const mockedUseDepositosActivos = vi.mocked(useDepositosActivos)
 const mockedCrearTraspaso = vi.mocked(crearTraspaso)
 const mockedUseStockPorDeposito = vi.mocked(useStockPorDeposito)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
+const mockedUsePlantillasTraspaso = vi.mocked(usePlantillasTraspaso)
+const mockedUsePlantillaProductos = vi.mocked(usePlantillaProductos)
 
 const PRODUCTOS = [
   { id: 'prod-1', codigo: 'P-001', nombre: 'Producto Uno', tipo: 'P', is_active: 1 },
@@ -58,6 +65,24 @@ const STOCK_ORIGEN_DEFAULT = [
   { producto_id: 'prod-2', cantidad_actual: '10.000' },
 ]
 
+// Plantillas de traslado: 'plant-1' = 1 producto activo (caso "reemplazo
+// simple"/"crearTraspaso tras cargar"); 'plant-2' = 1 activo + 1 inactivo
+// (caso "filtrado de productos inactivos al cargar").
+const PLANTILLAS = [
+  { id: 'plant-1', empresa_id: 'emp-1', nombre: 'Plantilla Semanal', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 1 },
+  { id: 'plant-2', empresa_id: 'emp-1', nombre: 'Plantilla Con Inactivo', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 2 },
+]
+
+const PLANTILLA_PRODUCTOS: Record<string, Array<{ id: string; producto_id: string; producto_nombre: string; producto_codigo: string; producto_is_active: number }>> = {
+  'plant-1': [
+    { id: 'det-1', producto_id: 'prod-1', producto_nombre: 'Producto Uno', producto_codigo: 'P-001', producto_is_active: 1 },
+  ],
+  'plant-2': [
+    { id: 'det-2', producto_id: 'prod-1', producto_nombre: 'Producto Uno', producto_codigo: 'P-001', producto_is_active: 1 },
+    { id: 'det-3', producto_id: 'prod-2', producto_nombre: 'Producto Dos', producto_codigo: 'P-002', producto_is_active: 0 },
+  ],
+}
+
 function setupMocks(stockOrigen: Array<{ producto_id: string; cantidad_actual: string }> = STOCK_ORIGEN_DEFAULT) {
   mockedUseProductos.mockReturnValue({ productos: PRODUCTOS as never, isLoading: false })
   mockedUseDepositosActivos.mockReturnValue({ depositos: DEPOSITOS as never, isLoading: false })
@@ -66,6 +91,11 @@ function setupMocks(stockOrigen: Array<{ producto_id: string; cantidad_actual: s
     user: { id: 'user-1', email: 'a@a.com', nombre: 'Test', level: 1, rol_id: null, rol_nombre: null, empresa_id: 'emp-1' },
     loading: false,
   })
+  mockedUsePlantillasTraspaso.mockReturnValue({ plantillas: PLANTILLAS as never, isLoading: false })
+  mockedUsePlantillaProductos.mockImplementation((plantillaId: string) => ({
+    productos: (PLANTILLA_PRODUCTOS[plantillaId] ?? []) as never,
+    isLoading: false,
+  }))
 }
 
 beforeEach(() => {
@@ -266,5 +296,116 @@ describe('TraspasoForm — feedback de cantidad > disponible (Mejora 2)', () => 
     await user.type(cantidadInput, '3')
 
     expect(cantidadInput).toHaveAttribute('aria-invalid', 'false')
+  })
+})
+
+describe('TraspasoForm — Cargar plantilla (Slice C)', () => {
+  it('cargar una plantilla reemplaza las lineas vacias con sus productos, cantidad vacia', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+    expect(screen.getAllByPlaceholderText('0.000')).toHaveLength(1)
+    expect((screen.getByPlaceholderText('0.000') as HTMLInputElement).value).toBe('')
+  })
+
+  it('pide confirmacion si las lineas tienen datos; cancelar deja las lineas sin cambios', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await seleccionarProducto(user, 0, 'Producto Dos', 'Producto Dos')
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(screen.getByText('Producto Dos')).toBeInTheDocument()
+    expect(screen.queryByText('Producto Uno')).not.toBeInTheDocument()
+  })
+
+  it('pide confirmacion si las lineas tienen datos; confirmar reemplaza las lineas', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await seleccionarProducto(user, 0, 'Producto Dos', 'Producto Dos')
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+    expect(screen.queryByText('Producto Dos')).not.toBeInTheDocument()
+  })
+
+  it('un producto de la plantilla sin stock en origen igual se carga (no se filtra) y usa el feedback existente', async () => {
+    const user = userEvent.setup()
+    setupMocks([{ producto_id: 'prod-1', cantidad_actual: '0.000' }])
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+    expect(screen.getByText('0.000')).toBeInTheDocument()
+
+    const cantidadInput = screen.getByPlaceholderText('0.000') as HTMLInputElement
+    await user.type(cantidadInput, '2')
+
+    expect(cantidadInput).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('filtra productos inactivos de la plantilla: solo cargan los activos', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-2')
+
+    expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+    expect(screen.queryByText('Producto Dos')).not.toBeInTheDocument()
+    expect(screen.getAllByPlaceholderText('0.000')).toHaveLength(1)
+  })
+
+  it('crearTraspaso sigue funcionando correctamente tras cargar una plantilla', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    const cantidadInput = await screen.findByPlaceholderText('0.000')
+    await user.type(cantidadInput, '4')
+
+    fireEvent.submit(screen.getByRole('button', { name: /registrar traspaso/i }).closest('form')!)
+
+    await waitFor(() => {
+      expect(mockedCrearTraspaso).toHaveBeenCalled()
+    })
+    expect(mockedCrearTraspaso.mock.calls[0]![0]).toMatchObject({
+      empresa_id: 'emp-1',
+      deposito_origen_id: 'dep-A',
+      deposito_destino_id: 'dep-B',
+      lineas: [{ producto_id: 'prod-1', cantidad: 4 }],
+    })
   })
 })

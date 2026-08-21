@@ -8,6 +8,7 @@ import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useStockPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePlantillasTraspaso, usePlantillaProductos } from '@/features/inventario/hooks/use-plantillas-traspaso'
 
 interface TraspasoFormProps {
   isOpen: boolean
@@ -162,6 +163,10 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
   const [observacion, setObservacion] = useState('')
   const [lineas, setLineas] = useState<LineaItem[]>([{ ...LINEA_VACIA }])
   const [submitting, setSubmitting] = useState(false)
+  const [plantillaSeleccionadaId, setPlantillaSeleccionadaId] = useState('')
+
+  const { plantillas } = usePlantillasTraspaso()
+  const { productos: productosPlantilla } = usePlantillaProductos(plantillaSeleccionadaId)
 
   const { stock: stockOrigen } = useStockPorDeposito(depositoOrigenId)
   const stockDisponiblePorProducto = useMemo(() => {
@@ -186,7 +191,39 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
     setObservacion('')
     setLineas([{ ...LINEA_VACIA }])
     setSubmitting(false)
+    setPlantillaSeleccionadaId('')
   }
+
+  // "Cargar plantilla": al elegir una plantilla se REEMPLAZAN las lineas
+  // actuales por sus productos (cantidad vacia — se completa en el
+  // traspaso, nunca se persiste cantidad en la plantilla). Si ya hay datos
+  // cargados se pide confirmacion antes de reemplazar (evita perdida
+  // accidental). Productos inactivos de la plantilla se excluyen del set
+  // cargado; si todos estan inactivos, la grilla vuelve a una linea vacia
+  // en lugar de quedar en blanco. No filtra por stock en origen — un
+  // producto sin stock igual se carga y usa el feedback existente
+  // (`stockDisponiblePorProducto`/`stockExcedido`).
+  useEffect(() => {
+    if (!plantillaSeleccionadaId) return
+
+    const tieneLineasNoVacias = lineas.some((l) => l.producto_id)
+    if (tieneLineasNoVacias && !window.confirm('Esto reemplazara los productos actuales. Continuar?')) {
+      return
+    }
+
+    const activos = productosPlantilla.filter((p) => p.producto_is_active === 1)
+    setLineas(
+      activos.length > 0
+        ? activos.map((p) => ({
+            producto_id: p.producto_id,
+            producto_nombre: p.producto_nombre,
+            producto_codigo: p.producto_codigo,
+            cantidad: '',
+          }))
+        : [{ ...LINEA_VACIA }]
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plantillaSeleccionadaId])
 
   useEffect(() => {
     if (isOpen) {
@@ -336,6 +373,23 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
                 placeholder="Descripcion o comentario"
                 className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label htmlFor="traspaso-plantilla" className="text-xs font-medium text-muted-foreground">
+                Cargar plantilla
+              </label>
+              <select
+                id="traspaso-plantilla"
+                value={plantillaSeleccionadaId}
+                onChange={(e) => setPlantillaSeleccionadaId(e.target.value)}
+                className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Seleccionar plantilla...</option>
+                {plantillas.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nombre}</option>
+                ))}
+              </select>
             </div>
 
             {/* Lineas — 1 = individual, N = por lote, mismo formulario */}
