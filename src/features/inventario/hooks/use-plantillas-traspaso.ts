@@ -171,14 +171,17 @@ export async function actualizarPlantilla(id: string, params: ActualizarPlantill
  * Desactiva una plantilla (soft-delete via UPDATE is_active=0). No toca el
  * detalle ni afecta traspasos ya creados con esa plantilla (decoupled —
  * `traspasos_inventario`/`_det` no referencian `traspaso_plantillas`).
+ * El UPDATE filtra por `empresa_id` (defensa en profundidad multi-tenant,
+ * mismo criterio que `actualizarPlantilla`; nunca desactivar una plantilla
+ * de otra empresa aunque el id coincidiera).
  */
-export async function desactivarPlantilla(id: string): Promise<void> {
+export async function desactivarPlantilla(id: string, empresa_id: string): Promise<void> {
   const now = localNow()
 
   await db.writeTransaction(async (tx) => {
     await tx.execute(
-      'UPDATE traspaso_plantillas SET is_active = 0, updated_at = ? WHERE id = ?',
-      [now, id]
+      'UPDATE traspaso_plantillas SET is_active = 0, updated_at = ? WHERE id = ? AND empresa_id = ?',
+      [now, id, empresa_id]
     )
   })
 }

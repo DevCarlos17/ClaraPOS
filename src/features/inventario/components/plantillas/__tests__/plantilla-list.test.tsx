@@ -96,7 +96,7 @@ describe('PlantillaList — estado vacio (Estado Vacio sin Plantillas)', () => {
 })
 
 describe('PlantillaList — desactivar (Desactivar Plantilla/Desactivacion no borra el registro)', () => {
-  it('el boton Desactivar llama a desactivarPlantilla con el id correcto', async () => {
+  it('el boton Desactivar llama a desactivarPlantilla con el id y el empresa_id de la plantilla', async () => {
     const user = userEvent.setup()
     mockedUsePlantillasTraspaso.mockReturnValue({ plantillas: PLANTILLAS, isLoading: false })
     render(<PlantillaList />)
@@ -105,7 +105,7 @@ describe('PlantillaList — desactivar (Desactivar Plantilla/Desactivacion no bo
     await user.click(desactivarButtons[0]!)
 
     await waitFor(() => {
-      expect(mockedDesactivarPlantilla).toHaveBeenCalledWith('plant-1')
+      expect(mockedDesactivarPlantilla).toHaveBeenCalledWith('plant-1', 'emp-1')
     })
   })
 })

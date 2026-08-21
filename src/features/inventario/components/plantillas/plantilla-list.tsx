@@ -32,7 +32,7 @@ export function PlantillaList() {
   async function handleDesactivar(plantilla: PlantillaConProductos) {
     setDesactivandoId(plantilla.id)
     try {
-      await desactivarPlantilla(plantilla.id)
+      await desactivarPlantilla(plantilla.id, plantilla.empresa_id)
       toast.success('Plantilla desactivada')
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'

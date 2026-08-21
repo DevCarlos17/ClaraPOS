@@ -155,7 +155,7 @@ describe('desactivarPlantilla — soft-delete (Desactivar Plantilla/Desactivacio
   it('emite UPDATE is_active=0 unicamente — sin cambios de detalle, sin DELETE del header', async () => {
     const calls = mockPlantillaTx()
 
-    await desactivarPlantilla('plantilla-3')
+    await desactivarPlantilla('plantilla-3', 'emp-1')
 
     expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
     expect(calls).toHaveLength(1)
@@ -165,5 +165,15 @@ describe('desactivarPlantilla — soft-delete (Desactivar Plantilla/Desactivacio
 
     const deleteCalls = calls.filter((c) => c.sql.startsWith('DELETE'))
     expect(deleteCalls).toHaveLength(0)
+  })
+
+  it('filtra el UPDATE por empresa_id (aislamiento multi-tenant, no desactiva plantillas de otra empresa)', async () => {
+    const calls = mockPlantillaTx()
+
+    await desactivarPlantilla('plantilla-3', 'emp-1')
+
+    expect(calls[0]!.sql).toContain('empresa_id = ?')
+    // El empresa_id debe ir entre los params del UPDATE.
+    expect(calls[0]!.params).toContain('emp-1')
   })
 })

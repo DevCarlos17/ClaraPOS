@@ -82,7 +82,7 @@ No pure functions; no behavior change. Verified via lockstep review + `yarn type
 - [x] B2.5 [GREEN] Wire submit to `crearPlantilla`/`actualizarPlantilla` (edit mode via `plantilla` prop, same pattern as `marca-form.tsx`'s `isEditing`).
 - [x] B2.6 [RED] Failing test — editing a plantilla pre-selects its current productos (from `usePlantillaProductos`); adding/removing a checkbox updates the submitted `productoIds`.
 - [x] B2.7 [GREEN] Wire edit-mode initial state from `usePlantillaProductos(plantilla.id)`.
-- [x] B2.8 Verify: `yarn test:run`, `yarn type-check:test`. Review gate: if actual diff exceeds ~400 lines, split product-multi-select into its own sub-component/PR before merging (flagged risk, see forecast). Deviation noted below — actual diff came in under budget, no split needed. Also wired `PlantillaForm` into `plantilla-list.tsx` (Nueva/Editar buttons -> dialog), completing the B1 placeholder handlers.
+- [x] B2.8 Verify: `yarn test:run`, `yarn type-check:test`. Review gate: B2 actual diff (~544 lines) EXCEEDED the ~400-line budget as forecast. Decision: shipped as a single Slice B PR with maintainer-approved `size:exception` (cohesive CRUD list+form; splitting the product multi-select from the form adds friction without review value). Also wired `PlantillaForm` into `plantilla-list.tsx` (Nueva/Editar buttons -> dialog), completing the B1 placeholder handlers.
 
 ## Slice C — Traspaso-Form Integration ("Cargar Plantilla")
 
