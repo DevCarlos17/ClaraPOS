@@ -9,6 +9,12 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import { connector } from '@/core/db/powersync/connector'
 import { aplicarPagoFacturaEnTx } from '@/features/cxc/hooks/use-cxc'
+import { buildStockPorDepositoFragments, resolveDepositoEgresoVenta } from '../lib/deposito-venta'
+import {
+  upsertStockDeposito,
+  leerStockDeposito,
+  evaluarStockDepositoSuficiente,
+} from '@/features/inventario/lib/stock-deposito'
 
 // ============================================================
 // Validacion de stock en servidor antes de escribir localmente.
@@ -25,6 +31,14 @@ export interface LineaValidarStock {
 export async function validarStockServidor(
   lineas: LineaValidarStock[],
   empresa_id: string,
+  /**
+   * Deposito de la caja activa — el servidor valida stock ESCOPEADO a este
+   * deposito (`inventario_stock`), no el total cross-deposito `productos.stock`
+   * (Slice 2b, VSD/Edge Function valida por deposito). `null` cuando no hay
+   * caja/deposito resuelto (edge case documentado): la Edge Function trata
+   * la ausencia como "sin stock" para ese deposito.
+   */
+  deposito_id: string | null,
 ): Promise<void> {
   const session = connector.currentSession
   if (!session?.access_token) {
@@ -45,7 +59,7 @@ export async function validarStockServidor(
         apikey: anonKey,
         Authorization: `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ lineas, empresa_id }),
+      body: JSON.stringify({ lineas, empresa_id, deposito_id }),
     })
   } catch {
     // Error de red (offline): no bloquear la venta.
@@ -181,7 +195,15 @@ export interface CrearVentaResult {
   nroFactura: string
 }
 
-export function useBuscarProductosVenta(query: string) {
+/**
+ * `depositoId`: cuando se provee (incluso `null`), el stock se lee escopeado
+ * al deposito de la caja activa via `inventario_stock` en vez del total
+ * cross-deposito `productos.stock` (Slice 2a, VSD/Validacion de Stock
+ * Escopeada por Deposito). Omitir el parametro preserva el comportamiento
+ * legado — usado por consumidores fuera del POS que no validan stock contra
+ * una caja (ej. `ventas-consultas-modal.tsx`).
+ */
+export function useBuscarProductosVenta(query: string, depositoId?: string | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
   // Normalizar a minúsculas + NFC para que ñ/Ñ y acentos sean case-insensitive
@@ -189,25 +211,28 @@ export function useBuscarProductosVenta(query: string) {
   const searchTerm = query.trim().toLowerCase().normalize('NFC')
   const shouldSearch = searchTerm.length >= 2
   const pattern = `%${searchTerm}%`
+  const frag = buildStockPorDepositoFragments(depositoId)
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock,
+      ? `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd,
+                ${frag.stockExpr} as stock,
                 p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
                 p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
          FROM productos p
          LEFT JOIN unidades u ON p.unidad_base_id = u.id
          LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
+         ${frag.joinInventarioStock}
          WHERE p.empresa_id = ? AND p.is_active = 1
          AND (
            LOWER(REPLACE(REPLACE(p.nombre, 'Ñ', 'n'), 'ñ', 'n')) LIKE REPLACE(LOWER(?), 'ñ', 'n')
            OR p.codigo LIKE ?
            OR p.codigo_barras LIKE ?
          )
-         AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
+         AND (p.tipo = 'S' OR CAST(${frag.stockExpr} AS REAL) > 0)
          ORDER BY p.nombre ASC LIMIT 10`
       : '',
-    shouldSearch ? [empresaId, pattern, pattern, pattern] : []
+    shouldSearch ? [...frag.paramsPrefix, empresaId, pattern, pattern, pattern] : []
   )
 
   return { productos: (data ?? []) as ProductoVenta[], isLoading }
@@ -228,23 +253,32 @@ export interface ProductoVenta {
   impuesto_pct?: number
 }
 
+/**
+ * `depositoId`: mismo contrato que `useBuscarProductosVenta` — omitido
+ * preserva la lectura legada de `productos.stock`; provisto (incluso `null`)
+ * escopea a `inventario_stock` del deposito de la caja activa.
+ */
 export async function buscarProductoPorCodigoBarras(
   barcode: string,
-  empresaId: string
+  empresaId: string,
+  depositoId?: string | null
 ): Promise<ProductoVenta | null> {
+  const frag = buildStockPorDepositoFragments(depositoId)
   const result = await db.execute(
-    `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd, p.stock,
+    `SELECT p.id, p.codigo, p.tipo, p.nombre, p.precio_venta_usd, p.precio_mayor_usd, p.precio_especial_usd,
+            ${frag.stockExpr} as stock,
             p.codigo_barras, COALESCE(u.es_decimal, 1) as es_decimal,
             p.tipo_impuesto, COALESCE(CAST(iv.porcentaje AS REAL), 0) as impuesto_pct
      FROM productos p
      LEFT JOIN unidades u ON p.unidad_base_id = u.id
      LEFT JOIN impuestos_ve iv ON p.impuesto_iva_id = iv.id
+     ${frag.joinInventarioStock}
      WHERE p.empresa_id = ?
        AND p.codigo_barras = ?
        AND p.is_active = 1
-       AND (p.tipo = 'S' OR CAST(p.stock AS REAL) > 0)
+       AND (p.tipo = 'S' OR CAST(${frag.stockExpr} AS REAL) > 0)
      LIMIT 1`,
-    [empresaId, barcode]
+    [...frag.paramsPrefix, empresaId, barcode]
   )
   if (!result.rows || result.rows.length === 0) return null
   return result.rows.item(0) as ProductoVenta
@@ -268,17 +302,38 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     const now = localNow()
     ventaId = uuidv4()
 
-    // 0. Obtener deposito principal de la empresa
+    // 0. Resolver deposito de EGRESO: prioriza el deposito de la caja activa
+    //    (sesion_caja_id -> caja_id -> cajas.deposito_id); si no hay sesion de
+    //    caja o la caja no tiene deposito asignado, cae al deposito
+    //    `es_principal` de la empresa (Slice 2b, VSD/Egreso de Venta desde el
+    //    Deposito de la Caja, VSD/Venta sin sesion de caja activa). Este es el
+    //    deposito que usan TODOS los movimientos de salida de esta venta
+    //    (kardex + inventario_stock), incluida la explosion de receta.
+    let cajaDepositoId: string | null = null
+    if (sesion_caja_id) {
+      const cajaDepResult = await tx.execute(
+        `SELECT c.deposito_id as deposito_id
+         FROM sesiones_caja sc
+         JOIN cajas c ON sc.caja_id = c.id
+         WHERE sc.id = ? LIMIT 1`,
+        [sesion_caja_id]
+      )
+      if (cajaDepResult.rows && cajaDepResult.rows.length > 0) {
+        const row = cajaDepResult.rows.item(0) as { deposito_id: string | null } | null
+        cajaDepositoId = row?.deposito_id ?? null
+      }
+    }
+
     const depResult = await tx.execute(
       'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
       [empresa_id]
     )
-    let depositoId: string | null = null
+    let principalId: string | null = null
     if (depResult.rows && depResult.rows.length > 0) {
       const row = depResult.rows.item(0) as { id: string | null } | null
-      depositoId = row?.id ?? null
+      principalId = row?.id ?? null
     }
-    if (!depositoId) {
+    if (!principalId) {
       const depFallback = await tx.execute(
         'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
         [empresa_id]
@@ -287,8 +342,10 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         throw new Error('No hay depositos configurados. Cree un deposito primero.')
       }
       const rowFb = depFallback.rows.item(0) as { id: string | null } | null
-      depositoId = rowFb?.id ?? null
+      principalId = rowFb?.id ?? null
     }
+
+    const depositoId = resolveDepositoEgresoVenta(cajaDepositoId, principalId)
     if (!depositoId) {
       throw new Error('No se pudo resolver el deposito: el ID es nulo. Verifique la sincronizacion.')
     }
@@ -472,11 +529,24 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
       if (producto.tipo === 'P') {
         const stockActual = parseFloat(producto.stock)
-        if (stockActual < linea.cantidad) {
+
+        // Re-chequeo local por deposito (Slice 2b, VSD/Re-chequeo local
+        // rechaza stock insuficiente): la disponibilidad que autoriza el
+        // egreso es la del deposito de la caja activa (`inventario_stock`),
+        // NO el total cross-deposito `productos.stock` — un producto puede
+        // tener stock global positivo pero 0 en el deposito que
+        // efectivamente esta despachando esta venta. Bloquea ANTES de
+        // escribir cualquier kardex/inventario_stock de esta linea. Usa el
+        // mismo par lectura+decision (`leerStockDeposito` /
+        // `evaluarStockDepositoSuficiente`) que el guard de ingredientes de
+        // receta mas abajo — una unica fuente de la logica de suficiencia.
+        const stockDepositoActual = await leerStockDeposito(tx, linea.producto_id, depositoId)
+        if (!evaluarStockDepositoSuficiente(stockDepositoActual, new Decimal(linea.cantidad))) {
           throw new Error(
-            `Stock insuficiente para "${producto.nombre}". Stock: ${stockActual}, Solicitado: ${linea.cantidad}`
+            `Stock insuficiente para "${producto.nombre}" en el deposito de la caja. Stock: ${stockDepositoActual.toFixed(3)}, Solicitado: ${linea.cantidad}`
           )
         }
+
         const stockNuevo = stockActual - linea.cantidad
 
         if (Number(producto.maneja_lotes) === 1) {
@@ -542,6 +612,16 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                  ]
                )
 
+              await upsertStockDeposito(tx, {
+                empresa_id,
+                producto_id: linea.producto_id,
+                deposito_id: depositoId,
+                delta: new Decimal(aDescontar).negated(),
+                usuario_id,
+                now,
+                movimientoInventarioId: movLoteId,
+              })
+
               stockCursor = stockLoteNuevo
               pendiente -= aDescontar
             }
@@ -581,13 +661,17 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               now,
             ]
           )
-        }
 
-        await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-          stockNuevo.toFixed(3),
-          now,
-          linea.producto_id,
-        ])
+          await upsertStockDeposito(tx, {
+            empresa_id,
+            producto_id: linea.producto_id,
+            deposito_id: depositoId,
+            delta: new Decimal(linea.cantidad).negated(),
+            usuario_id,
+            now,
+            movimientoInventarioId: movId,
+          })
+        }
       } else if (producto.tipo === 'S') {
         // SERVICIO: explotar receta
         const recetasResult = await tx.execute(
@@ -607,9 +691,16 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             const cantidadNecesaria = parseFloat(ingrediente.cantidad) * linea.cantidad
             const stockIngrediente = parseFloat(ingrediente.stock)
 
-            if (stockIngrediente < cantidadNecesaria) {
+            // Re-chequeo local por deposito (cierre de WARNING de review de Slice 2b):
+            // alinea el pre-check del ingrediente con el guard ya aplicado a la linea
+            // de producto directo arriba — la disponibilidad que autoriza el consumo
+            // es la del deposito de la caja activa (`inventario_stock`), NO el total
+            // cross-deposito `productos.stock` del ingrediente (que solo se conserva
+            // para el snapshot `stock_anterior`/`stock_nuevo` del kardex, sin cambios).
+            const stockDepositoIngrediente = await leerStockDeposito(tx, ingrediente.producto_id, depositoId)
+            if (!evaluarStockDepositoSuficiente(stockDepositoIngrediente, new Decimal(cantidadNecesaria))) {
               throw new Error(
-                `Stock insuficiente de ingrediente "${ingrediente.nombre}" para servicio "${producto.nombre}". Stock: ${stockIngrediente}, Necesario: ${cantidadNecesaria.toFixed(3)}`
+                `Stock insuficiente de ingrediente "${ingrediente.nombre}" en el deposito de la caja para servicio "${producto.nombre}". Stock: ${stockDepositoIngrediente.toFixed(3)}, Necesario: ${cantidadNecesaria.toFixed(3)}`
               )
             }
 
@@ -637,11 +728,15 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               ]
             )
 
-            await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-              stockNuevoIng.toFixed(3),
+            await upsertStockDeposito(tx, {
+              empresa_id,
+              producto_id: ingrediente.producto_id,
+              deposito_id: depositoId,
+              delta: new Decimal(cantidadNecesaria).negated(),
+              usuario_id,
               now,
-              ingrediente.producto_id,
-            ])
+              movimientoInventarioId: movIngId,
+            })
           }
         }
       }

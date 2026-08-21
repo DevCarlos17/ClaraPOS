@@ -351,6 +351,7 @@ export interface Productos {
   presentacion: string | null
   codigo_barras: string | null
   duracion_min: number | null
+  deposito_id: string | null
 }
 
 export interface InventarioStock {
@@ -458,6 +459,34 @@ export interface Lotes {
   created_at: string
   updated_at: string
   created_by: string | null
+}
+
+// Slice 3a (inventario-multideposito): traspasos entre depositos.
+// Inmutable por RLS (SELECT+INSERT-only) — ver migrations/0084_traspasos_inventario.sql.
+export interface TraspasosInventario {
+  id: string
+  empresa_id: string
+  deposito_origen_id: string
+  deposito_destino_id: string
+  usuario_id: string
+  fecha: string
+  observacion: string | null
+  autorizado_por: string | null
+  verificado_por: string | null
+  correlativo_usuario: number
+  created_at: string
+  created_by: string | null
+}
+
+export interface TraspasosInventarioDet {
+  id: string
+  empresa_id: string
+  traspaso_id: string
+  producto_id: string
+  cantidad: string
+  mov_salida_id: string | null
+  mov_entrada_id: string | null
+  created_at: string
 }
 
 // =============================================
@@ -1297,6 +1326,8 @@ export interface DB {
   ajustes: Ajustes
   ajustes_det: AjustesDet
   lotes: Lotes
+  traspasos_inventario: TraspasosInventario
+  traspasos_inventario_det: TraspasosInventarioDet
   // Clientes / CxC
   clientes: Clientes
   movimientos_cuenta: MovimientosCuenta

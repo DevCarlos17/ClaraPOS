@@ -15,6 +15,8 @@ import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
+import { useDepositoActivoVenta } from '../hooks/use-deposito-activo'
+import { useInventarioStockBackfillListo } from '@/features/inventario/stores/inventario-stock-backfill-gate-store'
 import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import type { LineaVentaForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -51,6 +53,16 @@ export function PosTerminal() {
   const canCloseCajaPos = isOwner || hasPermission(PERMISSIONS.CAJA_CLOSE)
   const esperaStore = useFacturasEsperaStore()
   const { sesion, isLoading: sesionLoading } = useSesionActiva()
+  // Deposito de la caja activa (Slice 2a) — escopea lectura/validacion de
+  // stock en el article select y en el guard de cantidad. NO afecta el
+  // deposito real usado al escribir la venta (crearVenta sigue con su propia
+  // resolucion hardcodeada al principal hasta Slice 2b).
+  const { depositoId, isLoading: depositoLoading } = useDepositoActivoVenta()
+  // Gate de primer arranque del backfill de inventario_stock (cierre de
+  // WARNING post-2a) — solo lectura, NUNCA dispara el backfill (eso lo hace
+  // unicamente useInventarioStockBackfill() montado en _app/route.tsx).
+  // true en arranques posteriores al primero (sin delay alguno).
+  const backfillListo = useInventarioStockBackfillListo()
   const { cuentas: cuentasTesoreria } = useCuentasTesoreria()
   const { cajas: cajasFuerteActivas } = useCajasFuerteActivas()
   const navigate = useNavigate()
@@ -189,12 +201,12 @@ export function PosTerminal() {
 
   // --- Auto-focus en buscador cuando carga el POS ---
   useEffect(() => {
-    if (!tasaLoading && !sesionLoading && tasaValor > 0) {
+    if (!tasaLoading && !sesionLoading && !depositoLoading && backfillListo && tasaValor > 0) {
       productoBuscadorRef.current?.focus()
     }
   // Solo la primera vez que los datos esten listos
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasaLoading, sesionLoading])
+  }, [tasaLoading, sesionLoading, depositoLoading, backfillListo])
 
   // --- Focus a cantidad tras agregar/incrementar producto ---
   useEffect(() => {
@@ -610,10 +622,23 @@ export function PosTerminal() {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
-  if (tasaLoading || sesionLoading) {
+  if (tasaLoading || sesionLoading || depositoLoading) {
     return (
       <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
         Cargando...
+      </div>
+    )
+  }
+
+  // Gate de PRIMER arranque unicamente (Slice 2a — cierre de WARNING): mientras
+  // el backfill de inventario_stock corre por primera vez en este dispositivo,
+  // evita que un producto legado con stock real pero sin fila propia en
+  // inventario_stock parezca "no encontrado". En arranques posteriores
+  // (flag ya marcado) backfillListo es true de inmediato, sin este bloque.
+  if (!backfillListo) {
+    return (
+      <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+        Verificando inventario…
       </div>
     )
   }
@@ -720,7 +745,7 @@ export function PosTerminal() {
                 <kbd className="rounded border bg-muted px-1 py-px text-[10px] font-mono leading-none">F1</kbd>
               </label>
               <div className="flex-1 max-w-2xl">
-                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} tasa={tasaValor} nivelActivo={nivelActivo} />
+                <ProductoBuscador ref={productoBuscadorRef} onSelect={handleSelectProducto} tasa={tasaValor} nivelActivo={nivelActivo} depositoId={depositoId} />
               </div>
               {/* Toggle nivel de precio — visible solo si hay más de 1 nivel activo */}
               {nivelesPrecio.length > 1 && (
@@ -1289,6 +1314,7 @@ export function PosTerminal() {
         usuarioId={user?.id ?? ''}
         empresaId={user?.empresa_id ?? ''}
         metodos={metodos}
+        depositoId={depositoId}
         onSuccess={(data) => {
           setVentaExitosa(data)
           setShowCobroModal(false)

@@ -35,8 +35,20 @@ const FATAL_RESPONSE_CODES = [
 
 // Tablas con clave natural única distinta al PK (empresa_id+usuario_id+dia_semana, etc.)
 // Para estas tablas el PUT usa onConflict para hacer upsert real en lugar de insertar y fallar
+//
+// inventario_stock: clave natural UNIQUE(empresa_id, producto_id, deposito_id)
+// (migrations/0004_inventario.sql, `uq_stock_empresa_producto_deposito`). Sin esta entrada,
+// dos filas locales distintas para el MISMO (empresa,producto,deposito) — ej. el backfill de
+// arranque (recalcularStockDesdeKardex) y una compra multi-deposito casi simultánea, cada una
+// con su propio UUID local — generan dos PUT independientes. El upsert genérico (por `id`) no
+// detecta el conflicto real y el segundo PUT choca contra la constraint UNIQUE en Supabase
+// (23505 duplicate key), PowerSync lo descarta como FATAL y el registro local diverge del
+// servidor. Con clave natural, el PUT intenta UPDATE por (empresa_id,producto_id,deposito_id)
+// primero — si ya existe una fila con esa clave (de cualquier origen), converge sobre ella en
+// vez de intentar un segundo INSERT.
 const TABLE_NATURAL_KEYS: Record<string, string> = {
   horarios_staff: 'empresa_id,usuario_id,dia_semana',
+  inventario_stock: 'empresa_id,producto_id,deposito_id',
 }
 
 // Columnas BOOLEAN en Supabase que SQLite almacena como 0/1
@@ -49,6 +61,11 @@ const BOOLEAN_COLUMNS: Record<string, string[]> = {
 // Columnas que NO se deben actualizar en un UPDATE (son inmutables o son el filtro del match)
 const IMMUTABLE_COLUMNS: Record<string, string[]> = {
   horarios_staff: ['created_at', 'empresa_id', 'usuario_id', 'dia_semana'],
+  // inventario_stock no tiene created_at — la clave natural completa ya viaja en
+  // TABLE_NATURAL_KEYS y se excluye automáticamente del payload de UPDATE, pero se
+  // repite aquí explícitamente para que quede documentado en el mismo lugar que
+  // horarios_staff (ninguna columna adicional a proteger además de la clave).
+  inventario_stock: ['empresa_id', 'producto_id', 'deposito_id'],
 }
 
 // Columnas gestionadas por triggers de PostgreSQL — se actualizan server-side

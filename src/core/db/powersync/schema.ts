@@ -375,6 +375,7 @@ const productos = new Table(
     presentacion: column.text,
     codigo_barras: column.text,
     duracion_min: column.integer,
+    deposito_id: column.text,
   },
   { indexes: {} }
 )
@@ -497,6 +498,39 @@ const lotes = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+// Slice 3a (inventario-multideposito): traspasos entre depositos.
+// Inmutable por RLS (SELECT+INSERT-only, sin trigger dedicado) — ver
+// migrations/0084_traspasos_inventario.sql.
+const traspasos_inventario = new Table(
+  {
+    empresa_id: column.text,
+    deposito_origen_id: column.text,
+    deposito_destino_id: column.text,
+    usuario_id: column.text,
+    fecha: column.text,
+    observacion: column.text,
+    autorizado_por: column.text,
+    verificado_por: column.text,
+    correlativo_usuario: column.integer,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const traspasos_inventario_det = new Table(
+  {
+    empresa_id: column.text,
+    traspaso_id: column.text,
+    producto_id: column.text,
+    cantidad: column.text,
+    mov_salida_id: column.text,
+    mov_entrada_id: column.text,
+    created_at: column.text,
   },
   { indexes: {} }
 )
@@ -1557,6 +1591,8 @@ export const AppSchema = new Schema({
   ajustes,
   ajustes_det,
   lotes,
+  traspasos_inventario,
+  traspasos_inventario_det,
   // Clientes / CxC
   clientes,
   movimientos_cuenta,

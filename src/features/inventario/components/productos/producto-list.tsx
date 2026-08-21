@@ -21,6 +21,7 @@ import {
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
+import { useDepositos } from '@/features/inventario/hooks/use-depositos'
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -51,6 +52,10 @@ type SortDir = 'asc' | 'desc'
 export function ProductoList() {
   const { productos, isLoading } = useProductos()
   const { departamentos } = useDepartamentos()
+  // Todos los depositos (incluye inactivos): un producto puede tener su
+  // deposito_id apuntando a uno desactivado y aun asi debe mostrar su nombre
+  // real en la columna, no '-'. Mismo criterio que useDepartamentos (no-activos).
+  const { depositos } = useDepositos()
   const { tasaValor } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
   const { recetas } = useTodasLasRecetas()
@@ -86,6 +91,14 @@ export function ProductoList() {
     }
     return map
   }, [departamentos])
+
+  const depositoMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const dep of depositos) {
+      map.set(dep.id, dep.nombre)
+    }
+    return map
+  }, [depositos])
 
   const productosFiltrados = useMemo(() => {
     return productos.filter((p) => {
@@ -421,6 +434,7 @@ export function ProductoList() {
                     {renderSortIcon('departamento')}
                   </button>
                 </th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Deposito</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('costo')}
@@ -499,6 +513,9 @@ export function ProductoList() {
                     <td className="px-4 py-3 text-foreground">{prod.nombre}</td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {departamentoMap.get(prod.departamento_id) ?? '-'}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {prod.deposito_id ? depositoMap.get(prod.deposito_id) ?? '-' : '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <PrecioDisplay usd={prod.costo_usd} tasa={tasaValor} />
