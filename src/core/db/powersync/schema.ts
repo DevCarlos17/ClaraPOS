@@ -535,6 +535,35 @@ const traspasos_inventario_det = new Table(
   { indexes: {} }
 )
 
+// Plantillas de Traslado: sets reutilizables de productos (sin cantidad)
+// para pre-llenar el formulario de traspasos — ver
+// migrations/0085_traspaso_plantillas.sql. Editable (RLS SELECT+INSERT+
+// UPDATE, patron `marcas`); det es membresia pura (SELECT+INSERT+DELETE,
+// patron `recetas`).
+const traspaso_plantillas = new Table(
+  {
+    empresa_id: column.text,
+    nombre: column.text,
+    descripcion: column.text,
+    is_active: column.integer,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
+    updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const traspaso_plantillas_det = new Table(
+  {
+    empresa_id: column.text,
+    plantilla_id: column.text,
+    producto_id: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
 // =============================================
 // FISCAL: Impuestos por empresa
 // =============================================
@@ -1593,6 +1622,8 @@ export const AppSchema = new Schema({
   lotes,
   traspasos_inventario,
   traspasos_inventario_det,
+  traspaso_plantillas,
+  traspaso_plantillas_det,
   // Clientes / CxC
   clientes,
   movimientos_cuenta,
