@@ -55,23 +55,23 @@ The "Cargar plantilla" selector MUST only list and load plantillas belonging to 
 
 ### Requirement: Productos Inactivos al Cargar
 
-If a plantilla references a producto that has since become inactive (`is_active=0`), loading it MUST still show that producto in the resulting lineas but flagged as inactive, consistent with the repo's `productosActivos` filtering elsewhere.
+If a plantilla references a producto that has since become inactive (`is_active=0`), loading it MUST drop that producto from the resulting lineas (it is not loaded), consistent with the repo's `productosActivos` filtering elsewhere. Loading an inactive producto into a traspaso would place it in a flow where it has no stock and the write-path guard (`crearTraspaso`) would reject it; dropping it up front is the safer default.
 
-#### Scenario: Producto inactivo flaggeado
+#### Scenario: Producto inactivo descartado
 
 - GIVEN plantilla P references producto X, later deactivated
 - WHEN P is loaded into the traspaso form
-- THEN producto X appears in lineas, visually flagged as inactive rather than silently dropped
+- THEN producto X is NOT added to lineas; only the remaining active productos of P are loaded
 
 ### Requirement: Estado Vacio - Plantilla sin Productos Activos
 
-If every producto in a plantilla is inactive, loading it MUST still populate lineas (all flagged inactive) rather than producing an empty or broken grid.
+If every producto in a plantilla is inactive, loading it MUST leave the form with a single empty linea (the default) rather than producing an empty or broken grid, so the user can continue manually.
 
 #### Scenario: Todos los productos de la plantilla estan inactivos
 
 - GIVEN plantilla P has 2 productos, both now inactive
 - WHEN P is loaded into the traspaso form
-- THEN both lineas appear flagged as inactive, with no error or blank grid
+- THEN no template producto is loaded and the form shows one empty linea, with no error or blank grid
 
 ### Requirement: Sin Cambios al Flujo de Escritura
 

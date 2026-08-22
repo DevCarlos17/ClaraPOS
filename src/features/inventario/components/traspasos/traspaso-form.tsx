@@ -8,6 +8,7 @@ import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useStockPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePlantillasTraspaso, usePlantillaProductos } from '@/features/inventario/hooks/use-plantillas-traspaso'
 
 interface TraspasoFormProps {
   isOpen: boolean
@@ -162,6 +163,15 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
   const [observacion, setObservacion] = useState('')
   const [lineas, setLineas] = useState<LineaItem[]>([{ ...LINEA_VACIA }])
   const [submitting, setSubmitting] = useState(false)
+  const [plantillaSeleccionadaId, setPlantillaSeleccionadaId] = useState('')
+  // Marca la ultima plantilla efectivamente cargada, para no re-preguntar la
+  // confirmacion ni recargar cuando `productosPlantilla` (useQuery async de
+  // PowerSync) cambia de referencia tras el fetch. La carga real ocurre cuando
+  // llegan los datos, no en el render de la seleccion.
+  const plantillaCargadaRef = useRef('')
+
+  const { plantillas } = usePlantillasTraspaso()
+  const { productos: productosPlantilla } = usePlantillaProductos(plantillaSeleccionadaId)
 
   const { stock: stockOrigen } = useStockPorDeposito(depositoOrigenId)
   const stockDisponiblePorProducto = useMemo(() => {
@@ -186,7 +196,58 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
     setObservacion('')
     setLineas([{ ...LINEA_VACIA }])
     setSubmitting(false)
+    setPlantillaSeleccionadaId('')
+    plantillaCargadaRef.current = ''
   }
+
+  // "Cargar plantilla": al elegir una plantilla se REEMPLAZAN las lineas
+  // actuales por sus productos (cantidad vacia — se completa en el
+  // traspaso, nunca se persiste cantidad en la plantilla). Si ya hay datos
+  // cargados se pide confirmacion antes de reemplazar (evita perdida
+  // accidental). Productos inactivos de la plantilla se excluyen del set
+  // cargado; si todos estan inactivos, la grilla vuelve a una linea vacia
+  // en lugar de quedar en blanco. No filtra por stock en origen — un
+  // producto sin stock igual se carga y usa el feedback existente
+  // (`stockDisponiblePorProducto`/`stockExcedido`).
+  useEffect(() => {
+    // Sin plantilla elegida: resetea la marca para permitir recargar la misma
+    // plantilla mas tarde.
+    if (!plantillaSeleccionadaId) {
+      plantillaCargadaRef.current = ''
+      return
+    }
+    // `productosPlantilla` es un useQuery ASINCRONO de PowerSync: en el render
+    // de la seleccion todavia llega vacio y se puebla despues. Este effect
+    // depende de `productosPlantilla`, asi que se re-ejecuta cuando los datos
+    // llegan; el ref evita repetir la confirmacion/carga una vez procesada
+    // esta plantilla.
+    if (plantillaCargadaRef.current === plantillaSeleccionadaId) return
+    // Espera a que la query resuelva antes de cargar (no reemplazar con vacio).
+    if (productosPlantilla.length === 0) return
+
+    const tieneLineasNoVacias = lineas.some((l) => l.producto_id)
+    if (tieneLineasNoVacias && !window.confirm('Esto reemplazara los productos actuales. Continuar?')) {
+      // Rechazo: revierte la seleccion para que el usuario pueda reintentar.
+      setPlantillaSeleccionadaId('')
+      return
+    }
+
+    plantillaCargadaRef.current = plantillaSeleccionadaId
+    const activos = productosPlantilla.filter((p) => p.producto_is_active === 1)
+    setLineas(
+      activos.length > 0
+        ? activos.map((p) => ({
+            producto_id: p.producto_id,
+            producto_nombre: p.producto_nombre,
+            producto_codigo: p.producto_codigo,
+            cantidad: '',
+          }))
+        : [{ ...LINEA_VACIA }]
+    )
+    // `lineas` se lee para el gate de confirmacion pero no debe re-disparar el
+    // effect (la carga la gobiernan la seleccion + la llegada de datos).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plantillaSeleccionadaId, productosPlantilla])
 
   useEffect(() => {
     if (isOpen) {
@@ -336,6 +397,23 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
                 placeholder="Descripcion o comentario"
                 className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
               />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label htmlFor="traspaso-plantilla" className="text-xs font-medium text-muted-foreground">
+                Cargar plantilla
+              </label>
+              <select
+                id="traspaso-plantilla"
+                value={plantillaSeleccionadaId}
+                onChange={(e) => setPlantillaSeleccionadaId(e.target.value)}
+                className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                <option value="">Seleccionar plantilla...</option>
+                {plantillas.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nombre}</option>
+                ))}
+              </select>
             </div>
 
             {/* Lineas — 1 = individual, N = por lote, mismo formulario */}
