@@ -6,6 +6,7 @@ import { localNow } from '@/lib/dates'
 import {
   buildUnsetOtrosPrincipalesQuery,
   debeBloquearQuitarUltimoPrincipal,
+  debeForzarPrincipalUnico,
 } from '@/features/inventario/lib/deposito-principal'
 
 export interface Deposito {
@@ -67,6 +68,13 @@ export function useDepositosVentaActivos() {
  * de insertar, para garantizar la invariante "a lo sumo un es_principal por
  * empresa" de forma atomica (nunca hay una ventana con 0 o 2+ principales).
  * Ver `buildUnsetOtrosPrincipalesQuery` para el detalle de la query.
+ *
+ * Ademas aplica "deposito activo unico debe ser principal": si `es_principal`
+ * viene en `false` Y no existe NINGUN otro deposito activo de la empresa
+ * (este seria el unico), se RECHAZA fail-fast, antes de abrir la transaccion,
+ * sin escribir nada. Si `es_principal=true`, esta condicion nunca puede
+ * bloquear, por lo que ni siquiera se consulta el conteo. Ver
+ * `debeForzarPrincipalUnico` para el detalle de la decision.
  */
 export async function crearDeposito(data: {
   nombre: string
@@ -78,6 +86,24 @@ export async function crearDeposito(data: {
 }) {
   const id = uuidv4()
   const now = localNow()
+
+  if (!data.es_principal) {
+    const otrosRows = await db.getAll<{ cnt: number }>(
+      'SELECT COUNT(*) as cnt FROM depositos WHERE empresa_id = ? AND is_active = 1',
+      [data.empresa_id]
+    )
+    const otrosActivosCount = Number(otrosRows[0]?.cnt ?? 0)
+
+    if (
+      debeForzarPrincipalUnico({
+        otrosActivosCount,
+        quedaraActivo: true,
+        esPrincipalFalse: true,
+      })
+    ) {
+      throw new Error('El único depósito activo de la empresa debe ser principal.')
+    }
+  }
 
   await db.writeTransaction(async (tx) => {
     if (data.es_principal) {
@@ -120,6 +146,12 @@ export async function crearDeposito(data: {
  * el UNICO deposito principal activo de la empresa, se RECHAZA — fail-fast,
  * antes de abrir la transaccion, sin escribir nada. Ver
  * `debeBloquearQuitarUltimoPrincipal` para el detalle de la decision.
+ *
+ * Tambien aplica "deposito activo unico debe ser principal" como defensa en
+ * profundidad: si el deposito NO es actualmente el principal activo pero
+ * queda activo y se reconfirma/establece `es_principal=false` sin que exista
+ * ningun otro deposito activo de la empresa, tambien se RECHAZA fail-fast.
+ * Ver `debeForzarPrincipalUnico`.
  */
 export async function actualizarDeposito(
   id: string,
@@ -161,6 +193,8 @@ export async function actualizarDeposito(
       const esPrincipalActivoActual = actual.es_principal === 1 && actual.is_active === 1
       const seEstaQuitando =
         data.es_principal === false || (data.is_active === false && actual.es_principal === 1)
+      const podriaDejarActivoSinPrincipal =
+        data.es_principal === false && data.is_active !== false && actual.is_active === 1
 
       if (esPrincipalActivoActual && seEstaQuitando) {
         const otrosRows = await db.getAll<{ cnt: number }>(
@@ -179,6 +213,22 @@ export async function actualizarDeposito(
           throw new Error(
             'Debe existir al menos un deposito principal. Marca otro deposito como principal antes de quitar este.'
           )
+        }
+      } else if (podriaDejarActivoSinPrincipal) {
+        const otrosRows = await db.getAll<{ cnt: number }>(
+          'SELECT COUNT(*) as cnt FROM depositos WHERE empresa_id = ? AND is_active = 1 AND id != ?',
+          [empresaId, id]
+        )
+        const otrosActivosCount = Number(otrosRows[0]?.cnt ?? 0)
+
+        if (
+          debeForzarPrincipalUnico({
+            otrosActivosCount,
+            quedaraActivo: true,
+            esPrincipalFalse: true,
+          })
+        ) {
+          throw new Error('El único depósito activo de la empresa debe ser principal.')
         }
       }
     }
