@@ -69,3 +69,35 @@ export function debeBloquearQuitarUltimoPrincipal(params: UltimoPrincipalGuardPa
     !params.existeOtroPrincipalActivo
   )
 }
+
+export interface ForzarPrincipalUnicoParams {
+  /** Depositos activos de OTRAS filas (no cuenta este) que quedarian tras la operacion. */
+  otrosActivosCount: number
+  /** Este deposito quedara activo tras la operacion (is_active=1). */
+  quedaraActivo: boolean
+  /** Este deposito quedara es_principal=false tras la operacion. */
+  esPrincipalFalse: boolean
+}
+
+/**
+ * Invariante "deposito activo unico debe ser principal". Se evalua ANTES de
+ * escribir: `otrosActivosCount` es el conteo de is_active=1 de la empresa SIN
+ * contar el deposito que se esta creando/actualizando (mismo criterio que
+ * `existeOtroPrincipalActivo` en `debeBloquearQuitarUltimoPrincipal`).
+ * Devuelve `true` cuando la operacion DEBE bloquearse: quedaria exactamente 1
+ * deposito activo en la empresa y ese deposito NO es_principal, lo que rompe
+ * el fallback de `resolveDepositoIngreso`/`resolveDepositoEgresoVenta`
+ * (`... WHERE es_principal=1 AND is_active=1 LIMIT 1`, sin ORDER BY).
+ *
+ * Bloquea SOLO cuando las 3 condiciones se cumplen a la vez: no quedan otros
+ * depositos activos, este deposito quedara activo, y quedara es_principal=false.
+ * Si existe otro deposito activo (otrosActivosCount > 0), o este deposito no
+ * quedara activo, o quedara es_principal=true, NUNCA se bloquea.
+ */
+export function debeForzarPrincipalUnico(params: ForzarPrincipalUnicoParams): boolean {
+  return (
+    params.otrosActivosCount === 0 &&
+    params.quedaraActivo &&
+    params.esPrincipalFalse
+  )
+}

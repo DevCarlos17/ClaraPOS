@@ -47,6 +47,11 @@ export function DepositoList() {
     return map
   }, [conteosData])
 
+  const activeDepositosCount = useMemo(
+    () => depositos.filter((d) => d.is_active === 1).length,
+    [depositos]
+  )
+
   function handleNuevo() {
     setEditingDeposito(undefined)
     setFormOpen(true)
@@ -271,6 +276,7 @@ export function DepositoList() {
         isOpen={formOpen}
         onClose={handleCloseForm}
         deposito={editingDeposito}
+        activeDepositosCount={activeDepositosCount}
       />
 
       <DepositoProductosModal

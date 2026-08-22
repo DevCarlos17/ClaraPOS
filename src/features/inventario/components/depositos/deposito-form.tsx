@@ -12,12 +12,24 @@ interface DepositoFormProps {
   isOpen: boolean
   onClose: () => void
   deposito?: Deposito
+  /**
+   * Cantidad de depositos ACTIVOS (`is_active=1`) de la empresa, calculada
+   * por el caller (`deposito-list.tsx`, sin query nueva). Cuando queda
+   * exactamente 1 activo, el invariante "deposito activo unico debe ser
+   * principal" bloquea y fuerza el checkbox `es_principal` en esta UI
+   * (capa UX-only; el hook y el trigger de DB son la fuente de verdad).
+   */
+  activeDepositosCount: number
 }
 
-export function DepositoForm({ isOpen, onClose, deposito }: DepositoFormProps) {
+export function DepositoForm({ isOpen, onClose, deposito, activeDepositosCount }: DepositoFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!deposito
   const { user } = useCurrentUser()
+
+  const soloUno = isEditing
+    ? activeDepositosCount === 1 && deposito!.is_active === 1
+    : activeDepositosCount === 0
 
   const [nombre, setNombre] = useState('')
   const [direccion, setDireccion] = useState('')
@@ -31,12 +43,12 @@ export function DepositoForm({ isOpen, onClose, deposito }: DepositoFormProps) {
       if (deposito) {
         setNombre(deposito.nombre)
         setDireccion(deposito.direccion ?? '')
-        setEsPrincipal(deposito.es_principal === 1)
+        setEsPrincipal(deposito.es_principal === 1 || soloUno)
         setPermiteVenta(deposito.permite_venta === 1)
       } else {
         setNombre('')
         setDireccion('')
-        setEsPrincipal(false)
+        setEsPrincipal(soloUno)
         setPermiteVenta(false)
       }
       setErrors({})
@@ -44,7 +56,7 @@ export function DepositoForm({ isOpen, onClose, deposito }: DepositoFormProps) {
     } else {
       dialogRef.current?.close()
     }
-  }, [isOpen, deposito])
+  }, [isOpen, deposito, soloUno])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -156,17 +168,26 @@ export function DepositoForm({ isOpen, onClose, deposito }: DepositoFormProps) {
           </div>
 
           {/* Es principal */}
-          <div className="flex items-center gap-2">
-            <input
-              id="deposito-es-principal"
-              type="checkbox"
-              checked={esPrincipal}
-              onChange={(e) => setEsPrincipal(e.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            <label htmlFor="deposito-es-principal" className="text-sm font-medium text-gray-700">
-              Deposito principal
-            </label>
+          <div>
+            <div className="flex items-center gap-2">
+              <input
+                id="deposito-es-principal"
+                type="checkbox"
+                checked={esPrincipal}
+                disabled={soloUno}
+                onChange={(e) => setEsPrincipal(e.target.checked)}
+                aria-describedby={soloUno ? 'deposito-es-principal-hint' : undefined}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-70"
+              />
+              <label htmlFor="deposito-es-principal" className="text-sm font-medium text-gray-700">
+                Deposito principal
+              </label>
+            </div>
+            {soloUno && (
+              <p id="deposito-es-principal-hint" className="text-xs text-gray-500 mt-1 ml-6">
+                Es el único depósito activo — debe ser el principal.
+              </p>
+            )}
           </div>
 
           {/* Permite venta */}

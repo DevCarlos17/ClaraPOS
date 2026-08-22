@@ -13,6 +13,7 @@
 import {
   buildUnsetOtrosPrincipalesQuery,
   debeBloquearQuitarUltimoPrincipal,
+  debeForzarPrincipalUnico,
 } from '../deposito-principal'
 
 describe('buildUnsetOtrosPrincipalesQuery', () => {
@@ -85,6 +86,55 @@ describe('debeBloquearQuitarUltimoPrincipal', () => {
       esPrincipalActivoActual: true,
       seEstaQuitando: false,
       existeOtroPrincipalActivo: false,
+    })
+
+    expect(bloqueado).toBe(false)
+  })
+})
+
+// Invariante "deposito activo unico debe ser principal": si tras la operacion
+// la empresa queda con exactamente 1 deposito activo (otrosActivosCount=0 +
+// quedaraActivo), ese deposito DEBE ser es_principal=1. `debeForzarPrincipalUnico`
+// determina si la operacion debe BLOQUEARSE porque dejaria a ese unico
+// deposito activo con es_principal=0, lo que rompe el fallback de
+// `resolveDepositoIngreso`/`resolveDepositoEgresoVenta`
+// (`... WHERE es_principal=1 AND is_active=1 LIMIT 1`).
+describe('debeForzarPrincipalUnico', () => {
+  it('no quedan otros activos Y este quedara activo Y quedara es_principal=false: BLOQUEA', () => {
+    const bloqueado = debeForzarPrincipalUnico({
+      otrosActivosCount: 0,
+      quedaraActivo: true,
+      esPrincipalFalse: true,
+    })
+
+    expect(bloqueado).toBe(true)
+  })
+
+  it('existe al menos otro deposito activo (otrosActivosCount > 0): PERMITE, sin importar el resto', () => {
+    const bloqueado = debeForzarPrincipalUnico({
+      otrosActivosCount: 1,
+      quedaraActivo: true,
+      esPrincipalFalse: true,
+    })
+
+    expect(bloqueado).toBe(false)
+  })
+
+  it('el propio deposito NO quedara activo (se esta desactivando): PERMITE', () => {
+    const bloqueado = debeForzarPrincipalUnico({
+      otrosActivosCount: 0,
+      quedaraActivo: false,
+      esPrincipalFalse: true,
+    })
+
+    expect(bloqueado).toBe(false)
+  })
+
+  it('el propio deposito quedara es_principal=true: PERMITE', () => {
+    const bloqueado = debeForzarPrincipalUnico({
+      otrosActivosCount: 0,
+      quedaraActivo: true,
+      esPrincipalFalse: false,
     })
 
     expect(bloqueado).toBe(false)
