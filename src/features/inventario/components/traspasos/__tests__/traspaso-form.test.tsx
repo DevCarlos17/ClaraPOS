@@ -68,9 +68,14 @@ const STOCK_ORIGEN_DEFAULT = [
 // Plantillas de traslado: 'plant-1' = 1 producto activo (caso "reemplazo
 // simple"/"crearTraspaso tras cargar"); 'plant-2' = 1 activo + 1 inactivo
 // (caso "filtrado de productos inactivos al cargar").
+// Plantillas de traslado: 'plant-1' = 1 producto activo (caso "reemplazo
+// simple"/"crearTraspaso tras cargar"); 'plant-2' = 1 activo + 1 inactivo
+// (caso "filtrado de productos inactivos al cargar"); 'plant-3' = todos
+// inactivos (caso "fallback a una linea vacia").
 const PLANTILLAS = [
   { id: 'plant-1', empresa_id: 'emp-1', nombre: 'Plantilla Semanal', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 1 },
   { id: 'plant-2', empresa_id: 'emp-1', nombre: 'Plantilla Con Inactivo', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 2 },
+  { id: 'plant-3', empresa_id: 'emp-1', nombre: 'Plantilla Todo Inactivo', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 2 },
 ]
 
 const PLANTILLA_PRODUCTOS: Record<string, Array<{ id: string; producto_id: string; producto_nombre: string; producto_codigo: string; producto_is_active: number }>> = {
@@ -80,6 +85,10 @@ const PLANTILLA_PRODUCTOS: Record<string, Array<{ id: string; producto_id: strin
   'plant-2': [
     { id: 'det-2', producto_id: 'prod-1', producto_nombre: 'Producto Uno', producto_codigo: 'P-001', producto_is_active: 1 },
     { id: 'det-3', producto_id: 'prod-2', producto_nombre: 'Producto Dos', producto_codigo: 'P-002', producto_is_active: 0 },
+  ],
+  'plant-3': [
+    { id: 'det-4', producto_id: 'prod-1', producto_nombre: 'Producto Uno', producto_codigo: 'P-001', producto_is_active: 0 },
+    { id: 'det-5', producto_id: 'prod-2', producto_nombre: 'Producto Dos', producto_codigo: 'P-002', producto_is_active: 0 },
   ],
 }
 
@@ -379,6 +388,24 @@ describe('TraspasoForm — Cargar plantilla (Slice C)', () => {
     expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
     expect(screen.queryByText('Producto Dos')).not.toBeInTheDocument()
     expect(screen.getAllByPlaceholderText('0.000')).toHaveLength(1)
+  })
+
+  it('plantilla con TODOS los productos inactivos: la grilla vuelve a una linea vacia (sin error)', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-3')
+
+    // Ningun producto de la plantilla se carga (todos inactivos), pero la
+    // grilla no queda en blanco: muestra una unica linea vacia.
+    await waitFor(() => {
+      expect(screen.getAllByPlaceholderText('0.000')).toHaveLength(1)
+    })
+    expect(screen.queryByText('Producto Uno')).not.toBeInTheDocument()
+    expect(screen.queryByText('Producto Dos')).not.toBeInTheDocument()
+    expect((screen.getByPlaceholderText('0.000') as HTMLInputElement).value).toBe('')
   })
 
   it('crearTraspaso sigue funcionando correctamente tras cargar una plantilla', async () => {
