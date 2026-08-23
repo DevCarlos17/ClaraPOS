@@ -22,13 +22,27 @@ export function useDepositoActivoVenta() {
   const { sesion, isLoading: sesionLoading } = useSesionActiva()
   const cajaId = sesion?.caja_id ?? ''
 
+  // Guardia `is_active` (change `guarda-deposito-inactivo` Slice B, decision
+  // de diseno #4): el deposito de la caja puede haber sido desactivado
+  // despues de asignarse — este hook es SOLO lectura/validacion de stock
+  // (cosmetico), asi que si `is_active=0` se trata como si la caja no tuviera
+  // deposito asignado, cayendo al principal (mismo fallback ya usado para
+  // "caja sin deposito"). El camino de ESCRITURA (`crearVenta`) re-valida de
+  // forma independiente y bloquea (hard-block) si esto ocurre.
   const { data: cajaData, isLoading: cajaLoading } = useQuery(
-    cajaId ? 'SELECT deposito_id FROM cajas WHERE id = ? LIMIT 1' : '',
+    cajaId
+      ? `SELECT c.deposito_id as deposito_id, d.is_active as deposito_is_active
+         FROM cajas c
+         LEFT JOIN depositos d ON d.id = c.deposito_id
+         WHERE c.id = ? LIMIT 1`
+      : '',
     cajaId ? [cajaId] : []
   )
-  const cajaDepositoId = cajaData?.[0]
-    ? ((cajaData[0] as { deposito_id: string | null }).deposito_id ?? null)
-    : null
+  const cajaRow = cajaData?.[0] as
+    | { deposito_id: string | null; deposito_is_active: number | null }
+    | undefined
+  const cajaDepositoId =
+    cajaRow?.deposito_is_active === 0 ? null : (cajaRow?.deposito_id ?? null)
 
   const { data: principalData, isLoading: principalLoading } = useQuery(
     empresaId

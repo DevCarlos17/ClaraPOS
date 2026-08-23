@@ -9,6 +9,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
 import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
+import { resolveDepositoReingresoNcr } from '@/features/inventario/lib/deposito-inactivo'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -178,10 +179,56 @@ export async function crearNotaCredito(
       status: string
       deposito_id: string
     }
-    const depositoId = venta.deposito_id
+    const depositoOrigenId = venta.deposito_id
 
     if (venta.status === 'ANULADA') {
       throw new Error('Esta factura ya fue anulada')
+    }
+
+    // Reingreso automatico (change `guarda-deposito-inactivo` Slice B,
+    // decision de producto #3, obs #2228): si el deposito de ORIGEN de la
+    // venta sigue activo, el stock reingresa ahi (comportamiento pre-existente,
+    // sin cambios). Si fue desactivado desde la venta, cae AUTOMATICAMENTE al
+    // deposito principal ACTUAL de la empresa — el cajero NUNCA elige (flujo
+    // POS-express, "reversar factura del dia"). Resuelto ANTES de construir
+    // cualquier INSERT de `movimientos_inventario`, para que el trigger DB de
+    // defensa en profundidad (migracion 0087) nunca vea un fallback en
+    // transito — siempre recibe un deposito YA activo.
+    //
+    // La consulta al principal SOLO ocurre cuando el origen esta inactivo
+    // (lazy) — preserva el comportamiento pre-existente de NUNCA tocar
+    // `es_principal` cuando el origen sigue activo (test "NO al deposito
+    // principal de la empresa").
+    const depositoOrigenResult = await tx.execute(
+      'SELECT is_active FROM depositos WHERE id = ?',
+      [depositoOrigenId]
+    )
+    const depositoOrigenIsActive =
+      !!depositoOrigenResult.rows &&
+      depositoOrigenResult.rows.length > 0 &&
+      (depositoOrigenResult.rows.item(0) as { is_active: number }).is_active === 1
+
+    let principalDepositoId: string | null = null
+    if (!depositoOrigenIsActive) {
+      const principalResult = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+        [empresa_id]
+      )
+      principalDepositoId =
+        principalResult.rows && principalResult.rows.length > 0
+          ? (principalResult.rows.item(0) as { id: string }).id
+          : null
+    }
+
+    const depositoId = resolveDepositoReingresoNcr(
+      depositoOrigenId,
+      depositoOrigenIsActive,
+      principalDepositoId
+    )
+    if (!depositoId) {
+      throw new Error(
+        'No se pudo reintegrar el stock: no hay un deposito activo disponible en la empresa. Configure un deposito principal.'
+      )
     }
 
     // 2. Generar nro_ncr (por empresa)

@@ -133,8 +133,15 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
   }
 
   interface VentaTxFixtures {
-    /** Fila que retorna la resolucion `sesion_caja -> caja.deposito_id`. `null`/ausente = sin fila (sin sesion/caja). */
-    cajaDepositoRow?: { deposito_id: string | null } | null
+    /**
+     * Fila que retorna la resolucion `sesion_caja -> caja.deposito_id` (con
+     * `depositos.is_active` del deposito de la caja, change
+     * `guarda-deposito-inactivo` Slice B). `null`/ausente = sin fila (sin
+     * sesion/caja). `deposito_is_active` ausente = no se testea ese camino
+     * (mismo comportamiento que 1, no bloquea — fixtures pre-existentes no
+     * lo necesitan).
+     */
+    cajaDepositoRow?: { deposito_id: string | null; deposito_is_active?: number } | null
     principalDepositoId: string
     productos: Record<string, { tipo: string; stock: string; nombre: string; maneja_lotes: number }>
     /** key `${producto_id}::${deposito_id}` -> cantidad_actual. Ausente = sin fila (baseline 0). */
@@ -398,6 +405,49 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     const kardexInsert = calls.find(
       (c) => c.sql.startsWith('INSERT INTO movimientos_inventario') && c.params.includes('ing-1')
     )
+    expect(kardexInsert).toBeDefined()
+    expect(kardexInsert!.params).toContain('dep-caja-A')
+  })
+
+  it('Scenario: Venta bloqueada (change guarda-deposito-inactivo, Slice B) — el deposito de la caja esta is_active=0: rechaza la venta en espanol, antes de escribir cualquier kardex', async () => {
+    const calls = mockCrearVentaTx({
+      cajaDepositoRow: { deposito_id: 'dep-caja-A', deposito_is_active: 0 },
+      principalDepositoId: 'dep-principal',
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+      inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+    })
+
+    await expect(
+      crearVenta(
+        baseParams({
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 3 })],
+          pagos: [pago({ monto: 30 })],
+        })
+      )
+    ).rejects.toThrow(/deposito.*inactivo/i)
+
+    const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(kardexInsert).toBeUndefined()
+  })
+
+  it('Scenario: Venta permitida — el deposito de la caja sigue is_active=1: procede normalmente (no regresion)', async () => {
+    const calls = mockCrearVentaTx({
+      cajaDepositoRow: { deposito_id: 'dep-caja-A', deposito_is_active: 1 },
+      principalDepositoId: 'dep-principal',
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+      inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+    })
+
+    await crearVenta(
+      baseParams({
+        sesion_caja_id: 'sesion-1',
+        lineas: [linea({ producto_id: 'prod-1', cantidad: 3 })],
+        pagos: [pago({ monto: 30 })],
+      })
+    )
+
+    const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
     expect(kardexInsert).toBeDefined()
     expect(kardexInsert!.params).toContain('dep-caja-A')
   })

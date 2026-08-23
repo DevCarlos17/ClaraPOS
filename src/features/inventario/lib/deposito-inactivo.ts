@@ -73,3 +73,25 @@ export function resolveBloqueoDesactivacion(cajas: CajaReferenciaDeposito[]): Bl
 
   return { bloqueado: true, motivo: 'CAJA_SIN_SESION', cajas }
 }
+
+/**
+ * Pura: reingreso de stock automatico para el flujo de NCR POS-express
+ * (decision de producto #3, obs #2228 — "reversar factura del dia", el
+ * cajero NUNCA elige destino). Si el deposito de ORIGEN de la venta
+ * (`venta.deposito_id`) sigue activo, el stock vuelve ahi. Si fue desactivado
+ * desde la venta, cae automaticamente al deposito `es_principal` ACTUAL de
+ * la empresa. Si tampoco hay principal (caso borde: empresa sin deposito
+ * activo configurado), retorna `null` — el caller (`crearNotaCredito`)
+ * decide como manejarlo (no puede escribir un `movimientos_inventario` con
+ * `deposito_id` nulo, `NOT NULL` en el schema).
+ *
+ * El modulo NCR administrativo (destino elegido explicitamente) NO usa esta
+ * funcion — queda fuera de scope (todavia no existe, ver obs #2228).
+ */
+export function resolveDepositoReingresoNcr(
+  origenDepositoId: string,
+  origenIsActive: boolean,
+  principalDepositoId: string | null
+): string | null {
+  return origenIsActive ? origenDepositoId : principalDepositoId
+}
