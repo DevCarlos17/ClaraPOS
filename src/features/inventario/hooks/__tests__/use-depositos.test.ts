@@ -290,3 +290,92 @@ describe('actualizarDeposito — invariante al menos un principal por empresa (a
     expect(calls[0].sql).toContain('UPDATE depositos SET')
   })
 })
+
+// Guarda de desactivacion (change `guarda-deposito-inactivo`, Slice A): un
+// deposito referenciado por `cajas.deposito_id` NO puede desactivarse sin
+// antes cerrar la sesion abierta (si existe) o reasignar la caja. Defensa en
+// profundidad a nivel de hook (fail-fast, fuera de la tx) — la UI
+// (`deposito-list.tsx`) ya revisa esto de forma proactiva ANTES de llamar al
+// hook, pero callers no-UI (o bugs de UI) deben seguir bloqueados aca.
+describe('actualizarDeposito — guarda de desactivacion (cajas.deposito_id referenciando el deposito)', () => {
+  it('Scenario: Bloqueada por sesion abierta — la caja que referencia el deposito tiene sesion ABIERTA: rechaza fail-fast, en espanol, nombrando la caja, y NO abre writeTransaction', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-1', es_principal: 0, is_active: 1 }]
+      }
+      if (sql.startsWith('SELECT c.id as caja_id')) {
+        return [{ caja_id: 'caja-1', caja_nombre: 'CAJA PRINCIPAL', tiene_sesion_abierta: 1 }]
+      }
+      return []
+    }) as typeof db.getAll)
+    const calls = mockWriteTransaction()
+
+    await expect(
+      actualizarDeposito('deposito-en-uso', { is_active: false })
+    ).rejects.toThrow(/CAJA PRINCIPAL/)
+
+    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('Scenario: Bloqueada por caja sin sesion abierta — la caja referencia el deposito, sin sesion abierta: rechaza, instruyendo a reasignar la caja primero', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-1', es_principal: 0, is_active: 1 }]
+      }
+      if (sql.startsWith('SELECT c.id as caja_id')) {
+        return [{ caja_id: 'caja-2', caja_nombre: 'CAJA SECUNDARIA', tiene_sesion_abierta: 0 }]
+      }
+      return []
+    }) as typeof db.getAll)
+    const calls = mockWriteTransaction()
+
+    await expect(
+      actualizarDeposito('deposito-en-uso', { is_active: false })
+    ).rejects.toThrow(/CAJA SECUNDARIA.*[Rr]easign/)
+
+    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+    expect(calls).toHaveLength(0)
+  })
+
+  it('Scenario: Permitida sin cajas referenciandolo — ninguna caja apunta al deposito: la desactivacion procede normalmente', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-1', es_principal: 0, is_active: 1 }]
+      }
+      if (sql.startsWith('SELECT c.id as caja_id')) {
+        return []
+      }
+      return []
+    }) as typeof db.getAll)
+    const calls = mockWriteTransaction()
+
+    await actualizarDeposito('deposito-libre', { is_active: false })
+
+    expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].sql).toContain('UPDATE depositos SET')
+  })
+
+  it('la query de cajas referenciando el deposito filtra por empresa_id (aislamiento multi-tenant)', async () => {
+    mockedDb.getAll.mockImplementation((async (sql: string) => {
+      if (sql.startsWith('SELECT empresa_id, es_principal, is_active FROM depositos')) {
+        return [{ empresa_id: 'empresa-7', es_principal: 0, is_active: 1 }]
+      }
+      if (sql.startsWith('SELECT c.id as caja_id')) {
+        return []
+      }
+      return []
+    }) as typeof db.getAll)
+    mockWriteTransaction()
+
+    await actualizarDeposito('deposito-libre', { is_active: false })
+
+    const cajasCall = mockedDb.getAll.mock.calls.find(([sql]) =>
+      (sql as string).startsWith('SELECT c.id as caja_id')
+    )
+    expect(cajasCall).toBeDefined()
+    expect(cajasCall![0]).toContain('empresa_id')
+    expect(cajasCall![1]).toEqual(expect.arrayContaining(['empresa-7']))
+  })
+})
