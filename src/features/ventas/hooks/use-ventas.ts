@@ -309,18 +309,36 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     //    Deposito de la Caja, VSD/Venta sin sesion de caja activa). Este es el
     //    deposito que usan TODOS los movimientos de salida de esta venta
     //    (kardex + inventario_stock), incluida la explosion de receta.
+    //
+    //    Guardia `is_active` (change `guarda-deposito-inactivo` Slice B,
+    //    decision de producto #2, obs #2228): si la caja SI tiene un
+    //    `deposito_id` asignado pero ese deposito esta `is_active=0`, la venta
+    //    se RECHAZA (hard-block, NO fallback al principal) — con la
+    //    reasignacion proactiva de Slice A, este estado casi nunca deberia
+    //    ocurrir, pero es el backstop real al momento de venta. Es la MISMA
+    //    query/tx.execute de siempre (nunca escribio nada todavia), solo se le
+    //    agrega el JOIN a `depositos` para traer `is_active` sin costo extra.
     let cajaDepositoId: string | null = null
     if (sesion_caja_id) {
       const cajaDepResult = await tx.execute(
-        `SELECT c.deposito_id as deposito_id
+        `SELECT c.deposito_id as deposito_id, d.is_active as deposito_is_active
          FROM sesiones_caja sc
          JOIN cajas c ON sc.caja_id = c.id
+         LEFT JOIN depositos d ON d.id = c.deposito_id
          WHERE sc.id = ? LIMIT 1`,
         [sesion_caja_id]
       )
       if (cajaDepResult.rows && cajaDepResult.rows.length > 0) {
-        const row = cajaDepResult.rows.item(0) as { deposito_id: string | null } | null
+        const row = cajaDepResult.rows.item(0) as {
+          deposito_id: string | null
+          deposito_is_active: number | null
+        } | null
         cajaDepositoId = row?.deposito_id ?? null
+        if (cajaDepositoId && row?.deposito_is_active === 0) {
+          throw new Error(
+            'No se puede completar la venta: el deposito asignado a esta caja esta inactivo. Reasigne la caja a otro deposito antes de vender.'
+          )
+        }
       }
     }
 
