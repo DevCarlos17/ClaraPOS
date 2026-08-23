@@ -50,6 +50,15 @@ interface NcrTxFixtures {
   /** key `${producto_id}::${deposito_id}` -> cantidad_actual previa en inventario_stock. */
   inventarioStock?: Record<string, string>
   recetas?: Record<string, Array<{ producto_id: string; cantidad: string; stock: string; nombre: string }>>
+  /**
+   * Slice B (change `guarda-deposito-inactivo`): is_active de
+   * `venta.deposito_id` (el deposito de ORIGEN). Default `true` — preserva el
+   * comportamiento de los tests pre-existentes (reingreso siempre al origen,
+   * nunca consulta el principal).
+   */
+  depositoOrigenIsActive?: boolean
+  /** Id del deposito principal activo de la empresa — solo se consulta/usa cuando `depositoOrigenIsActive` es `false` (fallback NCR). */
+  principalDepositoId?: string
 }
 
 /**
@@ -66,6 +75,16 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
 
         if (sql.startsWith('SELECT * FROM ventas WHERE id')) {
           return { rows: { length: 1, item: () => opts.venta } }
+        }
+        if (sql.startsWith('SELECT is_active FROM depositos WHERE id')) {
+          return {
+            rows: { length: 1, item: () => ({ is_active: (opts.depositoOrigenIsActive ?? true) ? 1 : 0 }) },
+          }
+        }
+        if (sql.startsWith('SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1')) {
+          return opts.principalDepositoId
+            ? { rows: { length: 1, item: () => ({ id: opts.principalDepositoId }) } }
+            : { rows: { length: 0, item: () => undefined } }
         }
         if (sql.startsWith('SELECT COUNT(*) as cnt FROM notas_credito')) {
           return { rows: { length: 1, item: () => ({ cnt: 0 }) } }
@@ -308,5 +327,59 @@ describe('crearNotaCredito — Slice 4 (reingreso de stock al deposito de ORIGEN
     )
     expect(stockUpsertRead).toBeDefined()
     expect(stockUpsertRead!.params).toContain('dep-B')
+  })
+})
+
+describe('crearNotaCredito — Slice B (change guarda-deposito-inactivo): fallback automatico al principal cuando el deposito de origen esta inactivo', () => {
+  it('Scenario: Fallback automatico al principal — venta.deposito_id (dep-B) esta inactivo: reintegra al deposito PRINCIPAL actual, no al origen, sin preguntar al cajero', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '30.00',
+        total_bs: '1200.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-principal-actual': '10.000' },
+      depositoOrigenIsActive: false,
+      principalDepositoId: 'dep-principal-actual',
+    })
+
+    await crearNotaCredito(baseParams())
+
+    const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(kardexInsert).toBeDefined()
+    expect(kardexInsert!.params).toContain('dep-principal-actual')
+    expect(kardexInsert!.params).not.toContain('dep-B')
+  })
+
+  it('origen inactivo y sin deposito principal configurado (caso borde): rechaza en espanol, sin escribir ningun kardex', async () => {
+    mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '30.00',
+        total_bs: '1200.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      depositoOrigenIsActive: false,
+      // Sin principalDepositoId: no hay deposito principal activo configurado.
+    })
+
+    await expect(crearNotaCredito(baseParams())).rejects.toThrow(/deposito/i)
   })
 })
