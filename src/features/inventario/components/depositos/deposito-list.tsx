@@ -10,12 +10,25 @@ import {
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatDateTime } from '@/lib/format'
 import { localNow } from '@/lib/dates'
+import {
+  agruparCajasPorDeposito,
+  resolveBloqueoDesactivacion,
+  type CajaReferenciaDeposito,
+} from '@/features/inventario/lib/deposito-inactivo'
 import { DepositoForm } from './deposito-form'
 import { DepositoProductosModal } from './deposito-productos-modal'
+import { ReasignarCajaDialog } from './reasignar-caja-dialog'
 
 interface ConteoDeposito {
   deposito_id: string
   total: number
+}
+
+interface CajaPorDepositoRow {
+  deposito_id: string
+  caja_id: string
+  caja_nombre: string
+  tiene_sesion_abierta: number
 }
 
 export function DepositoList() {
@@ -27,6 +40,8 @@ export function DepositoList() {
   const [editingDeposito, setEditingDeposito] = useState<Deposito | undefined>(undefined)
   const [togglingId, setTogglingId] = useState<string | null>(null)
   const [productoModalDeposito, setProductoModalDeposito] = useState<Deposito | null>(null)
+  const [reasignarDeposito, setReasignarDeposito] = useState<Deposito | null>(null)
+  const [reasignarCajas, setReasignarCajas] = useState<CajaReferenciaDeposito[]>([])
 
   // Cantidad de articulos por deposito (agrupado desde movimientos)
   const { data: conteosData } = useQuery(
@@ -46,6 +61,29 @@ export function DepositoList() {
     }
     return map
   }, [conteosData])
+
+  // Transparencia de uso (Requirement: Transparencia de Uso en el Listado de
+  // Depositos, change `guarda-deposito-inactivo`): 1 sola query agrupada por
+  // `deposito_id` trayendo cada caja de la empresa cuyo `deposito_id` la
+  // referencia, junto con si tiene una `sesiones_caja` con `status='ABIERTA'`
+  // (EXISTS correlacionado) — evita N+1 (Decision de diseno #2). Mismo patron
+  // useMemo+Map ya establecido arriba para `conteosMap`.
+  const { data: cajasPorDepositoData } = useQuery(
+    empresaId
+      ? `SELECT c.deposito_id as deposito_id, c.id as caja_id, c.nombre as caja_nombre,
+           CASE WHEN EXISTS (
+             SELECT 1 FROM sesiones_caja s WHERE s.caja_id = c.id AND s.status = 'ABIERTA'
+           ) THEN 1 ELSE 0 END as tiene_sesion_abierta
+         FROM cajas c
+         WHERE c.empresa_id = ? AND c.deposito_id IS NOT NULL`
+      : '',
+    empresaId ? [empresaId] : []
+  )
+
+  const cajasPorDeposito = useMemo(
+    () => agruparCajasPorDeposito((cajasPorDepositoData ?? []) as CajaPorDepositoRow[]),
+    [cajasPorDepositoData]
+  )
 
   const activeDepositosCount = useMemo(
     () => depositos.filter((d) => d.is_active === 1).length,
@@ -69,6 +107,33 @@ export function DepositoList() {
 
   async function handleToggleActivo(deposito: Deposito) {
     const nuevoEstado = deposito.is_active !== 1
+
+    // Guarda proactiva (Decision de producto #1, change
+    // `guarda-deposito-inactivo`): solo aplica al DESACTIVAR. El mapa
+    // `cajasPorDeposito` ya esta precargado (1 query agrupada, sin query
+    // extra aca) — se revisa ANTES de llamar al hook para que la UI feliz
+    // nunca dependa de parsear el string de error del throw fail-fast del
+    // hook (esa defensa en profundidad sigue existiendo en `use-depositos.ts`
+    // para callers no-UI).
+    if (!nuevoEstado) {
+      const cajas = cajasPorDeposito.get(deposito.id) ?? []
+      const bloqueo = resolveBloqueoDesactivacion(cajas)
+
+      if (bloqueo.motivo === 'SESION_ABIERTA') {
+        const cajaConSesion = bloqueo.cajas.find((c) => c.tieneSesionAbierta)
+        toast.error(
+          `No se puede desactivar: la caja "${cajaConSesion?.cajaNombre}" tiene una sesion de caja abierta. Cierra la sesion primero.`
+        )
+        return
+      }
+
+      if (bloqueo.motivo === 'CAJA_SIN_SESION') {
+        setReasignarDeposito(deposito)
+        setReasignarCajas(bloqueo.cajas)
+        return
+      }
+    }
+
     setTogglingId(deposito.id)
     try {
       await actualizarDeposito(deposito.id, { is_active: nuevoEstado })
@@ -79,6 +144,11 @@ export function DepositoList() {
     } finally {
       setTogglingId(null)
     }
+  }
+
+  function handleCloseReasignar() {
+    setReasignarDeposito(null)
+    setReasignarCajas([])
   }
 
   function handleReporte() {
@@ -203,6 +273,7 @@ export function DepositoList() {
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Principal</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Permite Venta</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Articulos</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Cajas</th>
                 <th className="text-left px-4 py-3 font-medium text-muted-foreground">Estado</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">Acciones</th>
               </tr>
@@ -238,6 +309,24 @@ export function DepositoList() {
                   <td className="px-4 py-3 text-right">
                     <span className="font-medium">{conteosMap.get(d.id) ?? 0}</span>
                     <span className="text-xs text-muted-foreground ml-1">artículos</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {(cajasPorDeposito.get(d.id) ?? []).length === 0 ? (
+                      <span className="text-muted-foreground text-xs">Sin cajas asociadas</span>
+                    ) : (
+                      <div className="flex flex-col gap-1">
+                        {(cajasPorDeposito.get(d.id) ?? []).map((c) => (
+                          <span key={c.cajaId} className="text-xs">
+                            {c.cajaNombre}
+                            {c.tieneSesionAbierta && (
+                              <span className="ml-1 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 ring-1 ring-amber-600/20 ring-inset">
+                                Sesión abierta
+                              </span>
+                            )}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <button
@@ -282,6 +371,13 @@ export function DepositoList() {
       <DepositoProductosModal
         deposito={productoModalDeposito}
         onClose={() => setProductoModalDeposito(null)}
+      />
+
+      <ReasignarCajaDialog
+        isOpen={reasignarDeposito !== null}
+        deposito={reasignarDeposito}
+        cajas={reasignarCajas}
+        onClose={handleCloseReasignar}
       />
     </div>
   )
