@@ -48,19 +48,19 @@ Migration numbering verified: `0086_deposito_unico_principal.sql` is the last ap
 
 ## Phase 3: Lib puro — Slice B (reingreso NCR)
 
-- [ ] 3.1 (RED) `deposito-inactivo.test.ts`: casos para `resolveDepositoReingresoNcr` (origen activo, fallback a principal, principal null)
-- [ ] 3.2 (GREEN) `deposito-inactivo.ts`: implementar `resolveDepositoReingresoNcr` para pasar 3.1
+- [x] 3.1 (RED) `deposito-inactivo.test.ts`: casos para `resolveDepositoReingresoNcr` (origen activo, fallback a principal, principal null)
+- [x] 3.2 (GREEN) `deposito-inactivo.ts`: implementar `resolveDepositoReingresoNcr` para pasar 3.1
 
 ## Phase 4: Slice B — Venta + NCR + DB trigger
 
-- [ ] 4.1 (RED) `use-ventas` tests: venta rechazada (mensaje español) cuando el depósito de la caja tiene `is_active=0`, antes de `writeTransaction`
-- [ ] 4.2 (GREEN) `use-ventas.ts`: pre-check JOIN `sesiones_caja→cajas→depositos` (`is_active`) antes de abrir `writeTransaction`; throw si inactivo
-- [ ] 4.3 `use-deposito-activo.ts`: tratar `cajaDepositoId` como `null` si su `is_active=0`, antes de `resolveDepositoEgresoVenta`
-- [ ] 4.4 `use-notas-credito.ts`: leer `is_active` de `venta.deposito_id` + `depositoId` principal; aplicar `resolveDepositoReingresoNcr` antes del INSERT/`upsertStockDeposito`
-- [ ] 4.5 Crear `migrations/0087_deposito_inactivo_guard.sql`: `validate_movimiento_inventario_insert` + chequeo `is_active=0` reject-only, estilo idempotente de `0086`; documentar verificación manual (INSERT crudo rechaza / fallback NCR ya resuelto acepta)
+- [x] 4.1 (RED) `use-ventas` tests: venta rechazada (mensaje español) cuando el depósito de la caja tiene `is_active=0`, antes de `writeTransaction`
+- [x] 4.2 (GREEN) `use-ventas.ts`: pre-check JOIN `sesiones_caja→cajas→depositos` (`is_active`) antes de abrir `writeTransaction`; throw si inactivo
+- [x] 4.3 `use-deposito-activo.ts`: tratar `cajaDepositoId` como `null` si su `is_active=0`, antes de `resolveDepositoEgresoVenta`
+- [x] 4.4 `use-notas-credito.ts`: leer `is_active` de `venta.deposito_id` + `depositoId` principal; aplicar `resolveDepositoReingresoNcr` antes del INSERT/`upsertStockDeposito`
+- [x] 4.5 Crear `migrations/0087_deposito_inactivo_guard.sql`: `validate_movimiento_inventario_insert` + chequeo `is_active=0` reject-only, estilo idempotente de `0086`; documentar verificación manual (INSERT crudo rechaza / fallback NCR ya resuelto acepta)
 
 ## Phase 5: Cierre de scope
 
-- [ ] 5.1 Verificar que las 6 requirements filtran por `empresa_id` en cada query/count nuevo
-- [ ] 5.2 No crear guard en `abrirSesionCaja` (diferido, backlog #2231) — no marcar como omisión en `sdd-verify`
-- [ ] 5.3 No tocar módulo NCR administrativo (futuro, fuera de scope) ni el checkbox de Finding 1 (fix directo aparte)
+- [x] 5.1 Verificar que las 6 requirements filtran por `empresa_id` en cada query/count nuevo
+- [x] 5.2 No crear guard en `abrirSesionCaja` (diferido, backlog #2231) — no marcar como omisión en `sdd-verify`
+- [x] 5.3 No tocar módulo NCR administrativo (futuro, fuera de scope) ni el checkbox de Finding 1 (fix directo aparte)
