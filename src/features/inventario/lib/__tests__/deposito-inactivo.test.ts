@@ -7,7 +7,11 @@
 // bloquearse y por que motivo. Se testea sin mocks porque no toca la DB — el
 // caller (`actualizarDeposito` en use-depositos.ts) es quien ejecuta la query
 // y le pasa el resultado ya mapeado.
-import { agruparCajasPorDeposito, resolveBloqueoDesactivacion } from '../deposito-inactivo'
+import {
+  agruparCajasPorDeposito,
+  resolveBloqueoDesactivacion,
+  resolveDepositoReingresoNcr,
+} from '../deposito-inactivo'
 
 describe('agruparCajasPorDeposito', () => {
   it('agrupa filas planas de 1 query en un Map<deposito_id, CajaReferenciaDeposito[]>', () => {
@@ -72,5 +76,26 @@ describe('resolveBloqueoDesactivacion', () => {
     const bloqueo = resolveBloqueoDesactivacion([])
 
     expect(bloqueo).toEqual({ bloqueado: false, cajas: [] })
+  })
+})
+
+// Slice B (change `guarda-deposito-inactivo`): reingreso automatico en NCR
+// POS-express (decision de producto #3, obs #2228). `resolveDepositoReingresoNcr`
+// es la parte pura: dado el deposito de ORIGEN de la venta y si sigue activo,
+// mas el deposito principal actual de la empresa, decide a donde reingresa el
+// stock — nunca pregunta al cajero. El caller (`crearNotaCredito` en
+// use-notas-credito.ts) resuelve `origenIsActive`/`principalDepositoId` con 1
+// query cada uno ANTES de construir el INSERT de `movimientos_inventario`.
+describe('resolveDepositoReingresoNcr', () => {
+  it('Scenario: Reingreso al deposito de origen — origen sigue activo: retorna el ID de origen, ignora el principal', () => {
+    expect(resolveDepositoReingresoNcr('dep-origen', true, 'dep-principal')).toBe('dep-origen')
+  })
+
+  it('Scenario: Fallback automatico al principal — origen esta inactivo: retorna el ID del deposito principal', () => {
+    expect(resolveDepositoReingresoNcr('dep-origen', false, 'dep-principal')).toBe('dep-principal')
+  })
+
+  it('origen inactivo y sin principal configurado (caso borde): retorna null — el caller decide como manejarlo', () => {
+    expect(resolveDepositoReingresoNcr('dep-origen', false, null)).toBeNull()
   })
 })
