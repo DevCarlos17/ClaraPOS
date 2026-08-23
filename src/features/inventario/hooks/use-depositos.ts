@@ -8,6 +8,10 @@ import {
   debeBloquearQuitarUltimoPrincipal,
   debeForzarPrincipalUnico,
 } from '@/features/inventario/lib/deposito-principal'
+import {
+  resolveBloqueoDesactivacion,
+  type CajaReferenciaDeposito,
+} from '@/features/inventario/lib/deposito-inactivo'
 
 export interface Deposito {
   id: string
@@ -240,6 +244,52 @@ export async function actualizarDeposito(
       [id]
     )
     empresaId = rows[0]?.empresa_id
+  }
+
+  // Guarda de desactivacion (change `guarda-deposito-inactivo`, Slice A,
+  // Decision de producto #1): un deposito referenciado por `cajas.deposito_id`
+  // NO puede desactivarse sin antes cerrar la sesion abierta (si existe) o
+  // reasignar la caja a otro deposito. Defensa en profundidad a nivel de hook
+  // — `deposito-list.tsx` ya revisa esto de forma PROACTIVA (via el mismo
+  // Map de `agruparCajasPorDeposito`, precargado, sin query extra) antes de
+  // llamar a este hook, pero callers no-UI deben seguir bloqueados aca. La
+  // query trae, en 1 sola pasada (sin N+1), cada caja de la empresa cuyo
+  // `deposito_id` apunta a este deposito junto con si tiene una
+  // `sesiones_caja` con `status='ABIERTA'` (EXISTS correlacionado).
+  if (data.is_active === false) {
+    const cajaRows = await db.getAll<{
+      caja_id: string
+      caja_nombre: string
+      tiene_sesion_abierta: number
+    }>(
+      `SELECT c.id as caja_id, c.nombre as caja_nombre,
+         CASE WHEN EXISTS (
+           SELECT 1 FROM sesiones_caja s WHERE s.caja_id = c.id AND s.status = 'ABIERTA'
+         ) THEN 1 ELSE 0 END as tiene_sesion_abierta
+       FROM cajas c
+       WHERE c.deposito_id = ? AND c.empresa_id = ?`,
+      [id, empresaId ?? '']
+    )
+
+    const cajas: CajaReferenciaDeposito[] = cajaRows.map((row) => ({
+      cajaId: row.caja_id,
+      cajaNombre: row.caja_nombre,
+      tieneSesionAbierta: row.tiene_sesion_abierta === 1,
+    }))
+
+    const bloqueo = resolveBloqueoDesactivacion(cajas)
+    if (bloqueo.bloqueado) {
+      if (bloqueo.motivo === 'SESION_ABIERTA') {
+        const cajaConSesion = bloqueo.cajas.find((c) => c.tieneSesionAbierta)
+        throw new Error(
+          `No se puede desactivar: la caja "${cajaConSesion?.cajaNombre}" tiene una sesion de caja abierta. Cierra la sesion antes de desactivar el deposito.`
+        )
+      }
+      const primeraCaja = bloqueo.cajas[0]
+      throw new Error(
+        `No se puede desactivar: la caja "${primeraCaja?.cajaNombre}" todavia tiene este deposito seleccionado. Reasigna la caja a otro deposito antes de desactivar este.`
+      )
+    }
   }
 
   const setClauses = Object.keys(updates)
