@@ -21,6 +21,10 @@ export interface Banco {
   titular: string
   titular_documento: string | null
   moneda_id: string
+  /** Codigo legible de la moneda ('USD' | 'BS'), resuelto via JOIN a `monedas`.
+   * Fix qa/metodo-pago-hereda-moneda-banco: el form de metodo de pago necesita
+   * esto para derivar/validar la moneda del metodo contra la de su banco. */
+  moneda: string
   saldo_actual: string
   saldo_inicial: string   // 0069: NUMERIC(18,4) stored as string
   cuenta_contable_id: string | null
@@ -58,12 +62,21 @@ export interface BancoMetodo {
   consolidar_lotes: number
 }
 
+// Fix qa/metodo-pago-hereda-moneda-banco: mismo CASE de mapeo VES->'BS' que
+// SELECT_METODOS (use-payment-methods.ts) — codigo legible, nunca el UUID crudo.
+const SELECT_BANCOS_CON_MONEDA = `
+  SELECT b.*,
+         CASE WHEN m.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(m.codigo_iso, 'USD') END as moneda
+  FROM bancos_empresa b
+  LEFT JOIN monedas m ON b.moneda_id = m.id
+`
+
 export function useBancos() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM bancos_empresa WHERE empresa_id = ? ORDER BY nombre_banco ASC',
+    `${SELECT_BANCOS_CON_MONEDA} WHERE b.empresa_id = ? ORDER BY b.nombre_banco ASC`,
     [empresaId]
   )
   return { bancos: (data ?? []) as Banco[], isLoading }
@@ -74,7 +87,7 @@ export function useBancosActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    'SELECT * FROM bancos_empresa WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre_banco ASC',
+    `${SELECT_BANCOS_CON_MONEDA} WHERE b.empresa_id = ? AND b.is_active = 1 ORDER BY b.nombre_banco ASC`,
     [empresaId]
   )
   return { bancos: (data ?? []) as Banco[], isLoading }

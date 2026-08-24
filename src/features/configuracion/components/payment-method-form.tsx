@@ -44,6 +44,21 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
   const [submitting, setSubmitting] = useState(false)
 
   const requiereBanco = ['TRANSFERENCIA', 'PUNTO', 'PAGO_MOVIL'].includes(tipo)
+  const bancoSeleccionado = bancos.find((b) => b.id === bancoEmpresaId)
+  // Fix qa/metodo-pago-hereda-moneda-banco: en creacion, con banco
+  // seleccionado, la moneda queda derivada+bloqueada (transparente al
+  // usuario). En edicion la moneda es SIEMPRE inmutable (dato ya
+  // persistido, puede tener saldo/movimientos en esa moneda — re-derivarla
+  // corrompe el saldo sin una conversion real).
+  const monedaDerivadaDeBanco = !isEditing && requiereBanco && !!bancoEmpresaId
+  // En edicion, solo se ofrecen bancos cuya moneda coincide con la moneda ya
+  // fijada del metodo — evita recrear el bug original (reasignar un banco de
+  // otra moneda a un metodo existente). El banco YA asignado se conserva en
+  // la lista aunque no coincida (dato legado potencialmente desalineado que
+  // este fix no corrige de forma silenciosa/forzada).
+  const bancosDisponibles = isEditing
+    ? bancos.filter((b) => b.moneda === currency || b.id === bancoEmpresaId)
+    : bancos
   const { deducciones: deduccionesExistentes } = useDeduccionesDeMetodo(method?.id)
   // Fix W1: evita repetir el warning de "sin cuenta pasarela" en cada
   // render mientras el mismo banco siga seleccionado.
@@ -88,6 +103,20 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
       dialogRef.current?.close()
     }
   }, [isOpen, method, deduccionesExistentes])
+
+  // Fix qa/metodo-pago-hereda-moneda-banco: al crear un metodo que requiere
+  // banco (TRANSFERENCIA/PUNTO/PAGO_MOVIL) y elegir/cambiar el banco, la
+  // moneda se deriva automaticamente de `banco.moneda` — el usuario deja de
+  // poder desincronizarla manualmente (root cause del bug: TRANSF VZLA en
+  // VES con banco en USD). Guardado explicito por `!isEditing`: en edicion
+  // la moneda NUNCA se re-deriva (inmutabilidad post-creacion).
+  useEffect(() => {
+    if (isEditing || !requiereBanco || !bancoEmpresaId) return
+    const banco = bancos.find((b) => b.id === bancoEmpresaId)
+    if (banco && (banco.moneda === 'USD' || banco.moneda === 'BS')) {
+      setCurrency(banco.moneda)
+    }
+  }, [isEditing, requiereBanco, bancoEmpresaId, bancos])
 
   // PR-3 (SC-07) + Fix W2a: al elegir/tener banco asociado (creacion O
   // edicion — ej. una edicion que le agrega banco a un metodo EFECTIVO),
@@ -180,6 +209,16 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
       currency,
       tipo,
       banco_empresa_id: bancoEmpresaId || undefined,
+      // Remediacion CRITICAL (Engram qa/metodo-pago-hereda-moneda-banco/verify-report
+      // #2257): en edicion la moneda es SIEMPRE inmutable (campo disabled), por lo
+      // que el refine cruzado de abajo no aporta nada — solo bloquea el submit de
+      // metodos legados con banco desalineado (root cause del bug original) sin
+      // forma de corregirse. `banco_moneda` se omite en edicion para que el refine
+      // lo salte incondicionalmente; createPaymentMethod mantiene su propia defensa
+      // en profundidad para el path de creacion.
+      banco_moneda: !isEditing && (bancoSeleccionado?.moneda === 'USD' || bancoSeleccionado?.moneda === 'BS')
+        ? bancoSeleccionado.moneda
+        : undefined,
       requiere_referencia: requiereReferencia,
       active,
       consolidar_lotes: consolidarLotes,
@@ -318,8 +357,8 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
               id="mp-currency"
               value={currency}
               onChange={(e) => setCurrency(e.target.value as 'USD' | 'BS')}
-              disabled={isEditing}
-              className={isEditing ? 'text-gray-500 cursor-not-allowed' : undefined}
+              disabled={isEditing || monedaDerivadaDeBanco}
+              className={isEditing || monedaDerivadaDeBanco ? 'text-gray-500 cursor-not-allowed' : undefined}
             >
               <option value="USD">USD - Dolares</option>
               <option value="BS">BS - Bolivares</option>
@@ -330,6 +369,11 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
             {isEditing && (
               <p className="text-gray-400 text-xs mt-1">La moneda no puede modificarse</p>
             )}
+            {!isEditing && monedaDerivadaDeBanco && (
+              <p className="text-gray-400 text-xs mt-1">
+                La moneda se toma del banco seleccionado y no puede cambiarse manualmente
+              </p>
+            )}
           </div>
 
           {/* Banco (condicional) */}
@@ -338,7 +382,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
               <label htmlFor="mp-banco" className="block text-sm font-medium text-gray-700 mb-1">
                 Banco Asociado
               </label>
-              {bancos.length === 0 ? (
+              {bancosDisponibles.length === 0 ? (
                 <p className="text-amber-600 text-xs bg-amber-50 rounded-md px-3 py-2">
                   No hay bancos registrados. Cree un banco primero en la seccion de Bancos.
                 </p>
@@ -349,7 +393,7 @@ export function PaymentMethodForm({ isOpen, onClose, method }: PaymentMethodForm
                   onChange={(e) => setBancoEmpresaId(e.target.value)}
                 >
                   <option value="">-- Seleccione un banco --</option>
-                  {bancos.map((b) => (
+                  {bancosDisponibles.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.nombre_banco} - {b.nro_cuenta}
                     </option>

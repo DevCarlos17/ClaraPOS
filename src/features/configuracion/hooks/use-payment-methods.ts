@@ -149,6 +149,29 @@ export async function createPaymentMethod(params: {
     }
     const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
+    // Fix qa/metodo-pago-hereda-moneda-banco: defensa en profundidad. El
+    // schema Zod (payment-method-schema.ts) ya bloquea esto en la UI, pero
+    // createPaymentMethod puede invocarse desde otros callers futuros — un
+    // metodo bancario NUNCA debe quedar con una moneda distinta a la de su
+    // banco vinculado (root cause del bug original: TRANSF VZLA en VES con
+    // banco en USD).
+    if (params.banco_empresa_id) {
+      // Remediacion WARNING 2 (verify-report #2257): escopar por empresa_id
+      // (CLAUDE.md regla 11) — un banco_empresa_id de otro tenant nunca debe
+      // resolver moneda aqui.
+      const bancoResult = await tx.execute(
+        'SELECT moneda_id FROM bancos_empresa WHERE id = ? AND empresa_id = ? LIMIT 1',
+        [params.banco_empresa_id, params.empresa_id]
+      )
+      const bancoMonedaId = (bancoResult.rows?.item(0) as { moneda_id: string } | undefined)
+        ?.moneda_id
+      if (bancoMonedaId && bancoMonedaId !== monedaId) {
+        throw new Error(
+          'La moneda del metodo debe coincidir con la moneda del banco seleccionado'
+        )
+      }
+    }
+
     await tx.execute(
       `INSERT INTO metodos_cobro
          (id, empresa_id, nombre, tipo, moneda_id, banco_empresa_id,
@@ -277,6 +300,39 @@ export async function updatePaymentMethod(
   }
 
   if (sets.length === 0) return
+
+  // Remediacion WARNING 3 (verify-report #2257): guard simetrico a
+  // createPaymentMethod, pero SOLO cuando banco_empresa_id cambia a un valor
+  // DISTINTO del ya persistido — nunca debe disparar en un edit que no toca
+  // el banco (ej. toggle de `active` en un metodo legado con banco
+  // desalineado). La moneda del metodo es inmutable en edicion (nunca se
+  // reasigna aqui), asi que solo se valida que la moneda YA persistida siga
+  // coincidiendo con el banco NUEVO que se le esta asignando.
+  if (data.banco_empresa_id !== undefined) {
+    const current = await db.execute(
+      'SELECT empresa_id, moneda_id, banco_empresa_id FROM metodos_cobro WHERE id = ?',
+      [id]
+    )
+    const currentRow = current.rows?.item(0) as
+      | { empresa_id: string; moneda_id: string; banco_empresa_id: string | null }
+      | undefined
+    if (!currentRow) {
+      throw new Error('Metodo de pago no encontrado')
+    }
+    if (data.banco_empresa_id && data.banco_empresa_id !== currentRow.banco_empresa_id) {
+      const bancoResult = await db.execute(
+        'SELECT moneda_id FROM bancos_empresa WHERE id = ? AND empresa_id = ? LIMIT 1',
+        [data.banco_empresa_id, currentRow.empresa_id]
+      )
+      const bancoMonedaId = (bancoResult.rows?.item(0) as { moneda_id: string } | undefined)
+        ?.moneda_id
+      if (bancoMonedaId && bancoMonedaId !== currentRow.moneda_id) {
+        throw new Error(
+          'La moneda del metodo debe coincidir con la moneda del banco seleccionado'
+        )
+      }
+    }
+  }
 
   sets.push('updated_at = ?')
   values.push(localNow())
