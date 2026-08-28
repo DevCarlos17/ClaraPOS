@@ -16,6 +16,7 @@ import {
   type DeduccionActivaRow,
 } from '@/features/caja/lib/deducciones-cierre'
 import { debeExcluirseDeConsolidacionCierre } from '@/features/caja/lib/consolidacion-cierre'
+import { resolverMontoConsolidacionLote } from '@/features/caja/lib/resolucion-monto-consolidacion'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -874,7 +875,13 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
 
     // cierre-consolidacion-tesoreria (PR2): acumula el total_sistema por metodo de cobro
     // ya calculado en este loop, para reutilizarlo en el step 9 sin recalcular.
-    const consolidacionPorMetodo = new Map<string, { totalSistemaD: Decimal; monedaId: string }>()
+    // totalFisicoNativo (cierre-tesoreria-monto-reportado-lote): monto contado/reportado
+    // por el cajero para el metodo, en la misma moneda nativa. Se propaga hasta el loop
+    // de consolidacion para que la rama sin-lotes use lo reportado, nunca totalSistemaD.
+    const consolidacionPorMetodo = new Map<
+      string,
+      { totalSistemaD: Decimal; monedaId: string; totalFisicoNativo: Decimal | null }
+    >()
 
     if (metodosUsadosResult.rows) {
       for (let i = 0; i < metodosUsadosResult.rows.length; i++) {
@@ -892,19 +899,22 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
           .plus(new Decimal(manual.ingreso))
           .minus(new Decimal(manual.egreso))
 
-        if (row.metodo_cobro_id) {
-          consolidacionPorMetodo.set(row.metodo_cobro_id, { totalSistemaD, monedaId: row.moneda_id })
-        }
-
         // Calcular total_fisico y diferencia si se recibio conteo del usuario.
         // conteoFisicoPorMetodo esta en moneda nativa y totalSistemaD tambien:
         // la diferencia se calcula nativo vs nativo (sin conversion de tasa).
-        let totalFisicoNativo: number | null = null
+        let totalFisicoD: Decimal | null = null
         let diferenciaValor: Decimal | null = null
         if (conteoFisicoPorMetodo && row.metodo_cobro_id in conteoFisicoPorMetodo) {
-          totalFisicoNativo = conteoFisicoPorMetodo[row.metodo_cobro_id]
-          const totalFisicoD = new Decimal(totalFisicoNativo)
+          totalFisicoD = new Decimal(conteoFisicoPorMetodo[row.metodo_cobro_id])
           diferenciaValor = totalFisicoD.minus(totalSistemaD)
+        }
+
+        if (row.metodo_cobro_id) {
+          consolidacionPorMetodo.set(row.metodo_cobro_id, {
+            totalSistemaD,
+            monedaId: row.moneda_id,
+            totalFisicoNativo: totalFisicoD,
+          })
         }
 
         const detalleId = uuidv4()
@@ -918,7 +928,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
             row.metodo_cobro_id,
             row.moneda_id,
             toStorageString(totalSistemaD),
-            totalFisicoNativo !== null ? toStorageString(new Decimal(totalFisicoNativo)) : null,
+            totalFisicoD !== null ? toStorageString(totalFisicoD) : null,
             diferenciaValor !== null ? toStorageString(diferenciaValor) : null,
             row.num_transacciones,
             empresaId,
@@ -1004,13 +1014,16 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     // config real del metodo (ver `monedaIdBase || config.moneda_id`).
     const metodoIdsSoloLotes = Array.from(metodoIdsConLotes).filter((mid) => !metodoIdsBase.has(mid))
 
-    const metodosParaConsolidar: [string, { totalSistemaD: Decimal; monedaId: string }][] = [
+    const metodosParaConsolidar: [
+      string,
+      { totalSistemaD: Decimal; monedaId: string; totalFisicoNativo: Decimal | null },
+    ][] = [
       ...metodosParaConsolidarBase,
       ...metodoIdsSoloLotes.map(
         (mid) =>
-          [mid, { totalSistemaD: new Decimal(0), monedaId: '' }] as [
+          [mid, { totalSistemaD: new Decimal(0), monedaId: '', totalFisicoNativo: null }] as [
             string,
-            { totalSistemaD: Decimal; monedaId: string },
+            { totalSistemaD: Decimal; monedaId: string; totalFisicoNativo: Decimal | null },
           ]
       ),
     ]
@@ -1070,7 +1083,12 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       }
 
       // 9. Consolidar cada metodo con saldo positivo hacia Tesoreria
-      for (const [metodoCobroId, { totalSistemaD, monedaId: monedaIdBase }] of metodosParaConsolidar) {
+      for (const [
+        metodoCobroId,
+        // totalSistemaD ya no se usa dentro del loop: ambas ramas (lotes y sin-lotes)
+        // consolidan por el monto reportado, nunca por el total sistema.
+        { totalSistemaD: _totalSistemaD, monedaId: monedaIdBase, totalFisicoNativo },
+      ] of metodosParaConsolidar) {
         const config = metodosConfigMap.get(metodoCobroId)
         if (!config) {
           throw new Error(
@@ -1249,14 +1267,18 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
             }
           }
         } else {
-          // Camino existente sin cambios: metodo sin lotes cargados (no-POS, o tipo='PUNTO' sin
-          // lotes en este cuadre) consolida por totalSistemaD, identico a antes de este cambio
-          // (SC-13, no-regresion dura).
+          // Camino existente: metodo sin lotes cargados consolida por MONTO REPORTADO (no
+          // totalSistemaD) tanto en el deposito a Tesoreria como en la base de comision —
+          // MISMA fuente de verdad para que ambos numeros no puedan divergir (cierre-tesoreria-
+          // monto-reportado-lote). Deja esta rama consistente con la rama de lotes, que ya
+          // reutiliza sumaLotesD/montoLoteD para ambas llamadas.
+          const montoReportadoD = resolverMontoConsolidacionLote({ totalFisicoNativo })
+
           await consolidarMetodoATesoreriaEnTx(tx, {
             sesionCajaId: id,
             metodoCobroId,
             destino,
-            monto: toStorageString(totalSistemaD),
+            monto: toStorageString(montoReportadoD),
             monedaId,
             empresaId,
             userId: usuario_cierre_id,
@@ -1265,7 +1287,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
             descripcion: `Consolidacion cierre de caja - sesion ${formatSesionId(id)}`,
           })
 
-          await aplicarComisionSiCorresponde(totalSistemaD)
+          await aplicarComisionSiCorresponde(montoReportadoD)
         }
       }
     }
