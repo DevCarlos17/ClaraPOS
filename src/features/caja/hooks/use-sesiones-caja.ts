@@ -15,6 +15,7 @@ import {
   resolverDeduccionesCierre,
   type DeduccionActivaRow,
 } from '@/features/caja/lib/deducciones-cierre'
+import { debeExcluirseDeConsolidacionCierre } from '@/features/caja/lib/consolidacion-cierre'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -1021,7 +1022,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
 
       const metodosConfigResult = await tx.execute(
         `SELECT mc.id AS metodo_cobro_id, mc.nombre, mc.tipo, mc.banco_empresa_id, mc.caja_fuerte_id,
-                mc.moneda_id, mo.codigo_iso AS moneda_codigo, mc.consolidar_lotes
+                mc.moneda_id, mo.codigo_iso AS moneda_codigo, mc.consolidar_lotes, mc.deposito_directo
          FROM metodos_cobro mc
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mc.id IN (${inPhConsolidar}) AND mc.empresa_id = ?`,
@@ -1037,6 +1038,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         moneda_id: string
         moneda_codigo: string
         consolidar_lotes: number
+        deposito_directo: number
       }
       const metodosConfigMap = new Map<string, MetodoConfigRow>()
       if (metodosConfigResult.rows) {
@@ -1075,6 +1077,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
             `No se encontro la configuracion del metodo de cobro para consolidar el cierre de caja.`
           )
         }
+        if (debeExcluirseDeConsolidacionCierre(config)) continue
         const nombreMetodo = config.nombre
         // conciliacion-lotes-pos (fix WARNING #2): metodos incorporados solo por tener
         // lotes traen monedaId placeholder (''); se resuelve desde la config real del
