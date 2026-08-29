@@ -166,6 +166,46 @@ describe('puedeProcesarTraspaso (REQ Límite de Cantidad Disponible y Habilitaci
     expect(result.habilitado).toBe(false)
   })
 
+  it('BUG 1 — linea con cantidad vacia (""): deshabilitado (no puede procesarse sin cantidad)', () => {
+    const result = puedeProcesarTraspaso(
+      estadoBase({ lineas: [{ producto_id: 'prod-1', cantidad: '' }] })
+    )
+    expect(result.habilitado).toBe(false)
+    expect(result.motivo).toBeDefined()
+  })
+
+  it('BUG 1 — linea con cantidad "0": deshabilitado (cantidad debe ser > 0)', () => {
+    const result = puedeProcesarTraspaso(
+      estadoBase({ lineas: [{ producto_id: 'prod-1', cantidad: '0' }] })
+    )
+    expect(result.habilitado).toBe(false)
+    expect(result.motivo).toBeDefined()
+  })
+
+  it('BUG 1 — linea con cantidad negativa: deshabilitado', () => {
+    const result = puedeProcesarTraspaso(
+      estadoBase({ lineas: [{ producto_id: 'prod-1', cantidad: '-1' }] })
+    )
+    expect(result.habilitado).toBe(false)
+  })
+
+  it('BUG 1 — multiples lineas, una con cantidad vacia: deshabilitado aunque las demas sean validas', () => {
+    const result = puedeProcesarTraspaso(
+      estadoBase({
+        lineas: [
+          { producto_id: 'prod-1', cantidad: '4' },
+          { producto_id: 'prod-2', cantidad: '' },
+        ],
+        stockDisponiblePorProducto: new Map([
+          ['prod-1', '10.000'],
+          ['prod-2', '5.000'],
+        ]),
+        productosValidosIds: new Set(['prod-1', 'prod-2']),
+      })
+    )
+    expect(result.habilitado).toBe(false)
+  })
+
   it('producto ausente en stockDisponiblePorProducto (sin stock en origen): deshabilitado', () => {
     const result = puedeProcesarTraspaso(
       estadoBase({

@@ -284,6 +284,27 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plantillaSeleccionadaId, productosPlantilla])
 
+  // BUG 2 (post-QA): si el deposito origen o destino seleccionado deja de
+  // estar en la lista de depositos activos (ej. otro usuario lo desactiva
+  // mientras el formulario esta abierto), el <select> nativo del navegador
+  // "olvida" la seleccion visualmente (la opcion ya no existe), pero el
+  // estado de React (`depositoOrigenId`/`depositoDestinoId`) queda con el id
+  // viejo — un valor fantasma que `puedeProcesarTraspaso` sigue viendo como
+  // valido/no-vacio. Este efecto sincroniza el estado con la lista reactiva:
+  // si el id seleccionado ya no esta entre los depositos activos, se limpia,
+  // lo que reevalua el predicado y deshabilita el boton correctamente.
+  useEffect(() => {
+    if (depositoOrigenId && !depositos.some((d) => d.id === depositoOrigenId)) {
+      setDepositoOrigenId('')
+    }
+  }, [depositos, depositoOrigenId])
+
+  useEffect(() => {
+    if (depositoDestinoId && !depositos.some((d) => d.id === depositoDestinoId)) {
+      setDepositoDestinoId('')
+    }
+  }, [depositos, depositoDestinoId])
+
   useEffect(() => {
     if (isOpen) {
       reset()

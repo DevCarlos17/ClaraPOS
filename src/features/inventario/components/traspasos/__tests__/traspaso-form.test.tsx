@@ -750,6 +750,67 @@ describe('TraspasoForm — caida de stock concurrente re-renderiza el estado inv
   })
 })
 
+describe('TraspasoForm — BUG 2: deposito desactivado en pleno formulario valido deshabilita el boton', () => {
+  it('formulario totalmente valido (boton habilitado) -> el deposito ORIGEN se desactiva y desaparece de la lista -> la seleccion se limpia y el boton se deshabilita', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    const { rerender } = render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    const selectOrigen = selects[0] as HTMLSelectElement
+    await user.selectOptions(selectOrigen, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '4')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    // Estado "antes": formulario completo, boton realmente habilitado (no vacuo).
+    expect(submitBtn).toBeEnabled()
+
+    // El deposito origen (dep-A) se desactiva concurrentemente: el hook
+    // reactivo `useDepositosActivos` deja de devolverlo en la lista — mismo
+    // patron que el test de "caida de stock concurrente": mismo componente
+    // montado (rerender, no remount), solo cambia la prop reactiva.
+    mockedUseDepositosActivos.mockReturnValue({
+      depositos: [{ id: 'dep-B', nombre: 'Deposito B', es_principal: 0 }] as never,
+      isLoading: false,
+    })
+    rerender(<TraspasoForm isOpen onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(selectOrigen.value).toBe('')
+    })
+    expect(submitBtn).toBeDisabled()
+  })
+
+  it('formulario totalmente valido (boton habilitado) -> el deposito DESTINO se desactiva y desaparece de la lista -> la seleccion se limpia y el boton se deshabilita', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    const { rerender } = render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    const selectDestino = selects[1] as HTMLSelectElement
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selectDestino, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '4')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    expect(submitBtn).toBeEnabled()
+
+    mockedUseDepositosActivos.mockReturnValue({
+      depositos: [{ id: 'dep-A', nombre: 'Deposito A', es_principal: 1 }] as never,
+      isLoading: false,
+    })
+    rerender(<TraspasoForm isOpen onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(selectDestino.value).toBe('')
+    })
+    expect(submitBtn).toBeDisabled()
+  })
+})
+
 describe('TraspasoForm — el modal no se cierra ante errores de validacion en el submit (REQ Modal No Se Cierra ante Errores de Validacion)', () => {
   it('si crearTraspaso rechaza, el modal permanece abierto (onClose NO se llama) y los datos del formulario se preservan', async () => {
     const user = userEvent.setup()

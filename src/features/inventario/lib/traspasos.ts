@@ -165,10 +165,16 @@ export interface ResultadoPuedeProcesar {
  * habilitarse — cubre la matriz completa del REQ Límite de Cantidad
  * Disponible y Habilitación Condicional del Botón, evaluada en este orden:
  * sin líneas -> falta origen/destino -> origen === destino -> línea con
- * producto vacío o inexistente/inactivo en BD -> producto sin stock
- * registrado en origen -> cantidad de alguna línea excede el disponible.
- * Cantidad inválida/NaN NO se agrega aquí — la cubre el `safeParse` de Zod
- * en el submit (REQ Modal No Se Cierra ante Errores de Validación).
+ * producto vacío o inexistente/inactivo en BD -> línea sin cantidad válida
+ * (vacía/0/negativa/NaN) -> producto sin stock registrado en origen ->
+ * cantidad de alguna línea excede el disponible.
+ *
+ * Cantidad inválida/vacía/0 SI se valida aquí (corrección post-QA, ver
+ * `sdd/traspaso-validaciones-redes-seguridad/qa-hallazgos` BUG 1): la regla
+ * de fondo del mantenedor es que el botón solo se habilita cuando TODO el
+ * formulario esta completo salvo la descripción — una línea con cantidad
+ * vacía o 0 es un formulario incompleto, no debe depender solo del
+ * `safeParse` de Zod en el submit.
  */
 export function puedeProcesarTraspaso(estado: EstadoTraspasoForm): ResultadoPuedeProcesar {
   const { depositoOrigenId, depositoDestinoId, lineas, stockDisponiblePorProducto, productosValidosIds } = estado
@@ -189,6 +195,13 @@ export function puedeProcesarTraspaso(estado: EstadoTraspasoForm): ResultadoPued
   for (const linea of lineas) {
     if (!linea.producto_id || !productosValidosIds.has(linea.producto_id)) {
       return { habilitado: false, motivo: 'Todas las lineas deben tener un producto valido' }
+    }
+  }
+
+  for (const linea of lineas) {
+    const cantidad = Number(linea.cantidad)
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      return { habilitado: false, motivo: 'Todas las lineas deben tener una cantidad valida mayor a cero' }
     }
   }
 
