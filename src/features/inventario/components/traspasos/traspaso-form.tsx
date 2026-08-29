@@ -293,9 +293,22 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
   // valido/no-vacio. Este efecto sincroniza el estado con la lista reactiva:
   // si el id seleccionado ya no esta entre los depositos activos, se limpia,
   // lo que reevalua el predicado y deshabilita el boton correctamente.
+  // BUG 3 (post-QA, mismo family que BUG 2): con articulos cargados el
+  // select de origen queda BLOQUEADO (`hayArticulosCargados`). Si el origen
+  // seleccionado se desactiva, el efecto de arriba limpia depositoOrigenId,
+  // pero el select sigue bloqueado (las lineas siguen cargadas) y ahora sin
+  // seleccion — el usuario queda trabado, sin poder elegir otro origen.
+  // Decision del mantenedor (Opcion A): los articulos cargados pertenecian
+  // al origen que ya no existe, asi que tambien se limpia la tabla de
+  // lineas. Eso deja `hayArticulosCargados(lineas) === false`, lo que
+  // desbloquea el select automaticamente para que el usuario arranque de
+  // nuevo con un origen valido. Solo aplica al ORIGEN: el destino no
+  // determina que articulos tienen stock, asi que su efecto (mas abajo) no
+  // toca la tabla.
   useEffect(() => {
     if (depositoOrigenId && !depositos.some((d) => d.id === depositoOrigenId)) {
       setDepositoOrigenId('')
+      setLineas([{ ...LINEA_VACIA }])
     }
   }, [depositos, depositoOrigenId])
 

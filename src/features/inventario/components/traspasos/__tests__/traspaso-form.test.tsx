@@ -811,6 +811,77 @@ describe('TraspasoForm — BUG 2: deposito desactivado en pleno formulario valid
   })
 })
 
+describe('TraspasoForm — BUG 3 (post-QA): desactivar el deposito ORIGEN con articulos cargados limpia la tabla y desbloquea el select', () => {
+  it('origen se desactiva con articulos cargados (select bloqueado) -> se limpia la seleccion, la tabla de lineas queda vacia y el select se DESBLOQUEA', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    const { rerender } = render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    const selectOrigen = selects[0] as HTMLSelectElement
+    await user.selectOptions(selectOrigen, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '4')
+
+    // Estado "antes": no vacuo — articulo realmente cargado y select
+    // realmente bloqueado por hayArticulosCargados(lineas).
+    expect(screen.getByText('Producto Uno')).toBeInTheDocument()
+    expect(selectOrigen).toBeDisabled()
+
+    // El deposito origen (dep-A) se desactiva concurrentemente y desaparece
+    // de la lista reactiva de depositos activos.
+    mockedUseDepositosActivos.mockReturnValue({
+      depositos: [{ id: 'dep-B', nombre: 'Deposito B', es_principal: 0 }] as never,
+      isLoading: false,
+    })
+    rerender(<TraspasoForm isOpen onClose={() => {}} />)
+
+    // (a) la seleccion de origen se limpia.
+    await waitFor(() => {
+      expect(selectOrigen.value).toBe('')
+    })
+    // (b) la tabla de lineas queda vacia (vuelve a una unica linea vacia):
+    // los articulos cargados pertenecian al origen que ya no existe. Sin
+    // origen seleccionado el buscador de esa unica linea vuelve al
+    // placeholder de "elegi un deposito origen primero".
+    expect(screen.queryByText('Producto Uno')).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText(/elegi un deposito origen primero/i)).toBeInTheDocument()
+    // (c) con la tabla vacia, hayArticulosCargados(lineas) es false -> el
+    // select de origen se DESBLOQUEA para que el usuario pueda elegir otro.
+    expect(selectOrigen).toBeEnabled()
+  })
+
+  it('companion: desactivar el deposito DESTINO con articulos cargados NO limpia la tabla de lineas', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    const { rerender } = render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    const selectDestino = selects[1] as HTMLSelectElement
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selectDestino, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '4')
+
+    expect(screen.getByText('Producto Uno')).toBeInTheDocument()
+
+    // El deposito DESTINO (dep-B) se desactiva; el origen no se ve afectado.
+    mockedUseDepositosActivos.mockReturnValue({
+      depositos: [{ id: 'dep-A', nombre: 'Deposito A', es_principal: 1 }] as never,
+      isLoading: false,
+    })
+    rerender(<TraspasoForm isOpen onClose={() => {}} />)
+
+    await waitFor(() => {
+      expect(selectDestino.value).toBe('')
+    })
+    // La tabla de lineas NO se limpia: destino no determina que articulos
+    // tienen stock, solo origen lo hace.
+    expect(screen.getByText('Producto Uno')).toBeInTheDocument()
+  })
+})
+
 describe('TraspasoForm — el modal no se cierra ante errores de validacion en el submit (REQ Modal No Se Cierra ante Errores de Validacion)', () => {
   it('si crearTraspaso rechaza, el modal permanece abierto (onClose NO se llama) y los datos del formulario se preservan', async () => {
     const user = userEvent.setup()
