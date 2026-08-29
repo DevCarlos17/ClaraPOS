@@ -6,6 +6,7 @@
 vi.mock('@/core/db/powersync/db', () => ({
   db: {
     writeTransaction: vi.fn(),
+    getAll: vi.fn(),
   },
 }))
 
@@ -86,6 +87,13 @@ function mockCrearTraspasoTx(opts: {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Default: ambos depositos (dep-A/dep-B, usados en todos los tests de este
+  // archivo) activos — la guardia is_active no bloquea salvo que un test
+  // sobre-escriba este mock explicitamente.
+  mockedDb.getAll.mockResolvedValue([
+    { id: 'dep-A', is_active: 1 },
+    { id: 'dep-B', is_active: 1 },
+  ])
 })
 
 describe('crearTraspaso — traspaso individual (TRI/Traspaso individual mueve stock A→B atomicamente)', () => {
@@ -353,6 +361,62 @@ describe('crearTraspaso — deposito origen igual a destino', () => {
     ).rejects.toThrow(/diferentes/i)
 
     expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+  })
+})
+
+describe('crearTraspaso — guardia is_active (Guardia is_active en Traspaso)', () => {
+  it('deposito origen inactivo: rechaza en espanol ANTES de abrir la transaccion', async () => {
+    mockedDb.getAll.mockResolvedValue([
+      { id: 'dep-A', is_active: 0 },
+      { id: 'dep-B', is_active: 1 },
+    ])
+
+    await expect(
+      crearTraspaso({
+        empresa_id: 'emp-1',
+        usuario_id: 'user-1',
+        deposito_origen_id: 'dep-A',
+        deposito_destino_id: 'dep-B',
+        lineas: [{ producto_id: 'prod-1', cantidad: 1 }],
+      })
+    ).rejects.toThrow(/origen.*inactivo/i)
+
+    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+  })
+
+  it('deposito destino inactivo: rechaza en espanol ANTES de abrir la transaccion', async () => {
+    mockedDb.getAll.mockResolvedValue([
+      { id: 'dep-A', is_active: 1 },
+      { id: 'dep-B', is_active: 0 },
+    ])
+
+    await expect(
+      crearTraspaso({
+        empresa_id: 'emp-1',
+        usuario_id: 'user-1',
+        deposito_origen_id: 'dep-A',
+        deposito_destino_id: 'dep-B',
+        lineas: [{ producto_id: 'prod-1', cantidad: 1 }],
+      })
+    ).rejects.toThrow(/destino.*inactivo/i)
+
+    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
+  })
+
+  it('origen y destino activos: procede normalmente, la transaccion se abre', async () => {
+    mockCrearTraspasoTx({
+      inventarioStock: { 'prod-1::dep-A': { id: 'stock-A', cantidad_actual: '10.000' } },
+    })
+
+    await crearTraspaso({
+      empresa_id: 'emp-1',
+      usuario_id: 'user-1',
+      deposito_origen_id: 'dep-A',
+      deposito_destino_id: 'dep-B',
+      lineas: [{ producto_id: 'prod-1', cantidad: 1 }],
+    })
+
+    expect(mockedDb.writeTransaction).toHaveBeenCalledTimes(1)
   })
 })
 

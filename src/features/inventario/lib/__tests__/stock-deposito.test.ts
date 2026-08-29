@@ -200,20 +200,32 @@ describe('leerStockDeposito (cierre de WARNING — lectura compartida por los re
       'FROM inventario_stock': [{ cantidad_actual: '7.500' }],
     })
 
-    const result = await leerStockDeposito(tx, 'prod-1', 'dep-A')
+    const result = await leerStockDeposito(tx, 'prod-1', 'dep-A', 'emp-1')
 
     expect(result.toFixed(3)).toBe('7.500')
     const readCall = calls.find((c) => c.sql.startsWith('SELECT cantidad_actual FROM inventario_stock'))
     expect(readCall).toBeDefined()
-    expect(readCall!.params).toEqual(['prod-1', 'dep-A'])
+    expect(readCall!.params).toEqual(['prod-1', 'dep-A', 'emp-1'])
   })
 
   it('sin fila en inventario_stock para ese (producto,deposito): retorna 0 (mismo criterio de baseline que upsertStockDeposito)', async () => {
     const { tx } = createFakeTx({ 'FROM inventario_stock': [] })
 
-    const result = await leerStockDeposito(tx, 'prod-1', 'dep-A')
+    const result = await leerStockDeposito(tx, 'prod-1', 'dep-A', 'emp-1')
 
     expect(result.toFixed(3)).toBe('0.000')
+  })
+
+  it('filtra por empresa_id en el WHERE (aislamiento multi-tenant, consistente con upsertStockDeposito)', async () => {
+    const { tx, calls } = createFakeTx({
+      'FROM inventario_stock': [{ cantidad_actual: '3.000' }],
+    })
+
+    await leerStockDeposito(tx, 'prod-1', 'dep-A', 'emp-2')
+
+    const readCall = calls.find((c) => c.sql.startsWith('SELECT cantidad_actual FROM inventario_stock'))
+    expect(readCall!.sql).toContain('empresa_id = ?')
+    expect(readCall!.params).toEqual(['prod-1', 'dep-A', 'emp-2'])
   })
 })
 

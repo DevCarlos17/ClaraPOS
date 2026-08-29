@@ -9,7 +9,11 @@ import {
   leerStockDeposito,
   evaluarStockDepositoSuficiente,
 } from '@/features/inventario/lib/stock-deposito'
-import { computeCorrelativoUsuario, buildTraspasoKardexPair } from '@/features/inventario/lib/traspasos'
+import {
+  computeCorrelativoUsuario,
+  buildTraspasoKardexPair,
+  evaluarGuardiaDepositosActivos,
+} from '@/features/inventario/lib/traspasos'
 
 export interface TraspasoInventario {
   id: string
@@ -103,6 +107,28 @@ export async function crearTraspaso(params: CrearTraspasoParams): Promise<CrearT
     throw new Error('El traspaso debe tener al menos una linea')
   }
 
+  // Guardia `is_active` (mismo patron que la Guardia is_active en Venta,
+  // use-ventas.ts:313-341): re-verifica ANTES de abrir la writeTransaction
+  // que ambos depositos sigan activos, scoped a empresa_id — origen/destino
+  // ya son conocidos como params (no se resuelven dinamicamente dentro de la
+  // tx), asi que el pre-check fail-fast evita abrir tx para nada.
+  const depositosActivos = await db.getAll<{ id: string; is_active: number }>(
+    'SELECT id, is_active FROM depositos WHERE empresa_id = ? AND id IN (?, ?)',
+    [empresa_id, deposito_origen_id, deposito_destino_id]
+  )
+  const isActivePorId = new Map(depositosActivos.map((d) => [d.id, d.is_active]))
+  const guardia = evaluarGuardiaDepositosActivos(
+    isActivePorId.get(deposito_origen_id),
+    isActivePorId.get(deposito_destino_id)
+  )
+  if (guardia.bloqueado) {
+    throw new Error(
+      guardia.lado === 'origen'
+        ? 'No se puede completar el traspaso: el deposito de origen esta inactivo'
+        : 'No se puede completar el traspaso: el deposito de destino esta inactivo'
+    )
+  }
+
   const traspasoId = uuidv4()
   const now = localNow()
   let correlativo = 0
@@ -146,7 +172,7 @@ export async function crearTraspaso(params: CrearTraspasoParams): Promise<CrearT
     for (const linea of lineas) {
       const cantidad = new Decimal(linea.cantidad)
 
-      const stockOrigenActual = await leerStockDeposito(tx, linea.producto_id, deposito_origen_id)
+      const stockOrigenActual = await leerStockDeposito(tx, linea.producto_id, deposito_origen_id, empresa_id)
       if (!evaluarStockDepositoSuficiente(stockOrigenActual, cantidad)) {
         throw new Error(
           `Stock insuficiente en el deposito de origen para el producto ${linea.producto_id}. Disponible: ${stockOrigenActual.toFixed(3)}, Solicitado: ${cantidad.toFixed(3)}`
@@ -155,7 +181,7 @@ export async function crearTraspaso(params: CrearTraspasoParams): Promise<CrearT
       // Stock de destino ANTES del traspaso — necesario para el snapshot
       // stock_anterior/stock_nuevo de la entrada (lectura per-deposito, no
       // productos.stock global: un traspaso no cambia el total cross-deposito).
-      const stockDestinoActual = await leerStockDeposito(tx, linea.producto_id, deposito_destino_id)
+      const stockDestinoActual = await leerStockDeposito(tx, linea.producto_id, deposito_destino_id, empresa_id)
 
       const movSalidaId = uuidv4()
       const movEntradaId = uuidv4()

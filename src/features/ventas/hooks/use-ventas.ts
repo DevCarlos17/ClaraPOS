@@ -558,7 +558,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         // mismo par lectura+decision (`leerStockDeposito` /
         // `evaluarStockDepositoSuficiente`) que el guard de ingredientes de
         // receta mas abajo — una unica fuente de la logica de suficiencia.
-        const stockDepositoActual = await leerStockDeposito(tx, linea.producto_id, depositoId)
+        const stockDepositoActual = await leerStockDeposito(tx, linea.producto_id, depositoId, empresa_id)
         if (!evaluarStockDepositoSuficiente(stockDepositoActual, new Decimal(linea.cantidad))) {
           throw new Error(
             `Stock insuficiente para "${producto.nombre}" en el deposito de la caja. Stock: ${stockDepositoActual.toFixed(3)}, Solicitado: ${linea.cantidad}`
@@ -715,7 +715,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
             // es la del deposito de la caja activa (`inventario_stock`), NO el total
             // cross-deposito `productos.stock` del ingrediente (que solo se conserva
             // para el snapshot `stock_anterior`/`stock_nuevo` del kardex, sin cambios).
-            const stockDepositoIngrediente = await leerStockDeposito(tx, ingrediente.producto_id, depositoId)
+            const stockDepositoIngrediente = await leerStockDeposito(tx, ingrediente.producto_id, depositoId, empresa_id)
             if (!evaluarStockDepositoSuficiente(stockDepositoIngrediente, new Decimal(cantidadNecesaria))) {
               throw new Error(
                 `Stock insuficiente de ingrediente "${ingrediente.nombre}" en el deposito de la caja para servicio "${producto.nombre}". Stock: ${stockDepositoIngrediente.toFixed(3)}, Necesario: ${cantidadNecesaria.toFixed(3)}`

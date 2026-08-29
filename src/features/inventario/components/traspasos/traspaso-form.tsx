@@ -9,6 +9,11 @@ import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useStockPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePlantillasTraspaso, usePlantillaProductos } from '@/features/inventario/hooks/use-plantillas-traspaso'
+import {
+  filtrarDepositosDisponibles,
+  hayArticulosCargados,
+  puedeProcesarTraspaso,
+} from '@/features/inventario/lib/traspasos'
 
 interface TraspasoFormProps {
   isOpen: boolean
@@ -108,6 +113,7 @@ function ProductoBuscador({
         <button
           type="button"
           onClick={() => onSelect({ id: '', nombre: '', codigo: '' })}
+          aria-label="Quitar producto de la linea"
           className="p-0.5 text-muted-foreground hover:text-destructive shrink-0"
         >
           <X className="h-3 w-3" />
@@ -188,6 +194,35 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
   const productosActivos = useMemo(
     () => productos.filter((p) => p.tipo === 'P' && p.is_active === 1) as typeof productos,
     [productos]
+  )
+
+  // Exclusion mutua entre origen/destino (REQ1): cada select excluye la
+  // opcion ya elegida del otro lado — capa de UX, el guard real (schema +
+  // hook + trigger DB) sigue rechazando origen === destino.
+  const depositosDisponiblesOrigen = useMemo(
+    () => filtrarDepositosDisponibles(depositos, depositoDestinoId),
+    [depositos, depositoDestinoId]
+  )
+  const depositosDisponiblesDestino = useMemo(
+    () => filtrarDepositosDisponibles(depositos, depositoOrigenId),
+    [depositos, depositoOrigenId]
+  )
+
+  const productosValidosIds = useMemo(
+    () => new Set(productosActivos.map((p) => p.id)),
+    [productosActivos]
+  )
+
+  const resultado = useMemo(
+    () =>
+      puedeProcesarTraspaso({
+        depositoOrigenId,
+        depositoDestinoId,
+        lineas: lineas.map((l) => ({ producto_id: l.producto_id, cantidad: l.cantidad })),
+        stockDisponiblePorProducto,
+        productosValidosIds,
+      }),
+    [depositoOrigenId, depositoDestinoId, lineas, stockDisponiblePorProducto, productosValidosIds]
   )
 
   function reset() {
@@ -349,10 +384,11 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
                   id="traspaso-origen"
                   value={depositoOrigenId}
                   onChange={(e) => setDepositoOrigenId(e.target.value)}
-                  className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={hayArticulosCargados(lineas)}
+                  className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-muted/40 disabled:cursor-not-allowed"
                 >
                   <option value="">Seleccionar...</option>
-                  {depositos.map((d) => (
+                  {depositosDisponiblesOrigen.map((d) => (
                     <option key={d.id} value={d.id}>{d.nombre}</option>
                   ))}
                 </select>
@@ -372,7 +408,7 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
                   }`}
                 >
                   <option value="">Seleccionar...</option>
-                  {depositos.map((d) => (
+                  {depositosDisponiblesDestino.map((d) => (
                     <option key={d.id} value={d.id}>{d.nombre}</option>
                   ))}
                 </select>
@@ -518,7 +554,8 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
             </button>
             <button
               type="submit"
-              disabled={submitting || mismoDeposito}
+              disabled={submitting || !resultado.habilitado}
+              title={resultado.motivo}
               className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? 'Registrando...' : 'Registrar Traspaso'}

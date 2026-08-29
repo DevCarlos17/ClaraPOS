@@ -1,5 +1,6 @@
-import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { TraspasoForm } from '../traspaso-form'
 import { useProductos } from '@/features/inventario/hooks/use-productos'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
@@ -7,6 +8,11 @@ import { crearTraspaso } from '@/features/inventario/hooks/use-traspasos'
 import { useStockPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePlantillasTraspaso, usePlantillaProductos } from '@/features/inventario/hooks/use-plantillas-traspaso'
+
+// Mockeado para poder aserter sobre el toast de error en el test de REQ4
+// (modal no se cierra ante errores de validacion) sin depender del store
+// interno real de sonner.
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 // Mismo patron que movimiento-form.test.tsx: mockeamos `@/core/db/powersync/db`
 // primero porque los modulos reales importados transitivamente (via
@@ -46,6 +52,7 @@ const mockedUseStockPorDeposito = vi.mocked(useStockPorDeposito)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUsePlantillasTraspaso = vi.mocked(usePlantillasTraspaso)
 const mockedUsePlantillaProductos = vi.mocked(usePlantillaProductos)
+const mockedToastError = vi.mocked(toast.error)
 
 const PRODUCTOS = [
   { id: 'prod-1', codigo: 'P-001', nombre: 'Producto Uno', tipo: 'P', is_active: 1 },
@@ -72,10 +79,15 @@ const STOCK_ORIGEN_DEFAULT = [
 // simple"/"crearTraspaso tras cargar"); 'plant-2' = 1 activo + 1 inactivo
 // (caso "filtrado de productos inactivos al cargar"); 'plant-3' = todos
 // inactivos (caso "fallback a una linea vacia").
+// 'plant-4' = referencia un producto_id ('prod-999') que NO existe en el
+// catalogo `PRODUCTOS` de este archivo (simula una plantilla desactualizada
+// tras borrar/desactivar el producto en Inventario) — caso de "linea con
+// producto ausente en la BD" del REQ Habilitacion Condicional del Boton.
 const PLANTILLAS = [
   { id: 'plant-1', empresa_id: 'emp-1', nombre: 'Plantilla Semanal', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 1 },
   { id: 'plant-2', empresa_id: 'emp-1', nombre: 'Plantilla Con Inactivo', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 2 },
   { id: 'plant-3', empresa_id: 'emp-1', nombre: 'Plantilla Todo Inactivo', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 2 },
+  { id: 'plant-4', empresa_id: 'emp-1', nombre: 'Plantilla Desactualizada', descripcion: null, is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null, items_count: 1 },
 ]
 
 const PLANTILLA_PRODUCTOS: Record<string, Array<{ id: string; producto_id: string; producto_nombre: string; producto_codigo: string; producto_is_active: number }>> = {
@@ -89,6 +101,12 @@ const PLANTILLA_PRODUCTOS: Record<string, Array<{ id: string; producto_id: strin
   'plant-3': [
     { id: 'det-4', producto_id: 'prod-1', producto_nombre: 'Producto Uno', producto_codigo: 'P-001', producto_is_active: 0 },
     { id: 'det-5', producto_id: 'prod-2', producto_nombre: 'Producto Dos', producto_codigo: 'P-002', producto_is_active: 0 },
+  ],
+  // producto_is_active viene en 1 desde la vista de la plantilla (el producto
+  // estaba activo cuando se guardo la plantilla), pero 'prod-999' ya no
+  // existe en el catalogo `PRODUCTOS` -> productosValidosIds no lo contiene.
+  'plant-4': [
+    { id: 'det-6', producto_id: 'prod-999', producto_nombre: 'Producto Fantasma', producto_codigo: 'P-999', producto_is_active: 1 },
   ],
 }
 
@@ -119,7 +137,7 @@ async function seleccionarProducto(user: ReturnType<typeof userEvent.setup>, ind
 }
 
 describe('TraspasoForm — deposito origen/destino (TRI/Traspaso Atomico Individual)', () => {
-  it('bloquea el submit cuando origen y destino son el mismo deposito, mostrando un mensaje claro', async () => {
+  it('la exclusion mutua entre origen y destino impide elegir el mismo deposito en ambos selects (REQ Exclusión Mutua)', async () => {
     const user = userEvent.setup()
     setupMocks()
     render(<TraspasoForm isOpen onClose={() => {}} />)
@@ -129,10 +147,27 @@ describe('TraspasoForm — deposito origen/destino (TRI/Traspaso Atomico Individ
     const selectDestino = selects[1] as HTMLSelectElement
 
     await user.selectOptions(selectOrigen, 'dep-A')
-    await user.selectOptions(selectDestino, 'dep-A')
+    // Elegir A como origen lo excluye de las opciones de destino.
+    expect(within(selectDestino).queryByText('Deposito A')).not.toBeInTheDocument()
 
-    expect(await screen.findByText(/deben ser diferentes/i)).toBeInTheDocument()
+    await user.selectOptions(selectDestino, 'dep-B')
+    // Elegir B como destino lo excluye, simetricamente, de las opciones de origen.
+    expect(within(selectOrigen).queryByText('Deposito B')).not.toBeInTheDocument()
 
+    expect(screen.queryByText(/deben ser diferentes/i)).not.toBeInTheDocument()
+    expect(mockedCrearTraspaso).not.toHaveBeenCalled()
+  })
+
+  it('boton "Registrar Traspaso" deshabilitado sin lineas validas cargadas', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+
+    // Origen y destino validos, pero sin ningun producto cargado en las lineas.
     const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
     expect(submitBtn).toBeDisabled()
     expect(mockedCrearTraspaso).not.toHaveBeenCalled()
@@ -465,5 +500,293 @@ describe('TraspasoForm — Cargar plantilla (Slice C)', () => {
 
     // Ahora el effect debe re-dispararse y cargar el producto.
     expect(await screen.findByText('Producto Uno')).toBeInTheDocument()
+  })
+})
+
+describe('TraspasoForm — matriz de habilitacion del boton via click real (REQ Limite de Cantidad Disponible)', () => {
+  // Nota de cobertura: la condicion "origen === destino" de la matriz NO
+  // tiene aqui un test dedicado porque, una vez cableada la exclusion mutua
+  // (REQ Exclusion Mutua, ver describe de mas arriba), es estructuralmente
+  // INALCANZABLE via la UI real — los dos <select> nunca pueden compartir el
+  // mismo valor porque cada uno excluye la opcion ya elegida del otro lado
+  // (`filtrarDepositosDisponibles`). La regla en si sigue 100% cubierta por
+  // `puedeProcesarTraspaso` (unit, matriz completa en lib/__tests__/traspasos.test.ts)
+  // y por el guard real en schema/hook/trigger DB. Fabricar aqui un test que
+  // fuerce ese estado saltandose la UI seria vacuo (no probaria el cableado
+  // real del componente).
+
+  it('boton deshabilitado si falta el deposito destino, aunque haya lineas validas cargadas', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectOrigen = screen.getAllByRole('combobox')[0] as HTMLSelectElement
+    await user.selectOptions(selectOrigen, 'dep-A')
+    // Destino NUNCA se selecciona.
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '4')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    expect(submitBtn).toBeDisabled()
+
+    await user.click(submitBtn)
+    expect(mockedCrearTraspaso).not.toHaveBeenCalled()
+  })
+
+  it('boton deshabilitado si falta el deposito origen (destino solo, sin lineas cargables)', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectDestino = screen.getAllByRole('combobox')[1] as HTMLSelectElement
+    await user.selectOptions(selectDestino, 'dep-B')
+    // Sin origen, el buscador de productos permanece deshabilitado (ya
+    // cubierto por otro describe) por lo que no hay lineas validas posibles:
+    // el boton debe seguir deshabilitado por la falta de origen.
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    expect(submitBtn).toBeDisabled()
+
+    await user.click(submitBtn)
+    expect(mockedCrearTraspaso).not.toHaveBeenCalled()
+  })
+
+  it('boton deshabilitado si la cantidad de una linea supera el stock disponible en origen', async () => {
+    const user = userEvent.setup()
+    setupMocks([{ producto_id: 'prod-1', cantidad_actual: '5.000' }])
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+
+    const cantidadInput = screen.getByPlaceholderText('0.000')
+    // Disponible = 5, pedimos 8 -> excede el stock del origen.
+    await user.type(cantidadInput, '8')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    expect(submitBtn).toBeDisabled()
+
+    await user.click(submitBtn)
+    expect(mockedCrearTraspaso).not.toHaveBeenCalled()
+  })
+
+  it('boton deshabilitado si una linea referencia un producto sin fila de stock en el deposito origen', async () => {
+    const user = userEvent.setup()
+    // El stock del origen solo trae fila para prod-2; prod-1 (el que carga
+    // la plantilla) no tiene fila alguna en `stockDisponiblePorProducto`.
+    setupMocks([{ producto_id: 'prod-2', cantidad_actual: '10.000' }])
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    await screen.findByText('Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '1')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    expect(submitBtn).toBeDisabled()
+
+    await user.click(submitBtn)
+    expect(mockedCrearTraspaso).not.toHaveBeenCalled()
+  })
+
+  it('boton deshabilitado si una plantilla desactualizada referencia un producto que ya no existe en el catalogo activo', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-4')
+
+    // 'prod-999' no existe en PRODUCTOS -> no esta en productosValidosIds.
+    await screen.findByText('Producto Fantasma')
+    await user.type(screen.getByPlaceholderText('0.000'), '1')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    expect(submitBtn).toBeDisabled()
+
+    await user.click(submitBtn)
+    expect(mockedCrearTraspaso).not.toHaveBeenCalled()
+  })
+
+  it('con datos totalmente validos el boton se HABILITA (atributo disabled real) y el submit SI dispara crearTraspaso', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '4')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    // Prueba real y no-vacua del atributo `disabled` nativo: si el cableado
+    // `disabled={submitting || !resultado.habilitado}` estuviera roto (p.ej.
+    // siempre `true`), esta assertion fallaria aqui.
+    expect(submitBtn).toBeEnabled()
+
+    // NOTA (hallazgo de infraestructura de test, no del componente): NO se usa
+    // `user.click(submitBtn)` para disparar el submit aqui porque happy-dom
+    // tiene un bug real en su calculo de `stepMismatch` para <input type=number
+    // step="0.001">: `(value - min) % step` se computa con floating-point CRUDO
+    // sin la tolerancia que exige la spec HTML (ver `(4-0.001) % 0.001 =
+    // 2.68e-17 !== 0`), por lo que happy-dom marca como invalido un valor
+    // perfectamente valido (ej. "4") y bloquea la sub-mision NATIVA disparada
+    // por el click en un boton type="submit" — el 'submit' event nunca llega a
+    // dispararse (confirmado: ni `crearTraspaso` ni `toast.error` se invocan).
+    // Esto es EXACTAMENTE por lo que los tests "happy path" preexistentes de
+    // este archivo usan `fireEvent.submit(form)`: no es un antipatron, es un
+    // workaround deliberado a esta limitacion del entorno. La parte que SI
+    // prueba el cableado real es la assertion `toBeEnabled()` de arriba (via
+    // el atributo `disabled` autentico) — `fireEvent.submit` solo dispara el
+    // evento nativo de submit sin pasar por la validacion HTML5 rota de
+    // happy-dom, igual que el resto de la suite.
+    fireEvent.submit(submitBtn.closest('form')!)
+
+    await waitFor(() => {
+      expect(mockedCrearTraspaso).toHaveBeenCalled()
+    })
+    expect(mockedCrearTraspaso.mock.calls[0]![0]).toMatchObject({
+      empresa_id: 'emp-1',
+      usuario_id: 'user-1',
+      deposito_origen_id: 'dep-A',
+      deposito_destino_id: 'dep-B',
+      lineas: [{ producto_id: 'prod-1', cantidad: 4 }],
+    })
+  })
+})
+
+describe('TraspasoForm — bloqueo del select de deposito origen (REQ Busqueda de Productos Limitada al Origen y Bloqueo de Seleccion)', () => {
+  it('agregar el primer articulo bloquea el select de deposito origen', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectOrigen = screen.getAllByRole('combobox')[0] as HTMLSelectElement
+    await user.selectOptions(selectOrigen, 'dep-A')
+    expect(selectOrigen).toBeEnabled()
+
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+
+    expect(selectOrigen).toBeDisabled()
+  })
+
+  it('cargar una plantilla bloquea el select de deposito origen', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectOrigen = screen.getAllByRole('combobox')[0] as HTMLSelectElement
+    expect(selectOrigen).toBeEnabled()
+
+    const selectPlantilla = screen.getByLabelText(/cargar plantilla/i)
+    await user.selectOptions(selectPlantilla, 'plant-1')
+
+    await screen.findByText('Producto Uno')
+    expect(selectOrigen).toBeDisabled()
+  })
+
+  it('vaciar la unica linea cargada (quitar el producto) vuelve a habilitar el select de deposito origen', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selectOrigen = screen.getAllByRole('combobox')[0] as HTMLSelectElement
+    await user.selectOptions(selectOrigen, 'dep-A')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    expect(selectOrigen).toBeDisabled()
+
+    // Con una sola linea, "Quitar linea" esta deshabilitado (min. 1 linea);
+    // la unica forma de vaciar la tabla es limpiar el producto de esa linea
+    // con el boton "X" junto al valor seleccionado.
+    await user.click(screen.getByRole('button', { name: /quitar producto de la linea/i }))
+
+    expect(selectOrigen).toBeEnabled()
+  })
+})
+
+describe('TraspasoForm — caida de stock concurrente re-renderiza el estado invalido (REQ Limite de Cantidad Disponible)', () => {
+  it('una venta concurrente que reduce el stock disponible por debajo de la cantidad ya cargada invalida el input y deshabilita el boton', async () => {
+    const user = userEvent.setup()
+    setupMocks([{ producto_id: 'prod-1', cantidad_actual: '10.000' }])
+    const { rerender } = render(<TraspasoForm isOpen onClose={() => {}} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+
+    const cantidadInput = screen.getByPlaceholderText('0.000') as HTMLInputElement
+    await user.type(cantidadInput, '8')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    // Estado inicial: 8 <= 10 disponibles -> valido.
+    expect(cantidadInput).toHaveAttribute('aria-invalid', 'false')
+    expect(submitBtn).toBeEnabled()
+
+    // Una venta concurrente sincroniza y el query reactivo de PowerSync
+    // (`useStockPorDeposito`) refleja el nuevo stock mas bajo; simulamos ese
+    // update cambiando el valor devuelto por el mock y re-renderizando el
+    // MISMO componente (no un remount) — el estado local (lineas, cantidad
+    // tipeada) se preserva, solo cambia la prop reactiva de stock.
+    mockedUseStockPorDeposito.mockReturnValue({
+      stock: [{ producto_id: 'prod-1', cantidad_actual: '5.000' }] as never,
+      isLoading: false,
+    })
+    rerender(<TraspasoForm isOpen onClose={() => {}} />)
+
+    expect(cantidadInput).toHaveAttribute('aria-invalid', 'true')
+    expect(submitBtn).toBeDisabled()
+  })
+})
+
+describe('TraspasoForm — el modal no se cierra ante errores de validacion en el submit (REQ Modal No Se Cierra ante Errores de Validacion)', () => {
+  it('si crearTraspaso rechaza, el modal permanece abierto (onClose NO se llama) y los datos del formulario se preservan', async () => {
+    const user = userEvent.setup()
+    setupMocks()
+    mockedCrearTraspaso.mockRejectedValueOnce(new Error('Stock insuficiente en el deposito de origen'))
+    const onClose = vi.fn()
+    render(<TraspasoForm isOpen onClose={onClose} />)
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[0]!, 'dep-A')
+    await user.selectOptions(selects[1]!, 'dep-B')
+    await seleccionarProducto(user, 0, 'Producto Uno', 'Producto Uno')
+    await user.type(screen.getByPlaceholderText('0.000'), '4')
+
+    const submitBtn = screen.getByRole('button', { name: /registrar traspaso/i })
+    // Prueba real via el atributo `disabled` nativo (ver nota extendida en el
+    // describe "matriz de habilitacion del boton via click real" mas arriba):
+    // se dispara el submit con `fireEvent.submit` porque happy-dom tiene un
+    // bug de floating-point en `stepMismatch` para <input step="0.001"> que
+    // bloquea la submision nativa disparada por click en botones type=submit
+    // — mismo workaround que el resto de la suite.
+    expect(submitBtn).toBeEnabled()
+    fireEvent.submit(submitBtn.closest('form')!)
+
+    await waitFor(() => {
+      expect(mockedCrearTraspaso).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(mockedToastError).toHaveBeenCalledWith('Stock insuficiente en el deposito de origen')
+    })
+
+    // Si el catch de handleSubmit llamara onClose() (bug), esta assertion
+    // fallaria: prueba en runtime que el modal NO se cierra ante el error.
+    expect(onClose).not.toHaveBeenCalled()
+    // El formulario sigue montado con los datos que el usuario cargo.
+    expect(screen.getByRole('button', { name: /registrar traspaso/i })).toBeInTheDocument()
+    expect(screen.getByText('Producto Uno')).toBeInTheDocument()
+    expect((selects[0] as HTMLSelectElement).value).toBe('dep-A')
   })
 })
