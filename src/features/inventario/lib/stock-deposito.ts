@@ -64,11 +64,12 @@ export function evaluarStockDepositoSuficiente(
 export async function leerStockDeposito(
   tx: Transaction,
   producto_id: string,
-  deposito_id: string
+  deposito_id: string,
+  empresa_id: string
 ): Promise<Decimal> {
   const result = await tx.execute(
-    'SELECT cantidad_actual FROM inventario_stock WHERE producto_id = ? AND deposito_id = ?',
-    [producto_id, deposito_id]
+    'SELECT cantidad_actual FROM inventario_stock WHERE producto_id = ? AND deposito_id = ? AND empresa_id = ?',
+    [producto_id, deposito_id, empresa_id]
   )
   return result.rows?.length
     ? new Decimal((result.rows.item(0) as { cantidad_actual: string }).cantidad_actual)

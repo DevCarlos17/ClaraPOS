@@ -375,7 +375,7 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       (c) => c.sql.startsWith('SELECT cantidad_actual FROM inventario_stock') && c.params.includes('ing-1')
     )
     expect(stockDepositoRead).toBeDefined()
-    expect(stockDepositoRead!.params).toEqual(['ing-1', 'dep-caja-A'])
+    expect(stockDepositoRead!.params).toEqual(['ing-1', 'dep-caja-A', 'emp-1'])
   })
 
   it('venta con receta: ingrediente CON stock suficiente en el deposito de la caja se consume correctamente (kardex + upsertStockDeposito con el deposito de la caja)', async () => {

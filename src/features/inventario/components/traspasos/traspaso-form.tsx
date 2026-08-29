@@ -9,6 +9,11 @@ import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useStockPorDeposito } from '@/features/inventario/hooks/use-inventario-stock'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePlantillasTraspaso, usePlantillaProductos } from '@/features/inventario/hooks/use-plantillas-traspaso'
+import {
+  filtrarDepositosDisponibles,
+  hayArticulosCargados,
+  puedeProcesarTraspaso,
+} from '@/features/inventario/lib/traspasos'
 
 interface TraspasoFormProps {
   isOpen: boolean
@@ -108,6 +113,7 @@ function ProductoBuscador({
         <button
           type="button"
           onClick={() => onSelect({ id: '', nombre: '', codigo: '' })}
+          aria-label="Quitar producto de la linea"
           className="p-0.5 text-muted-foreground hover:text-destructive shrink-0"
         >
           <X className="h-3 w-3" />
@@ -190,6 +196,35 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
     [productos]
   )
 
+  // Exclusion mutua entre origen/destino (REQ1): cada select excluye la
+  // opcion ya elegida del otro lado — capa de UX, el guard real (schema +
+  // hook + trigger DB) sigue rechazando origen === destino.
+  const depositosDisponiblesOrigen = useMemo(
+    () => filtrarDepositosDisponibles(depositos, depositoDestinoId),
+    [depositos, depositoDestinoId]
+  )
+  const depositosDisponiblesDestino = useMemo(
+    () => filtrarDepositosDisponibles(depositos, depositoOrigenId),
+    [depositos, depositoOrigenId]
+  )
+
+  const productosValidosIds = useMemo(
+    () => new Set(productosActivos.map((p) => p.id)),
+    [productosActivos]
+  )
+
+  const resultado = useMemo(
+    () =>
+      puedeProcesarTraspaso({
+        depositoOrigenId,
+        depositoDestinoId,
+        lineas: lineas.map((l) => ({ producto_id: l.producto_id, cantidad: l.cantidad })),
+        stockDisponiblePorProducto,
+        productosValidosIds,
+      }),
+    [depositoOrigenId, depositoDestinoId, lineas, stockDisponiblePorProducto, productosValidosIds]
+  )
+
   function reset() {
     setDepositoOrigenId('')
     setDepositoDestinoId('')
@@ -248,6 +283,40 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
     // effect (la carga la gobiernan la seleccion + la llegada de datos).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plantillaSeleccionadaId, productosPlantilla])
+
+  // BUG 2 (post-QA): si el deposito origen o destino seleccionado deja de
+  // estar en la lista de depositos activos (ej. otro usuario lo desactiva
+  // mientras el formulario esta abierto), el <select> nativo del navegador
+  // "olvida" la seleccion visualmente (la opcion ya no existe), pero el
+  // estado de React (`depositoOrigenId`/`depositoDestinoId`) queda con el id
+  // viejo — un valor fantasma que `puedeProcesarTraspaso` sigue viendo como
+  // valido/no-vacio. Este efecto sincroniza el estado con la lista reactiva:
+  // si el id seleccionado ya no esta entre los depositos activos, se limpia,
+  // lo que reevalua el predicado y deshabilita el boton correctamente.
+  // BUG 3 (post-QA, mismo family que BUG 2): con articulos cargados el
+  // select de origen queda BLOQUEADO (`hayArticulosCargados`). Si el origen
+  // seleccionado se desactiva, el efecto de arriba limpia depositoOrigenId,
+  // pero el select sigue bloqueado (las lineas siguen cargadas) y ahora sin
+  // seleccion — el usuario queda trabado, sin poder elegir otro origen.
+  // Decision del mantenedor (Opcion A): los articulos cargados pertenecian
+  // al origen que ya no existe, asi que tambien se limpia la tabla de
+  // lineas. Eso deja `hayArticulosCargados(lineas) === false`, lo que
+  // desbloquea el select automaticamente para que el usuario arranque de
+  // nuevo con un origen valido. Solo aplica al ORIGEN: el destino no
+  // determina que articulos tienen stock, asi que su efecto (mas abajo) no
+  // toca la tabla.
+  useEffect(() => {
+    if (depositoOrigenId && !depositos.some((d) => d.id === depositoOrigenId)) {
+      setDepositoOrigenId('')
+      setLineas([{ ...LINEA_VACIA }])
+    }
+  }, [depositos, depositoOrigenId])
+
+  useEffect(() => {
+    if (depositoDestinoId && !depositos.some((d) => d.id === depositoDestinoId)) {
+      setDepositoDestinoId('')
+    }
+  }, [depositos, depositoDestinoId])
 
   useEffect(() => {
     if (isOpen) {
@@ -349,10 +418,11 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
                   id="traspaso-origen"
                   value={depositoOrigenId}
                   onChange={(e) => setDepositoOrigenId(e.target.value)}
-                  className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
+                  disabled={hayArticulosCargados(lineas)}
+                  className="h-9 px-3 text-sm border border-input bg-white rounded-md focus:outline-none focus:ring-2 focus:ring-primary disabled:bg-muted/40 disabled:cursor-not-allowed"
                 >
                   <option value="">Seleccionar...</option>
-                  {depositos.map((d) => (
+                  {depositosDisponiblesOrigen.map((d) => (
                     <option key={d.id} value={d.id}>{d.nombre}</option>
                   ))}
                 </select>
@@ -372,7 +442,7 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
                   }`}
                 >
                   <option value="">Seleccionar...</option>
-                  {depositos.map((d) => (
+                  {depositosDisponiblesDestino.map((d) => (
                     <option key={d.id} value={d.id}>{d.nombre}</option>
                   ))}
                 </select>
@@ -518,7 +588,8 @@ export function TraspasoForm({ isOpen, onClose }: TraspasoFormProps) {
             </button>
             <button
               type="submit"
-              disabled={submitting || mismoDeposito}
+              disabled={submitting || !resultado.habilitado}
+              title={resultado.motivo}
               className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {submitting ? 'Registrando...' : 'Registrar Traspaso'}
