@@ -533,28 +533,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         'GRUPO_COMISIONES_BANCARIAS',
         user.empresa_id
       )
-      // TEMP DEBUG — quitar tras diagnostico
-      try {
-        const dbgConfig = await db.execute(
-          `SELECT clave, cuenta_contable_id FROM cuentas_config WHERE empresa_id = ? AND clave LIKE 'GRUPO_COMISIONES%'`,
-          [user.empresa_id]
-        )
-        const dbgPlan = await db.execute(
-          `SELECT codigo, nombre FROM plan_cuentas WHERE empresa_id = ? AND codigo IN ('6.2.06.01','6.1.25.01')`,
-          [user.empresa_id]
-        )
-        // eslint-disable-next-line no-console
-        console.log('[DEBUG comision] empresa_id=', user.empresa_id)
-        // eslint-disable-next-line no-console
-        console.log('[DEBUG comision] cuentas_config LOCAL rows=', dbgConfig.rows?.length, JSON.stringify(Array.from({ length: dbgConfig.rows?.length ?? 0 }, (_, i) => dbgConfig.rows?.item(i))))
-        // eslint-disable-next-line no-console
-        console.log('[DEBUG comision] plan_cuentas grupos LOCAL rows=', dbgPlan.rows?.length, JSON.stringify(Array.from({ length: dbgPlan.rows?.length ?? 0 }, (_, i) => dbgPlan.rows?.item(i))))
-        // eslint-disable-next-line no-console
-        console.log('[DEBUG comision] grupoComisionesBancarias resuelto=', JSON.stringify(grupoComisionesBancarias))
-      } catch (e) {
-        // eslint-disable-next-line no-console
-        console.error('[DEBUG comision] error consultando local', e)
-      }
       if (!grupoComisionesBancarias) {
         throw new Error(
           'No se pudo resolver el grupo de Comisiones Bancarias — verifica la configuracion contable de la empresa (cuentas_config) o aplica la migracion 0081.'
