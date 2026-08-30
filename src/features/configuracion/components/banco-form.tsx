@@ -24,11 +24,10 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   useCuentasDetalle,
   useCuentasDetallePorTipo,
-  useGrupoComisionesBancarias,
-  useGrupoComisionesPasarela,
   crearCuenta,
   agregarSubcuentaAGrupo,
 } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import { resolverGrupoPorClaveConfig } from '@/features/contabilidad/lib/grupo-por-clave-config'
 import { db } from '@/core/db/powersync/db'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -234,10 +233,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   const { user } = useCurrentUser()
   const { cuentas } = useCuentasDetalle()
   const { cuentas: cuentasGasto } = useCuentasDetallePorTipo('GASTO')
-  // 0081 (PR-2b): 2 grupos-padre resueltos via cuentas_config, reemplaza el
-  // subgrupo plano 6.2.05 (useSubgrupoComisionesBancarias, eliminado)
-  const grupoComisionesBancarias = useGrupoComisionesBancarias()
-  const grupoComisionesPasarela = useGrupoComisionesPasarela()
 
   // Basic banco fields
   const [nombreBanco, setNombreBanco] = useState('')
@@ -508,20 +503,55 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
     cuentaContableId?: string
     cuentaGastoComisionId?: string
     cuentaGastoPasarelaId?: string
-    comisionBancariaOmitida: boolean
-    comisionPasarelaOmitida: boolean
   }> {
     const resultado: {
       cuentaContableId?: string
       cuentaGastoComisionId?: string
       cuentaGastoPasarelaId?: string
-      comisionBancariaOmitida: boolean
-      comisionPasarelaOmitida: boolean
-    } = {
-      comisionBancariaOmitida: false,
-      comisionPasarelaOmitida: false,
-    }
+    } = {}
     if (!user?.empresa_id) return resultado
+
+    // FAIL-FAST (fix race condition, Engram obs #2637/#2661): resolver AMBOS
+    // grupos de comision via lookup DIRECTO (`resolverGrupoPorClaveConfig`,
+    // mismo patron imperativo que la rama principal de abajo), ANTES de
+    // crear cualquier cuenta. `crearCuenta`/`agregarSubcuentaAGrupo` abren
+    // cada uno su propia `writeTransaction` independiente (no hay una
+    // transaccion compartida) — si la comision se validara DESPUES de crear
+    // la cuenta principal y fallara, esta quedaria huerfana en
+    // `plan_cuentas`. Fail-closed: si `opts` pide una cuenta de comision y
+    // su grupo no resuelve, se lanza un Error antes de insertar nada — el
+    // error sube al `try/catch` ya existente en los 3 call-sites
+    // (`handleCrearCuentaContable`, `handleSubmit` create/edit) via
+    // `toast.error` (reemplaza el antiguo `toast.warning` descartable que
+    // dejaba el banco guardado con la FK en NULL).
+    let grupoComisionesBancarias: { id: string; codigo: string; nivel: number } | null = null
+    let grupoComisionesPasarela: { id: string; codigo: string; nivel: number } | null = null
+
+    if (opts.crearComisionBancaria) {
+      grupoComisionesBancarias = await resolverGrupoPorClaveConfig(
+        db,
+        'GRUPO_COMISIONES_BANCARIAS',
+        user.empresa_id
+      )
+      if (!grupoComisionesBancarias) {
+        throw new Error(
+          'No se pudo resolver el grupo de Comisiones Bancarias — verifica la configuracion contable de la empresa (cuentas_config) o aplica la migracion 0081.'
+        )
+      }
+    }
+
+    if (opts.crearComisionPasarela) {
+      grupoComisionesPasarela = await resolverGrupoPorClaveConfig(
+        db,
+        'GRUPO_COMISIONES_PASARELA',
+        user.empresa_id
+      )
+      if (!grupoComisionesPasarela) {
+        throw new Error(
+          'No se pudo resolver el grupo de Comisiones de Pasarelas de Pago — verifica la configuracion contable de la empresa (cuentas_config) o aplica la migracion 0081.'
+        )
+      }
+    }
 
     if (opts.crearActivo) {
       // Buscar cuenta padre "1.1.01" (EFECTIVO Y EQUIVALENTES) u otro prefijo de activos bancarios
@@ -611,20 +641,15 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         return undefined
       }
 
-      if (opts.crearComisionBancaria) {
-        if (grupoComisionesBancarias) {
-          resultado.cuentaGastoComisionId = await crearLeafBajoGrupo(grupoComisionesBancarias, nombreLeafBancaria)
-        } else {
-          resultado.comisionBancariaOmitida = true
-        }
+      // `grupoComisionesBancarias`/`grupoComisionesPasarela` ya fueron
+      // resueltos y validados (no-null) en el bloque fail-fast de arriba
+      // cuando `opts` los pidio — nunca llegan aqui como null.
+      if (opts.crearComisionBancaria && grupoComisionesBancarias) {
+        resultado.cuentaGastoComisionId = await crearLeafBajoGrupo(grupoComisionesBancarias, nombreLeafBancaria)
       }
 
-      if (opts.crearComisionPasarela) {
-        if (grupoComisionesPasarela) {
-          resultado.cuentaGastoPasarelaId = await crearLeafBajoGrupo(grupoComisionesPasarela, nombreLeafPasarela)
-        } else {
-          resultado.comisionPasarelaOmitida = true
-        }
+      if (opts.crearComisionPasarela && grupoComisionesPasarela) {
+        resultado.cuentaGastoPasarelaId = await crearLeafBajoGrupo(grupoComisionesPasarela, nombreLeafPasarela)
       }
     }
 
@@ -635,31 +660,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
   // "Crear Cuenta" genere un nombre de leaf degradado (ult4 vacio) cuando el
   // numero de cuenta aun no fue completado (hallazgo de review 3b.3).
   const NRO_CUENTA_MIN_LENGTH = 5
-
-  /**
-   * Avisa (sin bloquear) cuando `crearCuentasDelBanco` no pudo resolver
-   * alguno de los 2 grupos-padre via cuentas_config. Compartido por el boton
-   * manual "Crear Cuenta" y por `handleSubmit` (CREATE/EDIT) — en ambos casos
-   * el banco/cuenta se guarda igual, pero el usuario debe ver que una de las
-   * cuentas de comision quedo sin crear/vincular (hallazgo de review 3b.3:
-   * antes solo se avisaba desde el boton manual, `handleSubmit` lo descartaba
-   * en silencio).
-   */
-  function avisarComisionesOmitidas(creadas: {
-    comisionBancariaOmitida: boolean
-    comisionPasarelaOmitida: boolean
-  }) {
-    if (creadas.comisionBancariaOmitida) {
-      toast.warning(
-        'No se pudo resolver el grupo de Comisiones Bancarias — la cuenta de comision bancaria no se creo. Verifica la configuracion contable de la empresa (cuentas_config) o aplica la migracion 0081.'
-      )
-    }
-    if (creadas.comisionPasarelaOmitida) {
-      toast.warning(
-        'No se pudo resolver el grupo de Comisiones de Pasarelas de Pago — la cuenta base de pasarela no se creo. Verifica la configuracion contable de la empresa (cuentas_config) o aplica la migracion 0081.'
-      )
-    }
-  }
 
   async function handleCrearCuentaContable() {
     if (!nombreBanco.trim()) {
@@ -703,8 +703,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
       } else if (cantidadCreadas > 0) {
         toast.success('Cuenta(s) creada(s) y vinculada(s)')
       }
-
-      avisarComisionesOmitidas(creadas)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error al crear la cuenta contable'
       toast.error(message)
@@ -754,6 +752,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         // cuentas de comision quedo NULL (bancos creados antes de esta
         // feature o de la migracion 0081), se auto-crea SOLO la faltante,
         // una vez, sin duplicar ni tocar la que ya esta vinculada (SC-15).
+        // Fail-closed (decision del mantenedor, fix race condition Engram
+        // obs #2637): si el backfill no puede resolver el grupo de comision
+        // requerido, `crearCuentasDelBanco` lanza y ABORTA la edicion
+        // completa (el `catch` de abajo lo muestra via `toast.error`) — ya
+        // no se guarda el banco con la comision en NULL en silencio.
         let cuentaGastoComisionFinal = cuentaGastoComisionId
         if (!cuentaGastoComisionFinal || !cuentaGastoPasarelaFinal) {
           const creadas = await crearCuentasDelBanco(
@@ -772,10 +775,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             cuentaGastoPasarelaFinal = creadas.cuentaGastoPasarelaId
             setCuentaGastoPasarelaId(creadas.cuentaGastoPasarelaId)
           }
-          // El banco se actualiza igual (no bloqueante) — el aviso hace
-          // visible que alguna cuenta de comision quedo sin resolver
-          // (hallazgo de review 3b.3: antes se descartaba en silencio aqui).
-          avisarComisionesOmitidas(creadas)
         }
 
         await updateBanco(banco.id, {
@@ -797,7 +796,11 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
         // sistema (decision de usuario) — las 3 se auto-crean y vinculan
         // aqui, sin pasos manuales (SC-13). Idempotente: si el usuario ya
         // uso "Crear Cuenta" o selecciono una cuenta existente en algun
-        // select, solo se completa lo que falta.
+        // select, solo se completa lo que falta. Fail-closed (fix race
+        // condition Engram obs #2637): si una cuenta de comision requerida
+        // no resuelve, `crearCuentasDelBanco` lanza ANTES de crear la cuenta
+        // principal (fail-fast interno) — la creacion completa del banco se
+        // aborta, nunca se guarda con la FK de comision en NULL.
         let cuentaContableFinal = cuentaContableId
         let cuentaGastoComisionFinal = cuentaGastoComisionId
         if (!cuentaContableFinal || !cuentaGastoComisionFinal || !cuentaGastoPasarelaFinal) {
@@ -818,11 +821,6 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
           if (!cuentaGastoPasarelaFinal && creadas.cuentaGastoPasarelaId) {
             cuentaGastoPasarelaFinal = creadas.cuentaGastoPasarelaId
           }
-          // El banco se crea igual (no bloqueante) — el aviso hace visible
-          // que alguna cuenta de comision quedo sin resolver, en vez de
-          // guardar cuenta_gasto_pasarela_id/cuenta_gasto_comision_id = NULL
-          // en silencio (hallazgo de review 3b.3).
-          avisarComisionesOmitidas(creadas)
         }
 
         // Invariante "ningun metodo queda huerfano" (SC-29/30): al garantizar
@@ -910,9 +908,10 @@ export function BancoForm({ isOpen, onClose, banco }: BancoFormProps) {
             // llegar a createPaymentMethod — nunca persiste cuenta_gasto_id
             // vacio (invariante nunca-huerfano, SC-08/SC-30). Si tras
             // resolver contra cuentaGastoPasarelaFinal sigue vacio (caso
-            // extremo: la cuenta de pasarela no pudo crearse, ver
-            // avisarComisionesOmitidas arriba), se aborta con un error claro
-            // en vez de guardar un huerfano en silencio.
+            // extremo: la cuenta de pasarela no pudo crearse — ya deberia
+            // haber abortado antes via el fail-closed de crearCuentasDelBanco
+            // de mas arriba, este throw es el backstop final), se aborta con
+            // un error claro en vez de guardar un huerfano en silencio.
             deducciones: draft.deducciones.map((d) => {
               const cuentaGastoId = d.cuenta_gasto_id || cuentaGastoPasarelaFinal
               if (!cuentaGastoId) {
