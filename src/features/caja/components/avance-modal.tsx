@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Wallet, Info, CashRegister, Vault, Bank } from '@phosphor-icons/react'
+import { Wallet, Info, CashRegister, Vault } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
-import { formatUsd, formatBs } from '@/lib/currency'
+import { formatUsd, formatBs, toStorageString } from '@/lib/currency'
+import { v4 as uuidv4 } from 'uuid'
+import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { todayStr, localNow } from '@/lib/dates'
+import type { CuentaTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
 
 // ─── Types ────────────────────────────────────────────────────
 
-export type OrigenFondos = 'CAJA' | 'EFECTIVO_EMPRESA' | 'BANCO'
+export type OrigenFondos = 'CAJA' | 'EFECTIVO_EMPRESA'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -38,6 +43,7 @@ interface AvanceModalProps {
   /** Egresos de caja ya comprometidos en esta factura (aun no debitados) */
   pendingCajaUsd?: number
   pendingCajaBs?: number
+  cuentas?: CuentaTesoreria[]
 }
 
 // ─── Utilidades ───────────────────────────────────────────────
@@ -53,9 +59,13 @@ function calcularAvance(
   // Calcular cargo en moneda nativa de cada campo para evitar errores de redondeo.
   // Si se convirtiera Bs→USD→%→Bs, los toFixed(2) intermedios introducen desvíos.
   const totalCargoUsdNativo = Number((montoUsd * multiplier).toFixed(2))
-  const totalCargoBs        = Number((montoBs  * multiplier).toFixed(2))
-  const totalCargoUsdFromBs = tasa > 0 ? Number((totalCargoBs / tasa).toFixed(2)) : 0
+  const totalCargoBsNativo  = Number((montoBs  * multiplier).toFixed(2))
+  const totalCargoUsdFromBs = tasa > 0 ? Number((totalCargoBsNativo / tasa).toFixed(2)) : 0
   const totalCargoUsd       = Number((totalCargoUsdNativo + totalCargoUsdFromBs).toFixed(2))
+  // Equivalente completo en Bs: porción nativa + porción USD convertida a Bs.
+  // Sigue el mismo patrón que prestamo-modal para evitar la reconversión posterior.
+  const totalCargoBsFromUsd = Number((totalCargoUsdNativo * tasa).toFixed(2))
+  const totalCargoBs        = Number((totalCargoBsNativo + totalCargoBsFromUsd).toFixed(2))
 
   // Desglose para el resumen (solo display)
   const avanceBsEnUsd  = tasa > 0 ? Number((montoBs / tasa).toFixed(2)) : 0
@@ -75,6 +85,7 @@ function FormAvance({
   onAplicado,
   pendingCajaUsd = 0,
   pendingCajaBs = 0,
+  cuentas,
 }: {
   onClose: () => void
   sesionCajaId?: string
@@ -83,7 +94,9 @@ function FormAvance({
   onAplicado?: (avance: AvanceAplicado) => void
   pendingCajaUsd?: number
   pendingCajaBs?: number
+  cuentas?: CuentaTesoreria[]
 }) {
+  const { user } = useCurrentUser()
   const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
   const { saldoUsd: sesionSaldoUsd, saldoBs: sesionSaldoBs } = useSaldoSesionCaja(sesionCajaId)
 
@@ -99,7 +112,8 @@ function FormAvance({
 
   const [concepto, setConcepto] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const submitting = false
+  const [submitting, setSubmitting] = useState(false)
+  const [selectedCuentaId, setSelectedCuentaId] = useState('')
 
   // Metodos de efectivo disponibles
   const efectivoUsd = metodos.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
@@ -108,6 +122,10 @@ function FormAvance({
   // Saldo disponible real = balance de sesion - egresos pendientes en esta factura
   const dispUsd = Math.max(0, sesionSaldoUsd - pendingCajaUsd)
   const dispBs = Math.max(0, sesionSaldoBs - pendingCajaBs)
+
+  const selectedCuenta = selectedCuentaId
+    ? (cuentas ?? []).find((c) => c.id === selectedCuentaId)
+    : undefined
 
   const usd = parseFloat(montoUsd) || 0
   const bs = parseFloat(montoBs) || 0
@@ -122,9 +140,10 @@ function FormAvance({
     setPorcentajeFee('10')
     setConcepto('')
     setErrors({})
+    setSelectedCuentaId('')
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
 
@@ -157,6 +176,20 @@ function FormAvance({
         }
       }
     }
+    if (origenFondos !== 'CAJA') {
+      if (!selectedCuentaId) {
+        newErrors.general = 'Selecciona una cuenta de origen'
+      } else if (selectedCuenta) {
+        const saldoDisp = parseFloat(selectedCuenta.saldo_actual ?? '0')
+        const esUSD = selectedCuenta.moneda_codigo === 'USD'
+        const montoSolicitado = esUSD ? usd : bs
+        if (montoSolicitado <= 0) {
+          newErrors.general = `Ingresa el monto en ${esUSD ? 'USD' : 'Bs'}`
+        } else if (montoSolicitado > saldoDisp) {
+          newErrors.general = `Saldo insuficiente. Disponible: ${esUSD ? formatUsd(saldoDisp) : formatBs(saldoDisp)}`
+        }
+      }
+    }
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
@@ -165,6 +198,45 @@ function FormAvance({
 
     const conceptoFinal = concepto.trim() ||
       `Avance de efectivo${clienteNombre ? ` - ${clienteNombre}` : ''}`
+
+    if (origenFondos !== 'CAJA' && selectedCuenta && user?.id && user?.empresa_id) {
+      setSubmitting(true)
+      try {
+        const movId = uuidv4()
+        const now = localNow()
+        const fecha = todayStr()
+        const esUSD = selectedCuenta.moneda_codigo === 'USD'
+        const montoNativo = esUSD ? usd : bs
+        const saldoAnt = parseFloat(selectedCuenta.saldo_actual ?? '0')
+        const saldoNuevo = saldoAnt - montoNativo
+
+        await db.writeTransaction(async (tx) => {
+          await tx.execute(
+            `INSERT INTO mov_caja_fuerte
+               (id, empresa_id, caja_fuerte_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                descripcion, validado, reversado, fecha, created_at, created_by)
+             VALUES (?, ?, ?, 'EGRESO', 'MANUAL', ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+            [
+              movId, user.empresa_id, selectedCuenta.id,
+              toStorageString(montoNativo),
+              toStorageString(saldoAnt),
+              toStorageString(saldoNuevo),
+              conceptoFinal,
+              fecha, now, user.id,
+            ]
+          )
+          await tx.execute(
+            'UPDATE caja_fuerte SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(saldoNuevo), now, selectedCuenta.id]
+          )
+        })
+      } catch (err) {
+        setErrors({ general: err instanceof Error ? err.message : 'Error al registrar el avance en tesorería' })
+        setSubmitting(false)
+        return
+      }
+      setSubmitting(false)
+    }
 
     const egresosCaja: Array<{ metodo_cobro_id: string; monto: number }> = []
     if (origenFondos === 'CAJA') {
@@ -210,7 +282,6 @@ function FormAvance({
           {([
             { key: 'CAJA' as OrigenFondos, label: 'Caja', Icon: CashRegister },
             { key: 'EFECTIVO_EMPRESA' as OrigenFondos, label: 'Efectivo empresa', Icon: Vault },
-            { key: 'BANCO' as OrigenFondos, label: 'Banco', Icon: Bank },
           ] as const).map(({ key, label, Icon }) => (
             <button
               key={key}
@@ -237,9 +308,31 @@ function FormAvance({
           ))}
         </div>
         {origenFondos !== 'CAJA' && (
-          <p className="mt-2 text-xs text-amber-700 bg-amber-50/80 border border-amber-200/60 rounded-xl px-3 py-2">
-            Los fondos no se descontaran de la caja activa. El modulo bancario esta pendiente de implementacion.
-          </p>
+          <div className="mt-2 space-y-2">
+            <select
+              value={selectedCuentaId}
+              onChange={(e) => { setSelectedCuentaId(e.target.value); setErrors({}) }}
+              className="flex h-9 w-full rounded-lg border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <option value="">-- Selecciona una cuenta --</option>
+              {(cuentas ?? [])
+                .filter((c) => c.tipo === 'CAJA_FUERTE')
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    [{c.moneda_codigo}] {c.nombre} — {c.moneda_codigo === 'USD' ? formatUsd(parseFloat(c.saldo_actual ?? '0')) : formatBs(parseFloat(c.saldo_actual ?? '0'))}
+                  </option>
+                ))}
+            </select>
+            {selectedCuentaId && (() => {
+              const sel = (cuentas ?? []).find((c) => c.id === selectedCuentaId)
+              if (!sel) return null
+              return (
+                <p className="text-xs text-muted-foreground px-1">
+                  Solo puedes avanzar en {sel.moneda_codigo === 'USD' ? 'dólares (USD)' : 'bolívares (Bs)'} desde esta cuenta.
+                </p>
+              )
+            })()}
+          </div>
         )}
       </div>
 
@@ -257,6 +350,11 @@ function FormAvance({
                   Disp: {formatUsd(dispUsd)}
                 </span>
               )}
+              {origenFondos !== 'CAJA' && selectedCuenta?.moneda_codigo === 'USD' && (
+                <span className="text-xs text-muted-foreground">
+                  Disp: {formatUsd(parseFloat(selectedCuenta.saldo_actual ?? '0'))}
+                </span>
+              )}
             </div>
             <input
               type="number"
@@ -267,7 +365,7 @@ function FormAvance({
               onChange={(e) => setMontoUsd(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={origenFondos === 'CAJA' && (!efectivoUsd || loadingMetodos)}
+              disabled={(origenFondos === 'CAJA' && (!efectivoUsd || loadingMetodos)) || (origenFondos !== 'CAJA' && selectedCuenta?.moneda_codigo !== 'USD')}
               className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoUsd && !loadingMetodos && (
@@ -283,6 +381,11 @@ function FormAvance({
                   Disp: {formatBs(dispBs)}
                 </span>
               )}
+              {origenFondos !== 'CAJA' && selectedCuenta && selectedCuenta.moneda_codigo !== 'USD' && (
+                <span className="text-xs text-muted-foreground">
+                  Disp: {formatBs(parseFloat(selectedCuenta.saldo_actual ?? '0'))}
+                </span>
+              )}
             </div>
             <input
               type="number"
@@ -293,7 +396,7 @@ function FormAvance({
               onChange={(e) => setMontoBs(e.target.value)}
               onWheel={(e) => e.currentTarget.blur()}
               placeholder="0.00"
-              disabled={origenFondos === 'CAJA' && (!efectivoBs || loadingMetodos)}
+              disabled={(origenFondos === 'CAJA' && (!efectivoBs || loadingMetodos)) || (origenFondos !== 'CAJA' && selectedCuenta?.moneda_codigo === 'USD')}
               className="no-spinner w-full rounded-lg border bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50 disabled:cursor-not-allowed"
             />
             {origenFondos === 'CAJA' && !efectivoBs && !loadingMetodos && (
@@ -404,6 +507,7 @@ export function AvanceModal({
   onAplicado,
   pendingCajaUsd,
   pendingCajaBs,
+  cuentas,
 }: AvanceModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -450,6 +554,7 @@ export function AvanceModal({
           onAplicado={onAplicado}
           pendingCajaUsd={pendingCajaUsd}
           pendingCajaBs={pendingCajaBs}
+          cuentas={cuentas}
         />
       </div>
     </dialog>

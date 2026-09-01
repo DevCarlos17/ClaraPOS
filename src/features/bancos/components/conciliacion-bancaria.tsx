@@ -19,6 +19,7 @@ import {
 
 const ORIGEN_LABELS: Record<string, string> = {
   DEPOSITO_CAJA: 'Deposito caja',
+  CIERRE_CONSOLIDACION: 'Consolidacion de cierre',
   TRANSFERENCIA_CLIENTE: 'Cobro cliente',
   PAGO_PROVEEDOR: 'Pago proveedor',
   GASTO: 'Gasto',

@@ -11,6 +11,7 @@ import {
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime, formatHora } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 
 interface PrintOptions {
   desgloseFiscal: boolean
@@ -609,7 +610,7 @@ export function CuadreImprimir({
       </div>
 
       <p className="text-center text-[9px] text-gray-400 mt-4">
-        Generado: {new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })} · ClaraPOS
+        Generado: {formatDateTime(localNow())} · ClaraPOS
       </p>
     </div>
   )

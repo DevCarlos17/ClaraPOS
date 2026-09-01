@@ -1,192 +1,976 @@
 import { useMemo, useState } from 'react'
+import { Plus, BookOpen, CaretDown, CaretUp, Printer } from '@phosphor-icons/react'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useGastos } from '@/features/contabilidad/hooks/use-gastos'
-import { todayStr } from '@/lib/dates'
-import { GastosKpis } from './gastos-kpis'
 import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
-  Legend,
+  useGruposGastoConSubcuentas,
+  findGrupoGastoById,
+  flattenGruposGasto,
+  collectGrupoGastoIds,
+  type GrupoConSubcuentas,
+} from '@/features/contabilidad/hooks/use-plan-cuentas'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useCompany } from '@/features/configuracion/hooks/use-company'
+import { todayStr, startOfMonth, daysAgo, localNow } from '@/lib/dates'
+import { formatUsd, formatBs } from '@/lib/currency'
+import { formatDate, formatDateTime } from '@/lib/format'
+import { montoCostoGasto, montoIvaGasto, montoTotalGasto } from '@/features/contabilidad/lib/gasto-montos'
+import { GastoForm } from './gasto-form'
+import { CuentaGastoModal } from './cuenta-gasto-modal'
+import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  PieChart, Pie, Cell,
 } from 'recharts'
 
-// ─── Constantes ──────────────────────────────────────────────
+const COLORES_PIE = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316', '#14b8a6']
 
-const MESES = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-]
+// ─── Utilidades de impresión ─────────────────────────────────
 
-const COLORES_PIE = [
-  '#3b82f6', '#10b981', '#f59e0b', '#ef4444',
-  '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16',
-]
+const PRINT_STYLES = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; color: #1a1a1a; font-size: 12px; }
+  .empresa-header { text-align: center; border-bottom: 2px solid #2563eb; padding-bottom: 10px; margin-bottom: 16px; }
+  .empresa-nombre { font-size: 16px; font-weight: 700; color: #2563eb; }
+  .empresa-rif, .empresa-dir { font-size: 11px; color: #555; margin-top: 2px; }
+  .report-title { text-align: center; font-size: 15px; font-weight: 700; margin: 12px 0 4px; text-transform: uppercase; letter-spacing: 1px; }
+  .report-meta { text-align: center; font-size: 10px; color: #666; margin-bottom: 14px; }
+  .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+    color: #2563eb; border-bottom: 1px solid #2563eb; padding-bottom: 3px; margin: 14px 0 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th { background: #f0f4ff; text-align: left; padding: 5px 8px; font-weight: 600; border-bottom: 1px solid #cdd; }
+  td { padding: 4px 8px; border-bottom: 1px solid #eee; }
+  tr.grupo-row td { background: #e8edf8; font-weight: 700; font-size: 11px; }
+  tr.cuenta-row td { background: #f5f7fc; font-weight: 600; font-size: 11px; padding-left: 16px; }
+  tr.detail-row td:first-child { padding-left: 28px; }
+  .text-right { text-align: right; }
+  .mono { font-family: monospace; }
+  .total-row td { font-weight: 700; border-top: 2px solid #2563eb; background: #f0f4ff; }
+  @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+`
 
-// ─── Helpers ─────────────────────────────────────────────────
-
-function padMes(n: number) {
-  return String(n).padStart(2, '0')
+function openPrintWindow(title: string, html: string) {
+  const w = window.open('', '_blank', 'width=900,height=700')
+  if (!w) return
+  w.document.write(`<!DOCTYPE html><html><head><title>${title}</title><style>${PRINT_STYLES}</style></head><body>${html}</body></html>`)
+  w.document.close()
+  w.focus()
+  setTimeout(() => w.print(), 350)
 }
 
-// ─── Componente ──────────────────────────────────────────────
+// ─── Tipos ───────────────────────────────────────────────────
+
+type Criterio = 'TODAS' | 'GRUPO' | 'CUENTA'
+type Intervalo = 'DIARIO' | 'ULTIMOS_7' | 'MENSUAL'
+
+// ─── Helpers de fecha ────────────────────────────────────────
+
+const MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+
+function lastDayOfMonth(yyyyMM: string): string {
+  const [y, m] = yyyyMM.split('-').map(Number)
+  const last = new Date(y, m, 0).getDate()
+  return `${yyyyMM}-${String(last).padStart(2, '0')}`
+}
+
+function dayLabel(dateStr: string): string {
+  const [, m, d] = dateStr.split('-')
+  return `${d}/${m}`
+}
+
+function getXKey(dateStr: string, intervalo: Intervalo): string {
+  if (intervalo === 'MENSUAL') return dateStr.slice(0, 7)
+  return dateStr.slice(0, 10)  // DIARIO y ULTIMOS_7 → por día
+}
+
+function xKeyToLabel(key: string, intervalo: Intervalo): string {
+  if (intervalo === 'MENSUAL') {
+    const month = parseInt(key.slice(5, 7)) - 1
+    return MESES_CORTOS[month] ?? key
+  }
+  return dayLabel(key)  // DIARIO y ULTIMOS_7
+}
+
+// Badge status reutilizable
+function StatusBadge({ status }: { status: string }) {
+  return status === 'ANULADO'
+    ? <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">ANULADO</span>
+    : <span className="inline-flex items-center rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">REGISTRADO</span>
+}
+
+// ─── Componente principal ─────────────────────────────────────
 
 export function GastosDashboard() {
-  const [yearStr, monthStr] = todayStr().split('-')
-  const [mes, setMes] = useState(Number(monthStr))
-  const [anio, setAnio] = useState(Number(yearStr))
+  const today = todayStr()
+  const defaultMesDesde = today.slice(0, 7)
+  const { user } = useCurrentUser()
+  const { company } = useCompany()
 
-  const fechaDesde = `${anio}-${padMes(mes)}-01`
-  const ultimoDia = new Date(anio, mes, 0).getDate()
-  const fechaHasta = `${anio}-${padMes(mes)}-${ultimoDia}`
+  // ── Estado de filtros
+  const [criterio, setCriterio]       = useState<Criterio>('TODAS')
+  const [grupoId, setGrupoId]         = useState<string>('')
+  const [cuentaId, setCuentaId]       = useState<string>('')
+  const [intervalo, setIntervalo]     = useState<Intervalo>('DIARIO')
 
-  const { gastos, isLoading } = useGastos(fechaDesde, fechaHasta)
+  // Dates preserves per interval
+  const [dailyDesde, setDailyDesde]   = useState(startOfMonth())
+  const [dailyHasta, setDailyHasta]   = useState(today)
+  const [mesDesde, setMesDesde]       = useState(defaultMesDesde)
+  const [mesHasta, setMesHasta]       = useState(defaultMesDesde)
 
-  const gastosFiltrados = useMemo(
-    () => gastos.filter((g) => g.status === 'REGISTRADO'),
-    [gastos]
+  // Últimos 7 días: auto-computed, no pickers
+  const ultimos7Desde = useMemo(() => daysAgo(7), [today])
+
+  // Collapsible: grupos expandidos por defecto, cuentas colapsadas por defecto
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
+  const [expandedCuentas, setExpandedCuentas] = useState<Set<string>>(new Set())
+
+  function toggleGroup(id: string) {
+    setCollapsedGroups((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+  function toggleCuenta(id: string) {
+    setExpandedCuentas((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  // ── Modales
+  const [formOpen, setFormOpen]               = useState(false)
+  const [cuentaModalOpen, setCuentaModalOpen] = useState(false)
+  const [detalleId, setDetalleId]             = useState<string | null>(null)
+
+  // ── Datos — declarados ANTES de expandir/colapsar todo para que los capture correctamente
+  const { grupos } = useGruposGastoConSubcuentas()
+
+  // Arbol de grupos aplanado con su profundidad — usado por el selector
+  // "Grupo" para mostrar subgrupos anidados (ej. 6.1.25.01) con sangria bajo
+  // su padre en vez de como opciones sueltas al mismo nivel que las raices.
+  const gruposFlat = useMemo(() => flattenGruposGasto(grupos), [grupos])
+
+  // Expandir / colapsar todo — definidos DESPUÉS de grupos para tener la referencia correcta.
+  // Usa collectGrupoGastoIds para incluir subgrupos anidados a cualquier profundidad
+  // (ej. 6.1.25.01 dentro de 6.1.25), no solo los grupos raiz.
+  function colapsarTodo() {
+    setCollapsedGroups(new Set(collectGrupoGastoIds(grupos)))  // colapsa nivel grupo (TODAS, cualquier profundidad)
+    setExpandedCuentas(new Set())                               // colapsa nivel cuenta (TODAS + GRUPO)
+  }
+  function expandirTodo() {
+    setCollapsedGroups(new Set())                          // expande nivel grupo (TODAS)
+    setExpandedCuentas(new Set(grupos.flatMap((g) => g.subcuentas.map((s) => s.id))))  // expande cuentas
+  }
+
+  // Compute actual desde/hasta for query
+  const { queryDesde, queryHasta } = useMemo(() => {
+    if (intervalo === 'MENSUAL') return { queryDesde: `${mesDesde}-01`, queryHasta: lastDayOfMonth(mesHasta) }
+    if (intervalo === 'ULTIMOS_7') return { queryDesde: ultimos7Desde, queryHasta: today }
+    return { queryDesde: dailyDesde, queryHasta: dailyHasta }
+  }, [intervalo, mesDesde, mesHasta, dailyDesde, dailyHasta, ultimos7Desde, today])
+
+  const { gastos, isLoading } = useGastos(queryDesde, queryHasta)
+
+  // ── Filtrar por criterio
+  const gastosFiltrados = useMemo(() => {
+    const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
+    if (criterio === 'GRUPO' && grupoId) {
+      const grupo = findGrupoGastoById(grupos, grupoId)
+      const ids = new Set(grupo?.subcuentas.map((s) => s.id) ?? [])
+      return registrados.filter((g) => ids.has(g.cuenta_id))
+    }
+    if (criterio === 'CUENTA' && cuentaId) {
+      return registrados.filter((g) => g.cuenta_id === cuentaId)
+    }
+    return registrados
+  }, [gastos, criterio, grupoId, cuentaId, grupos])
+
+  // ── Datos gráfica: agrupar por intervalo
+  const chartData = useMemo(() => {
+    const bucket: Record<string, number> = {}
+    for (const g of gastosFiltrados) {
+      const key = getXKey(g.fecha, intervalo)
+      bucket[key] = (bucket[key] ?? 0) + montoCostoGasto(g)
+    }
+    return Object.entries(bucket)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, total]) => ({
+        name: xKeyToLabel(key, intervalo),
+        total: Number(total.toFixed(4)),
+      }))
+  }, [gastosFiltrados, intervalo])
+
+  // ── Resumen por criterio (card lateral)
+  const resumenItems = useMemo(() => {
+    if (criterio === 'TODAS') {
+      // Totals per group
+      return grupos.map((grupo) => {
+        const ids = new Set(grupo.subcuentas.map((s) => s.id))
+        const total = gastosFiltrados
+          .filter((g) => ids.has(g.cuenta_id))
+          .reduce((s, g) => s + montoCostoGasto(g), 0)
+        return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, total }
+      }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total)
+    }
+    if (criterio === 'GRUPO' && grupoId) {
+      const grupo = findGrupoGastoById(grupos, grupoId)
+      return (grupo?.subcuentas ?? []).map((sub) => {
+        const total = gastosFiltrados
+          .filter((g) => g.cuenta_id === sub.id)
+          .reduce((s, g) => s + montoCostoGasto(g), 0)
+        return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, total }
+      }).filter((i) => i.total > 0).sort((a, b) => b.total - a.total)
+    }
+    if (criterio === 'CUENTA' && cuentaId) {
+      const allSubs = grupos.flatMap((g) => g.subcuentas)
+      const sub = allSubs.find((s) => s.id === cuentaId)
+      if (!sub) return []
+      const total = gastosFiltrados.reduce((s, g) => s + montoCostoGasto(g), 0)
+      return [{ id: sub.id, nombre: sub.nombre, codigo: sub.codigo, total }]
+    }
+    return []
+  }, [criterio, gastosFiltrados, grupos, grupoId, cuentaId])
+
+  // Flat list of all accounts for CUENTA dropdown
+  const todasLasCuentas = useMemo(
+    () => grupos.flatMap((g) => g.subcuentas),
+    [grupos]
   )
 
-  // Datos para grafico de barras: agrupados por semana del mes
-  const datosBarras = useMemo(() => {
-    const semanas: Record<string, number> = {
-      'Sem 1': 0, 'Sem 2': 0, 'Sem 3': 0, 'Sem 4': 0,
-    }
-    for (const g of gastosFiltrados) {
-      const dia = new Date(g.fecha).getUTCDate()
-      let semana: string
-      if (dia <= 7) semana = 'Sem 1'
-      else if (dia <= 14) semana = 'Sem 2'
-      else if (dia <= 21) semana = 'Sem 3'
-      else semana = 'Sem 4'
-      semanas[semana] += parseFloat(g.monto_usd) || 0
-    }
-    return Object.entries(semanas).map(([name, total]) => ({
-      name,
-      total: Number(total.toFixed(2)),
-    }))
-  }, [gastosFiltrados])
+  // ── Estadísticas del panel lateral (costo = base imponible, sin IVA) ─────
+  const totalPeriodo = useMemo(
+    () => gastosFiltrados.reduce((s, g) => s + montoCostoGasto(g), 0),
+    [gastosFiltrados]
+  )
+  const ivaPeriodo = useMemo(
+    () => gastosFiltrados.reduce((s, g) => s + montoIvaGasto(g), 0),
+    [gastosFiltrados]
+  )
+  const totalGeneralPeriodo = useMemo(
+    () => gastosFiltrados.reduce((s, g) => s + montoTotalGasto(g), 0),
+    [gastosFiltrados]
+  )
 
-  // Datos para grafico de torta: por cuenta contable
-  const datosPie = useMemo(() => {
-    const porCuenta: Record<string, number> = {}
-    for (const g of gastosFiltrados) {
-      const nombre = g.cuenta_nombre ?? 'Sin cuenta'
-      porCuenta[nombre] = (porCuenta[nombre] ?? 0) + (parseFloat(g.monto_usd) || 0)
+  const numDivisiones = useMemo(() => {
+    if (intervalo === 'ULTIMOS_7') return 7
+    if (intervalo === 'MENSUAL') {
+      const [y1, m1] = mesDesde.split('-').map(Number)
+      const [y2, m2] = mesHasta.split('-').map(Number)
+      return Math.max(1, (y2 - y1) * 12 + (m2 - m1) + 1)
     }
-    return Object.entries(porCuenta)
-      .map(([name, value]) => ({ name, value: Number(value.toFixed(2)) }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8)
-  }, [gastosFiltrados])
+    // DIARIO
+    const d1 = new Date(queryDesde + 'T00:00:00')
+    const d2 = new Date(queryHasta + 'T00:00:00')
+    return Math.max(1, Math.round((d2.getTime() - d1.getTime()) / 86400000) + 1)
+  }, [intervalo, mesDesde, mesHasta, queryDesde, queryHasta])
+
+  const promedioPeriodo = numDivisiones > 0 ? totalPeriodo / numDivisiones : 0
+
+  // Pie data: usa resumenItems (ya calculados y filtrados)
+  const pieData = useMemo(
+    () => resumenItems.slice(0, 10).map((item) => ({ name: item.nombre, value: item.total })),
+    [resumenItems]
+  )
+
+  function handleIntervaloChange(newIntervalo: Intervalo) {
+    setIntervalo(newIntervalo)
+  }
+
+  // ── Impresión PDF ─────────────────────────────────────────
+
+  function handleImprimir() {
+    const nombreEmpresa = company?.nombre ?? ''
+    const rifEmpresa    = company?.rif ?? undefined
+    const nombreUsuario = user?.nombre ?? user?.email ?? 'Sistema'
+    const ahora = formatDateTime(localNow())
+
+    const criterioLabel =
+      criterio === 'TODAS' ? 'Todas las cuentas'
+      : criterio === 'GRUPO' ? `Grupo: ${findGrupoGastoById(grupos, grupoId)?.nombre ?? grupoId}`
+      : `Cuenta: ${todasLasCuentas.find((s) => s.id === cuentaId)?.nombre ?? cuentaId}`
+
+    const intervaloLabel =
+      intervalo === 'DIARIO' ? 'Diario'
+      : intervalo === 'ULTIMOS_7' ? 'Últimos 7 días'
+      : 'Mensual'
+
+    const periodoLabel = `${queryDesde}  →  ${queryHasta}`
+
+    const totalGeneral = gastosFiltrados.reduce((s, g) => s + montoCostoGasto(g), 0)
+
+    // Construir filas de la tabla según criterio
+    let tableRows = ''
+
+    if (criterio === 'TODAS') {
+      for (const grupo of grupos) {
+        const ids = new Set(grupo.subcuentas.map((s) => s.id))
+        const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
+        if (rowsGrupo.length === 0) continue
+        const subtotalGrupo = rowsGrupo.reduce((s, g) => s + montoCostoGasto(g), 0)
+        tableRows += `<tr class="grupo-row"><td colspan="4">${grupo.codigo} — ${grupo.nombre}</td><td class="text-right">${formatUsd(subtotalGrupo)}</td></tr>`
+        for (const sub of grupo.subcuentas) {
+          const rowsCuenta = rowsGrupo.filter((g) => g.cuenta_id === sub.id).sort((a, b) => a.fecha.localeCompare(b.fecha))
+          if (rowsCuenta.length === 0) continue
+          const subtotalCuenta = rowsCuenta.reduce((s, g) => s + montoCostoGasto(g), 0)
+          tableRows += `<tr class="cuenta-row"><td colspan="4">${sub.codigo} — ${sub.nombre}</td><td class="text-right">${formatUsd(subtotalCuenta)}</td></tr>`
+          for (const g of rowsCuenta) {
+            tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(montoCostoGasto(g))}</td></tr>`
+          }
+        }
+      }
+    } else if (criterio === 'GRUPO') {
+      const grupo = findGrupoGastoById(grupos, grupoId)
+      const subcuentas = grupo?.subcuentas ?? grupos.flatMap((g) => g.subcuentas)
+      for (const sub of subcuentas) {
+        const rows = gastosFiltrados.filter((g) => g.cuenta_id === sub.id).sort((a, b) => a.fecha.localeCompare(b.fecha))
+        if (rows.length === 0) continue
+        const subtotal = rows.reduce((s, g) => s + montoCostoGasto(g), 0)
+        tableRows += `<tr class="cuenta-row"><td colspan="4">${sub.codigo} — ${sub.nombre}</td><td class="text-right">${formatUsd(subtotal)}</td></tr>`
+        for (const g of rows) {
+          tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(montoCostoGasto(g))}</td></tr>`
+        }
+      }
+    } else {
+      const rows = gastosFiltrados.sort((a, b) => a.fecha.localeCompare(b.fecha))
+      for (const g of rows) {
+        tableRows += `<tr class="detail-row"><td class="mono">${g.nro_gasto}</td><td>${formatDate(g.fecha)}</td><td>${g.nro_factura ?? '—'}</td><td>${g.observaciones ?? g.descripcion ?? ''}</td><td class="text-right">${formatUsd(montoCostoGasto(g))}</td></tr>`
+      }
+    }
+
+    const html = `
+      <div class="empresa-header">
+        <div class="empresa-nombre">${nombreEmpresa}</div>
+        ${rifEmpresa ? `<div class="empresa-rif">RIF: ${rifEmpresa}</div>` : ''}
+      </div>
+
+      <div class="report-title">Reporte de Gastos</div>
+      <div class="report-meta">
+        Criterio: ${criterioLabel} &nbsp;|&nbsp; Intervalo: ${intervaloLabel} &nbsp;|&nbsp; Periodo: ${periodoLabel}
+        <br/>Generado: ${ahora} &nbsp;|&nbsp; Usuario: ${nombreUsuario}
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Nro Gasto</th>
+            <th>Fecha</th>
+            <th>Factura</th>
+            <th>Descripcion</th>
+            <th class="text-right">Base USD</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${tableRows}
+        </tbody>
+        <tfoot>
+          <tr class="total-row">
+            <td colspan="4">Total general</td>
+            <td class="text-right">${formatUsd(totalGeneral)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    `
+
+    openPrintWindow('Reporte de Gastos', html)
+  }
+
+  // ── Render recursivo de filas de tabla (grupos anidados a cualquier
+  // profundidad — reemplaza el render de 2 niveles hardcodeado) ──────────
+
+  function renderGrupoHijosFilaTabla(grupo: GrupoConSubcuentas, depth: number): React.ReactNode[] {
+    return [
+      ...grupo.subgrupos.flatMap((sg) => renderGrupoFilaTabla(sg, depth + 1)),
+      ...grupo.hojas.flatMap((sub) => {
+        const rowsCuenta = gastosFiltrados
+          .filter((g) => g.cuenta_id === sub.id)
+          .sort((a, b) => a.fecha.localeCompare(b.fecha))
+        if (rowsCuenta.length === 0) return []
+        const subtotalCuenta = rowsCuenta.reduce((s, g) => s + montoCostoGasto(g), 0)
+        const cuentaExpanded = expandedCuentas.has(sub.id)
+        const cuentaPaddingLeft = 16 + (depth + 1) * 24
+        return [
+          <tr key={`acc-${sub.id}`}
+            className="bg-muted/20 border-t border-border/60 cursor-pointer select-none"
+            onClick={() => toggleCuenta(sub.id)}
+          >
+            <td colSpan={5} className="py-1.5 text-xs font-medium text-muted-foreground" style={{ paddingLeft: cuentaPaddingLeft, paddingRight: 16 }}>
+              <span className="inline-flex items-center gap-1.5">
+                {cuentaExpanded ? <CaretUp className="h-3 w-3" /> : <CaretDown className="h-3 w-3" />}
+                <span className="font-mono text-muted-foreground/50 mr-1">{sub.codigo}</span>
+                {sub.nombre}
+                <span className="opacity-50 font-normal ml-1">({rowsCuenta.length})</span>
+              </span>
+            </td>
+            <td className="px-4 py-1.5 text-right text-xs font-medium tabular-nums">{formatUsd(subtotalCuenta)}</td>
+            <td />
+          </tr>,
+          ...(cuentaExpanded ? rowsCuenta.map((g) => (
+            <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} indent />
+          )) : []),
+        ]
+      }),
+    ]
+  }
+
+  function renderGrupoFilaTabla(grupo: GrupoConSubcuentas, depth: number): React.ReactNode[] {
+    const ids = new Set(grupo.subcuentas.map((s) => s.id))
+    const rowsGrupo = gastosFiltrados.filter((g) => ids.has(g.cuenta_id))
+    if (rowsGrupo.length === 0) return []
+    const subtotalGrupo = rowsGrupo.reduce((s, g) => s + montoCostoGasto(g), 0)
+    const grupoCollapsed = collapsedGroups.has(grupo.id)
+    const paddingLeft = 16 + depth * 24
+
+    return [
+      <tr key={`grp-${grupo.id}`}
+        className="bg-muted/40 border-t-2 border-border cursor-pointer select-none"
+        onClick={() => toggleGroup(grupo.id)}
+      >
+        <td colSpan={5} className="py-2 text-xs font-semibold text-foreground uppercase tracking-wide" style={{ paddingLeft, paddingRight: 16 }}>
+          <span className="inline-flex items-center gap-1.5">
+            {grupoCollapsed ? <CaretDown className="h-3 w-3 text-muted-foreground" /> : <CaretUp className="h-3 w-3 text-muted-foreground" />}
+            <span className="font-mono text-muted-foreground/60 mr-1">{grupo.codigo}</span>
+            {grupo.nombre}
+            <span className="text-muted-foreground/50 font-normal ml-1">({rowsGrupo.length})</span>
+          </span>
+        </td>
+        <td className="px-4 py-2 text-right text-xs font-semibold tabular-nums text-foreground">{formatUsd(subtotalGrupo)}</td>
+        <td />
+      </tr>,
+      ...(!grupoCollapsed ? renderGrupoHijosFilaTabla(grupo, depth) : []),
+    ]
+  }
+
+  if (formOpen) {
+    return <GastoForm onClose={() => setFormOpen(false)} />
+  }
 
   return (
-    <div className="space-y-6">
-      {/* Selector de periodo */}
+    <div className="space-y-4">
+
+      {/* ── Barra de filtros ─────────────────────────────────── */}
       <div className="rounded-2xl bg-card shadow-lg p-4">
-      <div className="flex flex-wrap items-center gap-4">
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Mes</label>
-          <select
-            value={mes}
-            onChange={(e) => setMes(Number(e.target.value))}
-            className="rounded-md border border-input px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-          >
-            {MESES.map((nombre, i) => (
-              <option key={i + 1} value={i + 1}>{nombre}</option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-end gap-3">
+
+          {/* Criterio */}
+          <div className="flex-shrink-0">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Criterio</label>
+            <select
+              value={criterio}
+              onChange={(e) => { setCriterio(e.target.value as Criterio); setGrupoId(''); setCuentaId('') }}
+              className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="TODAS">Todas las cuentas</option>
+              <option value="GRUPO">Por grupo</option>
+              <option value="CUENTA">Por cuenta</option>
+            </select>
+          </div>
+
+          {/* Grupo selector */}
+          {criterio === 'GRUPO' && (
+            <div className="flex-shrink-0">
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Grupo</label>
+              <select
+                value={grupoId}
+                onChange={(e) => setGrupoId(e.target.value)}
+                className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Seleccionar grupo...</option>
+                {gruposFlat.map(({ grupo: g, depth }) => (
+                  <option key={g.id} value={g.id}>
+                    {'\u00A0\u00A0\u00A0\u00A0'.repeat(depth)}{g.codigo} — {g.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Cuenta selector */}
+          {criterio === 'CUENTA' && (
+            <div className="flex-shrink-0">
+              <label className="block text-xs font-medium text-muted-foreground mb-1">Cuenta</label>
+              <select
+                value={cuentaId}
+                onChange={(e) => setCuentaId(e.target.value)}
+                className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring min-w-[200px]"
+              >
+                <option value="">Seleccionar cuenta...</option>
+                {todasLasCuentas.map((s) => (
+                  <option key={s.id} value={s.id}>{s.codigo} — {s.nombre}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Intervalo */}
+          <div className="flex-shrink-0">
+            <label className="block text-xs font-medium text-muted-foreground mb-1">Intervalo</label>
+            <div className="flex rounded-md border border-input overflow-hidden text-sm">
+              {(['DIARIO', 'ULTIMOS_7', 'MENSUAL'] as Intervalo[]).map((iv) => (
+                <button
+                  key={iv}
+                  type="button"
+                  onClick={() => handleIntervaloChange(iv)}
+                  className={`px-3 py-2 font-medium transition-colors ${
+                    intervalo === iv
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  {iv === 'DIARIO' ? 'Diario' : iv === 'ULTIMOS_7' ? 'Últ. 7 días' : 'Mensual'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Rango de fechas — adapta al intervalo */}
+          {intervalo === 'MENSUAL' ? (
+            <>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Mes inicio</label>
+                <input
+                  type="month"
+                  value={mesDesde}
+                  onChange={(e) => setMesDesde(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Mes fin</label>
+                <input
+                  type="month"
+                  value={mesHasta}
+                  min={mesDesde}
+                  onChange={(e) => setMesHasta(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </>
+          ) : intervalo === 'DIARIO' ? (
+            <>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Fecha inicio</label>
+                <input
+                  type="date"
+                  value={dailyDesde}
+                  onChange={(e) => setDailyDesde(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="flex-shrink-0">
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Fecha fin</label>
+                <input
+                  type="date"
+                  value={dailyHasta}
+                  min={dailyDesde}
+                  onChange={(e) => setDailyHasta(e.target.value)}
+                  className="rounded-md border border-input px-3 py-2 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+            </>
+          ) : (
+            /* ULTIMOS_7: auto-computed, solo informativo */
+            <div className="flex-shrink-0 self-end">
+              <p className="text-xs text-muted-foreground pb-2.5">
+                {ultimos7Desde} → {today}
+              </p>
+            </div>
+          )}
+
+          {/* Separador + acciones */}
+          <div className="flex-1" />
+          <div className="flex gap-2 flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setCuentaModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors"
+            >
+              <BookOpen className="h-4 w-4" />
+              Crear cuenta
+            </button>
+            <button
+              type="button"
+              onClick={handleImprimir}
+              disabled={gastosFiltrados.length === 0 || isLoading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors disabled:opacity-40"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimir
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Agregar gasto
+            </button>
+          </div>
         </div>
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Ano</label>
-          <input
-            type="number"
-            value={anio}
-            onChange={(e) => setAnio(Number(e.target.value))}
-            min={2020}
-            max={2099}
-            className="w-24 rounded-md border border-input px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-          />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {isLoading ? 'Cargando...' : `${gastosFiltrados.length} gastos registrados`}
-        </p>
-      </div>
+
       </div>
 
-      {/* KPIs */}
-      <GastosKpis gastos={gastos} />
+      {/* ── Pestañas ─────────────────────────────────────────── */}
+      <Tabs defaultValue="dashboard" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+          <TabsTrigger value="libro">Libro de gastos</TabsTrigger>
+        </TabsList>
 
-      {/* Graficas */}
-      {gastosFiltrados.length > 0 ? (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Grafico de barras: total por semana */}
-          <div className="bg-card border border-border rounded-2xl shadow-lg p-4">
-            <h3 className="text-sm font-semibold text-foreground mb-4">Gastos por Semana (USD)</h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={datosBarras} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${v}`} />
+        {/* ── Tab: Dashboard ─────────────────────────────────── */}
+        <TabsContent value="dashboard" className="space-y-4">
+
+      {/* ── Placeholder cuando GRUPO sin selección ───────────── */}
+      {!isLoading && criterio === 'GRUPO' && !grupoId && (
+        <div className="rounded-2xl bg-card shadow-lg p-12 text-center text-muted-foreground">
+          <p className="text-base font-medium">Selecciona un grupo para ver los datos</p>
+          <p className="text-sm mt-1">Elige un grupo en el selector de criterio para cargar la gráfica y el detalle</p>
+        </div>
+      )}
+
+      {/* ── Resumen + Gráfica ─────────────────────────────────── */}
+      {!isLoading && gastosFiltrados.length > 0 && !(criterio === 'GRUPO' && !grupoId) && (
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-stretch">
+
+          {/* Card de estadísticas + pie */}
+          <div className="lg:col-span-2 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col">
+            <div className="px-4 py-3 border-b border-border bg-muted/40 shrink-0">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Estadísticas</p>
+            </div>
+
+            {/* Total + promedio */}
+            <div className="grid grid-cols-2 divide-x divide-border border-b border-border shrink-0">
+              <div className="px-4 py-3">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-0.5">Costo periodo</p>
+                <p className="text-lg font-bold tabular-nums text-foreground">{formatUsd(totalPeriodo)}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{formatBs(totalPeriodo * (gastosFiltrados[0] ? parseFloat(gastosFiltrados[0].tasa) : 1))}</p>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
+                </p>
+              </div>
+              <div className="px-4 py-3">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-0.5">
+                  Promedio / {intervalo === 'MENSUAL' ? 'mes' : 'día'}
+                </p>
+                <p className="text-lg font-bold tabular-nums text-foreground">{formatUsd(promedioPeriodo)}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {numDivisiones} {intervalo === 'MENSUAL' ? `mes${numDivisiones !== 1 ? 'es' : ''}` : `día${numDivisiones !== 1 ? 's' : ''}`}
+                </p>
+              </div>
+            </div>
+
+            {/* Pie chart de distribución */}
+            {pieData.length > 0 && (
+              <div className="flex-1 flex flex-col items-center justify-center py-2">
+                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Distribución</p>
+                <ResponsiveContainer width="100%" height={160}>
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={42}
+                      outerRadius={68}
+                      paddingAngle={2}
+                      dataKey="value"
+                    >
+                      {pieData.map((_entry, i) => (
+                        <Cell key={i} fill={COLORES_PIE[i % COLORES_PIE.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value) => {
+                        const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
+                        const pct = totalPeriodo > 0 ? ((num / totalPeriodo) * 100).toFixed(1) : '0'
+                        return [`$${num.toFixed(2)} (${pct}%)`, '']
+                      }}
+                      cursor={false}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                {/* Leyenda compacta */}
+                <div className="w-full px-3 space-y-1 pb-2">
+                  {pieData.slice(0, 5).map((item, i) => (
+                    <div key={item.name} className="flex items-center gap-1.5 text-[10px]">
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: COLORES_PIE[i % COLORES_PIE.length] }} />
+                      <span className="text-muted-foreground truncate flex-1">{item.name}</span>
+                      <span className="tabular-nums text-foreground font-medium shrink-0">
+                        {totalPeriodo > 0 ? `${((item.value / totalPeriodo) * 100).toFixed(0)}%` : '0%'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Gráfica de barras — ocupa toda la altura de la card de estadísticas */}
+          <div className="lg:col-span-3 rounded-2xl bg-card shadow-lg p-4 flex flex-col h-full">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3 shrink-0">
+              Gastos por {intervalo === 'MENSUAL' ? 'mes' : 'día'} (USD)
+            </p>
+            <div className="flex-1 min-h-[220px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={(v) => `$${v}`}
+                  width={52}
+                />
                 <Tooltip
                   formatter={(value) => {
                     const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
-                    return [`$${num.toFixed(2)}`, 'Total USD']
+                    return [`$${num.toFixed(4)}`, 'Total USD']
                   }}
+                  cursor={{ fill: 'rgba(0,0,0,0.04)' }}
                 />
-                <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="total" fill="#2563eb" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
-          </div>
-
-          {/* Grafico de torta: por cuenta contable */}
-          <div className="bg-card border border-border rounded-2xl shadow-lg p-4">
-            <h3 className="text-sm font-semibold text-foreground mb-4">Distribucion por Cuenta</h3>
-            <ResponsiveContainer width="100%" height={260}>
-              <PieChart>
-                <Pie
-                  data={datosPie}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={55}
-                  outerRadius={90}
-                  paddingAngle={3}
-                  dataKey="value"
-                >
-                  {datosPie.map((_entry, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={COLORES_PIE[index % COLORES_PIE.length]}
-                    />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(value) => {
-                    const num = typeof value === 'number' ? value : parseFloat(String(value ?? 0))
-                    return [`$${num.toFixed(2)}`, 'USD']
-                  }}
-                />
-                <Legend
-                  formatter={(value) =>
-                    value.length > 20 ? `${value.slice(0, 18)}...` : value
-                  }
-                  wrapperStyle={{ fontSize: 11 }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+            </div>
           </div>
         </div>
-      ) : (
-        !isLoading && (
-          <div className="text-center py-12 border border-dashed border-border rounded-lg text-muted-foreground">
-            <p className="text-base font-medium">Sin datos para el periodo seleccionado</p>
-            <p className="text-sm mt-1">Registra gastos para ver las graficas</p>
-          </div>
-        )
       )}
+
+      {/* ── Tabla de detalle ──────────────────────────────────── */}
+      {!isLoading && !(criterio === 'GRUPO' && !grupoId) && (
+        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-border bg-muted/40 flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              Detalle de registros
+            </p>
+            {gastosFiltrados.length > 0 && criterio !== 'CUENTA' && (
+              <div className="flex gap-2">
+                <button type="button" onClick={expandirTodo}
+                  className="text-xs text-primary hover:underline">Expandir todo</button>
+                <span className="text-muted-foreground/40">·</span>
+                <button type="button" onClick={colapsarTodo}
+                  className="text-xs text-primary hover:underline">Colapsar todo</button>
+              </div>
+            )}
+          </div>
+
+          {gastosFiltrados.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <p className="text-sm font-medium">Sin gastos en el periodo</p>
+              <p className="text-xs mt-1">Ajusta los filtros o registra un gasto</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50 sticky top-0 z-[1]">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Factura</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Costo</th>
+                    <th className="text-center px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {/* Group by: group separator when TODAS or GRUPO */}
+                  {criterio === 'TODAS' ? (
+                    // Nivel 1: Grupo → Nivel 2: Subgrupo (recursivo, cualquier
+                    // profundidad) → Nivel 3: Cuenta → Nivel 4: Registros (ASC)
+                    grupos.flatMap((grupo) => renderGrupoFilaTabla(grupo, 0))
+                  ) : criterio === 'GRUPO' ? (
+                    (() => {
+                      const grupo = grupoId ? findGrupoGastoById(grupos, grupoId) : undefined
+                      return grupo ? renderGrupoHijosFilaTabla(grupo, 0) : []
+                    })()
+                  ) : (
+                    gastosFiltrados.map((g) => (
+                      <GastoRow key={g.id} g={g} onClick={() => setDetalleId(g.id)} />
+                    ))
+                  )}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-border bg-muted/30">
+                    <td colSpan={5} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
+                      Total periodo (costo · IVA · total)
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      <div className="text-sm font-bold">{formatUsd(totalPeriodo)}</div>
+                      <div className="text-[10px] font-normal text-muted-foreground">
+                        IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
+                      </div>
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+        </TabsContent>
+
+        {/* ── Tab: Libro de gastos ──────────────────────────── */}
+        <TabsContent value="libro" className="space-y-4">
+
+          {/* Botones de acción */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setCuentaModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors"
+            >
+              <BookOpen className="h-4 w-4" />
+              Crear cuenta
+            </button>
+            <button
+              type="button"
+              onClick={handleImprimir}
+              disabled={gastosFiltrados.length === 0 || isLoading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground bg-background hover:bg-muted transition-colors disabled:opacity-40"
+            >
+              <Printer className="h-4 w-4" />
+              Imprimir
+            </button>
+            <button
+              type="button"
+              onClick={() => setFormOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary text-primary-foreground px-3 py-2 text-sm font-medium hover:bg-primary/90 transition-colors"
+            >
+              <Plus className="h-4 w-4" />
+              Agregar gasto
+            </button>
+          </div>
+
+          {/* Tabla plana cronológica */}
+          <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+            {isLoading ? (
+              <div className="p-4 space-y-2">
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} className="h-10 bg-muted/50 rounded animate-pulse" />
+                ))}
+              </div>
+            ) : gastosFiltrados.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <p className="text-sm font-medium">Sin gastos en el periodo</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 sticky top-0 z-[1]">
+                    <tr>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Factura</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+                      <th className="text-left px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Observaciones</th>
+                      <th className="text-right px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Costo</th>
+                      <th className="text-center px-4 py-2.5 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...gastosFiltrados]
+                      .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.created_at.localeCompare(a.created_at))
+                      .map((g) => {
+                        const anulado = g.status === 'ANULADO'
+                        const montoUsd = montoCostoGasto(g)
+                        const tasaGasto = parseFloat(g.tasa) || 1
+                        const montoBs = montoUsd * tasaGasto
+                        return (
+                          <tr
+                            key={g.id}
+                            onClick={() => setDetalleId(g.id)}
+                            className={`border-t border-border hover:bg-muted/30 cursor-pointer transition-colors ${anulado ? 'opacity-50' : ''}`}
+                          >
+                            <td className={`px-4 py-2 font-mono text-xs ${anulado ? 'line-through' : 'text-foreground'}`}>{g.nro_gasto}</td>
+                            <td className={`px-4 py-2 text-xs text-muted-foreground whitespace-nowrap ${anulado ? 'line-through' : ''}`}>{formatDate(g.fecha)}</td>
+                            <td className={`px-4 py-2 text-xs text-foreground max-w-[160px] truncate ${anulado ? 'line-through' : ''}`}>{(g as { cuenta_nombre: string }).cuenta_nombre}</td>
+                            <td className={`px-4 py-2 font-mono text-xs text-muted-foreground ${anulado ? 'line-through' : ''}`}>{g.nro_factura ?? '—'}</td>
+                            <td className="px-4 py-2 text-xs text-muted-foreground">{(g as { proveedor_nombre: string | null }).proveedor_nombre ?? '—'}</td>
+                            <td className="px-4 py-2 text-xs text-muted-foreground max-w-[200px] truncate">{(g as { observaciones: string | null }).observaciones ?? '—'}</td>
+                            <td className="px-4 py-2 text-right tabular-nums">
+                              <div className={`text-sm font-semibold ${anulado ? 'line-through' : 'text-foreground'}`}>{formatUsd(montoUsd)}</div>
+                              <div className="text-[10px] text-muted-foreground">{formatBs(montoBs)}</div>
+                            </td>
+                            <td className="px-4 py-2 text-center"><StatusBadge status={g.status} /></td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/30">
+                      <td colSpan={6} className="px-4 py-2.5 text-xs font-semibold text-muted-foreground">
+                        Total (costo · IVA · total)
+                      </td>
+                      <td className="px-4 py-2.5 text-right tabular-nums">
+                        <div className="text-sm font-bold">{formatUsd(totalPeriodo)}</div>
+                        <div className="text-[10px] font-normal text-muted-foreground">
+                          IVA {formatUsd(ivaPeriodo)} · Total {formatUsd(totalGeneralPeriodo)}
+                        </div>
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </TabsContent>
+      </Tabs>
+
+      {/* ── Modales ───────────────────────────────────────────── */}
+      <FacturaProveedorModal
+        tipo="GASTO"
+        id={detalleId ?? ''}
+        isOpen={!!detalleId}
+        onClose={() => setDetalleId(null)}
+      />
+      <CuentaGastoModal
+        isOpen={cuentaModalOpen}
+        onClose={() => setCuentaModalOpen(false)}
+      />
     </div>
+  )
+}
+
+// ─── Fila de gasto ────────────────────────────────────────────
+
+type GastoConJoins = {
+  id: string; nro_gasto: string; nro_factura: string | null; cuenta_nombre: string
+  proveedor_nombre: string | null; fecha: string; monto_usd: string; tasa: string; status: string
+  created_by_nombre?: string | null
+  base_imponible_usd: string; monto_iva_usd: string
+}
+
+function GastoRow({ g, onClick, indent = false }: { g: GastoConJoins; onClick: () => void; indent?: boolean }) {
+  const anulado = g.status === 'ANULADO'
+  const montoUsd = montoCostoGasto(g)
+  const tasaGasto = parseFloat(g.tasa) || 1
+  const montoBs = montoUsd * tasaGasto
+  return (
+    <tr
+      onClick={onClick}
+      className={`border-t border-border hover:bg-muted/30 cursor-pointer transition-colors ${anulado ? 'opacity-50' : ''}`}
+    >
+      <td className={`${indent ? 'pl-10 pr-4' : 'px-4'} py-2.5 font-mono text-xs text-foreground ${anulado ? 'line-through' : ''}`}>
+        {g.nro_gasto}
+      </td>
+      <td className={`px-4 py-2.5 font-mono text-xs text-muted-foreground ${anulado ? 'line-through' : ''}`}>
+        {g.nro_factura ?? '—'}
+      </td>
+      <td className={`px-4 py-2.5 text-xs text-muted-foreground whitespace-nowrap ${anulado ? 'line-through' : ''}`}>
+        {formatDate(g.fecha)}
+      </td>
+      <td className={`px-4 py-2.5 text-xs text-foreground max-w-[160px] truncate ${anulado ? 'line-through' : ''}`}>
+        {g.cuenta_nombre}
+      </td>
+      <td className="px-4 py-2.5 text-xs text-muted-foreground">
+        {g.proveedor_nombre ?? '—'}
+      </td>
+      <td className="px-4 py-2.5 text-right tabular-nums">
+        <div className={`text-sm font-semibold ${anulado ? 'line-through' : 'text-foreground'}`}>
+          {formatUsd(montoUsd)}
+        </div>
+        <div className="text-[10px] text-muted-foreground">{formatBs(montoBs)}</div>
+      </td>
+      <td className="px-4 py-2.5 text-center">
+        <StatusBadge status={g.status} />
+      </td>
+    </tr>
   )
 }

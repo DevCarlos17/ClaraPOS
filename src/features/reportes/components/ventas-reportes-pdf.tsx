@@ -13,7 +13,8 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
-import { formatDate } from '@/lib/format'
+import { formatDate, formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import {
   useVentasKpisRango,
   usePagosPorMetodoRango,
@@ -318,7 +319,7 @@ export function VentasReportesPdfButton({ fechaDesde, fechaHasta }: VentasReport
         doc.setTextColor(150)
         const pageHeight = doc.internal.pageSize.getHeight()
         doc.text(
-          `Generado el ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })} - Pagina ${i} de ${totalPages}`,
+          `Generado el ${formatDateTime(localNow())} - Pagina ${i} de ${totalPages}`,
           pageWidth / 2,
           pageHeight - 8,
           { align: 'center' }

@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Trash, UserPlus, ArrowLeft, Warning, Info, FileText } from '@phosphor-icons/react'
+import { Plus, Trash, UserPlus, ArrowLeft, Warning, Info, FileText, CashRegister, Vault } from '@phosphor-icons/react'
 import { gastoSchema } from '@/features/contabilidad/schemas/gasto-schema'
 import { crearGasto, type GastoPago } from '@/features/contabilidad/hooks/use-gastos'
 import { useCuentasDetallePorTipo } from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { useProveedores } from '@/features/proveedores/hooks/use-proveedores'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxP } from '@/features/configuracion/hooks/use-payment-methods'
 import { useImpuestosActivos } from '@/features/configuracion/hooks/use-impuestos'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { ProveedorForm } from '@/features/proveedores/components/proveedor-form'
 import { formatUsd, formatBs } from '@/lib/currency'
+import { formatDateTime, formatHora } from '@/lib/format'
 import { todayStr, localNow } from '@/lib/dates'
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
@@ -208,11 +209,11 @@ function ResumenConfirm({
             <>
               <div className="flex justify-between font-medium">
                 <span>Total USD:</span>
-                <span>{formatUsd(montoFactura)}</span>
+                <span>{formatUsd(totalFactura)}</span>
               </div>
               <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
                 <span>Equivalente Bs (tasa proveedor):</span>
-                <span>{formatBs(montoFactura * tasaProveedor)}</span>
+                <span>{formatBs(totalFactura * tasaProveedor)}</span>
               </div>
               <div className="flex justify-between text-muted-foreground/70 text-xs mt-0.5">
                 <span>Total Contable USD:</span>
@@ -223,7 +224,7 @@ function ResumenConfirm({
             <>
               <div className="flex justify-between font-medium">
                 <span>Total Bs:</span>
-                <span>{formatBs(montoFactura)}</span>
+                <span>{formatBs(totalFactura)}</span>
               </div>
               <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
                 <span>Total USD (tasa proveedor):</span>
@@ -238,7 +239,7 @@ function ResumenConfirm({
             <>
               <div className="flex justify-between font-medium">
                 <span>Total Factura:</span>
-                <span>{montoFactura.toFixed(2)} {monedaFactura}</span>
+                <span>{totalFactura.toFixed(2)} {monedaFactura}</span>
               </div>
               <div className="flex justify-between text-muted-foreground text-xs mt-0.5">
                 <span>Total Contable USD:</span>
@@ -331,7 +332,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
 
   const { cuentas, isLoading: loadingCuentas } = useCuentasDetallePorTipo('GASTO')
   const { proveedores, isLoading: loadingProveedores } = useProveedores()
-  const { metodos, isLoading: loadingMetodos } = useMetodosPagoActivos()
+  const { metodos, isLoading: loadingMetodos } = useMetodosCxP()
   const { impuestos } = useImpuestosActivos()
   const { tasa: tasaActual } = useTasaActual()
 
@@ -358,6 +359,36 @@ export function GastoForm({ onClose }: GastoFormProps) {
 
   // ─── Pagos/Abonos ──────────────────────────────────────────
   const [pagos, setPagos] = useState<PagoRow[]>([])
+
+  // ─── Destino del pago ──────────────────────────────────────
+  const [destinoCobro, setDestinoCobro] = useState<'CAJA' | 'TESORERIA'>('TESORERIA')
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null)
+  const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user?.empresa_id) return
+    db.execute(
+      "SELECT id, fecha_apertura FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura DESC LIMIT 1",
+      [user.empresa_id]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
+      if (row) {
+        setSesionActivaId(row.id)
+        const hora = formatHora(row.fecha_apertura)
+        setSesionActivaHora(hora)
+        setDestinoCobro('CAJA')
+      } else {
+        setSesionActivaId(null)
+        setSesionActivaHora(null)
+        setDestinoCobro('TESORERIA')
+      }
+    }).catch(() => {
+      setSesionActivaId(null)
+      setSesionActivaHora(null)
+      setDestinoCobro('TESORERIA')
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.empresa_id])
 
   // ─── UI State ─────────────────────────────────────────────
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -631,6 +662,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
         monto_usd: abonoPagoProveedorUsd(p),
         monto_usd_interno: abonoPagoInternoUsd(p),
         referencia: p.referencia.trim() || undefined,
+        sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
       }
     })
 
@@ -701,7 +733,10 @@ export function GastoForm({ onClose }: GastoFormProps) {
         porcentaje_iva: payloadConfirmado.porcentaje_iva,
         monto_factura: payloadConfirmado.monto_factura,
         monto_usd: payloadConfirmado.monto_usd ?? 0,
-        pagos: payloadConfirmado.pagos as GastoPago[],
+        pagos: (payloadConfirmado.pagos as GastoPago[]).map((p) => ({
+          ...p,
+          sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
+        })),
         observaciones: payloadConfirmado.observaciones || undefined,
         empresa_id: user.empresa_id!,
         created_by: user.id,
@@ -798,7 +833,7 @@ export function GastoForm({ onClose }: GastoFormProps) {
                         Hay un gasto pendiente sin guardar
                       </p>
                       <p className="text-xs text-amber-600 dark:text-amber-400 mt-0.5">
-                        Guardado el {new Date(borrador.ultimaActualizacion).toLocaleString('es-VE', { dateStyle: 'short', timeStyle: 'short' })}
+                        Guardado el {formatDateTime(borrador.ultimaActualizacion)}
                       </p>
                     </div>
                     <div className="flex gap-2 shrink-0">
@@ -1236,6 +1271,33 @@ export function GastoForm({ onClose }: GastoFormProps) {
                       <Plus className="h-3.5 w-3.5" />
                       Agregar abono
                     </button>
+                  </div>
+
+                  {/* ── ¿Dónde salen estos pagos? ── */}
+                  <div className="space-y-1.5 mb-3">
+                    <label className="text-xs font-medium text-muted-foreground">¿Dónde salen estos pagos?</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" disabled={!sesionActivaId}
+                        onClick={() => setDestinoCobro('CAJA')}
+                        className={`flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg border text-xs font-medium transition-colors
+                          ${destinoCobro === 'CAJA' ? 'bg-green-600 text-white border-green-600' : 'bg-background border-border hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed'}`}
+                      >
+                        <CashRegister size={13} /> Sesión de caja
+                      </button>
+                      <button type="button"
+                        onClick={() => setDestinoCobro('TESORERIA')}
+                        className={`flex items-center justify-center gap-2 py-1.5 px-3 rounded-lg border text-xs font-medium transition-colors
+                          ${destinoCobro === 'TESORERIA' ? 'bg-primary text-white border-primary' : 'bg-background border-border hover:bg-muted'}`}
+                      >
+                        <Vault size={13} /> Tesorería
+                      </button>
+                    </div>
+                    {destinoCobro === 'CAJA' && sesionActivaHora && (
+                      <p className="text-[11px] text-green-600">✓ Sesión activa desde las {sesionActivaHora}</p>
+                    )}
+                    {!sesionActivaId && (
+                      <p className="text-[11px] text-amber-600">Sin sesión de caja abierta — los pagos irán a Tesorería.</p>
+                    )}
                   </div>
 
                   {errors.pagos && (

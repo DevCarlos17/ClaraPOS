@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { X } from '@phosphor-icons/react'
+import { X, CashRegister, Vault } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxC } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import {
   registrarAbonoGlobal,
@@ -39,7 +39,7 @@ export function AbonoGlobalModal({
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
-  const { metodos } = useMetodosPagoActivos()
+  const { metodos } = useMetodosCxC()
   const { facturas } = useFacturasPendientes(isOpen ? clienteId : null)
   const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(isOpen ? clienteId : null)
 
@@ -54,6 +54,30 @@ export function AbonoGlobalModal({
   // Manual SAF state
   const [usarSaf, setUsarSaf] = useState(false)
   const [montoSafStr, setMontoSafStr] = useState('')
+
+  // Destino del cobro
+  const [destinoCobro, setDestinoCobro] = useState<'CAJA' | 'TESORERIA'>('CAJA')
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null)
+  const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isOpen || !user?.empresa_id) return
+    db.execute(
+      "SELECT id, fecha_apertura FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura DESC LIMIT 1",
+      [user.empresa_id]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
+      if (row) {
+        setSesionActivaId(row.id)
+        const h = row.fecha_apertura.length >= 16 ? row.fecha_apertura.substring(11, 16) : ''
+        setSesionActivaHora(h || null)
+      } else {
+        setSesionActivaId(null)
+        setSesionActivaHora(null)
+        setDestinoCobro('TESORERIA')
+      }
+    }).catch(() => { setSesionActivaId(null); setSesionActivaHora(null) })
+  }, [isOpen, user?.empresa_id])
 
   // Buscar tasa BCV correspondiente a la fecha del abono
   useEffect(() => {
@@ -77,8 +101,11 @@ export function AbonoGlobalModal({
       setExcessMode('ANTICIPO')
       setUsarSaf(false)
       setMontoSafStr('')
+      setDestinoCobro('CAJA')
     } else {
       dialogRef.current?.close()
+      setSesionActivaId(null)
+      setSesionActivaHora(null)
     }
   }, [isOpen])
 
@@ -89,8 +116,8 @@ export function AbonoGlobalModal({
   // Tasa efectiva: la de la fecha del abono (historica si es pasada), con fallback a la actual
   const tasaEfectiva = tasaFecha || tasaValor
 
-  const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva) : monto
-  const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva) : monto
+  const montoUsd = moneda === 'BS' ? bsToUsd(monto, tasaEfectiva).toNumber() : monto
+  const montoBs = moneda === 'USD' ? usdToBs(monto, tasaEfectiva).toNumber() : monto
 
   // SAF manual calculations
   const montoSafNum = usarSaf ? (parseFloat(montoSafStr) || 0) : 0
@@ -101,13 +128,6 @@ export function AbonoGlobalModal({
   // Overpayment: cuando el monto supera la deuda total (descontando SAF)
   const estaOverpago = saldoConSaf > 0 && montoUsd > saldoConSaf + 0.01
   const excedenteUsd = estaOverpago ? Number((montoUsd - saldoConSaf).toFixed(2)) : 0
-
-  // Deteccion de efectivo para aviso
-  const esEfectivo =
-    !!metodoSeleccionado &&
-    (metodoSeleccionado.nombre.toLowerCase().includes('efectivo') ||
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (metodoSeleccionado as any).tipo === 'EFECTIVO')
 
   const safCubreTodo = usarSaf && montoSafNum >= saldoActual - 0.001
   const canSubmit =
@@ -126,7 +146,7 @@ export function AbonoGlobalModal({
     let restante = montoEfectivo
     const result: { nro_factura: string; saldo: number; aplicar: number }[] = []
     for (const f of facturas) {
-      if (restante <= 0.01) break
+      if (restante <= 1e-8) break  // same epsilon as registrarAbonoGlobal
       const saldo = parseFloat(f.saldo_pend_usd)
       const aplicar = Math.min(saldo, restante)
       result.push({ nro_factura: f.nro_factura, saldo, aplicar })
@@ -161,8 +181,8 @@ export function AbonoGlobalModal({
 
       if (estaOverpago && excessMode !== 'ANTICIPO') {
         // VUELTO o PROPINA: abonar solo la deuda exacta y registrar el excedente aparte
-        const montoDeuda = moneda === 'BS' ? usdToBs(saldoConSaf, tasaEfectiva) : saldoConSaf
-        const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaEfectiva) : excedenteUsd
+        const montoDeuda = moneda === 'BS' ? usdToBs(saldoConSaf, tasaEfectiva).toNumber() : saldoConSaf
+        const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaEfectiva).toNumber() : excedenteUsd
 
         const result = await registrarAbonoGlobal({
           cliente_id: clienteId,
@@ -174,6 +194,7 @@ export function AbonoGlobalModal({
           empresa_id: user!.empresa_id!,
           procesado_por: user!.id,
           procesado_por_nombre: user!.nombre,
+          sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
           ...safParams,
         })
 
@@ -207,6 +228,7 @@ export function AbonoGlobalModal({
           empresa_id: user!.empresa_id!,
           procesado_por: user!.id,
           procesado_por_nombre: user!.nombre,
+          sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
           ...safParams,
         })
         toast.success(`${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s)`)
@@ -242,6 +264,47 @@ export function AbonoGlobalModal({
           <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
             <X className="h-5 w-5 text-muted-foreground" />
           </button>
+        </div>
+
+        {/* Selector destino del cobro */}
+        <div className="rounded-lg border bg-muted/30 p-3 mb-4 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">¿Dónde ingresa este cobro?</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setDestinoCobro('CAJA')}
+              disabled={!sesionActivaId}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                destinoCobro === 'CAJA'
+                  ? 'bg-green-600 text-white border-green-600'
+                  : 'bg-background text-muted-foreground border-input hover:bg-muted'
+              }`}
+            >
+              <CashRegister size={13} weight="fill" />
+              Sesión de caja
+            </button>
+            <button
+              type="button"
+              onClick={() => setDestinoCobro('TESORERIA')}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium border transition-colors ${
+                destinoCobro === 'TESORERIA'
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-background text-muted-foreground border-input hover:bg-muted'
+              }`}
+            >
+              <Vault size={13} weight="fill" />
+              Tesorería
+            </button>
+          </div>
+          {destinoCobro === 'CAJA' && sesionActivaId && sesionActivaHora && (
+            <p className="text-xs text-green-700">✓ Sesión activa desde las {sesionActivaHora}</p>
+          )}
+          {!sesionActivaId && (
+            <p className="text-xs text-amber-600">Sin sesión de caja abierta — el cobro irá a Tesorería.</p>
+          )}
+          {destinoCobro === 'TESORERIA' && sesionActivaId && (
+            <p className="text-xs text-muted-foreground">Este cobro no afectará la sesión de caja activa.</p>
+          )}
         </div>
 
         {/* Resumen saldo */}
@@ -314,12 +377,7 @@ export function AbonoGlobalModal({
                 </option>
               ))}
             </NativeSelect>
-            {/* Aviso efectivo */}
-            {esEfectivo && (
-              <p className="text-xs text-blue-600 mt-1">
-                Cobro en efectivo — no debe ingresar a caja. Si querés registrarlo, usá "Ingreso de efectivo" desde el POS.
-              </p>
-            )}
+
           </div>
 
           {/* Monto */}

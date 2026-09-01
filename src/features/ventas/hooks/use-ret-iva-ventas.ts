@@ -2,6 +2,7 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import { toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 
 // ─── Interfaces ─────────────────────────────────────────────
@@ -140,11 +141,11 @@ export async function crearRetencionIvaVenta(
         nro_comprobante,
         fecha_comprobante,
         periodo_fiscal ?? null,
-        base_imponible.toFixed(2),
-        porcentaje_iva.toFixed(2),
-        monto_iva.toFixed(2),
-        porcentaje_retencion.toFixed(2),
-        monto_retenido.toFixed(2),
+        toStorageString(base_imponible),
+        toStorageString(porcentaje_iva),
+        toStorageString(monto_iva),
+        toStorageString(porcentaje_retencion),
+        toStorageString(monto_retenido),
         observaciones ?? null,
         now,
         usuario_id,

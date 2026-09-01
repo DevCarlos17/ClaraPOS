@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { toast } from 'sonner'
+import { CashRegister, Vault } from '@phosphor-icons/react'
 import {
   Dialog,
   DialogContent,
@@ -10,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
+import { useMetodosCxC } from '@/features/configuracion/hooks/use-payment-methods'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs, bsToUsd } from '@/lib/currency'
 import {
@@ -18,10 +19,12 @@ import {
   registrarAbonoPrestamo,
   registrarDiscrepanciaCxC,
   registrarSafExcedente,
+  registrarDiferencialCxC,
   type VentaPendiente,
   type VencimientoVenta,
   type VencimientoPrestamo,
 } from '../hooks/use-cxc'
+import Decimal from 'decimal.js'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
@@ -53,7 +56,7 @@ export function PagoFacturaModal({
   vencimientoInicial,
 }: PagoFacturaModalProps) {
   const { user } = useCurrentUser()
-  const { metodos } = useMetodosPagoActivos()
+  const { metodos } = useMetodosCxC()
   const { tasaValor } = useTasaActual()
   const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(clienteId || null)
 
@@ -69,6 +72,8 @@ export function PagoFacturaModal({
   // Tasa interna auto-cargada de la DB para la fecha seleccionada
   const [tasaInternaNum, setTasaInternaNum] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [microBalance, setMicroBalance] = useState<{ saldoUsd: Decimal; saldoBs: Decimal; tasa: number } | null>(null)
+  const [loadingDiferencial, setLoadingDiferencial] = useState(false)
 
   // Manual SAF application state
   const [usarSaf, setUsarSaf] = useState(false)
@@ -76,6 +81,30 @@ export function PagoFacturaModal({
 
   // Overpayment
   const [overpayMode, setOverpayMode] = useState<OverpayMode>(null)
+
+  // Destino del cobro
+  const [destinoCobro, setDestinoCobro] = useState<'CAJA' | 'TESORERIA'>('CAJA')
+  const [sesionActivaId, setSesionActivaId] = useState<string | null>(null)
+  const [sesionActivaHora, setSesionActivaHora] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!isOpen || !user?.empresa_id) return
+    db.execute(
+      "SELECT id, fecha_apertura FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura DESC LIMIT 1",
+      [user.empresa_id]
+    ).then((res) => {
+      const row = res.rows?.item(0) as { id: string; fecha_apertura: string } | undefined
+      if (row) {
+        setSesionActivaId(row.id)
+        const h = row.fecha_apertura.length >= 16 ? row.fecha_apertura.substring(11, 16) : ''
+        setSesionActivaHora(h || null)
+      } else {
+        setSesionActivaId(null)
+        setSesionActivaHora(null)
+        setDestinoCobro('TESORERIA')
+      }
+    }).catch(() => { setSesionActivaId(null); setSesionActivaHora(null) })
+  }, [isOpen, user?.empresa_id])
 
   // Préstamos con saldo pendiente — incluye vencimientoInicial si no está en vencimientos
   const effectiveVencimientos: VencimientoVenta[] = vencimientoInicial && !vencimientos.some((v) => v.id === vencimientoInicial.id)
@@ -141,7 +170,33 @@ export function PagoFacturaModal({
     setOverpayMode(null)
     setUsarSaf(false)
     setMontoSafStr('')
+    setMicroBalance(null)
+    setLoadingDiferencial(false)
+    setDestinoCobro('CAJA')
+    setSesionActivaId(null)
+    setSesionActivaHora(null)
     onClose()
+  }
+
+  async function handleDiferencial() {
+    if (!factura || !user?.empresa_id || !user.id) return
+    setLoadingDiferencial(true)
+    try {
+      await registrarDiferencialCxC({
+        ventaId: factura.id,
+        clienteId,
+        empresaId: user.empresa_id,
+        procesadoPor: user.id,
+        tasa: microBalance?.tasa ?? tasaNum,
+      })
+      toast.success(`Diferencial cambiario registrado. Factura ${factura.nro_factura} saldada.`)
+      onSuccess()
+      handleClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar diferencial cambiario')
+    } finally {
+      setLoadingDiferencial(false)
+    }
   }
 
   if (!factura && defaultDestino !== 'PRESTAMO') return null
@@ -165,11 +220,12 @@ export function PagoFacturaModal({
   const montoSafNum = usarSaf ? (parseFloat(montoSafStr) || 0) : 0
   const maxSaf = Math.min(safDisponible, saldoEfectivo)
   // Required payment via method = saldo - SAF
-  const saldoRequeridoConSaf = Math.max(0, Number((saldoEfectivo - montoSafNum).toFixed(2)))
+  // Do NOT use toFixed(2) here — that truncates small USD amounts like $0.022 → $0.02
+  const saldoRequeridoConSaf = Math.max(0, saldoEfectivo - montoSafNum)
 
   // Para pago USD: monto directo. Para pago BS: se divide por la tasa
-  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum) : montoNum
-  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaNum) : montoNum
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoNum, tasaNum).toNumber() : montoNum
+  const montoBs = moneda === 'USD' ? usdToBs(montoNum, tasaNum).toNumber() : montoNum
 
   // Overpayment para destino FACTURA
   const estaOverpago = destino === 'FACTURA' && montoUsd > saldoRequeridoConSaf + 0.01
@@ -195,7 +251,9 @@ export function PagoFacturaModal({
     if (moneda === 'BS') {
       setMontoStr(usdToBs(saldoRequeridoConSaf, tasaNum > 0 ? tasaNum : tasaValor).toFixed(2))
     } else {
-      setMontoStr(saldoRequeridoConSaf.toFixed(2))
+      // Preserve sub-cent precision (e.g. $0.022 for a Bs-denominated loan at 500 Bs/USD)
+      // Round to 6 decimals then strip trailing zeros for a clean display
+      setMontoStr(parseFloat(saldoRequeridoConSaf.toFixed(6)).toString())
     }
   }
 
@@ -208,8 +266,8 @@ export function PagoFacturaModal({
       if (destino === 'PRESTAMO') {
         if (estaOverpagoPrestamo && overpayMode) {
           // Overpago: pagar el saldo exacto del préstamo y gestionar el excedente
-          const montoSaldoExacto = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum) : saldoRequeridoConSaf
-          const montoExcedentePrestamo = moneda === 'BS' ? usdToBs(excedentePrestamo, tasaNum) : excedentePrestamo
+          const montoSaldoExacto = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum).toNumber() : saldoRequeridoConSaf
+          const montoExcedentePrestamo = moneda === 'BS' ? usdToBs(excedentePrestamo, tasaNum).toNumber() : excedentePrestamo
           await registrarAbonoPrestamo({
             vencimiento_id: vencimientoId,
             metodo_cobro_id: metodoCobro,
@@ -279,8 +337,8 @@ export function PagoFacturaModal({
 
         if (estaOverpago && overpayMode) {
           // Calcular monto exacto del saldo requerido en la moneda original
-          const montoSaldo = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum) : saldoRequeridoConSaf
-          const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaNum) : excedenteUsd
+          const montoSaldo = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum).toNumber() : saldoRequeridoConSaf
+          const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaNum).toNumber() : excedenteUsd
 
           if (overpayMode === 'SAF') {
             // Pagar solo el saldo exacto de la factura (excedente queda como crédito)
@@ -296,6 +354,7 @@ export function PagoFacturaModal({
               empresa_id: user.empresa_id,
               procesado_por: user.id,
               procesado_por_nombre: user.nombre,
+              sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
               aplicarSaf: usarSaf && montoSafNum > 0,
               montoSaf: usarSaf ? montoSafNum : undefined,
               safOrigenRefs: usarSaf ? [`PAG-${factura.nro_factura}`] : undefined,
@@ -326,6 +385,7 @@ export function PagoFacturaModal({
               empresa_id: user.empresa_id,
               procesado_por: user.id,
               procesado_por_nombre: user.nombre,
+              sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
               aplicarSaf: usarSaf && montoSafNum > 0,
               montoSaf: usarSaf ? montoSafNum : undefined,
               safOrigenRefs: usarSaf ? [`PAG-${factura.nro_factura}`] : undefined,
@@ -360,6 +420,7 @@ export function PagoFacturaModal({
             empresa_id: user.empresa_id,
             procesado_por: user.id,
             procesado_por_nombre: user.nombre,
+            sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
             aplicarSaf: usarSaf && montoSafNum > 0,
             montoSaf: usarSaf ? montoSafNum : undefined,
             safOrigenRefs: usarSaf ? [`PAG-${factura.nro_factura}`] : undefined,
@@ -368,6 +429,18 @@ export function PagoFacturaModal({
           if (usarSaf && montoSafNum > 0) labels.push(`SAF ${formatUsd(montoSafNum)}`)
           if (montoMetodo > 0) labels.push(formatUsd(montoUsd))
           toast.success(`Pago registrado a factura ${factura.nro_factura}${labels.length ? ` (${labels.join(' + ')})` : ''}`)
+
+          // Detectar micro-saldo residual sub-centavo
+          const totalAbonado = new Decimal(montoUsd).plus(new Decimal(usarSaf ? montoSafNum : 0))
+          const saldoRestante = new Decimal(saldoEfectivo).minus(totalAbonado)
+          if (saldoRestante.gt(new Decimal('0')) && saldoRestante.lt(new Decimal('0.01'))) {
+            setMicroBalance({
+              saldoUsd: saldoRestante,
+              saldoBs: saldoRestante.times(new Decimal(tasaNum)),
+              tasa: tasaNum,
+            })
+            return  // No cerrar el modal todavía
+          }
         }
       }
       onSuccess()
@@ -386,6 +459,46 @@ export function PagoFacturaModal({
           <DialogTitle>Registrar Pago CxC</DialogTitle>
         </DialogHeader>
 
+        {/* ── Panel de micro-saldo residual post-pago ── */}
+        {microBalance ? (
+          <div className="space-y-4">
+            <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 dark:bg-amber-950/20 dark:border-amber-800 space-y-2">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                Pago registrado. Queda un residual sub-centavo:
+              </p>
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-amber-900 dark:text-amber-100">
+                  {formatBs(microBalance.saldoBs.toNumber())}
+                </span>
+                <span className="text-xs text-amber-600 dark:text-amber-400 font-mono">
+                  = {microBalance.saldoUsd.toFixed(8)} USD @ {microBalance.tasa.toFixed(2)}
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Este monto no es cobrable en USD (menor a $0.01).
+              </p>
+            </div>
+            <p className="text-sm font-medium text-foreground">¿Qué hacemos con este residual?</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                onClick={handleDiferencial}
+                disabled={loadingDiferencial}
+                className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+              >
+                {loadingDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+              </Button>
+              <Button variant="outline" onClick={() => { onSuccess(); handleClose() }} disabled={loadingDiferencial}>
+                Dejar pendiente en Bs
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              <strong>Diferencial cambiario:</strong> cierra la factura asumiendo la diferencia como pérdida cambiaria.<br />
+              <strong>Dejar pendiente:</strong> la factura queda con {formatBs(microBalance.saldoBs.toNumber())} adeudados, pagables en Bs.
+            </p>
+          </div>
+        ) : (
+        <>
         {/* Selector de destino (solo cuando hay factura Y préstamos activos) */}
         {factura && tienePrestamoActivo && (
           <div className="flex rounded-lg border border-border overflow-hidden text-sm">
@@ -429,14 +542,17 @@ export function PagoFacturaModal({
             </div>
             <div className="flex justify-between font-semibold">
               <span>Saldo pendiente:</span>
-              <span className="text-destructive">{formatUsd(saldoPend)}</span>
-            </div>
-            {tasaNum > 0 && (
-              <div className="flex justify-between text-muted-foreground">
-                <span>Equivalente Bs:</span>
-                <span>{formatBs(usdToBs(saldoPend, tasaNum))}</span>
+              <div className="text-right">
+                {tasaNum > 0 ? (
+                  <>
+                    <span className="text-destructive">{formatBs(usdToBs(saldoPend, tasaNum))}</span>
+                    <span className="ml-1.5 text-xs text-muted-foreground font-normal">({formatUsd(saldoPend)})</span>
+                  </>
+                ) : (
+                  <span className="text-destructive">{formatUsd(saldoPend)}</span>
+                )}
               </div>
-            )}
+            </div>
           </div>
         ) : destino === 'PRESTAMO' ? (
           <div className="p-3 rounded-lg bg-purple-50 border border-purple-200 space-y-2 text-sm">
@@ -470,28 +586,46 @@ export function PagoFacturaModal({
             {/* Datos del préstamo seleccionado */}
             {vencSeleccionado && (
               <>
+                {/* Total c/interés */}
                 <div className="flex justify-between">
                   <span className="text-purple-700">Total c/interés:</span>
-                  <span className="font-medium">{formatUsd(parseFloat(vencSeleccionado.monto_original_usd))}</span>
+                  <div className="text-right">
+                    <div className="font-medium">{formatUsd(parseFloat(vencSeleccionado.monto_original_usd))}</div>
+                    {tasaNum > 0 && (
+                      <div className="text-xs text-purple-500">
+                        {formatBs(usdToBs(parseFloat(vencSeleccionado.monto_original_usd), tasaNum))}
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {/* Pagado */}
                 <div className="flex justify-between">
                   <span className="text-purple-700">Pagado:</span>
-                  <span className="text-green-700">{formatUsd(parseFloat(vencSeleccionado.monto_pagado_usd))}</span>
+                  <div className="text-right">
+                    <div className="text-green-700">{formatUsd(parseFloat(vencSeleccionado.monto_pagado_usd))}</div>
+                    {tasaNum > 0 && parseFloat(vencSeleccionado.monto_pagado_usd) > 0 && (
+                      <div className="text-xs text-green-600/70">
+                        {formatBs(usdToBs(parseFloat(vencSeleccionado.monto_pagado_usd), tasaNum))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="flex justify-between font-semibold">
+                {/* Saldo pendiente */}
+                <div className="flex justify-between font-semibold border-t border-purple-200 pt-1.5">
                   <span className="text-purple-800">Saldo pendiente:</span>
-                  <span className="text-destructive">{formatUsd(saldoPrestamo)}</span>
+                  <div className="text-right">
+                    <div className="text-destructive">{formatUsd(saldoPrestamo)}</div>
+                    {tasaNum > 0 && saldoPrestamo > 0 && (
+                      <div className="text-xs font-normal text-destructive/70">
+                        {formatBs(usdToBs(saldoPrestamo, tasaNum))}
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div className="flex justify-between text-purple-700 text-xs">
                   <span>Fecha vencimiento:</span>
                   <span>{vencSeleccionado.fecha_vencimiento}</span>
                 </div>
-                {tasaNum > 0 && (
-                  <div className="flex justify-between text-purple-600 text-xs">
-                    <span>Equivalente Bs:</span>
-                    <span>{formatBs(usdToBs(saldoPrestamo, tasaNum))}</span>
-                  </div>
-                )}
               </>
             )}
 
@@ -500,6 +634,47 @@ export function PagoFacturaModal({
             )}
           </div>
         ) : null}
+
+        {/* Selector destino del cobro */}
+        <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">¿Dónde ingresa este cobro?</p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setDestinoCobro('CAJA')}
+              disabled={!sesionActivaId}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                destinoCobro === 'CAJA'
+                  ? 'bg-green-600 text-white border-green-600'
+                  : 'bg-background text-muted-foreground border-input hover:bg-muted'
+              }`}
+            >
+              <CashRegister size={13} weight="fill" />
+              Sesión de caja
+            </button>
+            <button
+              type="button"
+              onClick={() => setDestinoCobro('TESORERIA')}
+              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium border transition-colors ${
+                destinoCobro === 'TESORERIA'
+                  ? 'bg-primary text-primary-foreground border-primary'
+                  : 'bg-background text-muted-foreground border-input hover:bg-muted'
+              }`}
+            >
+              <Vault size={13} weight="fill" />
+              Tesorería
+            </button>
+          </div>
+          {destinoCobro === 'CAJA' && sesionActivaId && sesionActivaHora && (
+            <p className="text-xs text-green-700">✓ Sesión activa desde las {sesionActivaHora}</p>
+          )}
+          {!sesionActivaId && (
+            <p className="text-xs text-amber-600">Sin sesión de caja abierta — el cobro irá a Tesorería.</p>
+          )}
+          {destinoCobro === 'TESORERIA' && sesionActivaId && (
+            <p className="text-xs text-muted-foreground">Este cobro no afectará la sesión de caja activa.</p>
+          )}
+        </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
 
@@ -582,14 +757,7 @@ export function PagoFacturaModal({
               ))}
             </NativeSelect>
 
-            {/* Aviso efectivo */}
-            {metodoSeleccionado?.tipo === 'EFECTIVO' && (
-              <div className="p-2 rounded-md bg-blue-50 border border-blue-200">
-                <p className="text-xs text-blue-700">
-                  Este cobro es en efectivo. Si querés registrarlo en caja, hacelo desde el módulo POS con "Ingreso de efectivo".
-                </p>
-              </div>
-            )}
+
           </div>
 
           {/* Monto */}
@@ -805,6 +973,8 @@ export function PagoFacturaModal({
             </Button>
           </div>
         </form>
+        </>
+        )}
       </DialogContent>
     </Dialog>
   )

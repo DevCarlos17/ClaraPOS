@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { Printer } from '@phosphor-icons/react'
 import { formatUsd } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import { useValorPorDepto } from '../hooks/use-inventario-reportes'
 
 const COLORS = [
@@ -87,7 +89,7 @@ export function InventarioValorModal({ isOpen, onClose }: InventarioValorModalPr
       </tr>
     </tfoot>
   </table>
-  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${formatDateTime(localNow())}</p>
 </body>
 </html>`)
     w.document.close()

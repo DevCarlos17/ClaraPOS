@@ -18,6 +18,8 @@ interface CuentaFormProps {
   cuentas: CuentaContable[]
   /** Cuando se provee, el formulario pre-rellena campos para crear una subcuenta */
   parentPreset?: CuentaContable
+  /** IDs de cuentas vinculadas al sistema (no pueden desactivarse) */
+  sistemaCuentaIds?: Set<string>
 }
 
 const TIPO_LABELS: Record<string, string> = {
@@ -31,7 +33,7 @@ const TIPO_LABELS: Record<string, string> = {
 
 // ─── Componente ───────────────────────────────────────────────
 
-export function CuentaForm({ isOpen, onClose, cuenta, cuentas, parentPreset }: CuentaFormProps) {
+export function CuentaForm({ isOpen, onClose, cuenta, cuentas, parentPreset, sistemaCuentaIds }: CuentaFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { user } = useCurrentUser()
   const isEditing = !!cuenta
@@ -339,18 +341,24 @@ export function CuentaForm({ isOpen, onClose, cuenta, cuentas, parentPreset }: C
           </div>
 
           {/* Activo (solo en edicion) */}
-          {isEditing && (
+          {isEditing && cuenta && (
             <div className="flex items-center gap-2">
               <input
                 id="cuenta-active"
                 type="checkbox"
                 checked={isActive}
                 onChange={(e) => setIsActive(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                disabled={isActive && sistemaCuentaIds?.has(cuenta.id)}
+                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
               />
               <label htmlFor="cuenta-active" className="text-sm font-medium text-gray-700">
                 Activa
               </label>
+              {isActive && sistemaCuentaIds?.has(cuenta.id) && (
+                <span className="text-xs text-violet-600">
+                  Vinculada al sistema — no puede desactivarse
+                </span>
+              )}
             </div>
           )}
 

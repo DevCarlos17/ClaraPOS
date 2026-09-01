@@ -9,6 +9,16 @@ import {
 
 import { type Session, SupabaseClient, createClient } from '@supabase/supabase-js'
 import { isValidCedula, isValidRif } from '@/lib/identity'
+import { uploadRetryStore } from '@/lib/upload-retry-store'
+
+/**
+ * Logging de la capa de sincronización, solo en desarrollo.
+ * En producción no ensucia la consola del cliente; en dev conserva la
+ * trazabilidad del upload PowerSync → Supabase para diagnosticar syncs fallidos.
+ */
+function debugLog(...args: unknown[]): void {
+  if (import.meta.env.DEV) console.log(...args)
+}
 
 export type SupabaseConfig = {
   supabaseUrl: string
@@ -25,8 +35,20 @@ const FATAL_RESPONSE_CODES = [
 
 // Tablas con clave natural única distinta al PK (empresa_id+usuario_id+dia_semana, etc.)
 // Para estas tablas el PUT usa onConflict para hacer upsert real en lugar de insertar y fallar
+//
+// inventario_stock: clave natural UNIQUE(empresa_id, producto_id, deposito_id)
+// (migrations/0004_inventario.sql, `uq_stock_empresa_producto_deposito`). Sin esta entrada,
+// dos filas locales distintas para el MISMO (empresa,producto,deposito) — ej. el backfill de
+// arranque (recalcularStockDesdeKardex) y una compra multi-deposito casi simultánea, cada una
+// con su propio UUID local — generan dos PUT independientes. El upsert genérico (por `id`) no
+// detecta el conflicto real y el segundo PUT choca contra la constraint UNIQUE en Supabase
+// (23505 duplicate key), PowerSync lo descarta como FATAL y el registro local diverge del
+// servidor. Con clave natural, el PUT intenta UPDATE por (empresa_id,producto_id,deposito_id)
+// primero — si ya existe una fila con esa clave (de cualquier origen), converge sobre ella en
+// vez de intentar un segundo INSERT.
 const TABLE_NATURAL_KEYS: Record<string, string> = {
   horarios_staff: 'empresa_id,usuario_id,dia_semana',
+  inventario_stock: 'empresa_id,producto_id,deposito_id',
 }
 
 // Columnas BOOLEAN en Supabase que SQLite almacena como 0/1
@@ -39,6 +61,22 @@ const BOOLEAN_COLUMNS: Record<string, string[]> = {
 // Columnas que NO se deben actualizar en un UPDATE (son inmutables o son el filtro del match)
 const IMMUTABLE_COLUMNS: Record<string, string[]> = {
   horarios_staff: ['created_at', 'empresa_id', 'usuario_id', 'dia_semana'],
+  // inventario_stock no tiene created_at — la clave natural completa ya viaja en
+  // TABLE_NATURAL_KEYS y se excluye automáticamente del payload de UPDATE, pero se
+  // repite aquí explícitamente para que quede documentado en el mismo lugar que
+  // horarios_staff (ninguna columna adicional a proteger además de la clave).
+  inventario_stock: ['empresa_id', 'producto_id', 'deposito_id'],
+}
+
+// Columnas gestionadas por triggers de PostgreSQL — se actualizan server-side
+// como efecto secundario de INSERTs en otras tablas.
+// El conector las stripea del PATCH antes de subir para evitar que el trigger
+// levante P0001 al recibir un UPDATE directo.
+// (La escritura local en SQLite sigue ocurriendo para mantener la UI reactiva.)
+const TRIGGER_MANAGED_PATCH_COLUMNS: Record<string, string[]> = {
+  // saldo_actual se actualiza via trigger actualizar_saldo_cliente
+  // disparado por INSERT en movimientos_cuenta
+  clientes: ['saldo_actual'],
 }
 
 // Tablas con triggers PostgreSQL que bloquean UPDATE (total o parcialmente).
@@ -116,12 +154,23 @@ export class SupabaseConnector
   currentSession: Session | null
 
   /**
+   * Suscripción al onAuthStateChange de supabase-js. Se guarda para poder
+   * limpiarla y, sobre todo, para no registrar listeners duplicados si init()
+   * se llegara a invocar más de una vez (ver guard eager de `ready` en init()).
+   */
+  private authSubscription: { unsubscribe: () => void } | null = null
+
+  /**
    * Reintentos por transacción (clave = ID del primer op de la tx).
    * Permite abandonar transacciones que fallan repetidamente con errores
    * transitorios (red caída, token expirado) en lugar de bloquear la cola.
+   *
+   * El conteo se persiste vía `uploadRetryStore` (localStorage) en lugar de
+   * memoria: PowerSync re-invoca `uploadData` en cada arranque de la app,
+   * y un contador en memoria se resetearía en cada reload, permitiendo que
+   * un error transitorio recurrente bloquee la cola de sync para siempre.
    */
   private readonly MAX_UPLOAD_RETRIES = 5
-  private readonly uploadRetries = new Map<string, number>()
 
   constructor() {
     super()
@@ -133,8 +182,15 @@ export class SupabaseConnector
 
     this.client = createClient(this.config.supabaseUrl, this.config.supabaseAnonKey, {
       auth: {
+        // persistSession: guarda la sesión (incluido refresh_token) en localStorage
+        // para sobrevivir reloads y cierres de la PWA.
         persistSession: true,
-        autoRefreshToken: false,
+        // autoRefreshToken: true (default) — supabase-js corre un timer que renueva
+        // el access_token ANTES de que expire (JWT vive 1h) y también al reconectar
+        // tras estar offline. Es el ÚNICO mecanismo de refresh: NO refrescar a mano
+        // en paralelo, porque la rotación de refresh tokens está activada en el
+        // proyecto (un token rotado invalida el anterior → refresh concurrente = logout).
+        autoRefreshToken: true,
         detectSessionInUrl: false,
       },
     })
@@ -146,22 +202,61 @@ export class SupabaseConnector
     if (this.ready) {
       return
     }
+    // Guard EAGER: marcamos ready ANTES del primer await. init() se invoca desde
+    // varios lugares (bootstrap en main.tsx, PowerSyncProvider, AuthProvider). Como
+    // son async y ceden el event loop en el await de getSession(), un flag seteado
+    // recién al final dejaría pasar llamadas concurrentes → doble getSession() y,
+    // peor, doble suscripción a onAuthStateChange. Setearlo acá hace el guard atómico.
+    this.ready = true
 
     try {
-      const projectId = new URL(this.config.supabaseUrl).hostname.split('.')[0]
-      const storageKey = `sb-${projectId}-auth-token`
-      const storedData = localStorage.getItem(storageKey)
+      // getSession() lee la sesión persistida desde localStorage. Funciona OFFLINE
+      // (no hace request de red): devuelve la sesión guardada aunque el access_token
+      // esté vencido. supabase-js la refresca solo cuando vuelva la conexión.
+      // Reemplaza la lectura manual de localStorage, que no validaba expiración y
+      // duplicaba (mal) la lógica interna de supabase-js.
+      const {
+        data: { session },
+      } = await this.client.auth.getSession()
 
-      if (storedData) {
-        const parsed = JSON.parse(storedData)
-        this.updateSession(parsed)
+      if (session) {
+        this.updateSession(session)
       }
     } catch (error) {
-      console.warn('No se pudo cargar sesion de localStorage:', error)
+      console.warn('No se pudo cargar sesion persistida:', error)
     }
 
-    this.ready = true
+    // onAuthStateChange: mantiene currentSession sincronizado con los refreshes
+    // automáticos de supabase-js. Sin esto, cuando el timer interno renueva el
+    // access_token, el connector seguiría usando el token viejo hasta el próximo
+    // reload. TOKEN_REFRESHED/SIGNED_IN/INITIAL_SESSION actualizan; SIGNED_OUT limpia.
+    // Guardamos la suscripción para evitar duplicados y permitir cleanup.
+    // Defensa extra: si ya había una suscripción (init() reentrante), la liberamos.
+    this.authSubscription?.unsubscribe()
+    const {
+      data: { subscription },
+    } = this.client.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        this.currentSession = null
+        return
+      }
+      if (session) {
+        this.updateSession(session)
+      }
+    })
+    this.authSubscription = subscription
+
     this.iterateListeners((cb) => cb.initialized?.())
+  }
+
+  /**
+   * Libera la suscripción a onAuthStateChange. Para un singleton que vive toda la
+   * app no es estrictamente necesario, pero evita listeners colgados en escenarios
+   * de teardown (tests, hot-reload) y documenta el ciclo de vida de la suscripción.
+   */
+  dispose() {
+    this.authSubscription?.unsubscribe()
+    this.authSubscription = null
   }
 
   async login(username: string, password: string) {
@@ -273,29 +368,37 @@ export class SupabaseConnector
   }
 
   async fetchCredentials() {
-    if (!navigator.onLine) {
-      if (this.currentSession) {
-        return {
-          endpoint: this.config.powersyncUrl,
-          token: this.currentSession.access_token ?? '',
-        } satisfies PowerSyncCredentials
-      }
-
-      throw new Error('Sin sesion disponible. Conecta a internet e inicia sesion.')
-    }
-
+    // getSession() lee de localStorage y funciona online y offline sin lógica
+    // condicional. Online y con token por vencer, supabase-js lo refresca acá
+    // mismo (autoRefreshToken:true). Offline devuelve la sesión persistida con el
+    // token actual (posiblemente vencido): PowerSync no podrá conectar al servicio
+    // de sync mientras no haya red, pero NO desloguea al usuario — reintenta
+    // fetchCredentials al reconectar. El error solo se lanza si NO hay sesión.
     const {
       data: { session },
       error,
     } = await this.client.auth.getSession()
 
     if (!session || error) {
-      throw new Error(`No se pudo obtener credenciales: ${error}`)
+      throw new Error('Sin sesion disponible. Conecta a internet e inicia sesion.')
+    }
+
+    // Offline con token ya vencido: lanzar en vez de devolver credenciales muertas.
+    // Devolver un token expirado haría que PowerSync intente conectar, reciba 401 y
+    // pueda reintentar en caliente (quema batería del dispositivo del cajero). Al
+    // lanzar, PowerSync aplica backoff y reintenta fetchCredentials al reconectar,
+    // momento en que autoRefreshToken ya habrá renovado el access_token.
+    const isExpired = session.expires_at ? Date.now() / 1000 >= session.expires_at : false
+    if (!navigator.onLine && isExpired) {
+      throw new Error('Sin conexion y token vencido — reintentando al reconectar.')
     }
 
     return {
       endpoint: this.config.powersyncUrl,
       token: session.access_token ?? '',
+      // expiresAt permite a PowerSync pre-renovar credenciales ~30s antes de
+      // que el token expire, evitando un hueco de autenticación durante el sync.
+      expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : undefined,
     } satisfies PowerSyncCredentials
   }
 
@@ -306,17 +409,17 @@ export class SupabaseConnector
       return
     }
 
-    console.log('⬆️ [PowerSync upload] Procesando transaccion con', transaction.crud.length, 'operaciones')
+    debugLog('⬆️ [PowerSync upload] Procesando transaccion con', transaction.crud.length, 'operaciones')
 
     // Clave estable para esta transacción a través de reintentos
     const txKey = transaction.crud[0]?.id ?? 'tx_unknown'
-    const retryCount = this.uploadRetries.get(txKey) ?? 0
+    const retryCount = uploadRetryStore.get(txKey)
 
     let lastOp: CrudEntry | null = null
     try {
       for (const op of transaction.crud) {
         lastOp = op
-        console.log('⬆️ [PowerSync upload] Op:', op.op, op.table, op.id)
+        debugLog('⬆️ [PowerSync upload] Op:', op.op, op.table, op.id)
 
         // Validacion de identidad fiscal (middle layer)
         if (op.op === UpdateType.PUT) {
@@ -329,7 +432,7 @@ export class SupabaseConnector
                 code: 'VALIDATION', message: `Cédula inválida: ${identificacion}`,
                 reason: 'validation',
               }))
-              this.uploadRetries.delete(txKey)
+              uploadRetryStore.clear(txKey)
               await transaction.complete()
               return
             }
@@ -343,7 +446,7 @@ export class SupabaseConnector
                 code: 'VALIDATION', message: `RIF inválido: ${rif}`,
                 reason: 'validation',
               }))
-              this.uploadRetries.delete(txKey)
+              uploadRetryStore.clear(txKey)
               await transaction.complete()
               return
             }
@@ -357,7 +460,7 @@ export class SupabaseConnector
                 code: 'VALIDATION', message: 'Venta sin depósito asignado',
                 reason: 'validation',
               }))
-              this.uploadRetries.delete(txKey)
+              uploadRetryStore.clear(txKey)
               await transaction.complete()
               return
             }
@@ -391,7 +494,7 @@ export class SupabaseConnector
               updatePayload = convertBooleans(op.table, updatePayload)
 
               if (op.table === 'horarios_staff') {
-                console.log('⬆️ [upload PUT horarios_staff] matchFilter:', matchFilter, '| payload:', updatePayload)
+                debugLog('⬆️ [upload PUT horarios_staff] matchFilter:', matchFilter, '| payload:', updatePayload)
               }
 
               const { data: updatedRows, error: updateErr } = await table
@@ -404,16 +507,16 @@ export class SupabaseConnector
                 result = { error: updateErr }
               } else if (!updatedRows || updatedRows.length === 0) {
                 // No existe en Supabase → INSERT con el UUID del cliente
-                if (op.table === 'horarios_staff') console.log('⬆️ [upload PUT horarios_staff] 0 filas por clave natural → INSERT id:', op.id)
+                if (op.table === 'horarios_staff') debugLog('⬆️ [upload PUT horarios_staff] 0 filas por clave natural → INSERT id:', op.id)
                 const insertRecord = convertBooleans(op.table, record as Record<string, unknown>)
                 const insertResult = await table.insert(insertRecord)
                 if (op.table === 'horarios_staff') {
                   if (insertResult.error) console.error('⬆️ [upload PUT horarios_staff] INSERT error:', insertResult.error)
-                  else console.log('⬆️ [upload PUT horarios_staff] INSERT OK')
+                  else debugLog('⬆️ [upload PUT horarios_staff] INSERT OK')
                 }
                 result = insertResult
               } else {
-                if (op.table === 'horarios_staff') console.log('⬆️ [upload PUT horarios_staff] UPDATE OK, filas afectadas:', updatedRows.length, '| ids Supabase:', updatedRows.map((r: any) => r.id))
+                if (op.table === 'horarios_staff') debugLog('⬆️ [upload PUT horarios_staff] UPDATE OK, filas afectadas:', updatedRows.length, '| ids Supabase:', updatedRows.map((r: any) => r.id))
                 result = { error: null }
               }
             } else {
@@ -426,7 +529,21 @@ export class SupabaseConnector
           }
           case UpdateType.PATCH: {
             const naturalKey = TABLE_NATURAL_KEYS[op.table]
-            const patchPayload = convertBooleans(op.table, op.opData as Record<string, unknown>)
+            let patchPayload = convertBooleans(op.table, op.opData as Record<string, unknown>)
+
+            // Strip columns managed by server-side triggers (updated automatically
+            // as a side-effect of INSERTs in other tables; direct UPDATE is rejected with P0001)
+            const triggerManagedCols = TRIGGER_MANAGED_PATCH_COLUMNS[op.table]
+            if (triggerManagedCols?.length) {
+              patchPayload = Object.fromEntries(
+                Object.entries(patchPayload).filter(([k]) => !triggerManagedCols.includes(k))
+              )
+              // If nothing left to update, skip the PATCH entirely
+              if (Object.keys(patchPayload).length === 0) {
+                result = { error: null }
+                break
+              }
+            }
 
             if (naturalKey) {
               // Para tablas con clave natural: intentar por UUID primero,
@@ -434,7 +551,7 @@ export class SupabaseConnector
               // Ocurre cuando el UUID local no llego a Supabase (ciclo PUT previo
               // actualizo por clave natural manteniendo el UUID de Supabase).
               if (op.table === 'horarios_staff') {
-                console.log('⬆️ [upload PATCH horarios_staff] id:', op.id, '| payload:', patchPayload)
+                debugLog('⬆️ [upload PATCH horarios_staff] id:', op.id, '| payload:', patchPayload)
               }
 
               const { data: updatedRows, error: patchErr } = await table
@@ -458,11 +575,11 @@ export class SupabaseConnector
                   for (const k of keyColumns) {
                     matchFilter[k] = localRow[k]
                   }
-                  console.log('⬆️ [upload PATCH horarios_staff] fallback matchFilter:', matchFilter)
+                  debugLog('⬆️ [upload PATCH horarios_staff] fallback matchFilter:', matchFilter)
                   const fallbackResult = await table.update(patchPayload).match(matchFilter)
                   if (op.table === 'horarios_staff') {
                     if (fallbackResult.error) console.error('⬆️ [upload PATCH horarios_staff] fallback error:', fallbackResult.error)
-                    else console.log('⬆️ [upload PATCH horarios_staff] fallback OK')
+                    else debugLog('⬆️ [upload PATCH horarios_staff] fallback OK')
                   }
                   result = fallbackResult
                 } else {
@@ -470,11 +587,32 @@ export class SupabaseConnector
                   result = { error: null }
                 }
               } else {
-                if (op.table === 'horarios_staff') console.log('⬆️ [upload PATCH horarios_staff] UPDATE por UUID OK')
+                if (op.table === 'horarios_staff') debugLog('⬆️ [upload PATCH horarios_staff] UPDATE por UUID OK')
                 result = { error: null }
               }
             } else {
-              result = await table.update(patchPayload).eq('id', op.id)
+              // Use select('id') to detect silent 0-row updates (e.g. RLS blocking the update
+              // without returning an error). If 0 rows are affected, Supabase will return
+              // { data: [], error: null } instead of silently discarding the change.
+              const { data: patchedRows, error: patchErr } = await table
+                .update(patchPayload)
+                .eq('id', op.id)
+                .select('id')
+
+              if (patchErr) {
+                result = { error: patchErr }
+              } else if (!patchedRows || patchedRows.length === 0) {
+                // 0 rows affected — most likely causes:
+                //   1. Row was deleted in Supabase (ok to ignore)
+                //   2. RLS is silently blocking the update (data will NOT persist)
+                console.warn(
+                  '⬆️ [PowerSync upload] PATCH afecto 0 filas — posible bloqueo RLS o fila eliminada:',
+                  { table: op.table, id: op.id }
+                )
+                result = { error: null }
+              } else {
+                result = { error: null }
+              }
             }
             break
           }
@@ -501,7 +639,7 @@ export class SupabaseConnector
       }
 
       await transaction.complete()
-      this.uploadRetries.delete(txKey)  // éxito — limpiar contador
+      uploadRetryStore.clear(txKey)  // éxito — limpiar contador
     } catch (ex: unknown) {
       const error = ex as { code?: string; message?: string }
       const isFatal =
@@ -520,7 +658,7 @@ export class SupabaseConnector
           message: error.message ?? 'Error desconocido',
           reason: 'db_error',
         }))
-        this.uploadRetries.delete(txKey)
+        uploadRetryStore.clear(txKey)
         await transaction.complete()
       } else {
         const attempts = retryCount + 1
@@ -539,10 +677,10 @@ export class SupabaseConnector
             message: error.message ?? 'Error desconocido',
             reason: 'max_retries',
           }))
-          this.uploadRetries.delete(txKey)
+          uploadRetryStore.clear(txKey)
           await transaction.complete()
         } else {
-          this.uploadRetries.set(txKey, attempts)
+          uploadRetryStore.bump(txKey)
           console.error(`[PowerSync upload] Error transitorio - reintentando (${attempts}/${this.MAX_UPLOAD_RETRIES}):`, {
             op: lastOp, code: error.code, message: error.message,
           })

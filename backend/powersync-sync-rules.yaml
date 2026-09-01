@@ -28,6 +28,12 @@
 #   ALTER PUBLICATION powersync ADD TABLE "public"."horarios_descansos";
 #   ALTER PUBLICATION powersync ADD TABLE "public"."horarios_excepciones";
 #
+# Tabla de lotes de punto de venta (cierre-consolidacion):
+#   ALTER PUBLICATION powersync ADD TABLE "public"."lotes_pos_cuadre";
+#
+# Tabla system_settings (config de precision decimal; PK es `key`, se aliasa a id):
+#   ALTER PUBLICATION powersync ADD TABLE "public"."system_settings";
+#
 # Para verificar que tablas ya estan en la publicacion:
 #   SELECT tablename FROM pg_publication_tables WHERE pubname = 'powersync';
 # =============================================
@@ -44,6 +50,9 @@ bucket_definitions:
       - SELECT * FROM islr_conceptos_ve
       - SELECT * FROM tipos_movimiento
       - SELECT * FROM permisos
+      # system_settings usa `key` como PK (no `id`). PowerSync exige una columna
+      # `id` de tipo texto en toda tabla sincronizada, por eso se aliasa `key as id`.
+      - SELECT *, key as id FROM system_settings
 
   # ==========================================
   # BUCKET POR EMPRESA: Datos de negocio
@@ -63,6 +72,7 @@ bucket_definitions:
       # --- CONFIGURACION ---
       - SELECT * FROM tasas_cambio WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM metodos_cobro WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM metodo_cobro_deducciones WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM bancos_empresa WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM cajas WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM impuestos_ve WHERE empresa_id = bucket.empresa_id
@@ -82,6 +92,10 @@ bucket_definitions:
       - SELECT * FROM ajustes WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM ajustes_det WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM lotes WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM traspasos_inventario WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM traspasos_inventario_det WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM traspaso_plantillas WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM traspaso_plantillas_det WHERE empresa_id = bucket.empresa_id
 
       # --- CLIENTES / CXC ---
       - SELECT * FROM clientes WHERE empresa_id = bucket.empresa_id
@@ -100,6 +114,7 @@ bucket_definitions:
       # --- CAJA / TESORERIA ---
       - SELECT * FROM sesiones_caja WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM sesiones_caja_detalle WHERE empresa_id = bucket.empresa_id
+      - SELECT * FROM lotes_pos_cuadre WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_metodo_cobro WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM movimientos_bancarios WHERE empresa_id = bucket.empresa_id
       - SELECT * FROM caja_fuerte WHERE empresa_id = bucket.empresa_id

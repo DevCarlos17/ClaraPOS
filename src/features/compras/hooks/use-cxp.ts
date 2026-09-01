@@ -1,8 +1,10 @@
 import { useQuery } from '@powersync/react'
+import Decimal from 'decimal.js'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxP, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 
@@ -63,6 +65,11 @@ export interface PagoCxPParams {
   referencia?: string
   empresa_id: string
   usuario_id: string
+  /**
+   * ID de la sesión de caja activa donde se registra el pago.
+   * null / undefined = el pago va a Tesorería (no aparece en cuadre de caja).
+   */
+  sesion_caja_id?: string | null
 }
 
 // ─── Hooks de lectura ────────────────────────────────────────
@@ -81,13 +88,13 @@ export function useProveedoresConDeuda() {
      INNER JOIN (
        SELECT proveedor_id, id as doc_id, CAST(saldo_pend_usd AS REAL) as saldo
        FROM facturas_compra
-       WHERE empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
+       WHERE empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
        UNION ALL
        SELECT proveedor_id, id as doc_id, CAST(saldo_pendiente_usd AS REAL) as saldo
        FROM gastos
        WHERE empresa_id = ? AND proveedor_id IS NOT NULL
          AND status = 'REGISTRADO'
-         AND CAST(saldo_pendiente_usd AS REAL) > 0.01
+         AND CAST(saldo_pendiente_usd AS REAL) > 0.001
      ) d ON d.proveedor_id = p.id
      WHERE p.empresa_id = ? AND p.is_active = 1
      GROUP BY p.id, p.rif, p.razon_social
@@ -103,8 +110,8 @@ export function useFacturasCompraPendientes(proveedorId: string | null) {
     proveedorId
       ? `SELECT id, nro_factura, fecha_factura, total_usd, saldo_pend_usd, tipo, tasa, tasa_costo
          FROM facturas_compra
-         WHERE proveedor_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
-         ORDER BY fecha_factura ASC`
+         WHERE proveedor_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
+          ORDER BY fecha_factura ASC`
       : '',
     proveedorId ? [proveedorId] : []
   )
@@ -122,9 +129,10 @@ export function useFacturasCompraPendientes(proveedorId: string | null) {
  */
 export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
   const {
-    factura_compra_id, proveedor_id, banco_empresa_id,
+    factura_compra_id, proveedor_id, metodo_cobro_id, banco_empresa_id,
     moneda, tasa, tasaBcvCompra, tasaInternaPago, monto,
     fechaPago, referencia, empresa_id, usuario_id,
+    sesion_caja_id = null,
   } = params
 
   if (tasa <= 0) throw new Error('La tasa debe ser mayor a 0')
@@ -132,6 +140,8 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
+    const dTasa = new Decimal(tasa)
+    const dMonto = new Decimal(monto)
 
     // 1. Leer factura
     const facturaResult = await tx.execute(
@@ -142,48 +152,52 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
     const factura = facturaResult.rows.item(0) as {
       nro_factura: string; saldo_pend_usd: string; tasa: string; tasa_costo: string | null
     }
-    const saldoFactura = parseFloat(factura.saldo_pend_usd)
+    const saldoFactura = new Decimal(factura.saldo_pend_usd)
 
     // tasaCompra para diferencial: usa tasa BCV/interna del documento
-    const tasaCompra = tasaBcvCompra
-      ?? (factura.tasa_costo ? parseFloat(factura.tasa_costo) : null)
-      ?? parseFloat(factura.tasa)
+    const tasaCompra = tasaBcvCompra != null
+      ? new Decimal(tasaBcvCompra)
+      : factura.tasa_costo
+        ? new Decimal(factura.tasa_costo)
+        : new Decimal(factura.tasa)
 
     // 2. Calcular monto en USD (a tasa del proveedor del documento o tasa pactada)
-    const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+    const montoUsd = moneda === 'BS' ? dMonto.dividedBy(dTasa) : dMonto
 
     // 3. monto_usd_interno: USD a tasa interna del día del pago (para contabilidad)
     // Para BS: monto_bs / tasa_interna_pago
     // Para USD: el mismo monto (1 USD = 1 USD)
-    let montoUsdInterno: number
+    let montoUsdInterno: Decimal
     if (moneda === 'BS') {
-      const tasaInt = tasaInternaPago ?? tasaCompra
-      montoUsdInterno = tasaInt > 0 ? Number((monto / tasaInt).toFixed(2)) : montoUsd
+      const dTasaInt = tasaInternaPago ? new Decimal(tasaInternaPago) : tasaCompra
+      montoUsdInterno = dTasaInt.gt(0) ? dMonto.dividedBy(dTasaInt) : montoUsd
     } else {
       montoUsdInterno = montoUsd
     }
 
     // 4. Validar monto <= saldo pendiente
-    if (montoUsd > saldoFactura + 0.01) {
+    if (montoUsd.gt(saldoFactura.plus(0.01))) {
       throw new Error(
         `El pago ($${montoUsd.toFixed(2)}) excede el saldo pendiente ($${saldoFactura.toFixed(2)}) de la factura ${factura.nro_factura}`
       )
     }
 
-    // 5. Leer saldo proveedor ANTES de modificar la factura (desde facturas_compra)
+    // 5. Leer saldo proveedor ANTES de modificar (facturas + gastos)
     const sumResult = await tx.execute(
-      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
-       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
-      [proveedor_id, empresa_id]
+      `SELECT
+         COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+         + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+         as saldo`,
+      [proveedor_id, empresa_id, proveedor_id, empresa_id]
     )
-    const saldoProv = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
-    const nuevoSaldoProv = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
+    const saldoProv = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
+    const nuevoSaldoProv = Decimal.max(0, saldoProv.minus(montoUsd))
 
     // 6. Reducir saldo de la factura
-    const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
+    const nuevoSaldoFactura = Decimal.max(0, saldoFactura.minus(montoUsd))
     await tx.execute(
       'UPDATE facturas_compra SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
-      [nuevoSaldoFactura.toFixed(2), now, factura_compra_id]
+      [toStorageString(nuevoSaldoFactura), now, factura_compra_id]
     )
 
     // 7. Crear movimiento_cuenta_proveedor con datos de dual-rate
@@ -198,15 +212,15 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
       [
         movId, empresa_id, proveedor_id,
         referencia || `PAG-${factura.nro_factura}`,
-        montoUsd.toFixed(2),
-        saldoProv.toFixed(2),
-        nuevoSaldoProv.toFixed(2),
+        toStorageString(montoUsd),
+        toStorageString(saldoProv),
+        toStorageString(nuevoSaldoProv),
         `Pago factura ${factura.nro_factura}`,
         factura_compra_id,
         moneda,
-        monto.toFixed(2),
-        tasa.toFixed(4),
-        montoUsdInterno.toFixed(2),
+        toStorageString(dMonto),
+        toStorageString(dTasa),
+        toStorageString(montoUsdInterno),
         fechaPago,
         now, usuario_id,
       ]
@@ -214,23 +228,72 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
     // NOTA: saldo_actual de proveedores se actualiza via trigger en Supabase.
     // No hacer UPDATE directo aqui — el trigger lo bloquea (P0001).
 
+    // 7b. Movimiento de método de cobro (para cuadre de caja cuando hay sesión activa)
+    // tipo='EGRESO' — el dinero SALE de caja hacia el proveedor.
+    // sesion_caja_id=null → va a Tesorería, no aparece en el cuadre de sesión.
+    await tx.execute(
+      `INSERT INTO movimientos_metodo_cobro
+         (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+          doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresa_id, metodo_cobro_id,
+        toStorageString(dMonto),   // monto nativo (Bs si moneda='BS', USD si moneda='USD')
+        factura_compra_id,
+        referencia || `PAG-${factura.nro_factura}`,
+        `Pago CxP fac. ${factura.nro_factura}`,
+        sesion_caja_id ?? null,
+        now, now, usuario_id,
+      ]
+    )
+
     // 8. Movimiento bancario + asientos contables
     try {
-      if (banco_empresa_id && montoUsd > 0) {
+      if (banco_empresa_id && montoUsd.gt(0)) {
         const movBancoId = uuidv4()
+
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [banco_empresa_id]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (moneda === 'BS' ? monto : usdToBs(montoUsd, dTasa).toNumber())
+          : (moneda === 'BS' ? bsToUsd(monto, dTasa).toNumber() : montoUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt - _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, ?, ?, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoId, empresa_id, banco_empresa_id,
-            montoUsd.toFixed(2),
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
             factura_compra_id,
             referencia ?? null,
             `Pago CxP ${factura.nro_factura}`,
             fechaPago, now, usuario_id,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, banco_empresa_id]
         )
       }
 
@@ -242,13 +305,13 @@ export async function registrarPagoCxP(params: PagoCxPParams): Promise<void> {
         empresaId: empresa_id,
         pagoId: movId,
         pagoRef: referencia || `PAG-${factura.nro_factura}`,
-        monto_usd: montoUsd,
+        monto_usd: montoUsd.toNumber(),
         banco_empresa_id: banco_empresa_id ?? null,
         cuentas,
         usuarioId: usuario_id,
         monedaContable,
         tasaPago: tasa,
-        tasaCompra,
+        tasaCompra: tasaCompra.toNumber(),
       })
     } catch (err) {
       console.error('[CxP] Error en contabilidad al registrar pago:', err)
@@ -269,13 +332,18 @@ export async function reversarAbonoCxP(params: ReversarAbonoCxPParams): Promise<
 
     // 1. Leer el abono a reversar
     const abonoResult = await tx.execute(
-      'SELECT monto, tipo, referencia FROM movimientos_cuenta_proveedor WHERE id = ? AND empresa_id = ?',
+      `SELECT monto, tipo, referencia, moneda_pago, monto_moneda, tasa_pago, monto_usd_interno
+       FROM movimientos_cuenta_proveedor WHERE id = ? AND empresa_id = ?`,
       [abonoId, empresaId]
     )
     if (!abonoResult.rows?.length) throw new Error('Abono no encontrado')
-    const abono = abonoResult.rows.item(0) as { monto: string; tipo: string; referencia: string }
+    const abono = abonoResult.rows.item(0) as {
+      monto: string; tipo: string; referencia: string
+      moneda_pago: string | null; monto_moneda: string | null
+      tasa_pago: string | null; monto_usd_interno: string | null
+    }
     if (abono.tipo !== 'PAG') throw new Error('Solo se pueden reversar movimientos de tipo PAG')
-    const montoAbono = parseFloat(abono.monto)
+    const montoAbono = new Decimal(abono.monto)
 
     // 2. Leer factura
     const facturaResult = await tx.execute(
@@ -284,41 +352,126 @@ export async function reversarAbonoCxP(params: ReversarAbonoCxPParams): Promise<
     )
     if (!facturaResult.rows?.length) throw new Error('Factura no encontrada')
     const factura = facturaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; total_usd: string }
-    const saldoFactura = parseFloat(factura.saldo_pend_usd)
-    const totalUsd = parseFloat(factura.total_usd)
+    const saldoFactura = new Decimal(factura.saldo_pend_usd)
+    const totalUsd = new Decimal(factura.total_usd)
 
-    // 3. Saldo total del proveedor ANTES de modificar (para el movimiento)
+    // 3. Saldo total del proveedor ANTES de modificar (facturas + gastos)
     const sumResult = await tx.execute(
-      `SELECT COALESCE(SUM(CAST(saldo_pend_usd AS REAL)), 0.0) as saldo
-       FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
-      [proveedorId, empresaId]
+      `SELECT
+         COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+         + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+         as saldo`,
+      [proveedorId, empresaId, proveedorId, empresaId]
     )
-    const saldoProvAnterior = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+    const saldoProvAnterior = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
 
     // 4. Nuevo saldo de la factura (no puede superar el total)
-    const nuevoSaldoFactura = Math.min(totalUsd, Number((saldoFactura + montoAbono).toFixed(2)))
+    const nuevoSaldoFactura = Decimal.min(totalUsd, saldoFactura.plus(montoAbono))
 
     // 5. Actualizar saldo de la factura
     await tx.execute(
       'UPDATE facturas_compra SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
-      [nuevoSaldoFactura.toFixed(2), now, facturaCompraId]
+      [toStorageString(nuevoSaldoFactura), now, facturaCompraId]
     )
 
     // 6. Crear movimiento DEV (la deuda aumenta = saldo proveedor sube)
-    const nuevoSaldoProv = Number((saldoProvAnterior + montoAbono).toFixed(2))
+    const nuevoSaldoProv = saldoProvAnterior.plus(montoAbono)
     await tx.execute(
       `INSERT INTO movimientos_cuenta_proveedor
          (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
-          observacion, factura_compra_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'DEV', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          observacion, factura_compra_id,
+          moneda_pago, monto_moneda, tasa_pago, monto_usd_interno,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'DEV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         uuidv4(), empresaId, proveedorId,
         `DEV-${abono.referencia}`,
-        montoAbono.toFixed(2),
-        saldoProvAnterior.toFixed(2),
-        nuevoSaldoProv.toFixed(2),
+        toStorageString(montoAbono),
+        toStorageString(saldoProvAnterior),
+        toStorageString(nuevoSaldoProv),
         `Reversa de abono ${abono.referencia} - Factura ${factura.nro_factura}`,
         facturaCompraId,
+        abono.moneda_pago ?? null,
+        abono.monto_moneda ?? null,
+        abono.tasa_pago ?? null,
+        abono.monto_usd_interno ?? null,
+        now, now, usuarioId,
+      ]
+    )
+  })
+}
+
+// ─── Diferencial cambiario ───────────────────────────────────
+
+export interface DiferencialCxPParams {
+  facturaCompraId: string
+  proveedorId: string
+  empresaId: string
+  usuarioId: string
+  tasa: number  // tasa usada para calcular el equivalente en Bs
+}
+
+/**
+ * Registrar el saldo residual sub-centavo como diferencial cambiario.
+ * Crea un abono de sistema (sin movimiento bancario) que cierra la factura.
+ * Solo aplica cuando saldo_pend_usd > 0 y < $0.01.
+ */
+export async function registrarDiferencialCxP(params: DiferencialCxPParams): Promise<void> {
+  const { facturaCompraId, proveedorId, empresaId, usuarioId, tasa } = params
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    const facturaResult = await tx.execute(
+      'SELECT nro_factura, saldo_pend_usd FROM facturas_compra WHERE id = ? AND empresa_id = ?',
+      [facturaCompraId, empresaId]
+    )
+    if (!facturaResult.rows?.length) throw new Error('Factura no encontrada')
+    const factura = facturaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+    const saldoActual = new Decimal(factura.saldo_pend_usd || '0')
+
+    if (saldoActual.lte(0)) throw new Error('La factura ya no tiene saldo pendiente')
+    if (saldoActual.gte(new Decimal('0.01'))) {
+      throw new Error('El diferencial cambiario solo aplica para saldos sub-centavo (< $0.01)')
+    }
+
+    const sumResult = await tx.execute(
+      `SELECT
+         COALESCE((SELECT SUM(CAST(saldo_pend_usd AS REAL)) FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?), 0)
+         + COALESCE((SELECT SUM(CAST(saldo_pendiente_usd AS REAL)) FROM gastos WHERE proveedor_id = ? AND empresa_id = ? AND status = 'REGISTRADO'), 0)
+         as saldo`,
+      [proveedorId, empresaId, proveedorId, empresaId]
+    )
+    const saldoProv = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
+    const nuevoSaldoProv = Decimal.max(0, saldoProv.minus(saldoActual))
+
+    await tx.execute(
+      'UPDATE facturas_compra SET saldo_pend_usd = ?, updated_at = ? WHERE id = ?',
+      [toStorageString(new Decimal(0)), now, facturaCompraId]
+    )
+
+    const dTasa = new Decimal(tasa)
+    const saldoBs = saldoActual.times(dTasa)
+
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta_proveedor
+         (id, empresa_id, proveedor_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+          observacion, factura_compra_id,
+          moneda_pago, monto_moneda, tasa_pago, monto_usd_interno,
+          fecha, created_at, created_by)
+       VALUES (?, ?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        uuidv4(), empresaId, proveedorId,
+        `DIFE-${factura.nro_factura}`,
+        toStorageString(saldoActual),
+        toStorageString(saldoProv),
+        toStorageString(nuevoSaldoProv),
+        `Diferencial cambiario - Factura ${factura.nro_factura}`,
+        facturaCompraId,
+        'BS',
+        toStorageString(saldoBs),
+        toStorageString(dTasa),
+        toStorageString(saldoActual),
         now, now, usuarioId,
       ]
     )

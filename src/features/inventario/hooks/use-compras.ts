@@ -1,10 +1,15 @@
 import { useQuery } from '@powersync/react'
+import Decimal from 'decimal.js'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { toStorageString, usdToBs, bsToUsd } from '@/lib/currency'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosCompra } from '@/features/contabilidad/lib/generar-asientos'
+import { resolverAccionesLineaCompra, resolverCostoAEscribir } from '@/features/inventario/lib/compra-precio-gating'
+import { totalizarLineasCargo, consolidarLineasCargo, type LineaCargoUI, type ConceptoCargo } from '@/features/inventario/lib/compra-lineas-cargo'
+import { upsertStockDeposito, resolveDepositoIngreso } from '@/features/inventario/lib/stock-deposito'
 
 export interface Compra {
   id: string
@@ -12,6 +17,8 @@ export interface Compra {
   nro_factura: string
   nro_control: string | null
   tasa: string
+  total_base_usd: string
+  total_iva_usd: string
   total_usd: string
   total_bs: string
   saldo_pend_usd: string
@@ -90,6 +97,8 @@ export interface PagoCompraParam {
   monto: number
   banco_empresa_id: string | null
   referencia?: string
+  /** ID de sesión de caja activa. null = va a Tesorería, no aparece en cuadre. */
+  sesion_caja_id?: string | null
 }
 
 export interface CrearCompraParams {
@@ -101,6 +110,8 @@ export interface CrearCompraParams {
   nro_control?: string
   moneda: 'USD' | 'BS'
   lineas: LineaCompra[]
+  /** Lineas de cargo no-producto (Material de Empaque / Flete). Opcional — [] = comportamiento identico al previo. */
+  lineasCargo?: LineaCargoUI[]
   pagos: PagoCompraParam[]
   usuario_id: string
   empresa_id: string
@@ -277,8 +288,8 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
 
     // 5. Por cada linea: validar stock y crear Kardex inverso (salida por devolucion)
     for (const linea of lineas) {
-      const qty = parseFloat(linea.cantidad)
-      const costoSistema = parseFloat(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
+      const qty = new Decimal(linea.cantidad)
+      const costoSistema = new Decimal(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
 
       const prodRes = await tx.execute(
         'SELECT stock, costo_usd FROM productos WHERE id = ?',
@@ -286,25 +297,26 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
       )
       if (!prodRes.rows?.length) throw new Error('Producto no encontrado')
       const prod = prodRes.rows.item(0) as { stock: string; costo_usd: string }
-      const currentStock = parseFloat(prod.stock)
-      const currentCosto = parseFloat(prod.costo_usd)
+      const currentStock = new Decimal(prod.stock)
+      const currentCosto = new Decimal(prod.costo_usd)
 
-      if (currentStock < qty - 0.001) {
+      if (currentStock.lt(qty.minus(0.001))) {
         throw new Error(
           `Stock insuficiente para reversar. Disponible: ${currentStock.toFixed(3)}, requerido: ${qty.toFixed(3)}. Es posible que el inventario ya haya sido consumido.`
         )
       }
 
-      const newStock = Math.max(0, Number((currentStock - qty).toFixed(3)))
+      const newStock = Decimal.max(0, currentStock.minus(qty))
 
       // Recalcular costo promedio ponderado (reverso de la contribucion de esta compra)
       let newCosto = currentCosto
-      if (newStock > 0.001) {
-        const rawCosto = (currentStock * currentCosto - qty * costoSistema) / newStock
-        newCosto = Math.max(0, Number(rawCosto.toFixed(4)))
+      if (newStock.gt(0.001)) {
+        const rawCosto = currentStock.times(currentCosto).minus(qty.times(costoSistema)).dividedBy(newStock)
+        newCosto = Decimal.max(0, rawCosto)
       }
 
       // Kardex: salida por devolucion de compra
+      const movId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_inventario
            (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
@@ -312,13 +324,13 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
             usuario_id, fecha, empresa_id, created_at)
          VALUES (?, ?, ?, 'S', 'DEV', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          uuidv4(),
+          movId,
           linea.producto_id,
           linea.deposito_id,
-          qty.toFixed(3),
-          currentStock.toFixed(3),
-          newStock.toFixed(3),
-          costoSistema.toFixed(4),
+          toStorageString(qty),
+          toStorageString(currentStock),
+          toStorageString(newStock),
+          toStorageString(costoSistema),
           linea.lote_id ?? null,
           compraId,
           `DEV-${compra.nro_factura}`,
@@ -330,22 +342,42 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
         ]
       )
 
-      // Actualizar stock y costo del producto
-      await tx.execute(
-        'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-        [newStock.toFixed(3), newCosto.toFixed(4), now, linea.producto_id]
-      )
+      // inventario_stock (por deposito) + productos.stock (total cross-deposito)
+      // via el helper compartido — reemplaza el UPDATE manual anterior, que
+      // bypasseaba inventario_stock y lo dejaba desactualizado tras cada
+      // reversion (CRITICAL detectado en el verify final). El deposito usado
+      // es el MISMO de la linea original (facturas_compra_det.deposito_id,
+      // NOT NULL desde el schema original 0007_compras.sql — la compra ya
+      // enruto esta linea a ese deposito en 1c), asi una devolucion
+      // multi-deposito reversa cada linea contra su deposito correcto.
+      await upsertStockDeposito(tx, {
+        empresa_id: empresaId,
+        producto_id: linea.producto_id,
+        deposito_id: linea.deposito_id,
+        delta: qty.negated(),
+        usuario_id: usuarioId,
+        now,
+        movimientoInventarioId: movId,
+      })
+
+      // costo_usd (promedio ponderado) sigue siendo responsabilidad de este
+      // flujo — upsertStockDeposito solo mantiene stock (por-deposito y total).
+      await tx.execute('UPDATE productos SET costo_usd = ?, updated_at = ? WHERE id = ?', [
+        toStorageString(newCosto),
+        now,
+        linea.producto_id,
+      ])
     }
 
     // 6. Movimiento CxP: cancelar deuda pendiente (CREDITO sin abonos)
-    const saldoPend = parseFloat(compra.saldo_pend_usd)
-    if (saldoPend > 0.01) {
+    const saldoPend = new Decimal(compra.saldo_pend_usd)
+    if (saldoPend.gt(0.01)) {
       const provRes = await tx.execute(
         'SELECT saldo_actual FROM proveedores WHERE id = ? AND empresa_id = ?',
         [compra.proveedor_id, empresaId]
       )
-      const saldoProvActual = parseFloat((provRes.rows?.item(0) as { saldo_actual: string })?.saldo_actual ?? '0')
-      const nuevoSaldoProv = Math.max(0, Number((saldoProvActual - saldoPend).toFixed(2)))
+      const saldoProvActual = new Decimal((provRes.rows?.item(0) as { saldo_actual: string })?.saldo_actual ?? '0')
+      const nuevoSaldoProv = Decimal.max(0, saldoProvActual.minus(saldoPend))
 
       await tx.execute(
         `INSERT INTO movimientos_cuenta_proveedor
@@ -355,9 +387,9 @@ export async function reversarCompra(params: ReversarCompraParams): Promise<void
         [
           uuidv4(), empresaId, compra.proveedor_id,
           `DEV-${compra.nro_factura}`,
-          saldoPend.toFixed(2),
-          saldoProvActual.toFixed(2),
-          nuevoSaldoProv.toFixed(2),
+          toStorageString(saldoPend),
+          toStorageString(saldoProvActual),
+          toStorageString(nuevoSaldoProv),
           `Devolucion de factura de compra ${compra.nro_factura}`,
           compraId, compraId,
           now, now, usuarioId,
@@ -383,6 +415,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     nro_control,
     moneda,
     lineas,
+    lineasCargo = [],
     pagos,
     usuario_id,
     empresa_id,
@@ -417,14 +450,16 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   // lecturas y escrituras dentro del loop, lo que puede causar que solo
   // el primer producto se procese en algunas implementaciones de wa-sqlite.
 
-  // 0. Deposito principal
-  let depositoId: string
+  // 0. Deposito principal — usado como header de la factura (concepto de un solo
+  // campo) y como FALLBACK por linea cuando el producto no tiene deposito_id
+  // propio (ver resolveDepositoIngreso mas abajo, Slice 1c).
+  let depositoPrincipalId: string
   const depResult = await db.execute(
     'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
     [empresa_id]
   )
   if (depResult.rows && depResult.rows.length > 0) {
-    depositoId = (depResult.rows.item(0) as { id: string }).id
+    depositoPrincipalId = (depResult.rows.item(0) as { id: string }).id
   } else {
     const depFallback = await db.execute(
       'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
@@ -433,7 +468,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     if (!depFallback.rows || depFallback.rows.length === 0) {
       throw new Error('No hay depositos configurados. Cree un deposito primero.')
     }
-    depositoId = (depFallback.rows.item(0) as { id: string }).id
+    depositoPrincipalId = (depFallback.rows.item(0) as { id: string }).id
   }
 
   // 0b. Moneda
@@ -448,18 +483,21 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
   // 0c. Stocks y precios actuales de todos los productos de las lineas
-  const stocksMap = new Map<string, number>()
+  const stocksMap = new Map<string, Decimal>()
   type PreciosActuales = {
-    costo_usd: number
-    precio_venta_usd: number
-    precio_mayor_usd: number | null
-    precio_especial_usd: number | null
+    costo_usd: Decimal
+    precio_venta_usd: Decimal
+    precio_mayor_usd: Decimal | null
+    precio_especial_usd: Decimal | null
   }
   const preciosMap = new Map<string, PreciosActuales>()
+  // deposito_id default de cada producto (Slice 1c) — resuelto por linea via
+  // resolveDepositoIngreso mas abajo, con fallback al deposito principal.
+  const productoDepositoMap = new Map<string, string | null>()
 
   for (const linea of lineas) {
     const prodRes = await db.execute(
-      'SELECT stock, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd FROM productos WHERE id = ? LIMIT 1',
+      'SELECT stock, costo_usd, precio_venta_usd, precio_mayor_usd, precio_especial_usd, deposito_id FROM productos WHERE id = ? LIMIT 1',
       [linea.producto_id]
     )
     if (!prodRes.rows || prodRes.rows.length === 0) {
@@ -471,14 +509,16 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       precio_venta_usd: string
       precio_mayor_usd: string | null
       precio_especial_usd: string | null
+      deposito_id: string | null
     }
-    stocksMap.set(linea.producto_id, parseFloat(p.stock) || 0)
+    stocksMap.set(linea.producto_id, new Decimal(p.stock || '0'))
     preciosMap.set(linea.producto_id, {
-      costo_usd: parseFloat(p.costo_usd) || 0,
-      precio_venta_usd: parseFloat(p.precio_venta_usd) || 0,
-      precio_mayor_usd: p.precio_mayor_usd != null ? (parseFloat(p.precio_mayor_usd) || null) : null,
-      precio_especial_usd: p.precio_especial_usd != null ? (parseFloat(p.precio_especial_usd) || null) : null,
+      costo_usd: new Decimal(p.costo_usd || '0'),
+      precio_venta_usd: new Decimal(p.precio_venta_usd || '0'),
+      precio_mayor_usd: p.precio_mayor_usd != null ? new Decimal(p.precio_mayor_usd) : null,
+      precio_especial_usd: p.precio_especial_usd != null ? new Decimal(p.precio_especial_usd) : null,
     })
+    productoDepositoMap.set(linea.producto_id, p.deposito_id ?? null)
   }
 
   let compraId = ''
@@ -488,36 +528,44 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     compraId = uuidv4()
 
     // 1. Calcular totales con desglose fiscal (lineas ya vienen en USD)
-    let totalExentoUsd = 0
-    let totalBaseUsd = 0
-    let totalIvaUsd = 0
+    const dTasa = new Decimal(tasa)
+    let totalExentoUsd = new Decimal(0)
+    let totalBaseUsd = new Decimal(0)
+    let totalIvaUsd = new Decimal(0)
     for (const linea of lineas) {
-      const subtotal = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
+      const subtotal = new Decimal(linea.cantidad).times(linea.costo_unitario_usd)
       const tipoImp = linea.tipo_impuesto ?? 'Exento'
       if (tipoImp === 'Exento') {
-        totalExentoUsd += subtotal
+        totalExentoUsd = totalExentoUsd.plus(subtotal)
       } else {
         // Gravable o Exonerado: contribuye a la base imponible
-        totalBaseUsd += subtotal
-        const pct = linea.impuesto_pct ?? 0
-        totalIvaUsd += Number((subtotal * (pct / 100)).toFixed(2))
+        totalBaseUsd = totalBaseUsd.plus(subtotal)
+        const pct = new Decimal(linea.impuesto_pct ?? 0)
+        totalIvaUsd = totalIvaUsd.plus(subtotal.times(pct).dividedBy(100))
       }
     }
-    totalExentoUsd = Number(totalExentoUsd.toFixed(2))
-    totalBaseUsd = Number(totalBaseUsd.toFixed(2))
-    totalIvaUsd = Number(totalIvaUsd.toFixed(2))
-    const totalUsd = Number((totalExentoUsd + totalBaseUsd + totalIvaUsd).toFixed(2))
-    const totalBs = Number((totalUsd * tasa).toFixed(2))
+
+    // 1b. Fold de lineas de cargo (Material de Empaque / Flete) en los mismos buckets
+    // fiscales que las lineas de producto — los totales de la factura (facturas_compra)
+    // ya incluyen los cargos. No altera el loop de lineas de producto de arriba.
+    const cargoTotales = totalizarLineasCargo(lineasCargo)
+    totalExentoUsd = totalExentoUsd.plus(cargoTotales.exentoUsd)
+    totalBaseUsd = totalBaseUsd.plus(cargoTotales.baseUsd)
+    totalIvaUsd = totalIvaUsd.plus(cargoTotales.ivaUsd)
+
+    const totalUsd = totalExentoUsd.plus(totalBaseUsd).plus(totalIvaUsd)
+    const totalBs = totalUsd.times(dTasa)
 
     // 2. Calcular pagos inmediatos y saldo pendiente
-    let totalAbonadoUsd = 0
+    let totalAbonadoUsd = new Decimal(0)
     for (const pago of pagos) {
-      const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
-      totalAbonadoUsd += montoUsd
+      const montoUsd = pago.moneda === 'BS'
+        ? new Decimal(pago.monto).dividedBy(dTasa)
+        : new Decimal(pago.monto)
+      totalAbonadoUsd = totalAbonadoUsd.plus(montoUsd)
     }
-    totalAbonadoUsd = Number(totalAbonadoUsd.toFixed(2))
-    const pendienteUsd = Math.max(0, Number((totalUsd - totalAbonadoUsd).toFixed(2)))
-    const tipo: 'CONTADO' | 'CREDITO' = pendienteUsd <= 0.01 ? 'CONTADO' : 'CREDITO'
+    const pendienteUsd = Decimal.max(0, totalUsd.minus(totalAbonadoUsd))
+    const tipo: 'CONTADO' | 'CREDITO' = pendienteUsd.lte(0.01) ? 'CONTADO' : 'CREDITO'
     const saldoPendUsd = pendienteUsd
 
     // 3. INSERT facturas_compra (cabecera)
@@ -531,17 +579,17 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         proveedor_id,
         nro_factura,
         nro_control ?? null,
-        depositoId,
+        depositoPrincipalId,
         monedaId,
-        tasa.toFixed(4),
-        tasa_costo ? tasa_costo.toFixed(4) : null,
-        totalExentoUsd.toFixed(2),
-        totalBaseUsd.toFixed(2),
-        totalIvaUsd.toFixed(2),
-        '0.00',
-        totalUsd.toFixed(2),
-        totalBs.toFixed(2),
-        saldoPendUsd.toFixed(2),
+        toStorageString(tasa),
+        tasa_costo ? toStorageString(tasa_costo) : null,
+        toStorageString(totalExentoUsd),
+        toStorageString(totalBaseUsd),
+        toStorageString(totalIvaUsd),
+        '0.00000000',
+        toStorageString(totalUsd),
+        toStorageString(totalBs),
+        toStorageString(saldoPendUsd),
         tipo,
         'PROCESADA',
         fecha_factura,
@@ -557,11 +605,23 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     // 4. Por cada linea: detalle + kardex + actualizar producto
     for (const linea of lineas) {
       const detalleId = uuidv4()
-      const subtotalUsd = Number((linea.cantidad * linea.costo_unitario_usd).toFixed(2))
-      const subtotalBs = Number((subtotalUsd * tasa).toFixed(2))
+      const dCantidad = new Decimal(linea.cantidad)
+      // Enrutamiento de ingreso por linea (Slice 1c): prioriza el deposito
+      // default DEL PRODUCTO de esta linea; si es NULL, cae al deposito
+      // principal de la empresa. Una misma factura puede escribir a
+      // MULTIPLES depositos (uno por linea), a diferencia del header
+      // (facturas_compra.deposito_id) que conserva el deposito principal
+      // pre-resuelto (concepto de un solo campo). (CPD/Enrutamiento de
+      // Ingreso por Linea)
+      const lineaDepositoId =
+        resolveDepositoIngreso(productoDepositoMap.get(linea.producto_id) ?? null, depositoPrincipalId) ??
+        depositoPrincipalId
+      const dCostoUnit = new Decimal(linea.costo_unitario_usd)
+      const subtotalUsd = dCantidad.times(dCostoUnit)
+      const subtotalBs = subtotalUsd.times(dTasa)
       // costoSistema: BCV-adjusted cost for inventory valuation.
       // Equals costo_unitario_usd when not using tasa paralela.
-      const costoSistema = linea.costo_usd_sistema ?? linea.costo_unitario_usd
+      const costoSistema = new Decimal(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
 
       // 4a. Crear lote si aplica
       let loteId: string | null = null
@@ -574,13 +634,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             loteId,
             empresa_id,
             linea.producto_id,
-            depositoId,
+            lineaDepositoId,
             linea.lote_nro.trim().toUpperCase(),
             linea.lote_fecha_fab ?? null,
             linea.lote_fecha_venc ?? null,
-            linea.cantidad.toFixed(3),
-            linea.cantidad.toFixed(3),
-            costoSistema.toFixed(2),
+            toStorageString(dCantidad),
+            toStorageString(dCantidad),
+            toStorageString(costoSistema),
             compraId,
             now,
             now,
@@ -597,14 +657,14 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           detalleId,
           compraId,
           linea.producto_id,
-          depositoId,
-          linea.cantidad.toFixed(3),
-          linea.costo_unitario_usd.toFixed(4),
-          costoSistema.toFixed(4),
+          lineaDepositoId,
+          toStorageString(dCantidad),
+          toStorageString(dCostoUnit),
+          toStorageString(costoSistema),
           linea.tipo_impuesto ?? 'Exento',
-          (linea.impuesto_pct ?? 0).toFixed(2),
-          subtotalUsd.toFixed(2),
-          subtotalBs.toFixed(2),
+          toStorageString(linea.impuesto_pct ?? 0),
+          toStorageString(subtotalUsd),
+          toStorageString(subtotalBs),
           loteId,
           empresa_id,
           now,
@@ -612,10 +672,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       )
 
       // 4c. Stock actual (pre-cargado; se actualiza localmente para acumular lineas del mismo producto)
-      const stockActual = stocksMap.get(linea.producto_id) ?? 0
+      const stockActual = stocksMap.get(linea.producto_id) ?? new Decimal(0)
 
       // 4d. Calcular nuevo stock y actualizar mapa para proximas iteraciones
-      const stockNuevo = stockActual + linea.cantidad
+      const stockNuevo = stockActual.plus(dCantidad)
       stocksMap.set(linea.producto_id, stockNuevo)
 
       // 4e. INSERT movimiento de inventario (entrada por compra) — usa costo sistema (BCV)
@@ -626,11 +686,11 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         [
           movId,
           linea.producto_id,
-          depositoId,
-          linea.cantidad.toFixed(3),
-          stockActual.toFixed(3),
-          stockNuevo.toFixed(3),
-          costoSistema.toFixed(4),
+          lineaDepositoId,
+          toStorageString(dCantidad),
+          toStorageString(stockActual),
+          toStorageString(stockNuevo),
+          toStorageString(costoSistema),
           loteId,
           compraId,
           `COM-${nro_factura}`,
@@ -649,91 +709,124 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // nuevo_precio_venta_usd provisto → usar pvp elegido por el usuario
       // ninguna de las anteriores → auto-calcular pvp desde el margen actual
       const precios = preciosMap.get(linea.producto_id)
-      const costoActual = precios?.costo_usd ?? 0
-      const pvpActual = precios?.precio_venta_usd ?? 0
+      const costoActual = precios?.costo_usd ?? new Decimal(0)
+      const pvpActual = precios?.precio_venta_usd ?? new Decimal(0)
       const mayorActual = precios?.precio_mayor_usd ?? null
       const especialActual = precios?.precio_especial_usd ?? null
       // pvpNuevoAudit: captura el pvp final para el registro de auditoria de precios
-      let pvpNuevoAudit: number | null = null
+      let pvpNuevoAudit: Decimal | null = null
 
-      if (!linea.costo_cambio) {
-        // Costo no cambio: solo actualizar stock
-        await tx.execute(
-          'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), now, linea.producto_id]
-        )
-      } else if (linea.no_actualizar_pvp) {
+      // resolverAccionesLineaCompra: predicado unico que decide que se escribe en
+      // productos y si corresponde auditar en historico_precios, independiente
+      // entre si (un PVP editado sin cambio de costo tambien debe persistir/auditar).
+      const { actualizarCosto, actualizarPvp, registrarAuditoria } = resolverAccionesLineaCompra(
+        linea.costo_cambio === true,
+        linea.no_actualizar_pvp
+      )
+      // costoParaEscribir: valor a escribir en productos.costo_usd (y a auditar como
+      // costo_nuevo). Cuando el costo NO cambio, preserva costoActual EXACTO en vez de
+      // costoSistema (que puede sufrir drift de punto flotante bajo tasa paralela) —
+      // evita que una edicion de PVP sin cambio de costo introduzca drift en el costo
+      // guardado o rompa el invariante costo_anterior === costo_nuevo en la auditoria.
+      // Cuando el costo SI cambio, es exactamente costoSistema (sin cambios de comportamiento).
+      const costoParaEscribir = resolverCostoAEscribir(actualizarCosto, costoSistema, costoActual)
+
+      if (!actualizarCosto && !actualizarPvp) {
+        // Costo no cambio y no se edito el pvp: nada que actualizar aqui ademas
+        // del stock (ver upsertStockDeposito luego de este bloque).
+      } else if (actualizarCosto && !actualizarPvp) {
         // Costo cambio pero usuario eligio mantener el pvp actual
         await tx.execute(
-          'UPDATE productos SET stock = ?, costo_usd = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), costoSistema.toFixed(4), now, linea.producto_id]
+          'UPDATE productos SET costo_usd = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(costoParaEscribir), now, linea.producto_id]
         )
         pvpNuevoAudit = pvpActual
       } else {
         // Determinar nuevo pvp (nivel 1)
-        let nuevoPvp: number
+        let nuevoPvp: Decimal
         if (linea.nuevo_precio_venta_usd !== undefined && linea.nuevo_precio_venta_usd > 0) {
+          const dNuevoPvp = new Decimal(linea.nuevo_precio_venta_usd)
           // Guard: PVP no puede ser menor al costo
-          if (linea.nuevo_precio_venta_usd < costoSistema) {
+          if (dNuevoPvp.lt(costoParaEscribir)) {
             throw new Error(
-              `El PVP ($${linea.nuevo_precio_venta_usd.toFixed(2)}) es menor al costo ($${costoSistema.toFixed(2)}). Corrija el precio antes de guardar.`
+              `El PVP ($${dNuevoPvp.toFixed(2)}) es menor al costo ($${costoParaEscribir.toFixed(2)}). Corrija el precio antes de guardar.`
             )
           }
-          nuevoPvp = linea.nuevo_precio_venta_usd
-        } else if (costoActual > 0 && pvpActual > 0) {
-          const margen = (pvpActual - costoActual) / costoActual
-          nuevoPvp = Math.max(costoSistema, Number((costoSistema * (1 + margen)).toFixed(2)))
+          nuevoPvp = dNuevoPvp
+        } else if (costoActual.gt(0) && pvpActual.gt(0)) {
+          const margen = pvpActual.minus(costoActual).dividedBy(costoActual)
+          nuevoPvp = Decimal.max(costoParaEscribir, costoParaEscribir.times(new Decimal(1).plus(margen)))
         } else {
-          nuevoPvp = Number(costoSistema.toFixed(2))
+          nuevoPvp = costoParaEscribir
         }
 
         pvpNuevoAudit = nuevoPvp
 
         // Precio mayor: usar provisto o auto-calcular con margen propio (siempre >= pvp)
-        let nuevoMayor: number | null = null
+        let nuevoMayor: Decimal | null = null
         if (linea.nuevo_precio_mayor_usd !== undefined && linea.nuevo_precio_mayor_usd > 0) {
-          nuevoMayor = linea.nuevo_precio_mayor_usd
-        } else if (mayorActual !== null && mayorActual > 0 && costoActual > 0) {
-          const margenMayor = (mayorActual - costoActual) / costoActual
-          nuevoMayor = Number((costoSistema * (1 + margenMayor)).toFixed(2))
-          if (nuevoMayor < nuevoPvp) nuevoMayor = nuevoPvp
+          nuevoMayor = new Decimal(linea.nuevo_precio_mayor_usd)
+        } else if (mayorActual !== null && mayorActual.gt(0) && costoActual.gt(0)) {
+          const margenMayor = mayorActual.minus(costoActual).dividedBy(costoActual)
+          nuevoMayor = costoParaEscribir.times(new Decimal(1).plus(margenMayor))
+          if (nuevoMayor.lt(nuevoPvp)) nuevoMayor = nuevoPvp
         }
 
         // Precio especial: usar provisto o auto-calcular con margen propio (siempre >= pvp)
-        let nuevoEspecial: number | null = null
+        let nuevoEspecial: Decimal | null = null
         if (linea.nuevo_precio_especial_usd !== undefined && linea.nuevo_precio_especial_usd > 0) {
-          nuevoEspecial = linea.nuevo_precio_especial_usd
-        } else if (especialActual !== null && especialActual > 0 && costoActual > 0) {
-          const margenEspecial = (especialActual - costoActual) / costoActual
-          nuevoEspecial = Number((costoSistema * (1 + margenEspecial)).toFixed(2))
-          if (nuevoEspecial < nuevoPvp) nuevoEspecial = nuevoPvp
+          nuevoEspecial = new Decimal(linea.nuevo_precio_especial_usd)
+        } else if (especialActual !== null && especialActual.gt(0) && costoActual.gt(0)) {
+          const margenEspecial = especialActual.minus(costoActual).dividedBy(costoActual)
+          nuevoEspecial = costoParaEscribir.times(new Decimal(1).plus(margenEspecial))
+          if (nuevoEspecial.lt(nuevoPvp)) nuevoEspecial = nuevoPvp
         }
 
         if (nuevoMayor !== null && nuevoEspecial !== null) {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoMayor.toFixed(2), nuevoEspecial.toFixed(2), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else if (nuevoMayor !== null) {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoMayor.toFixed(2), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, precio_mayor_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoMayor), now, linea.producto_id]
           )
         } else if (nuevoEspecial !== null) {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), nuevoEspecial.toFixed(2), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, precio_especial_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), toStorageString(nuevoEspecial), now, linea.producto_id]
           )
         } else {
           await tx.execute(
-            'UPDATE productos SET stock = ?, costo_usd = ?, precio_venta_usd = ?, updated_at = ? WHERE id = ?',
-            [stockNuevo.toFixed(3), costoSistema.toFixed(4), nuevoPvp.toFixed(2), now, linea.producto_id]
+            'UPDATE productos SET costo_usd = ?, precio_venta_usd = ?, updated_at = ? WHERE id = ?',
+            [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), now, linea.producto_id]
           )
         }
       }
 
-      // 4g. Registrar historico de precios cuando el costo cambio
-      if (linea.costo_cambio && pvpNuevoAudit !== null) {
+      // inventario_stock (por deposito) + productos.stock (total) — usa el deposito
+      // RESUELTO POR LINEA (lineaDepositoId, Slice 1c), no un unico deposito
+      // prefetched para toda la factura. Una factura con productos en distintos
+      // depositos ahora escribe a MULTIPLES depositos, cada uno en la MISMA
+      // writeTransaction (atomicidad preservada).
+      await upsertStockDeposito(tx, {
+        empresa_id,
+        producto_id: linea.producto_id,
+        deposito_id: lineaDepositoId,
+        delta: dCantidad,
+        usuario_id: usuario_id,
+        now,
+        movimientoInventarioId: movId,
+      })
+
+      // 4g. Registrar historico de precios cuando cambio el costo o el pvp.
+      // `pvpNuevoAudit !== null` ya es estructuralmente equivalente a `registrarAuditoria`
+      // (solo se asigna en la rama "mantener pvp" o "recompute/apply pvp", nunca en la
+      // rama solo-stock), pero se mantiene explicito por claridad y para el null-narrowing
+      // de TypeScript. Si esa equivalencia cambia en un refactor futuro, este gate debe
+      // revisarse.
+      if (registrarAuditoria && pvpNuevoAudit !== null) {
         await tx.execute(
           `INSERT INTO historico_precios
              (id, empresa_id, factura_compra_id, producto_id, usuario_id,
@@ -745,11 +838,90 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             compraId,
             linea.producto_id,
             usuario_id,
-            String(costoActual.toFixed(4)),
-            String(costoSistema.toFixed(4)),
-            String(pvpActual.toFixed(2)),
-            String(pvpNuevoAudit.toFixed(2)),
+            toStorageString(costoActual),
+            toStorageString(costoParaEscribir),
+            toStorageString(pvpActual),
+            toStorageString(pvpNuevoAudit),
             now,
+          ]
+        )
+      }
+    }
+
+    // 4b. Gastos consolidados por concepto (Material de Empaque / Flete).
+    // Se ejecuta DENTRO de la misma writeTransaction — PowerSync no permite tx
+    // anidada, por eso se hace INSERT crudo aqui en vez de llamar crearGasto().
+    // Mismo template que use-ajustes.ts (aplicarAjuste, rama RESTA con gasto por linea).
+    const gruposCargo = consolidarLineasCargo(lineasCargo)
+    if (gruposCargo.length > 0) {
+      const CLAVE_POR_CONCEPTO: Record<ConceptoCargo, string> = {
+        EMPAQUE: 'MATERIAL_EMPAQUE',
+        FLETE: 'FLETE_COMPRA',
+      }
+      const DESCRIPCION_POR_CONCEPTO: Record<ConceptoCargo, string> = {
+        EMPAQUE: 'Material de empaque',
+        FLETE: 'Flete',
+      }
+
+      const monedaUsdRes = await tx.execute("SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1", [])
+      const monedaUsdId = (monedaUsdRes.rows?.item(0) as { id: string } | undefined)?.id ?? ''
+
+      for (const grupo of gruposCargo) {
+        const clave = CLAVE_POR_CONCEPTO[grupo.concepto]
+        const cuentaRes = await tx.execute(
+          'SELECT cuenta_contable_id FROM cuentas_config WHERE empresa_id = ? AND clave = ? LIMIT 1',
+          [empresa_id, clave]
+        )
+        const cuentaId = (cuentaRes.rows?.item(0) as { cuenta_contable_id: string } | undefined)?.cuenta_contable_id
+        if (!cuentaId) {
+          // Fail loud: la migracion 0082 backfillea esta clave para toda empresa existente.
+          // Un null aqui significa que la migracion no fue aplicada — postear el cargo sin
+          // cuenta contable dejaria dinero en CxP sin gasto contable que lo respalde.
+          throw new Error(
+            `No hay cuenta contable configurada para "${clave}". Configure Contabilidad → Cuentas antes de registrar cargos de ${DESCRIPCION_POR_CONCEPTO[grupo.concepto].toLowerCase()}.`
+          )
+        }
+
+        const dBase = new Decimal(grupo.baseUsd)
+        const dIva = new Decimal(grupo.ivaUsd)
+        const dTotal = dBase.plus(dIva)
+        const pctEfectivo = dBase.gt(0) ? dIva.dividedBy(dBase).times(100) : new Decimal(0)
+        const tipoImpuestoCargo = dIva.gt(0) ? 'Gravable' : 'Exento'
+
+        await tx.execute(
+          `INSERT INTO gastos
+             (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
+              moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+              tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+              saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by,
+              doc_origen_id, doc_origen_tipo)
+           VALUES (?, ?, ?, ?, ?, ?, ?,
+                   ?, 'USD', 0, ?, ?, ?,
+                   ?, ?, ?, ?,
+                   '0.00', ?, 'REGISTRADO', ?, ?, ?,
+                   ?, ?)`,
+          [
+            uuidv4(),
+            empresa_id,
+            `FC-${compraId}-${grupo.concepto}`,
+            nro_factura,
+            cuentaId,
+            `${DESCRIPCION_POR_CONCEPTO[grupo.concepto]} - Factura de compra ${nro_factura}`,
+            fecha_factura,
+            monedaUsdId,
+            dTasa.toFixed(4),
+            toStorageString(dBase),
+            toStorageString(dTotal),
+            tipoImpuestoCargo,
+            pctEfectivo.toFixed(2),
+            toStorageString(dBase),
+            toStorageString(dIva),
+            `Generado automaticamente desde la factura de compra ${nro_factura}`,
+            now,
+            now,
+            usuario_id,
+            compraId,
+            'FACTURA_COMPRA',
           ]
         )
       }
@@ -765,13 +937,13 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
        FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
       [proveedor_id, empresa_id]
     )
-    const sumAfterInsert = parseFloat((sumResult.rows?.item(0) as { saldo: string }).saldo) || 0
+    const sumAfterInsert = new Decimal((sumResult.rows?.item(0) as { saldo: string }).saldo || '0')
     // saldo antes de esta factura = sum actual - pendienteUsd (contribucion de la nueva factura)
-    let saldoProv = Math.max(0, Number((sumAfterInsert - pendienteUsd).toFixed(2)))
+    let saldoProv = Decimal.max(0, sumAfterInsert.minus(pendienteUsd))
 
     // 5b. Si hay deuda pendiente: crear entrada FAC
-    if (pendienteUsd > 0.01) {
-      const nuevoSaldo = Number((saldoProv + pendienteUsd).toFixed(2))
+    if (pendienteUsd.gt(0.01)) {
+      const nuevoSaldo = saldoProv.plus(pendienteUsd)
       const movFacId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_cuenta_proveedor
@@ -781,9 +953,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         [
           movFacId, empresa_id, proveedor_id,
           `FAC-${nro_factura}`,
-          pendienteUsd.toFixed(2),
-          saldoProv.toFixed(2),
-          nuevoSaldo.toFixed(2),
+          toStorageString(pendienteUsd),
+          toStorageString(saldoProv),
+          toStorageString(nuevoSaldo),
           `Factura compra ${nro_factura}`,
           compraId, compraId,
           now, now, usuario_id,
@@ -794,16 +966,17 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
     // 5c. Por cada pago inmediato: crear entrada PAG
     // tasa_interna: para pagos iniciales usar tasa_costo si existe, sino tasa del proveedor
-    const tasaInterna = tasa_costo ?? tasa
+    const dTasaInterna = tasa_costo ? new Decimal(tasa_costo) : dTasa
 
     for (const pago of pagos) {
-      const montoUsd = pago.moneda === 'BS' ? Number((pago.monto / tasa).toFixed(2)) : pago.monto
-      if (montoUsd <= 0) continue
+      const dMontoPago = new Decimal(pago.monto)
+      const montoUsd = pago.moneda === 'BS' ? dMontoPago.dividedBy(dTasa) : dMontoPago
+      if (montoUsd.lte(0)) continue
       // monto a tasa interna (para contabilidad)
       const montoUsdInterno = pago.moneda === 'BS'
-        ? Number((pago.monto / tasaInterna).toFixed(2))
-        : pago.monto
-      const nuevoSaldo = Math.max(0, Number((saldoProv - montoUsd).toFixed(2)))
+        ? dMontoPago.dividedBy(dTasaInterna)
+        : dMontoPago
+      const nuevoSaldo = Decimal.max(0, saldoProv.minus(montoUsd))
       const movPagId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_cuenta_proveedor
@@ -815,36 +988,83 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         [
           movPagId, empresa_id, proveedor_id,
           pago.referencia ? pago.referencia : `PAG-${nro_factura}`,
-          montoUsd.toFixed(2),
-          saldoProv.toFixed(2),
-          nuevoSaldo.toFixed(2),
+          toStorageString(montoUsd),
+          toStorageString(saldoProv),
+          toStorageString(nuevoSaldo),
           `Pago inicial compra ${nro_factura}`,
           compraId, compraId,
           pago.moneda,
-          pago.monto.toFixed(2),
-          tasa.toFixed(4),
-          montoUsdInterno.toFixed(2),
+          toStorageString(dMontoPago),
+          toStorageString(dTasa),
+          toStorageString(montoUsdInterno),
           now, now, usuario_id,
         ]
       )
       saldoProv = nuevoSaldo
 
+      // Movimiento de método de cobro (para cuadre de caja si hay sesión activa)
+      await tx.execute(
+        `INSERT INTO movimientos_metodo_cobro
+           (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+            doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+         VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(), empresa_id, pago.metodo_cobro_id,
+          toStorageString(dMontoPago),
+          compraId,
+          pago.referencia || `PAG-${nro_factura}`,
+          `Pago compra ${nro_factura}`,
+          pago.sesion_caja_id ?? null,
+          now, now, usuario_id,
+        ]
+      )
+
       // Movimiento bancario si tiene banco asociado
       if (pago.banco_empresa_id) {
         const movBancoId = uuidv4()
+
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [pago.banco_empresa_id]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (pago.moneda === 'BS' ? dMontoPago.toNumber() : usdToBs(montoUsd, dTasa).toNumber())
+          : (pago.moneda === 'BS' ? bsToUsd(dMontoPago, dTasa).toNumber() : montoUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt - _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, 0, 0, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'EGRESO', 'PAGO_PROVEEDOR', ?, ?, ?, ?, 'PAGO_CXP', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoId, empresa_id, pago.banco_empresa_id,
-            montoUsd.toFixed(2),
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
             compraId,
             pago.referencia ?? null,
             `Pago compra ${nro_factura}`,
             now, now, usuario_id,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, pago.banco_empresa_id]
         )
       }
     }
@@ -853,14 +1073,20 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     try {
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
       const pagosContabilidad = pagos.map((p) => ({
-        monto_usd: p.moneda === 'BS' ? Number((p.monto / tasa).toFixed(2)) : p.monto,
+        monto_usd: p.moneda === 'BS'
+          ? new Decimal(p.monto).dividedBy(dTasa).toNumber()
+          : p.monto,
         banco_empresa_id: p.banco_empresa_id,
       }))
       await generarAsientosCompra(tx, {
         empresaId: empresa_id,
         compraId,
         nroFactura: nro_factura,
-        totalUsd,
+        totalUsd: totalUsd.toNumber(),
+        // El IVA de compra no es costo ni gasto: va a IVA_CREDITO (cuenta de
+        // credito fiscal), separado del monto que se capitaliza en INVENTARIO.
+        baseInventarioUsd: totalExentoUsd.plus(totalBaseUsd).toNumber(),
+        ivaUsd: totalIvaUsd.toNumber(),
         esContado: tipo === 'CONTADO',
         banco_empresa_id: null,
         pagos: pagosContabilidad,

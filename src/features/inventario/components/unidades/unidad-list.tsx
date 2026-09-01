@@ -8,6 +8,8 @@ import {
   type Unidad,
 } from '@/features/inventario/hooks/use-unidades'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 import { UnidadForm } from './unidad-form'
 
 export function UnidadList() {
@@ -96,7 +98,7 @@ export function UnidadList() {
 </head>
 <body>
   <h1>Reporte de Unidades de Medida</h1>
-  <p>Total: ${unidades.length} unidades &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p>Total: ${unidades.length} unidades &nbsp;|&nbsp; Generado: ${formatDateTime(localNow())}</p>
   <table>
     <thead>
       <tr>

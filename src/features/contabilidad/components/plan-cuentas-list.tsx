@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { CaretDown, CaretRight, Copy, Download, PencilSimple, Plus, Upload } from '@phosphor-icons/react'
+import { CaretDown, CaretRight, Copy, Download, LockSimple, PencilSimple, Plus, Upload } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   usePlanCuentas,
@@ -82,7 +82,7 @@ function TablaSkeleton() {
 // ─── Componente principal ──────────────────────────────────────
 
 export function PlanCuentasList() {
-  const { cuentas, isLoading } = usePlanCuentas()
+  const { cuentas, isLoading, sistemaCuentaIds } = usePlanCuentas()
   const { user } = useCurrentUser()
 
   // ─── Estado del formulario ───────────────────────────────────
@@ -169,6 +169,11 @@ export function PlanCuentasList() {
 
   async function handleToggleActivo(cuenta: CuentaContable) {
     const nuevoEstado = cuenta.is_active !== 1
+    // Bloquear desactivacion de cuentas vinculadas al sistema
+    if (!nuevoEstado && sistemaCuentaIds.has(cuenta.id)) {
+      toast.error('Esta cuenta está vinculada al sistema y no puede desactivarse')
+      return
+    }
     setTogglingId(cuenta.id)
     try {
       await actualizarCuenta(cuenta.id, { is_active: nuevoEstado })
@@ -364,7 +369,22 @@ export function PlanCuentasList() {
                       </div>
                     </td>
 
-                    <td className="px-4 py-3 text-gray-900">{c.nombre}</td>
+                    <td className="px-4 py-3 text-gray-900">
+                      <div className="flex items-center gap-2">
+                        <span>{c.nombre}</span>
+                        {sistemaCuentaIds.has(c.id) && (
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 ring-1 ring-violet-600/20 ring-inset">
+                            <LockSimple className="h-2.5 w-2.5" />
+                            Sistema
+                          </span>
+                        )}
+                        {c.created_by === null && !sistemaCuentaIds.has(c.id) && (
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-500/20 ring-inset">
+                            Inicial
+                          </span>
+                        )}
+                      </div>
+                    </td>
 
                     <td className="px-4 py-3">
                       <TipoBadge tipo={c.tipo} />
@@ -381,8 +401,9 @@ export function PlanCuentasList() {
                     <td className="px-4 py-3">
                       <button
                         onClick={() => handleToggleActivo(c)}
-                        disabled={togglingId === c.id}
-                        className="disabled:opacity-50"
+                        disabled={togglingId === c.id || (c.is_active === 1 && sistemaCuentaIds.has(c.id))}
+                        title={sistemaCuentaIds.has(c.id) && c.is_active === 1 ? 'Vinculada al sistema — no puede desactivarse' : undefined}
+                        className="disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {c.is_active === 1 ? (
                           <span className="inline-flex items-center rounded-full bg-green-50 px-2.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-green-600/20 ring-inset">
@@ -421,6 +442,7 @@ export function PlanCuentasList() {
         cuenta={editingCuenta}
         cuentas={cuentas}
         parentPreset={parentPreset}
+        sistemaCuentaIds={sistemaCuentaIds}
       />
 
       {/* Dialogo de importacion CSV */}

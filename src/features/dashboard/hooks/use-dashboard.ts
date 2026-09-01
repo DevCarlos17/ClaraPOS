@@ -1,6 +1,7 @@
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { todayStr, daysAgo, daysFromNow } from '@/lib/dates'
+import { diasHastaVencimiento } from '@/lib/vencimientos'
 
 export interface InventarioDepto {
   departamento: string
@@ -49,15 +50,6 @@ export function useDebugVentas() {
     `SELECT DISTINCT empresa_id FROM ventas LIMIT 10`,
     []
   )
-
-  console.group('🔍 DEBUG VENTAS')
-  console.log('empresa_id del usuario:', empresaId)
-  console.log('user completo:', user)
-  console.log('Total ventas (sin filtro):', (allVentas?.[0] as Record<string, unknown>)?.cnt)
-  console.log('Total ventas (con empresa_id):', (empresaVentas?.[0] as Record<string, unknown>)?.cnt)
-  console.log('Sample ventas (ultimas 5):', sampleVentas)
-  console.log('Empresas distintas en ventas:', empresasEnVentas)
-  console.groupEnd()
 
   return {
     totalSinFiltro: Number((allVentas?.[0] as Record<string, unknown>)?.cnt ?? 0),
@@ -156,7 +148,6 @@ export function usePrestamosProximos(diasAdelanto = 7) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
-  const today = todayStr()
   const limitStr = daysFromNow(diasAdelanto)
 
   const { data, isLoading } = useQuery(
@@ -178,9 +169,7 @@ export function usePrestamosProximos(diasAdelanto = 7) {
 
   const items: VencimientoPrestamo[] = (data ?? []).map((row: Record<string, unknown>) => {
     const fechaVenc = String(row.fecha_vencimiento ?? '')
-    const diff = Math.floor(
-      (new Date(fechaVenc).getTime() - new Date(today + 'T00:00:00').getTime()) / 86400000
-    )
+    const diff = diasHastaVencimiento(fechaVenc)
     return {
       id: String(row.id ?? ''),
       venta_id: String(row.venta_id ?? ''),

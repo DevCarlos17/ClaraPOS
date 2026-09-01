@@ -9,6 +9,15 @@
 const LETTER_VALUES: Record<string, number> = { V: 1, E: 2, J: 3, G: 4, C: 5, P: 6 }
 const RIF_WEIGHTS = [4, 3, 2, 7, 6, 5, 4, 3, 2]
 
+/**
+ * Prefijos cuyo valor en LETTER_VALUES esta confirmado y por lo tanto se les
+ * exige el digito verificador Modulo 11: J (empresas), V/E (personas).
+ * G/C/P (gubernamental / comunidades / pasaporte) tienen valores de letra en
+ * duda (ver observacion fiscal): se validan solo por formato hasta confirmar
+ * contra un RIF real conocido, para no rechazar identificaciones legitimas.
+ */
+const RIF_CHECK_DIGIT_ENFORCED = new Set(['J', 'V', 'E'])
+
 // ---------------------------------------------------------------------------
 // Sanitizacion
 // ---------------------------------------------------------------------------
@@ -65,9 +74,16 @@ export function calcRifCheckDigit(rif: string): number {
   return digito >= 10 ? 0 : digito
 }
 
-/** Valida RIF purificado (10 chars): letra permitida + 9 digitos */
+/**
+ * Valida RIF purificado (10 chars): letra permitida + 9 digitos.
+ * Para J/V/E exige ademas el digito verificador Modulo 11.
+ * Para G/C/P (valores de letra en duda) valida solo el formato.
+ */
 export function isValidRif(value: string): boolean {
-  return /^[VEJGCP]\d{9}$/.test(value)
+  if (!/^[VEJGCP]\d{9}$/.test(value)) return false
+  if (!RIF_CHECK_DIGIT_ENFORCED.has(value[0])) return true
+  const expectedCheck = calcRifCheckDigit(value.slice(0, 9))
+  return expectedCheck.toString() === value[9]
 }
 
 // ---------------------------------------------------------------------------

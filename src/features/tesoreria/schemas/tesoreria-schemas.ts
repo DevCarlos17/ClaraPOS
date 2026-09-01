@@ -27,6 +27,7 @@ export const traspasoSchema = z
     tasa_cambio: z.coerce.number().positive().optional().nullable(),
     fecha: z.string().min(10, 'Seleccione una fecha'),
     observacion: z.string().max(300).optional(),
+    referencia: z.string().max(100).optional(),
   })
   .refine((d) => d.cuenta_origen_id !== d.cuenta_destino_id, {
     message: 'La cuenta origen y destino no pueden ser la misma',

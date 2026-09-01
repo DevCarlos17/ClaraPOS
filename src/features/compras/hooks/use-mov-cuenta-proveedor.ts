@@ -28,16 +28,15 @@ export interface MovCuentaProveedor {
  * READ-ONLY: Este registro es inmutable, no se exponen funciones de escritura.
  * Retorna los ultimos 100 movimientos ordenados por fecha descendente.
  */
-export function useMovCuentaProveedor(proveedorId: string) {
+export function useMovCuentaProveedor(proveedorId: string, empresaIdOverride?: string) {
   const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
+  const empresaId = empresaIdOverride ?? user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
     proveedorId
       ? `SELECT * FROM movimientos_cuenta_proveedor
          WHERE empresa_id = ? AND proveedor_id = ?
-         ORDER BY fecha DESC
-         LIMIT 100`
+         ORDER BY fecha ASC, created_at ASC`
       : '',
     proveedorId ? [empresaId, proveedorId] : []
   )

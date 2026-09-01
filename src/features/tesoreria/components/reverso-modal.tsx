@@ -12,8 +12,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatUsd } from '@/lib/currency'
+import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { reversarMovBancario, reversarMovCajaFuerte } from '../hooks/use-conciliacion-tesoreria'
+import { reversarTraspaso } from '../hooks/use-traspasos'
 import { reversoSchema } from '../schemas/tesoreria-schemas'
 import type { MovimientoTesoreria } from './movimientos-table'
 
@@ -22,11 +24,13 @@ interface Props {
   onClose: () => void
   movimiento: MovimientoTesoreria | null
   monedaSimbolo: string
+  traspasoId?: string
 }
 
 const ORIGEN_LABELS: Record<string, string> = {
   DEPOSITO_CAJA: 'Deposito caja',
   DEPOSITO_CIERRE: 'Cierre caja',
+  CIERRE_CONSOLIDACION: 'Consolidacion de cierre',
   TRANSFERENCIA_CLIENTE: 'Cobro cliente',
   PAGO_PROVEEDOR: 'Pago proveedor',
   GASTO: 'Gasto',
@@ -35,7 +39,7 @@ const ORIGEN_LABELS: Record<string, string> = {
   MANUAL: 'Manual',
 }
 
-export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo }: Props) {
+export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo, traspasoId }: Props) {
   const { user } = useCurrentUser()
   const [saving, setSaving] = useState(false)
   const [motivo, setMotivo] = useState('')
@@ -64,7 +68,16 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo }: Pro
     if (!user?.id || !user?.empresa_id || !movimiento) return
     setSaving(true)
     try {
-      if (movimiento._source === 'BANCO') {
+      if (traspasoId) {
+        // Full traspaso reversal — both sides
+        await reversarTraspaso({
+          traspasoId,
+          motivo: parsed.data.motivo,
+          userId: user.id,
+          empresaId: user.empresa_id,
+        })
+        toast.success('Traspaso reversado correctamente')
+      } else if (movimiento._source === 'BANCO') {
         const result = await reversarMovBancario({
           movId: movimiento.id,
           motivo: parsed.data.motivo,
@@ -89,7 +102,7 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo }: Pro
       }
       onClose()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al reversar movimiento')
+      toast.error(err instanceof Error ? err.message : 'Error al reversar')
     } finally {
       setSaving(false)
     }
@@ -103,7 +116,9 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo }: Pro
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Reversar movimiento</DialogTitle>
+          <DialogTitle>
+            {traspasoId ? 'Reversar traspaso' : 'Reversar movimiento'}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -111,7 +126,7 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo }: Pro
           <div className="rounded-lg border bg-muted/30 p-4 space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-muted-foreground">Fecha</span>
-              <span>{String(movimiento.fecha).slice(0, 10)}</span>
+              <span>{formatDate(movimiento.fecha)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Origen</span>
@@ -130,6 +145,17 @@ export function ReversoModal({ isOpen, onClose, movimiento, monedaSimbolo }: Pro
               </span>
             </div>
           </div>
+
+          {/* Warning si forma parte de un traspaso */}
+          {traspasoId && (
+            <div className="flex gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              <Warning size={16} className="shrink-0 mt-0.5" weight="fill" />
+              <p>
+                Este movimiento forma parte de un traspaso. Al reversarlo, se revertirán{' '}
+                <strong>ambos extremos</strong> de la operación automáticamente.
+              </p>
+            </div>
+          )}
 
           {/* Warning si afecta CxC */}
           {esTransferenciaCliente && (

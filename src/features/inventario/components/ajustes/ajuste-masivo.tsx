@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   CheckCircle, CaretDown, CaretUp, ClipboardText,
@@ -12,10 +12,12 @@ import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
 import { useAjusteMotivosActivos } from '@/features/inventario/hooks/use-ajuste-motivos'
 import { useEnsureDefaultMotivos } from '@/features/inventario/hooks/use-ensure-default-motivos'
 import { crearAjuste, aplicarAjuste } from '@/features/inventario/hooks/use-ajustes'
-import { todayStr } from '@/lib/dates'
+import { todayStr, localNow } from '@/lib/dates'
+import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
 import { AjusteList } from './ajuste-list'
+import { AjusteForm } from './ajuste-form'
 
 interface ProductoConteo {
   id: string
@@ -41,11 +43,12 @@ interface LoteDisponible {
 
 type CambioItem = { id: string; stockActual: number; stockNuevo: number; lote_id?: string }
 
-type Vista = 'conteo' | 'historial'
+type Vista = 'conteo' | 'historial' | 'individual'
 
 const VISTA_TABS = [
-  { key: 'conteo'    as const, label: 'Conteo Fisico' },
-  { key: 'historial' as const, label: 'Historial de Ajustes' },
+  { key: 'conteo'      as const, label: 'Ajuste Masivo' },
+  { key: 'individual'  as const, label: 'Ajuste Individual' },
+  { key: 'historial'   as const, label: 'Historial de Ajustes' },
 ]
 
 export function AjusteMasivo() {
@@ -56,10 +59,13 @@ export function AjusteMasivo() {
 
   const [vista, setVista] = useState<Vista>('conteo')
   const [prevVista, setPrevVista] = useState<Vista>('conteo')
+
   const [depositoId, setDepositoId] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [filtroDepto, setFiltroDepto] = useState('')
+  const [tipoRegistro, setTipoRegistro] = useState<'S' | 'E' | ''>('')
   const [soloConCambios, setSoloConCambios] = useState(false)
+  const [tablaMostrada, setTablaMostrada] = useState(false)
   const [conteos, setConteos] = useState<Record<string, string>>({})
   const [lotesSeleccionados, setLotesSeleccionados] = useState<Record<string, string>>({})
   const [, setConfirmando] = useState(false)
@@ -67,7 +73,14 @@ export function AjusteMasivo() {
   const [motivoRestaId, setMotivoRestaId] = useState('')
   const [observaciones, setObservaciones] = useState('')
   const [aplicando, setAplicando] = useState(false)
+  const [conteoAplicado, setConteoAplicado] = useState(false)
   const [orden, setOrden] = useState<{ col: OrdenCol; dir: OrdenDir }>({ col: 'nombre', dir: 'asc' })
+
+  useEffect(() => {
+    setTablaMostrada(false)
+    setConteoAplicado(false)
+    setMotivoRestaId('')
+  }, [depositoId, filtroDepto, tipoRegistro])
 
   const dialogRef = useRef<HTMLDialogElement>(null)
 
@@ -109,8 +122,12 @@ export function AjusteMasivo() {
     return Array.from(set.entries()).sort((a, b) => a[1].localeCompare(b[1]))
   }, [productos])
 
+  const CLAVES_SALIDA = ['MERMA_INVENTARIO', 'EXTRAVIO_INVENTARIO', 'CONSUMO_INTERNO']
   const motivosSuma  = useMemo(() => motivos.filter((m) => m.operacion_base === 'SUMA'),  [motivos])
-  const motivosResta = useMemo(() => motivos.filter((m) => m.operacion_base === 'RESTA'), [motivos])
+  const motivosResta = useMemo(
+    () => motivos.filter((m) => m.operacion_base === 'RESTA' && CLAVES_SALIDA.includes(m.cuentas_config_clave ?? '')),
+    [motivos] // eslint-disable-line react-hooks/exhaustive-deps
+  )
 
   const productosFiltrados = useMemo(() => {
     let lista = productos
@@ -173,10 +190,27 @@ export function AjusteMasivo() {
   )
   const mostrarColumnaLotes = hayProductosConLotes && !!depositoId && depositoId !== '__ALL__'
 
+  // Invalidos: filas cuya dirección contradice el tipo de registro seleccionado
+  const invalidos = useMemo(() => {
+    const set = new Set<string>()
+    if (!tipoRegistro || !tablaMostrada) return set
+    for (const p of productosFiltrados) {
+      const val = conteos[p.id]
+      if (!val || val === '') continue
+      const fisico = parseFloat(val)
+      if (isNaN(fisico)) continue
+      const actual = parseFloat(p.stock)
+      if (tipoRegistro === 'S' && fisico > actual) set.add(p.id) // salida pero aumenta = inválido
+      if (tipoRegistro === 'E' && fisico < actual) set.add(p.id) // entrada pero disminuye = inválido
+    }
+    return set
+  }, [conteos, productosFiltrados, tipoRegistro, tablaMostrada])
+
   const cambios = useMemo(() => {
     const sumas: CambioItem[] = []
     const restas: CambioItem[] = []
     for (const p of productos) {
+      if (invalidos.has(p.id)) continue // excluir filas inválidas del cálculo
       const val = conteos[p.id]
       if (!val || val === '') continue
       const nuevo = parseFloat(val)
@@ -201,6 +235,15 @@ export function AjusteMasivo() {
     setSoloConCambios(false)
   }
 
+  function handleCancelarPlanilla() {
+    setTablaMostrada(false)
+    setConteoAplicado(false)
+    setConteos({})
+    setLotesSeleccionados({})
+    setSoloConCambios(false)
+    setObservaciones('')
+  }
+
   function handleOrden(col: OrdenCol) {
     setOrden((prev) =>
       prev.col === col
@@ -215,6 +258,7 @@ export function AjusteMasivo() {
   }
 
   function abrirConfirmacion() {
+    if (invalidos.size > 0) { toast.error(`${invalidos.size} producto(s) con dirección incorrecta para el tipo seleccionado. Revisá las filas marcadas en rojo.`); return }
     if (cambios.total === 0) { toast.error('No hay cambios de stock para aplicar'); return }
     if (!depositoId) { toast.error('Selecciona un deposito antes de aplicar el conteo'); return }
     if (depositoId === '__ALL__') { toast.error('Selecciona un deposito especifico (no "Todos") para aplicar el conteo'); return }
@@ -246,7 +290,7 @@ export function AjusteMasivo() {
       const fechaHoy = todayStr()
       const ajusteIds: string[] = []
 
-      if (cambios.sumas.length > 0) {
+      if (tipoRegistro !== 'S' && cambios.sumas.length > 0) {
         const lineas = cambios.sumas.map((c) => ({
           producto_id: c.id,
           deposito_id: depositoId,
@@ -265,7 +309,7 @@ export function AjusteMasivo() {
         await aplicarAjuste(ajusteId, empresaId, user?.id ?? '')
       }
 
-      if (cambios.restas.length > 0) {
+      if (tipoRegistro !== 'E' && cambios.restas.length > 0) {
         const lineas = cambios.restas.map((c) => ({
           producto_id: c.id,
           deposito_id: depositoId,
@@ -290,6 +334,8 @@ export function AjusteMasivo() {
       setLotesSeleccionados({})
       setSoloConCambios(false)
       setObservaciones('')
+      setConteoAplicado(true)
+      setTablaMostrada(false)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al aplicar conteo')
     } finally {
@@ -326,7 +372,7 @@ th{background:#f3f4f6;border:1px solid #e5e7eb;padding:6px 8px;text-align:left;f
 td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9fafb}
 @media print{body{margin:0}}</style></head>
 <body><h1>Conteo Fisico de Inventario</h1>
-<p>Deposito: ${depNombre} &nbsp;|&nbsp; Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+<p>Deposito: ${depNombre} &nbsp;|&nbsp; Generado: ${formatDateTime(localNow())}</p>
 <table><thead><tr>
   <th>Codigo</th><th>Departamento</th><th>Nombre</th>
   <th style="text-align:right">Stock Actual</th><th style="text-align:right">Nuevo Stock</th>
@@ -385,6 +431,15 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
               </div>
             )}
 
+            {/* ── AJUSTE INDIVIDUAL ── */}
+            {vista === 'individual' && (
+              <AjusteForm
+                isOpen={false}
+                onClose={() => setVista('conteo')}
+                inline
+              />
+            )}
+
             {/* ── CONTEO ── */}
             {vista === 'conteo' && (
               <div className="rounded-b-xl rounded-tr-xl border border-t-0 bg-card p-4 space-y-4">
@@ -396,10 +451,10 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     <select
                       value={depositoId}
                       onChange={(e) => setDepositoId(e.target.value)}
-                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px]"
+                      disabled={tablaMostrada}
+                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px] disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <option value="">Seleccionar deposito...</option>
-                      <option value="__ALL__">Todos los depositos</option>
                       {depositos.map((d) => (
                         <option key={d.id} value={d.id}>{d.nombre}</option>
                       ))}
@@ -412,7 +467,8 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     <select
                       value={filtroDepto}
                       onChange={(e) => setFiltroDepto(e.target.value)}
-                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px]"
+                      disabled={tablaMostrada}
+                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[160px] disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <option value="">Seleccionar departamento...</option>
                       <option value="__ALL__">Todos los departamentos</option>
@@ -421,6 +477,43 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                       ))}
                     </select>
                   </div>
+
+                  {/* Tipo de registro */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      Tipo <span className="text-destructive">*</span>
+                    </label>
+                    <select
+                      value={tipoRegistro}
+                      onChange={(e) => setTipoRegistro(e.target.value as 'S' | 'E' | '')}
+                      disabled={tablaMostrada}
+                      className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[140px] disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <option value="">Seleccionar tipo...</option>
+                      <option value="S">Salida</option>
+                      <option value="E">Entrada</option>
+                    </select>
+                  </div>
+
+                  {/* Causa — solo para Salidas */}
+                  {tipoRegistro === 'S' && (
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-muted-foreground">
+                        Causa <span className="text-destructive">*</span>
+                      </label>
+                      <select
+                        value={motivoRestaId}
+                        onChange={(e) => setMotivoRestaId(e.target.value)}
+                        disabled={tablaMostrada}
+                        className="h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary min-w-[180px] disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        <option value="">Seleccionar causa...</option>
+                        {motivosResta.map((m) => (
+                          <option key={m.id} value={m.id}>{m.nombre}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
 
                   {/* Busqueda */}
                   <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
@@ -437,20 +530,29 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     </div>
                   </div>
 
-                  {/* Solo con cambios */}
-                  <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer h-9 self-end">
+                  {/* Solo con cambios — filtro visual, no borra datos */}
+                  <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer h-9 self-end" title="Oculta los productos sin cambios. Los datos ingresados se conservan.">
                     <input
                       type="checkbox"
                       checked={soloConCambios}
                       onChange={(e) => setSoloConCambios(e.target.checked)}
                       className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
                     />
-                    Solo con cambios
+                    Ver solo con cambios
                   </label>
 
                   {/* Botones */}
-                  <div className="flex gap-2 ml-auto self-end">
-                    {cambios.total > 0 && (
+                  <div className="flex gap-2 ml-auto self-end flex-wrap">
+                    {tablaMostrada && (
+                      <button
+                        onClick={handleCancelarPlanilla}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-destructive bg-white dark:bg-muted border border-destructive/40 rounded-md hover:bg-destructive/10 transition-colors"
+                      >
+                        <ArrowCounterClockwise size={15} />
+                        Cancelar Planilla
+                      </button>
+                    )}
+                    {tablaMostrada && cambios.total > 0 && (
                       <button
                         onClick={handleLimpiar}
                         className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-muted-foreground bg-white dark:bg-muted border border-border rounded-md hover:bg-muted/50 transition-colors"
@@ -461,24 +563,27 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                     )}
                     <button
                       onClick={handleReporte}
-                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-foreground bg-white dark:bg-muted border border-border rounded-md hover:bg-muted/50 transition-colors"
+                      disabled={!conteoAplicado}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-foreground bg-white dark:bg-muted border border-border rounded-md hover:bg-muted/50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <Printer size={15} />
                       Reporte
                     </button>
-                    <button
-                      onClick={abrirConfirmacion}
-                      disabled={cambios.total === 0 || !depositoId || depositoId === '__ALL__'}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <CheckCircle size={15} />
-                      Aplicar Conteo
-                      {cambios.total > 0 && (
-                        <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-bold bg-white/20 rounded-full">
-                          {cambios.total}
-                        </span>
-                      )}
-                    </button>
+                    {tablaMostrada && (
+                      <button
+                        onClick={abrirConfirmacion}
+                        disabled={cambios.total === 0 || !depositoId}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <CheckCircle size={15} />
+                        Aplicar Conteo
+                        {cambios.total > 0 && (
+                          <span className="ml-1 inline-flex items-center justify-center h-5 min-w-[20px] px-1 text-xs font-bold bg-white/20 rounded-full">
+                            {cambios.total}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -502,170 +607,197 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
                 )}
 
                 {/* Tabla / estados */}
-                {depositoId === '' || filtroDepto === '' ? (
+                {tablaMostrada ? (
+                  isLoading ? (
+                    <div className="space-y-2">
+                      {Array.from({ length: 8 }).map((_, i) => (
+                        <div key={i} className="h-10 bg-muted rounded-lg animate-pulse" />
+                      ))}
+                    </div>
+                  ) : productosFiltrados.length === 0 ? (
+                    <div className="text-center py-16 border border-dashed border-border rounded-2xl">
+                      <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
+                      <p className="text-sm font-medium text-muted-foreground">
+                        {productos.length === 0
+                          ? 'No hay productos de inventario'
+                          : 'No hay productos que coincidan con los filtros'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-border overflow-hidden shadow-sm">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border bg-muted/40">
+                              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                Codigo
+                              </th>
+                              <ThSort col="departamento" label="Departamento" />
+                              <ThSort col="nombre" label="Nombre" />
+                              <ThSort col="stock" label="Stock Actual" />
+                              <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                                Nuevo Stock
+                              </th>
+                              <ThSort col="diferencia" label="Diferencia" />
+                              {mostrarColumnaLotes && (
+                                <th className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
+                                  Lote
+                                </th>
+                              )}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-border/50">
+                            {productosFiltrados.map((p) => {
+                              const actual = parseFloat(p.stock)
+                              const nuevoStr = conteos[p.id] ?? ''
+                              const nuevoVal = nuevoStr !== '' ? parseFloat(nuevoStr) : null
+                              const diff = nuevoVal !== null && !isNaN(nuevoVal) ? nuevoVal - actual : null
+                              const hayCambio = diff !== null && Math.abs(diff) > 0.0001
+                              const esInvalido = invalidos.has(p.id)
+
+                              return (
+                                <tr
+                                  key={p.id}
+                                  className={cn(
+                                    'transition-colors duration-150',
+                                    esInvalido
+                                      ? 'bg-red-50/80 dark:bg-red-950/30 hover:bg-red-50 dark:hover:bg-red-950/40'
+                                      : hayCambio
+                                        ? 'bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+                                        : 'hover:bg-muted/30',
+                                  )}
+                                >
+                                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground whitespace-nowrap">
+                                    {p.codigo}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
+                                    {p.nombre_departamento ?? '-'}
+                                  </td>
+                                  <td className="px-4 py-2.5 text-foreground">
+                                    <span className="flex items-center gap-1.5">
+                                      {p.nombre}
+                                      {p.maneja_lotes === 1 && (
+                                        <span title="Maneja lotes"><Package size={13} className="text-primary/60 shrink-0" /></span>
+                                      )}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground whitespace-nowrap">
+                                    {actual.toFixed(3)}
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <div className="flex items-center gap-1.5">
+                                      <input
+                                        type="number"
+                                        step="0.001"
+                                        min="0"
+                                        value={nuevoStr}
+                                        onChange={(e) => handleCambioConteo(p.id, e.target.value)}
+                                        placeholder={actual.toFixed(3)}
+                                        className={cn(
+                                          'w-28 h-8 px-2 text-sm text-right tabular-nums border rounded focus:outline-none focus:ring-2',
+                                          esInvalido
+                                            ? 'border-red-500 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
+                                            : hayCambio
+                                              ? diff! > 0
+                                                ? 'border-green-400 bg-green-50 dark:bg-green-950/30 focus:ring-green-500'
+                                                : 'border-red-400 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
+                                              : 'border-input bg-white dark:bg-card focus:ring-primary',
+                                        )}
+                                      />
+                                      {esInvalido && (
+                                        <span
+                                          className="text-red-600 text-xs font-medium whitespace-nowrap"
+                                          title={tipoRegistro === 'S' ? 'La cantidad física es mayor al stock actual — esto sería una entrada, no una salida.' : 'La cantidad física es menor al stock actual — esto sería una salida, no una entrada.'}
+                                        >
+                                          ⚠ {tipoRegistro === 'S' ? 'No es salida' : 'No es entrada'}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
+                                    {diff === null ? (
+                                      <span className="text-muted-foreground/30">—</span>
+                                    ) : Math.abs(diff) < 0.0001 ? (
+                                      <span className="text-muted-foreground text-xs">sin cambio</span>
+                                    ) : diff > 0 ? (
+                                      <span className="font-semibold text-green-700 dark:text-green-400">+{diff.toFixed(3)}</span>
+                                    ) : (
+                                      <span className="font-semibold text-red-700 dark:text-red-400">{diff.toFixed(3)}</span>
+                                    )}
+                                  </td>
+                                  {mostrarColumnaLotes && (
+                                    <td className="px-3 py-2.5">
+                                      {p.maneja_lotes === 1 && hayCambio ? (
+                                        (() => {
+                                          const lotes = getLotesParaProducto(p.id)
+                                          if (lotes.length === 0) {
+                                            return (
+                                              <span className="text-xs text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                                                Sin lotes activos
+                                              </span>
+                                            )
+                                          }
+                                          const loteSeleccionado = lotesSeleccionados[p.id] ?? ''
+                                          return (
+                                            <select
+                                              value={loteSeleccionado}
+                                              onChange={(e) =>
+                                                setLotesSeleccionados((prev) => ({
+                                                  ...prev,
+                                                  [p.id]: e.target.value,
+                                                }))
+                                              }
+                                              className={cn(
+                                                'h-8 px-2 text-xs border rounded focus:outline-none focus:ring-2 focus:ring-primary min-w-[150px]',
+                                                loteSeleccionado
+                                                  ? 'border-green-400 bg-green-50 dark:bg-green-950/30'
+                                                  : 'border-amber-400 bg-amber-50 dark:bg-amber-950/30',
+                                              )}
+                                            >
+                                              <option value="">Seleccionar lote...</option>
+                                              {lotes.map((l) => (
+                                                <option key={l.id} value={l.id}>
+                                                  {l.nro_lote} — {parseFloat(l.cantidad_actual).toFixed(3)} uds
+                                                  {l.fecha_vencimiento ? ` (venc: ${l.fecha_vencimiento})` : ''}
+                                                </option>
+                                              ))}
+                                            </select>
+                                          )
+                                        })()
+                                      ) : (
+                                        <span className="text-muted-foreground/30 text-xs">—</span>
+                                      )}
+                                    </td>
+                                  )}
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="px-4 py-2 bg-muted/40 border-t border-border text-xs text-muted-foreground">
+                        {productosFiltrados.length} producto(s) mostrado(s) de {productos.length} total
+                      </div>
+                    </div>
+                  )
+                ) : (
                   <div className="text-center py-16 border border-dashed border-border rounded-2xl">
                     <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
                     <p className="text-sm font-medium text-muted-foreground">
                       {depositoId === ''
                         ? 'Selecciona un deposito para comenzar el conteo'
-                        : 'Selecciona un departamento para ver los productos'}
+                        : filtroDepto === ''
+                        ? 'Selecciona un departamento para ver los productos'
+                        : 'Confirma la selección para generar la planilla de conteo'}
                     </p>
-                  </div>
-                ) : isLoading ? (
-                  <div className="space-y-2">
-                    {Array.from({ length: 8 }).map((_, i) => (
-                      <div key={i} className="h-10 bg-muted rounded-lg animate-pulse" />
-                    ))}
-                  </div>
-                ) : productosFiltrados.length === 0 ? (
-                  <div className="text-center py-16 border border-dashed border-border rounded-2xl">
-                    <ClipboardText size={36} className="mx-auto mb-3 text-muted-foreground/30" />
-                    <p className="text-sm font-medium text-muted-foreground">
-                      {productos.length === 0
-                        ? 'No hay productos de inventario'
-                        : 'No hay productos que coincidan con los filtros'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="rounded-2xl border border-border overflow-hidden shadow-sm">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-border bg-muted/40">
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                              Codigo
-                            </th>
-                            <ThSort col="departamento" label="Departamento" />
-                            <ThSort col="nombre" label="Nombre" />
-                            <ThSort col="stock" label="Stock Actual" />
-                            <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                              Nuevo Stock
-                            </th>
-                            <ThSort col="diferencia" label="Diferencia" />
-                            {mostrarColumnaLotes && (
-                              <th className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide whitespace-nowrap">
-                                Lote
-                              </th>
-                            )}
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border/50">
-                          {productosFiltrados.map((p) => {
-                            const actual = parseFloat(p.stock)
-                            const nuevoStr = conteos[p.id] ?? ''
-                            const nuevoVal = nuevoStr !== '' ? parseFloat(nuevoStr) : null
-                            const diff = nuevoVal !== null && !isNaN(nuevoVal) ? nuevoVal - actual : null
-                            const hayCambio = diff !== null && Math.abs(diff) > 0.0001
-
-                            return (
-                              <tr
-                                key={p.id}
-                                className={cn(
-                                  'transition-colors duration-150',
-                                  hayCambio
-                                    ? 'bg-amber-50/60 dark:bg-amber-950/20 hover:bg-amber-50 dark:hover:bg-amber-950/30'
-                                    : 'hover:bg-muted/30',
-                                )}
-                              >
-                                <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground whitespace-nowrap">
-                                  {p.codigo}
-                                </td>
-                                <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap text-xs">
-                                  {p.nombre_departamento ?? '-'}
-                                </td>
-                                <td className="px-4 py-2.5 text-foreground">
-                                  <span className="flex items-center gap-1.5">
-                                    {p.nombre}
-                                    {p.maneja_lotes === 1 && (
-                                      <span title="Maneja lotes"><Package size={13} className="text-primary/60 shrink-0" /></span>
-                                    )}
-                                  </span>
-                                </td>
-                                <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground whitespace-nowrap">
-                                  {actual.toFixed(3)}
-                                </td>
-                                <td className="px-4 py-2.5">
-                                  <input
-                                    type="number"
-                                    step="0.001"
-                                    min="0"
-                                    value={nuevoStr}
-                                    onChange={(e) => handleCambioConteo(p.id, e.target.value)}
-                                    placeholder={actual.toFixed(3)}
-                                    className={cn(
-                                      'w-28 h-8 px-2 text-sm text-right tabular-nums border rounded focus:outline-none focus:ring-2',
-                                      hayCambio
-                                        ? diff! > 0
-                                          ? 'border-green-400 bg-green-50 dark:bg-green-950/30 focus:ring-green-500'
-                                          : 'border-red-400 bg-red-50 dark:bg-red-950/30 focus:ring-red-500'
-                                        : 'border-input bg-white dark:bg-card focus:ring-primary',
-                                    )}
-                                  />
-                                </td>
-                                <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
-                                  {diff === null ? (
-                                    <span className="text-muted-foreground/30">—</span>
-                                  ) : Math.abs(diff) < 0.0001 ? (
-                                    <span className="text-muted-foreground text-xs">sin cambio</span>
-                                  ) : diff > 0 ? (
-                                    <span className="font-semibold text-green-700 dark:text-green-400">+{diff.toFixed(3)}</span>
-                                  ) : (
-                                    <span className="font-semibold text-red-700 dark:text-red-400">{diff.toFixed(3)}</span>
-                                  )}
-                                </td>
-                                {mostrarColumnaLotes && (
-                                  <td className="px-3 py-2.5">
-                                    {p.maneja_lotes === 1 && hayCambio ? (
-                                      (() => {
-                                        const lotes = getLotesParaProducto(p.id)
-                                        if (lotes.length === 0) {
-                                          return (
-                                            <span className="text-xs text-amber-600 dark:text-amber-400 whitespace-nowrap">
-                                              Sin lotes activos
-                                            </span>
-                                          )
-                                        }
-                                        const loteSeleccionado = lotesSeleccionados[p.id] ?? ''
-                                        return (
-                                          <select
-                                            value={loteSeleccionado}
-                                            onChange={(e) =>
-                                              setLotesSeleccionados((prev) => ({
-                                                ...prev,
-                                                [p.id]: e.target.value,
-                                              }))
-                                            }
-                                            className={cn(
-                                              'h-8 px-2 text-xs border rounded focus:outline-none focus:ring-2 focus:ring-primary min-w-[150px]',
-                                              loteSeleccionado
-                                                ? 'border-green-400 bg-green-50 dark:bg-green-950/30'
-                                                : 'border-amber-400 bg-amber-50 dark:bg-amber-950/30',
-                                            )}
-                                          >
-                                            <option value="">Seleccionar lote...</option>
-                                            {lotes.map((l) => (
-                                              <option key={l.id} value={l.id}>
-                                                {l.nro_lote} — {parseFloat(l.cantidad_actual).toFixed(3)} uds
-                                                {l.fecha_vencimiento ? ` (venc: ${l.fecha_vencimiento})` : ''}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        )
-                                      })()
-                                    ) : (
-                                      <span className="text-muted-foreground/30 text-xs">—</span>
-                                    )}
-                                  </td>
-                                )}
-                              </tr>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    <div className="px-4 py-2 bg-muted/40 border-t border-border text-xs text-muted-foreground">
-                      {productosFiltrados.length} producto(s) mostrado(s) de {productos.length} total
-                    </div>
+                    <button
+                      onClick={() => setTablaMostrada(true)}
+                      disabled={!filtroDepto || !depositoId || !tipoRegistro || (tipoRegistro === 'S' && !motivoRestaId)}
+                      className="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ClipboardText size={16} />
+                      Generar Planilla de Conteo
+                    </button>
                   </div>
                 )}
               </div>
@@ -726,24 +858,8 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
           )}
 
           {cambios.restas.length > 0 && (
-            <div className="space-y-1">
-              <label className="text-sm font-medium text-foreground">
-                Motivo de salida (RESTA)<span className="text-destructive ml-1">*</span>
-              </label>
-              {motivosResta.length === 0 ? (
-                <p className="text-sm text-amber-700 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 rounded-md px-3 py-2">
-                  No hay motivos de tipo RESTA activos. Crea uno en "Motivos de Ajuste".
-                </p>
-              ) : (
-                <select
-                  value={motivoRestaId}
-                  onChange={(e) => setMotivoRestaId(e.target.value)}
-                  className="w-full h-9 px-3 text-sm border border-input bg-white dark:bg-card rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="">Seleccionar motivo...</option>
-                  {motivosResta.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
-                </select>
-              )}
+            <div className="px-3 py-2 bg-muted/40 rounded-lg text-sm text-muted-foreground">
+              Causa de salida: <span className="font-medium text-foreground">{motivosResta.find((m) => m.id === motivoRestaId)?.nombre ?? '—'}</span>
             </div>
           )}
 
@@ -790,6 +906,8 @@ td{border:1px solid #e5e7eb;padding:5px 8px}tr:nth-child(even) td{background:#f9
           </div>
         </div>
       </dialog>
+
+
     </div>
   )
 }

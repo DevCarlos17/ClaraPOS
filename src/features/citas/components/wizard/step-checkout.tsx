@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useCitaWizardStore, type CheckoutTipo } from '@/stores/cita-wizard-store'
-import { useQuery } from '@powersync/react'
-import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useMetodosPOS } from '@/features/configuracion/hooks/use-payment-methods'
 import { cn } from '@/lib/utils'
 import { formatUsd } from '@/lib/currency'
 import { Input } from '@/components/ui/input'
@@ -42,8 +41,7 @@ const CHECKOUT_OPTIONS: { tipo: CheckoutTipo; titulo: string; desc: string; colo
 ]
 
 export function StepCheckout() {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
+  const { metodos } = useMetodosPOS()
 
   const {
     clienteNombre,
@@ -67,13 +65,6 @@ export function StepCheckout() {
   const [monto, setMonto] = useState(pago?.monto?.toFixed(2) ?? totalUsd().toFixed(2))
   const [referencia, setReferencia] = useState(pago?.referencia ?? '')
 
-  const { data: metodosData } = useQuery(
-    empresaId
-      ? 'SELECT id, nombre, requiere_referencia FROM metodos_cobro WHERE empresa_id = ? AND is_active = 1 ORDER BY nombre'
-      : '',
-    empresaId ? [empresaId] : []
-  )
-  const metodos = (metodosData ?? []) as { id: string; nombre: string; requiere_referencia: number }[]
   const metodoSeleccionado = metodos.find((m) => m.id === metodoPagoId)
 
   const handleMetodoChange = (id: string) => {

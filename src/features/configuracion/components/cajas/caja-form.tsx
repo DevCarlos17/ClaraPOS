@@ -6,9 +6,10 @@ import {
   actualizarCaja,
   type Caja,
 } from '@/features/configuracion/hooks/use-cajas'
-import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
+import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { NativeSelect } from '@/components/ui/native-select'
+import { esDepositoVentaValido } from '@/features/configuracion/lib/caja-deposito-venta'
 
 interface CajaFormProps {
   isOpen: boolean
@@ -20,7 +21,7 @@ export function CajaForm({ isOpen, onClose, caja }: CajaFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!caja
   const { user } = useCurrentUser()
-  const { depositos, isLoading: loadingDepositos } = useDepositosActivos()
+  const { depositos, isLoading: loadingDepositos } = useDepositosVentaActivos()
 
   const [nombre, setNombre] = useState('')
   const [ubicacion, setUbicacion] = useState('')
@@ -57,10 +58,15 @@ export function CajaForm({ isOpen, onClose, caja }: CajaFormProps) {
     e.preventDefault()
     setErrors({})
 
+    if (depositoId && !esDepositoVentaValido(depositoId, depositos)) {
+      setErrors({ deposito_id: 'El deposito seleccionado no permite ventas' })
+      return
+    }
+
     const parsed = cajaSchema.safeParse({
       nombre,
       ubicacion: ubicacion || undefined,
-      deposito_id: depositoId || undefined,
+      deposito_id: depositoId,
       is_active: activo,
     })
 
@@ -164,7 +170,7 @@ export function CajaForm({ isOpen, onClose, caja }: CajaFormProps) {
           {/* Deposito */}
           <div>
             <label htmlFor="caja-deposito" className="block text-sm font-medium text-muted-foreground mb-1">
-              Deposito <span className="text-muted-foreground/60 font-normal">(opcional)</span>
+              Deposito
             </label>
             <NativeSelect
               id="caja-deposito"
@@ -173,7 +179,9 @@ export function CajaForm({ isOpen, onClose, caja }: CajaFormProps) {
               disabled={loadingDepositos}
               className={loadingDepositos ? 'text-muted-foreground' : undefined}
             >
-              <option value="">Sin deposito</option>
+              <option value="" disabled>
+                -- Selecciona un deposito --
+              </option>
               {depositos.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.nombre}

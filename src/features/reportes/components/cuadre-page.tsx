@@ -1,12 +1,12 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useQuery } from '@powersync/react'
-import { MagnifyingGlass, CheckSquare, Square, ShoppingCart, CreditCard, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear } from '@phosphor-icons/react'
+import { MagnifyingGlass, CheckSquare, Square, LockKey, Eye, Warning, Printer, X, Bank, CheckCircle, Gear, HandCoins, CaretDown, CaretRight, ArrowFatLineUp, ArrowFatLineDown } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
 import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
-import { formatDateTime, formatHora } from '@/lib/format'
+import { formatDate, formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { cerrarSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { PagosResumen } from './pagos-resumen'
@@ -19,13 +19,31 @@ import { CuadreConteoFisico } from './cuadre-conteo-fisico'
 import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
-import { CuadreSaldoCaja } from './cuadre-saldo-caja'
+import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
+import { DiferencialCambiarioModal } from './diferencial-cambiario-modal'
+import { AbsorcionModal } from './absorcion-modal'
 import {
   useSesionesPorCajaYFecha,
   useTasaDelDia,
   useVentasDelDia,
   useCxcDelDia,
   useSafDiario,
+  useSaldoEfectivoBimonetario,
+  useCobrosViaPOS,
+  useSesionApertura,
+  usePagosPorMetodo,
+  useMovimientosManualesDia,
+  useTotalesFiscales,
+  useVentasFinancieras,
+  useMovimientosEfectivoCaja,
+  useCobranzasCxCCaja,
+  useResumenTiposVenta,
+  usePropinasDelDia,
+  useAnticiposDelDia,
+  useDiferencialCambiarioDelDia,
+  useAbsorcionDelDia,
+  type MovimientoEfectivoDetalle,
+  type CobranzaCxCItem,
   type CuadreFilters,
   type VerifiedEntry,
 } from '../hooks/use-cuadre'
@@ -54,9 +72,21 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   // Modal states
   const [auditOpen, setAuditOpen] = useState(false)
   const [cxcOpen, setCxcOpen] = useState(false)
-  const [metodoModal, setMetodoModal] = useState<string | null>(null)
   const [resumenOpen, setResumenOpen] = useState(false)
   const [safModalOpen, setSafModalOpen] = useState(false)
+  const [financieroOpen, setFinancieroOpen] = useState(false)
+  const [diferencialOpen, setDiferencialOpen] = useState(false)
+  const [absorcionOpen, setAbsorcionOpen] = useState(false)
+
+  // Movimientos manuales — tablas opcionales al final del cuadre
+  const [showIngresos, setShowIngresos] = useState(false)
+  const [showEgresos, setShowEgresos] = useState(false)
+  const [showVueltos, setShowVueltos] = useState(false)
+  const [showCobranzasCxC, setShowCobranzasCxC] = useState(false)
+
+  // Selected payment method — drives both row highlight in PagosResumen and CuadreMetodoModal
+  const [selectedMetodoNombre, setSelectedMetodoNombre] = useState<string | null>(null)
+
 
   // Verified non-cash payment amounts (keyed by metodo_cobro_id)
   const [verifiedAmountsByMetodoId, setVerifiedAmountsByMetodoId] = useState<Record<string, VerifiedEntry>>({})
@@ -136,10 +166,106 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { tasaPromedio, tasaCount } = useTasaDelDia(activeFilters?.fecha ?? null)
 
   // KPI data — shown after consultar
-  const { totalVentasUsd, totalVentasBs, facturasCount, isLoading: loadingVentas } =
-    useVentasDelDia(activeFilters)
-  const { cxcTotalUsd, isLoading: loadingCxc } = useCxcDelDia(activeFilters)
-  const { items: safItems } = useSafDiario(activeFilters)
+  const { totalVentasUsd, totalVentasBs, facturasCount } = useVentasDelDia(activeFilters)
+  const { cxcTotalUsd, cxcTotalBs } = useCxcDelDia(activeFilters)
+  const { items: safItems, totalUsd: safTotalUsd } = useSafDiario(activeFilters)
+
+  // Data for CuadreNetoEsperado
+  const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
+  const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, totalCobrosBsEquiv, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
+
+  // Cobros CxC por tipo de moneda — para el Arqueo Teórico.
+  // Solo métodos EFECTIVO: las transferencias no afectan el efectivo físico en caja.
+  const cobrosUsdEnArqueo = cobrosViaPOS
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda !== 'BS')
+    .reduce((s, m) => s + m.cobrosUsd, 0)
+  const cobrosBsNativoEnArqueo = cobrosViaPOS
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
+    .reduce((s, m) => s + m.cobrosNativo, 0)
+
+  // Data for CuadreArqueoTeorico
+  const { aperturaUsd: fondoAperturaUsd, aperturaBs: fondoAperturaBs } = useSesionApertura(activeFilters)
+  const { metodos: todosMetodos } = usePagosPorMetodo(activeFilters)
+  const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
+  const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
+  const { contadoUsd, contadoBs, creditoUsd, creditoBs } = useResumenTiposVenta(activeFilters)
+  const { propinaBs, propinaUsd } = usePropinasDelDia(activeFilters)
+  const { anticipoUsd, anticipoBsNativo } = useAnticiposDelDia(activeFilters)
+  const diferencialCambiario = useDiferencialCambiarioDelDia(activeFilters)
+  const absorcion = useAbsorcionDelDia(activeFilters)
+  // Detalle individual de movimientos para las tablas al pie del cuadre
+  const { movimientos: movsEfectivoDetalle } = useMovimientosEfectivoCaja(activeFilters)
+  const { items: cobranzasCxC } = useCobranzasCxCCaja(activeFilters)
+
+  // Derived values for CuadreArqueoTeorico — track USD (moneda != BS)
+  const ventasEfectivoUsd = todosMetodos
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda !== 'BS')
+    .reduce((s, m) => s + m.totalUsd, 0)
+  const ingresosEfectivoUsd = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && (m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'))
+    .reduce((s, m) => s + m.total, 0)
+  const egresosEfectivoUsd = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.mov_tipo === 'EGRESO')
+    .reduce((s, m) => s + m.total, 0)
+  // Track Bs nativo (moneda == BS) — ventas, ingresos y egresos en bolívares
+  const ventasEfectivoBsNativo = todosMetodos
+    .filter((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
+    .reduce((s, m) => s + m.totalOriginal, 0)
+  const ingresosEfectivoBsNativo = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && (m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'))
+    .reduce((s, m) => s + m.total, 0)
+  const egresosEfectivoBsNativo = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.mov_tipo === 'EGRESO')
+    .reduce((s, m) => s + m.total, 0)
+
+  // Separación vueltos vs retiros para el Arqueo Teórico (display)
+  const vueltosEfectivoUsd = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.origen === 'VUELTO')
+    .reduce((s, m) => s + m.total, 0)
+  const vueltosEfectivoBsNativo = movManualesCaja
+    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.origen === 'VUELTO')
+    .reduce((s, m) => s + m.total, 0)
+  const retirosManualesUsd      = egresosEfectivoUsd      - vueltosEfectivoUsd
+  const retirosManualesBsNativo = egresosEfectivoBsNativo - vueltosEfectivoBsNativo
+
+  // Detalle de movimientos manuales para tablas opcionales
+  const ingresosDetalle = movsEfectivoDetalle.filter(
+    (m) => m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'
+  )
+  const egresosDetalle = movsEfectivoDetalle.filter(
+    (m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA' || m.origen === 'PAGO_PROVEEDOR'
+  )
+  const vueltosDetalle = movsEfectivoDetalle.filter(
+    (m) => m.origen === 'VUELTO'
+  )
+
+  // Diferencial cambiario por redondeo (mismo calculo que PagosResumen)
+  const totalCobradoBs = todosMetodos.reduce((s, m) =>
+    s + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs), 0
+  )
+  const diferencialBs = totalesFiscales.totalFacturadoBs + totalCobrosBs - totalCobradoBs - cxcTotalBs
+  const diferencialCambiarioUsd = tasaPromedio > 0
+    ? Number((diferencialBs / tasaPromedio).toFixed(2))
+    : 0
+  // Fondo apertura en Bs. nativos convertido a USD equivalente (para el total neto USD)
+  const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
+  // "Total Contado" = facturas emitidas originalmente como CONTADO (tipo='CONTADO').
+  // Usa el tipo original de la factura en lugar de la fórmula totalFacturado - cxcPendiente,
+  // que distorsionaba el resultado cuando una factura crédito se cobraba en la misma sesión.
+  const totalContadoUsd = contadoUsd
+  const totalContadoBs  = contadoBs
+
+  // totalNeto incluye: efectivo USD esperado (apertura_usd + ventas + movimientos)
+  //                  + Bs. nativos de apertura convertidos a USD
+  //                  + cobros anteriores CxC
+  //                  + diferencial cambiario
+  const totalNeto = saldoContadoUsd + fondoAperturaBsEnUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
+  // Para display en Bs.: sumar los Bs. nativos de apertura directamente (sin re-convertir)
+  // Cuando hay tasa: convierte el track USD a Bs y suma los Bs nativos de apertura
+  // Sin tasa: muestra solo los Bs nativos de apertura (sin conversión)
+  const totalNetoBs = tasaPromedio > 0
+    ? (saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd) * tasaPromedio + fondoAperturaBs
+    : fondoAperturaBs
 
   // Determine if exactly one ABIERTA session is selected (enables finalizar cuadre)
   const sesionAbiertaId = useMemo(() => {
@@ -456,57 +582,11 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
           {/* Tasa del dia */}
           {consulted && activeFilters && tasaCount > 0 && (
             <div className="text-xs text-muted-foreground border-t pt-2">
-              Tasa del dia: <span className="font-semibold text-foreground">{formatTasa(tasaPromedio)} Bs/$</span>
-              {tasaCount > 1 && <span className="ml-1">(prom. {tasaCount} registros)</span>}
+              Tasa vigente: <span className="font-semibold text-foreground">{formatTasa(tasaPromedio)} Bs/$</span>
             </div>
           )}
         </div>
 
-        {/* KPI cards */}
-        {consulted && activeFilters && (
-          <>
-            <button
-              onClick={() => setAuditOpen(true)}
-              className="rounded-2xl bg-card shadow-lg p-4 flex items-center gap-3 hover:bg-muted/30 transition-colors text-left min-w-[180px]"
-            >
-              <div className="p-2 rounded-xl bg-blue-100 text-blue-600">
-                <ShoppingCart size={20} />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Total Ventas</p>
-                {loadingVentas ? (
-                  <div className="h-5 w-24 bg-muted rounded animate-pulse" />
-                ) : (
-                  <>
-                    <p className="text-lg font-bold leading-none">{formatUsd(totalVentasUsd)}</p>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      {formatBs(totalVentasBs)} · {facturasCount} fact.
-                    </p>
-                  </>
-                )}
-              </div>
-            </button>
-
-            <button
-              onClick={() => setCxcOpen(true)}
-              className="rounded-2xl bg-card shadow-lg p-4 flex items-center gap-3 hover:bg-muted/30 transition-colors text-left min-w-[160px]"
-            >
-              <div className="p-2 rounded-xl bg-red-100 text-red-600">
-                <CreditCard size={20} />
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">CxC Hoy</p>
-                {loadingCxc ? (
-                  <div className="h-5 w-20 bg-muted rounded animate-pulse" />
-                ) : (
-                  <p className="text-lg font-bold leading-none text-red-600">
-                    {formatUsd(cxcTotalUsd)}
-                  </p>
-                )}
-              </div>
-            </button>
-          </>
-        )}
       </div>
 
       {/* Content */}
@@ -517,11 +597,201 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         </div>
       ) : (
         <>
+          {/* Resumen fiscal — full width, encabeza el contenido */}
           <CuadreTotalesFiscales filters={activeFilters} />
 
-          <CuadreSaldoCaja filters={activeFilters} />
-
+          {/* Two-column grid: LEFT = resumen financiero, RIGHT = métodos de pago */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* LEFT COLUMN — Resumen financiero */}
+            <div className="rounded-2xl bg-card shadow-lg p-5 space-y-3">
+              <h3 className="text-sm font-semibold">Resumen de Caja</h3>
+
+              {/* Total Facturado (ventas puras, sin avances/préstamos) */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Facturado (ventas)</span>
+                <div className="text-right">
+                  <div>{formatBs(totalesFiscales.totalVentasBs + totalesFiscales.totalIgtfBs)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {formatUsd(totalesFiscales.totalVentasUsd + totalesFiscales.totalIgtfUsd)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Avances / Préstamos — solo si hay, clickeable para ver detalle */}
+              {totalesFiscales.totalFinancieroUsd > 0.001 && (
+                <button
+                  type="button"
+                  onClick={() => setFinancieroOpen(true)}
+                  className="w-full flex justify-between items-center text-sm rounded-lg px-2 py-1 -mx-2 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors group"
+                >
+                  <span className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+                    <HandCoins size={14} weight="fill" />
+                    Avances / Préstamos
+                    <span className="text-[10px] text-amber-500 group-hover:underline">(ver detalle)</span>
+                  </span>
+                  <div className="text-right">
+                    <div className="text-amber-700 dark:text-amber-400">{formatBs(totalesFiscales.totalFinancieroBs)}</div>
+                    <div className="text-xs text-muted-foreground">{formatUsd(totalesFiscales.totalFinancieroUsd)}</div>
+                  </div>
+                </button>
+              )}
+
+              {/* Total General = ventas + financiero + IGTF */}
+              {totalesFiscales.totalFinancieroUsd > 0.001 && (
+                <div className="flex justify-between text-sm border-t pt-2">
+                  <span className="font-medium">Total General</span>
+                  <div className="text-right">
+                    <div className="font-medium">
+                      {formatBs(totalesFiscales.totalVentasBs + totalesFiscales.totalFinancieroBs + totalesFiscales.totalIgtfBs)}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {formatUsd(totalesFiscales.totalVentasUsd + totalesFiscales.totalFinancieroUsd + totalesFiscales.totalIgtfUsd)}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t" />
+
+              {/* Total Contado — solo ventas cobradas en efectivo, sin fondo de apertura */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Contado</span>
+                <div className="text-right">
+                  {totalContadoBs > 0.001 || (tasaPromedio > 0 && totalContadoUsd > 0.001) ? (
+                    <>
+                      {totalContadoBs > 0.001 && (
+                        <div>{formatBs(totalContadoBs)}</div>
+                      )}
+                      {tasaPromedio > 0 && totalContadoUsd > 0.001 && (
+                        <div className="text-xs text-muted-foreground">{formatUsd(totalContadoUsd)}</div>
+                      )}
+                      {totalContadoBs <= 0.001 && totalContadoUsd > 0.001 && (
+                        <div>{formatUsd(totalContadoUsd)}</div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">{formatBs(0)}</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Total Credito (CxC) — muestra el total emitido a crédito (tipo original) */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Total Credito (CxC)</span>
+                <div className="text-right">
+                  <div>{formatBs(creditoBs)}</div>
+                  <div className="text-xs text-muted-foreground">{formatUsd(creditoUsd)}</div>
+                </div>
+              </div>
+
+              {/* Cobros Anteriores (CxC) */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Cobros Anteriores (CxC)</span>
+                <div className="text-right">
+                  <div className="text-blue-600">
+                    {formatBs(totalCobrosBsEquiv)}
+                  </div>
+                  <div className="text-xs text-muted-foreground">{formatUsd(cobrosAnterioresUsd)}</div>
+                </div>
+              </div>
+
+              {/* Cobros por Adelantado (anticipos sin factura) */}
+              {(anticipoUsd > 0.001 || anticipoBsNativo > 0.001) && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Cobros por Adelantado</span>
+                  <div className="text-right">
+                    {anticipoBsNativo > 0.001 && (
+                      <div className="text-indigo-600">{formatBs(anticipoBsNativo)}</div>
+                    )}
+                    {anticipoUsd > 0.001 && (
+                      <div className={anticipoBsNativo > 0.001 ? 'text-xs text-muted-foreground' : 'text-indigo-600'}>
+                        {formatUsd(anticipoUsd)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Cobros por Adelantado (SAF directo) — solo si hay */}
+              {safTotalUsd > 0.001 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Cobros por Adelantado (SAF)</span>
+                  <div className="text-right">
+                    {tasaPromedio > 0 && (
+                      <div className="text-indigo-600">{formatBs(safTotalUsd * tasaPromedio)}</div>
+                    )}
+                    <div className="text-xs text-muted-foreground">{formatUsd(safTotalUsd)}</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Propinas — solo si hay */}
+              {(propinaBs > 0.001 || propinaUsd > 0.001) && (() => {
+                // Calcular el total en Bs y en USD para mostrar ambos.
+                // propinaBs = suma nativa de propinas en métodos VES
+                // propinaUsd = suma nativa de propinas en métodos USD
+                // Equivalente total: convertir cada porción con tasaPromedio
+                const totalPropinaBs = propinaBs + (tasaPromedio > 0 ? propinaUsd * tasaPromedio : 0)
+                const totalPropinaUsd = propinaUsd + (tasaPromedio > 0 ? propinaBs / tasaPromedio : 0)
+                return (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Propinas</span>
+                    <div className="text-right">
+                      <div className="text-purple-600">{formatBs(totalPropinaBs)}</div>
+                      <div className="text-xs text-muted-foreground">{formatUsd(totalPropinaUsd)}</div>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* Diferencial Cambiario */}
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Diferencial Cambiario</span>
+                <div className="text-right">
+                  {tasaPromedio > 0 && (
+                    <div className={diferencialCambiarioUsd >= 0 ? 'text-green-600' : 'text-orange-600'}>
+                      {diferencialCambiarioUsd >= 0 ? '+' : ''}{formatBs(Math.abs(diferencialCambiarioUsd) * tasaPromedio)}
+                    </div>
+                  )}
+                  <div className="text-xs text-muted-foreground">
+                    {diferencialCambiarioUsd >= 0 ? '+' : ''}{formatUsd(diferencialCambiarioUsd)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Separador + Total Neto Esperado */}
+              <div className="border-t pt-3">
+                <div className="flex justify-between items-start">
+                  <span className="text-sm font-semibold">Total Caja Neto Esperado</span>
+                  <div className="text-right">
+                    <p className={`text-2xl font-bold tabular-nums ${totalNeto >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                      {fondoAperturaBs > 0 || tasaPromedio > 0 ? formatBs(totalNetoBs) : formatUsd(totalNeto)}
+                    </p>
+                    {(fondoAperturaBs > 0 || tasaPromedio > 0) && (
+                      <p className="text-xs text-muted-foreground tabular-nums mt-0.5">
+                        {formatUsd(totalNeto)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT COLUMN — Métodos de pago */}
+            <PagosResumen
+              filters={activeFilters}
+              tasaDelDia={tasaPromedio}
+              selectedMetodoId={selectedMetodoNombre}
+              onMetodoClick={setSelectedMetodoNombre}
+              onCreditoClick={() => setCxcOpen(true)}
+              onSafClick={() => setSafModalOpen(true)}
+              onDiferencialClick={() => setDiferencialOpen(true)}
+              onAbsorcionClick={() => setAbsorcionOpen(true)}
+            />
+          </div>
+
+          {/* Arqueo de caja */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <CuadreConteoFisico
               filters={activeFilters}
               tasaDelDia={tasaPromedio}
@@ -529,45 +799,190 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               onTotalesChange={handleTotalesChange}
               onConteoFisicoChange={handleConteoFisicoChange}
               onLimpiar={handleLimpiarConteo}
+
               readOnly={!!sesionCerradaId}
             />
-            <PagosResumen
-              filters={activeFilters}
-              tasaDelDia={tasaPromedio}
-              onMetodoClick={(nombre) => setMetodoModal(nombre)}
-              onCreditoClick={() => setCxcOpen(true)}
-              onSafClick={() => setSafModalOpen(true)}
+            <CuadreArqueoTeorico
+              fondoAperturaUsd={fondoAperturaUsd}
+              fondoAperturaBs={fondoAperturaBs}
+              ventasEfectivoUsd={Math.max(0, ventasEfectivoUsd - cobrosUsdEnArqueo)}
+              ventasEfectivoBsNativo={Math.max(0, ventasEfectivoBsNativo - cobrosBsNativoEnArqueo)}
+              cobrosUsd={cobrosUsdEnArqueo}
+              cobrosBsNativo={cobrosBsNativoEnArqueo}
+              ingresosEfectivoUsd={ingresosEfectivoUsd}
+              ingresosEfectivoBsNativo={ingresosEfectivoBsNativo}
+              egresosUsd={egresosEfectivoUsd}
+              egresosBsNativo={egresosEfectivoBsNativo}
+              retirosManualesUsd={retirosManualesUsd}
+              retirosManualesBsNativo={retirosManualesBsNativo}
+              vueltosUsd={vueltosEfectivoUsd}
+              vueltosBsNativo={vueltosEfectivoBsNativo}
+              tasaCambio={tasaPromedio}
             />
           </div>
 
-          <div className="space-y-3">
-            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
-              Detalle del periodo
-            </h2>
-            <CuadreDetallePagos
-              filters={activeFilters}
-              onVerifiedChange={handleVerifiedChange}
-              resetKey={detallePagosResetKey}
-            />
-            <CuadreDetalleFacturas filters={activeFilters} />
+          {/* Ventas del dia + Cobros desde POS — full width */}
+          <div className="space-y-4">
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Ventas del dia
+              </h2>
+              <CuadreDetalleFacturas filters={activeFilters} />
+            </div>
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Cobros desde POS
+              </h2>
+              <CuadreDetallePagos
+                filters={activeFilters}
+                onVerifiedChange={handleVerifiedChange}
+                resetKey={detallePagosResetKey}
+              />
+            </div>
           </div>
+
+          {/* Cobranzas CxC ingresadas a caja */}
+          {cobranzasCxC.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Cobranzas CxC
+              </h2>
+              <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                <label className="flex items-center gap-3 px-5 py-3.5 cursor-pointer hover:bg-muted/40 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={showCobranzasCxC}
+                    onChange={(e) => setShowCobranzasCxC(e.target.checked)}
+                    className="h-4 w-4 rounded border accent-blue-600"
+                  />
+                  <div className="flex items-center gap-2">
+                    <ArrowFatLineUp size={15} weight="fill" className="text-blue-600" />
+                    <span className="text-sm font-semibold">Cobranzas CxC</span>
+                    <span className="text-xs text-muted-foreground">({cobranzasCxC.length})</span>
+                  </div>
+                </label>
+                {showCobranzasCxC && <CobranzasCxCTable items={cobranzasCxC} />}
+              </div>
+            </div>
+          )}
+
+          {/* Movimientos manuales de caja — tablas opcionales colapsables */}
+          {(ingresosDetalle.length > 0 || egresosDetalle.length > 0 || vueltosDetalle.length > 0) && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide px-1">
+                Movimientos Manuales de Caja
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Ingresos */}
+                {ingresosDetalle.length > 0 && (
+                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowIngresos((v) => !v)}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ArrowFatLineUp size={15} weight="fill" className="text-green-600" />
+                        <span className="text-sm font-semibold">Ingresos Manuales</span>
+                        <span className="text-xs text-muted-foreground">({ingresosDetalle.length})</span>
+                      </div>
+                      {showIngresos
+                        ? <CaretDown size={13} className="text-muted-foreground" />
+                        : <CaretRight size={13} className="text-muted-foreground" />}
+                    </button>
+                    {showIngresos && (
+                      <MovimientosManualesTable items={ingresosDetalle} />
+                    )}
+                  </div>
+                )}
+
+                {/* Salidas de caja: egresos manuales + pagos a proveedores */}
+                {egresosDetalle.length > 0 && (
+                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowEgresos((v) => !v)}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ArrowFatLineDown size={15} weight="fill" className="text-red-600" />
+                        <span className="text-sm font-semibold">Salidas de Caja</span>
+                        <span className="text-xs text-muted-foreground">({egresosDetalle.length})</span>
+                      </div>
+                      {showEgresos
+                        ? <CaretDown size={13} className="text-muted-foreground" />
+                        : <CaretRight size={13} className="text-muted-foreground" />}
+                    </button>
+                    {showEgresos && (
+                      <MovimientosManualesTable items={egresosDetalle} />
+                    )}
+                  </div>
+                )}
+
+                {/* Vueltos entregados */}
+                {vueltosDetalle.length > 0 && (
+                  <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowVueltos((v) => !v)}
+                      className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-muted/40 transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <ArrowFatLineDown size={15} weight="fill" className="text-orange-500" />
+                        <span className="text-sm font-semibold">Vueltos Entregados</span>
+                        <span className="text-xs text-muted-foreground">({vueltosDetalle.length})</span>
+                      </div>
+                      {showVueltos
+                        ? <CaretDown size={13} className="text-muted-foreground" />
+                        : <CaretRight size={13} className="text-muted-foreground" />}
+                    </button>
+                    {showVueltos && (
+                      <MovimientosManualesTable items={vueltosDetalle} />
+                    )}
+                  </div>
+                )}
+
+              </div>
+            </div>
+          )}
 
           <AuditModal isOpen={auditOpen} onClose={() => setAuditOpen(false)} filters={activeFilters} />
           <CxcModal isOpen={cxcOpen} onClose={() => setCxcOpen(false)} filters={activeFilters} />
+          <DiferencialCambiarioModal
+            open={diferencialOpen}
+            onClose={() => setDiferencialOpen(false)}
+            items={diferencialCambiario.items}
+            totalFaltanteBs={diferencialCambiario.totalFaltanteBs}
+            totalFaltanteUsd={diferencialCambiario.totalFaltanteUsd}
+            totalSobranteBs={diferencialCambiario.totalSobranteBs}
+            fecha={activeFilters?.fecha ?? ''}
+          />
+          <AbsorcionModal
+            open={absorcionOpen}
+            onClose={() => setAbsorcionOpen(false)}
+            items={absorcion.items}
+            totalBs={absorcion.totalBs}
+            totalUsd={absorcion.totalUsd}
+            fecha={activeFilters?.fecha ?? ''}
+          />
+          {financieroOpen && (
+            <FinancieroDetalleModal
+              filters={activeFilters}
+              onClose={() => setFinancieroOpen(false)}
+            />
+          )}
           <SafDetalleModal
             open={safModalOpen}
             onClose={() => setSafModalOpen(false)}
             items={safItems}
             tasaDelDia={tasaPromedio}
           />
-          {metodoModal && (
-            <CuadreMetodoModal
-              isOpen={!!metodoModal}
-              onClose={() => setMetodoModal(null)}
-              filters={activeFilters}
-              metodoNombre={metodoModal}
-            />
-          )}
+          <CuadreMetodoModal
+            isOpen={selectedMetodoNombre !== null}
+            onClose={() => setSelectedMetodoNombre(null)}
+            filters={activeFilters}
+            metodoNombre={selectedMetodoNombre ?? ''}
+          />
         </>
       )}
 
@@ -796,6 +1211,288 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   )
 }
 
+// ─── Tabla de movimientos manuales (ingresos o egresos) ──────
+
+function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[] }) {
+  return (
+    <div className="border-t overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-muted/50 text-muted-foreground">
+            <th className="text-left px-4 py-2 font-medium">Concepto</th>
+            <th className="text-left px-3 py-2 font-medium">Método</th>
+            <th className="text-right px-4 py-2 font-medium">Monto</th>
+            <th className="text-right px-4 py-2 font-medium">Hora</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((m) => {
+            const hora = m.fecha ? formatHora(m.fecha) || '—' : '—'
+            const label = m.concepto ?? m.destinatario ?? m.metodo_nombre
+            const monto = m.metodo_moneda === 'BS'
+              ? formatBs(parseFloat(m.monto))
+              : formatUsd(parseFloat(m.monto))
+                    const isTesoreria = m.origen === 'INGRESO_TESORERIA' || m.origen === 'EGRESO_TESORERIA'
+                    const isCxP = m.origen === 'PAGO_PROVEEDOR'
+                    return (
+                      <tr key={m.id} className="border-b last:border-0 hover:bg-muted/20">
+                        <td className="px-4 py-2.5">
+                          <div className="flex items-center gap-1.5">
+                            {isTesoreria && (
+                              <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">
+                                Tesorería
+                              </span>
+                            )}
+                            {isCxP && (
+                              <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-orange-100 text-orange-700 font-medium">
+                                CxP
+                              </span>
+                            )}
+                            <span className="truncate max-w-[180px]">{label}</span>
+                          </div>
+                        </td>
+                <td className="px-3 py-2.5 text-muted-foreground">{m.metodo_nombre}</td>
+                <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium">
+                  {monto}
+                </td>
+                <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ─── Tabla de cobranzas CxC ──────────────────────────────────
+
+function CobranzasCxCTable({ items }: { items: CobranzaCxCItem[] }) {
+  const [search, setSearch] = useState('')
+
+  const filtered = search.trim()
+    ? items.filter((item) => {
+        const q = search.toLowerCase()
+        return (
+          item.nroFactura?.toLowerCase().includes(q) ||
+          item.clienteNombre?.toLowerCase().includes(q) ||
+          item.metodoNombre.toLowerCase().includes(q) ||
+          item.referencia?.toLowerCase().includes(q)
+        )
+      })
+    : items
+
+  // Agrupar por (createdAt + metodo) — todos los pagos de un mismo abono global
+  // comparten el mismo created_at (misma writeTransaction) y método.
+  const groups: { key: string; rows: CobranzaCxCItem[] }[] = []
+  for (const item of filtered) {
+    const key = `${item.createdAt}|${item.metodoNombre}`
+    const last = groups[groups.length - 1]
+    if (last && last.key === key) {
+      last.rows.push(item)
+    } else {
+      groups.push({ key, rows: [item] })
+    }
+  }
+
+  function renderCell(item: CobranzaCxCItem) {
+    const hora = formatHora(item.createdAt || item.fecha) || '—'
+    const fecha = item.fecha && !isNaN(new Date(item.fecha).getTime()) ? formatDate(item.fecha) : '—'
+    const tasa = parseFloat(item.tasa ?? '0')
+    const montoNum = parseFloat(item.monto)
+    const montoBs = item.metodoMoneda === 'BS' ? montoNum : (tasa > 0 ? montoNum * tasa : 0)
+    const montoDisplay = item.metodoMoneda === 'BS' ? formatBs(montoNum) : formatUsd(montoNum)
+    return { hora, fecha, tasa, montoBs, montoDisplay }
+  }
+
+  return (
+    <div className="border-t">
+      <div className="px-4 py-2 border-b bg-muted/20">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Buscar por factura, cliente, método, referencia..."
+          className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-blue-50/60 text-muted-foreground">
+              <th className="text-left px-4 py-2 font-medium">Factura / Cliente</th>
+              <th className="text-left px-3 py-2 font-medium">Método</th>
+              <th className="text-right px-3 py-2 font-medium">Tasa</th>
+              <th className="text-right px-4 py-2 font-medium">Monto</th>
+              <th className="text-right px-4 py-2 font-medium">Bs.</th>
+              <th className="text-left px-3 py-2 font-medium">Ref.</th>
+              <th className="text-right px-4 py-2 font-medium">Fecha</th>
+              <th className="text-right px-4 py-2 font-medium">Hora</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="px-4 py-4 text-center text-muted-foreground">Sin resultados</td>
+              </tr>
+            ) : groups.map((group) => {
+              const multi = group.rows.length > 1
+              return group.rows.map((item, idx) => {
+                const { hora, fecha, tasa, montoBs, montoDisplay } = renderCell(item)
+                const isLast = idx === group.rows.length - 1
+
+                // Subtotal para grupos de 2+ facturas (después de la última fila del grupo)
+                const subtotalRow = multi && isLast ? (() => {
+                  const totalMonto = group.rows.reduce((s, r) => s + parseFloat(r.monto), 0)
+                  const totalBs   = group.rows.reduce((s, r) => {
+                    const t = parseFloat(r.tasa ?? '0')
+                    const m = parseFloat(r.monto)
+                    return s + (r.metodoMoneda === 'BS' ? m : (t > 0 ? m * t : 0))
+                  }, 0)
+                  const isBs = item.metodoMoneda === 'BS'
+                  return (
+                    <tr key={`${group.key}-subtotal`} className="bg-blue-50/40 border-t border-blue-200">
+                      <td colSpan={3} className="px-4 py-1.5 text-xs font-semibold text-blue-700">
+                        Subtotal ({group.rows.length} facturas)
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono font-bold text-blue-700 tabular-nums">
+                        {isBs ? formatBs(totalMonto) : formatUsd(totalMonto)}
+                      </td>
+                      <td className="px-4 py-1.5 text-right font-mono font-bold text-blue-700 tabular-nums">
+                        {totalBs > 0 ? formatBs(totalBs) : '—'}
+                      </td>
+                      <td colSpan={3} />
+                    </tr>
+                  )
+                })() : null
+
+                return (
+                  <React.Fragment key={item.id}>
+                    <tr className={`border-b hover:bg-blue-50/30 ${multi ? 'bg-blue-50/10' : ''}`}>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-blue-100 text-blue-700 font-medium">CxC</span>
+                          <div className="min-w-0">
+                            {item.nroFactura && <span className="font-medium font-mono">#{item.nroFactura}</span>}
+                            {item.clienteNombre && <span className="text-muted-foreground ml-1.5 truncate">{item.clienteNombre}</span>}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-muted-foreground">{item.metodoNombre}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{tasa > 0 ? tasa.toFixed(2) : '—'}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums font-medium text-blue-700">{montoDisplay}</td>
+                      <td className="px-4 py-2.5 text-right font-mono tabular-nums text-muted-foreground">{montoBs > 0 ? formatBs(montoBs) : '—'}</td>
+                      <td className="px-3 py-2.5 text-muted-foreground truncate max-w-[80px]">{item.referencia ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{fecha}</td>
+                      <td className="px-4 py-2.5 text-right text-muted-foreground tabular-nums">{hora}</td>
+                    </tr>
+                    {subtotalRow}
+                  </React.Fragment>
+                )
+              })
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// ─── Modal detalle operaciones financieras ───────────────────
+
+function FinancieroDetalleModal({
+  filters,
+  onClose,
+}: {
+  filters: CuadreFilters
+  onClose: () => void
+}) {
+  const { items, isLoading } = useVentasFinancieras(filters)
+
+  const totalUsd = items.reduce((s, i) => s + i.cargoFinancieroUsd, 0)
+  const totalBs  = items.reduce((s, i) => s + i.cargoFinancieroBs,  0)
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-card rounded-2xl shadow-xl w-full max-w-lg p-6 space-y-4 max-h-[85vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-950">
+              <HandCoins size={16} weight="fill" className="text-amber-600 dark:text-amber-400" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold">Avances y Préstamos</h2>
+              <p className="text-xs text-muted-foreground">Cargos financieros cobrados al cliente</p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Lista */}
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {isLoading ? (
+            <div className="space-y-2">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+              ))}
+            </div>
+          ) : items.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-8">Sin operaciones financieras</p>
+          ) : (
+            <div className="space-y-1">
+              {items.map((item) => {
+                const hora = item.fecha.length >= 16 ? item.fecha.substring(11, 16) : ''
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between px-2 py-2 rounded-lg hover:bg-muted/50 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{item.nroFactura}</p>
+                      <p className="text-xs text-muted-foreground truncate">{item.clienteNombre}</p>
+                    </div>
+                    <div className="text-right shrink-0 ml-3">
+                      <p className="font-mono tabular-nums text-amber-700 dark:text-amber-400">
+                        {formatBs(item.cargoFinancieroBs)}
+                      </p>
+                      <p className="text-xs text-muted-foreground font-mono tabular-nums">
+                        {formatUsd(item.cargoFinancieroUsd)}
+                        {hora && <span className="ml-2 text-[10px]">{hora}</span>}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Totales */}
+        {items.length > 0 && (
+          <div className="border-t pt-3 shrink-0">
+            <div className="flex justify-between items-baseline">
+              <span className="text-sm font-semibold">Total financiero</span>
+              <div className="text-right">
+                <p className="font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                  {formatBs(totalBs)}
+                </p>
+                <p className="text-xs text-muted-foreground tabular-nums">{formatUsd(totalUsd)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Modal resumen de sesion cerrada ─────────────────────────
 
 function ResumenSesionCerradaModal({
@@ -819,10 +1516,12 @@ function ResumenSesionCerradaModal({
   )
 
   const { data: detalleData } = useQuery(
-    `SELECT scd.metodo_cobro_id, mc.nombre as metodo_nombre, mc.moneda,
+    `SELECT scd.metodo_cobro_id, mc.nombre as metodo_nombre,
+            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
             scd.total_sistema, scd.total_fisico, scd.diferencia, scd.num_transacciones
      FROM sesiones_caja_detalle scd
      JOIN metodos_cobro mc ON scd.metodo_cobro_id = mc.id
+     LEFT JOIN monedas mon ON mc.moneda_id = mon.id
      WHERE scd.sesion_caja_id = ?
      ORDER BY mc.nombre`,
     [sesionId]
@@ -978,7 +1677,9 @@ function ResumenSesionCerradaModal({
                             <td className={`px-3 py-2 text-right tabular-nums font-medium ${
                               dif === null ? '' : dif > 0.001 ? 'text-green-600' : dif < -0.001 ? 'text-red-600' : 'text-muted-foreground'
                             }`}>
-                              {dif !== null ? `${dif > 0 ? '+' : ''}${formatUsd(dif)}` : '—'}
+                              {dif !== null
+                                ? `${dif > 0 ? '+' : ''}${d.moneda === 'BS' ? formatBs(dif) : formatUsd(dif)}`
+                                : '—'}
                             </td>
                           </tr>
                         )

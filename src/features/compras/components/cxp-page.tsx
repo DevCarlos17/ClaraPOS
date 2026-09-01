@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Buildings,
   CaretRight,
@@ -21,7 +21,10 @@ import {
 import { PagoCxPModal } from './pago-cxp-modal'
 import { PagoGastoCxpModal } from './pago-gasto-cxp-modal'
 import { FacturaProveedorModal } from './factura-proveedor-modal'
+import Decimal from 'decimal.js'
 import { formatUsd } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 
 // ─── Sort ─────────────────────────────────────────────────────
 
@@ -77,7 +80,10 @@ function printReporteProveedor(
     )
     .join('')
 
-  const totalPend = facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0)
+  const totalPend = facturas.reduce(
+    (s, f) => s.plus(new Decimal(f.saldo_pend_usd || '0')),
+    new Decimal(0)
+  ).toNumber()
 
   const html = `<!DOCTYPE html>
 <html lang="es">
@@ -118,7 +124,7 @@ function printReporteProveedor(
       </tr>
     </tbody>
   </table>
-  <p class="footer">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p class="footer">Generado: ${formatDateTime(localNow())}</p>
 </body>
 </html>`
 
@@ -295,7 +301,7 @@ function DetallePanel({
                     Total facturas pendientes
                   </td>
                   <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
-                    {formatUsd(facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0))}
+                    {formatUsd(facturas.reduce((s, f) => s.plus(new Decimal(f.saldo_pend_usd || '0')), new Decimal(0)).toNumber())}
                   </td>
                   <td />
                 </tr>
@@ -379,7 +385,7 @@ function DetallePanel({
                         Total gastos pendientes
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-bold text-destructive text-sm">
-                        {formatUsd(gastosPendientes.reduce((s, g) => s + parseFloat(g.saldo_pendiente_usd), 0))}
+                        {formatUsd(gastosPendientes.reduce((s, g) => s.plus(new Decimal(g.saldo_pendiente_usd || '0')), new Decimal(0)).toNumber())}
                       </td>
                       <td />
                     </tr>
@@ -396,9 +402,20 @@ function DetallePanel({
 
 // ─── Componente principal ─────────────────────────────────────
 
-export function CxpPage() {
+interface CxpPageProps {
+  initialProveedorId?: string
+}
+
+export function CxpPage({ initialProveedorId }: CxpPageProps) {
   const { proveedores, isLoading } = useProveedoresConDeuda()
   const [proveedorSeleccionado, setProveedorSeleccionado] = useState<ProveedorConDeuda | null>(null)
+
+  // Pre-select proveedor from URL param once the list is loaded
+  useEffect(() => {
+    if (!initialProveedorId || isLoading || proveedores.length === 0) return
+    const found = proveedores.find((p) => p.id === initialProveedorId)
+    if (found) setProveedorSeleccionado(found)
+  }, [initialProveedorId, proveedores, isLoading])
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaCompraPendiente | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [gastoSeleccionado, setGastoSeleccionado] = useState<GastoPendiente | null>(null)
@@ -430,9 +447,9 @@ export function CxpPage() {
 
   // KPIs globales derivados de la lista de proveedores
   const deudaTotal = proveedores.reduce(
-    (sum, p) => sum + parseFloat(p.saldo_actual),
-    0
-  )
+    (sum, p) => sum.plus(new Decimal(p.saldo_actual || '0')),
+    new Decimal(0)
+  ).toNumber()
   const nroProveedores = proveedores.length
   const proveedorMayorDeuda = proveedores.length > 0
     ? [...proveedores].sort((a, b) => parseFloat(b.saldo_actual) - parseFloat(a.saldo_actual))[0]

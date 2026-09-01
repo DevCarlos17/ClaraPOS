@@ -29,13 +29,13 @@ import {
   Ruler,
   Warehouse,
   Stack,
+  ArrowsClockwise,
   Monitor,
   ArrowsDownUp,
   FileXls,
-  Percent,
-  FileMinus,
-  BookBookmark,
-  HandCoins,
+
+  Vault,
+
   TrendUp,
   Handshake,
   ListNumbers,
@@ -110,26 +110,18 @@ const menuItems: MenuItem[] = [
       { title: 'Marcas', url: '/inventario/marcas', icon: Tag, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Unidades', url: '/inventario/unidades', icon: Ruler, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
       { title: 'Depositos', url: '/inventario/depositos', icon: Warehouse, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
+      { title: 'Traspasos', url: '/inventario/traspasos', icon: ArrowsClockwise, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
       { title: 'Lotes', url: '/inventario/lotes', icon: Stack, requiredPermission: PERMISSIONS.INVENTORY_VIEW },
-    ],
-  },
-  {
-    title: 'Proveedores',
-    icon: Truck,
-    children: [
-      { title: 'Gestion de Proveedores', url: '/proveedores/gestion', icon: Truck, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
     ],
   },
   {
     title: 'Compras y Gastos',
     icon: ClipboardText,
     children: [
-      { title: 'Facturas', url: '/compras/facturas', icon: FileXls, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Compras', url: '/compras/facturas', icon: FileXls, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Gastos', url: '/compras/gastos-dashboard', icon: ChartBar, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
       { title: 'Cuentas por Pagar', url: '/compras/cxp', icon: CreditCard, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Retenciones', url: '/compras/retenciones', icon: Percent, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Notas Fiscales', url: '/compras/notas-fiscales', icon: FileMinus, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Gastos', url: '/compras/gastos', icon: HandCoins, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
-      { title: 'Dashboard Gastos', url: '/compras/gastos-dashboard', icon: ChartBar, requiredPermission: PERMISSIONS.PURCHASES_VIEW },
+      { title: 'Proveedor', url: '/proveedores/gestion', icon: Truck, requiredPermission: PERMISSIONS.INVENTORY_ADJUST },
     ],
   },
   {
@@ -166,8 +158,7 @@ const menuItems: MenuItem[] = [
     icon: Bank,
     children: [
       { title: 'Bancos', url: '/configuracion/bancos', icon: Bank, requiredPermission: PERMISSIONS.CONFIG_RATES },
-      { title: 'Metodos de Pago', url: '/configuracion/metodos-pago', icon: Wallet, requiredPermission: PERMISSIONS.CONFIG_RATES },
-      { title: 'Conciliacion Tesoreria', url: '/bancos/conciliacion', icon: BookBookmark, requiredPermission: PERMISSIONS.CONFIG_RATES },
+      { title: 'Tesoreria', url: '/tesoreria', icon: Vault, requiredPermission: PERMISSIONS.CONFIG_RATES },
       { title: 'Diferencial Cambiario', url: '/bancos/diferencial-cambiario', icon: TrendUp, requiredPermission: PERMISSIONS.ACCOUNTING_VIEW },
     ],
   },

@@ -4,6 +4,8 @@ import { useProductosTipo, type Producto } from '@/features/inventario/hooks/use
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { ServicioDetalleModal } from './servicio-detalle-modal'
 import { formatUsd } from '@/lib/currency'
+import { formatDateTime } from '@/lib/format'
+import { localNow } from '@/lib/dates'
 
 export function ServicioList() {
   const { productos: servicios, isLoading } = useProductosTipo('S')
@@ -78,7 +80,7 @@ export function ServicioList() {
 </head>
 <body>
   <h1>Reporte de Servicios y Recetas</h1>
-  <p>Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p>Generado: ${formatDateTime(localNow())}</p>
   <table>
     <thead>
       <tr>
@@ -178,7 +180,7 @@ export function ServicioList() {
 </head>
 <body>
   <h1>Reporte Detallado de Servicios y Recetas</h1>
-  <p class="fecha">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p class="fecha">Generado: ${formatDateTime(localNow())}</p>
   ${bloques}
 </body>
 </html>`)

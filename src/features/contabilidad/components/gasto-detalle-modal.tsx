@@ -1,3 +1,9 @@
+// TODO(dead-code): This component is not imported anywhere in the app.
+// The live "Detalle de Gasto" modal is `FacturaProveedorModal`
+// (src/features/compras/components/factura-proveedor-modal.tsx, tipo='GASTO').
+// Kept only as reference for the Base/IVA/Total breakdown pattern
+// (see src/features/contabilidad/lib/gasto-montos.ts deriveGastoTotales).
+// No functional change made here.
 import { useRef, useState, useMemo } from 'react'
 import { X, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { useQuery } from '@powersync/react'
@@ -10,6 +16,11 @@ import {
 } from '@/features/contabilidad/hooks/use-gastos'
 import { formatDate } from '@/lib/format'
 import { formatUsd, formatBs } from '@/lib/currency'
+import {
+  montoCostoGasto,
+  montoIvaGasto,
+  montoTotalGasto,
+} from '@/features/contabilidad/lib/gasto-montos'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -124,6 +135,14 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
   const tasa = parseFloat(gasto.tasa)
   const tasaProveedor = gasto.tasa_proveedor ? parseFloat(gasto.tasa_proveedor) : null
   const montoUsd = parseFloat(gasto.monto_usd)
+  const baseUsd = montoCostoGasto(gasto)
+  const ivaUsd = montoIvaGasto(gasto)
+  const totalUsd = montoTotalGasto(gasto)
+  const tieneIva = ivaUsd > 0.005
+  const esGravable = gasto.tipo_impuesto === 'Gravable' && tieneIva
+  const esExento = gasto.tipo_impuesto === 'Exento'
+  const esExonerado = gasto.tipo_impuesto === 'Exonerado'
+  const porcentajeIva = parseFloat(gasto.porcentaje_iva) || 0
   const montoBs = montoUsd * tasaValor
   const saldoPendiente = parseFloat(gasto.saldo_pendiente_usd)
   const esAnulado = gasto.status === 'ANULADO'
@@ -193,8 +212,8 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
           </div>
         </div>
 
-        {/* Info */}
-        <div className="rounded-lg border border-border bg-muted/30 p-4 mb-4 space-y-2">
+        {/* Datos de la factura */}
+        <div className="rounded-lg border border-border bg-muted/30 p-4 mb-4">
           <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
             <div className="flex gap-1">
               <span className="text-muted-foreground min-w-[90px]">Nro Factura:</span>
@@ -211,16 +230,8 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
               </div>
             )}
             <div className="flex gap-1 col-span-2">
-              <span className="text-muted-foreground min-w-[90px]">Cuenta:</span>
-              <span className="font-medium">{gasto.cuenta_nombre}</span>
-            </div>
-            <div className="flex gap-1 col-span-2">
               <span className="text-muted-foreground min-w-[90px]">Proveedor:</span>
               <span>{gasto.proveedor_nombre ?? '—'}</span>
-            </div>
-            <div className="flex gap-1 col-span-2">
-              <span className="text-muted-foreground min-w-[90px]">Descripcion:</span>
-              <span>{gasto.descripcion}</span>
             </div>
             <div className="flex gap-1">
               <span className="text-muted-foreground min-w-[90px]">Tasa Interna:</span>
@@ -251,8 +262,62 @@ export function GastoDetalleModal({ gasto, isOpen, onClose }: GastoDetalleModalP
           </div>
         </div>
 
-        {/* Totales */}
+        {/* Gastos de la factura (hoy 1; el modelo contempla varios a futuro) */}
+        <div className="mb-4">
+          <h3 className="text-sm font-semibold text-foreground mb-2">Gasto</h3>
+          <div className="rounded-lg border border-border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50">
+                <tr>
+                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Cuenta</th>
+                  <th className="text-left px-3 py-2 font-medium text-muted-foreground">Descripcion</th>
+                  <th className="text-right px-3 py-2 font-medium text-muted-foreground">Monto</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                <tr>
+                  <td className="px-3 py-2 font-medium align-top">{gasto.cuenta_nombre}</td>
+                  <td className="px-3 py-2 text-muted-foreground align-top">{gasto.descripcion}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium align-top">
+                    {formatUsd(baseUsd)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Resumen de la factura */}
         <div className="rounded-lg border border-border bg-muted/30 p-4 mb-4 space-y-1.5">
+          <h3 className="text-sm font-semibold text-foreground mb-1">Resumen de la Factura</h3>
+          {esGravable && (
+            <>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Base Imponible:</span>
+                <span className="font-medium text-foreground">{formatUsd(baseUsd)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">IVA ({porcentajeIva.toFixed(2)}%):</span>
+                <span className="font-medium text-foreground">{formatUsd(ivaUsd)}</span>
+              </div>
+              <div className="flex justify-between text-sm border-b border-border/50 pb-1.5 mb-0.5">
+                <span className="text-muted-foreground">Total Factura:</span>
+                <span className="font-semibold text-foreground">{formatUsd(totalUsd)}</span>
+              </div>
+            </>
+          )}
+          {esExento && (
+            <div className="flex justify-between text-sm border-b border-border/50 pb-1.5 mb-0.5">
+              <span className="text-muted-foreground">Monto Exento (sin IVA):</span>
+              <span className="font-semibold text-foreground">{formatUsd(totalUsd)}</span>
+            </div>
+          )}
+          {esExonerado && (
+            <div className="flex justify-between text-sm border-b border-border/50 pb-1.5 mb-0.5">
+              <span className="text-muted-foreground">Monto Exonerado (sin IVA):</span>
+              <span className="font-semibold text-foreground">{formatUsd(totalUsd)}</span>
+            </div>
+          )}
           {hayDualRate ? (
             <>
               <div className="flex justify-between text-sm">

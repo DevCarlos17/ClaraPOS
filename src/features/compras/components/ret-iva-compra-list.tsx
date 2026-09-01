@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Plus } from '@phosphor-icons/react'
 import { useRetencionesIvaCompras, type RetencionIva } from '@/features/compras/hooks/use-ret-iva-compras'
 import { RetIvaCompraForm } from './ret-iva-compra-form'
+import { formatDate } from '@/lib/format'
 
 type RetencionIvaConProveedor = RetencionIva & { proveedor_nombre: string }
 
@@ -99,7 +100,7 @@ export function RetIvaCompraList() {
                   className="border-b border-border hover:bg-muted/50 transition-colors cursor-pointer"
                 >
                   <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
-                    {new Date(ret.fecha_comprobante).toLocaleDateString('es-VE')}
+                    {formatDate(ret.fecha_comprobante)}
                   </td>
                   <td className="px-4 py-3 font-mono text-foreground">{ret.nro_comprobante}</td>
                   <td className="px-4 py-3 text-foreground">{ret.proveedor_nombre}</td>

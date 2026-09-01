@@ -192,6 +192,15 @@ const metodos_cobro = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+    // 0069: nuevos atributos operativos
+    deposito_directo: column.integer,  // boolean 0/1
+    comision_pct: column.text,         // NUMERIC(5,2) stored as string
+    usa_pos: column.integer,           // boolean 0/1
+    usa_cxc: column.integer,           // boolean 0/1
+    usa_cxp: column.integer,           // boolean 0/1
+    caja_fuerte_id: column.text,       // UUID nullable
+    // 0079: consolidar lotes POS en un traspaso (1) o uno por lote (0)
+    consolidar_lotes: column.integer,
   },
   { indexes: {} }
 )
@@ -206,12 +215,36 @@ const bancos_empresa = new Table(
     titular_documento: column.text,
     moneda_id: column.text,
     saldo_actual: column.text,
+    saldo_inicial: column.text,        // 0069: NUMERIC(18,4) stored as string
     cuenta_contable_id: column.text,
+    cuenta_gasto_comision_id: column.text,  // 0080: default de cuenta de gasto para deducciones (bancaria, 6.2.06.01)
+    cuenta_gasto_pasarela_id: column.text,  // 0081: cuenta base de comisión de pasarela de pago (6.1.25.01)
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
     updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
+// 0080: N conceptos de deducción por método de cobro (comisión bancaria,
+// retención ISLR de tarjetas de crédito, etc.). Reemplaza el campo único
+// metodos_cobro.comision_pct (deprecado). Config editable, no ledger —
+// soft-deactivate vía is_active, sin trigger anti-UPDATE/DELETE.
+const metodo_cobro_deducciones = new Table(
+  {
+    empresa_id: column.text,
+    metodo_cobro_id: column.text,
+    cuenta_gasto_id: column.text,
+    concepto: column.text,
+    tipo: column.text,
+    porcentaje: column.text,     // NUMERIC(5,2) stored as string
+    orden: column.integer,
+    is_active: column.integer,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
   },
   { indexes: {} }
 )
@@ -342,6 +375,7 @@ const productos = new Table(
     presentacion: column.text,
     codigo_barras: column.text,
     duracion_min: column.integer,
+    deposito_id: column.text,
   },
   { indexes: {} }
 )
@@ -380,6 +414,8 @@ const movimientos_inventario = new Table(
     usuario_id: column.text,
     fecha: column.text,
     created_at: column.text,
+    // 0068: tipo de salida tipificada (MERMA, EXTRAVIO, CONSUMO_INTERNO)
+    tipo_salida: column.text,
   },
   { indexes: {} }
 )
@@ -402,6 +438,7 @@ const ajuste_motivos = new Table(
     es_sistema: column.integer,
     operacion_base: column.text,
     afecta_costo: column.integer,
+    cuentas_config_clave: column.text,  // clave en cuentas_config para registro contable automático
     is_active: column.integer,
     created_at: column.text,
     updated_at: column.text,
@@ -461,6 +498,68 @@ const lotes = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+// Slice 3a (inventario-multideposito): traspasos entre depositos.
+// Inmutable por RLS (SELECT+INSERT-only, sin trigger dedicado) — ver
+// migrations/0084_traspasos_inventario.sql.
+const traspasos_inventario = new Table(
+  {
+    empresa_id: column.text,
+    deposito_origen_id: column.text,
+    deposito_destino_id: column.text,
+    usuario_id: column.text,
+    fecha: column.text,
+    observacion: column.text,
+    autorizado_por: column.text,
+    verificado_por: column.text,
+    correlativo_usuario: column.integer,
+    created_at: column.text,
+    created_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const traspasos_inventario_det = new Table(
+  {
+    empresa_id: column.text,
+    traspaso_id: column.text,
+    producto_id: column.text,
+    cantidad: column.text,
+    mov_salida_id: column.text,
+    mov_entrada_id: column.text,
+    created_at: column.text,
+  },
+  { indexes: {} }
+)
+
+// Plantillas de Traslado: sets reutilizables de productos (sin cantidad)
+// para pre-llenar el formulario de traspasos — ver
+// migrations/0085_traspaso_plantillas.sql. Editable (RLS SELECT+INSERT+
+// UPDATE, patron `marcas`); det es membresia pura (SELECT+INSERT+DELETE,
+// patron `recetas`).
+const traspaso_plantillas = new Table(
+  {
+    empresa_id: column.text,
+    nombre: column.text,
+    descripcion: column.text,
+    is_active: column.integer,
+    created_at: column.text,
+    updated_at: column.text,
+    created_by: column.text,
+    updated_by: column.text,
+  },
+  { indexes: {} }
+)
+
+const traspaso_plantillas_det = new Table(
+  {
+    empresa_id: column.text,
+    plantilla_id: column.text,
+    producto_id: column.text,
+    created_at: column.text,
   },
   { indexes: {} }
 )
@@ -646,6 +745,7 @@ const pagos = new Table(
     reversed_by: column.text,
     reversed_reason: column.text,
     procesado_por_nombre: column.text,
+    is_pos_saf_allocation: column.integer,
   },
   { indexes: {} }
 )
@@ -801,6 +901,7 @@ const movimientos_bancarios = new Table(
     empresa_id: column.text,
     banco_empresa_id: column.text,
     tipo: column.text,
+    // DEPOSITO_CAJA | TRANSFERENCIA_CLIENTE | PAGO_PROVEEDOR | GASTO | MANUAL | TRASPASO | REVERSO | CIERRE_CONSOLIDACION
     origen: column.text,
     monto: column.text,
     saldo_anterior: column.text,
@@ -888,6 +989,25 @@ const traspasos_tesoreria = new Table(
     fecha: column.text,
     created_at: column.text,
     created_by: column.text,
+    // pos-tesoreria-integration: link traspaso back to its originating session
+    sesion_caja_id: column.text,
+  },
+  { indexes: {} }
+)
+
+// 0079: lotes de punto de venta cargados por el cajero antes de cerrar la
+// sesión (dato de trabajo pre-cierre, no inmutable — ver migrations/0079).
+const lotes_pos_cuadre = new Table(
+  {
+    empresa_id: column.text,
+    sesion_caja_id: column.text,
+    metodo_cobro_id: column.text,
+    moneda_id: column.text,
+    nro_lote: column.text,
+    monto: column.text,        // NUMERIC(18,4) stored as string
+    created_at: column.text,
+    created_by: column.text,
+    updated_at: column.text,
   },
   { indexes: {} }
 )
@@ -1229,6 +1349,9 @@ const gastos = new Table(
     created_at: column.text,
     updated_at: column.text,
     created_by: column.text,
+    // 0068: trazabilidad inversa hacia el documento que generó el gasto
+    doc_origen_id: column.text,
+    doc_origen_tipo: column.text,
   },
   { indexes: {} }
 )
@@ -1443,6 +1566,20 @@ const horarios_plantillas = new Table(
 )
 
 // =============================================
+// SYSTEM SETTINGS (global, no empresa_id)
+// =============================================
+
+const system_settings = new Table(
+  {
+    key: column.text,
+    value: column.text,
+    description: column.text,
+    updated_at: column.text,
+  },
+  { indexes: {} }
+)
+
+// =============================================
 // SCHEMA EXPORT
 // =============================================
 
@@ -1453,6 +1590,7 @@ export const AppSchema = new Schema({
   islr_conceptos_ve,
   tipos_movimiento,
   permisos,
+  system_settings,
   // Core
   empresas,
   empresas_fiscal_ve,
@@ -1464,6 +1602,7 @@ export const AppSchema = new Schema({
   tasas_cambio,
   metodos_cobro,
   bancos_empresa,
+  metodo_cobro_deducciones,
   cajas,
   impuestos_ve,
   niveles_precio,
@@ -1481,6 +1620,10 @@ export const AppSchema = new Schema({
   ajustes,
   ajustes_det,
   lotes,
+  traspasos_inventario,
+  traspasos_inventario_det,
+  traspaso_plantillas,
+  traspaso_plantillas_det,
   // Clientes / CxC
   clientes,
   movimientos_cuenta,
@@ -1501,6 +1644,7 @@ export const AppSchema = new Schema({
   caja_fuerte,
   mov_caja_fuerte,
   traspasos_tesoreria,
+  lotes_pos_cuadre,
   // Retenciones ventas
   retenciones_iva_ventas,
   retenciones_islr_ventas,

@@ -44,9 +44,16 @@ function campoTexto(maxLen: number, nombre: string) {
 export const lineaCompraSchema = z.object({
   producto_id: campoUuid('El producto'),
   cantidad: campoFinanciero(999_999_999, 'La cantidad'),        // NUMERIC(12,3) → max 999,999,999.999
-  costo_unitario_usd: campoFinanciero(9_999_999_999, 'El costo unitario'),  // NUMERIC(12,2) → max 9,999,999,999.99
+  costo_unitario_usd: campoFinanciero(9_999_999_999, 'El costo unitario'),  // NUMERIC(20,8) — migración 0058 amplió a 8 decimales
   tipo_impuesto: z.enum(['Gravable', 'Exento', 'Exonerado']).default('Exento'),
   impuesto_pct: z.number().min(0).max(100).default(0),
+})
+
+// ── Schema: linea de cargo (Material de Empaque / Flete) ──────────────────────
+export const lineaCargoSchema = z.object({
+  concepto: z.enum(['EMPAQUE', 'FLETE']),
+  monto: campoFinanciero(9_999_999_999, 'El monto'),  // NUMERIC(20,8), mismo tope que costo_unitario_usd
+  porcentaje_iva: z.union([z.literal(0), z.literal(16)]),
 })
 
 // ── Schema: pago de compra ────────────────────────────────────────────────────
@@ -134,3 +141,4 @@ export const compraHeaderSchema = z.object({
 export type LineaCompraValues = z.infer<typeof lineaCompraSchema>
 export type CompraHeaderValues = z.infer<typeof compraHeaderSchema>
 export type PagoCompraValues = z.infer<typeof pagoCompraSchema>
+export type LineaCargoValues = z.infer<typeof lineaCargoSchema>

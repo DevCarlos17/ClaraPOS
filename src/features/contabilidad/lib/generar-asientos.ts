@@ -11,6 +11,42 @@ function montoContable(usd: number, tasa: number, moneda: MonedaContable): numbe
 }
 
 /**
+ * Distribuye un monto total YA REDONDEADO en moneda contable (`montoTotalContable`)
+ * entre N partes expresadas en USD (`partesUsd`), garantizando que la SUMA de
+ * las partes resultantes coincide EXACTAMENTE con el total — sin importar el
+ * drift de punto flotante que produce redondear cada parte por separado.
+ *
+ * Las primeras N-1 partes se redondean normalmente via `montoContable`; la
+ * ULTIMA absorbe el residuo (`total - suma de las anteriores`) en vez de
+ * redondearse de forma independiente. Mismo criterio que
+ * `construirLineasDebitoCompra` (base derivada de total - iva).
+ *
+ * El caller es responsable de calcular `montoTotalContable` UNA sola vez a
+ * partir del mismo total que el lado opuesto del asiento usa, para que
+ * ambos lados cuadren exactamente en la validacion de partida doble.
+ */
+export function distribuirMontoConResiduo(
+  montoTotalContable: number,
+  partesUsd: number[],
+  tasa: number,
+  monedaContable: MonedaContable
+): number[] {
+  if (partesUsd.length === 0) return []
+  if (partesUsd.length === 1) return [montoTotalContable]
+
+  const resultado: number[] = []
+  let acumulado = 0
+  for (let i = 0; i < partesUsd.length - 1; i++) {
+    const parte = montoContable(partesUsd[i], tasa, monedaContable)
+    resultado.push(parte)
+    acumulado += parte
+  }
+  resultado.push(Number((montoTotalContable - acumulado).toFixed(2)))
+
+  return resultado
+}
+
+/**
  * La contabilidad siempre se lleva en Bs.
  * Funcion mantenida por compatibilidad con los generadores especializados.
  */
@@ -165,7 +201,11 @@ export async function generarAsientosVenta(
 
   const lineas: LineaAsiento[] = []
 
-  // DEBE: pagos al contado (positivo)
+  // DEBE: pagos al contado + credito (CxC). El total se redondea UNA sola
+  // vez y se distribuye entre las partes (residuo en la ultima) para que
+  // la suma calce exacto — redondear cada pago por separado puede diferir
+  // del total redondeado hasta 1 centavo y romper la partida doble.
+  const partesDebe: Array<{ usd: number; cuentaContable: string; bancoEmpresaId: string | null; detalle: string }> = []
   for (const pago of pagosContado) {
     if (pago.monto_usd <= 0) continue
     const cuentaBanco = pago.banco_empresa_id
@@ -173,38 +213,63 @@ export async function generarAsientosVenta(
       : cuentas['CAJA_EFECTIVO']
 
     if (!cuentaBanco) continue
-    lineas.push({
-      cuenta_contable_id: cuentaBanco,
-      banco_empresa_id: pago.banco_empresa_id,
-      monto: montoContable(pago.monto_usd, tasa, monedaContable),
+    partesDebe.push({
+      usd: pago.monto_usd,
+      cuentaContable: cuentaBanco,
+      bancoEmpresaId: pago.banco_empresa_id,
       detalle: `Cobro venta ${nroFactura}`,
     })
   }
 
-  // DEBE: credito (CxC)
   if (montoCredito > 0 && cuentas['CXC_CLIENTES']) {
-    lineas.push({
-      cuenta_contable_id: cuentas['CXC_CLIENTES'],
-      monto: montoContable(montoCredito, tasa, monedaContable),
+    partesDebe.push({
+      usd: montoCredito,
+      cuentaContable: cuentas['CXC_CLIENTES'],
+      bancoEmpresaId: null,
       detalle: `Credito venta ${nroFactura}`,
     })
   }
 
-  // HABER: ingreso por productos (negativo)
-  if (montoProductos > 0 && cuentas['INGRESO_VENTA_PRODUCTO']) {
+  const totalDebeUsd = partesDebe.reduce((acc, p) => acc + p.usd, 0)
+  const montoTotalDebe = montoContable(totalDebeUsd, tasa, monedaContable)
+  const montosDebe = distribuirMontoConResiduo(montoTotalDebe, partesDebe.map((p) => p.usd), tasa, monedaContable)
+
+  for (let i = 0; i < partesDebe.length; i++) {
     lineas.push({
-      cuenta_contable_id: cuentas['INGRESO_VENTA_PRODUCTO'],
-      monto: -montoContable(montoProductos, tasa, monedaContable),
-      detalle: `Ingreso productos ${nroFactura}`,
+      cuenta_contable_id: partesDebe[i].cuentaContable,
+      banco_empresa_id: partesDebe[i].bancoEmpresaId,
+      monto: montosDebe[i],
+      detalle: partesDebe[i].detalle,
     })
   }
 
-  // HABER: ingreso por servicios (negativo)
+  // HABER: ingreso por productos + servicios. Mismo criterio: total
+  // redondeado una vez, residuo en la ultima parte.
+  const partesHaber: Array<{ usd: number; cuentaContable: string; detalle: string }> = []
+  if (montoProductos > 0 && cuentas['INGRESO_VENTA_PRODUCTO']) {
+    partesHaber.push({
+      usd: montoProductos,
+      cuentaContable: cuentas['INGRESO_VENTA_PRODUCTO'],
+      detalle: `Ingreso productos ${nroFactura}`,
+    })
+  }
   if (montoServicios > 0 && cuentas['INGRESO_VENTA_SERVICIO']) {
-    lineas.push({
-      cuenta_contable_id: cuentas['INGRESO_VENTA_SERVICIO'],
-      monto: -montoContable(montoServicios, tasa, monedaContable),
+    partesHaber.push({
+      usd: montoServicios,
+      cuentaContable: cuentas['INGRESO_VENTA_SERVICIO'],
       detalle: `Ingreso servicios ${nroFactura}`,
+    })
+  }
+
+  const totalHaberUsd = partesHaber.reduce((acc, p) => acc + p.usd, 0)
+  const montoTotalHaber = montoContable(totalHaberUsd, tasa, monedaContable)
+  const montosHaber = distribuirMontoConResiduo(montoTotalHaber, partesHaber.map((p) => p.usd), tasa, monedaContable)
+
+  for (let i = 0; i < partesHaber.length; i++) {
+    lineas.push({
+      cuenta_contable_id: partesHaber[i].cuentaContable,
+      monto: -montosHaber[i],
+      detalle: partesHaber[i].detalle,
     })
   }
 
@@ -265,12 +330,22 @@ export async function generarAsientosGasto(
     },
   ]
 
-  let totalInternoUsd = 0
-  for (const pago of pagos) {
-    const internoUsd = pago.monto_usd_interno ?? pago.monto_usd
-    if (internoUsd <= 0) continue
-    totalInternoUsd += internoUsd
+  // El total pagado (en terminos internos) se redondea UNA sola vez y se
+  // distribuye entre los pagos (residuo en el ultimo) para que la suma
+  // calce exacto — redondear cada pago por separado puede diferir del
+  // total redondeado hasta 1 centavo y romper la partida doble.
+  const pagosValidos = pagos
+    .map((pago) => ({ ...pago, internoUsd: pago.monto_usd_interno ?? pago.monto_usd }))
+    .filter((pago) => pago.internoUsd > 0)
 
+  let totalInternoUsd = 0
+  for (const pago of pagosValidos) totalInternoUsd += pago.internoUsd
+
+  const montoTotalPagos = montoContable(totalInternoUsd, tasa, monedaContable)
+  const montosPagos = distribuirMontoConResiduo(montoTotalPagos, pagosValidos.map((p) => p.internoUsd), tasa, monedaContable)
+
+  for (let i = 0; i < pagosValidos.length; i++) {
+    const pago = pagosValidos[i]
     const cuentaBanco = pago.banco_empresa_id
       ? (await getCuentaBanco(tx, pago.banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
       : cuentas['CAJA_EFECTIVO']
@@ -278,7 +353,7 @@ export async function generarAsientosGasto(
     lineas.push({
       cuenta_contable_id: cuentaBanco ?? cuentaGastoId,
       banco_empresa_id: pago.banco_empresa_id,
-      monto: -montoContable(internoUsd, tasa, monedaContable),
+      monto: -montosPagos[i],
       detalle: `Pago gasto ${nroGasto}`,
     })
   }
@@ -450,6 +525,76 @@ export async function generarAsientosPagoCxC(
 }
 
 /**
+ * Construye las lineas de DEBE de una compra de inventario, separando el
+ * monto BASE (exento + gravable, va a INVENTARIO) del IVA (va a IVA_CREDITO,
+ * cuenta de credito fiscal — el IVA de compra no es costo ni gasto).
+ *
+ * `baseInventarioUsd` y `ivaUsd` ya vienen plegados por el caller (incluyen
+ * tanto lineas de producto como lineas de cargo de empaque/flete, si las
+ * hay) — esta funcion solo decide a que cuenta va cada porcion.
+ *
+ * Si no existe la cuenta IVA_CREDITO configurada (`cuentas_config`), el IVA
+ * se pliega junto con la base en INVENTARIO como fallback — evita perder el
+ * monto de la partida doble en empresas que aun no aplicaron la migracion
+ * que siembra esa cuenta, en vez de fallar toda la compra.
+ */
+export function construirLineasDebitoCompra(params: {
+  baseInventarioUsd: number
+  ivaUsd: number
+  tasa: number
+  monedaContable: MonedaContable
+  cuentas: Record<string, string>
+  nroFactura: string
+}): LineaAsiento[] {
+  const { baseInventarioUsd, ivaUsd, tasa, monedaContable, cuentas, nroFactura } = params
+
+  const cuentaInventario = cuentas['INVENTARIO']
+  if (!cuentaInventario) return []
+
+  const cuentaIvaCredito = cuentas['IVA_CREDITO']
+  // El TOTAL se redondea UNA sola vez (mismo criterio que el lado HABER del
+  // asiento, que siempre redondea totalUsd de una vez). Redondear base e iva
+  // por separado y sumarlos puede diferir del total redondeado hasta 1
+  // centavo (uno redondea arriba, el otro abajo) y rompe la partida doble
+  // contra el HABER. Por eso la base se DERIVA como total - iva (remanente),
+  // nunca se redondea de forma independiente.
+  const montoTotal = montoContable(baseInventarioUsd + ivaUsd, tasa, monedaContable)
+  const montoIva = montoContable(ivaUsd, tasa, monedaContable)
+
+  if (montoIva > 0 && !cuentaIvaCredito) {
+    // Fallback: sin cuenta IVA_CREDITO configurada, todo pliega en INVENTARIO
+    // (comportamiento previo al fix, preserva el total sin perder monto).
+    return [
+      {
+        cuenta_contable_id: cuentaInventario,
+        monto: montoTotal,
+        detalle: `Compra mercancia ${nroFactura}`,
+      },
+    ]
+  }
+
+  const lineas: LineaAsiento[] = []
+  const montoBase = Number((montoTotal - montoIva).toFixed(2))
+  if (montoBase > 0) {
+    lineas.push({
+      cuenta_contable_id: cuentaInventario,
+      monto: montoBase,
+      detalle: `Compra mercancia ${nroFactura}`,
+    })
+  }
+
+  if (montoIva > 0 && cuentaIvaCredito) {
+    lineas.push({
+      cuenta_contable_id: cuentaIvaCredito,
+      monto: montoIva,
+      detalle: `IVA credito fiscal compra ${nroFactura}`,
+    })
+  }
+
+  return lineas
+}
+
+/**
  * Asientos para una compra de inventario.
  * La contabilidad siempre se genera en Bs (monedaContable='BS' por defecto).
  * Si se proveen pagos parciales/totales, se genera un HABER por cada pago;
@@ -462,6 +607,10 @@ export async function generarAsientosCompra(
     compraId: string
     nroFactura: string
     totalUsd: number
+    /** Base imponible + exenta de la factura (productos + cargos), en USD. Va a INVENTARIO. */
+    baseInventarioUsd: number
+    /** IVA total de la factura (productos + cargos), en USD. Va a IVA_CREDITO. */
+    ivaUsd: number
     esContado: boolean
     banco_empresa_id: string | null
     /** Pagos inmediatos registrados al momento de la compra */
@@ -473,32 +622,36 @@ export async function generarAsientosCompra(
   }
 ): Promise<string[]> {
   const {
-    empresaId, compraId, nroFactura, totalUsd, esContado, banco_empresa_id,
+    empresaId, compraId, nroFactura, totalUsd, baseInventarioUsd, ivaUsd, esContado, banco_empresa_id,
     pagos, cuentas, usuarioId, monedaContable = 'BS', tasa = 1,
   } = params
 
   if (totalUsd <= 0) return []
 
-  const cuentaInventario = cuentas['INVENTARIO']
-  if (!cuentaInventario) return []
+  if (!cuentas['INVENTARIO']) return []
 
   const montoTotal = montoContable(totalUsd, tasa, monedaContable)
 
-  const lineas: LineaAsiento[] = [
-    {
-      cuenta_contable_id: cuentaInventario,
-      monto: montoTotal,
-      detalle: `Compra mercancia ${nroFactura}`,
-    },
-  ]
+  const lineas: LineaAsiento[] = construirLineasDebitoCompra({
+    baseInventarioUsd, ivaUsd, tasa, monedaContable, cuentas, nroFactura,
+  })
 
   if (pagos && pagos.length > 0) {
-    // Multi-pago: HABER por cada pago, HABER CxP por el restante
-    let totalPagadoUsd = 0
-    for (const pago of pagos) {
-      if (pago.monto_usd <= 0) continue
-      totalPagadoUsd += pago.monto_usd
-      const montoPago = montoContable(pago.monto_usd, tasa, monedaContable)
+    // Multi-pago: HABER por cada pago, HABER CxP por el restante. El total
+    // (montoTotal, calculado UNA vez arriba a partir de totalUsd — mismo
+    // valor que el DEBE) se distribuye entre pagos + restante con el
+    // residuo en la ultima parte, para que la suma calce exacto contra el
+    // DEBE sin importar el drift de redondear cada pago por separado.
+    const pagosValidos = pagos.filter((pago) => pago.monto_usd > 0)
+    const totalPagadoUsd = pagosValidos.reduce((acc, pago) => acc + pago.monto_usd, 0)
+    const restanteUsd = Math.max(0, Number((totalUsd - totalPagadoUsd).toFixed(2)))
+    const tieneRestante = restanteUsd > 0.01 && Boolean(cuentas['CXP_PROVEEDORES'])
+
+    const partesUsd = [...pagosValidos.map((pago) => pago.monto_usd), ...(tieneRestante ? [restanteUsd] : [])]
+    const montos = distribuirMontoConResiduo(montoTotal, partesUsd, tasa, monedaContable)
+
+    for (let i = 0; i < pagosValidos.length; i++) {
+      const pago = pagosValidos[i]
       const cuentaBanco = pago.banco_empresa_id
         ? (await getCuentaBanco(tx, pago.banco_empresa_id)) ?? cuentas['BANCO_DEFAULT']
         : cuentas['CAJA_EFECTIVO'] ?? cuentas['BANCO_DEFAULT']
@@ -506,21 +659,17 @@ export async function generarAsientosCompra(
         lineas.push({
           cuenta_contable_id: cuentaBanco,
           banco_empresa_id: pago.banco_empresa_id,
-          monto: -montoPago,
+          monto: -montos[i],
           detalle: `Pago compra ${nroFactura}`,
         })
       }
     }
-    const restanteUsd = Math.max(0, Number((totalUsd - totalPagadoUsd).toFixed(2)))
-    if (restanteUsd > 0.01) {
-      const cuentaCxP = cuentas['CXP_PROVEEDORES']
-      if (cuentaCxP) {
-        lineas.push({
-          cuenta_contable_id: cuentaCxP,
-          monto: -montoContable(restanteUsd, tasa, monedaContable),
-          detalle: `Credito compra ${nroFactura}`,
-        })
-      }
+    if (tieneRestante) {
+      lineas.push({
+        cuenta_contable_id: cuentas['CXP_PROVEEDORES']!,
+        monto: -montos[montos.length - 1],
+        detalle: `Credito compra ${nroFactura}`,
+      })
     }
   } else if (esContado) {
     const cuentaBanco = banco_empresa_id

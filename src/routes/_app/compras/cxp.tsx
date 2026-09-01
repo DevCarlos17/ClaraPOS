@@ -11,11 +11,15 @@ import { UploadSimple } from '@phosphor-icons/react'
 
 export const Route = createFileRoute('/_app/compras/cxp')({
   component: CxpRoutePage,
+  validateSearch: (search: Record<string, unknown>) => ({
+    proveedorId: typeof search.proveedorId === 'string' ? search.proveedorId : undefined,
+  }),
 })
 
 function CxpRoutePage() {
   const { isOwner } = usePermissions()
   const [modalImportarAbierto, setModalImportarAbierto] = useState(false)
+  const { proveedorId } = Route.useSearch()
 
   return (
     <RequirePermission permission={PERMISSIONS.PURCHASES_VIEW} fallback={<AccessDeniedPage />}>
@@ -32,7 +36,7 @@ function CxpRoutePage() {
           )}
         </PageHeader>
 
-        <CxpPage />
+        <CxpPage initialProveedorId={proveedorId} />
 
         {isOwner && (
           <ImportarCxpModal

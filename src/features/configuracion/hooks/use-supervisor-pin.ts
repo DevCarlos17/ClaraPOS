@@ -13,7 +13,9 @@ export async function setSupervisorPin(
   empresaId: string,
   targetUserId?: string
 ): Promise<void> {
-  if (!connector.currentSession) throw new Error('No hay sesion activa')
+  // Obtener la sesión actual desde el cliente Supabase (refresca el token si expiró)
+  const { data: { session } } = await connector.client.auth.getSession()
+  if (!session) throw new Error('No hay sesion activa')
 
   const pinHash = await hashPin(pin, empresaId)
 
@@ -27,7 +29,7 @@ export async function setSupervisorPin(
       headers: {
         'Content-Type': 'application/json',
         apikey: connector.config.supabaseAnonKey,
-        Authorization: `Bearer ${connector.currentSession.access_token}`,
+        Authorization: `Bearer ${session.access_token}`,
       },
       body: JSON.stringify(body),
     }

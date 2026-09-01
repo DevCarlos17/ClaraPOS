@@ -315,11 +315,6 @@ export async function guardarHorariosProfesional(
 ) {
   const now = localNow()
 
-  console.group('💾 [guardarHorarios] Iniciando guardado')
-  console.log('  profesionalId:', profesionalId)
-  console.log('  empresaId:', empresaId)
-  console.log('  dias a guardar:', horarios.map(h => `dia${h.diaSemana}:${h.isActive?'✓':'✗'} ${h.horaInicio}-${h.horaFin}`))
-
   // Leer registros existentes FUERA de la write transaction.
   // Ordenar por created_at ASC: el mas antiguo es el de Supabase (UUID canonico);
   // los mas nuevos son UUIDs locales huerfanos generados en ciclos previos.
@@ -327,7 +322,6 @@ export async function guardarHorariosProfesional(
     'SELECT id, dia_semana FROM horarios_staff WHERE empresa_id = ? AND usuario_id = ? ORDER BY created_at ASC',
     [empresaId, profesionalId]
   )
-  console.log('  filas existentes en SQLite local:', existingRows.length, existingRows)
 
   // Deduplicar: por cada dia_semana conservar solo el primero (mas antiguo = Supabase),
   // marcar los duplicados para borrar en la misma transaccion.
@@ -348,7 +342,6 @@ export async function guardarHorariosProfesional(
   await db.writeTransaction(async (tx) => {
     // Eliminar filas duplicadas (UUIDs locales que no existen en Supabase)
     for (const id of orphanIds) {
-      console.log(`  DELETE huerfano id=${id}`)
       await tx.execute('DELETE FROM horarios_staff WHERE id = ?', [id])
     }
 
@@ -356,7 +349,6 @@ export async function guardarHorariosProfesional(
       const existingId = existingMap.get(h.diaSemana)
 
       if (existingId) {
-        console.log(`  UPDATE dia_semana=${h.diaSemana} id=${existingId}`)
         await tx.execute(
           `UPDATE horarios_staff
            SET hora_inicio = ?, hora_fin = ?, is_active = ?, tiempo_preparacion_min = ?, updated_at = ?
@@ -365,7 +357,6 @@ export async function guardarHorariosProfesional(
         )
       } else {
         const newId = uuidv4()
-        console.log(`  INSERT dia_semana=${h.diaSemana} nuevo id=${newId}`)
         await tx.execute(
           `INSERT INTO horarios_staff
              (id, empresa_id, usuario_id, dia_semana, hora_inicio, hora_fin, is_active, tiempo_preparacion_min, cruza_medianoche, created_at, updated_at)
@@ -375,8 +366,6 @@ export async function guardarHorariosProfesional(
       }
     }
   })
-
-  console.log('  ✅ writeTransaction completada')
 
   // VERIFICACION POST-ESCRITURA: confirma que el dato quedo en SQLite local
   const verificacion = await db.getAll<{
@@ -392,19 +381,7 @@ export async function guardarHorariosProfesional(
   )
   if (verificacion.length === 0) {
     console.error('  ❌ [VERIFICACION] CRITICO: SQLite local NO tiene filas tras writeTransaction!')
-  } else {
-    console.log('  📖 [VERIFICACION] SQLite local post-escritura:')
-    console.table(verificacion.map(r => ({
-      dia: r.dia_semana,
-      activo: r.is_active === 1 ? '✓' : '✗',
-      entrada: r.hora_inicio,
-      salida: r.hora_fin,
-      prep_min: r.tiempo_preparacion_min,
-      uuid_corto: r.id.slice(0, 8) + '...',
-    })))
   }
-
-  console.groupEnd()
 }
 
 export async function actualizarHorario(

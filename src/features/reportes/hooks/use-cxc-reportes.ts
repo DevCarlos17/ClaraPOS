@@ -45,13 +45,19 @@ export function useCxcKpis() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
+  // Deuda re-sourced desde SUM(ventas.saldo_pend_usd), nunca desde el
+  // clientes.saldo_actual neteado (ver spec cxc-deuda-lectura).
   const { data, isLoading } = useQuery(
     `SELECT
-       COALESCE(SUM(CAST(saldo_actual AS REAL)), 0) as deuda_total,
-       SUM(CASE WHEN CAST(saldo_actual AS REAL) > 0.01 THEN 1 ELSE 0 END) as con_deuda,
-       SUM(CASE WHEN CAST(limite_credito_usd AS REAL) > 0 AND CAST(saldo_actual AS REAL) > CAST(limite_credito_usd AS REAL) THEN 1 ELSE 0 END) as sobre_limite
-     FROM clientes
-     WHERE empresa_id = ? AND is_active = 1`,
+       COALESCE(SUM(deuda_usd), 0) as deuda_total,
+       SUM(CASE WHEN deuda_usd > 0.01 THEN 1 ELSE 0 END) as con_deuda,
+       SUM(CASE WHEN CAST(limite_credito_usd AS REAL) > 0 AND deuda_usd > CAST(limite_credito_usd AS REAL) THEN 1 ELSE 0 END) as sobre_limite
+     FROM (
+       SELECT c.limite_credito_usd,
+         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
+       FROM clientes c
+       WHERE c.empresa_id = ? AND c.is_active = 1
+     ) t`,
     [empresaId]
   )
 
@@ -131,11 +137,19 @@ export function useTopDeudores(limit = 10) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
+  // Deuda re-sourced desde SUM(ventas.saldo_pend_usd), nunca desde el
+  // clientes.saldo_actual neteado (ver spec cxc-deuda-lectura). Se alias como
+  // saldo_actual para no tocar el mapeo de abajo (TopDeudor.saldoActual).
   const { data, isLoading } = useQuery(
-    `SELECT nombre, identificacion, saldo_actual, limite_credito_usd
-     FROM clientes
-     WHERE empresa_id = ? AND CAST(saldo_actual AS REAL) > 0.01 AND is_active = 1
-     ORDER BY CAST(saldo_actual AS REAL) DESC
+    `SELECT nombre, identificacion, limite_credito_usd, deuda_usd as saldo_actual
+     FROM (
+       SELECT c.nombre, c.identificacion, c.limite_credito_usd,
+         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
+       FROM clientes c
+       WHERE c.empresa_id = ? AND c.is_active = 1
+     ) t
+     WHERE deuda_usd > 0.01
+     ORDER BY deuda_usd DESC
      LIMIT ${limit}`,
     [empresaId]
   )
@@ -156,13 +170,19 @@ export function useUtilizacionCredito(limit = 10) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
+  // Deuda re-sourced desde SUM(ventas.saldo_pend_usd), nunca desde el
+  // clientes.saldo_actual neteado (ver spec cxc-deuda-lectura). Se alias como
+  // saldo_actual para no tocar el mapeo de abajo (UtilizacionCreditoItem.saldoActual).
   const { data, isLoading } = useQuery(
-    `SELECT nombre, saldo_actual, limite_credito_usd
-     FROM clientes
-     WHERE empresa_id = ? AND is_active = 1
-       AND CAST(limite_credito_usd AS REAL) > 0
-       AND CAST(saldo_actual AS REAL) > 0
-     ORDER BY (CAST(saldo_actual AS REAL) / CAST(limite_credito_usd AS REAL)) DESC
+    `SELECT nombre, limite_credito_usd, deuda_usd as saldo_actual
+     FROM (
+       SELECT c.nombre, c.limite_credito_usd,
+         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
+       FROM clientes c
+       WHERE c.empresa_id = ? AND c.is_active = 1
+     ) t
+     WHERE CAST(limite_credito_usd AS REAL) > 0 AND deuda_usd > 0
+     ORDER BY (deuda_usd / CAST(limite_credito_usd AS REAL)) DESC
      LIMIT ${limit}`,
     [empresaId]
   )

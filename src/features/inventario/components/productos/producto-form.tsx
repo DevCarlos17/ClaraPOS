@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { useQuery } from '@powersync/react'
 import { toast } from 'sonner'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
 import { productoSchema } from '@/features/inventario/schemas/producto-schema'
 import {
   crearProducto,
@@ -18,7 +19,12 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
+import {
+  calcularPrecioPreservandoMargen,
+  calcularViolacionCostoPvp,
+} from '@/features/inventario/lib/producto-precio-gating'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 import { useDebounce } from '@/hooks/use-debounce'
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
@@ -242,6 +248,45 @@ function SearchSelect({
 
 // ============================================================
 
+/** Proyeccion de PVP (no aplicada aun) calculada al editar el Costo. */
+interface ProyeccionPvp {
+  pvpProyectado: number
+  margenPct: number
+  violado: boolean
+}
+
+/** Hint "PVP cambiaria a $X, margen Y%" con accion explicita "Aplicar". */
+function ProyeccionPvpHint({
+  proyeccion,
+  onAplicar,
+}: {
+  proyeccion: ProyeccionPvp | null
+  onAplicar: () => void
+}) {
+  if (!proyeccion) return null
+  return (
+    <div
+      className={`mt-1 rounded px-1.5 py-1 text-[11px] leading-tight ${
+        proyeccion.violado ? 'bg-red-50 text-red-700' : 'bg-blue-50 text-blue-700'
+      }`}
+    >
+      <p>
+        PVP cambiaria a ${proyeccion.pvpProyectado.toFixed(2)}, margen {proyeccion.margenPct.toFixed(1)}%
+      </p>
+      {proyeccion.violado && (
+        <p className="font-medium">El costo iguala o supera el PVP actual</p>
+      )}
+      <button
+        type="button"
+        onClick={onAplicar}
+        className="mt-0.5 font-medium underline hover:no-underline"
+      >
+        Aplicar
+      </button>
+    </div>
+  )
+}
+
 type TabId = 'general' | 'precios' | 'inventario'
 
 interface LoteRow {
@@ -314,6 +359,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [impuestoIvaId, setImpuestoIvaId] = useState<string>('')
 
+  // Proyeccion de PVP por nivel — calculada al editar el Costo, no comprometida
+  // en los precios reales hasta que el usuario ejecuta "Aplicar" (ver spec
+  // productos-edicion-precios).
+  const [proyeccionDetal, setProyeccionDetal] = useState<ProyeccionPvp | null>(null)
+  const [proyeccionMayor, setProyeccionMayor] = useState<ProyeccionPvp | null>(null)
+  const [proyeccionEspecial, setProyeccionEspecial] = useState<ProyeccionPvp | null>(null)
+
   // === Duracion por defecto (solo Servicios) ===
   const [duracionMin, setDuracionMin] = useState<number | null>(null)
 
@@ -342,6 +394,18 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   )
   const lotes = (lotesData ?? []) as LoteRow[]
 
+  // Ultimo producto creado en la empresa (solo modo alta) — ayuda al vuelo para
+  // elegir el siguiente codigo, independiente de la convencion (correlativo global
+  // o por departamento). El scope por departamento queda como mejora futura.
+  const empresaId = user?.empresa_id ?? ''
+  const { data: ultimoProductoData } = useQuery(
+    !isEditing && empresaId
+      ? 'SELECT codigo, nombre FROM productos WHERE empresa_id = ? ORDER BY created_at DESC LIMIT 1'
+      : '',
+    !isEditing && empresaId ? [empresaId] : []
+  )
+  const ultimoProducto = (ultimoProductoData?.[0] ?? null) as { codigo: string; nombre: string } | null
+
   // === Reset form on open / populate on edit ===
   useEffect(() => {
     if (isOpen) {
@@ -365,7 +429,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setImpuestoIvaId(producto.impuesto_iva_id ?? '')
         setUbicacion(producto.ubicacion ?? '')
         setManejaLotes(producto.maneja_lotes === 1)
-        setDepositoId('')
+        setDepositoId(producto.deposito_id ?? '')
         setStockInicial('')
         if (tasaValor > 0) {
           const costoN = parseFloat(producto.costo_usd) || 0
@@ -421,6 +485,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setStockInicial('')
       }
       setErrors({})
+      setProyeccionDetal(null)
+      setProyeccionMayor(null)
+      setProyeccionEspecial(null)
       setPopoverOpen(false)
       dialogRef.current?.showModal()
     } else {
@@ -467,6 +534,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setStockInicial('')
       setCostoUsd('0')
       setCostoBs('0')
+      setProyeccionDetal(null)
+      setProyeccionMayor(null)
+      setProyeccionEspecial(null)
     }
   }
 
@@ -476,40 +546,90 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   // --- Bidireccionales: Costo ---
-  // Recalcula precios cuando cambia el costo.
-  // Prioridad: si hay margen configurado → calcula precio; si no → recalcula margen del precio existente.
+  // Proyecta precios cuando cambia el costo, SIN mutar los precios reales
+  // (regla: editar el Costo no debe alterar el PVP automaticamente).
+  // Prioridad por nivel: si hay margen configurado → proyecta PVP preservando
+  // ese margen (requiere accion explicita "Aplicar"); si no → recalcula el
+  // margen desde el precio existente (esto no muta el PVP, solo el margen%).
   function applyPricesFromCosto(costoN: number) {
-    if (costoN <= 0) return
+    if (costoN <= 0) {
+      setProyeccionDetal(null)
+      setProyeccionMayor(null)
+      setProyeccionEspecial(null)
+      return
+    }
 
     const margenN = parseFloat(margen)
     const ventaN = parseFloat(precioVentaUsd) || 0
     if (!isNaN(margenN) && margenN !== 0) {
-      const pvp = Math.max(0, costoN * (1 + margenN / 100))
-      setPrecioVentaUsd(pvp.toFixed(2))
-      if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
-    } else if (ventaN > 0) {
-      setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
+      setProyeccionDetal({
+        pvpProyectado: calcularPrecioPreservandoMargen(costoN, margenN),
+        margenPct: margenN,
+        violado: ventaN > 0 && calcularViolacionCostoPvp(costoN, ventaN),
+      })
+    } else {
+      setProyeccionDetal(null)
+      if (ventaN > 0) {
+        setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
+      }
     }
 
     const margenMayorN = parseFloat(margenMayor)
     const mayorN = parseFloat(precioMayorUsd) || 0
     if (!isNaN(margenMayorN) && margenMayorN !== 0) {
-      const pvp = Math.max(0, costoN * (1 + margenMayorN / 100))
-      setPrecioMayorUsd(pvp.toFixed(2))
-      if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
-    } else if (mayorN > 0) {
-      setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
+      setProyeccionMayor({
+        pvpProyectado: calcularPrecioPreservandoMargen(costoN, margenMayorN),
+        margenPct: margenMayorN,
+        violado: mayorN > 0 && calcularViolacionCostoPvp(costoN, mayorN),
+      })
+    } else {
+      setProyeccionMayor(null)
+      if (mayorN > 0) {
+        setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
+      }
     }
 
     const margenEspecialN = parseFloat(margenEspecial)
     const especN = parseFloat(precioEspecialUsd) || 0
     if (!isNaN(margenEspecialN) && margenEspecialN !== 0) {
-      const pvp = Math.max(0, costoN * (1 + margenEspecialN / 100))
-      setPrecioEspecialUsd(pvp.toFixed(2))
-      if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
-    } else if (especN > 0) {
-      setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
+      setProyeccionEspecial({
+        pvpProyectado: calcularPrecioPreservandoMargen(costoN, margenEspecialN),
+        margenPct: margenEspecialN,
+        violado: especN > 0 && calcularViolacionCostoPvp(costoN, especN),
+      })
+    } else {
+      setProyeccionEspecial(null)
+      if (especN > 0) {
+        setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
+      }
     }
+  }
+
+  /** Aplica la proyeccion de PVP Detal a los precios reales (accion explicita del usuario). */
+  function aplicarProyeccionDetal() {
+    if (!proyeccionDetal) return
+    setPrecioVentaUsd(proyeccionDetal.pvpProyectado.toFixed(2))
+    setMargen(proyeccionDetal.margenPct.toFixed(2))
+    if (tasaValor > 0) setPrecioVentaBs(usdToBs(proyeccionDetal.pvpProyectado, tasaValor).toFixed(2))
+    setProyeccionDetal(null)
+  }
+
+  /** Aplica la proyeccion de PVP Mayor a los precios reales (accion explicita del usuario). */
+  function aplicarProyeccionMayor() {
+    if (!proyeccionMayor) return
+    setPrecioMayorUsd(proyeccionMayor.pvpProyectado.toFixed(2))
+    setMargenMayor(proyeccionMayor.margenPct.toFixed(2))
+    if (tasaValor > 0) setPrecioMayorBs(usdToBs(proyeccionMayor.pvpProyectado, tasaValor).toFixed(2))
+    setProyeccionMayor(null)
+  }
+
+  /** Aplica la proyeccion de PVP Especial a los precios reales (accion explicita del usuario). */
+  function aplicarProyeccionEspecial() {
+    if (!proyeccionEspecial) return
+    setPrecioEspecialUsd(proyeccionEspecial.pvpProyectado.toFixed(2))
+    setMargenEspecial(proyeccionEspecial.margenPct.toFixed(2))
+    if (tasaValor > 0) setPrecioEspecialBs(usdToBs(proyeccionEspecial.pvpProyectado, tasaValor).toFixed(2))
+    setProyeccionEspecial(null)
   }
 
   function handleCostoUsdChange(val: string) {
@@ -524,13 +644,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setCostoUsd(usd.toFixed(2))
-      applyPricesFromCosto(usd)
+      setCostoUsd(usd.toFixed(8))
+      applyPricesFromCosto(usd.toNumber())
     }
   }
 
   // --- Bidireccionales: PVP Detal ---
   function handlePrecioVentaUsdChange(val: string) {
+    setProyeccionDetal(null)
     setPrecioVentaUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioVentaBs(usdToBs(num, tasaValor).toFixed(2))
@@ -542,20 +663,24 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioVentaBsChange(val: string) {
+    setProyeccionDetal(null)
     setPrecioVentaBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioVentaUsd(usd.toFixed(2))
+      const usdStr = usd.toFixed(8)
+      setPrecioVentaUsd(usdStr)
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-      if (costoN > 0 && usd > 0) {
-        setMargen(((usd - costoN) / costoN * 100).toFixed(2))
+      const usdN = usd.toNumber()
+      if (costoN > 0 && usdN > 0) {
+        setMargen(((usdN - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
 
   // --- Margen Detal ---
   function handleMargenChange(val: string) {
+    setProyeccionDetal(null)
     setMargen(val)
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
@@ -568,6 +693,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Margen Mayor ---
   function handleMargenMayorChange(val: string) {
+    setProyeccionMayor(null)
     setMargenMayor(val)
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
@@ -580,6 +706,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Margen Especial ---
   function handleMargenEspecialChange(val: string) {
+    setProyeccionEspecial(null)
     setMargenEspecial(val)
     const margenN = parseFloat(val)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
@@ -592,6 +719,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Bidireccionales: PVP Mayor ---
   function handlePrecioMayorUsdChange(val: string) {
+    setProyeccionMayor(null)
     setPrecioMayorUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioMayorBs(usdToBs(num, tasaValor).toFixed(2))
@@ -603,20 +731,23 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioMayorBsChange(val: string) {
+    setProyeccionMayor(null)
     setPrecioMayorBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioMayorUsd(usd.toFixed(2))
+      setPrecioMayorUsd(usd.toFixed(8))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-      if (costoN > 0 && usd > 0) {
-        setMargenMayor(((usd - costoN) / costoN * 100).toFixed(2))
+      const usdN = usd.toNumber()
+      if (costoN > 0 && usdN > 0) {
+        setMargenMayor(((usdN - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
 
   // --- Bidireccionales: PVP Especial ---
   function handlePrecioEspecialUsdChange(val: string) {
+    setProyeccionEspecial(null)
     setPrecioEspecialUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioEspecialBs(usdToBs(num, tasaValor).toFixed(2))
@@ -628,14 +759,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioEspecialBsChange(val: string) {
+    setProyeccionEspecial(null)
     setPrecioEspecialBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioEspecialUsd(usd.toFixed(2))
+      setPrecioEspecialUsd(usd.toFixed(8))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-      if (costoN > 0 && usd > 0) {
-        setMargenEspecial(((usd - costoN) / costoN * 100).toFixed(2))
+      const usdN = usd.toNumber()
+      if (costoN > 0 && usdN > 0) {
+        setMargenEspecial(((usdN - costoN) / costoN * 100).toFixed(2))
       }
     }
   }
@@ -644,6 +777,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handlePrecioFinalDetalUsdChange(val: string) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
+    setProyeccionDetal(null)
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioVentaUsd(baseUsd.toFixed(2))
@@ -657,10 +791,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
-    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    setProyeccionDetal(null)
+    const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioVentaUsd(baseUsd.toFixed(2))
+    setPrecioVentaUsd(baseUsd.toFixed(8))
     setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
@@ -671,6 +806,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handlePrecioFinalMayorUsdChange(val: string) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
+    setProyeccionMayor(null)
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioMayorUsd(baseUsd.toFixed(2))
@@ -684,10 +820,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
-    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    setProyeccionMayor(null)
+    const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioMayorUsd(baseUsd.toFixed(2))
+    setPrecioMayorUsd(baseUsd.toFixed(8))
     setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
@@ -698,6 +835,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handlePrecioFinalEspecialUsdChange(val: string) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
+    setProyeccionEspecial(null)
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioEspecialUsd(baseUsd.toFixed(2))
@@ -711,10 +849,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
-    const pfUsd = bsToUsd(pfBsN, tasaValor)
+    setProyeccionEspecial(null)
+    const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioEspecialUsd(baseUsd.toFixed(2))
+    setPrecioEspecialUsd(baseUsd.toFixed(8))
     setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
@@ -749,7 +888,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const esServicioOCombo = tipo === 'S' || tipo === 'C'
 
     const newErrors: Record<string, string> = {}
-    if (!isEditing && tipo === 'P' && !depositoId) {
+    if (tipo === 'P' && !depositoId) {
       newErrors.deposito_id = 'Selecciona un deposito'
     }
     if (Object.keys(newErrors).length > 0) {
@@ -814,6 +953,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           presentacion: esServicioOCombo ? null : (parsed.data.presentacion || null),
           codigo_barras: parsed.data.codigo_barras?.trim() || null,
           duracion_min: tipo === 'S' ? duracionMin : null,
+          deposito_id: esServicioOCombo ? null : (depositoId || null),
         })
         toast.success('Producto actualizado correctamente')
       } else {
@@ -836,6 +976,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           presentacion: esServicioOCombo ? undefined : (parsed.data.presentacion || undefined),
           codigo_barras: parsed.data.codigo_barras?.trim() || undefined,
           duracion_min: tipo === 'S' ? duracionMin : undefined,
+          deposito_id: esServicioOCombo ? null : (depositoId || null),
         })
 
         const stockInicialNum = parseNumOrZero(stockInicial)
@@ -843,30 +984,30 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           const now = localNow()
           const fecha = now.split('T')[0] ?? now.substring(0, 10)
           await db.writeTransaction(async (tx) => {
+            const movInicialId = uuidv4()
             await tx.execute(
               `INSERT INTO movimientos_inventario
                (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad,
                 stock_anterior, stock_nuevo, motivo, usuario_id, fecha, created_at)
                VALUES (?, ?, ?, ?, 'E', 'MAN', ?, '0.000', ?, 'Stock inicial', ?, ?, ?)`,
               [
-                uuidv4(), user!.empresa_id!, productoId, depositoId,
+                movInicialId, user!.empresa_id!, productoId, depositoId,
                 stockInicialNum.toFixed(3), stockInicialNum.toFixed(3),
                 user!.id, fecha, now,
               ]
             )
-            await tx.execute(
-              'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-              [stockInicialNum.toFixed(3), now, productoId]
-            )
-            await tx.execute(
-              `INSERT INTO inventario_stock
-               (id, empresa_id, producto_id, deposito_id, cantidad_actual, stock_reservado, updated_at, updated_by)
-               VALUES (?, ?, ?, ?, ?, '0.000', ?, ?)`,
-              [
-                uuidv4(), user!.empresa_id!, productoId, depositoId,
-                stockInicialNum.toFixed(3), now, user!.id,
-              ]
-            )
+            // inventario_stock (por deposito) + productos.stock (total) — un unico camino
+            // de escritura compartido con compras/kardex/ajustes/ventas (stock-deposito.ts).
+            // El producto recien creado arranca en 0, asi que el delta = stock inicial.
+            await upsertStockDeposito(tx, {
+              empresa_id: user!.empresa_id!,
+              producto_id: productoId,
+              deposito_id: depositoId,
+              delta: new Decimal(stockInicialNum),
+              usuario_id: user!.id,
+              now,
+              movimientoInventarioId: movInicialId,
+            })
           })
         }
         toast.success('Producto creado correctamente')
@@ -898,15 +1039,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   // IVA y Precio Final por nivel
   const ivaDetalUsd = (parseFloat(precioVentaUsd) || 0) * alicuota / 100
   const pfDetalUsd = (parseFloat(precioVentaUsd) || 0) + ivaDetalUsd
-  const pfDetalBs = tasaValor > 0 ? usdToBs(pfDetalUsd, tasaValor) : 0
+  const pfDetalBs = tasaValor > 0 ? usdToBs(pfDetalUsd, tasaValor).toNumber() : 0
 
   const ivaMayorUsd = (parseFloat(precioMayorUsd) || 0) * alicuota / 100
   const pfMayorUsd = (parseFloat(precioMayorUsd) || 0) + ivaMayorUsd
-  const pfMayorBs = tasaValor > 0 ? usdToBs(pfMayorUsd, tasaValor) : 0
+  const pfMayorBs = tasaValor > 0 ? usdToBs(pfMayorUsd, tasaValor).toNumber() : 0
 
   const ivaEspecialUsd = (parseFloat(precioEspecialUsd) || 0) * alicuota / 100
   const pfEspecialUsd = (parseFloat(precioEspecialUsd) || 0) + ivaEspecialUsd
-  const pfEspecialBs = tasaValor > 0 ? usdToBs(pfEspecialUsd, tasaValor) : 0
+  const pfEspecialBs = tasaValor > 0 ? usdToBs(pfEspecialUsd, tasaValor).toNumber() : 0
 
   const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
@@ -991,6 +1132,14 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               {errors.codigo && <p className="text-red-500 text-xs mt-0.5">{errors.codigo}</p>}
               {isEditing && (
                 <p className="text-gray-400 text-xs mt-0.5">El codigo no puede modificarse</p>
+              )}
+              {!isEditing && ultimoProducto && (
+                <p className="text-gray-400 text-xs mt-0.5">
+                  Último código creado:{' '}
+                  <strong className="text-gray-500 font-medium">{ultimoProducto.codigo}</strong>
+                  {' — '}
+                  {ultimoProducto.nombre}
+                </p>
               )}
             </div>
             <div>
@@ -1358,7 +1507,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       id="prod-costo"
                       type="number"
                       inputMode="decimal"
-                      step="0.01"
+                      step="any"
                       min="0"
                       value={esComboLocal ? '0' : costoUsd}
                       onChange={(e) => handleCostoUsdChange(e.target.value)}
@@ -1384,7 +1533,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       id="prod-costo-bs"
                       type="number"
                       inputMode="decimal"
-                      step="0.01"
+                      step="any"
                       min="0"
                       value={esComboLocal ? '0' : costoBs}
                       onChange={(e) => handleCostoBsChange(e.target.value)}
@@ -1406,7 +1555,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                 <div>
                   <div className="mb-2">
                     <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                      Esquema de Precios
+                      Esquema de Precios <span className="text-red-500 font-bold">v2</span>
                     </p>
                   </div>
 
@@ -1440,7 +1589,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               value={margen}
                               onChange={(e) => handleMargenChange(e.target.value)}
                               onWheel={stopScroll}
@@ -1453,7 +1602,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               id="prod-venta"
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioVentaUsd}
                               onChange={(e) => handlePrecioVentaUsdChange(e.target.value)}
@@ -1466,12 +1615,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             {errors.precio_venta_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_venta_usd}</p>
                             )}
+                            <ProyeccionPvpHint proyeccion={proyeccionDetal} onAplicar={aplicarProyeccionDetal} />
                           </td>
                           <td className="px-2 py-1.5">
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioVentaBs}
                               onChange={(e) => handlePrecioVentaBsChange(e.target.value)}
@@ -1498,7 +1648,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-detal-usd-${pfDetalUsd.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalDetalUsdChange(e.target.value)}
@@ -1513,7 +1663,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-detal-bs-${pfDetalBs.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfDetalBs > 0 ? pfDetalBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalDetalBsChange(e.target.value)}
@@ -1540,7 +1690,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               value={margenMayor}
                               onChange={(e) => handleMargenMayorChange(e.target.value)}
                               onWheel={stopScroll}
@@ -1553,7 +1703,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               id="prod-mayor"
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioMayorUsd}
                               onChange={(e) => handlePrecioMayorUsdChange(e.target.value)}
@@ -1566,12 +1716,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             {errors.precio_mayor_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_mayor_usd}</p>
                             )}
+                            <ProyeccionPvpHint proyeccion={proyeccionMayor} onAplicar={aplicarProyeccionMayor} />
                           </td>
                           <td className="px-2 py-1.5">
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioMayorBs}
                               onChange={(e) => handlePrecioMayorBsChange(e.target.value)}
@@ -1598,7 +1749,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-mayor-usd-${pfMayorUsd.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalMayorUsdChange(e.target.value)}
@@ -1613,7 +1764,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-mayor-bs-${pfMayorBs.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfMayorBs > 0 ? pfMayorBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalMayorBsChange(e.target.value)}
@@ -1641,7 +1792,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               value={margenEspecial}
                               onChange={(e) => handleMargenEspecialChange(e.target.value)}
                               onWheel={stopScroll}
@@ -1654,7 +1805,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               id="prod-especial"
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioEspecialUsd}
                               onChange={(e) => handlePrecioEspecialUsdChange(e.target.value)}
@@ -1667,12 +1818,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                             {errors.precio_especial_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_especial_usd}</p>
                             )}
+                            <ProyeccionPvpHint proyeccion={proyeccionEspecial} onAplicar={aplicarProyeccionEspecial} />
                           </td>
                           <td className="px-2 py-1.5">
                             <input
                               type="number"
                               inputMode="decimal"
-                              step="0.01"
+                              step="any"
                               min="0"
                               value={precioEspecialBs}
                               onChange={(e) => handlePrecioEspecialBsChange(e.target.value)}
@@ -1699,7 +1851,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-especial-usd-${pfEspecialUsd.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalEspecialUsdChange(e.target.value)}
@@ -1714,7 +1866,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   key={`pf-especial-bs-${pfEspecialBs.toFixed(4)}`}
                                   type="number"
                                   inputMode="decimal"
-                                  step="0.01"
+                                  step="any"
                                   min="0"
                                   defaultValue={pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalEspecialBsChange(e.target.value)}
@@ -1785,6 +1937,34 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       Los movimientos posteriores se gestionan via Compras o Ajustes
                     </p>
                   </div>
+                </div>
+              )}
+
+              {/* Deposito por Defecto — editable, solo edicion tipo P */}
+              {isEditing && producto && tipo === 'P' && (
+                <div className="border border-gray-200 rounded-md p-3 space-y-2 bg-gray-50">
+                  <p className="text-xs font-medium text-gray-600">Deposito por Defecto</p>
+                  <div>
+                    <label htmlFor="prod-deposito-edit" className="block text-sm font-medium text-gray-700 mb-1">
+                      Deposito <span className="text-red-500">*</span>
+                    </label>
+                    <SearchSelect
+                      id="prod-deposito-edit"
+                      options={depositoOptions}
+                      value={depositoId}
+                      onChange={setDepositoId}
+                      placeholder="Seleccionar deposito"
+                      searchPlaceholder="Buscar deposito..."
+                      error={errors.deposito_id}
+                      container={dialogRef.current}
+                    />
+                    {errors.deposito_id && (
+                      <p className="text-red-500 text-xs mt-1">{errors.deposito_id}</p>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400">
+                    Deposito donde ingresa stock nuevo por defecto (compras, kardex). Cambiarlo no mueve el stock existente.
+                  </p>
                 </div>
               )}
 

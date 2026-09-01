@@ -167,6 +167,9 @@ export interface FacturaMetodoItem {
   referencia: string | null
   fecha: string
   moneda: string
+  venta_tipo: string
+  /** 1 si el pago fue inicial (contado al emitir), 0 si es cobro CxC posterior */
+  es_pago_inicial: number
 }
 
 export interface ProductoDeptoItem {
@@ -249,7 +252,7 @@ export function useCxcDelDia(filters: CuadreFilters | null) {
      FROM ventas
      WHERE ${where}
        AND tipo = 'CREDITO'
-       AND CAST(saldo_pend_usd AS REAL) > 0.01`,
+       AND CAST(saldo_pend_usd AS REAL) > 0.001`,
     params
   )
 
@@ -344,6 +347,7 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
   )
 
   // Query principal: metodos con pagos de ventas
+  // GROUP BY solo por mp.id para evitar filas duplicadas cuando moneda es NULL en algunos pagos
   const { data, isLoading } = useQuery(
     `SELECT
        mp.id as metodo_cobro_id,
@@ -358,7 +362,8 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
      LEFT JOIN monedas mon ON mp.moneda_id = mon.id
      LEFT JOIN ventas v ON pg.venta_id = v.id
      WHERE ${where}
-     GROUP BY mp.id, mp.nombre, mp.tipo, moneda
+       AND pg.venta_id IS NOT NULL
+     GROUP BY mp.id
      ORDER BY total_usd DESC`,
     params
   )
@@ -382,12 +387,13 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
            AND mc.id NOT IN (
              SELECT DISTINCT pg2.metodo_cobro_id FROM pagos pg2 WHERE ${whereNotIn}
            )
-           AND mc.id IN (
-             SELECT DISTINCT mmc.metodo_cobro_id
-             FROM movimientos_metodo_cobro mmc
-             WHERE ${whereMmc}
-           )`
-      : '',
+             AND mc.id IN (
+              SELECT DISTINCT mmc.metodo_cobro_id
+              FROM movimientos_metodo_cobro mmc
+              WHERE ${whereMmc}
+            )
+          GROUP BY mc.id`
+       : '',
     filters ? [empresaId, ...paramsNotIn, ...paramsMmc] : []
   )
 
@@ -426,12 +432,13 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
                  AND CAST(COALESCE(sc.monto_apertura_usd, '0') AS REAL) > 0.001
              ))
              OR (mon.codigo_iso = 'VES' AND EXISTS (
-               SELECT 1 FROM sesiones_caja sc
-               WHERE sc.id IN (${aperturaPlaceholders})
-                 AND CAST(COALESCE(sc.monto_apertura_bs, '0') AS REAL) > 0.001
-             ))
-           )`
-      : '',
+                SELECT 1 FROM sesiones_caja sc
+                WHERE sc.id IN (${aperturaPlaceholders})
+                  AND CAST(COALESCE(sc.monto_apertura_bs, '0') AS REAL) > 0.001
+              ))
+            )
+          GROUP BY mc.id`
+       : '',
     hasSessionForApertura
       ? [empresaId, ...paramsNotIn, ...paramsMmc, ...filters!.sesionCajaIds, ...filters!.sesionCajaIds]
       : []
@@ -447,16 +454,18 @@ export function usePagosPorMetodo(filters: CuadreFilters | null) {
     totalBs: Number(Number(row.total_bs ?? 0).toFixed(2)),
   })
 
-  // Deduplicar los tres conjuntos: pagos > extra > apertura — memoizado para referencia estable
+  // Deduplicar los tres conjuntos: pagos > extra > apertura — memoizado para referencia estable.
+  // Solo dedup por metodo_cobro_id: las tres queries ya son mutuamente excluyentes por diseño
+  // (extra y apertura usan NOT IN para no repetir métodos que aparecen en la query principal).
   const metodos = useMemo(() => {
-    const seen = new Set<string>()
+    const seenId = new Set<string>()
     return [
       ...(data ?? []).map(toItem),
       ...(extraData ?? []).map(toItem),
       ...(aperturaData ?? []).map(toItem),
     ].filter((m) => {
-      if (seen.has(m.metodo_cobro_id)) return false
-      seen.add(m.metodo_cobro_id)
+      if (seenId.has(m.metodo_cobro_id)) return false
+      seenId.add(m.metodo_cobro_id)
       return true
     })
   }, [data, extraData, aperturaData])
@@ -598,7 +607,7 @@ export function useDetalleCxcDia(filters: CuadreFilters | null) {
      JOIN clientes c ON v.cliente_id = c.id
      WHERE ${where}
        AND v.tipo = 'CREDITO'
-       AND CAST(v.saldo_pend_usd AS REAL) > 0.01
+       AND CAST(v.saldo_pend_usd AS REAL) > 0.001
      ORDER BY v.fecha ASC`,
     params
   )
@@ -635,25 +644,40 @@ export function useSesionesPorCajaYFecha(cajaId: string | null, fecha: string) {
 
 // ─── Tasa del Dia ──────────────────────────────────────────
 
+/**
+ * Tasa vigente para el cierre. Devuelve la ULTIMA tasa registrada hasta la fecha
+ * del cierre (inclusive), no un promedio del dia.
+ *
+ * Razon: el BCV publica una sola tasa por dia y el cierre se procesa en tiempo
+ * real. Si un dia no hay registro de actualizacion, significa que la tasa no
+ * vario respecto al dia anterior, por lo que la ultima vigente sigue aplicando.
+ * El AVG diario anterior devolvia 0 en dias sin registro y rompia el cierre con
+ * comision bancaria en Bs. Ademas apuntaba a columnas inexistentes (`tasa` en
+ * vez de `valor`, `created_at` en vez de `fecha`), enmascarado por el COALESCE.
+ * Se usa el mismo patron de columnas que useTasaActual (fecha DESC, created_at DESC).
+ */
 export function useTasaDelDia(fecha: string | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
     fecha
-      ? `SELECT
-           COALESCE(AVG(CAST(tasa AS REAL)), 0) as avg_tasa,
-           COUNT(*) as cnt
+      ? `SELECT CAST(valor AS REAL) as tasa_vigente
          FROM tasas_cambio
-         WHERE empresa_id = ? AND DATE(created_at, 'localtime') = ?`
+         WHERE empresa_id = ? AND fecha <= ?
+         ORDER BY fecha DESC, created_at DESC
+         LIMIT 1`
       : '',
     fecha ? [empresaId, fecha] : []
   )
 
-  const row = (data?.[0] ?? {}) as { avg_tasa: number; cnt: number }
+  const row = (data?.[0] ?? {}) as { tasa_vigente: number }
+  const tasaVigente = Number(Number(row.tasa_vigente ?? 0).toFixed(4))
   return {
-    tasaPromedio: Number(Number(row.avg_tasa ?? 0).toFixed(4)),
-    tasaCount: Number(row.cnt ?? 0),
+    tasaPromedio: tasaVigente,
+    // Se conserva el nombre por compatibilidad con los consumidores; ahora es 1
+    // si hay una tasa vigente, 0 si no existe ninguna registrada.
+    tasaCount: tasaVigente > 0 ? 1 : 0,
     isLoading,
   }
 }
@@ -846,7 +870,9 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
     hasSession ? filters!.sesionCajaIds : []
   )
 
-  // Pagos efectivo USD (monto_usd = valor en USD)
+  // Pagos efectivo USD (monto_usd = valor en USD).
+  // Excluye asignaciones internas de excedente POS (is_pos_saf_allocation = 1)
+  // porque ese efectivo ya se contabilizó en el pago de la venta original.
   const { data: dataPagosUsd } = useQuery(
     hasSession
       ? `SELECT COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total
@@ -854,12 +880,14 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+           AND p.venta_id IS NOT NULL`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
 
-  // Pagos efectivo VES (monto = valor nativo en Bs.)
+  // Pagos efectivo VES (monto = valor nativo en Bs.).
+  // Excluye asignaciones internas de excedente POS (is_pos_saf_allocation = 1).
   const { data: dataPagosVes } = useQuery(
     hasSession
       ? `SELECT COALESCE(SUM(CAST(p.monto AS REAL)), 0) as total
@@ -867,7 +895,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE p.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+           AND p.venta_id IS NOT NULL`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -883,14 +912,15 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
-           AND mmc.origen != 'VENTA'`
+            AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+            AND mmc.origen NOT IN ('VENTA', 'COBRO', 'PROPINA')`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
 
   // Movimientos manuales efectivo VES (incluye VUELTO como EGRESO).
-  // Excluye origen='VENTA' porque esos pagos ya se cuentan en dataPagosVes.
+  // Excluye: VENTA (ya en dataPagosVes), COBRO (ya en dataPagosVes via CxC),
+  // PROPINA (el excedente ya está en pagos.monto del pago de la venta).
   const { data: dataMovVes } = useQuery(
     hasSession
       ? `SELECT
@@ -900,8 +930,8 @@ export function useSaldoEfectivoBimonetario(filters: CuadreFilters | null) {
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${placeholders})
-           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
-           AND mmc.origen != 'VENTA'`
+            AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+            AND mmc.origen NOT IN ('VENTA', 'COBRO', 'PROPINA')`
       : '',
     hasSession ? filters!.sesionCajaIds : []
   )
@@ -947,7 +977,11 @@ export function useFacturasPorMetodo(filters: CuadreFilters | null, metodoNombre
            pg.monto_usd,
            pg.referencia,
            pg.fecha,
-           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
+           v.tipo as venta_tipo,
+           -- Un pago es INICIAL (contado al emitir) si comparte created_at con la venta
+           -- (misma writeTransaction). Un cobro CxC posterior tiene created_at distinto.
+           CASE WHEN pg.created_at = v.created_at THEN 1 ELSE 0 END as es_pago_inicial
          FROM pagos pg
          JOIN ventas v ON pg.venta_id = v.id
          JOIN clientes c ON v.cliente_id = c.id
@@ -1017,6 +1051,12 @@ export interface TotalesFiscales {
   totalDescuentoBs: number
   totalNcrUsd: number
   totalNcrBs: number
+  /** Solo productos/servicios (sin avances ni préstamos). Uso: Resumen Fiscal. */
+  totalVentasUsd: number
+  totalVentasBs: number
+  /** Porción financiera: avances + préstamos cobrados al cliente. */
+  totalFinancieroUsd: number
+  totalFinancieroBs: number
 }
 
 export function useTotalesFiscales(filters: CuadreFilters | null) {
@@ -1040,7 +1080,35 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_facturado,
        COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_facturado_bs,
        COALESCE(SUM(CAST(COALESCE(descuento_usd, '0') AS REAL)), 0) as total_descuento,
-       COALESCE(SUM(CAST(COALESCE(descuento_bs, '0') AS REAL)), 0) as total_descuento_bs
+       COALESCE(SUM(CAST(COALESCE(descuento_bs, '0') AS REAL)), 0) as total_descuento_bs,
+       -- Ventas puras: solo productos/servicios (sin avances ni préstamos)
+       COALESCE(SUM(
+         CAST(total_base_usd AS REAL) + CAST(total_exento_usd AS REAL) + CAST(total_iva_usd AS REAL)
+         - CAST(COALESCE(descuento_usd, '0') AS REAL)
+       ), 0) as total_ventas_puras,
+       COALESCE(SUM(
+         (CAST(total_base_usd AS REAL) + CAST(total_exento_usd AS REAL) + CAST(total_iva_usd AS REAL)
+         - CAST(COALESCE(descuento_usd, '0') AS REAL)) * CAST(tasa AS REAL)
+       ), 0) as total_ventas_puras_bs,
+       -- Financiero: avances y préstamos = diferencia entre total facturado y ventas puras
+       COALESCE(SUM(
+         MAX(0,
+           CAST(total_usd AS REAL)
+           - CAST(total_base_usd AS REAL)
+           - CAST(total_exento_usd AS REAL)
+           - CAST(total_iva_usd AS REAL)
+           + CAST(COALESCE(descuento_usd, '0') AS REAL)
+         )
+       ), 0) as total_financiero,
+       COALESCE(SUM(
+         MAX(0,
+           CAST(total_usd AS REAL)
+           - CAST(total_base_usd AS REAL)
+           - CAST(total_exento_usd AS REAL)
+           - CAST(total_iva_usd AS REAL)
+           + CAST(COALESCE(descuento_usd, '0') AS REAL)
+         ) * CAST(tasa AS REAL)
+       ), 0) as total_financiero_bs
      FROM ventas
      WHERE ${whereV}`,
     paramsV
@@ -1059,6 +1127,10 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
     total_facturado_bs: number
     total_descuento: number
     total_descuento_bs: number
+    total_ventas_puras: number
+    total_ventas_puras_bs: number
+    total_financiero: number
+    total_financiero_bs: number
   }
 
   // NCR del mismo dia/sesion — usando fecha y empresa_id
@@ -1091,6 +1163,10 @@ export function useTotalesFiscales(filters: CuadreFilters | null) {
       totalDescuentoBs: Number(Number(row.total_descuento_bs ?? 0).toFixed(2)),
       totalNcrUsd: Number(Number(ncrRow.total_ncr ?? 0).toFixed(2)),
       totalNcrBs: Number(Number(ncrRow.total_ncr_bs ?? 0).toFixed(2)),
+      totalVentasUsd: Number(Number(row.total_ventas_puras ?? 0).toFixed(2)),
+      totalVentasBs: Number(Number(row.total_ventas_puras_bs ?? 0).toFixed(2)),
+      totalFinancieroUsd: Number(Number(row.total_financiero ?? 0).toFixed(2)),
+      totalFinancieroBs: Number(Number(row.total_financiero_bs ?? 0).toFixed(2)),
     } as TotalesFiscales,
     isLoading: loadingVentas || loadingNcr,
   }
@@ -1518,8 +1594,10 @@ export interface CobroViaPOS {
   metodo_cobro_id: string
   nombre: string
   moneda: string
+  tipo: string        // mc.tipo: 'EFECTIVO' | 'TRANSFERENCIA' | 'PUNTO' | etc.
   cobrosUsd: number
   cobrosNativo: number
+  cobsBsEquiv: number
 }
 
 /**
@@ -1530,29 +1608,42 @@ export interface CobroViaPOS {
 export function useCobrosViaPOS(filters: CuadreFilters | null) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const [whereMmc, paramsMmc] = useMemo(
-    () => filters ? buildMovsWhere(filters, empresaId, 'mmc') : ['1=0', [] as unknown[]],
+  // Usa buildCuadreWhere (filtra por p.sesion_caja_id / p.fecha) en lugar de
+  // buildMovsWhere (mmc) para evitar acumulación de registros históricos en mmc.
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'p') : ['1=0', [] as unknown[]],
     [filters, empresaId]
   )
 
   const { data, isLoading } = useQuery(
     filters
       ? `SELECT
-           mmc.metodo_cobro_id,
+           p.metodo_cobro_id,
            mc.nombre,
+           mc.tipo,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as moneda,
            COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
-             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
-           COALESCE(SUM(CASE WHEN COALESCE(mon.codigo_iso,'USD') != 'VES'
-             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS cobros_usd
-         FROM movimientos_metodo_cobro mmc
-         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+             THEN CAST(p.monto AS REAL) ELSE 0 END), 0) AS cobros_bs,
+           COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) AS cobros_usd,
+           COALESCE(SUM(CASE
+             WHEN COALESCE(mon.codigo_iso,'USD') = 'VES'
+               THEN CAST(p.monto AS REAL)
+               ELSE CAST(p.monto_usd AS REAL) * CAST(COALESCE(p.tasa, '0') AS REAL)
+           END), 0) AS cobros_bs_equiv
+         FROM pagos p
+         JOIN ventas v ON p.venta_id = v.id
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
-         WHERE mmc.origen = 'COBRO' AND ${whereMmc}
-         GROUP BY mmc.metodo_cobro_id, mc.nombre, moneda
+         WHERE v.tipo = 'CREDITO'
+           AND (p.is_reversed IS NULL OR p.is_reversed = 0)
+           -- Excluir el pago inicial de una factura mixta (mismo created_at que la venta).
+           -- Ver nota en useCobranzasCxCCaja.
+           AND p.created_at != v.created_at
+           AND ${where}
+         GROUP BY p.metodo_cobro_id, mc.nombre, mc.tipo, moneda
          ORDER BY cobros_bs DESC, cobros_usd DESC`
       : '',
-    filters ? paramsMmc : []
+    filters ? params : []
   )
 
   const porMetodo: CobroViaPOS[] = (data ?? []).map((row: Record<string, unknown>) => {
@@ -1564,8 +1655,10 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
       metodo_cobro_id: String(row.metodo_cobro_id ?? ''),
       nombre: String(row.nombre ?? ''),
       moneda,
+      tipo: String(row.tipo ?? ''),
       cobrosUsd: Number(Number(row.cobros_usd ?? 0).toFixed(2)),
       cobrosNativo,
+      cobsBsEquiv: Number(Number(row.cobros_bs_equiv ?? 0).toFixed(2)),
     }
   })
 
@@ -1573,6 +1666,534 @@ export function useCobrosViaPOS(filters: CuadreFilters | null) {
   const totalCobrosBs  = porMetodo
     .filter(m => m.moneda === 'BS')
     .reduce((s, m) => s + m.cobrosNativo, 0)
+  const totalCobrosBsEquiv = porMetodo.reduce((s, m) => s + m.cobsBsEquiv, 0)
 
-  return { porMetodo, totalCobrosUsd, totalCobrosBs, isLoading }
+  return { porMetodo, totalCobrosUsd, totalCobrosBs, totalCobrosBsEquiv, isLoading }
+}
+
+// ─── Cobranzas CxC dirigidas a la sesión de caja ─────────────
+
+export interface CobranzaCxCItem {
+  id: string           // pagos.id
+  nroFactura: string | null
+  clienteNombre: string | null
+  metodoNombre: string
+  metodoMoneda: string
+  monto: string        // pagos.monto = monto nativo por factura (Bs o USD)
+  montoUsd: string     // pagos.monto_usd
+  tasa: string         // pagos.tasa
+  referencia: string | null
+  fecha: string
+  createdAt: string
+}
+
+/**
+ * Retorna los pagos de facturas a crédito (CxC) que entraron en la sesión de caja.
+ * Expande a una fila por factura (en abono global muestra cada factura afectada).
+ */
+export function useCobranzasCxCCaja(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'p') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+  const { data, isLoading } = useQuery(
+    filters
+      ? `SELECT
+           p.id,
+           p.monto,
+           p.monto_usd,
+           COALESCE(p.tasa, '0') as tasa,
+           p.referencia,
+           p.fecha,
+           p.created_at,
+           mc.nombre as metodo_nombre,
+           CASE WHEN mon.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
+           v.nro_factura,
+           c.nombre as cliente_nombre
+         FROM pagos p
+         JOIN ventas v ON p.venta_id = v.id
+         JOIN clientes c ON v.cliente_id = c.id
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mon ON mc.moneda_id = mon.id
+         WHERE v.tipo = 'CREDITO'
+           AND (p.is_reversed IS NULL OR p.is_reversed = 0)
+           -- Excluir el pago inicial de una factura mixta (contado + crédito):
+           -- ese pago se inserta en la misma writeTransaction que la venta y comparte
+           -- created_at. Un cobro CxC posterior corre en otra transacción con timestamp
+           -- distinto, por lo que sí entra. Esto separa Case A (pago inicial) de Case B (cobro posterior).
+           AND p.created_at != v.created_at
+           AND ${where}
+         ORDER BY p.fecha ASC`
+      : '',
+    filters ? params : []
+  )
+
+  const items: CobranzaCxCItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id ?? ''),
+    nroFactura: row.nro_factura ? String(row.nro_factura) : null,
+    clienteNombre: row.cliente_nombre ? String(row.cliente_nombre) : null,
+    metodoNombre: String(row.metodo_nombre ?? ''),
+    metodoMoneda: String(row.metodo_moneda ?? 'USD'),
+    monto: String(row.monto ?? '0'),
+    montoUsd: String(row.monto_usd ?? '0'),
+    tasa: String(row.tasa ?? '0'),
+    referencia: row.referencia ? String(row.referencia) : null,
+    fecha: String(row.fecha ?? ''),
+    createdAt: String(row.created_at ?? ''),
+  }))
+
+  return { items, isLoading }
+}
+
+// ─── Ventas con cargos financieros (avances/préstamos) ────────
+
+export interface VentaFinancieraItem {
+  id: string
+  nroFactura: string
+  clienteNombre: string
+  fecha: string
+  cargoFinancieroUsd: number
+  cargoFinancieroBs: number
+}
+
+/**
+ * Retorna las ventas del periodo que contienen avances o préstamos,
+ * con el monto financiero desglosado (total_usd − ventas_puras).
+ */
+export function useVentasFinancieras(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    `SELECT
+       v.id,
+       v.nro_factura,
+       v.fecha,
+       c.nombre as cliente_nombre,
+       (
+         CAST(v.total_usd AS REAL)
+         - CAST(v.total_base_usd AS REAL)
+         - CAST(v.total_exento_usd AS REAL)
+         - CAST(v.total_iva_usd AS REAL)
+         + CAST(COALESCE(v.descuento_usd, '0') AS REAL)
+       ) as cargo_financiero_usd,
+       (
+         CAST(v.total_usd AS REAL)
+         - CAST(v.total_base_usd AS REAL)
+         - CAST(v.total_exento_usd AS REAL)
+         - CAST(v.total_iva_usd AS REAL)
+         + CAST(COALESCE(v.descuento_usd, '0') AS REAL)
+       ) * CAST(v.tasa AS REAL) as cargo_financiero_bs
+     FROM ventas v
+     JOIN clientes c ON v.cliente_id = c.id
+     WHERE ${where}
+       AND (
+         CAST(v.total_usd AS REAL)
+         - CAST(v.total_base_usd AS REAL)
+         - CAST(v.total_exento_usd AS REAL)
+         - CAST(v.total_iva_usd AS REAL)
+         + CAST(COALESCE(v.descuento_usd, '0') AS REAL)
+       ) > 0.001
+     ORDER BY v.fecha DESC`,
+    params
+  )
+
+  const items: VentaFinancieraItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id: String(row.id ?? ''),
+    nroFactura: String(row.nro_factura ?? ''),
+    clienteNombre: String(row.cliente_nombre ?? ''),
+    fecha: String(row.fecha ?? ''),
+    cargoFinancieroUsd: Number(Number(row.cargo_financiero_usd ?? 0).toFixed(2)),
+    cargoFinancieroBs: Number(Number(row.cargo_financiero_bs ?? 0).toFixed(2)),
+  }))
+
+  return { items, isLoading }
+}
+
+// ─── Resumen por tipo de venta (preserva naturaleza original) ──
+/**
+ * Calcula el total facturado separado en la porción CONTADO (pagada al emitir)
+ * y la porción CRÉDITO (que quedó pendiente en CxC) de cada factura.
+ *
+ * Estas porciones son INVARIABLES una vez emitido el documento y no cambian
+ * cuando la porción a crédito se cobra después. Para obtenerlas se usa la fila
+ * inmutable movimientos_cuenta (tipo='FAC'), que guarda exactamente el saldo
+ * que quedó a crédito al emitir la factura:
+ *   - creditoPortion = monto de la fila FAC de esa venta
+ *   - contadoPortion = total de la venta − creditoPortion
+ *
+ * FACTURAS MIXTAS (ej: total 525, contado 500, crédito 25): la venta se guarda
+ * con tipo='CREDITO' porque quedó saldo, pero solo los 25 son crédito. La fila
+ * FAC guarda 25 → contado = 525 − 25 = 500. Correcto.
+ * CONTADO PURO: no hay fila FAC → credito=0, contado=total.
+ * CRÉDITO PURO: FAC=total → credito=total, contado=0.
+ *
+ * El IGTF siempre se cobra al momento, por lo que se suma a la porción contado.
+ */
+export function useResumenTiposVenta(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'v') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    `SELECT
+       COALESCE(SUM(
+         (CAST(v.total_usd AS REAL) + CAST(COALESCE(v.total_igtf_usd, '0') AS REAL))
+         - COALESCE(fac.credito_usd, 0)
+       ), 0) as contado_usd,
+       COALESCE(SUM(
+         (CAST(v.total_bs AS REAL)
+           + CAST(COALESCE(v.total_igtf_usd, '0') AS REAL) * CAST(COALESCE(v.tasa, '0') AS REAL))
+         - COALESCE(fac.credito_usd, 0) * CAST(COALESCE(v.tasa, '0') AS REAL)
+       ), 0) as contado_bs,
+       COALESCE(SUM(COALESCE(fac.credito_usd, 0)), 0) as credito_usd,
+       COALESCE(SUM(COALESCE(fac.credito_usd, 0) * CAST(COALESCE(v.tasa, '0') AS REAL)), 0) as credito_bs
+     FROM ventas v
+     LEFT JOIN (
+       SELECT venta_id, SUM(CAST(monto AS REAL)) as credito_usd
+       FROM movimientos_cuenta
+       WHERE tipo = 'FAC'
+       GROUP BY venta_id
+     ) fac ON fac.venta_id = v.id
+     WHERE ${where}`,
+    params
+  )
+
+  const row = (data?.[0] ?? {}) as {
+    contado_usd: number; contado_bs: number
+    credito_usd: number; credito_bs: number
+  }
+  return {
+    contadoUsd: Number(Number(row.contado_usd ?? 0).toFixed(2)),
+    contadoBs:  Number(Number(row.contado_bs  ?? 0).toFixed(2)),
+    creditoUsd: Number(Number(row.credito_usd ?? 0).toFixed(2)),
+    creditoBs:  Number(Number(row.credito_bs  ?? 0).toFixed(2)),
+    isLoading,
+  }
+}
+
+// ─── Cobros por adelantado (SAF directo desde POS) ────────────
+/**
+ * Suma los anticipos / saldos a favor registrados en la sesión.
+ * Se identifican como pagos con venta_id IS NULL y cliente_id IS NOT NULL:
+ * el cliente pagó más de lo que debe y el excedente queda a su favor.
+ * El monto está en la moneda nativa del método de pago.
+ */
+export function useAnticiposDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  const { data, isLoading } = useQuery(
+    hasSession
+      ? `SELECT
+           COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total_usd,
+           COALESCE(SUM(CASE WHEN COALESCE(mo.codigo_iso,'USD') = 'VES'
+             THEN CAST(p.monto AS REAL) ELSE 0 END), 0) as total_bs_nativo
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE p.empresa_id = ?
+           AND p.sesion_caja_id IN (${placeholders})
+           AND p.venta_id IS NULL
+           AND p.cliente_id IS NOT NULL
+           AND (p.is_reversed IS NULL OR p.is_reversed = 0)`
+      : '',
+    hasSession ? [empresaId, ...filters!.sesionCajaIds] : []
+  )
+
+  const row = (data?.[0] ?? {}) as { total_usd: number; total_bs_nativo: number }
+  return {
+    anticipoUsd:    Number(Number(row.total_usd       ?? 0).toFixed(2)),
+    anticipoBsNativo: Number(Number(row.total_bs_nativo ?? 0).toFixed(2)),
+    isLoading,
+  }
+}
+
+// ─── Propinas del día ─────────────────────────────────────────
+/**
+ * Suma todas las propinas registradas en la sesión.
+ * Las propinas se guardan en movimientos_metodo_cobro con origen='PROPINA'.
+ * El monto es el excedente nativo que el cliente dejó voluntariamente.
+ */
+export function usePropinasDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const placeholders = hasSession ? filters!.sesionCajaIds.map(() => '?').join(', ') : ''
+
+  const { data, isLoading } = useQuery(
+    hasSession
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mo.codigo_iso = 'VES'
+             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_bs,
+           COALESCE(SUM(CASE WHEN mo.codigo_iso != 'VES'
+             THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) as total_usd
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         LEFT JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mmc.empresa_id = ?
+           AND mmc.sesion_caja_id IN (${placeholders})
+           AND mmc.origen = 'PROPINA'`
+      : '',
+    hasSession ? [empresaId, ...filters!.sesionCajaIds] : []
+  )
+
+  const row = (data?.[0] ?? {}) as { total_bs: number; total_usd: number }
+  return {
+    propinaBs:  Number(Number(row.total_bs  ?? 0).toFixed(2)),
+    propinaUsd: Number(Number(row.total_usd ?? 0).toFixed(2)),
+    isLoading,
+  }
+}
+
+// ─── Absorción de faltante autorizado (Negocio asume) ────────
+/**
+ * Retorna los faltantes de caja que el negocio absorbió (autorizados por supervisor/dueño).
+ * Se identifican en `gastos` con descripcion = 'ABSORCION_DIFERENCIAL_POS'.
+ * Se une con `ventas` para poder filtrar por sesion_caja_id.
+ */
+
+export interface AbsorcionItem {
+  id: string
+  nroFactura: string
+  montoBs: number
+  montoUsd: number
+  observaciones: string | null
+  fecha: string
+}
+
+export function useAbsorcionDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const hasCaja    = !!filters && !!filters.cajaId
+
+  const [query, params] = useMemo(() => {
+    if (!filters) return ['', [] as unknown[]]
+
+    const base = `
+      SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+             CAST(g.monto_usd AS REAL) as monto_usd,
+             CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+             g.observaciones, g.fecha
+      FROM gastos g
+      JOIN ventas v ON v.empresa_id = g.empresa_id AND v.nro_factura = g.nro_factura
+      WHERE g.empresa_id = ?
+        AND g.descripcion = 'ABSORCION_DIFERENCIAL_POS'`
+
+    if (hasSession) {
+      const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+      return [
+        `${base} AND v.sesion_caja_id IN (${ph}) ORDER BY g.fecha DESC`,
+        [empresaId, ...filters.sesionCajaIds] as unknown[],
+      ]
+    } else if (hasCaja) {
+      return [
+        `${base} AND v.sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?) ORDER BY g.fecha DESC`,
+        [empresaId, filters.cajaId!, empresaId] as unknown[],
+      ]
+    } else {
+      return [
+        `${base} AND DATE(g.fecha, 'localtime') = ? ORDER BY g.fecha DESC`,
+        [empresaId, filters.fecha] as unknown[],
+      ]
+    }
+  }, [filters, empresaId, hasSession, hasCaja])
+
+  const { data, isLoading } = useQuery(query, params)
+
+  const items: AbsorcionItem[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    id:           String(row.id ?? ''),
+    nroFactura:   String(row.nro_factura ?? ''),
+    montoBs:      Number(Number(row.monto_bs  ?? 0).toFixed(2)),
+    montoUsd:     Number(Number(row.monto_usd ?? 0).toFixed(2)),
+    observaciones: row.observaciones ? String(row.observaciones) : null,
+    fecha:        String(row.fecha ?? ''),
+  }))
+
+  const totalBs  = Number(items.reduce((s, i) => s + i.montoBs,  0).toFixed(2))
+  const totalUsd = Number(items.reduce((s, i) => s + i.montoUsd, 0).toFixed(2))
+
+  return { items, totalBs, totalUsd, hayAbsorcion: items.length > 0, isLoading }
+}
+
+// ─── Diferencial cambiario del día ────────────────────────────
+/**
+ * Retorna el total acumulado de diferenciales cambiarios (faltantes autorizados)
+ * registrados durante la sesión.
+ *
+ * - FALTANTE: cliente paga menos que el total → guardado en `gastos` con
+ *   descripcion='DIFERENCIAL_CAMBIARIO_FALTANTE'. Se une con `ventas` para
+ *   poder filtrar por sesion_caja_id.
+ * - SOBRANTE: cliente paga más → guardado en `movimientos_metodo_cobro` con
+ *   origen='DIFERENCIAL_CAMBIARIO' y tipo='INGRESO'.
+ *
+ * El resultado neto = faltante − sobrante (positivo = caja debería tener menos).
+ */
+
+export interface DiferencialCambioItem {
+  id: string
+  nroFactura: string
+  montoBs: number
+  montoUsd: number
+  tipo: 'FALTANTE' | 'SOBRANTE'
+  fecha: string
+}
+
+export function useDiferencialCambiarioDelDia(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const hasSession = !!filters && filters.sesionCajaIds.length > 0
+  const hasCaja    = !!filters && !!filters.cajaId
+
+  // ── FALTANTE: gastos JOIN ventas ────────────────────────────
+  const [faltanteQuery, faltanteParams] = useMemo(() => {
+    if (!filters) return ['', [] as unknown[]]
+    if (hasSession) {
+      const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+      return [
+        `SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+                CAST(g.monto_usd AS REAL) as monto_usd,
+                CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+                g.fecha, 'FALTANTE' as tipo
+         FROM gastos g
+         JOIN ventas v ON v.empresa_id = g.empresa_id AND v.nro_factura = g.nro_factura
+         WHERE g.empresa_id = ?
+           AND g.descripcion = 'DIFERENCIAL_CAMBIARIO_FALTANTE'
+           AND v.sesion_caja_id IN (${ph})
+         ORDER BY g.fecha DESC`,
+        [empresaId, ...filters.sesionCajaIds] as unknown[],
+      ]
+    } else if (hasCaja) {
+      return [
+        `SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+                CAST(g.monto_usd AS REAL) as monto_usd,
+                CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+                g.fecha, 'FALTANTE' as tipo
+         FROM gastos g
+         JOIN ventas v ON v.empresa_id = g.empresa_id AND v.nro_factura = g.nro_factura
+         WHERE g.empresa_id = ?
+           AND g.descripcion = 'DIFERENCIAL_CAMBIARIO_FALTANTE'
+           AND v.sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?)
+         ORDER BY g.fecha DESC`,
+        [empresaId, filters.cajaId!, empresaId] as unknown[],
+      ]
+    } else {
+      return [
+        `SELECT g.id, COALESCE(g.nro_factura, '') as nro_factura,
+                CAST(g.monto_usd AS REAL) as monto_usd,
+                CAST(g.monto_usd AS REAL) * CAST(COALESCE(g.tasa, '0') AS REAL) as monto_bs,
+                g.fecha, 'FALTANTE' as tipo
+         FROM gastos g
+         WHERE g.empresa_id = ?
+           AND g.descripcion = 'DIFERENCIAL_CAMBIARIO_FALTANTE'
+           AND DATE(g.fecha, 'localtime') = ?
+         ORDER BY g.fecha DESC`,
+        [empresaId, filters.fecha] as unknown[],
+      ]
+    }
+  }, [filters, empresaId, hasSession, hasCaja])
+
+  const { data: dataFaltante, isLoading: loadingFaltante } = useQuery(
+    faltanteQuery, faltanteParams
+  )
+
+  // ── SOBRANTE: movimientos_metodo_cobro ───────────────────────
+  const [sobraQuery, sobraParams] = useMemo(() => {
+    if (!filters) return ['', [] as unknown[]]
+    if (hasSession) {
+      const ph = filters.sesionCajaIds.map(() => '?').join(', ')
+      return [
+        `SELECT mmc.id, COALESCE(mmc.doc_origen_ref, '') as nro_factura,
+                CAST(mmc.monto AS REAL) as monto_bs,
+                0 as monto_usd,
+                mmc.fecha, 'SOBRANTE' as tipo
+         FROM movimientos_metodo_cobro mmc
+         WHERE mmc.empresa_id = ?
+           AND mmc.origen = 'DIFERENCIAL_CAMBIARIO'
+           AND mmc.tipo = 'INGRESO'
+           AND mmc.sesion_caja_id IN (${ph})
+         ORDER BY mmc.fecha DESC`,
+        [empresaId, ...filters.sesionCajaIds] as unknown[],
+      ]
+    } else if (hasCaja) {
+      return [
+        `SELECT mmc.id, COALESCE(mmc.doc_origen_ref, '') as nro_factura,
+                CAST(mmc.monto AS REAL) as monto_bs,
+                0 as monto_usd,
+                mmc.fecha, 'SOBRANTE' as tipo
+         FROM movimientos_metodo_cobro mmc
+         WHERE mmc.empresa_id = ?
+           AND mmc.origen = 'DIFERENCIAL_CAMBIARIO'
+           AND mmc.tipo = 'INGRESO'
+           AND mmc.sesion_caja_id IN (SELECT id FROM sesiones_caja WHERE caja_id = ? AND empresa_id = ?)
+         ORDER BY mmc.fecha DESC`,
+        [empresaId, filters.cajaId!, empresaId] as unknown[],
+      ]
+    } else {
+      return [
+        `SELECT mmc.id, COALESCE(mmc.doc_origen_ref, '') as nro_factura,
+                CAST(mmc.monto AS REAL) as monto_bs,
+                0 as monto_usd,
+                mmc.fecha, 'SOBRANTE' as tipo
+         FROM movimientos_metodo_cobro mmc
+         WHERE mmc.empresa_id = ?
+           AND mmc.origen = 'DIFERENCIAL_CAMBIARIO'
+           AND mmc.tipo = 'INGRESO'
+           AND DATE(mmc.fecha, 'localtime') = ?
+         ORDER BY mmc.fecha DESC`,
+        [empresaId, filters.fecha] as unknown[],
+      ]
+    }
+  }, [filters, empresaId, hasSession, hasCaja])
+
+  const { data: dataSobrante, isLoading: loadingSobrante } = useQuery(
+    sobraQuery, sobraParams
+  )
+
+  const toItem = (row: Record<string, unknown>): DiferencialCambioItem => ({
+    id:          String(row.id ?? ''),
+    nroFactura:  String(row.nro_factura ?? ''),
+    montoBs:     Number(Number(row.monto_bs  ?? 0).toFixed(2)),
+    montoUsd:    Number(Number(row.monto_usd ?? 0).toFixed(2)),
+    tipo:        String(row.tipo ?? 'FALTANTE') as 'FALTANTE' | 'SOBRANTE',
+    fecha:       String(row.fecha ?? ''),
+  })
+
+  const faltantes: DiferencialCambioItem[] = (dataFaltante ?? []).map(toItem)
+  const sobrantes: DiferencialCambioItem[] = (dataSobrante ?? []).map(toItem)
+  const items = [...faltantes, ...sobrantes].sort((a, b) => a.fecha.localeCompare(b.fecha))
+
+  const totalFaltanteBs  = faltantes.reduce((s, i) => s + i.montoBs,  0)
+  const totalFaltanteUsd = faltantes.reduce((s, i) => s + i.montoUsd, 0)
+  const totalSobranteBs  = sobrantes.reduce((s, i) => s + i.montoBs,  0)
+
+  // Neto desde la perspectiva de caja:
+  // positivo = caja debería recibir este monto pero no lo recibió (FALTANTE > SOBRANTE)
+  const netoBs  = Number((totalFaltanteBs  - totalSobranteBs).toFixed(2))
+  const netoUsd = Number(totalFaltanteUsd.toFixed(2))
+
+  return {
+    items,
+    totalFaltanteBs,
+    totalFaltanteUsd,
+    totalSobranteBs,
+    netoBs,
+    netoUsd,
+    hayDiferencial: items.length > 0,
+    isLoading: loadingFaltante || loadingSobrante,
+  }
 }

@@ -31,7 +31,9 @@ export function AplicarSafModal({ isOpen, onClose, cliente, onSuccess }: Aplicar
   const [montoManual, setMontoManual] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
-  const creditoDisponible = Math.abs(parseFloat(cliente.saldo_actual))
+  // Nunca leer clientes.saldo_actual: es un valor neteado. La fuente confiable
+  // es cliente.credito_disponible_usd (SUM SAFC - SUM SAF, ver use-cxc.ts).
+  const creditoDisponible = cliente.credito_disponible_usd
 
   // Calculo FIFO: distribuye el crédito entre facturas ordenadas por fecha (ya vienen ASC)
   const fifoItems = useMemo(() => {

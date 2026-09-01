@@ -162,6 +162,15 @@ export interface MetodosCobro {
   created_at: string
   updated_at: string
   created_by: string | null
+  // 0069: nuevos atributos operativos
+  deposito_directo: number    // 0|1
+  comision_pct: string        // NUMERIC(5,2) as string
+  usa_pos: number             // 0|1
+  usa_cxc: number             // 0|1
+  usa_cxp: number             // 0|1
+  caja_fuerte_id: string | null
+  // 0079: consolidar lotes POS en un traspaso (1) o uno por lote (0)
+  consolidar_lotes: number
 }
 
 export interface BancosEmpresa {
@@ -174,12 +183,32 @@ export interface BancosEmpresa {
   titular_documento: string | null
   moneda_id: string
   saldo_actual: string
+  saldo_inicial: string   // 0069: NUMERIC(18,4) stored as string
   cuenta_contable_id: string | null
+  cuenta_gasto_comision_id: string | null  // 0080: default de cuenta de gasto para deducciones (bancaria, 6.2.06.01)
+  cuenta_gasto_pasarela_id: string | null  // 0081: cuenta base de comisión de pasarela de pago (6.1.25.01)
   is_active: number
   created_at: string
   updated_at: string
   created_by: string | null
   updated_by: string | null
+}
+
+// 0080: N conceptos de deducción por método de cobro (comisión bancaria,
+// retención ISLR de tarjetas de crédito, etc.). Reemplaza metodos_cobro.comision_pct.
+export interface MetodoCobroDeducciones {
+  id: string
+  empresa_id: string
+  metodo_cobro_id: string
+  cuenta_gasto_id: string
+  concepto: string
+  tipo: string             // 'COMISION' | 'ISLR' | 'OTRO'
+  porcentaje: string       // NUMERIC(5,2) stored as string
+  orden: number
+  is_active: number
+  created_at: string
+  updated_at: string
+  created_by: string | null
 }
 
 export interface Cajas {
@@ -322,6 +351,7 @@ export interface Productos {
   presentacion: string | null
   codigo_barras: string | null
   duracion_min: number | null
+  deposito_id: string | null
 }
 
 export interface InventarioStock {
@@ -356,6 +386,8 @@ export interface MovimientosInventario {
   usuario_id: string
   fecha: string
   created_at: string
+  // 0068: tipo de salida tipificada
+  tipo_salida: string | null
 }
 
 export interface Recetas {
@@ -374,6 +406,7 @@ export interface AjusteMotivos {
   es_sistema: number
   operacion_base: string
   afecta_costo: number
+  cuentas_config_clave: string | null  // clave en cuentas_config para registro contable automático
   is_active: number
   created_at: string
   updated_at: string
@@ -426,6 +459,57 @@ export interface Lotes {
   created_at: string
   updated_at: string
   created_by: string | null
+}
+
+// Slice 3a (inventario-multideposito): traspasos entre depositos.
+// Inmutable por RLS (SELECT+INSERT-only) — ver migrations/0084_traspasos_inventario.sql.
+export interface TraspasosInventario {
+  id: string
+  empresa_id: string
+  deposito_origen_id: string
+  deposito_destino_id: string
+  usuario_id: string
+  fecha: string
+  observacion: string | null
+  autorizado_por: string | null
+  verificado_por: string | null
+  correlativo_usuario: number
+  created_at: string
+  created_by: string | null
+}
+
+export interface TraspasosInventarioDet {
+  id: string
+  empresa_id: string
+  traspaso_id: string
+  producto_id: string
+  cantidad: string
+  mov_salida_id: string | null
+  mov_entrada_id: string | null
+  created_at: string
+}
+
+// Plantillas de Traslado: sets reutilizables de productos (sin cantidad)
+// para pre-llenar el formulario de traspasos — ver
+// migrations/0085_traspaso_plantillas.sql.
+export interface TraspasoPlantillas {
+  id: string
+  empresa_id: string
+  nombre: string
+  descripcion: string | null
+  is_active: number
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export interface TraspasoPlantillasDet {
+  id: string
+  empresa_id: string
+  plantilla_id: string
+  producto_id: string
+  created_at: string
 }
 
 // =============================================
@@ -678,7 +762,7 @@ export interface MovimientosBancarios {
   empresa_id: string
   banco_empresa_id: string
   tipo: string
-  origen: string
+  origen: string             // DEPOSITO_CAJA | TRANSFERENCIA_CLIENTE | PAGO_PROVEEDOR | GASTO | MANUAL | TRASPASO | REVERSO | CIERRE_CONSOLIDACION
   monto: string
   saldo_anterior: string
   saldo_nuevo: string
@@ -689,9 +773,89 @@ export interface MovimientosBancarios {
   validado_por: string | null
   validado_at: string | null
   observacion: string | null
+  reversado: number
+  reverso_de: string | null
+  descripcion: string | null
   fecha: string
   created_at: string
   created_by: string | null
+}
+
+export interface CajaFuerte {
+  id: string
+  empresa_id: string
+  nombre: string
+  moneda_id: string
+  saldo_actual: string      // NUMERIC stored as text
+  descripcion: string | null
+  is_active: number
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  updated_by: string | null
+}
+
+export interface MovCajaFuerte {
+  id: string
+  empresa_id: string
+  caja_fuerte_id: string
+  tipo: string              // INGRESO | EGRESO
+  origen: string            // DEPOSITO_CIERRE | GASTO | TRASPASO | MANUAL | REVERSO
+  monto: string
+  saldo_anterior: string
+  saldo_nuevo: string
+  doc_origen_id: string | null
+  doc_origen_tipo: string | null
+  referencia: string | null
+  descripcion: string | null
+  validado: number
+  validado_por: string | null
+  validado_at: string | null
+  reversado: number
+  reverso_de: string | null
+  fecha: string
+  created_at: string
+  created_by: string | null
+}
+
+export interface TraspasoTesoreria {
+  id: string
+  empresa_id: string
+  cuenta_origen_tipo: string
+  cuenta_origen_id: string
+  mov_origen_id: string | null
+  cuenta_destino_tipo: string
+  cuenta_destino_id: string
+  mov_destino_id: string | null
+  monto_origen: string
+  moneda_origen_id: string
+  monto_destino: string
+  moneda_destino_id: string
+  tasa_cambio: string | null
+  reversado: number
+  reversado_at: string | null
+  reversado_por: string | null
+  observacion: string | null
+  fecha: string
+  created_at: string
+  created_by: string | null
+  // pos-tesoreria-integration: link traspaso back to its originating session
+  sesion_caja_id: string | null
+}
+
+// 0079: lotes de punto de venta cargados por el cajero antes de cerrar la
+// sesión (dato de trabajo pre-cierre, no inmutable — ver migrations/0079).
+export interface LotesPosCuadre {
+  id: string
+  empresa_id: string
+  sesion_caja_id: string
+  metodo_cobro_id: string
+  moneda_id: string
+  nro_lote: string
+  monto: string              // NUMERIC(18,4) as string
+  created_at: string
+  created_by: string | null
+  updated_at: string
 }
 
 // =============================================
@@ -976,6 +1140,9 @@ export interface Gastos {
   created_at: string
   updated_at: string
   created_by: string | null
+  // 0068: trazabilidad inversa hacia el documento que generó el gasto
+  doc_origen_id: string | null
+  doc_origen_tipo: string | null
 }
 
 export interface CuentasConfig {
@@ -1164,6 +1331,7 @@ export interface DB {
   tasas_cambio: TasasCambio
   metodos_cobro: MetodosCobro
   bancos_empresa: BancosEmpresa
+  metodo_cobro_deducciones: MetodoCobroDeducciones
   cajas: Cajas
   impuestos_ve: ImpuestosVe
   niveles_precio: NivelesPrecio
@@ -1181,6 +1349,10 @@ export interface DB {
   ajustes: Ajustes
   ajustes_det: AjustesDet
   lotes: Lotes
+  traspasos_inventario: TraspasosInventario
+  traspasos_inventario_det: TraspasosInventarioDet
+  traspaso_plantillas: TraspasoPlantillas
+  traspaso_plantillas_det: TraspasoPlantillasDet
   // Clientes / CxC
   clientes: Clientes
   movimientos_cuenta: MovimientosCuenta
@@ -1198,6 +1370,10 @@ export interface DB {
   sesiones_caja_detalle: SesionesCajaDetalle
   movimientos_metodo_cobro: MovimientosMetodoCobro
   movimientos_bancarios: MovimientosBancarios
+  caja_fuerte: CajaFuerte
+  mov_caja_fuerte: MovCajaFuerte
+  traspasos_tesoreria: TraspasoTesoreria
+  lotes_pos_cuadre: LotesPosCuadre
   // Retenciones ventas
   retenciones_iva_ventas: RetencionesIvaVentas
   retenciones_islr_ventas: RetencionesIslrVentas

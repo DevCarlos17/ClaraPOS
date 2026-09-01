@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from 'react'
 import { MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
+import { useDeudaFacturasCliente, useDeudaFacturasClientes, useCreditoFavorClientes } from '@/features/cxc/hooks/use-deuda-cliente'
+import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
+import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { formatUsd } from '@/lib/currency'
 
 interface ClienteSelectorProps {
@@ -22,6 +25,12 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
   const [selectedCliente, setSelectedCliente] = useState<Cliente | null>(null)
   const [activeIndex, setActiveIndex] = useState(-1)
   const { clientes, isLoading } = useBuscarClientes(query)
+  // Deuda real de facturas — fuente del "Disponible" mostrado (nunca
+  // saldo_actual neteado, nunca suma saldo a favor). Ver design.md Decision 3.
+  const { deudaFacturasUsd: deudaSeleccionado } = useDeudaFacturasCliente(clienteId)
+  const { disponible: creditoSeleccionado } = useSaldoAFavor(clienteId)
+  const deudaPorCliente = useDeudaFacturasClientes(clientes.map((c) => c.id))
+  const creditoPorCliente = useCreditoFavorClientes(clientes.map((c) => c.id))
   const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -105,9 +114,8 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
 
   if (clienteId && selectedNombre) {
     const limite = selectedCliente ? parseFloat(selectedCliente.limite_credito_usd) : 0
-    const saldo = selectedCliente ? parseFloat(selectedCliente.saldo_actual) : 0
-    const disponible = Math.max(0, limite - saldo)
-    const excedido = saldo > limite
+    const disponible = calcularDisponibleCredito(limite, deudaSeleccionado).toNumber()
+    const excedido = limite > 0 && deudaSeleccionado > limite
 
     return (
       <div className="flex items-start gap-2 rounded-lg border bg-muted/50 px-3 py-2">
@@ -121,15 +129,23 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
             )}
             <p className="text-sm font-semibold truncate">{selectedNombre}</p>
           </div>
-          {/* Fila 2: Saldo + Disponible (sin Limite) */}
+          {/* Fila 2: Deuda + Disponible (sin Limite) + Saldo a favor (nunca neteado) */}
           {selectedCliente && (
             <p className="text-xs mt-0.5">
-              <span className="text-muted-foreground">Saldo: {formatUsd(selectedCliente.saldo_actual)}</span>
+              <span className="text-muted-foreground">Deuda: {formatUsd(deudaSeleccionado)}</span>
               {limite > 0 && (
                 <>
                   <span className="text-muted-foreground mx-1">|</span>
                   <span className={excedido ? 'text-destructive font-medium' : disponible < limite * 0.2 ? 'text-orange-600' : 'text-green-700'}>
                     Disponible: {excedido ? 'Excedido' : formatUsd(disponible)}
+                  </span>
+                </>
+              )}
+              {creditoSeleccionado > 0.001 && (
+                <>
+                  <span className="text-muted-foreground mx-1">|</span>
+                  <span className="text-green-700 font-medium">
+                    Saldo a favor: +{formatUsd(creditoSeleccionado)}
                   </span>
                 </>
               )}
@@ -177,8 +193,9 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
           ) : (
             clientes.map((c, i) => {
               const limite = parseFloat(c.limite_credito_usd)
-              const saldo = parseFloat(c.saldo_actual)
-              const disponible = limite > 0 ? Math.max(0, limite - saldo) : null
+              const deudaC = deudaPorCliente[c.id] ?? 0
+              const creditoC = creditoPorCliente[c.id] ?? 0
+              const disponible = limite > 0 ? calcularDisponibleCredito(limite, deudaC).toNumber() : null
               return (
                 <button
                   key={c.id}
@@ -195,11 +212,16 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xs text-muted-foreground">
-                        Saldo: {formatUsd(c.saldo_actual)}
+                        Deuda: {formatUsd(deudaC)}
                       </p>
                       {disponible !== null && (
-                        <p className={`text-xs ${disponible === 0 && saldo > limite ? 'text-destructive' : 'text-green-700'}`}>
+                        <p className={`text-xs ${disponible === 0 && deudaC > limite ? 'text-destructive' : 'text-green-700'}`}>
                           Disp: {formatUsd(disponible)}
+                        </p>
+                      )}
+                      {creditoC > 0.001 && (
+                        <p className="text-xs text-green-700 font-medium">
+                          Saldo a favor: +{formatUsd(creditoC)}
                         </p>
                       )}
                     </div>

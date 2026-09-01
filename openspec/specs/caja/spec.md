@@ -1,7 +1,7 @@
-# Spec: Caja — SAF en cuadre de sesión
+# Spec: Caja — SAF en cuadre de sesión + Consolidación a Tesorería
 
-> **Domain**: caja (cross-cutting: `features/caja` + `features/reportes`)
-> **Last updated by change**: `caja-saf` (2026-06-06) — added CAP-3, CAP-1, CAP-2
+> **Domain**: caja (cross-cutting: `features/caja` + `features/reportes` + `features/tesoreria`)
+> **Last updated by change**: `cierre-consolidacion-tesoreria` (2026-07-24) — added CAP-4
 
 ---
 
@@ -131,9 +131,60 @@ Click en "Saldo a favor aplicado" MUST abrir modal con `tipo='SAF'` de la sesió
 
 ---
 
+## CAP-4: cierre-consolidacion-tesoreria
+
+_Change: `cierre-consolidacion-tesoreria` (archived 2026-07-24)_
+
+### Requirement: cerrarSesionCaja triggers Tesorería consolidation atomically
+
+`cerrarSesionCaja` MUST, inside its existing `writeTransaction` and after populating `sesiones_caja_detalle`, invoke the `tesoreria-consolidacion-cierre` capability (see `openspec/specs/tesoreria-consolidacion-cierre/spec.md`) for every used method. Consolidation MUST use the same transaction handle (no nested `writeTransaction`) so any consolidation failure rolls back the ENTIRE cierre atomically, including the `sesiones_caja.status` update. The existing `status='ABIERTA'` guard MUST continue to provide idempotency — a session cannot be closed (and consolidated) twice.
+
+The `sesiones_caja.status='CERRADA'` UPDATE MUST be the LAST write inside `cerrarSesionCaja`'s transaction (not an early step), so that PostgreSQL trigger `fn_validate_sesion_abierta` (migration 0041), which rejects `movimientos_metodo_cobro`/`pagos` INSERTs against a non-`ABIERTA` session, sees the session as still `ABIERTA` while consolidation writes its `movimientos_metodo_cobro` EGRESO rows during PowerSync's sequential, write-order-preserving upload.
+
+#### Scenario: Successful cierre also consolidates to Tesorería
+
+- GIVEN an open session with mixed-method activity
+- WHEN the cashier confirms cierre
+- THEN `sesiones_caja.status` becomes `CERRADA` AND the corresponding pending Tesorería transfers exist, all committed in the same transaction
+
+#### Scenario: Consolidation failure blocks the whole cierre
+
+- GIVEN a method lacking a valid destination or a missing commission account
+- WHEN cierre is attempted
+- THEN the transaction throws, `sesiones_caja.status` stays `ABIERTA`, and no `sesiones_caja_detalle` row from this attempt persists either
+
+#### Scenario: Status flip ordered after consolidation writes (sync-safety)
+
+- GIVEN a cierre that consolidates at least one method to Tesorería
+- WHEN the local transaction's writes upload to Supabase in original order
+- THEN every `movimientos_metodo_cobro` EGRESO_TESORERIA insert reaches Postgres while the session is still `ABIERTA` there, so `fn_validate_sesion_abierta` does not reject it; the `status='CERRADA'` UPDATE is the last op in the batch
+
+### Requirement: Mensaje informativo de depósito a Tesorería al cerrar sesión
+
+Since cierre now deposits automatically via `tesoreria-consolidacion-cierre`, the system MUST NOT show any manual-deposit reminder toast after a successful cierre. The cashier is no longer responsible for manually depositing reported cash.
+
+#### Scenario: Successful cierre shows no deposit reminder
+
+- GIVEN a cashier completes cierre successfully
+- WHEN the success toast appears
+- THEN no additional "recuerda depositar" informational toast is shown afterward
+
+#### Scenario: Failed cierre still shows no reminder (unchanged)
+
+- GIVEN cierre fails
+- WHEN the error toast appears
+- THEN no deposit-reminder toast appears — same as before this change
+
+---
+
 ## Known Open Items
 
 | ID | Description |
 |----|-------------|
 | DEUDA-1 | `ResumenSesionCerradaModal` no muestra la fila SAF del snapshot — INNER JOIN sobre `metodo_cobro_id` excluye la fila virtual con NULL. Pendiente para futura iteración. |
 | DEUDA-2 | Empty state del modal dice "en esta sesión" en lugar de "hoy" (cosmético; implementación es más precisa que el spec original). |
+| DEUDA-3 | `cuadre-page.tsx` `ResumenSesionCerradaModal` query previamente seleccionaba `mc.moneda` (columna inexistente en `metodos_cobro`, solo existe `moneda_id`) — arreglado vía JOIN a `monedas` durante `cierre-consolidacion-tesoreria` (commit `808c714`), bug preexistente desde 2026-05-07 (commit `d5debc1`), no introducido por este cambio. |
+| DEUDA-4 | Factura con métodos de pago combinados mostrando solo métodos en efectivo en el cuadre — síntoma secundario detectado durante QA de `cierre-consolidacion-tesoreria`, sin diagnosticar; movido a exploración del cambio `conciliacion-lotes-pos`. |
+| DEUDA-5 | Carrera de lectura-escritura preexistente en `caja_fuerte.saldo_actual` / `bancos_empresa.saldo_actual` en cierres concurrentes (sin row locking) — documentada como riesgo conocido, no corregida en `cierre-consolidacion-tesoreria`. |
+| DEUDA-6 | Gap sistémico en `connector.ts` `uploadData()`: sube CRUD ops secuencialmente en orden de escritura local y, ante un error FATAL, descarta el resto del batch pendiente (`transaction.complete()`). Si la consolidación falla a mitad de loop por una razón no relacionada, Postgres podría quedar con consolidación parcial y el UPDATE final de `status='CERRADA'` descartado (sesión queda `ABIERTA` en Postgres). Estrictamente no peor que el bug que esto reemplaza, pero es un gap sistémico de atomicidad multi-statement que ameritaría una RPC/función de Postgres a futuro. |
+| DEUDA-7 | `pos-tesoreria-integration` (change previo) nunca fue archivado — su delta de `caja` (toast de recordatorio de depósito) quedó fuera del main spec hasta que `cierre-consolidacion-tesoreria` lo superó (MODIFIED requirement arriba). Considerar limpiar/archivar formalmente ese change folder si aún existe activo. |

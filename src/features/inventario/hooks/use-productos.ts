@@ -30,6 +30,7 @@ export interface Producto {
   presentacion: string | null
   codigo_barras: string | null
   duracion_min: number | null
+  deposito_id: string | null
 }
 
 export function useProductos() {
@@ -106,6 +107,8 @@ export async function crearProducto(data: {
   presentacion?: string
   codigo_barras?: string
   duracion_min?: number | null
+  /** Deposito por defecto donde ingresa stock nuevo (compras, kardex). NULL = sin definir (cae al principal en tiempo de resolucion). */
+  deposito_id?: string | null
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -119,14 +122,14 @@ export async function crearProducto(data: {
       tipo: data.tipo,
       nombre: data.nombre.toUpperCase(),
       departamento_id: data.departamento_id,
-      costo_usd: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
-      precio_venta_usd: data.precio_venta_usd.toFixed(2),
-      precio_mayor_usd: data.precio_mayor_usd?.toFixed(2) ?? null,
-      precio_especial_usd: data.precio_especial_usd?.toFixed(2) ?? null,
+      costo_usd: isServicioOCombo && data.tipo === 'C' ? '0.00000000' : data.costo_usd.toFixed(8),
+      precio_venta_usd: data.precio_venta_usd.toFixed(8),
+      precio_mayor_usd: data.precio_mayor_usd?.toFixed(8) ?? null,
+      precio_especial_usd: data.precio_especial_usd?.toFixed(8) ?? null,
       stock: '0.000',
       stock_minimo: isServicioOCombo ? '0.000' : data.stock_minimo.toFixed(3),
       costo_promedio: '0.00',
-      costo_ultimo: isServicioOCombo && data.tipo === 'C' ? '0.00' : data.costo_usd.toFixed(2),
+      costo_ultimo: isServicioOCombo && data.tipo === 'C' ? '0.00000000' : data.costo_usd.toFixed(8),
       tipo_impuesto: data.tipo_impuesto ?? 'Exento',
       impuesto_iva_id: data.tipo_impuesto === 'Gravable' ? (data.impuesto_iva_id ?? null) : null,
       maneja_lotes: isServicioOCombo ? 0 : (data.maneja_lotes ? 1 : 0),
@@ -139,6 +142,7 @@ export async function crearProducto(data: {
       presentacion: isServicioOCombo ? null : (data.presentacion?.toUpperCase() || null),
       codigo_barras: data.codigo_barras?.trim() || null,
       duracion_min: data.tipo === 'S' ? (data.duracion_min ?? null) : null,
+      deposito_id: data.deposito_id ?? null,
     })
     .execute()
 
@@ -165,6 +169,8 @@ export async function actualizarProducto(
     presentacion?: string | null
     codigo_barras?: string | null
     duracion_min?: number | null
+    /** Deposito por defecto (editable). Solo se toca si se provee explicitamente. */
+    deposito_id?: string | null
   }
 ) {
   const now = localNow()
@@ -172,10 +178,10 @@ export async function actualizarProducto(
 
   if (data.nombre !== undefined) updates.nombre = data.nombre.toUpperCase()
   if (data.departamento_id !== undefined) updates.departamento_id = data.departamento_id
-  if (data.costo_usd !== undefined) updates.costo_usd = data.costo_usd.toFixed(2)
-  if (data.precio_venta_usd !== undefined) updates.precio_venta_usd = data.precio_venta_usd.toFixed(2)
-  if (data.precio_mayor_usd !== undefined) updates.precio_mayor_usd = data.precio_mayor_usd?.toFixed(2) ?? null
-  if (data.precio_especial_usd !== undefined) updates.precio_especial_usd = data.precio_especial_usd?.toFixed(2) ?? null
+  if (data.costo_usd !== undefined) updates.costo_usd = data.costo_usd.toFixed(8)
+  if (data.precio_venta_usd !== undefined) updates.precio_venta_usd = data.precio_venta_usd.toFixed(8)
+  if (data.precio_mayor_usd !== undefined) updates.precio_mayor_usd = data.precio_mayor_usd?.toFixed(8) ?? null
+  if (data.precio_especial_usd !== undefined) updates.precio_especial_usd = data.precio_especial_usd?.toFixed(8) ?? null
   if (data.stock_minimo !== undefined) updates.stock_minimo = data.stock_minimo.toFixed(3)
   if (data.tipo_impuesto !== undefined) updates.tipo_impuesto = data.tipo_impuesto
   if (data.impuesto_iva_id !== undefined) {
@@ -188,6 +194,7 @@ export async function actualizarProducto(
   if (data.presentacion !== undefined) updates.presentacion = data.presentacion ? data.presentacion.toUpperCase() : null
   if (data.codigo_barras !== undefined) updates.codigo_barras = data.codigo_barras?.trim() || null
   if (data.duracion_min !== undefined) updates.duracion_min = data.duracion_min ?? null
+  if (data.deposito_id !== undefined) updates.deposito_id = data.deposito_id ?? null
 
   // Servicios y Combos no manejan stock ni presentacion fisica
   if (data.tipo === 'S' || data.tipo === 'C') {

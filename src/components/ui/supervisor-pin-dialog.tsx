@@ -3,6 +3,7 @@ import { ShieldCheck } from '@phosphor-icons/react'
 import { hashPin } from '@/lib/crypto'
 import { usePowerSync } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { connector } from '@/core/db/powersync/connector'
 
 interface SupervisorPinDialogProps {
   isOpen: boolean
@@ -56,10 +57,57 @@ export function SupervisorPinDialog({
     try {
       const hash = await hashPin(pin, user.empresa_id)
 
-      const result = await db.getAll<{ id: string; rol_id: string; level: number }>(
-        `SELECT id, rol_id, level FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
-        [user.empresa_id, hash]
-      )
+      // 1. Intentar en SQLite local (funciona offline y es más rápido)
+      //    Si falla (p.ej. columna pin_supervisor_hash no existe en la caché local),
+      //    se ignora el error y se va directo al fallback de Supabase.
+      let result: { id: string; rol_id: string; level: number }[] = []
+      try {
+        result = await db.getAll<{ id: string; rol_id: string; level: number }>(
+          `SELECT id, rol_id, level FROM usuarios WHERE empresa_id = ? AND pin_supervisor_hash = ? AND is_active = 1`,
+          [user.empresa_id, hash]
+        )
+      } catch {
+        // columna no sincronizada aún — continuar con fallback
+      }
+
+      // 2. Fallback a Supabase si SQLite no tiene el hash (sync delay o columna ausente)
+      if (result.length === 0) {
+        try {
+          const { data: { session } } = await connector.client.auth.getSession()
+          if (session) {
+            // Nota: no seleccionamos `level` aquí porque puede no existir en la
+            // tabla de Supabase dependiendo de la migración aplicada.
+            // Lo obtenemos de SQLite en el siguiente paso si es necesario.
+            const { data, error: sbError } = await connector.client
+              .from('usuarios')
+              .select('id, rol_id')
+              .eq('empresa_id', user.empresa_id)
+              .eq('pin_supervisor_hash', hash)
+              .eq('is_active', true)
+              .limit(1)
+            if (sbError) {
+              console.error('[PIN] Supabase fallback error:', sbError)
+            }
+            if (data && data.length > 0) {
+              // Completar con level desde SQLite (si está disponible)
+              let levelValue = 3
+              try {
+                const lvl = await db.getAll<{ level: number }>(
+                  'SELECT level FROM usuarios WHERE id = ?',
+                  [data[0].id]
+                )
+                levelValue = lvl[0]?.level ?? 3
+              } catch {
+                // level no disponible en SQLite — usar default seguro (3 = Cajero)
+              }
+              result = [{ id: data[0].id, rol_id: data[0].rol_id, level: levelValue }]
+            }
+          }
+        } catch (err) {
+          console.error('[PIN] Error en fallback Supabase:', err)
+          // Sin conexión — continuar con resultado vacío
+        }
+      }
 
       if (!result || result.length === 0) {
         setError('PIN incorrecto')

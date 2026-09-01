@@ -28,4 +28,7 @@ export const CLAVES_CONFIG: Record<string, string> = {
   COSTO_VENTA: 'Costo de mercancia vendida',
   GANANCIA_DIFERENCIAL_CAMBIARIO: 'Ganancia por diferencial cambiario',
   PERDIDA_DIFERENCIAL_CAMBIARIO: 'Perdida por diferencial cambiario',
+  COMISION_BANCARIA: 'Comisiones bancarias (cierre de caja)',
+  MATERIAL_EMPAQUE: 'Material de empaque (cargos en factura de compra)',
+  FLETE_COMPRA: 'Flete y transporte de mercancia (cargos en factura de compra)',
 }

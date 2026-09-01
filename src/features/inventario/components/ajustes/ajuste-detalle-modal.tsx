@@ -3,8 +3,9 @@ import { toast } from 'sonner'
 import { Printer } from '@phosphor-icons/react'
 import { useAjusteDetalle, useAjuste, aplicarAjuste, anularAjuste } from '@/features/inventario/hooks/use-ajustes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { formatDate } from '@/lib/format'
+import { formatDate, formatDateTime } from '@/lib/format'
 import { formatUsd } from '@/lib/currency'
+import { localNow } from '@/lib/dates'
 
 interface AjusteDetalleModalProps {
   isOpen: boolean
@@ -158,7 +159,7 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
       </tr>
     </tfoot>
   </table>
-  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${new Date().toLocaleString('es-VE', { timeZone: 'America/Caracas' })}</p>
+  <p style="margin-top:16px;font-size:10px;color:#9ca3af">Generado: ${formatDateTime(localNow())}</p>
 </body>
 </html>`)
     w.document.close()
@@ -209,8 +210,9 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                 <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="text-left px-4 py-3 font-medium text-gray-700">Producto</th>
                   <th className="text-left px-4 py-3 font-medium text-gray-700">Deposito</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-700">Cantidad</th>
-                  <th className="text-right px-4 py-3 font-medium text-gray-700">Costo Unit.</th>
+                   <th className="text-right px-4 py-3 font-medium text-gray-700">Cantidad</th>
+                   <th className="text-right px-4 py-3 font-medium text-gray-700">Costo Unit.</th>
+                   <th className="text-right px-4 py-3 font-medium text-gray-700">Total</th>
                 </tr>
               </thead>
               <tbody>
@@ -225,12 +227,17 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                     <td className="px-4 py-3 text-right tabular-nums text-gray-900">
                       {parseFloat(linea.cantidad).toFixed(3)}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-gray-700">
-                      {linea.costo_unitario != null
-                        ? `$${parseFloat(linea.costo_unitario).toFixed(2)}`
-                        : '-'}
-                    </td>
-                  </tr>
+                     <td className="px-4 py-3 text-right tabular-nums text-gray-700">
+                       {linea.costo_unitario != null
+                         ? `$${parseFloat(linea.costo_unitario).toFixed(4)}`
+                         : '-'}
+                     </td>
+                     <td className="px-4 py-3 text-right tabular-nums text-gray-900 font-medium">
+                       {linea.costo_unitario != null
+                         ? `$${(parseFloat(linea.cantidad) * parseFloat(linea.costo_unitario)).toFixed(4)}`
+                         : '-'}
+                     </td>
+                   </tr>
                 ))}
               </tbody>
             </table>
@@ -266,7 +273,7 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
         {showConfirmAnular && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-md">
             <p className="text-sm font-medium text-red-800 mb-2">
-              Anular este ajuste revertira todos los movimientos de inventario generados. Ingresa el motivo:
+              Reversar este ajuste creara contra-movimientos en el inventario y anulara el gasto contable asociado (si existe). Ingresa el motivo:
             </p>
             <input
               type="text"
@@ -281,7 +288,7 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                 disabled={applying || !motivoAnulacion.trim()}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
               >
-                {applying ? 'Anulando...' : 'Confirmar Anulacion'}
+                {applying ? 'Reversando...' : 'Confirmar reverso'}
               </button>
               <button
                 onClick={() => { setShowConfirmAnular(false); setMotivoAnulacion('') }}
@@ -307,14 +314,14 @@ export function AjusteDetalleModal({ isOpen, onClose, ajusteId }: AjusteDetalleM
                 Aplicar Ajuste
               </button>
             )}
-            {/* Anular: solo si APLICADO */}
+            {/* Reversar: solo si APLICADO */}
             {ajuste?.status === 'APLICADO' && !showConfirmAplicar && (
               <button
                 onClick={() => setShowConfirmAnular((v) => !v)}
                 disabled={applying}
                 className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 disabled:opacity-50 transition-colors"
               >
-                Anular
+                Reversar ajuste
               </button>
             )}
             {/* PDF */}

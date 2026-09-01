@@ -2,9 +2,14 @@ import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
+import Decimal from 'decimal.js'
+import { toStorageString } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
+import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
+import { resolveDepositoReingresoNcr } from '@/features/inventario/lib/deposito-inactivo'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -115,17 +120,12 @@ export function useBuscarFacturaParaAnular(query: string) {
 }
 
 // ─── Detalle de factura (articulos + pagos) ─────────────────
+// La consulta de lineas (ventas_det + productos) vive en el hook canonico
+// de `use-cxc.ts` — aca solo se agrega la consulta de pagos, propia de este
+// flujo de anulacion/reimpresion.
 
 export function useDetalleFactura(ventaId: string | null) {
-  const { data: detalles, isLoading: loadingDetalles } = useQuery(
-    ventaId
-      ? `SELECT p.nombre as producto_nombre, p.codigo as producto_codigo, dv.cantidad, dv.precio_unitario_usd
-         FROM ventas_det dv
-         JOIN productos p ON dv.producto_id = p.id
-         WHERE dv.venta_id = ?`
-      : '',
-    ventaId ? [ventaId] : []
-  )
+  const { detalle, isLoading: loadingDetalles } = useDetalleFacturaCanonica(ventaId)
 
   const { data: pagos, isLoading: loadingPagos } = useQuery(
     ventaId
@@ -139,7 +139,7 @@ export function useDetalleFactura(ventaId: string | null) {
   )
 
   return {
-    detalles: (detalles ?? []) as DetalleFacturaItem[],
+    detalles: detalle,
     pagos: (pagos ?? []) as PagoFacturaItem[],
     isLoading: loadingDetalles || loadingPagos,
   }
@@ -159,26 +159,10 @@ export async function crearNotaCredito(
     const now = localNow()
     ncrId = uuidv4()
 
-    // 0. Obtener deposito principal de la empresa
-    const depResult = await tx.execute(
-      'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
-      [empresa_id]
-    )
-    let depositoId: string
-    if (depResult.rows && depResult.rows.length > 0) {
-      depositoId = (depResult.rows.item(0) as { id: string }).id
-    } else {
-      const depFallback = await tx.execute(
-        'SELECT id FROM depositos WHERE empresa_id = ? AND is_active = 1 LIMIT 1',
-        [empresa_id]
-      )
-      if (!depFallback.rows || depFallback.rows.length === 0) {
-        throw new Error('No hay depositos configurados. Cree un deposito primero.')
-      }
-      depositoId = (depFallback.rows.item(0) as { id: string }).id
-    }
-
-    // 1. Leer factura y validar
+    // 1. Leer factura y validar. El reingreso de stock vuelve al deposito
+    //    de ORIGEN de la venta (`venta.deposito_id`, NOT NULL desde
+    //    0006_ventas.sql) — NUNCA se re-deriva el deposito principal de la
+    //    empresa (spec NCD/Reingreso al Deposito de Origen).
     const ventaResult = await tx.execute('SELECT * FROM ventas WHERE id = ?', [venta_id])
     if (!ventaResult.rows || ventaResult.rows.length === 0) {
       throw new Error('Factura no encontrada')
@@ -193,10 +177,58 @@ export async function crearNotaCredito(
       saldo_pend_usd: string
       tipo: string
       status: string
+      deposito_id: string
     }
+    const depositoOrigenId = venta.deposito_id
 
     if (venta.status === 'ANULADA') {
       throw new Error('Esta factura ya fue anulada')
+    }
+
+    // Reingreso automatico (change `guarda-deposito-inactivo` Slice B,
+    // decision de producto #3, obs #2228): si el deposito de ORIGEN de la
+    // venta sigue activo, el stock reingresa ahi (comportamiento pre-existente,
+    // sin cambios). Si fue desactivado desde la venta, cae AUTOMATICAMENTE al
+    // deposito principal ACTUAL de la empresa — el cajero NUNCA elige (flujo
+    // POS-express, "reversar factura del dia"). Resuelto ANTES de construir
+    // cualquier INSERT de `movimientos_inventario`, para que el trigger DB de
+    // defensa en profundidad (migracion 0087) nunca vea un fallback en
+    // transito — siempre recibe un deposito YA activo.
+    //
+    // La consulta al principal SOLO ocurre cuando el origen esta inactivo
+    // (lazy) — preserva el comportamiento pre-existente de NUNCA tocar
+    // `es_principal` cuando el origen sigue activo (test "NO al deposito
+    // principal de la empresa").
+    const depositoOrigenResult = await tx.execute(
+      'SELECT is_active FROM depositos WHERE id = ?',
+      [depositoOrigenId]
+    )
+    const depositoOrigenIsActive =
+      !!depositoOrigenResult.rows &&
+      depositoOrigenResult.rows.length > 0 &&
+      (depositoOrigenResult.rows.item(0) as { is_active: number }).is_active === 1
+
+    let principalDepositoId: string | null = null
+    if (!depositoOrigenIsActive) {
+      const principalResult = await tx.execute(
+        'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+        [empresa_id]
+      )
+      principalDepositoId =
+        principalResult.rows && principalResult.rows.length > 0
+          ? (principalResult.rows.item(0) as { id: string }).id
+          : null
+    }
+
+    const depositoId = resolveDepositoReingresoNcr(
+      depositoOrigenId,
+      depositoOrigenIsActive,
+      principalDepositoId
+    )
+    if (!depositoId) {
+      throw new Error(
+        'No se pudo reintegrar el stock: no hay un deposito activo disponible en la empresa. Configure un deposito principal.'
+      )
     }
 
     // 2. Generar nro_ncr (por empresa)
@@ -286,11 +318,15 @@ export async function crearNotaCredito(
             ]
           )
 
-          await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-            stockNuevo.toFixed(3),
+          await upsertStockDeposito(tx, {
+            empresa_id,
+            producto_id: linea.producto_id,
+            deposito_id: depositoId,
+            delta: new Decimal(cantidadVendida),
+            usuario_id,
             now,
-            linea.producto_id,
-          ])
+            movimientoInventarioId: movId,
+          })
 
           // Si la linea tenia lote, restaurar cantidad en el lote
           if (linea.lote_id) {
@@ -353,11 +389,15 @@ export async function crearNotaCredito(
                 ]
               )
 
-              await tx.execute('UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?', [
-                stockNuevoIng.toFixed(3),
+              await upsertStockDeposito(tx, {
+                empresa_id,
+                producto_id: ingrediente.producto_id,
+                deposito_id: depositoId,
+                delta: new Decimal(cantidadConsumida),
+                usuario_id,
                 now,
-                ingrediente.producto_id,
-              ])
+                movimientoInventarioId: movIngId,
+              })
             }
           }
         }
@@ -365,18 +405,18 @@ export async function crearNotaCredito(
     }
 
     // 5. Ajuste de saldo del cliente — solo si hay deuda pendiente
-    const saldoPend = parseFloat(venta.saldo_pend_usd)
-    if (saldoPend > 0.01) {
+    const saldoPend = new Decimal(venta.saldo_pend_usd)
+    if (saldoPend.gt('0.01')) {
       const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
         venta.cliente_id,
       ])
       if (!clienteResult.rows || clienteResult.rows.length === 0) {
         throw new Error('Cliente no encontrado')
       }
-      const saldoActual = parseFloat(
+      const saldoActual = new Decimal(
         (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
       )
-      const saldoNuevo = Math.max(0, Number((saldoActual - saldoPend).toFixed(2)))
+      const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(saldoPend))
 
       const movCuentaId = uuidv4()
       await tx.execute(
@@ -386,9 +426,9 @@ export async function crearNotaCredito(
           movCuentaId,
           venta.cliente_id,
           nroNcr,
-          saldoPend.toFixed(2),
-          saldoActual.toFixed(2),
-          saldoNuevo.toFixed(2),
+          toStorageString(saldoPend),
+          toStorageString(saldoActual),
+          toStorageString(saldoNuevo),
           `Anulacion de factura ${venta.nro_factura}`,
           venta_id,
           now,
@@ -398,10 +438,23 @@ export async function crearNotaCredito(
       )
 
       await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-        saldoNuevo.toFixed(2),
+        toStorageString(saldoNuevo),
         now,
         venta.cliente_id,
       ])
+    }
+
+    // 5b. Si la factura tenía un diferencial cambiario aplicado, reversarlo también
+    try {
+      await reversarDiferencialEnTx(tx, {
+        ventaId: venta_id,
+        clienteId: venta.cliente_id,
+        nroFactura: venta.nro_factura,
+        empresaId: empresa_id,
+        procesadoPor: usuario_id,
+      }, now)
+    } catch {
+      // DIFE reversal opcional — no bloquea la anulación
     }
 
     // 6. Marcar factura como anulada
@@ -418,8 +471,8 @@ export async function crearNotaCredito(
         ncrId,
         nroNcr,
         ventaId: venta_id,
-        totalUsd: parseFloat(venta.total_usd),
-        afectaCxC: saldoPend > 0.01,
+        totalUsd: new Decimal(venta.total_usd).toNumber(),
+        afectaCxC: saldoPend.gt('0.01'),
         banco_empresa_id: null,
         cuentas,
         usuarioId: usuario_id,

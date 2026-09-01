@@ -2,16 +2,21 @@ import { useRef, useState, useEffect, useMemo } from 'react'
 import { Plus, ChartBar, CaretDown, CaretUp, MagnifyingGlass, CalendarDots, BookOpen, X } from '@phosphor-icons/react'
 import {
   useGastos,
+  useGastosManualesRecientes,
   type Gasto,
 } from '@/features/contabilidad/hooks/use-gastos'
-import { useGruposGastoConSubcuentas } from '@/features/contabilidad/hooks/use-plan-cuentas'
+import {
+  useGruposGastoConSubcuentas,
+  findGrupoGastoById,
+  type GrupoConSubcuentas,
+} from '@/features/contabilidad/hooks/use-plan-cuentas'
 import { GastoForm } from './gasto-form'
 import { GastosKpis } from './gastos-kpis'
 import { GastoReportes, type TipoReporte } from './gasto-reportes'
 import { FacturaProveedorModal } from '@/features/compras/components/factura-proveedor-modal'
 import { CuentaGastoModal } from './cuenta-gasto-modal'
 import { formatDate } from '@/lib/format'
-import { formatUsd } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { todayStr, startOfMonth } from '@/lib/dates'
 
 // ─── Tipos ───────────────────────────────────────────────────
@@ -23,6 +28,17 @@ type GastoConJoins = Gasto & {
 }
 
 type GastoSortKey = 'nro_gasto' | 'fecha' | 'monto_usd' | 'status'
+
+/** Nodo del resumen por grupo — recursivo, admite subgrupos anidados a cualquier profundidad. */
+interface ResumenNode {
+  id: string
+  nombre: string
+  codigo: string
+  totalUsd: number
+  count: number
+  subgrupos: ResumenNode[]
+  subcuentas: { id: string; nombre: string; codigo: string; totalUsd: number; count: number }[]
+}
 
 function SortIcon({ field, current, dir }: { field: GastoSortKey; current: GastoSortKey; dir: 'asc' | 'desc' }) {
   if (field !== current) return <CaretDown className="h-3 w-3 opacity-30 inline ml-1" />
@@ -98,10 +114,15 @@ export function GastoList() {
 
   const hasConsulta = Boolean(consultaActiva)
 
-  const { gastos, isLoading } = useGastos(
+  const { gastos: gastosPorFecha, isLoading: isLoadingFecha } = useGastos(
     consultaActiva?.desde,
     consultaActiva?.hasta
   )
+  const { gastos: gastosRecientes, isLoading: isLoadingRecientes } = useGastosManualesRecientes(10)
+
+  // Usar gastos del rango si hay consulta activa, si no mostrar últimos manuales
+  const gastos = hasConsulta ? gastosPorFecha : gastosRecientes
+  const isLoading = hasConsulta ? isLoadingFecha : isLoadingRecientes
   const { grupos } = useGruposGastoConSubcuentas()
 
   // Validacion del rango
@@ -119,32 +140,49 @@ export function GastoList() {
     setConsultaActiva({ desde: fechaDesde, hasta: fechaHasta })
   }
 
-  // Resumen de gastos agrupado por grupo → subcuenta (solo REGISTRADO)
+  // Resumen de gastos agrupado por grupo → subgrupo (recursivo, cualquier
+  // profundidad) → subcuenta (solo REGISTRADO). Un nodo (grupo o subgrupo)
+  // solo se incluye si el tiene registros en algun nivel de su subarbol —
+  // evita entradas fantasma vacias sin importar la profundidad.
   const resumenPorGrupo = useMemo(() => {
     if (!hasConsulta || gastos.length === 0) return []
     const registrados = gastos.filter((g) => g.status === 'REGISTRADO')
+
+    function buildResumenNode(grupo: GrupoConSubcuentas): ResumenNode | null {
+      const subcuentasConData = grupo.hojas
+        .map((sub) => {
+          const items = registrados.filter((g) => g.cuenta_id === sub.id)
+          if (items.length === 0) return null
+          const totalUsd = items.reduce((sum, g) => sum + (parseFloat(g.monto_usd) || 0), 0)
+          return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, totalUsd, count: items.length }
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+
+      const subgrupos = grupo.subgrupos
+        .map(buildResumenNode)
+        .filter((x): x is NonNullable<typeof x> => x !== null)
+
+      if (subcuentasConData.length === 0 && subgrupos.length === 0) return null
+
+      const totalUsd =
+        subcuentasConData.reduce((sum, s) => sum + s.totalUsd, 0) +
+        subgrupos.reduce((sum, s) => sum + s.totalUsd, 0)
+      const count =
+        subcuentasConData.reduce((sum, s) => sum + s.count, 0) +
+        subgrupos.reduce((sum, s) => sum + s.count, 0)
+
+      return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, totalUsd, count, subgrupos, subcuentas: subcuentasConData }
+    }
+
     return grupos
-      .map((grupo) => {
-        const subcuentasConData = grupo.subcuentas
-          .map((sub) => {
-            const items = registrados.filter((g) => g.cuenta_id === sub.id)
-            if (items.length === 0) return null
-            const totalUsd = items.reduce((sum, g) => sum + (parseFloat(g.monto_usd) || 0), 0)
-            return { id: sub.id, nombre: sub.nombre, codigo: sub.codigo, totalUsd, count: items.length }
-          })
-          .filter((x): x is NonNullable<typeof x> => x !== null)
-        if (subcuentasConData.length === 0) return null
-        const totalUsd = subcuentasConData.reduce((sum, s) => sum + s.totalUsd, 0)
-        const count = subcuentasConData.reduce((sum, s) => sum + s.count, 0)
-        return { id: grupo.id, nombre: grupo.nombre, codigo: grupo.codigo, totalUsd, count, subcuentas: subcuentasConData }
-      })
+      .map(buildResumenNode)
       .filter((x): x is NonNullable<typeof x> => x !== null)
   }, [gastos, grupos, hasConsulta])
 
   // Gastos filtrados por grupo seleccionado (para la tabla plana)
   const gastosFiltrados = useMemo(() => {
     if (!filtroGrupoId) return gastos
-    const grupo = grupos.find((g) => g.id === filtroGrupoId)
+    const grupo = findGrupoGastoById(grupos, filtroGrupoId)
     if (!grupo) return gastos
     const subIds = new Set(grupo.subcuentas.map((s) => s.id))
     return gastos.filter((g) => subIds.has(g.cuenta_id))
@@ -160,6 +198,44 @@ export function GastoList() {
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') handleConsultar()
+  }
+
+  // Render recursivo del nodo de resumen (grupo o subgrupo anidado a
+  // cualquier profundidad) — reemplaza el render de 2 niveles hardcodeado.
+  function renderResumenNode(nodo: ResumenNode, depth: number) {
+    const paddingLeft = 16 + depth * 24
+    const paddingLeftHoja = paddingLeft + 24
+
+    return (
+      <div key={nodo.id}>
+        <button
+          type="button"
+          onClick={() => setFiltroGrupoId(filtroGrupoId === nodo.id ? null : nodo.id)}
+          className={`w-full flex items-center justify-between py-2.5 pr-4 text-left transition-colors hover:bg-muted/30 ${
+            filtroGrupoId === nodo.id ? 'bg-primary/5' : ''
+          }`}
+          style={{ paddingLeft }}
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">{nodo.codigo}</span>
+            <span className="text-sm font-semibold text-foreground">{nodo.nombre}</span>
+            <span className="text-[10px] text-muted-foreground">({nodo.count})</span>
+          </div>
+          <span className="text-sm font-bold text-foreground tabular-nums shrink-0">{formatUsd(nodo.totalUsd)}</span>
+        </button>
+        {nodo.subgrupos.map((sg) => renderResumenNode(sg, depth + 1))}
+        {nodo.subcuentas.map((sub) => (
+          <div key={sub.id} className="flex items-center justify-between py-1.5 pr-4 bg-muted/10 border-t border-border/30" style={{ paddingLeft: paddingLeftHoja }}>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">{sub.codigo}</span>
+              <span className="text-xs text-muted-foreground">{sub.nombre}</span>
+              <span className="text-[10px] text-muted-foreground/60">({sub.count})</span>
+            </div>
+            <span className="text-xs font-medium text-foreground tabular-nums shrink-0">{formatUsd(sub.totalUsd)}</span>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   // Cerrar dropdown al hacer clic fuera
@@ -248,12 +324,82 @@ export function GastoList() {
         )}
       </div>
 
-      {/* Estado sin consulta activa */}
+      {/* Vista por defecto: últimos 10 gastos manuales (sin consulta activa) */}
       {!hasConsulta ? (
-        <div className="text-center py-16 text-muted-foreground">
-          <CalendarDots className="h-10 w-10 mx-auto mb-3 opacity-40" />
-          <p className="text-base font-medium">Seleccione un rango de fechas</p>
-          <p className="text-sm mt-1">Elija las fechas de inicio y fin, luego presione "Consultar"</p>
+        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between px-4 py-3 bg-muted/40 border-b border-border">
+            <p className="text-sm text-muted-foreground font-medium">
+              Últimos 10 gastos manuales
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Use el filtro de fechas para consultar períodos específicos
+            </p>
+          </div>
+          {isLoading ? (
+            <div className="p-4 space-y-2">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <div key={i} className="h-12 bg-muted/50 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : gastos.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <p className="text-sm">Sin gastos manuales registrados</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Gasto</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Nro Factura</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Fecha</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Cuenta</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Proveedor</th>
+                    <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Monto</th>
+                    <th className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gastos.map((g) => {
+                    const anulado = g.status === 'ANULADO'
+                    const montoUsd = parseFloat(g.monto_usd)
+                    const tasaGasto = parseFloat(g.tasa) || 1
+                    const montoBs = montoUsd * tasaGasto
+                    return (
+                      <tr
+                        key={g.id}
+                        onClick={() => setDetalleId(g.id)}
+                        className="border-t border-border hover:bg-muted/30 cursor-pointer transition-colors"
+                      >
+                        <td className={`px-4 py-3 font-mono text-foreground ${anulado ? 'line-through opacity-50' : ''}`}>
+                          {g.nro_gasto}
+                        </td>
+                        <td className={`px-4 py-3 font-mono text-muted-foreground text-xs ${anulado ? 'line-through opacity-50' : ''}`}>
+                          {g.nro_factura ?? '—'}
+                        </td>
+                        <td className={`px-4 py-3 text-muted-foreground whitespace-nowrap ${anulado ? 'line-through opacity-50' : ''}`}>
+                          {formatDate(g.fecha)}
+                        </td>
+                        <td className={`px-4 py-3 text-foreground max-w-[180px] truncate ${anulado ? 'opacity-50' : ''}`}>
+                          {(g as GastoConJoins).cuenta_nombre}
+                        </td>
+                        <td className={`px-4 py-3 text-muted-foreground ${anulado ? 'opacity-50' : ''}`}>
+                          {(g as GastoConJoins).proveedor_nombre ?? '—'}
+                        </td>
+                        <td className={`px-4 py-3 text-right tabular-nums ${anulado ? 'line-through opacity-50' : ''}`}>
+                          <div className="font-medium text-foreground">{formatBs(montoBs)}</div>
+                          <div className="text-xs text-muted-foreground">{formatUsd(montoUsd)} @ {tasaGasto.toFixed(2)}</div>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          <StatusBadge status={g.status} />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -283,34 +429,7 @@ export function GastoList() {
                 )}
               </div>
               <div className="divide-y divide-border">
-                {resumenPorGrupo.map((grupo) => (
-                  <div key={grupo.id}>
-                    <button
-                      type="button"
-                      onClick={() => setFiltroGrupoId(filtroGrupoId === grupo.id ? null : grupo.id)}
-                      className={`w-full flex items-center justify-between px-4 py-2.5 text-left transition-colors hover:bg-muted/30 ${
-                        filtroGrupoId === grupo.id ? 'bg-primary/5' : ''
-                      }`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">{grupo.codigo}</span>
-                        <span className="text-sm font-semibold text-foreground">{grupo.nombre}</span>
-                        <span className="text-[10px] text-muted-foreground">({grupo.count})</span>
-                      </div>
-                      <span className="text-sm font-bold text-foreground tabular-nums shrink-0">{formatUsd(grupo.totalUsd)}</span>
-                    </button>
-                    {grupo.subcuentas.map((sub) => (
-                      <div key={sub.id} className="flex items-center justify-between px-4 py-1.5 pl-10 bg-muted/10 border-t border-border/30">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">{sub.codigo}</span>
-                          <span className="text-xs text-muted-foreground">{sub.nombre}</span>
-                          <span className="text-[10px] text-muted-foreground/60">({sub.count})</span>
-                        </div>
-                        <span className="text-xs font-medium text-foreground tabular-nums shrink-0">{formatUsd(sub.totalUsd)}</span>
-                      </div>
-                    ))}
-                  </div>
-                ))}
+                {resumenPorGrupo.map((grupo) => renderResumenNode(grupo, 0))}
                 {/* Total general */}
                 <div className="flex items-center justify-between px-4 py-2.5 bg-muted/30">
                   <span className="text-xs font-semibold text-muted-foreground">Total periodo</span>
@@ -330,7 +449,7 @@ export function GastoList() {
                 {isLoading
                   ? 'Cargando...'
                   : filtroGrupoId
-                    ? `${gastosFiltrados.length} gasto${gastosFiltrados.length !== 1 ? 's' : ''} · ${grupos.find(g => g.id === filtroGrupoId)?.nombre ?? ''}`
+                    ? `${gastosFiltrados.length} gasto${gastosFiltrados.length !== 1 ? 's' : ''} · ${findGrupoGastoById(grupos, filtroGrupoId ?? '')?.nombre ?? ''}`
                     : `${gastos.length} gasto${gastos.length !== 1 ? 's' : ''} encontrado${gastos.length !== 1 ? 's' : ''}`
                 }
               </p>
@@ -400,7 +519,7 @@ export function GastoList() {
                         className="text-right px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
                         onClick={() => toggleSort('monto_usd')}
                       >
-                        Monto USD<SortIcon field="monto_usd" current={sortKey} dir={sortDir} />
+                        Monto<SortIcon field="monto_usd" current={sortKey} dir={sortDir} />
                       </th>
                       <th
                         className="text-center px-4 py-3 font-medium text-muted-foreground text-xs uppercase tracking-wider cursor-pointer hover:text-foreground select-none"
@@ -435,8 +554,18 @@ export function GastoList() {
                           <td className={`px-4 py-3 text-muted-foreground ${anulado ? 'opacity-50' : ''}`}>
                             {g.proveedor_nombre ?? '—'}
                           </td>
-                          <td className={`px-4 py-3 text-right tabular-nums font-medium ${anulado ? 'line-through opacity-50' : 'text-foreground'}`}>
-                            {formatUsd(parseFloat(g.monto_usd))}
+                          <td className={`px-4 py-3 text-right tabular-nums ${anulado ? 'line-through opacity-50' : ''}`}>
+                            {(() => {
+                              const montoUsd = parseFloat(g.monto_usd)
+                              const tasaGasto = parseFloat(g.tasa) || 1
+                              const montoBs = montoUsd * tasaGasto
+                              return (
+                                <>
+                                  <div className="font-medium text-foreground">{formatBs(montoBs)}</div>
+                                  <div className="text-xs text-muted-foreground">{formatUsd(montoUsd)} @ {tasaGasto.toFixed(2)}</div>
+                                </>
+                              )
+                            })()}
                           </td>
                           <td className="px-4 py-3 text-center">
                             <StatusBadge status={g.status} />

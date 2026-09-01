@@ -3,6 +3,20 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import Decimal from 'decimal.js'
+import { toStorageString } from '@/lib/currency'
+import { formatSesionId } from '@/lib/format'
+import {
+  consolidarMetodoATesoreriaEnTx,
+  type DestinoConsolidacion,
+} from '@/features/tesoreria/hooks/use-traspasos'
+import { insertarGastoDeduccionEnTx } from '@/features/contabilidad/hooks/use-gastos'
+import {
+  resolverDeduccionesCierre,
+  type DeduccionActivaRow,
+} from '@/features/caja/lib/deducciones-cierre'
+import { debeExcluirseDeConsolidacionCierre } from '@/features/caja/lib/consolidacion-cierre'
+import { resolverMontoConsolidacionLote } from '@/features/caja/lib/resolucion-monto-consolidacion'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -215,7 +229,8 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id = ?
            AND mc.tipo = 'EFECTIVO'
-           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO',
+                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          GROUP BY mmc.origen`
       : '',
     id ? [id] : []
@@ -224,39 +239,60 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   const sesion = (sesionData ?? [])[0] as
     | { monto_apertura_usd: string; monto_apertura_bs: string }
     | undefined
-  const aperturaUsd = parseFloat(sesion?.monto_apertura_usd ?? '0') || 0
-  const aperturaBs  = parseFloat(sesion?.monto_apertura_bs  ?? '0') || 0
+  const aperturaUsd = new Decimal(sesion?.monto_apertura_usd ?? '0')
+  const aperturaBs  = new Decimal(sesion?.monto_apertura_bs  ?? '0')
 
   const pagosRow = (pagosData ?? [])[0] as
     | { ventas_usd: number; ventas_bs: number }
     | undefined
-  const ventasUsd = pagosRow?.ventas_usd ?? 0
-  const ventasBs  = pagosRow?.ventas_bs  ?? 0
+  const ventasUsd = new Decimal(pagosRow?.ventas_usd ?? 0)
+  const ventasBs  = new Decimal(pagosRow?.ventas_bs  ?? 0)
 
   type MovRow = { origen: string; total_usd: number; total_bs: number }
-  const movsMap = new Map<string, { usd: number; bs: number }>()
+  const movsMap = new Map<string, { usd: Decimal; bs: Decimal }>()
   for (const row of (movsData ?? []) as MovRow[]) {
-    movsMap.set(row.origen, { usd: row.total_usd, bs: row.total_bs })
+    movsMap.set(row.origen, { usd: new Decimal(row.total_usd), bs: new Decimal(row.total_bs) })
   }
 
-  const ingManualUsd = movsMap.get('INGRESO_MANUAL')?.usd ?? 0
-  const ingManualBs  = movsMap.get('INGRESO_MANUAL')?.bs  ?? 0
-  const egrManualUsd = movsMap.get('EGRESO_MANUAL')?.usd  ?? 0
-  const egrManualBs  = movsMap.get('EGRESO_MANUAL')?.bs   ?? 0
-  const avancesUsd   = movsMap.get('AVANCE')?.usd ?? 0
-  const avancesBs    = movsMap.get('AVANCE')?.bs  ?? 0
-  const prestamosUsd = movsMap.get('PRESTAMO')?.usd ?? 0
-  const prestamosBs  = movsMap.get('PRESTAMO')?.bs  ?? 0
+  const ingManualUsd    = movsMap.get('INGRESO_MANUAL')?.usd    ?? new Decimal(0)
+  const ingManualBs     = movsMap.get('INGRESO_MANUAL')?.bs     ?? new Decimal(0)
+  const egrManualUsd    = movsMap.get('EGRESO_MANUAL')?.usd     ?? new Decimal(0)
+  const egrManualBs     = movsMap.get('EGRESO_MANUAL')?.bs      ?? new Decimal(0)
+  const avancesUsd      = movsMap.get('AVANCE')?.usd            ?? new Decimal(0)
+  const avancesBs       = movsMap.get('AVANCE')?.bs             ?? new Decimal(0)
+  const prestamosUsd    = movsMap.get('PRESTAMO')?.usd          ?? new Decimal(0)
+  const prestamosBs     = movsMap.get('PRESTAMO')?.bs           ?? new Decimal(0)
+  // pos-tesoreria-integration: include POS↔Treasury transfers in session balance
+  const ingTesoreriaUsd = movsMap.get('INGRESO_TESORERIA')?.usd ?? new Decimal(0)
+  const ingTesoBs       = movsMap.get('INGRESO_TESORERIA')?.bs  ?? new Decimal(0)
+  const egrTesoreriaUsd = movsMap.get('EGRESO_TESORERIA')?.usd  ?? new Decimal(0)
+  const egrTesoBs       = movsMap.get('EGRESO_TESORERIA')?.bs   ?? new Decimal(0)
 
-  const saldoUsd = Math.max(0, Number((
-    aperturaUsd + ventasUsd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
-  ).toFixed(2)))
+  const saldoUsdD = Decimal.max(
+    new Decimal(0),
+    aperturaUsd
+      .plus(ventasUsd)
+      .plus(ingManualUsd)
+      .plus(ingTesoreriaUsd)
+      .minus(egrManualUsd)
+      .minus(avancesUsd)
+      .minus(prestamosUsd)
+      .minus(egrTesoreriaUsd)
+  )
 
-  const saldoBs = Math.max(0, Number((
-    aperturaBs + ventasBs + ingManualBs - egrManualBs - avancesBs - prestamosBs
-  ).toFixed(2)))
+  const saldoBsD = Decimal.max(
+    new Decimal(0),
+    aperturaBs
+      .plus(ventasBs)
+      .plus(ingManualBs)
+      .plus(ingTesoBs)
+      .minus(egrManualBs)
+      .minus(avancesBs)
+      .minus(prestamosBs)
+      .minus(egrTesoBs)
+  )
 
-  return { saldoUsd, saldoBs, isLoading: l1 || l2 || l3 }
+  return { saldoUsd: saldoUsdD.toNumber(), saldoBs: saldoBsD.toNumber(), isLoading: l1 || l2 || l3 }
 }
 
 // ─── Interface: SesionActivaDashboard ────────────────────────
@@ -381,7 +417,8 @@ export function useSesionesActivasDashboard() {
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id IN (${inPh})
            AND mc.tipo = 'EFECTIVO'
-           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO')
+           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO',
+                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          GROUP BY mmc.sesion_caja_id, mmc.origen`
       : '',
     hasIds ? sesionIds : []
@@ -424,25 +461,48 @@ export function useSesionesActivasDashboard() {
     const pagos   = pagosMap.get(s.id) ?? { usd: 0, bs: 0 }
     const movs    = movsMap.get(s.id) ?? new Map<string, { usd: number; bs: number }>()
 
-    const aperturaUsd  = parseFloat(s.monto_apertura_usd ?? '0') || 0
-    const aperturaBs   = parseFloat(s.monto_apertura_bs  ?? '0') || 0
+    const aperturaUsd  = new Decimal(s.monto_apertura_usd ?? '0')
+    const aperturaBs   = new Decimal(s.monto_apertura_bs  ?? '0')
 
-    const ingManualUsd = movs.get('INGRESO_MANUAL')?.usd ?? 0
-    const ingManualBs  = movs.get('INGRESO_MANUAL')?.bs  ?? 0
-    const egrManualUsd = movs.get('EGRESO_MANUAL')?.usd  ?? 0
-    const egrManualBs  = movs.get('EGRESO_MANUAL')?.bs   ?? 0
-    const avancesUsd   = movs.get('AVANCE')?.usd ?? 0
-    const avancesBs    = movs.get('AVANCE')?.bs  ?? 0
-    const prestamosUsd = movs.get('PRESTAMO')?.usd ?? 0
-    const prestamosBs  = movs.get('PRESTAMO')?.bs  ?? 0
+    const ingManualUsd    = new Decimal(movs.get('INGRESO_MANUAL')?.usd    ?? 0)
+    const ingManualBs     = new Decimal(movs.get('INGRESO_MANUAL')?.bs     ?? 0)
+    const egrManualUsd    = new Decimal(movs.get('EGRESO_MANUAL')?.usd     ?? 0)
+    const egrManualBs     = new Decimal(movs.get('EGRESO_MANUAL')?.bs      ?? 0)
+    const avancesUsd      = new Decimal(movs.get('AVANCE')?.usd            ?? 0)
+    const avancesBs       = new Decimal(movs.get('AVANCE')?.bs             ?? 0)
+    const prestamosUsd    = new Decimal(movs.get('PRESTAMO')?.usd          ?? 0)
+    const prestamosBs     = new Decimal(movs.get('PRESTAMO')?.bs           ?? 0)
+    // pos-tesoreria-integration: include POS↔Treasury transfers in session balance
+    const ingTesoreriaUsd = new Decimal(movs.get('INGRESO_TESORERIA')?.usd ?? 0)
+    const ingTesoBs       = new Decimal(movs.get('INGRESO_TESORERIA')?.bs  ?? 0)
+    const egrTesoreriaUsd = new Decimal(movs.get('EGRESO_TESORERIA')?.usd  ?? 0)
+    const egrTesoBs       = new Decimal(movs.get('EGRESO_TESORERIA')?.bs   ?? 0)
+    const pagosUsd        = new Decimal(pagos.usd)
+    const pagosBs         = new Decimal(pagos.bs)
 
-    const saldoUsd = Math.max(0, Number((
-      aperturaUsd + pagos.usd + ingManualUsd - egrManualUsd - avancesUsd - prestamosUsd
-    ).toFixed(2)))
+    const saldoUsd = Decimal.max(
+      new Decimal(0),
+      aperturaUsd
+        .plus(pagosUsd)
+        .plus(ingManualUsd)
+        .plus(ingTesoreriaUsd)
+        .minus(egrManualUsd)
+        .minus(avancesUsd)
+        .minus(prestamosUsd)
+        .minus(egrTesoreriaUsd)
+    ).toNumber()
 
-    const saldoBs = Math.max(0, Number((
-      aperturaBs + pagos.bs + ingManualBs - egrManualBs - avancesBs - prestamosBs
-    ).toFixed(2)))
+    const saldoBs = Decimal.max(
+      new Decimal(0),
+      aperturaBs
+        .plus(pagosBs)
+        .plus(ingManualBs)
+        .plus(ingTesoBs)
+        .minus(egrManualBs)
+        .minus(avancesBs)
+        .minus(prestamosBs)
+        .minus(egrTesoBs)
+    ).toNumber()
 
     const horasTranscurridas = Math.max(0.1, (now - new Date(s.fecha_apertura).getTime()) / 3_600_000)
     const totalArticulos = Math.round(arts)
@@ -556,6 +616,8 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
 
   const id = uuidv4()
   const now = localNow()
+  const montoAperturaUsdD = new Decimal(monto_apertura_usd)
+  const montoAperturaBsD  = new Decimal(monto_apertura_bs)
 
   await db.writeTransaction(async (tx) => {
     // Validar que no haya ya una sesion abierta para esta caja (Plan B)
@@ -569,7 +631,7 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
     )
 
     if (existente.rows && existente.rows.length > 0) {
-      const row = existente.rows[0] as { usuario_nombre: string | null }
+      const row = existente.rows.item(0) as { usuario_nombre: string | null }
       const quien = row.usuario_nombre ? ` Responsable actual: ${row.usuario_nombre}.` : ''
       throw new Error(`Esta caja ya tiene una sesion abierta.${quien} Solicita el cierre antes de continuar.`)
     }
@@ -581,7 +643,7 @@ export async function abrirSesionCaja(params: AbrirSesionParams): Promise<string
          monto_sistema_usd, monto_fisico_usd, diferencia_usd,
          observaciones_cierre, status, created_at, updated_at
        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, 'ABIERTA', ?, ?)`,
-      [id, empresa_id, caja_id, usuario_id, now, monto_apertura_usd.toFixed(2), monto_apertura_bs.toFixed(2), now, now]
+      [id, empresa_id, caja_id, usuario_id, now, toStorageString(montoAperturaUsdD), toStorageString(montoAperturaBsD), now, now]
     )
   })
 
@@ -615,6 +677,8 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
   if (monto_fisico_bs < 0) throw new Error('El monto fisico Bs no puede ser negativo')
 
   const now = localNow()
+  const montoFisicoUsdD = new Decimal(monto_fisico_usd)
+  const montoFisicoBsD  = new Decimal(monto_fisico_bs)
 
   await db.writeTransaction(async (tx) => {
     // 1. Leer sesion y validar que este abierta
@@ -639,8 +703,8 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       throw new Error('La sesion de caja ya fue cerrada')
     }
 
-    const aperturaUsd = parseFloat(sesion.monto_apertura_usd)
-    const aperturaBs  = parseFloat(sesion.monto_apertura_bs ?? '0')
+    const aperturaUsd = new Decimal(sesion.monto_apertura_usd || '0')
+    const aperturaBs  = new Decimal(sesion.monto_apertura_bs ?? '0')
     const empresaId   = sesion.empresa_id
 
     // 2a. Pagos en EFECTIVO cobrados en USD (monto nativo = USD)
@@ -655,7 +719,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
          AND COALESCE(p.is_reversed, 0) = 0`,
       [id]
     )
-    const pagosEfectivoUsd = Number(
+    const pagosEfectivoUsd = new Decimal(
       (pagosEfectivoUsdResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
     )
 
@@ -671,59 +735,61 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
          AND COALESCE(p.is_reversed, 0) = 0`,
       [id]
     )
-    const pagosEfectivoBs = Number(
+    const pagosEfectivoBs = new Decimal(
       (pagosEfectivoBsResult.rows?.item(0) as { total: number } | undefined)?.total ?? 0
     )
 
-    // 3a. Movimientos manuales en USD (INGRESO_MANUAL, EGRESO_MANUAL, AVANCE, PRESTAMO, VUELTO)
+    // 3a. Movimientos manuales en USD (incluye orígenes POS↔Tesorería)
     const movsManualUsdResult = await tx.execute(
       `SELECT mmc.origen, COALESCE(SUM(CAST(mmc.monto AS REAL)), 0) as total
        FROM movimientos_metodo_cobro mmc
        JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
        JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE mmc.sesion_caja_id = ?
-         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
+                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          AND mo.codigo_iso = 'USD'
        GROUP BY mmc.origen`,
       [id]
     )
 
-    let ingresosManualUsd = 0
-    let egresosManualUsd  = 0
+    let ingresosManualUsd = new Decimal(0)
+    let egresosManualUsd  = new Decimal(0)
     if (movsManualUsdResult.rows) {
       for (let i = 0; i < movsManualUsdResult.rows.length; i++) {
         const row = movsManualUsdResult.rows.item(i) as { origen: string; total: number }
-        if (row.origen === 'INGRESO_MANUAL') {
-          ingresosManualUsd += row.total
+        if (row.origen === 'INGRESO_MANUAL' || row.origen === 'INGRESO_TESORERIA') {
+          ingresosManualUsd = ingresosManualUsd.plus(new Decimal(row.total))
         } else {
-          // EGRESO_MANUAL, AVANCE, PRESTAMO y VUELTO son salidas de efectivo
-          egresosManualUsd += row.total
+          // EGRESO_MANUAL, AVANCE, PRESTAMO, VUELTO y EGRESO_TESORERIA son salidas de efectivo
+          egresosManualUsd = egresosManualUsd.plus(new Decimal(row.total))
         }
       }
     }
 
-    // 3b. Movimientos manuales en VES
+    // 3b. Movimientos manuales en VES (incluye orígenes POS↔Tesorería)
     const movsManualBsResult = await tx.execute(
       `SELECT mmc.origen, COALESCE(SUM(CAST(mmc.monto AS REAL)), 0) as total
        FROM movimientos_metodo_cobro mmc
        JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
        JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE mmc.sesion_caja_id = ?
-         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
+                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
          AND mo.codigo_iso = 'VES'
        GROUP BY mmc.origen`,
       [id]
     )
 
-    let ingresosManualBs = 0
-    let egresosManualBs  = 0
+    let ingresosManualBs = new Decimal(0)
+    let egresosManualBs  = new Decimal(0)
     if (movsManualBsResult.rows) {
       for (let i = 0; i < movsManualBsResult.rows.length; i++) {
         const row = movsManualBsResult.rows.item(i) as { origen: string; total: number }
-        if (row.origen === 'INGRESO_MANUAL') {
-          ingresosManualBs += row.total
+        if (row.origen === 'INGRESO_MANUAL' || row.origen === 'INGRESO_TESORERIA') {
+          ingresosManualBs = ingresosManualBs.plus(new Decimal(row.total))
         } else {
-          egresosManualBs += row.total
+          egresosManualBs = egresosManualBs.plus(new Decimal(row.total))
         }
       }
     }
@@ -733,60 +799,49 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     //    todos los metodos), se usa ese valor directamente para mantener consistencia con lo
     //    mostrado al usuario. Si no, se calcula solo desde pagos efectivo (fallback).
     //    Para Bs: siempre desde efectivo (los otros metodos son USD en este sistema).
-    const montoSistemaUsdFromDB = Number(
-      (aperturaUsd + pagosEfectivoUsd + ingresosManualUsd - egresosManualUsd).toFixed(2)
-    )
+    const montoSistemaUsdFromDB = aperturaUsd
+      .plus(pagosEfectivoUsd)
+      .plus(ingresosManualUsd)
+      .minus(egresosManualUsd)
+
     const montoSistemaUsd = montoSistemaUsdParam !== undefined
-      ? Number(montoSistemaUsdParam.toFixed(2))
+      ? new Decimal(montoSistemaUsdParam)
       : montoSistemaUsdFromDB
 
-    const montoSistemaBs = Number(
-      (aperturaBs + pagosEfectivoBs + ingresosManualBs - egresosManualBs).toFixed(2)
-    )
+    const montoSistemaBs = aperturaBs
+      .plus(pagosEfectivoBs)
+      .plus(ingresosManualBs)
+      .minus(egresosManualBs)
 
-    const diferenciaUsd = Number((monto_fisico_usd - montoSistemaUsd).toFixed(2))
-    const diferenciaBs  = Number((monto_fisico_bs  - montoSistemaBs).toFixed(2))
+    const diferenciaUsd = montoFisicoUsdD.minus(montoSistemaUsd)
+    const diferenciaBs  = montoFisicoBsD.minus(montoSistemaBs)
 
-    // 5. Actualizar la sesion a CERRADA con saldos por divisa
-    await tx.execute(
-      `UPDATE sesiones_caja SET
-         status = 'CERRADA',
-         usuario_cierre_id = ?,
-         fecha_cierre = ?,
-         monto_sistema_usd = ?,
-         monto_fisico_usd = ?,
-         diferencia_usd = ?,
-         monto_sistema_bs = ?,
-         monto_fisico_bs = ?,
-         diferencia_bs = ?,
-         observaciones_cierre = ?,
-         updated_at = ?
-       WHERE id = ?`,
-      [
-        usuario_cierre_id,
-        now,
-        montoSistemaUsd.toFixed(2),
-        monto_fisico_usd.toFixed(2),
-        diferenciaUsd.toFixed(2),
-        montoSistemaBs.toFixed(2),
-        monto_fisico_bs.toFixed(2),
-        diferenciaBs.toFixed(2),
-        observaciones_cierre ?? null,
-        now,
-        id,
-      ]
-    )
+    // NOTA (cierre-consolidacion-tesoreria, Opcion 1): el UPDATE status = 'CERRADA'
+    // se hace AL FINAL de esta writeTransaction (paso 10), NO aqui. El trigger Postgres
+    // fn_validate_sesion_abierta (migracion 0041) rechaza cualquier INSERT en
+    // movimientos_metodo_cobro cuyo sesion_caja_id apunte a una sesion que ya NO esta
+    // ABIERTA. La consolidacion a Tesoreria (pasos 8-9) inserta EGRESO en esa tabla, por
+    // lo que debe correr con la sesion todavia ABIERTA. Todo sigue dentro de la misma
+    // writeTransaction: si algo falla, rollback total y la sesion permanece ABIERTA.
 
     // 6. Poblar sesiones_caja_detalle con desglose por metodo de cobro
     // Obtener todos los metodos usados en pagos de esta sesion
+    // total_pagos se calcula en la MONEDA NATIVA del metodo (USD -> monto_usd,
+    // resto -> monto). Mezclar USD y Bs en una misma suma viola la regla bimonetaria
+    // y subvaluaba los metodos en Bs por un factor de ~tasa (cierre-consolidacion-tesoreria).
     const metodosUsadosResult = await tx.execute(
-      `SELECT p.metodo_cobro_id, mc.moneda_id,
-              COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) as total_pagos,
+      `SELECT p.metodo_cobro_id, mc.moneda_id, mo.codigo_iso as moneda_codigo,
+              COALESCE(SUM(
+                CASE WHEN mo.codigo_iso = 'USD'
+                     THEN CAST(p.monto_usd AS REAL)
+                     ELSE CAST(p.monto AS REAL) END
+              ), 0) as total_pagos,
               COUNT(*) as num_transacciones
        FROM pagos p
        JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+       JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE p.sesion_caja_id = ? AND COALESCE(p.is_reversed, 0) = 0
-       GROUP BY p.metodo_cobro_id, mc.moneda_id`,
+       GROUP BY p.metodo_cobro_id, mc.moneda_id, mo.codigo_iso`,
       [id]
     )
 
@@ -797,7 +852,8 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
               SUM(CASE WHEN tipo = 'EGRESO' THEN CAST(monto AS REAL) ELSE 0 END) as total_egreso
        FROM movimientos_metodo_cobro
        WHERE sesion_caja_id = ?
-         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO')
+         AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
+                       'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
        GROUP BY metodo_cobro_id`,
       [id]
     )
@@ -817,31 +873,48 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
       }
     }
 
+    // cierre-consolidacion-tesoreria (PR2): acumula el total_sistema por metodo de cobro
+    // ya calculado en este loop, para reutilizarlo en el step 9 sin recalcular.
+    // totalFisicoNativo (cierre-tesoreria-monto-reportado-lote): monto contado/reportado
+    // por el cajero para el metodo, en la misma moneda nativa. Se propaga hasta el loop
+    // de consolidacion para que la rama sin-lotes use lo reportado, nunca totalSistemaD.
+    const consolidacionPorMetodo = new Map<
+      string,
+      { totalSistemaD: Decimal; monedaId: string; totalFisicoNativo: Decimal | null }
+    >()
+
     if (metodosUsadosResult.rows) {
       for (let i = 0; i < metodosUsadosResult.rows.length; i++) {
         const row = metodosUsadosResult.rows.item(i) as {
           metodo_cobro_id: string
           moneda_id: string
+          moneda_codigo: string
           total_pagos: number
           num_transacciones: number
         }
 
         const manual = movsManualPorMetodo.get(row.metodo_cobro_id) ?? { ingreso: 0, egreso: 0 }
-        const totalSistema = Number(
-          (row.total_pagos + manual.ingreso - manual.egreso).toFixed(2)
-        )
+        // totalSistemaD ahora esta en la MONEDA NATIVA del metodo (ver query arriba).
+        const totalSistemaD = new Decimal(row.total_pagos)
+          .plus(new Decimal(manual.ingreso))
+          .minus(new Decimal(manual.egreso))
 
-        // Calcular total_fisico y diferencia si se recibio conteo del usuario
-        let totalFisicoNativo: number | null = null
-        let diferenciaValor: number | null = null
+        // Calcular total_fisico y diferencia si se recibio conteo del usuario.
+        // conteoFisicoPorMetodo esta en moneda nativa y totalSistemaD tambien:
+        // la diferencia se calcula nativo vs nativo (sin conversion de tasa).
+        let totalFisicoD: Decimal | null = null
+        let diferenciaValor: Decimal | null = null
         if (conteoFisicoPorMetodo && row.metodo_cobro_id in conteoFisicoPorMetodo) {
-          totalFisicoNativo = conteoFisicoPorMetodo[row.metodo_cobro_id]
-          // Convertir a USD para calcular diferencia homogenea
-          const fisicoUsd =
-            row.moneda_id !== 'USD' && (tasaDelDia ?? 0) > 0
-              ? totalFisicoNativo / tasaDelDia!
-              : totalFisicoNativo
-          diferenciaValor = Number((fisicoUsd - totalSistema).toFixed(2))
+          totalFisicoD = new Decimal(conteoFisicoPorMetodo[row.metodo_cobro_id])
+          diferenciaValor = totalFisicoD.minus(totalSistemaD)
+        }
+
+        if (row.metodo_cobro_id) {
+          consolidacionPorMetodo.set(row.metodo_cobro_id, {
+            totalSistemaD,
+            monedaId: row.moneda_id,
+            totalFisicoNativo: totalFisicoD,
+          })
         }
 
         const detalleId = uuidv4()
@@ -854,9 +927,9 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
             id,
             row.metodo_cobro_id,
             row.moneda_id,
-            totalSistema.toFixed(2),
-            totalFisicoNativo !== null ? totalFisicoNativo.toFixed(2) : null,
-            diferenciaValor !== null ? diferenciaValor.toFixed(2) : null,
+            toStorageString(totalSistemaD),
+            totalFisicoD !== null ? toStorageString(totalFisicoD) : null,
+            diferenciaValor !== null ? toStorageString(diferenciaValor) : null,
             row.num_transacciones,
             empresaId,
             now,
@@ -882,10 +955,10 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
     )
 
     const safRow = safResult.rows?.item(0) as { saf_total: number; saf_count: number } | undefined
-    const safTotal = Number(safRow?.saf_total ?? 0)
+    const safTotal = new Decimal(safRow?.saf_total ?? 0)
     const safCount = Number(safRow?.saf_count ?? 0)
 
-    if (safTotal > 0) {
+    if (safTotal.gt(0)) {
       await tx.execute(
         `INSERT OR IGNORE INTO sesiones_caja_detalle
            (id, sesion_caja_id, metodo_cobro_id, moneda_id, total_sistema, total_fisico,
@@ -894,13 +967,364 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
         [
           uuidv4(),
           id,
-          safTotal.toFixed(2),
+          toStorageString(safTotal),
           safCount,
           empresaId,
           now,
         ]
       )
     }
+
+    // 8-9. NEW (cierre-consolidacion-tesoreria, PR2): consolidacion automatica hacia
+    // Tesoreria de cada metodo usado en la sesion con saldo positivo. Se ejecuta DENTRO
+    // de esta misma writeTransaction — cualquier fallo (destino sin configurar, cuenta
+    // de comision sin configurar, tasa faltante) revierte TODO el cierre y la sesion
+    // permanece ABIERTA.
+    //
+    // conciliacion-lotes-pos (fix WARNING #2, verify-report obs #608): el set de metodos
+    // a consolidar es la UNION de (a) metodos con pagos no-reversados y saldo positivo
+    // (comportamiento original, sin cambios) y (b) metodos con lotes POS capturados en
+    // lotes_pos_cuadre para esta sesion. Sin esta union, un metodo tipo='PUNTO' cuyos
+    // pagos fueron TODOS reversados no aparece en (a) (metodosUsadosResult filtra
+    // is_reversed=0 y no genera fila) pero SI puede tener lotes cargados por el cajero
+    // (usePagosPorMetodo, que dirige el cuadre UI, no filtra is_reversed y deja verlo) —
+    // sin la union esos lotes se descartaban en silencio al cerrar, sin error y sin
+    // traspaso a Tesoreria (perdida de dinero silenciosa).
+    const metodosConLotesResult = await tx.execute(
+      `SELECT DISTINCT metodo_cobro_id FROM lotes_pos_cuadre
+       WHERE empresa_id = ? AND sesion_caja_id = ?`,
+      [empresaId, id]
+    )
+    const metodoIdsConLotes = new Set<string>()
+    if (metodosConLotesResult.rows) {
+      for (let i = 0; i < metodosConLotesResult.rows.length; i++) {
+        const row = metodosConLotesResult.rows.item(i) as { metodo_cobro_id: string }
+        if (row.metodo_cobro_id) metodoIdsConLotes.add(row.metodo_cobro_id)
+      }
+    }
+
+    const metodosParaConsolidarBase = Array.from(consolidacionPorMetodo.entries()).filter(
+      ([metodoCobroId, v]) => metodoCobroId && v.totalSistemaD.gt(0)
+    )
+    const metodoIdsBase = new Set(metodosParaConsolidarBase.map(([metodoCobroId]) => metodoCobroId))
+    // Metodos que SOLO tienen lotes (sin pagos no-reversados con saldo positivo). Se
+    // agregan con un placeholder de totalSistemaD/monedaId que nunca se usa: mas abajo
+    // (paso 9) todo metodo con lotes SIEMPRE toma la rama `lotesDelMetodo.length > 0`,
+    // que reemplaza totalSistemaD por la suma de lotes y resuelve monedaId desde la
+    // config real del metodo (ver `monedaIdBase || config.moneda_id`).
+    const metodoIdsSoloLotes = Array.from(metodoIdsConLotes).filter((mid) => !metodoIdsBase.has(mid))
+
+    const metodosParaConsolidar: [
+      string,
+      { totalSistemaD: Decimal; monedaId: string; totalFisicoNativo: Decimal | null },
+    ][] = [
+      ...metodosParaConsolidarBase,
+      ...metodoIdsSoloLotes.map(
+        (mid) =>
+          [mid, { totalSistemaD: new Decimal(0), monedaId: '', totalFisicoNativo: null }] as [
+            string,
+            { totalSistemaD: Decimal; monedaId: string; totalFisicoNativo: Decimal | null },
+          ]
+      ),
+    ]
+
+    if (metodosParaConsolidar.length > 0) {
+      // 8. Batch SELECT de la configuracion de Tesoreria de los metodos usados
+      const idsConsolidar = metodosParaConsolidar.map(([metodoId]) => metodoId)
+      const inPhConsolidar = idsConsolidar.map(() => '?').join(', ')
+
+      const metodosConfigResult = await tx.execute(
+        `SELECT mc.id AS metodo_cobro_id, mc.nombre, mc.tipo, mc.banco_empresa_id, mc.caja_fuerte_id,
+                mc.moneda_id, mo.codigo_iso AS moneda_codigo, mc.consolidar_lotes, mc.deposito_directo
+         FROM metodos_cobro mc
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mc.id IN (${inPhConsolidar}) AND mc.empresa_id = ?`,
+        [...idsConsolidar, empresaId]
+      )
+
+      type MetodoConfigRow = {
+        metodo_cobro_id: string
+        nombre: string
+        tipo: string
+        banco_empresa_id: string | null
+        caja_fuerte_id: string | null
+        moneda_id: string
+        moneda_codigo: string
+        consolidar_lotes: number
+        deposito_directo: number
+      }
+      const metodosConfigMap = new Map<string, MetodoConfigRow>()
+      if (metodosConfigResult.rows) {
+        for (let i = 0; i < metodosConfigResult.rows.length; i++) {
+          const row = metodosConfigResult.rows.item(i) as MetodoConfigRow
+          metodosConfigMap.set(row.metodo_cobro_id, row)
+        }
+      }
+
+      // conciliacion-lotes-pos (PR-C): lotes POS cargados para esta sesion (cuadre-conteo-fisico.tsx,
+      // PR-B), agrupados por metodo_cobro_id. Solo metodos tipo='PUNTO' con lotes cargados en el
+      // cuadre tendran entradas aqui; el resto sigue el camino totalSistemaD sin cambios (SC-13).
+      const lotesResult = await tx.execute(
+        `SELECT metodo_cobro_id, nro_lote, monto
+         FROM lotes_pos_cuadre
+         WHERE empresa_id = ? AND sesion_caja_id = ?`,
+        [empresaId, id]
+      )
+      type LoteRow = { metodo_cobro_id: string; nro_lote: string; monto: string }
+      const lotesPorMetodoMap = new Map<string, LoteRow[]>()
+      if (lotesResult.rows) {
+        for (let i = 0; i < lotesResult.rows.length; i++) {
+          const row = lotesResult.rows.item(i) as LoteRow
+          if (!lotesPorMetodoMap.has(row.metodo_cobro_id)) {
+            lotesPorMetodoMap.set(row.metodo_cobro_id, [])
+          }
+          lotesPorMetodoMap.get(row.metodo_cobro_id)!.push(row)
+        }
+      }
+
+      // 9. Consolidar cada metodo con saldo positivo hacia Tesoreria
+      for (const [
+        metodoCobroId,
+        // totalSistemaD ya no se usa dentro del loop: ambas ramas (lotes y sin-lotes)
+        // consolidan por el monto reportado, nunca por el total sistema.
+        { totalSistemaD: _totalSistemaD, monedaId: monedaIdBase, totalFisicoNativo },
+      ] of metodosParaConsolidar) {
+        const config = metodosConfigMap.get(metodoCobroId)
+        if (!config) {
+          throw new Error(
+            `No se encontro la configuracion del metodo de cobro para consolidar el cierre de caja.`
+          )
+        }
+        if (debeExcluirseDeConsolidacionCierre(config)) continue
+        const nombreMetodo = config.nombre
+        // conciliacion-lotes-pos (fix WARNING #2): metodos incorporados solo por tener
+        // lotes traen monedaId placeholder (''); se resuelve desde la config real del
+        // metodo (misma fuente que ya usa consolidacionPorMetodo para el resto: mc.moneda_id).
+        const monedaId = monedaIdBase || config.moneda_id
+
+        // Resolver destino: EFECTIVO -> caja fuerte propia del metodo; otro tipo -> banco.
+        // El origen se DERIVA siempre del tipo de destino (nunca al reves) para que
+        // BANCO siempre use CIERRE_CONSOLIDACION y CAJA_FUERTE siempre use DEPOSITO_CIERRE.
+        let destino: DestinoConsolidacion
+        let destinoMonedaId: string
+        if (config.tipo === 'EFECTIVO') {
+          if (!config.caja_fuerte_id) {
+            throw new Error(
+              `El metodo de cobro "${nombreMetodo}" (EFECTIVO) no tiene una caja fuerte de destino configurada. ` +
+              `Configura la caja fuerte correspondiente en Configuracion > Metodos de Cobro antes de cerrar la sesion.`
+            )
+          }
+          destino = { tipo: 'CAJA_FUERTE', id: config.caja_fuerte_id }
+          const cfRes = await tx.execute(
+            'SELECT moneda_id FROM caja_fuerte WHERE id = ? AND empresa_id = ?',
+            [config.caja_fuerte_id, empresaId]
+          )
+          if (!cfRes.rows?.length) {
+            throw new Error(`No se encontro la caja fuerte de destino del metodo "${nombreMetodo}".`)
+          }
+          destinoMonedaId = String((cfRes.rows.item(0) as { moneda_id: string }).moneda_id)
+        } else {
+          if (!config.banco_empresa_id) {
+            throw new Error(
+              `El metodo de cobro "${nombreMetodo}" no tiene un banco de destino configurado. ` +
+              `Configura el banco correspondiente en Configuracion > Metodos de Cobro antes de cerrar la sesion.`
+            )
+          }
+          destino = { tipo: 'BANCO', id: config.banco_empresa_id }
+          const bcoRes = await tx.execute(
+            'SELECT moneda_id FROM bancos_empresa WHERE id = ? AND empresa_id = ?',
+            [config.banco_empresa_id, empresaId]
+          )
+          if (!bcoRes.rows?.length) {
+            throw new Error(`No se encontro el banco de destino del metodo "${nombreMetodo}".`)
+          }
+          destinoMonedaId = String((bcoRes.rows.item(0) as { moneda_id: string }).moneda_id)
+        }
+
+        // W4: la moneda del destino debe coincidir con la moneda del metodo, si no,
+        // se depositaria un monto en la moneda equivocada. Falla el cierre (rollback).
+        if (destinoMonedaId !== config.moneda_id) {
+          throw new Error(
+            `El destino configurado para el metodo "${nombreMetodo}" tiene una moneda distinta ` +
+            `a la del metodo. Revisa la configuracion de la caja fuerte/banco de destino.`
+          )
+        }
+
+        const origenDestino = destino.tipo === 'CAJA_FUERTE' ? 'DEPOSITO_CIERRE' : 'CIERRE_CONSOLIDACION'
+
+        // Deducciones del cierre (comision-consolidacion-cierre, PR-Pieza-1): N conceptos
+        // por metodo (comision bancaria, retencion ISLR, otros) via `metodo_cobro_deducciones`
+        // en vez del antiguo `comision_pct` unico. Factorizada para reutilizarse sobre el monto
+        // correcto (totalSistemaD, suma de lotes, o lote individual) sin duplicar la logica W5
+        // en cada rama (conciliacion-lotes-pos, PR-C).
+        const aplicarComisionSiCorresponde = async (montoBaseD: Decimal): Promise<void> => {
+          const deduccionesResult = await tx.execute(
+            `SELECT id, cuenta_gasto_id, concepto, tipo, porcentaje, orden
+             FROM metodo_cobro_deducciones
+             WHERE metodo_cobro_id = ? AND empresa_id = ? AND is_active = 1
+             ORDER BY orden`,
+            [metodoCobroId, empresaId]
+          )
+          const deducciones: DeduccionActivaRow[] = []
+          if (deduccionesResult.rows) {
+            for (let i = 0; i < deduccionesResult.rows.length; i++) {
+              deducciones.push(deduccionesResult.rows.item(i) as DeduccionActivaRow)
+            }
+          }
+
+          const { toPost, warning } = resolverDeduccionesCierre({
+            deducciones,
+            montoBaseD,
+            destinoTipo: destino.tipo,
+            nombreMetodo,
+          })
+
+          // W5: un metodo EFECTIVO (o cualquier destino no-BANCO) con deducciones activas
+          // configuradas es un error de config; no se cobra deduccion sobre efectivo, pero
+          // se deja rastro para que sea detectable.
+          if (warning) {
+            console.warn(`[cierre] ${warning}`)
+            return
+          }
+
+          if (toPost.length === 0) return
+
+          const monedaCodigo: 'USD' | 'VES' = config.moneda_codigo === 'VES' ? 'VES' : 'USD'
+          if (monedaCodigo === 'VES' && !((tasaDelDia ?? 0) > 0)) {
+            throw new Error(
+              `No se puede registrar las deducciones del cierre en Bs: falta la tasa del dia para el cierre.`
+            )
+          }
+
+          for (const deduccion of toPost) {
+            const gastoId = uuidv4()
+
+            await insertarGastoDeduccionEnTx(tx, {
+              empresaId,
+              metodoCobroId,
+              bancoEmpresaId: destino.id,
+              montoDeduccionNativo: toStorageString(deduccion.montoDeduccionNativo),
+              monedaCodigo,
+              tasa: tasaDelDia ?? 0,
+              cuentaGastoId: deduccion.cuentaGastoId,
+              concepto: deduccion.concepto,
+              porcentaje: deduccion.porcentaje,
+              orden: deduccion.orden,
+              sesionCajaId: id,
+              gastoId,
+              usuarioId: usuario_cierre_id,
+            })
+          }
+        }
+
+        // conciliacion-lotes-pos (PR-C): metodos tipo='PUNTO' con lotes cargados en el cuadre
+        // enrutan el monto de la consolidacion segun los lotes, REEMPLAZANDO totalSistemaD —
+        // nunca sumado encima (evita doble conteo, decision de mayor riesgo del design.md).
+        // sesiones_caja_detalle.total_sistema (paso 6) sigue derivado de pagos sin cambios; la
+        // brecha vs. el total de lotes se ve como diferencia normal, no como bloqueante.
+        const lotesDelMetodo = lotesPorMetodoMap.get(metodoCobroId) ?? []
+
+        if (lotesDelMetodo.length > 0) {
+          const sumaLotesD = lotesDelMetodo.reduce(
+            (acc, lote) => acc.plus(new Decimal(lote.monto)),
+            new Decimal(0)
+          )
+
+          if (config.consolidar_lotes === 1) {
+            const nrosLotes = lotesDelMetodo.map((lote) => lote.nro_lote).join(', ')
+            await consolidarMetodoATesoreriaEnTx(tx, {
+              sesionCajaId: id,
+              metodoCobroId,
+              destino,
+              monto: toStorageString(sumaLotesD),
+              monedaId,
+              empresaId,
+              userId: usuario_cierre_id,
+              origenDestino,
+              skipSaldoCheck: true,
+              descripcion: `Consolidacion cierre de caja - sesion ${formatSesionId(id)} - Lotes: ${nrosLotes}`,
+            })
+
+            await aplicarComisionSiCorresponde(sumaLotesD)
+          } else {
+            for (const lote of lotesDelMetodo) {
+              const montoLoteD = new Decimal(lote.monto)
+
+              await consolidarMetodoATesoreriaEnTx(tx, {
+                sesionCajaId: id,
+                metodoCobroId,
+                destino,
+                monto: toStorageString(montoLoteD),
+                monedaId,
+                empresaId,
+                userId: usuario_cierre_id,
+                origenDestino,
+                skipSaldoCheck: true,
+                descripcion: `Consolidacion cierre de caja - sesion ${formatSesionId(id)} - Lote ${lote.nro_lote}`,
+              })
+
+              await aplicarComisionSiCorresponde(montoLoteD)
+            }
+          }
+        } else {
+          // Camino existente: metodo sin lotes cargados consolida por MONTO REPORTADO (no
+          // totalSistemaD) tanto en el deposito a Tesoreria como en la base de comision —
+          // MISMA fuente de verdad para que ambos numeros no puedan divergir (cierre-tesoreria-
+          // monto-reportado-lote). Deja esta rama consistente con la rama de lotes, que ya
+          // reutiliza sumaLotesD/montoLoteD para ambas llamadas.
+          const montoReportadoD = resolverMontoConsolidacionLote({ totalFisicoNativo })
+
+          await consolidarMetodoATesoreriaEnTx(tx, {
+            sesionCajaId: id,
+            metodoCobroId,
+            destino,
+            monto: toStorageString(montoReportadoD),
+            monedaId,
+            empresaId,
+            userId: usuario_cierre_id,
+            origenDestino,
+            skipSaldoCheck: true,
+            descripcion: `Consolidacion cierre de caja - sesion ${formatSesionId(id)}`,
+          })
+
+          await aplicarComisionSiCorresponde(montoReportadoD)
+        }
+      }
+    }
+
+    // 10. Actualizar la sesion a CERRADA con saldos por divisa. Se ejecuta como ULTIMO
+    // write de la writeTransaction (Opcion 1): todos los INSERT en movimientos_metodo_cobro
+    // de la consolidacion (pasos 8-9) ya ocurrieron con la sesion todavia ABIERTA, evitando
+    // el rechazo del trigger fn_validate_sesion_abierta. Si el cierre completo se revierte,
+    // la sesion queda ABIERTA.
+    await tx.execute(
+      `UPDATE sesiones_caja SET
+         status = 'CERRADA',
+         usuario_cierre_id = ?,
+         fecha_cierre = ?,
+         monto_sistema_usd = ?,
+         monto_fisico_usd = ?,
+         diferencia_usd = ?,
+         monto_sistema_bs = ?,
+         monto_fisico_bs = ?,
+         diferencia_bs = ?,
+         observaciones_cierre = ?,
+         updated_at = ?
+       WHERE id = ?`,
+      [
+        usuario_cierre_id,
+        now,
+        toStorageString(montoSistemaUsd),
+        toStorageString(montoFisicoUsdD),
+        toStorageString(diferenciaUsd),
+        toStorageString(montoSistemaBs),
+        toStorageString(montoFisicoBsD),
+        toStorageString(diferenciaBs),
+        observaciones_cierre ?? null,
+        now,
+        id,
+      ]
+    )
   })
 
 }

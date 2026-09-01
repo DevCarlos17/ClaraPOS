@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   X,
   Plus,
@@ -21,11 +21,14 @@ import { toast } from 'sonner'
 import {
   useGruposGastoConSubcuentas,
   useCuentaIdsConGastos,
+  useSistemaCuentaIds,
   actualizarCuenta,
   crearGrupoGastoConSubcuentas,
   agregarSubcuentaAGrupo,
   eliminarSubcuentaGasto,
   eliminarGrupoGastoCompleto,
+  collectGrupoGastoIds,
+  findGrupoGastoById,
   type CuentaContable,
   type GrupoConSubcuentas,
 } from '@/features/contabilidad/hooks/use-plan-cuentas'
@@ -52,12 +55,21 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
   const { user } = useCurrentUser()
   const { grupos, isLoading } = useGruposGastoConSubcuentas()
   const cuentasConGastos = useCuentaIdsConGastos()
+  // Cuentas/grupos vinculados al sistema (ej. los grupos resolver
+  // GRUPO_COMISIONES_PASARELA/GRUPO_COMISIONES_BANCARIAS) — no se pueden
+  // eliminar, igual que en PlanCuentasList.
+  const sistemaCuentaIds = useSistemaCuentaIds()
 
   // ─── Colapsar/expandir ────────────────────────────────────
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set())
 
   // Cuando llegan grupos, todos colapsados por defecto — no hacer nada
   // (expandidos vacío = todos colapsados)
+
+  // Ids de TODOS los grupos del arbol (raiz + anidados a cualquier
+  // profundidad) — necesario para "expandir/colapsar todos" ya que el arbol
+  // ahora puede tener subgrupos anidados (ej. 6.1.25.01 dentro de 6.1.25).
+  const allGroupIds = useMemo(() => collectGrupoGastoIds(grupos), [grupos])
 
   function toggleGrupo(id: string) {
     setExpandidos((prev) => {
@@ -69,14 +81,14 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
   }
 
   function toggleTodos() {
-    if (expandidos.size === grupos.length) {
+    if (expandidos.size === allGroupIds.length) {
       setExpandidos(new Set())
     } else {
-      setExpandidos(new Set(grupos.map((g) => g.id)))
+      setExpandidos(new Set(allGroupIds))
     }
   }
 
-  const todosExpandidos = grupos.length > 0 && expandidos.size === grupos.length
+  const todosExpandidos = allGroupIds.length > 0 && expandidos.size === allGroupIds.length
 
   // ─── Estado edicion inline ────────────────────────────────
   const [editandoId, setEditandoId] = useState<string | null>(null)
@@ -172,6 +184,17 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
 
   async function handleEliminarGrupo(grupoId: string) {
     if (!user?.empresa_id) return
+    // Defensa adicional: el boton ya se deshabilita en el render, pero se
+    // revalida aca por si se dispara desde otro camino (ej. teclado).
+    const grupo = findGrupoGastoById(grupos, grupoId)
+    if (grupo && (sistemaCuentaIds.has(grupo.id) || grupo.subgrupos.length > 0)) {
+      toast.error(
+        sistemaCuentaIds.has(grupo.id)
+          ? 'Cuenta del sistema, no se puede eliminar'
+          : 'No se puede eliminar: contiene subgrupos'
+      )
+      return
+    }
     setEliminandoId(grupoId)
     try {
       await eliminarGrupoGastoCompleto(grupoId, user.empresa_id)
@@ -261,7 +284,317 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
     }
   }
 
-  // ─── Render ───────────────────────────────────────────────
+  // ─── Render recursivo (grupos anidados a cualquier profundidad) ───
+
+  function renderHoja(sub: CuentaContable, depth: number) {
+    const subTieneGastos = cuentasConGastos.has(sub.id)
+    const confirmandoSub = confirmandoEliminarId === sub.id
+    const esEliminandoSub = eliminandoId === sub.id
+    const paddingLeft = 12 + depth * 20
+
+    return (
+      <div key={sub.id} className="flex items-center gap-2 py-2" style={{ paddingLeft }}>
+        <CaretRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+        <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/60 px-1.5 py-0.5 rounded shrink-0">
+          {sub.codigo}
+        </span>
+
+        {editandoId === sub.id ? (
+          <>
+            <input
+              type="text"
+              value={nombreEditando}
+              onChange={(e) => setNombreEditando(e.target.value.toUpperCase())}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') guardarEdicion()
+                if (e.key === 'Escape') cancelarEdicion()
+              }}
+              className="flex-1 rounded border border-input px-2 py-1 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+            <button
+              type="button"
+              onClick={guardarEdicion}
+              disabled={guardando}
+              className="p-1 text-primary hover:text-primary/80 disabled:opacity-50"
+            >
+              <Check className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={cancelarEdicion}
+              className="p-1 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </>
+        ) : confirmandoSub ? (
+          <>
+            <span className="flex-1 text-sm text-foreground truncate">{sub.nombre}</span>
+            <span className="text-xs text-destructive shrink-0">¿Eliminar?</span>
+            <button
+              type="button"
+              onClick={() => handleEliminarSubcuenta(sub.id)}
+              disabled={esEliminandoSub}
+              className="text-xs px-2 py-0.5 bg-destructive text-white rounded disabled:opacity-50 shrink-0"
+            >
+              {esEliminandoSub ? '...' : 'Si'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmandoEliminarId(null)}
+              className="text-xs px-2 py-0.5 bg-muted text-muted-foreground rounded shrink-0"
+            >
+              No
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="flex-1 text-sm text-foreground truncate">{sub.nombre}</span>
+            {subTieneGastos && (
+              <span className="text-[10px] text-muted-foreground/50 shrink-0 italic">
+                con registros
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => iniciarEdicion(sub)}
+              className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+              title="Editar nombre"
+            >
+              <PencilSimple className="h-3 w-3" />
+            </button>
+            {!subTieneGastos && (
+              <button
+                type="button"
+                onClick={() => { setConfirmandoEliminarId(sub.id); setEditandoId(null) }}
+                className="p-1 text-muted-foreground hover:text-destructive transition-colors"
+                title="Eliminar subcuenta"
+              >
+                <Trash className="h-3 w-3" />
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
+
+  function renderGrupo(grupo: GrupoConSubcuentas, depth: number) {
+    const grupoTieneGastos = grupo.subcuentas.some((s) => cuentasConGastos.has(s.id))
+    const confirmandoGrupo = confirmandoEliminarId === grupo.id
+    const esEliminandoGrupo = eliminandoId === grupo.id
+    const estaExpandido = expandidos.has(grupo.id)
+    const paddingLeft = 12 + depth * 20
+
+    // Proteccion contra borrado inseguro: un grupo con subgrupos anidados
+    // (ej. 6.1.25 GASTOS DE VENTA, que contiene 6.1.25.01) solo se borra a
+    // si mismo y sus hojas DIRECTAS (eliminarGrupoGastoCompleto no es
+    // recursivo) — dejaria huerfano el subgrupo y violaria los
+    // ON DELETE RESTRICT de Postgres al sincronizar. Un grupo vinculado al
+    // sistema (cuentas_config, ej. los resolver de comision) tampoco puede
+    // eliminarse aunque no tenga subgrupos.
+    const esSistema = sistemaCuentaIds.has(grupo.id)
+    const tieneSubgrupos = grupo.subgrupos.length > 0
+    const noEliminable = esSistema || tieneSubgrupos
+    const tituloNoEliminable = esSistema
+      ? 'Cuenta del sistema, no se puede eliminar'
+      : 'No se puede eliminar: contiene subgrupos'
+
+    return (
+      <div
+        key={grupo.id}
+        className={depth === 0 ? 'rounded-lg border border-border overflow-hidden' : 'border-t border-border/60'}
+      >
+        {/* Fila del grupo */}
+        <ContextMenu>
+        <ContextMenuTrigger asChild>
+        <div
+          className="flex items-center gap-2 py-2.5 bg-muted/40 select-none"
+          style={{ paddingLeft, paddingRight: 12 }}
+        >
+          {/* Toggle colapsar */}
+          <button
+            type="button"
+            onClick={() => toggleGrupo(grupo.id)}
+            className="p-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            title={estaExpandido ? 'Colapsar' : 'Expandir'}
+          >
+            {estaExpandido
+              ? <CaretDown className="h-3.5 w-3.5" />
+              : <CaretRight className="h-3.5 w-3.5" />
+            }
+          </button>
+
+          <span className="text-[11px] font-mono text-muted-foreground bg-background border border-border px-1.5 py-0.5 rounded shrink-0">
+            {grupo.codigo}
+          </span>
+
+          {editandoId === grupo.id ? (
+            <>
+              <input
+                type="text"
+                value={nombreEditando}
+                onChange={(e) => setNombreEditando(e.target.value.toUpperCase())}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') guardarEdicion()
+                  if (e.key === 'Escape') cancelarEdicion()
+                }}
+                className="flex-1 rounded border border-input px-2 py-1 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              <button
+                type="button"
+                onClick={guardarEdicion}
+                disabled={guardando}
+                className="p-1 text-primary hover:text-primary/80 disabled:opacity-50"
+                title="Guardar"
+              >
+                <Check className="h-4 w-4" />
+              </button>
+              <button
+                type="button"
+                onClick={cancelarEdicion}
+                className="p-1 text-muted-foreground hover:text-foreground"
+                title="Cancelar"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </>
+          ) : confirmandoGrupo ? (
+            <>
+              <span className="flex-1 text-sm font-semibold text-foreground truncate">
+                {grupo.nombre}
+              </span>
+              <span className="text-xs text-destructive shrink-0">¿Eliminar grupo y subcuentas?</span>
+              <button
+                type="button"
+                onClick={() => handleEliminarGrupo(grupo.id)}
+                disabled={esEliminandoGrupo}
+                className="text-xs px-2 py-1 bg-destructive text-white rounded disabled:opacity-50 shrink-0"
+              >
+                {esEliminandoGrupo ? '...' : 'Confirmar'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmandoEliminarId(null)}
+                className="text-xs px-2 py-1 bg-muted text-muted-foreground rounded shrink-0"
+              >
+                Cancelar
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => toggleGrupo(grupo.id)}
+                className="flex-1 text-left text-sm font-semibold text-foreground truncate hover:text-primary transition-colors"
+              >
+                {grupo.nombre}
+                <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
+                  ({grupo.subcuentas.length})
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => iniciarEdicion(grupo)}
+                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+                title="Editar nombre"
+              >
+                <PencilSimple className="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => abrirAgregarSubcuenta(grupo.id)}
+                className="p-1 text-muted-foreground hover:text-primary transition-colors"
+                title="Agregar subcuenta"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+              {!grupoTieneGastos && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (noEliminable) return
+                    setConfirmandoEliminarId(grupo.id)
+                    setEditandoId(null)
+                  }}
+                  disabled={noEliminable}
+                  title={noEliminable ? tituloNoEliminable : 'Eliminar grupo'}
+                  className={`p-1 transition-colors disabled:cursor-not-allowed ${
+                    noEliminable
+                      ? 'text-muted-foreground/30'
+                      : 'text-muted-foreground hover:text-destructive'
+                  }`}
+                >
+                  <Trash className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onClick={() => abrirAgregarSubcuenta(grupo.id)}>
+            <Plus className="h-3.5 w-3.5 text-primary" />
+            Agregar subcuenta
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={() => iniciarEdicion(grupo)}>
+            <PencilSimple className="h-3.5 w-3.5 text-muted-foreground" />
+            Editar nombre
+          </ContextMenuItem>
+        </ContextMenuContent>
+        </ContextMenu>
+
+        {/* Subgrupos + hojas — solo si expandido */}
+        {estaExpandido && (
+          <div className="divide-y divide-border/40">
+            {grupo.subgrupos.map((sg) => renderGrupo(sg, depth + 1))}
+            {grupo.hojas.map((sub) => renderHoja(sub, depth + 1))}
+
+            {/* Fila para agregar subcuenta inline */}
+            {agregandoEnGrupoId === grupo.id ? (
+              <div
+                className="flex items-center gap-2 py-2 bg-muted/20"
+                style={{ paddingLeft: paddingLeft + 20 }}
+              >
+                <CaretRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
+                <input
+                  type="text"
+                  value={nuevaSubNombre}
+                  onChange={(e) => setNuevaSubNombre(e.target.value.toUpperCase())}
+                  placeholder="Nombre de la nueva subcuenta"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); handleAgregarSubcuenta(grupo) }
+                    if (e.key === 'Escape') { setAgregandoEnGrupoId(null); setNuevaSubNombre('') }
+                  }}
+                  className="flex-1 rounded border border-input px-2 py-1 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleAgregarSubcuenta(grupo)}
+                  disabled={agregando || !nuevaSubNombre.trim()}
+                  className="p-1 text-primary hover:text-primary/80 disabled:opacity-40"
+                  title="Agregar"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAgregandoEnGrupoId(null); setNuevaSubNombre('') }}
+                  className="p-1 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <>
@@ -431,281 +764,7 @@ export function CuentaGastoModal({ isOpen, onClose }: CuentaGastoModalProps) {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {grupos.map((grupo) => {
-                    const grupoTieneGastos = grupo.subcuentas.some((s) => cuentasConGastos.has(s.id))
-                    const confirmandoGrupo = confirmandoEliminarId === grupo.id
-                    const esEliminandoGrupo = eliminandoId === grupo.id
-                    const estaExpandido = expandidos.has(grupo.id)
-
-                    return (
-                      <div key={grupo.id} className="rounded-lg border border-border overflow-hidden">
-
-                        {/* Fila del grupo */}
-                        <ContextMenu>
-                        <ContextMenuTrigger asChild>
-                        <div
-                          className="flex items-center gap-2 px-3 py-2.5 bg-muted/40 select-none"
-                        >
-                          {/* Toggle colapsar */}
-                          <button
-                            type="button"
-                            onClick={() => toggleGrupo(grupo.id)}
-                            className="p-0.5 text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                            title={estaExpandido ? 'Colapsar' : 'Expandir'}
-                          >
-                            {estaExpandido
-                              ? <CaretDown className="h-3.5 w-3.5" />
-                              : <CaretRight className="h-3.5 w-3.5" />
-                            }
-                          </button>
-
-                          <span className="text-[11px] font-mono text-muted-foreground bg-background border border-border px-1.5 py-0.5 rounded shrink-0">
-                            {grupo.codigo}
-                          </span>
-
-                          {editandoId === grupo.id ? (
-                            <>
-                              <input
-                                type="text"
-                                value={nombreEditando}
-                                onChange={(e) => setNombreEditando(e.target.value.toUpperCase())}
-                                autoFocus
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') guardarEdicion()
-                                  if (e.key === 'Escape') cancelarEdicion()
-                                }}
-                                className="flex-1 rounded border border-input px-2 py-1 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                              />
-                              <button
-                                type="button"
-                                onClick={guardarEdicion}
-                                disabled={guardando}
-                                className="p-1 text-primary hover:text-primary/80 disabled:opacity-50"
-                                title="Guardar"
-                              >
-                                <Check className="h-4 w-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={cancelarEdicion}
-                                className="p-1 text-muted-foreground hover:text-foreground"
-                                title="Cancelar"
-                              >
-                                <X className="h-4 w-4" />
-                              </button>
-                            </>
-                          ) : confirmandoGrupo ? (
-                            <>
-                              <span className="flex-1 text-sm font-semibold text-foreground truncate">
-                                {grupo.nombre}
-                              </span>
-                              <span className="text-xs text-destructive shrink-0">¿Eliminar grupo y subcuentas?</span>
-                              <button
-                                type="button"
-                                onClick={() => handleEliminarGrupo(grupo.id)}
-                                disabled={esEliminandoGrupo}
-                                className="text-xs px-2 py-1 bg-destructive text-white rounded disabled:opacity-50 shrink-0"
-                              >
-                                {esEliminandoGrupo ? '...' : 'Confirmar'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setConfirmandoEliminarId(null)}
-                                className="text-xs px-2 py-1 bg-muted text-muted-foreground rounded shrink-0"
-                              >
-                                Cancelar
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => toggleGrupo(grupo.id)}
-                                className="flex-1 text-left text-sm font-semibold text-foreground truncate hover:text-primary transition-colors"
-                              >
-                                {grupo.nombre}
-                                <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">
-                                  ({grupo.subcuentas.length})
-                                </span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => iniciarEdicion(grupo)}
-                                className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-                                title="Editar nombre"
-                              >
-                                <PencilSimple className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => abrirAgregarSubcuenta(grupo.id)}
-                                className="p-1 text-muted-foreground hover:text-primary transition-colors"
-                                title="Agregar subcuenta"
-                              >
-                                <Plus className="h-3.5 w-3.5" />
-                              </button>
-                              {!grupoTieneGastos && (
-                                <button
-                                  type="button"
-                                  onClick={() => { setConfirmandoEliminarId(grupo.id); setEditandoId(null) }}
-                                  className="p-1 text-muted-foreground hover:text-destructive transition-colors"
-                                  title="Eliminar grupo"
-                                >
-                                  <Trash className="h-3.5 w-3.5" />
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent>
-                          <ContextMenuItem onClick={() => abrirAgregarSubcuenta(grupo.id)}>
-                            <Plus className="h-3.5 w-3.5 text-primary" />
-                            Agregar subcuenta
-                          </ContextMenuItem>
-                          <ContextMenuSeparator />
-                          <ContextMenuItem onClick={() => iniciarEdicion(grupo)}>
-                            <PencilSimple className="h-3.5 w-3.5 text-muted-foreground" />
-                            Editar nombre
-                          </ContextMenuItem>
-                        </ContextMenuContent>
-                        </ContextMenu>
-
-                        {/* Subcuentas — solo si expandido */}
-                        {estaExpandido && (
-                          <div className="divide-y divide-border/40">
-                            {grupo.subcuentas.map((sub) => {
-                              const subTieneGastos = cuentasConGastos.has(sub.id)
-                              const confirmandoSub = confirmandoEliminarId === sub.id
-                              const esEliminandoSub = eliminandoId === sub.id
-
-                              return (
-                                <div key={sub.id} className="flex items-center gap-2 px-3 py-2 pl-8">
-                                  <CaretRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-                                  <span className="text-[10px] font-mono text-muted-foreground/70 bg-muted/60 px-1.5 py-0.5 rounded shrink-0">
-                                    {sub.codigo}
-                                  </span>
-
-                                  {editandoId === sub.id ? (
-                                    <>
-                                      <input
-                                        type="text"
-                                        value={nombreEditando}
-                                        onChange={(e) => setNombreEditando(e.target.value.toUpperCase())}
-                                        autoFocus
-                                        onKeyDown={(e) => {
-                                          if (e.key === 'Enter') guardarEdicion()
-                                          if (e.key === 'Escape') cancelarEdicion()
-                                        }}
-                                        className="flex-1 rounded border border-input px-2 py-1 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                                      />
-                                      <button
-                                        type="button"
-                                        onClick={guardarEdicion}
-                                        disabled={guardando}
-                                        className="p-1 text-primary hover:text-primary/80 disabled:opacity-50"
-                                      >
-                                        <Check className="h-3.5 w-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={cancelarEdicion}
-                                        className="p-1 text-muted-foreground hover:text-foreground"
-                                      >
-                                        <X className="h-3.5 w-3.5" />
-                                      </button>
-                                    </>
-                                  ) : confirmandoSub ? (
-                                    <>
-                                      <span className="flex-1 text-sm text-foreground truncate">{sub.nombre}</span>
-                                      <span className="text-xs text-destructive shrink-0">¿Eliminar?</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleEliminarSubcuenta(sub.id)}
-                                        disabled={esEliminandoSub}
-                                        className="text-xs px-2 py-0.5 bg-destructive text-white rounded disabled:opacity-50 shrink-0"
-                                      >
-                                        {esEliminandoSub ? '...' : 'Si'}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => setConfirmandoEliminarId(null)}
-                                        className="text-xs px-2 py-0.5 bg-muted text-muted-foreground rounded shrink-0"
-                                      >
-                                        No
-                                      </button>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <span className="flex-1 text-sm text-foreground truncate">{sub.nombre}</span>
-                                      {subTieneGastos && (
-                                        <span className="text-[10px] text-muted-foreground/50 shrink-0 italic">
-                                          con registros
-                                        </span>
-                                      )}
-                                      <button
-                                        type="button"
-                                        onClick={() => iniciarEdicion(sub)}
-                                        className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-                                        title="Editar nombre"
-                                      >
-                                        <PencilSimple className="h-3 w-3" />
-                                      </button>
-                                      {!subTieneGastos && (
-                                        <button
-                                          type="button"
-                                          onClick={() => { setConfirmandoEliminarId(sub.id); setEditandoId(null) }}
-                                          className="p-1 text-muted-foreground hover:text-destructive transition-colors"
-                                          title="Eliminar subcuenta"
-                                        >
-                                          <Trash className="h-3 w-3" />
-                                        </button>
-                                      )}
-                                    </>
-                                  )}
-                                </div>
-                              )
-                            })}
-
-                            {/* Fila para agregar subcuenta inline */}
-                            {agregandoEnGrupoId === grupo.id ? (
-                              <div className="flex items-center gap-2 px-3 py-2 pl-8 bg-muted/20">
-                                <CaretRight className="h-3 w-3 text-muted-foreground/40 shrink-0" />
-                                <input
-                                  type="text"
-                                  value={nuevaSubNombre}
-                                  onChange={(e) => setNuevaSubNombre(e.target.value.toUpperCase())}
-                                  placeholder="Nombre de la nueva subcuenta"
-                                  autoFocus
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') { e.preventDefault(); handleAgregarSubcuenta(grupo) }
-                                    if (e.key === 'Escape') { setAgregandoEnGrupoId(null); setNuevaSubNombre('') }
-                                  }}
-                                  className="flex-1 rounded border border-input px-2 py-1 text-sm bg-background focus:outline-none focus:ring-2 focus:ring-ring"
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => handleAgregarSubcuenta(grupo)}
-                                  disabled={agregando || !nuevaSubNombre.trim()}
-                                  className="p-1 text-primary hover:text-primary/80 disabled:opacity-40"
-                                  title="Agregar"
-                                >
-                                  <Check className="h-3.5 w-3.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => { setAgregandoEnGrupoId(null); setNuevaSubNombre('') }}
-                                  className="p-1 text-muted-foreground hover:text-foreground"
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
+                  {grupos.map((grupo) => renderGrupo(grupo, 0))}
                 </div>
               )}
             </div>

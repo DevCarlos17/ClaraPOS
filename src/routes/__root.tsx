@@ -19,6 +19,7 @@ const TABLE_LABELS: Record<string, string> = {
   notas_credito:                'Nota de Crédito',
   notas_debito:                 'Nota de Débito',
   movimientos_inventario:       'Movimiento de Inventario',
+  movimientos_cuenta:           'Movimiento de Cuenta',
   clientes:                     'Cliente',
   proveedores:                  'Proveedor',
   productos:                    'Producto',

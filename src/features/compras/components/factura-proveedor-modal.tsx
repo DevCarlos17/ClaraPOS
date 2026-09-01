@@ -10,11 +10,12 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import Decimal from 'decimal.js'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
-import { reversarAbonoCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
+import { reversarAbonoCxP, registrarDiferencialCxP, type FacturaCompraPendiente } from '../hooks/use-cxp'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import {
   anularGasto,
@@ -23,6 +24,7 @@ import {
 } from '@/features/contabilidad/hooks/use-gastos'
 import { PagoCxPModal } from './pago-cxp-modal'
 import { PagoGastoCxpModal } from './pago-gasto-cxp-modal'
+import { deriveGastoTotales } from '@/features/contabilidad/lib/gasto-montos'
 
 // ─── Tipos internos ──────────────────────────────────────────
 
@@ -70,6 +72,10 @@ interface GastoRow {
   proveedor_rif: string | null
   cuenta_nombre: string | null
   cuenta_codigo: string | null
+  tipo_impuesto: string
+  porcentaje_iva: string
+  base_imponible_usd: string
+  monto_iva_usd: string
 }
 
 interface DetalleRow {
@@ -116,6 +122,7 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   const [pagoOpen, setPagoOpen] = useState(false)
   const [confirmandoAnular, setConfirmandoAnular] = useState(false)
   const [anulando, setAnulando] = useState(false)
+  const [aplicandoDiferencial, setAplicandoDiferencial] = useState(false)
 
   // ─── Compra data ──────────────────────────────────────────
 
@@ -200,33 +207,52 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
 
   const amounts = useMemo(() => {
     if (tipo === 'COMPRA' && compra) {
-      const tasaFactura = parseFloat(compra.tasa)
-      const tasaInterna = compra.tasa_costo ? parseFloat(compra.tasa_costo) : tasaFactura
+      const tasaFactura = new Decimal(compra.tasa || '0')
+      const tasaInterna = compra.tasa_costo ? new Decimal(compra.tasa_costo) : tasaFactura
       const usaParalela = Boolean(
-        compra.tasa_costo && Math.abs(tasaFactura - parseFloat(compra.tasa_costo)) > 0.001
+        compra.tasa_costo &&
+        tasaFactura.minus(new Decimal(compra.tasa_costo)).abs().greaterThan(new Decimal('0.001'))
       )
-      const totalProveedorUsd = parseFloat(compra.total_usd)
-      const totalBs = parseFloat(compra.total_bs)
-      const totalContableUsd = usaParalela && tasaInterna > 0
-        ? totalBs / tasaInterna
+      const totalProveedorUsd = new Decimal(compra.total_usd || '0')
+      const totalBs = new Decimal(compra.total_bs || '0')
+      const totalContableUsd: Decimal = usaParalela && tasaInterna.greaterThan(0)
+        ? totalBs.dividedBy(tasaInterna)
         : totalProveedorUsd
-      const saldo = parseFloat(compra.saldo_pend_usd)
-      return { tasaFactura, tasaInterna, usaParalela, totalProveedorUsd, totalContableUsd, totalBs, saldo }
+      const saldo = new Decimal(compra.saldo_pend_usd || '0')
+      return {
+        tasaFactura: tasaFactura.toNumber(),
+        tasaInterna: tasaInterna.toNumber(),
+        usaParalela,
+        totalProveedorUsd: totalProveedorUsd.toNumber(),
+        totalContableUsd: totalContableUsd.toNumber(),
+        totalBs: totalBs.toNumber(),
+        saldo: saldo.toNumber(),
+        baseUsd: undefined,
+        ivaUsd: undefined,
+        porcentajeIva: undefined,
+        esGravable: false,
+        esExento: false,
+        esExonerado: false,
+      }
     }
     if (tipo === 'GASTO' && gasto) {
-      const tasaInterna = parseFloat(gasto.tasa)
-      const tasaFactura = gasto.tasa_proveedor ? parseFloat(gasto.tasa_proveedor) : tasaInterna
-      const usaParalela = gasto.usa_tasa_paralela === 1 && Boolean(gasto.tasa_proveedor)
-      const montoFactura = parseFloat(gasto.monto_factura)
-      const totalContableUsd = parseFloat(gasto.monto_usd)
-      const totalBs = totalContableUsd * tasaValor
-      const totalProveedorUsd = (() => {
-        if (gasto.moneda_factura === 'USD') return montoFactura
-        const tasaRef = usaParalela && tasaFactura > 0 ? tasaFactura : tasaInterna
-        return tasaRef > 0 ? montoFactura / tasaRef : totalContableUsd
-      })()
-      const saldo = parseFloat(gasto.saldo_pendiente_usd)
-      return { tasaFactura, tasaInterna, usaParalela, totalProveedorUsd, totalContableUsd, totalBs, saldo }
+      const totales = deriveGastoTotales(gasto, tasaValor)
+      const saldo = new Decimal(gasto.saldo_pendiente_usd || '0')
+      return {
+        tasaFactura: totales.tasaFactura,
+        tasaInterna: totales.tasaInterna,
+        usaParalela: totales.usaParalela,
+        totalProveedorUsd: totales.totalProveedorUsd,
+        totalContableUsd: totales.totalContableUsd,
+        totalBs: totales.totalBs,
+        saldo: saldo.toNumber(),
+        baseUsd: totales.baseUsd,
+        ivaUsd: totales.ivaUsd,
+        porcentajeIva: totales.porcentajeIva,
+        esGravable: totales.esGravable,
+        esExento: totales.esExento,
+        esExonerado: totales.esExonerado,
+      }
     }
     return null
   }, [tipo, compra, gasto, tasaValor])
@@ -234,16 +260,16 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
   // ─── Totales abonados ─────────────────────────────────────
 
   const { totalAbonadoProveedor, totalAbonadoContable } = useMemo(() => {
-    let prov = 0
-    let cont = 0
+    let prov = new Decimal(0)
+    let cont = new Decimal(0)
     for (const a of abonos) {
       if (a.tipo !== 'PAG') continue
       if (reversedPagRefs.has(a.referencia ?? '')) continue
-      const m = parseFloat(a.monto)
-      prov += m
-      cont += a.monto_usd_interno ? parseFloat(a.monto_usd_interno) : m
+      const m = new Decimal(a.monto || '0')
+      prov = prov.plus(m)
+      cont = cont.plus(a.monto_usd_interno ? new Decimal(a.monto_usd_interno) : m)
     }
-    return { totalAbonadoProveedor: prov, totalAbonadoContable: cont }
+    return { totalAbonadoProveedor: prov.toNumber(), totalAbonadoContable: cont.toNumber() }
   }, [abonos, reversedPagRefs])
 
   // ─── Acciones ─────────────────────────────────────────────
@@ -290,6 +316,26 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
       toast.error(err instanceof Error ? err.message : 'Error al anular el gasto')
     } finally {
       setAnulando(false)
+    }
+  }
+
+  async function handleDiferencialCambiario() {
+    if (!user?.empresa_id || !user.id || !compra) return
+    setAplicandoDiferencial(true)
+    try {
+      await registrarDiferencialCxP({
+        facturaCompraId: id,
+        proveedorId: compra.proveedor_id,
+        empresaId: user.empresa_id,
+        usuarioId: user.id,
+        tasa: amounts?.tasaFactura ?? 1,
+      })
+      toast.success('Diferencial cambiario registrado. Factura saldada.')
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al registrar diferencial cambiario')
+    } finally {
+      setAplicandoDiferencial(false)
     }
   }
 
@@ -534,8 +580,8 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                         </thead>
                         <tbody className="divide-y divide-border">
                           {detalle.map((d) => {
-                            const cant = parseFloat(d.cantidad)
-                            const costo = parseFloat(d.costo_unitario_usd)
+                            const cant = new Decimal(d.cantidad || '0')
+                            const costo = new Decimal(d.costo_unitario_usd || '0')
                             return (
                               <tr key={d.id}>
                                 <td className="px-3 py-1.5">
@@ -549,10 +595,10 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                                   {cant.toFixed(2)}
                                 </td>
                                 <td className="px-3 py-1.5 text-right tabular-nums">
-                                  {formatUsd(costo)}
+                                  {formatUsd(costo.toNumber())}
                                 </td>
                                 <td className="px-3 py-1.5 text-right tabular-nums font-medium">
-                                  {formatUsd(cant * costo)}
+                                  {formatUsd(cant.times(costo).toNumber())}
                                 </td>
                               </tr>
                             )
@@ -595,6 +641,61 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
               {/* ── Totales ──────────────────────────────── */}
               {amounts && (
                 <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-1.5">
+                  {tipo === 'GASTO' && (
+                    amounts.esGravable ? (
+                      <>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">Base imponible:</span>
+                          <div className="text-right">
+                            <div className="font-medium text-foreground">
+                              {formatUsd(amounts.baseUsd ?? 0)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatBs((amounts.baseUsd ?? 0) * tasaValor)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-sm">
+                          <span className="text-muted-foreground">
+                            IVA ({(amounts.porcentajeIva ?? 0).toFixed(2)}%):
+                          </span>
+                          <div className="text-right">
+                            <div className="font-medium text-foreground">
+                              {formatUsd(amounts.ivaUsd ?? 0)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatBs((amounts.ivaUsd ?? 0) * tasaValor)}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-sm border-b border-border/50 pb-1.5">
+                          <span className="text-muted-foreground">Total con IVA:</span>
+                          <div className="text-right">
+                            <div className="font-semibold text-foreground">
+                              {formatUsd(amounts.totalContableUsd)}
+                            </div>
+                            <div className="text-[10px] text-muted-foreground">
+                              {formatBs(amounts.totalBs)}
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex justify-between text-sm border-b border-border/50 pb-1.5">
+                        <span className="text-muted-foreground">
+                          Monto {amounts.esExonerado ? 'Exonerado' : 'Exento'} (sin IVA):
+                        </span>
+                        <div className="text-right">
+                          <div className="font-semibold text-foreground">
+                            {formatUsd(amounts.totalContableUsd)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {formatBs(amounts.totalBs)}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  )}
                   {amounts.usaParalela ? (
                     <>
                       <div className="flex justify-between text-sm">
@@ -653,10 +754,25 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                     </div>
                   )}
 
-                  {saldo > 0.005 ? (
+                  {saldo > 0 ? (
                     <div className="flex justify-between text-sm border-t border-border pt-1.5 mt-1">
                       <span className="font-medium text-muted-foreground">Saldo Pendiente:</span>
-                      <span className="font-bold text-destructive">{formatUsd(saldo)}</span>
+                      <div className="text-right">
+                        {saldo < 0.01 ? (
+                          <>
+                            <div className="font-mono text-xs text-amber-600 dark:text-amber-400">
+                              {new Decimal(saldo).toFixed(8)} USD
+                            </div>
+                            {amounts && amounts.tasaInterna > 0 && (
+                              <div className="font-bold text-destructive text-sm">
+                                {formatBs(new Decimal(saldo).times(new Decimal(amounts.tasaInterna)).toNumber())}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="font-bold text-destructive">{formatUsd(saldo)}</span>
+                        )}
+                      </div>
                     </div>
                   ) : totalAbonadoProveedor > 0.005 ? (
                     <div className="text-center text-xs text-green-600 font-medium pt-1.5 border-t border-border">
@@ -727,26 +843,38 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                               <td className="px-3 py-1.5 font-mono text-muted-foreground">
                                 {a.referencia ?? '—'}
                               </td>
-                              <td className="px-3 py-1.5 text-right">
-                                <div className="font-medium tabular-nums">
-                                  {a.tipo === 'PAG' ? '+' : '-'}
-                                  {formatUsd(parseFloat(a.monto))}
-                                </div>
-                                {esBs && (
-                                  <div className="text-muted-foreground text-[10px] leading-tight">
-                                    {formatBs(parseFloat(a.monto_moneda!))} @{' '}
-                                    {parseFloat(a.tasa_pago!).toFixed(2)}
-                                    {a.monto_usd_interno &&
-                                      Math.abs(
-                                        parseFloat(a.monto_usd_interno) - parseFloat(a.monto)
-                                      ) > 0.005 && (
-                                        <span className="text-slate-400 ml-1">
-                                          / {formatUsd(parseFloat(a.monto_usd_interno))} int.
-                                        </span>
-                                      )}
-                                  </div>
-                                )}
-                              </td>
+                               <td className="px-3 py-1.5 text-right">
+                                 {(() => {
+                                   const dMonto = new Decimal(a.monto || '0')
+                                   const esSubCentavo = dMonto.gt(0) && dMonto.lt(new Decimal('0.01'))
+                                   return (
+                                     <>
+                                       <div className="font-medium tabular-nums">
+                                         {a.tipo === 'PAG' ? '+' : '-'}
+                                         {esSubCentavo
+                                           ? <span className="font-mono text-[11px]">{dMonto.toFixed(8)} USD</span>
+                                           : formatUsd(dMonto.toNumber())
+                                         }
+                                       </div>
+                                       {esBs && (
+                                         <div className="text-muted-foreground text-[10px] leading-tight">
+                                           {formatBs(new Decimal(a.monto_moneda || '0').toNumber())} @{' '}
+                                           {new Decimal(a.tasa_pago || '0').toFixed(2)}
+                                           {a.monto_usd_interno &&
+                                             new Decimal(a.monto_usd_interno || '0')
+                                               .minus(dMonto)
+                                               .abs()
+                                               .greaterThan(new Decimal('0.005')) && (
+                                               <span className="text-slate-400 ml-1">
+                                                 / {formatUsd(new Decimal(a.monto_usd_interno || '0').toNumber())} int.
+                                               </span>
+                                             )}
+                                         </div>
+                                       )}
+                                     </>
+                                   )
+                                 })()}
+                                </td>
                               {puedeReversarAbono && (
                                 <td className="px-3 py-1.5 text-center">
                                   {a.tipo === 'PAG' && !esReversado ? (
@@ -801,11 +929,24 @@ export function FacturaProveedorModal({ tipo, id, isOpen, onClose }: FacturaProv
                 <Button variant="outline" onClick={onClose}>
                   Cerrar
                 </Button>
-                {saldo > 0.01 && !esAnulado && (
-                  <Button onClick={() => setPagoOpen(true)}>
-                    Registrar Pago
-                  </Button>
-                )}
+                <div className="flex gap-2">
+                  {tipo === 'COMPRA' && saldo > 0 && saldo < 0.01 && !esAnulado && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDiferencialCambiario}
+                      disabled={aplicandoDiferencial}
+                      className="text-amber-700 border-amber-300 hover:bg-amber-50 dark:text-amber-400 dark:border-amber-700 dark:hover:bg-amber-950/30"
+                    >
+                      {aplicandoDiferencial ? 'Procesando...' : 'Diferencial cambiario'}
+                    </Button>
+                  )}
+                  {saldo > 0 && !esAnulado && (
+                    <Button onClick={() => setPagoOpen(true)}>
+                      Registrar Pago
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           )}

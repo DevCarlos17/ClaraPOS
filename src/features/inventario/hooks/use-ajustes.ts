@@ -4,6 +4,9 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import Decimal from 'decimal.js'
+import { toStorageString } from '@/lib/currency'
+import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 
 export interface Ajuste {
   id: string
@@ -53,10 +56,12 @@ export function useAjustes() {
 
   const { data, isLoading } = useQuery(
     `SELECT a.*, m.nombre AS nombre_motivo, m.operacion_base,
+            u.nombre AS nombre_usuario,
             (SELECT COUNT(*) FROM ajustes_det ad WHERE ad.ajuste_id = a.id) AS items_count,
             (SELECT COALESCE(SUM(CAST(ad.cantidad AS REAL) * CASE WHEN ad.costo_unitario IS NOT NULL THEN CAST(ad.costo_unitario AS REAL) ELSE 0 END), 0) FROM ajustes_det ad WHERE ad.ajuste_id = a.id) AS total_usd
      FROM ajustes a
      LEFT JOIN ajuste_motivos m ON m.id = a.motivo_id
+     LEFT JOIN usuarios u ON u.id = a.created_by
      WHERE a.empresa_id = ?
      ORDER BY a.fecha DESC, a.num_ajuste DESC`,
     [empresaId]
@@ -65,6 +70,7 @@ export function useAjustes() {
     ajustes: (data ?? []) as (Ajuste & {
       nombre_motivo: string | null
       operacion_base: string | null
+      nombre_usuario: string | null
       items_count: number
       total_usd: number
     })[],
@@ -167,7 +173,7 @@ export async function crearAjuste(data: {
           linea.producto_id,
           linea.deposito_id,
           linea.cantidad.toFixed(3),
-          linea.costo_unitario !== undefined ? linea.costo_unitario.toFixed(2) : null,
+          linea.costo_unitario !== undefined ? toStorageString(new Decimal(linea.costo_unitario)) : null,
           linea.lote_id ?? null,
           linea.lote_nro ? linea.lote_nro.trim().toUpperCase() : null,
           linea.lote_fecha_fab ?? null,
@@ -201,8 +207,10 @@ export async function aplicarAjuste(
       'ajustes.num_ajuste',
       'ajustes.status',
       'ajustes.fecha',
+      'ajuste_motivos.nombre',
       'ajuste_motivos.operacion_base',
       'ajuste_motivos.afecta_costo',
+      'ajuste_motivos.cuentas_config_clave',
     ])
     .where('ajustes.id', '=', ajusteId)
     .executeTakeFirst()
@@ -222,7 +230,62 @@ export async function aplicarAjuste(
   const fechaHoy = now.split('T')[0] ?? now.substring(0, 10)
   const operacion = ajuste.operacion_base as string
 
+  // Mapeo cuentas_config_clave → tipo_salida (para movimientos de RESTA)
+  const CLAVE_A_TIPO_SALIDA: Record<string, string> = {
+    MERMA_INVENTARIO: 'MERMA',
+    EXTRAVIO_INVENTARIO: 'EXTRAVIO',
+    CONSUMO_INTERNO: 'CONSUMO_INTERNO',
+  }
+  const tipoSalidaAjuste = ajuste.cuentas_config_clave
+    ? (CLAVE_A_TIPO_SALIDA[ajuste.cuentas_config_clave] ?? null)
+    : null
+
+  // Pre-fetch de costo_usd para lineas sin costo_unitario (fix bug $0-gasto)
+  // Solo necesario cuando el motivo genera gasto (cuentas_config_clave && RESTA)
+  const costosEfectivos: Record<string, string> = {}
+  if (ajuste.cuentas_config_clave && operacion === 'RESTA') {
+    for (const linea of lineas) {
+      const costoLinea = parseFloat(linea.costo_unitario ?? '0')
+      if (costoLinea > 0) {
+        costosEfectivos[linea.producto_id] = linea.costo_unitario!
+      } else {
+        const prod = await kysely
+          .selectFrom('productos')
+          .select('costo_usd')
+          .where('id', '=', linea.producto_id)
+          .executeTakeFirst()
+        const costoStr = prod?.costo_usd ?? '0'
+        costosEfectivos[linea.producto_id] = parseFloat(costoStr) > 0 ? costoStr : '0'
+      }
+    }
+  }
+
   await db.writeTransaction(async (tx) => {
+    // Pre-fetch shared gasto lookups once per transaction (for per-line gasto creation in RESTA)
+    let tasaActualPorLinea = 0
+    let cuentaIdPorLinea: string | null = null
+    let monedaUsdIdPorLinea = ''
+    if (ajuste.cuentas_config_clave && operacion === 'RESTA') {
+      const tasaResL = await tx.execute(
+        'SELECT valor FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC, created_at DESC LIMIT 1',
+        [empresaId]
+      )
+      tasaActualPorLinea = parseFloat(
+        (tasaResL.rows?.item(0) as { valor: string } | undefined)?.valor ?? '0'
+      )
+      const cuentaResL = await tx.execute(
+        'SELECT cuenta_contable_id FROM cuentas_config WHERE empresa_id = ? AND clave = ? LIMIT 1',
+        [empresaId, ajuste.cuentas_config_clave]
+      )
+      cuentaIdPorLinea = (cuentaResL.rows?.item(0) as { cuenta_contable_id: string } | undefined)?.cuenta_contable_id ?? null
+      const monedaResL = await tx.execute(
+        "SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1",
+        []
+      )
+      monedaUsdIdPorLinea = (monedaResL.rows?.item(0) as { id: string } | undefined)?.id ?? ''
+    }
+    let gastoLineaIdx = 0
+
     for (const linea of lineas) {
       const stockResult = await tx.execute(
         'SELECT stock FROM productos WHERE id = ?',
@@ -271,23 +334,31 @@ export async function aplicarAjuste(
           )
         }
 
+        const movSumaId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_inventario
            (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
             costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
            VALUES (?, ?, ?, ?, 'E', 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?)`,
           [
-            uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
+            movSumaId, empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
             linea.costo_unitario ?? null, loteIdParaMovimiento,
             ajusteId, ajuste.num_ajuste,
-            userId, fechaHoy, now,
+            userId, now, now,
           ]
         )
-        await tx.execute(
-          'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), now, linea.producto_id]
-        )
+        // inventario_stock (por deposito) + productos.stock (total) — usa linea.deposito_id,
+        // que ya viene deposit-scoped desde el formulario (sin cambio de resolucion en este slice).
+        await upsertStockDeposito(tx, {
+          empresa_id: empresaId,
+          producto_id: linea.producto_id,
+          deposito_id: linea.deposito_id,
+          delta: new Decimal(cantidad),
+          usuario_id: userId,
+          now,
+          movimientoInventarioId: movSumaId,
+        })
       } else if (operacion === 'RESTA') {
         stockNuevo = stockAnterior - cantidad
         if (stockNuevo < 0) {
@@ -352,23 +423,93 @@ export async function aplicarAjuste(
           }
         }
 
+        const costoParaMovimiento = costosEfectivos[linea.producto_id] ?? linea.costo_unitario ?? null
+        if (costoParaMovimiento && costoParaMovimiento !== '0') {
+          await tx.execute(
+            'UPDATE ajustes_det SET costo_unitario = ? WHERE ajuste_id = ? AND producto_id = ?',
+            [costoParaMovimiento, ajusteId, linea.producto_id]
+          )
+        }
+        const movRestaId = uuidv4()
         await tx.execute(
           `INSERT INTO movimientos_inventario
            (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
-            costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
-           VALUES (?, ?, ?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?)`,
+            costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at,
+            tipo_salida)
+           VALUES (?, ?, ?, ?, 'S', 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Ajuste de inventario', ?, ?, ?, ?)`,
           [
-            uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
+            movRestaId, empresaId, linea.producto_id, linea.deposito_id,
             linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
-            linea.costo_unitario ?? null, loteIdMovimiento,
+            costoParaMovimiento, loteIdMovimiento,
             ajusteId, ajuste.num_ajuste,
-            userId, fechaHoy, now,
+            userId, now, now,
+            tipoSalidaAjuste,
           ]
         )
-        await tx.execute(
-          'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-          [stockNuevo.toFixed(3), now, linea.producto_id]
-        )
+        // inventario_stock (por deposito) + productos.stock (total) — usa linea.deposito_id,
+        // que ya viene deposit-scoped desde el formulario (sin cambio de resolucion en este slice).
+        await upsertStockDeposito(tx, {
+          empresa_id: empresaId,
+          producto_id: linea.producto_id,
+          deposito_id: linea.deposito_id,
+          delta: new Decimal(cantidad).negated(),
+          usuario_id: userId,
+          now,
+          movimientoInventarioId: movRestaId,
+        })
+
+        // Per-line gasto contable (W-02: un gasto por linea, no agregado; W-03: sin try/catch — fallo revierte todo el tx)
+        if (tipoSalidaAjuste && cuentaIdPorLinea && monedaUsdIdPorLinea) {
+          const totalLineaD = new Decimal(costosEfectivos[linea.producto_id] ?? '0').times(new Decimal(linea.cantidad))
+          if (totalLineaD.gt(0)) {
+            gastoLineaIdx++
+            const prodNombreRes = await tx.execute(
+              'SELECT nombre FROM productos WHERE id = ?',
+              [linea.producto_id]
+            )
+            const prodNombre = (prodNombreRes.rows?.item(0) as { nombre: string } | undefined)?.nombre ?? linea.producto_id
+            const TIPO_SALIDA_LABELS: Record<string, string> = {
+              MERMA: 'Merma',
+              EXTRAVIO: 'Extravío',
+              CONSUMO_INTERNO: 'Consumo Interno',
+            }
+            const concepto = `${TIPO_SALIDA_LABELS[tipoSalidaAjuste] ?? tipoSalidaAjuste}: ${prodNombre}`
+            const gastoId = uuidv4()
+            const totalLineaStr = toStorageString(totalLineaD)
+            const tasaStr = tasaActualPorLinea > 0 ? tasaActualPorLinea.toFixed(4) : '0'
+            const nroGasto = `AJU-${ajuste.num_ajuste}-L${String(gastoLineaIdx).padStart(2, '0')}`
+            await tx.execute(
+              `INSERT INTO gastos
+                 (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
+                  moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+                  tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+                  saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by,
+                  doc_origen_id, doc_origen_tipo)
+               VALUES (?, ?, ?, ?, ?, ?, ?,
+                       ?, 'USD', 0, ?, ?, ?,
+                       'Exento', '0.00', ?, '0.00',
+                        '0.00', ?, 'REGISTRADO', ?, ?, ?,
+                       ?, ?)`,
+              [
+                gastoId,
+                empresaId,
+                nroGasto,
+                ajuste.num_ajuste,
+                cuentaIdPorLinea,
+                concepto,
+                ajuste.fecha ?? fechaHoy,
+                monedaUsdIdPorLinea,
+                tasaStr,
+                totalLineaStr, totalLineaStr,
+                totalLineaStr,
+                `Generado automáticamente por ajuste de inventario ${ajuste.num_ajuste}`,
+                now, now, userId,
+                ajusteId,
+                'AJUSTE_INVENTARIO',
+              ]
+            )
+          }
+        }
       } else if (operacion === 'NEUTRO' && ajuste.afecta_costo === 1 && linea.costo_unitario != null) {
         // NEUTRO: solo actualizar costo sin mover stock
         await tx.execute(
@@ -406,6 +547,7 @@ export async function anularAjuste(
       'ajustes.status',
       'ajustes.observaciones',
       'ajuste_motivos.operacion_base',
+      'ajuste_motivos.cuentas_config_clave',
     ])
     .where('ajustes.id', '=', ajusteId)
     .executeTakeFirst()
@@ -420,7 +562,6 @@ export async function anularAjuste(
     .execute()
 
   const now = localNow()
-  const fechaHoy = now.split('T')[0] ?? now.substring(0, 10)
   const operacion = ajuste.operacion_base as string
   const obsAnulacion = motivoAnulacion
     ? `[ANULADO: ${motivoAnulacion}]${ajuste.observaciones ? ' | ' + ajuste.observaciones : ''}`
@@ -490,28 +631,49 @@ export async function anularAjuste(
         }
       }
 
+      const movAnulId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_inventario
          (id, empresa_id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo,
           costo_unitario, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, created_at)
          VALUES (?, ?, ?, ?, ?, 'AJU', ?, ?, ?, ?, ?, ?, ?, 'Anulacion de ajuste', ?, ?, ?)`,
         [
-          uuidv4(), empresaId, linea.producto_id, linea.deposito_id,
+          movAnulId, empresaId, linea.producto_id, linea.deposito_id,
           tipoInverso, linea.cantidad, stockAnterior.toFixed(3), stockNuevo.toFixed(3),
           linea.costo_unitario ?? null, loteId,
           ajusteId, ajuste.num_ajuste,
-          userId, fechaHoy, now,
+          userId, now, now,
         ]
       )
-      await tx.execute(
-        'UPDATE productos SET stock = ?, updated_at = ? WHERE id = ?',
-        [stockNuevo.toFixed(3), now, linea.producto_id]
-      )
+      // inventario_stock (por deposito) + productos.stock (total) — mismo deposito que el
+      // movimiento original (linea.deposito_id), delta inverso al de la aplicacion original.
+      await upsertStockDeposito(tx, {
+        empresa_id: empresaId,
+        producto_id: linea.producto_id,
+        deposito_id: linea.deposito_id,
+        delta: operacion === 'SUMA' ? new Decimal(cantidad).negated() : new Decimal(cantidad),
+        usuario_id: userId,
+        movimientoInventarioId: movAnulId,
+        now,
+      })
     }
 
     await tx.execute(
       'UPDATE ajustes SET status = ?, observaciones = ?, updated_at = ?, updated_by = ? WHERE id = ?',
       ['ANULADO', obsAnulacion, now, userId, ajusteId]
     )
+
+    // Anular el gasto contable automático si existía
+    if (ajuste.cuentas_config_clave && operacion === 'RESTA') {
+      try {
+        await tx.execute(
+          `UPDATE gastos SET status = 'ANULADO', updated_at = ?, updated_by = ?
+           WHERE empresa_id = ? AND nro_factura = ? AND status = 'PAGADO'`,
+          [now, userId, empresaId, ajuste.num_ajuste]
+        )
+      } catch {
+        console.warn('⚠️ anularAjuste: fallo al anular gasto contable para', ajusteId)
+      }
+    }
   })
 }

@@ -3,6 +3,7 @@ import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { toStorageString } from '@/lib/currency'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -110,10 +111,10 @@ export async function crearRetencionIslr(data: {
       nro_comprobante: data.nro_comprobante.toUpperCase(),
       fecha_comprobante: data.fecha_comprobante,
       periodo_fiscal: data.periodo_fiscal ?? null,
-      base_imponible_bs: data.base_imponible_bs.toFixed(2),
-      porcentaje_retencion: data.porcentaje_retencion.toFixed(2),
-      monto_retenido_bs: data.monto_retenido_bs.toFixed(2),
-      sustraendo_bs: data.sustraendo_bs != null ? data.sustraendo_bs.toFixed(2) : null,
+      base_imponible_bs: toStorageString(data.base_imponible_bs),
+      porcentaje_retencion: toStorageString(data.porcentaje_retencion),
+      monto_retenido_bs: toStorageString(data.monto_retenido_bs),
+      sustraendo_bs: data.sustraendo_bs != null ? toStorageString(data.sustraendo_bs) : null,
       status: 'PENDIENTE',
       observaciones: data.observaciones ?? null,
       created_at: now,

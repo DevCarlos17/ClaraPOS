@@ -21,6 +21,7 @@ import {
   type Producto,
 } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentos } from '@/features/inventario/hooks/use-departamentos'
+import { useDepositos } from '@/features/inventario/hooks/use-depositos'
 import { useTodasLasRecetas } from '@/features/inventario/hooks/use-recetas'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -36,6 +37,7 @@ import {
 } from '@/features/inventario/utils/productos-export'
 import { toast } from 'sonner'
 import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
+import { compararCodigos } from '@/features/inventario/lib/producto-sort'
 
 type SortKey =
   | 'codigo'
@@ -50,6 +52,10 @@ type SortDir = 'asc' | 'desc'
 export function ProductoList() {
   const { productos, isLoading } = useProductos()
   const { departamentos } = useDepartamentos()
+  // Todos los depositos (incluye inactivos): un producto puede tener su
+  // deposito_id apuntando a uno desactivado y aun asi debe mostrar su nombre
+  // real en la columna, no '-'. Mismo criterio que useDepartamentos (no-activos).
+  const { depositos } = useDepositos()
   const { tasaValor } = useTasaActual()
   const { valorTotal, stockCritico } = useResumenInventario()
   const { recetas } = useTodasLasRecetas()
@@ -69,6 +75,7 @@ export function ProductoList() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false)
 
   // Filtros
+  const [filtroTexto, setFiltroTexto] = useState('')
   const [filtroDepartamento, setFiltroDepartamento] = useState('')
   const [filtroTipo, setFiltroTipo] = useState<'P' | 'S' | 'C' | ''>('')
   const [filtroActivo, setFiltroActivo] = useState(true)
@@ -85,15 +92,33 @@ export function ProductoList() {
     return map
   }, [departamentos])
 
+  const depositoMap = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const dep of depositos) {
+      map.set(dep.id, dep.nombre)
+    }
+    return map
+  }, [depositos])
+
   const productosFiltrados = useMemo(() => {
     return productos.filter((p) => {
       if (filtroActivo && p.is_active !== 1) return false
       if (!filtroActivo && p.is_active === 1) return false
       if (filtroDepartamento && p.departamento_id !== filtroDepartamento) return false
       if (filtroTipo && p.tipo !== filtroTipo) return false
+      if (filtroTexto.trim()) {
+        const q = filtroTexto.toUpperCase()
+        if (
+          !p.nombre.includes(q) &&
+          !p.codigo.includes(q) &&
+          !(p.codigo_barras ?? '').includes(q)
+        ) {
+          return false
+        }
+      }
       return true
     })
-  }, [productos, filtroDepartamento, filtroTipo, filtroActivo])
+  }, [productos, filtroTexto, filtroDepartamento, filtroTipo, filtroActivo])
 
   const productosOrdenados = useMemo(() => {
     const items = [...productosFiltrados]
@@ -101,7 +126,7 @@ export function ProductoList() {
       let cmp = 0
       switch (sortKey) {
         case 'codigo':
-          cmp = a.codigo.localeCompare(b.codigo)
+          cmp = compararCodigos(a.codigo, b.codigo)
           break
         case 'tipo':
           cmp = a.tipo.localeCompare(b.tipo)
@@ -264,6 +289,14 @@ export function ProductoList() {
       <div className="rounded-2xl bg-card shadow-lg p-4 mb-4">
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div className="flex flex-wrap gap-2">
+          <input
+            type="text"
+            placeholder="Buscar por nombre, código o código de barras..."
+            value={filtroTexto}
+            onChange={(e) => setFiltroTexto(e.target.value)}
+            className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring w-64"
+          />
+
           <select
             value={filtroDepartamento}
             onChange={(e) => setFiltroDepartamento(e.target.value)}
@@ -401,6 +434,7 @@ export function ProductoList() {
                     {renderSortIcon('departamento')}
                   </button>
                 </th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Deposito</th>
                 <th className="text-right px-4 py-3 font-medium text-muted-foreground">
                   <button
                     onClick={() => handleSort('costo')}
@@ -479,6 +513,9 @@ export function ProductoList() {
                     <td className="px-4 py-3 text-foreground">{prod.nombre}</td>
                     <td className="px-4 py-3 text-muted-foreground">
                       {departamentoMap.get(prod.departamento_id) ?? '-'}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">
+                      {prod.deposito_id ? depositoMap.get(prod.deposito_id) ?? '-' : '-'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <PrecioDisplay usd={prod.costo_usd} tasa={tasaValor} />

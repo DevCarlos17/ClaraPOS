@@ -3,6 +3,7 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import Decimal from 'decimal.js'
 
 export interface PaymentMethod {
   id: string
@@ -13,11 +14,21 @@ export interface PaymentMethod {
   moneda: string
   banco_empresa_id: string | null
   banco_nombre: string | null
+  caja_fuerte_id: string | null
+  caja_nombre: string | null
   requiere_referencia: number
   saldo_actual: string
   is_active: number
   empresa_id: string
   created_at: string
+  // 0069: atributos operativos
+  deposito_directo: number   // 0|1
+  comision_pct: string
+  usa_pos: number            // 0|1
+  usa_cxc: number            // 0|1
+  usa_cxp: number            // 0|1
+  // 0079: consolidar lotes POS en un traspaso (1) o uno por lote (0)
+  consolidar_lotes: number
 }
 
 export const TIPOS_METODO = [
@@ -33,10 +44,12 @@ export const TIPOS_METODO = [
 const SELECT_METODOS = `
   SELECT mc.*,
          CASE WHEN m.codigo_iso = 'VES' THEN 'BS' ELSE COALESCE(m.codigo_iso, 'USD') END as moneda,
-         b.nombre_banco as banco_nombre
+         b.nombre_banco as banco_nombre,
+         cf.nombre as caja_nombre
   FROM metodos_cobro mc
   LEFT JOIN monedas m ON mc.moneda_id = m.id
   LEFT JOIN bancos_empresa b ON mc.banco_empresa_id = b.id
+  LEFT JOIN caja_fuerte cf ON mc.caja_fuerte_id = cf.id
 `
 
 export function usePaymentMethods() {
@@ -55,7 +68,40 @@ export function useMetodosPagoActivos() {
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 ORDER BY mc.nombre ASC`,
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) ORDER BY mc.nombre ASC`,
+    [empresaId]
+  )
+  return { metodos: (data ?? []) as PaymentMethod[], isLoading }
+}
+
+export function useMetodosPOS() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) AND mc.usa_pos = 1 ORDER BY mc.nombre ASC`,
+    [empresaId]
+  )
+  return { metodos: (data ?? []) as PaymentMethod[], isLoading }
+}
+
+export function useMetodosCxC() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) AND mc.usa_cxc = 1 ORDER BY mc.nombre ASC`,
+    [empresaId]
+  )
+  return { metodos: (data ?? []) as PaymentMethod[], isLoading }
+}
+
+export function useMetodosCxP() {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+
+  const { data, isLoading } = useQuery(
+    `${SELECT_METODOS} WHERE mc.empresa_id = ? AND mc.is_active = 1 AND (mc.banco_empresa_id IS NULL OR b.is_active = 1) AND mc.usa_cxp = 1 ORDER BY mc.nombre ASC`,
     [empresaId]
   )
   return { metodos: (data ?? []) as PaymentMethod[], isLoading }
@@ -69,9 +115,27 @@ export async function createPaymentMethod(params: {
   requiere_referencia?: boolean
   empresa_id: string
   usuario_id: string
+  // 0069: atributos operativos
+  deposito_directo?: boolean
+  comision_pct?: string
+  usa_pos?: boolean
+  usa_cxc?: boolean
+  usa_cxp?: boolean
+  caja_fuerte_id?: string | null
+  consolidar_lotes?: boolean
+  // PR-3: N conceptos de deduccion (comision de pasarela, ISLR, etc.), pre-armados
+  // por el caller (payment-method-form.tsx) con la cuenta base de pasarela del banco.
+  // createPaymentMethod NO resuelve la cuenta por su cuenta — solo persiste.
+  deducciones?: {
+    concepto: string
+    tipo: 'COMISION' | 'ISLR' | 'OTRO'
+    porcentaje: string
+    cuenta_gasto_id: string
+  }[]
 }) {
   const id = uuidv4()
   const now = localNow()
+  const comisionStorage = new Decimal(params.comision_pct || '0').toFixed(2)
 
   await db.writeTransaction(async (tx) => {
     // Buscar UUID de moneda
@@ -85,9 +149,37 @@ export async function createPaymentMethod(params: {
     }
     const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
+    // Fix qa/metodo-pago-hereda-moneda-banco: defensa en profundidad. El
+    // schema Zod (payment-method-schema.ts) ya bloquea esto en la UI, pero
+    // createPaymentMethod puede invocarse desde otros callers futuros — un
+    // metodo bancario NUNCA debe quedar con una moneda distinta a la de su
+    // banco vinculado (root cause del bug original: TRANSF VZLA en VES con
+    // banco en USD).
+    if (params.banco_empresa_id) {
+      // Remediacion WARNING 2 (verify-report #2257): escopar por empresa_id
+      // (CLAUDE.md regla 11) — un banco_empresa_id de otro tenant nunca debe
+      // resolver moneda aqui.
+      const bancoResult = await tx.execute(
+        'SELECT moneda_id FROM bancos_empresa WHERE id = ? AND empresa_id = ? LIMIT 1',
+        [params.banco_empresa_id, params.empresa_id]
+      )
+      const bancoMonedaId = (bancoResult.rows?.item(0) as { moneda_id: string } | undefined)
+        ?.moneda_id
+      if (bancoMonedaId && bancoMonedaId !== monedaId) {
+        throw new Error(
+          'La moneda del metodo debe coincidir con la moneda del banco seleccionado'
+        )
+      }
+    }
+
     await tx.execute(
-      `INSERT INTO metodos_cobro (id, empresa_id, nombre, tipo, moneda_id, banco_empresa_id, requiere_referencia, saldo_actual, is_active, created_at, updated_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO metodos_cobro
+         (id, empresa_id, nombre, tipo, moneda_id, banco_empresa_id,
+          requiere_referencia, saldo_actual, is_active,
+          created_at, updated_at, created_by,
+          deposito_directo, comision_pct, usa_pos, usa_cxc, usa_cxp, caja_fuerte_id,
+          consolidar_lotes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         params.empresa_id,
@@ -101,8 +193,42 @@ export async function createPaymentMethod(params: {
         now,
         now,
         params.usuario_id,
+        params.deposito_directo ? 1 : 0,
+        comisionStorage,
+        params.usa_pos !== false ? 1 : 0,
+        params.usa_cxc !== false ? 1 : 0,
+        params.usa_cxp !== false ? 1 : 0,
+        params.caja_fuerte_id ?? null,
+        params.consolidar_lotes !== false ? 1 : 0,
       ]
     )
+
+    // PR-3: default-seeding de deducciones, MISMA writeTransaction que el
+    // INSERT de metodos_cobro — el metodo y sus filas de deduccion se crean
+    // o fallan juntos (ningun metodo_cobro_deducciones puede quedar huerfano
+    // de su metodos_cobro padre).
+    for (const [i, d] of (params.deducciones ?? []).entries()) {
+      await tx.execute(
+        `INSERT INTO metodo_cobro_deducciones
+           (id, empresa_id, metodo_cobro_id, cuenta_gasto_id, concepto, tipo, porcentaje, orden,
+            is_active, created_at, updated_at, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          params.empresa_id,
+          id,
+          d.cuenta_gasto_id,
+          d.concepto,
+          d.tipo,
+          new Decimal(d.porcentaje || '0').toFixed(2),
+          i,
+          1,
+          now,
+          now,
+          params.usuario_id,
+        ]
+      )
+    }
   })
 
   return id
@@ -110,7 +236,20 @@ export async function createPaymentMethod(params: {
 
 export async function updatePaymentMethod(
   id: string,
-  data: { nombre?: string; tipo?: string; banco_empresa_id?: string | null; is_active?: boolean }
+  data: {
+    nombre?: string
+    tipo?: string
+    banco_empresa_id?: string | null
+    is_active?: boolean
+    // 0069: atributos operativos
+    deposito_directo?: boolean
+    comision_pct?: string
+    usa_pos?: boolean
+    usa_cxc?: boolean
+    usa_cxp?: boolean
+    caja_fuerte_id?: string | null
+    consolidar_lotes?: boolean
+  }
 ) {
   const sets: string[] = []
   const values: unknown[] = []
@@ -131,8 +270,69 @@ export async function updatePaymentMethod(
     sets.push('is_active = ?')
     values.push(data.is_active ? 1 : 0)
   }
+  if (data.deposito_directo !== undefined) {
+    sets.push('deposito_directo = ?')
+    values.push(data.deposito_directo ? 1 : 0)
+  }
+  if (data.comision_pct !== undefined) {
+    sets.push('comision_pct = ?')
+    values.push(new Decimal(data.comision_pct || '0').toFixed(2))
+  }
+  if (data.usa_pos !== undefined) {
+    sets.push('usa_pos = ?')
+    values.push(data.usa_pos ? 1 : 0)
+  }
+  if (data.usa_cxc !== undefined) {
+    sets.push('usa_cxc = ?')
+    values.push(data.usa_cxc ? 1 : 0)
+  }
+  if (data.usa_cxp !== undefined) {
+    sets.push('usa_cxp = ?')
+    values.push(data.usa_cxp ? 1 : 0)
+  }
+  if (data.caja_fuerte_id !== undefined) {
+    sets.push('caja_fuerte_id = ?')
+    values.push(data.caja_fuerte_id)
+  }
+  if (data.consolidar_lotes !== undefined) {
+    sets.push('consolidar_lotes = ?')
+    values.push(data.consolidar_lotes ? 1 : 0)
+  }
 
   if (sets.length === 0) return
+
+  // Remediacion WARNING 3 (verify-report #2257): guard simetrico a
+  // createPaymentMethod, pero SOLO cuando banco_empresa_id cambia a un valor
+  // DISTINTO del ya persistido — nunca debe disparar en un edit que no toca
+  // el banco (ej. toggle de `active` en un metodo legado con banco
+  // desalineado). La moneda del metodo es inmutable en edicion (nunca se
+  // reasigna aqui), asi que solo se valida que la moneda YA persistida siga
+  // coincidiendo con el banco NUEVO que se le esta asignando.
+  if (data.banco_empresa_id !== undefined) {
+    const current = await db.execute(
+      'SELECT empresa_id, moneda_id, banco_empresa_id FROM metodos_cobro WHERE id = ?',
+      [id]
+    )
+    const currentRow = current.rows?.item(0) as
+      | { empresa_id: string; moneda_id: string; banco_empresa_id: string | null }
+      | undefined
+    if (!currentRow) {
+      throw new Error('Metodo de pago no encontrado')
+    }
+    if (data.banco_empresa_id && data.banco_empresa_id !== currentRow.banco_empresa_id) {
+      const bancoResult = await db.execute(
+        'SELECT moneda_id FROM bancos_empresa WHERE id = ? AND empresa_id = ? LIMIT 1',
+        [data.banco_empresa_id, currentRow.empresa_id]
+      )
+      const bancoMonedaId = (bancoResult.rows?.item(0) as { moneda_id: string } | undefined)
+        ?.moneda_id
+      if (bancoMonedaId && bancoMonedaId !== currentRow.moneda_id) {
+        throw new Error(
+          'La moneda del metodo debe coincidir con la moneda del banco seleccionado'
+        )
+      }
+    }
+  }
 
   sets.push('updated_at = ?')
   values.push(localNow())

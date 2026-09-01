@@ -1,22 +1,52 @@
-import { Bank, Vault } from '@phosphor-icons/react'
+import { Bank, Vault, X } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
-import { formatUsd } from '@/lib/currency'
+import { formatBs, formatUsd } from '@/lib/currency'
 import type { CuentaTesoreria } from '../hooks/use-cuentas-tesoreria'
 
 interface Props {
   cuentas: CuentaTesoreria[]
+  cuentasInactivas?: CuentaTesoreria[]
   selectedId: string | null
   onSelect: (cuenta: CuentaTesoreria) => void
+  onDeselect?: () => void
+  pendingCounts?: Map<string, number>
 }
 
-export function CuentasOverview({ cuentas, selectedId, onSelect }: Props) {
+export function CuentasOverview({
+  cuentas,
+  cuentasInactivas = [],
+  selectedId,
+  onSelect,
+  onDeselect,
+  pendingCounts,
+}: Props) {
+  // If a card is selected, show ONLY that card (no section headers, no other cards)
+  // Lookup over the COMBINED active+inactive set: a bank that gets deactivated
+  // while selected must not disappear (see spec "Resiliencia de selección").
+  if (selectedId) {
+    const seleccionada = [...cuentas, ...cuentasInactivas].find((c) => c.id === selectedId)
+    if (!seleccionada) return null
+    return (
+      <div className="py-1">
+        <CuentaCard
+          cuenta={seleccionada}
+          selected
+          onSelect={onSelect}
+          onDeselect={onDeselect}
+          pendingCount={pendingCounts?.get(seleccionada.id) ?? 0}
+        />
+      </div>
+    )
+  }
+
+  // No selection: show all cards grouped by type (existing behavior)
   const bancos = cuentas.filter((c) => c.tipo === 'BANCO')
   const cajas = cuentas.filter((c) => c.tipo === 'CAJA_FUERTE')
 
-  if (cuentas.length === 0) {
+  if (cuentas.length === 0 && cuentasInactivas.length === 0) {
     return (
       <div className="text-sm text-muted-foreground py-4 text-center">
-        No hay cuentas configuradas. Cree un banco o una caja fuerte para comenzar.
+        No hay cuentas configuradas. Cree un banco para comenzar.
       </div>
     )
   }
@@ -33,14 +63,14 @@ export function CuentasOverview({ cuentas, selectedId, onSelect }: Props) {
               <CuentaCard
                 key={cuenta.id}
                 cuenta={cuenta}
-                selected={selectedId === cuenta.id}
+                selected={false}
                 onSelect={onSelect}
+                pendingCount={pendingCounts?.get(cuenta.id) ?? 0}
               />
             ))}
           </div>
         </div>
       )}
-
       {cajas.length > 0 && (
         <div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
@@ -51,8 +81,27 @@ export function CuentasOverview({ cuentas, selectedId, onSelect }: Props) {
               <CuentaCard
                 key={cuenta.id}
                 cuenta={cuenta}
-                selected={selectedId === cuenta.id}
+                selected={false}
                 onSelect={onSelect}
+                pendingCount={pendingCounts?.get(cuenta.id) ?? 0}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      {cuentasInactivas.length > 0 && (
+        <div className="opacity-60">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
+            Inactivos
+          </p>
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {cuentasInactivas.map((cuenta) => (
+              <CuentaCard
+                key={cuenta.id}
+                cuenta={cuenta}
+                selected={false}
+                onSelect={onSelect}
+                pendingCount={pendingCounts?.get(cuenta.id) ?? 0}
               />
             ))}
           </div>
@@ -66,10 +115,14 @@ function CuentaCard({
   cuenta,
   selected,
   onSelect,
+  onDeselect,
+  pendingCount,
 }: {
   cuenta: CuentaTesoreria
   selected: boolean
   onSelect: (c: CuentaTesoreria) => void
+  onDeselect?: () => void
+  pendingCount?: number
 }) {
   const Icon = cuenta.tipo === 'BANCO' ? Bank : Vault
   const saldo = parseFloat(cuenta.saldo_actual ?? '0')
@@ -78,13 +131,35 @@ function CuentaCard({
     <button
       onClick={() => onSelect(cuenta)}
       className={cn(
-        'flex-shrink-0 w-52 rounded-xl border p-4 text-left transition-all',
+        'relative flex-shrink-0 w-52 rounded-xl border p-4 text-left transition-all',
         'hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
         selected
           ? 'border-primary bg-primary/5 shadow-sm'
           : 'border-border bg-card hover:border-primary/40'
       )}
     >
+      {/* Pending badge — hidden when selected (X button occupies same corner) */}
+      {!selected && pendingCount !== undefined && pendingCount > 0 && (
+        <span className="absolute top-2 right-2 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1 shadow-sm z-10">
+          {pendingCount > 99 ? '99+' : pendingCount}
+        </span>
+      )}
+
+      {/* X button to deselect — only when selected */}
+      {selected && onDeselect && (
+        <span
+          role="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            onDeselect()
+          }}
+          className="absolute top-2 right-2 p-0.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+          title="Deseleccionar"
+        >
+          <X size={13} />
+        </span>
+      )}
+
       <div className="flex items-center gap-2 mb-3">
         <div
           className={cn(
@@ -113,7 +188,7 @@ function CuentaCard({
           saldo < 0 ? 'text-destructive' : selected ? 'text-primary' : 'text-foreground'
         )}
       >
-        {cuenta.moneda_simbolo} {formatUsd(saldo)}
+        {cuenta.moneda_codigo === 'USD' ? formatUsd(saldo) : formatBs(saldo)}
       </p>
     </button>
   )

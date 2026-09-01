@@ -12,18 +12,14 @@ export function PowerSyncProvider({ children }: { children: React.ReactNode }) {
     const initializePowerSync = async () => {
       try {
         if (navigator.storage && navigator.storage.persist) {
-          const isPersisted = await navigator.storage.persist()
-          if (isPersisted) {
-            console.log('Storage persistente activado')
-          }
+          await navigator.storage.persist()
         }
 
         await db.init()
 
         cleanup = connector.registerListener({
           initialized: () => {},
-          sessionStarted: (session) => {
-            console.log('Sesion iniciada, conectando PowerSync...', session.user?.email)
+          sessionStarted: () => {
             db.connect(connector)
           },
         })

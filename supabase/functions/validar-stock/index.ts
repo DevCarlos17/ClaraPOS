@@ -47,14 +47,25 @@ serve(async (req) => {
     const body = await req.json() as {
       lineas: LineaValidar[];
       empresa_id: string;
+      // Deposito de la caja activa que despacha esta venta (Slice 2b,
+      // VSD/Edge Function valida por deposito). Todas las lineas de una
+      // venta comparten el mismo deposito, un solo campo por checkout.
+      deposito_id: string | null;
     };
 
-    const { lineas, empresa_id } = body;
+    const { lineas, empresa_id, deposito_id } = body;
 
     if (!empresa_id) {
       return jsonResponse({ error: "empresa_id requerido" }, 400);
     }
     if (!Array.isArray(lineas) || lineas.length === 0) {
+      return jsonResponse({ ok: true }, 200);
+    }
+    if (!deposito_id) {
+      // Sin deposito resuelto (caso borde: sin caja ni deposito principal
+      // configurado) — no hay stock por-deposito confiable que validar en el
+      // servidor. El re-chequeo local en la writeTransaction sigue siendo la
+      // guarda; no bloquear aqui evita un falso 409 permanente.
       return jsonResponse({ ok: true }, 200);
     }
 
@@ -98,12 +109,15 @@ serve(async (req) => {
 
     const productIds = productosP.map((l) => l.producto_id);
 
-    // Leer stock actual desde PostgreSQL (fuente de verdad del servidor)
+    // Leer stock actual desde PostgreSQL, ESCOPEADO al deposito de la caja
+    // (fuente de verdad del servidor, VSD/Edge Function valida por deposito).
+    // `inventario_stock` no tiene `nombre` — se toma del payload del cliente
+    // (`lineas`) para el mensaje de error, igual que antes.
     const { data: stocks, error: stockError } = await supabaseAdmin
-      .from("productos")
-      .select("id, nombre, stock")
-      .in("id", productIds)
-      .eq("empresa_id", empresa_id);
+      .from("inventario_stock")
+      .select("producto_id, cantidad_actual")
+      .in("producto_id", productIds)
+      .eq("deposito_id", deposito_id);
 
     if (stockError || !stocks) {
       return jsonResponse({ error: "Error al consultar stock en servidor" }, 500);
@@ -112,22 +126,13 @@ serve(async (req) => {
     const faltantes: StockFaltante[] = [];
 
     for (const linea of productosP) {
-      const producto = stocks.find((p) => p.id === linea.producto_id);
-
-      if (!producto) {
-        faltantes.push({
-          nombre: linea.nombre,
-          disponible: 0,
-          solicitado: linea.cantidad,
-        });
-        continue;
-      }
-
-      const stockActual = parseFloat(producto.stock as string) || 0;
+      const stockRow = stocks.find((s) => s.producto_id === linea.producto_id);
+      // Sin fila = sin stock registrado para ese (producto, deposito) — 0.
+      const stockActual = stockRow ? (parseFloat(stockRow.cantidad_actual as string) || 0) : 0;
 
       if (stockActual < linea.cantidad - 0.001) {
         faltantes.push({
-          nombre: producto.nombre as string,
+          nombre: linea.nombre,
           disponible: stockActual,
           solicitado: linea.cantidad,
         });

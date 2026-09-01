@@ -3,9 +3,13 @@ import type { Transaction } from '@powersync/common'
 import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
-import { localNow } from '@/lib/dates'
+import { localNow, todayStr, daysFromNow, VE_OFFSET } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
+import Decimal from 'decimal.js'
+import { bsToUsd, usdToBs, toStorageString } from '@/lib/currency'
+import { calcularSaldoNuevoMovimientoCuenta } from '@/features/cxc/lib/saldo-cliente'
+import { calcularCreditoDisponible } from '@/features/cxc/lib/deuda-credito-cliente'
 
 export interface VentaPendiente {
   id: string
@@ -27,6 +31,10 @@ export interface ClienteConDeuda {
   saldo_actual: string
   limite_credito_usd: string
   facturas_pendientes: number
+  /** Deuda real: SUM(ventas.saldo_pend_usd) — nunca neteada contra credito. */
+  deuda_usd: number
+  /** Saldo a favor disponible: MAX(0, SUM(SAFC) - SUM(SAF)) — nunca neteado contra deuda. */
+  credito_disponible_usd: number
 }
 
 export interface PagoFacturaParams {
@@ -65,26 +73,45 @@ export interface AbonoGlobalParams {
   safOrigenRefs?: string[]
 }
 
+// Deuda y credito se calculan por separado, NUNCA neteados entre si (ver
+// openspec/changes/cxc-saldo-favor-modelo/design.md Decision 1/3):
+// - deuda_usd: SUM(ventas.saldo_pend_usd) de facturas realmente pendientes.
+// - credito_disponible_usd: MAX(0, SUM(SAFC) - SUM(SAF)) en movimientos_cuenta.
+//   'SAFC' aun no existe hasta que Slice B lo introduzca (migrations/0090); hasta
+//   entonces esta columna retorna $0 de forma legitima, no es un bug.
+// Se envuelve en subconsulta para poder filtrar/ordenar por los alias calculados.
+const DEUDA_CREDITO_CLIENTE_SELECT = `
+  c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
+  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes,
+  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd,
+  MAX(0,
+    COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.empresa_id = c.empresa_id AND mc.tipo = 'SAFC'), 0)
+    - COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.empresa_id = c.empresa_id AND mc.tipo = 'SAF'), 0)
+  ) as credito_disponible_usd
+`
+
 /**
- * Clientes con saldo pendiente > 0
+ * Clientes con deuda pendiente y/o saldo a favor (nunca neteados).
  */
 export function useClientesConDeuda() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-    `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-       (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
-     FROM clientes c
-     WHERE c.empresa_id = ? AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001 AND c.is_active = 1
-     ORDER BY CAST(c.saldo_actual AS REAL) DESC`,
+    `SELECT * FROM (
+       SELECT ${DEUDA_CREDITO_CLIENTE_SELECT}
+       FROM clientes c
+       WHERE c.empresa_id = ? AND c.is_active = 1
+     ) t
+     WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+     ORDER BY deuda_usd DESC`,
     [empresaId]
   )
   return { clientes: (data ?? []) as ClienteConDeuda[], isLoading }
 }
 
 /**
- * Buscar clientes con deuda por nombre/identificacion
+ * Buscar clientes con deuda y/o saldo a favor por nombre/identificacion.
  */
 export function useBuscarClientesDeuda(query: string) {
   const { user } = useCurrentUser()
@@ -95,12 +122,14 @@ export function useBuscarClientesDeuda(query: string) {
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-           (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.01) as facturas_pendientes
-         FROM clientes c
-         WHERE c.empresa_id = ? AND c.is_active = 1 AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001
-           AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
-         ORDER BY c.nombre ASC LIMIT 20`
+      ? `SELECT * FROM (
+           SELECT ${DEUDA_CREDITO_CLIENTE_SELECT}
+           FROM clientes c
+           WHERE c.empresa_id = ? AND c.is_active = 1
+             AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
+         ) t
+         WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+         ORDER BY nombre ASC LIMIT 20`
       : '',
     shouldSearch ? [empresaId, pattern, pattern] : []
   )
@@ -108,14 +137,22 @@ export function useBuscarClientesDeuda(query: string) {
 }
 
 /**
- * Facturas pendientes de un cliente (saldo_pend_usd > 0), ordenadas por fecha ASC (FIFO)
+ * Facturas de un cliente ordenadas por fecha ASC.
+ * Por defecto solo devuelve las pendientes (saldo_pend_usd > 0).
+ * Con incluirPagadas=true devuelve todas menos las anuladas/reversadas,
+ * lo que permite acceder al historial de pagos para reversarlos.
  */
-export function useFacturasPendientes(clienteId: string | null) {
+export function useFacturasPendientes(clienteId: string | null, incluirPagadas = false) {
   const { data, isLoading } = useQuery(
     clienteId
-      ? `SELECT * FROM ventas
-         WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.01
-         ORDER BY fecha ASC`
+      ? incluirPagadas
+        ? `SELECT * FROM ventas
+           WHERE cliente_id = ?
+             AND (status IS NULL OR status NOT IN ('ANULADA', 'REVERSADA'))
+           ORDER BY fecha ASC`
+        : `SELECT * FROM ventas
+           WHERE cliente_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
+           ORDER BY fecha ASC`
       : '',
     clienteId ? [clienteId] : []
   )
@@ -132,6 +169,8 @@ export interface DetalleFacturaCxc {
   subtotal_bs: string
   producto_nombre: string
   producto_codigo: string
+  tipo_impuesto: string
+  impuesto_pct: string
 }
 
 export interface PagoFacturaCxc {
@@ -189,6 +228,7 @@ export function useDetalleFactura(ventaId: string | null) {
   const { data, isLoading } = useQuery(
     ventaId
       ? `SELECT vd.id, vd.venta_id, vd.producto_id, vd.cantidad, vd.precio_unitario_usd, vd.subtotal_usd, vd.subtotal_bs,
+           vd.tipo_impuesto, vd.impuesto_pct,
            p.nombre as producto_nombre, p.codigo as producto_codigo
          FROM ventas_det vd
          JOIN productos p ON vd.producto_id = p.id
@@ -197,6 +237,23 @@ export function useDetalleFactura(ventaId: string | null) {
     ventaId ? [ventaId] : []
   )
   return { detalle: (data ?? []) as DetalleFacturaCxc[], isLoading }
+}
+
+interface VentaFechaRow {
+  fecha: string
+}
+
+/**
+ * Fecha persistida de una venta (para documentos/recibos que deben reflejar
+ * el momento real de la transaccion, no el momento en que se genera el PDF/share).
+ */
+export function useVentaFecha(ventaId: string | null) {
+  const { data, isLoading } = useQuery(
+    ventaId ? 'SELECT fecha FROM ventas WHERE id = ?' : '',
+    ventaId ? [ventaId] : []
+  )
+  const row = (data?.[0] as VentaFechaRow | undefined) ?? null
+  return { fecha: row?.fecha ?? null, isLoading }
 }
 
 export interface CargoEspecialVenta {
@@ -283,6 +340,14 @@ export interface AplicarPagoEnTxParams extends Omit<PagoFacturaParams, 'procesad
    * Default: false (comportamiento normal de CxC standalone).
    */
   skipBankAndAccounting?: boolean
+  /**
+   * true cuando el pago es una asignación interna del excedente POS (SAF aplicado
+   * a facturas crédito). Marca el registro en pagos con is_pos_saf_allocation = 1
+   * y omite el movimiento_metodo_cobro (COBRO) para evitar doble conteo en el
+   * cuadre de caja — el efectivo ya fue contabilizado en el pago de la venta original.
+   * Default: false.
+   */
+  isPosAllocation?: boolean
 }
 
 /**
@@ -303,12 +368,13 @@ export async function aplicarPagoFacturaEnTx(
     fechaPago, referencia, empresa_id, procesado_por,
     procesado_por_nombre = null, sesion_caja_id,
     skipBankAndAccounting = false,
+    isPosAllocation = false,
   } = params
 
   if (!Number.isFinite(tasa) || tasa <= 0) throw new Error('La tasa de cambio debe ser mayor a 0')
   if (!Number.isFinite(monto) || monto <= 0) throw new Error('El monto debe ser mayor a 0')
 
-  const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
+  const fechaDoc = fechaPago ? `${fechaPago}T00:00:00${VE_OFFSET}` : now
 
   // 0. Obtener UUID de moneda
   const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
@@ -330,42 +396,51 @@ export async function aplicarPagoFacturaEnTx(
     throw new Error('Factura no encontrada')
   }
   const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string; tasa: string }
-  const saldoFactura = parseFloat(venta.saldo_pend_usd)
-  const tasaVenta = parseFloat(venta.tasa)
+  const saldoFactura = new Decimal(venta.saldo_pend_usd || '0')
+  const tasaVenta = new Decimal(venta.tasa || '0')
+  const tasaD = new Decimal(tasa)
+  const montoD = new Decimal(monto)
 
   // 2. Calcular monto en USD
-  const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoD, tasaD) : montoD
 
   // 3. Validar que no exceda saldo pendiente
-  if (montoUsd > saldoFactura + 0.01) {
+  if (montoUsd.gt(saldoFactura.plus(new Decimal('0.01')))) {
     throw new Error(
-      `El pago ($${montoUsd.toFixed(2)}) excede el saldo pendiente ($${saldoFactura.toFixed(2)}) de la factura ${venta.nro_factura}`
+      `El pago ($${toStorageString(montoUsd)}) excede el saldo pendiente ($${toStorageString(saldoFactura)}) de la factura ${venta.nro_factura}`
     )
   }
 
   // 4. INSERT pago
+  // is_pos_saf_allocation = 1 indica que este pago es una asignación interna del
+  // excedente POS — el efectivo ya entró con la venta original y NO debe sumarse
+  // al total del método de pago ni al saldo esperado de caja.
   const pagoId = uuidv4()
   await tx.execute(
-    `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre, is_pos_saf_allocation)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       pagoId, venta_id, cliente_id, metodo_cobro_id, monedaId,
-      tasa.toFixed(4), monto.toFixed(2), montoUsd.toFixed(2),
+      toStorageString(tasaD), toStorageString(montoD), toStorageString(montoUsd),
       referencia ?? null, sesion_caja_id ?? null, fechaDoc,
       empresa_id, now, procesado_por, procesado_por_nombre ?? null,
+      isPosAllocation ? 1 : 0,
     ]
   )
 
-  // Crear movimiento_metodo_cobro (origen PAGO_CXC: registra el ingreso en cuadre de caja)
-  if (montoUsd > 0) {
+  // Crear movimiento_metodo_cobro (origen COBRO) solo para cobros CxC standalone.
+  // Cuando isPosAllocation=true el efectivo ya ingresó con la venta original;
+  // omitir el movimiento evita doble conteo en el cuadre de caja.
+  if (montoUsd.gt(0) && !isPosAllocation) {
     await tx.execute(
       `INSERT INTO movimientos_metodo_cobro
          (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
           doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-       VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
       [
         uuidv4(), empresa_id, metodo_cobro_id,
-        montoUsd.toFixed(2), venta_id,
+        toStorageString(montoD),    // monto = nativo (Bs para pagos BS, USD para pagos USD)
+        venta_id,
         `PAG-${venta.nro_factura}`, `Pago CxC fac. ${venta.nro_factura}`,
         sesion_caja_id ?? null, fechaDoc, now, procesado_por,
       ]
@@ -373,9 +448,9 @@ export async function aplicarPagoFacturaEnTx(
   }
 
   // 5. Reducir saldo pendiente de factura
-  const nuevoSaldoFactura = Math.max(0, Number((saldoFactura - montoUsd).toFixed(2)))
+  const nuevoSaldoFactura = Decimal.max(new Decimal(0), saldoFactura.minus(montoUsd))
   await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-    nuevoSaldoFactura.toFixed(2), venta_id,
+    toStorageString(nuevoSaldoFactura), venta_id,
   ])
 
   // 6. Movimiento de cuenta (tipo PAG) + actualizar saldo cliente
@@ -383,8 +458,11 @@ export async function aplicarPagoFacturaEnTx(
   if (!clienteResult.rows || clienteResult.rows.length === 0) {
     throw new Error('Cliente no encontrado')
   }
-  const saldoActual = parseFloat((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual)
-  const saldoNuevo = Math.max(0, Number((saldoActual - montoUsd).toFixed(2)))
+  const saldoActual = new Decimal((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0')
+  // Sin clamp a 0: si el cliente tenia saldo a favor (credito), el pago puede
+  // dejarlo con saldo negativo remanente — eso es correcto, no un error.
+  // Ver openspec/changes/saldo-a-favor-fix/specs/cxc-pago-factura/spec.md
+  const saldoNuevo = calcularSaldoNuevoMovimientoCuenta('PAG', saldoActual, montoUsd)
 
   const movId = uuidv4()
   await tx.execute(
@@ -392,10 +470,10 @@ export async function aplicarPagoFacturaEnTx(
      VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       movId, cliente_id, `PAG-${venta.nro_factura}`,
-      montoUsd.toFixed(2), saldoActual.toFixed(2), saldoNuevo.toFixed(2),
+      toStorageString(montoUsd), toStorageString(saldoActual), toStorageString(saldoNuevo),
       `Pago factura ${venta.nro_factura}`,
       venta_id, fechaDoc, empresa_id, now, procesado_por,
-      moneda, monto.toFixed(2), tasa.toFixed(4),
+      moneda, toStorageString(montoD), toStorageString(tasaD),
     ]
   )
 
@@ -403,7 +481,7 @@ export async function aplicarPagoFacturaEnTx(
   // En Supabase el trigger actualizar_saldo_cliente lo gestiona automáticamente
   // via el INSERT de movimientos_cuenta; este UPDATE llega como no-op (mismo valor).
   await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-    saldoNuevo.toFixed(2), now, cliente_id,
+    toStorageString(saldoNuevo), now, cliente_id,
   ])
 
   // 6b. Si la factura tiene préstamos vinculados, sincronizar vencimientos_cobrar (FIFO)
@@ -416,28 +494,28 @@ export async function aplicarPagoFacturaEnTx(
     [venta_id, empresa_id]
   )
   let montoRestante = montoUsd
-  for (let i = 0; i < (vencPrestResult.rows?.length ?? 0) && montoRestante > 0.005; i++) {
+  for (let i = 0; i < (vencPrestResult.rows?.length ?? 0) && montoRestante.gt(new Decimal('0.005')); i++) {
     const vc = vencPrestResult.rows!.item(i) as {
       id: string; saldo_pendiente_usd: string; monto_pagado_usd: string
     }
-    const saldoVc = parseFloat(vc.saldo_pendiente_usd)
-    const pagadoVc = parseFloat(vc.monto_pagado_usd)
-    const abonar = Math.min(montoRestante, saldoVc)
-    const nuevoSaldoVc = Math.max(0, Number((saldoVc - abonar).toFixed(2)))
-    const nuevoPagadoVc = Number((pagadoVc + abonar).toFixed(2))
-    const nuevoStatusVc = nuevoSaldoVc <= 0.005 ? 'PAGADO' : 'PENDIENTE'
+    const saldoVc = new Decimal(vc.saldo_pendiente_usd || '0')
+    const pagadoVc = new Decimal(vc.monto_pagado_usd || '0')
+    const abonar = Decimal.min(montoRestante, saldoVc)
+    const nuevoSaldoVc = Decimal.max(new Decimal(0), saldoVc.minus(abonar))
+    const nuevoPagadoVc = pagadoVc.plus(abonar)
+    const nuevoStatusVc = nuevoSaldoVc.lte(new Decimal('0.005')) ? 'PAGADO' : 'PENDIENTE'
 
     await tx.execute(
       `UPDATE vencimientos_cobrar
        SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?
        WHERE id = ?`,
-      [nuevoPagadoVc.toFixed(2), nuevoSaldoVc.toFixed(2), nuevoStatusVc, vc.id]
+      [toStorageString(nuevoPagadoVc), toStorageString(nuevoSaldoVc), nuevoStatusVc, vc.id]
     )
 
     // El historial de Préstamos para facturas vinculadas se construye desde `pagos`
     // (useHistorialPrestamo usa pagos cuando ventaId != null, cubriendo todos los paths de pago)
 
-    montoRestante = Number((montoRestante - abonar).toFixed(2))
+    montoRestante = montoRestante.minus(abonar)
   }
 
   // 7. Banco + contabilidad (solo para pagos CxC standalone; el POS los omite
@@ -445,24 +523,56 @@ export async function aplicarPagoFacturaEnTx(
   if (!skipBankAndAccounting) {
     try {
       const metodoCxCResult = await tx.execute(
-        'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+        'SELECT banco_empresa_id, deposito_directo FROM metodos_cobro WHERE id = ? LIMIT 1',
         [metodo_cobro_id]
       )
-      const bancoCxCId =
-        (metodoCxCResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
-          ?.banco_empresa_id ?? null
+      const _metodoCxCRow = metodoCxCResult.rows?.item(0) as
+        | { banco_empresa_id: string | null; deposito_directo: number | null }
+        | undefined
+      const bancoCxCId = _metodoCxCRow?.banco_empresa_id ?? null
+      const _depositoDirecto = _metodoCxCRow?.deposito_directo ?? 0
 
-      if (bancoCxCId && montoUsd > 0) {
+      if (bancoCxCId && montoUsd.gt(0) && _depositoDirecto === 1) {
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [bancoCxCId]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (moneda === 'BS' ? monto : usdToBs(montoUsd, tasaD).toNumber())
+          : (moneda === 'BS' ? bsToUsd(monto, tasaD).toNumber() : montoUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt + _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, ?, ?, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
           [
             uuidv4(), empresa_id, bancoCxCId,
-            montoUsd.toFixed(2), venta_id, referencia ?? null,
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
+            venta_id, referencia ?? null,
             `Cobro CxC fac.${venta.nro_factura}`, now, now, procesado_por,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, bancoCxCId]
         )
       }
 
@@ -474,13 +584,13 @@ export async function aplicarPagoFacturaEnTx(
         empresaId: empresa_id,
         pagoId,
         pagoRef: `PAG-${venta.nro_factura}`,
-        monto_usd: montoUsd,
+        monto_usd: montoUsd.toNumber(),
         banco_empresa_id: bancoCxCId,
         cuentas,
         usuarioId: procesado_por,
         monedaContable,
         tasaPago: tasa,
-        tasaVenta,
+        tasaVenta: tasaVenta.toNumber(),
       })
     } catch {
       // Fallo en contabilidad/bancos no bloquea el pago
@@ -508,22 +618,39 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
   await db.writeTransaction(async (tx) => {
     const now = localNow()
     const { venta_id, cliente_id, empresa_id, procesado_por, tasa } = params
-    const fechaDoc = params.fechaPago ? `${params.fechaPago}T00:00:00` : now
+    const fechaDoc = params.fechaPago ? `${params.fechaPago}T00:00:00${VE_OFFSET}` : now
+    const tasaD = new Decimal(tasa)
 
     if (params.aplicarSaf && params.montoSaf && params.montoSaf > 0) {
-      const montoSaf = params.montoSaf
+      const montoSaf = new Decimal(params.montoSaf)
       const safOrigenRefs = params.safOrigenRefs ?? []
 
-      // 1. Validate client has enough SAF credit
+      // 1. Validate client has enough SAF credit.
+      // saldo_actual sigue siendo la fuente del ledger crudo (para
+      // saldo_anterior/saldo_nuevo mas abajo), pero el GATE de validacion usa
+      // la fuente confiable SUM(SAFC)-SUM(SAF) — saldo_actual mezcla deuda y
+      // credito y puede leer casi-cero con credito real disponible. Ver
+      // design.md Decision 1/3.
       const clienteRes = await tx.execute(
         'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
         [cliente_id]
       )
       if (!clienteRes.rows?.length) throw new Error('Cliente no encontrado')
-      const saldoActualSaf = parseFloat((clienteRes.rows.item(0) as { saldo_actual: string }).saldo_actual)
-      if (saldoActualSaf >= -0.001) throw new Error('El cliente no tiene saldo a favor disponible')
-      if (montoSaf > Math.abs(saldoActualSaf) + 0.01) {
-        throw new Error(`El monto SAF ($${montoSaf.toFixed(2)}) excede el saldo disponible ($${Math.abs(saldoActualSaf).toFixed(2)})`)
+      const saldoActualSaf = new Decimal((clienteRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0')
+
+      const creditoSafRes = await tx.execute(
+        `SELECT
+           COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
+           COALESCE(SUM(CASE WHEN tipo = 'SAF' THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
+         FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
+        [cliente_id, empresa_id]
+      )
+      const creditoSafRow = creditoSafRes.rows?.item(0) as { creado: number; consumido: number } | undefined
+      const creditoSafDisponible = calcularCreditoDisponible(creditoSafRow?.creado ?? 0, creditoSafRow?.consumido ?? 0)
+
+      if (creditoSafDisponible.lte('0.001')) throw new Error('El cliente no tiene saldo a favor disponible')
+      if (montoSaf.gt(creditoSafDisponible.plus(new Decimal('0.01')))) {
+        throw new Error(`El monto SAF ($${toStorageString(montoSaf)}) excede el saldo disponible ($${toStorageString(creditoSafDisponible)})`)
       }
 
       // 2. Read factura for validation and nro_factura
@@ -533,16 +660,16 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       )
       if (!ventaRes.rows?.length) throw new Error('Factura no encontrada')
       const ventaSaf = ventaRes.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
-      const saldoFacturaSaf = parseFloat(ventaSaf.saldo_pend_usd)
+      const saldoFacturaSaf = new Decimal(ventaSaf.saldo_pend_usd || '0')
 
       // Validate SAF does not exceed invoice balance
-      if (montoSaf > saldoFacturaSaf + 0.01) {
+      if (montoSaf.gt(saldoFacturaSaf.plus(new Decimal('0.01')))) {
         throw new Error(`El monto SAF excede el saldo pendiente de la factura ${ventaSaf.nro_factura}`)
       }
 
       // 3. INSERT movimiento_cuenta tipo='SAF'
       const saldoAntesSaf = saldoActualSaf
-      const saldoDespuesSaf = Number((saldoActualSaf + montoSaf).toFixed(2))
+      const saldoDespuesSaf = saldoActualSaf.plus(montoSaf)
       await tx.execute(
         `INSERT INTO movimientos_cuenta
            (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
@@ -552,27 +679,27 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
         [
           uuidv4(), empresa_id, cliente_id,
           `SAF-CXC-${ventaSaf.nro_factura}`,
-          montoSaf.toFixed(2),
-          saldoAntesSaf.toFixed(2),
-          saldoDespuesSaf.toFixed(2),
+          toStorageString(montoSaf),
+          toStorageString(saldoAntesSaf),
+          toStorageString(saldoDespuesSaf),
           `Saldo a favor aplicado a factura ${ventaSaf.nro_factura}`,
           venta_id,
           fechaDoc, now, procesado_por,
-          montoSaf.toFixed(2),
-          tasa.toFixed(4),
+          toStorageString(montoSaf),
+          toStorageString(tasaD),
           safOrigenRefs.length > 0 ? JSON.stringify(safOrigenRefs) : null,
         ]
       )
 
       // 4. Reduce invoice saldo by SAF amount
-      const nuevoSaldoSaf = Math.max(0, Number((saldoFacturaSaf - montoSaf).toFixed(2)))
+      const nuevoSaldoSaf = Decimal.max(new Decimal(0), saldoFacturaSaf.minus(montoSaf))
       await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-        nuevoSaldoSaf.toFixed(2), venta_id,
+        toStorageString(nuevoSaldoSaf), venta_id,
       ])
 
       // 5. Update cliente saldo_actual (consume SAF credit)
       await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-        saldoDespuesSaf.toFixed(2), now, cliente_id,
+        toStorageString(saldoDespuesSaf), now, cliente_id,
       ])
     }
 
@@ -604,10 +731,16 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
+    const tasaD = new Decimal(tasa)
+
+    // Minimum processable amount: $1e-8 USD.
+    // Supports micro-payments like Bs 0.01 at tasa 500 ($0.00002) or even at tasa 100,000 ($1e-7).
+    // Old threshold was $0.01, which silently skipped any Bs payment < Bs 5 at tasa 500.
+    const FIFO_EPSILON = new Decimal('0.00000001')
 
     // SAF pre-step: apply SAF credit before FIFO distribution
     if (params.aplicarSaf && params.montoSaf && params.montoSaf > 0) {
-      const montoSaf = params.montoSaf
+      const montoSaf = new Decimal(params.montoSaf)
       const safOrigenRefs = params.safOrigenRefs ?? []
 
       const clienteSafRes = await tx.execute(
@@ -615,16 +748,16 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         [cliente_id]
       )
       if (!clienteSafRes.rows?.length) throw new Error('Cliente no encontrado')
-      const saldoActualSaf = parseFloat(
-        (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+      const saldoActualSaf = new Decimal(
+        (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
       )
-      if (saldoActualSaf >= -0.001) throw new Error('El cliente no tiene saldo a favor disponible')
-      if (montoSaf > Math.abs(saldoActualSaf) + 0.01) {
-        throw new Error(`El monto SAF excede el saldo disponible ($${Math.abs(saldoActualSaf).toFixed(2)})`)
+      if (saldoActualSaf.gte(new Decimal('-0.001'))) throw new Error('El cliente no tiene saldo a favor disponible')
+      if (montoSaf.gt(saldoActualSaf.abs().plus(new Decimal('0.01')))) {
+        throw new Error(`El monto SAF excede el saldo disponible ($${toStorageString(saldoActualSaf.abs())})`)
       }
 
       const saldoAntesSaf = saldoActualSaf
-      const saldoDespuesSaf = Number((saldoActualSaf + montoSaf).toFixed(2))
+      const saldoDespuesSaf = saldoActualSaf.plus(montoSaf)
 
       // INSERT movimiento_cuenta tipo='SAF' for the global abono
       await tx.execute(
@@ -636,13 +769,13 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         [
           uuidv4(), empresa_id, cliente_id,
           'SAF-ABONO-GLOBAL',
-          montoSaf.toFixed(2),
-          saldoAntesSaf.toFixed(2),
-          saldoDespuesSaf.toFixed(2),
+          toStorageString(montoSaf),
+          toStorageString(saldoAntesSaf),
+          toStorageString(saldoDespuesSaf),
           'Saldo a favor aplicado en abono global',
           now, now, procesado_por,
-          montoSaf.toFixed(2),
-          tasa.toFixed(4),
+          toStorageString(montoSaf),
+          toStorageString(tasaD),
           safOrigenRefs.length > 0 ? JSON.stringify(safOrigenRefs) : null,
         ]
       )
@@ -656,21 +789,21 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       )
       let montoSafRestante = montoSaf
       if (facturasSafRes.rows) {
-        for (let i = 0; i < facturasSafRes.rows.length && montoSafRestante > 0.01; i++) {
+        for (let i = 0; i < facturasSafRes.rows.length && montoSafRestante.gt(FIFO_EPSILON); i++) {
           const fSaf = facturasSafRes.rows.item(i) as { id: string; nro_factura: string; saldo_pend_usd: string }
-          const saldoFSaf = parseFloat(fSaf.saldo_pend_usd)
-          const aplicarSaf = Math.min(saldoFSaf, montoSafRestante)
-          const nuevoSaldoFSaf = Math.max(0, Number((saldoFSaf - aplicarSaf).toFixed(2)))
+          const saldoFSaf = new Decimal(fSaf.saldo_pend_usd || '0')
+          const aplicarSaf = Decimal.min(saldoFSaf, montoSafRestante)
+          const nuevoSaldoFSaf = Decimal.max(new Decimal(0), saldoFSaf.minus(aplicarSaf))
           await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-            nuevoSaldoFSaf.toFixed(2), fSaf.id,
+            toStorageString(nuevoSaldoFSaf), fSaf.id,
           ])
-          montoSafRestante = Number((montoSafRestante - aplicarSaf).toFixed(2))
+          montoSafRestante = montoSafRestante.minus(aplicarSaf)
         }
       }
 
       // Update cliente saldo_actual for SAF consumption
       await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-        saldoDespuesSaf.toFixed(2), now, cliente_id,
+        toStorageString(saldoDespuesSaf), now, cliente_id,
       ])
     }
 
@@ -693,7 +826,8 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     const monedaId = (monedaResult.rows.item(0) as { id: string }).id
 
     // 1. Calcular monto total en USD
-    const montoTotalUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+    const montoD = new Decimal(monto)
+    const montoTotalUsd = moneda === 'BS' ? bsToUsd(montoD, tasaD) : montoD
     let montoRestante = montoTotalUsd
 
     // 2. Obtener facturas pendientes FIFO (ORDER BY fecha ASC)
@@ -706,17 +840,18 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
 
     // 3. Cascada FIFO
     if (facturasResult.rows) {
-      for (let i = 0; i < facturasResult.rows.length && montoRestante > 0.01; i++) {
+      for (let i = 0; i < facturasResult.rows.length && montoRestante.gt(FIFO_EPSILON); i++) {
         const factura = facturasResult.rows.item(i) as {
           id: string
           nro_factura: string
           saldo_pend_usd: string
         }
-        const saldoFactura = parseFloat(factura.saldo_pend_usd)
-        const montoAplicar = Math.min(saldoFactura, montoRestante)
+        const saldoFactura = new Decimal(factura.saldo_pend_usd || '0')
+        const montoAplicar = Decimal.min(saldoFactura, montoRestante)
 
         // INSERT pago vinculado a esta factura
         const pagoId = uuidv4()
+        const montoNativo = moneda === 'BS' ? montoAplicar.times(tasaD) : montoAplicar
         await tx.execute(
           `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -726,9 +861,9 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
             cliente_id,
             metodo_cobro_id,
             monedaId,
-            tasa.toFixed(4),
-            (moneda === 'BS' ? montoAplicar * tasa : montoAplicar).toFixed(2),
-            montoAplicar.toFixed(2),
+            toStorageString(tasaD),
+            toStorageString(montoNativo),
+            toStorageString(montoAplicar),
             referencia ?? null,
             sesion_caja_id ?? null,
             now,
@@ -740,9 +875,9 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         )
 
         // Reducir saldo de esta factura
-        const nuevoSaldo = Math.max(0, Number((saldoFactura - montoAplicar).toFixed(2)))
+        const nuevoSaldo = Decimal.max(new Decimal(0), saldoFactura.minus(montoAplicar))
         await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-          nuevoSaldo.toFixed(2),
+          toStorageString(nuevoSaldo),
           factura.id,
         ])
 
@@ -755,33 +890,34 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           [factura.id, empresa_id]
         )
         let montoRestanteVenc = montoAplicar
-        for (let j = 0; j < (vencFifoResult.rows?.length ?? 0) && montoRestanteVenc > 0.005; j++) {
+        for (let j = 0; j < (vencFifoResult.rows?.length ?? 0) && montoRestanteVenc.gt(FIFO_EPSILON); j++) {
           const vc = vencFifoResult.rows!.item(j) as {
             id: string; saldo_pendiente_usd: string; monto_pagado_usd: string
           }
-          const saldoVc = parseFloat(vc.saldo_pendiente_usd)
-          const pagadoVc = parseFloat(vc.monto_pagado_usd)
-          const abonarVc = Math.min(montoRestanteVenc, saldoVc)
-          const nuevoSaldoVc = Math.max(0, Number((saldoVc - abonarVc).toFixed(2)))
-          const nuevoPagadoVc = Number((pagadoVc + abonarVc).toFixed(2))
-          const nuevoStatusVc = nuevoSaldoVc <= 0.005 ? 'PAGADO' : 'PENDIENTE'
+          const saldoVc = new Decimal(vc.saldo_pendiente_usd || '0')
+          const pagadoVc = new Decimal(vc.monto_pagado_usd || '0')
+          const abonarVc = Decimal.min(montoRestanteVenc, saldoVc)
+          const nuevoSaldoVc = Decimal.max(new Decimal(0), saldoVc.minus(abonarVc))
+          const nuevoPagadoVc = pagadoVc.plus(abonarVc)
+          const nuevoStatusVc = nuevoSaldoVc.lte(new Decimal('0.005')) ? 'PAGADO' : 'PENDIENTE'
           await tx.execute(
             `UPDATE vencimientos_cobrar
              SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?
              WHERE id = ?`,
-            [nuevoPagadoVc.toFixed(2), nuevoSaldoVc.toFixed(2), nuevoStatusVc, vc.id]
+            [toStorageString(nuevoPagadoVc), toStorageString(nuevoSaldoVc), nuevoStatusVc, vc.id]
           )
-          montoRestanteVenc = Number((montoRestanteVenc - abonarVc).toFixed(2))
+          montoRestanteVenc = montoRestanteVenc.minus(abonarVc)
         }
 
-        montoRestante = Number((montoRestante - montoAplicar).toFixed(2))
+        montoRestante = montoRestante.minus(montoAplicar)
         facturasAfectadas++
       }
     }
 
     // 4. Si sobra monto, crear pago sin factura (anticipo)
-    if (montoRestante > 0.01) {
+    if (montoRestante.gt(new Decimal('0.01'))) {
       const pagoAnticipoId = uuidv4()
+      const montoRestanteNativo = moneda === 'BS' ? montoRestante.times(tasaD) : montoRestante
       await tx.execute(
         `INSERT INTO pagos (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd, referencia, sesion_caja_id, fecha, empresa_id, created_at, created_by, procesado_por_nombre)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -791,9 +927,9 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
           cliente_id,
           metodo_cobro_id,
           monedaId,
-          tasa.toFixed(4),
-          (moneda === 'BS' ? montoRestante * tasa : montoRestante).toFixed(2),
-          montoRestante.toFixed(2),
+          toStorageString(tasaD),
+          toStorageString(montoRestanteNativo),
+          toStorageString(montoRestante),
           referencia ? `${referencia} (anticipo)` : 'Anticipo',
           sesion_caja_id ?? null,
           now,
@@ -805,7 +941,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
       )
     }
 
-    montoAplicado = montoTotalUsd
+    montoAplicado = montoTotalUsd.toNumber()
 
     // 5. Crear UN SOLO movimiento_cuenta (tipo PAG) por el total
     const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
@@ -814,12 +950,15 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     if (!clienteResult.rows || clienteResult.rows.length === 0) {
       throw new Error('Cliente no encontrado')
     }
-    const saldoActual = parseFloat(
-      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+    const saldoActual = new Decimal(
+      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
     )
-    const saldoNuevo = Math.max(0, Number((saldoActual - montoTotalUsd).toFixed(2)))
+    const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(montoTotalUsd))
 
     const movId = uuidv4()
+    const anticiPoSuffix = montoRestante.gt(new Decimal('0.01'))
+      ? `, anticipo $${toStorageString(montoRestante)}`
+      : ''
     await tx.execute(
       `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
        VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -827,40 +966,41 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         movId,
         cliente_id,
         `ABONO-GLOBAL`,
-        montoTotalUsd.toFixed(2),
-        saldoActual.toFixed(2),
-        saldoNuevo.toFixed(2),
-        `Abono global: ${facturasAfectadas} factura(s) afectada(s)${montoRestante > 0.01 ? `, anticipo $${montoRestante.toFixed(2)}` : ''}`,
+        toStorageString(montoTotalUsd),
+        toStorageString(saldoActual),
+        toStorageString(saldoNuevo),
+        `Abono global: ${facturasAfectadas} factura(s) afectada(s)${anticiPoSuffix}`,
         null,
         now,
         empresa_id,
         now,
         procesado_por,
         moneda,
-        monto.toFixed(2),
-        tasa.toFixed(4),
+        toStorageString(montoD),
+        toStorageString(tasaD),
       ]
     )
 
     await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-      saldoNuevo.toFixed(2),
+      toStorageString(saldoNuevo),
       now,
       cliente_id,
     ])
 
     // 6. Crear movimiento_metodo_cobro por el total del abono
-    if (montoTotalUsd > 0) {
+    if (montoTotalUsd.gt(0)) {
       const movMetodoAbonoId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_metodo_cobro
            (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
             doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
-         VALUES (?, ?, ?, 'INGRESO', 'PAGO_CXC', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, 'INGRESO', 'COBRO', ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movMetodoAbonoId,
           empresa_id,
           metodo_cobro_id,
-          montoTotalUsd.toFixed(2),
+          toStorageString(montoD),         // monto = nativo (Bs 10.300 o $20.60)
+          toStorageString(montoTotalUsd),  // saldo_nuevo = USD equivalente (para lookup)
           movId,
           'ABONO-GLOBAL',
           `Abono global cliente (${facturasAfectadas} fac.)`,
@@ -875,28 +1015,60 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
     // 7. Resolver banco + movimiento bancario + asientos contables (abono global CxC)
     try {
       const metodoAbonoResult = await tx.execute(
-        'SELECT banco_empresa_id FROM metodos_cobro WHERE id = ? LIMIT 1',
+        'SELECT banco_empresa_id, deposito_directo FROM metodos_cobro WHERE id = ? LIMIT 1',
         [metodo_cobro_id]
       )
-      const bancoAbonoId =
-        (metodoAbonoResult.rows?.item(0) as { banco_empresa_id: string | null } | undefined)
-          ?.banco_empresa_id ?? null
+      const _metodoAbonoRow = metodoAbonoResult.rows?.item(0) as
+        | { banco_empresa_id: string | null; deposito_directo: number | null }
+        | undefined
+      const bancoAbonoId = _metodoAbonoRow?.banco_empresa_id ?? null
+      const _depositoDirectoAbono = _metodoAbonoRow?.deposito_directo ?? 0
 
-      if (bancoAbonoId && montoTotalUsd > 0) {
+      if (bancoAbonoId && montoTotalUsd.gt(0) && _depositoDirectoAbono === 1) {
         const movBancoAbonoId = uuidv4()
+
+        const _bancoRow = await tx.execute(
+          'SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ? LIMIT 1',
+          [bancoAbonoId]
+        )
+        const _bancoData = _bancoRow.rows?.item(0) as
+          | { saldo_actual: string; moneda_id: string }
+          | undefined
+        const _monedaRow = await tx.execute(
+          'SELECT codigo_iso FROM monedas WHERE id = ? LIMIT 1',
+          [_bancoData?.moneda_id ?? '']
+        )
+        const _bancoMonedaCodigo =
+          (_monedaRow.rows?.item(0) as { codigo_iso: string } | undefined)?.codigo_iso ?? 'USD'
+
+        const _esBancoBS = _bancoMonedaCodigo === 'VES'
+        const _montoNativo = _esBancoBS
+          ? (moneda === 'BS' ? monto : usdToBs(montoTotalUsd, tasaD).toNumber())
+          : (moneda === 'BS' ? bsToUsd(monto, tasaD).toNumber() : montoTotalUsd.toNumber())
+
+        const _saldoAnt = parseFloat(_bancoData?.saldo_actual ?? '0')
+        const _saldoNuevo = _saldoAnt + _montoNativo
+
         await tx.execute(
           `INSERT INTO movimientos_bancarios
              (id, empresa_id, banco_empresa_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
               doc_origen_id, doc_origen_tipo, referencia, validado, observacion, fecha, created_at, created_by)
-           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, 0, 0, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, 'INGRESO', 'TRANSFERENCIA_CLIENTE', ?, ?, ?, ?, 'PAGO_CXC', ?, 0, ?, ?, ?, ?)`,
           [
             movBancoAbonoId, empresa_id, bancoAbonoId,
-            montoTotalUsd.toFixed(2),
+            toStorageString(_montoNativo),
+            toStorageString(_saldoAnt),
+            toStorageString(_saldoNuevo),
             movId,
             referencia ?? null,
             `Abono global cliente`,
             now, now, procesado_por,
           ]
+        )
+
+        await tx.execute(
+          'UPDATE bancos_empresa SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(_saldoNuevo), now, bancoAbonoId]
         )
       }
 
@@ -908,7 +1080,7 @@ export async function registrarAbonoGlobal(params: AbonoGlobalParams): Promise<{
         empresaId: empresa_id,
         pagoId: movId,
         pagoRef: 'ABONO-GLOBAL',
-        monto_usd: montoTotalUsd,
+        monto_usd: montoTotalUsd.toNumber(),
         banco_empresa_id: bancoAbonoId,
         cuentas,
         usuarioId: procesado_por,
@@ -962,7 +1134,7 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
-    const fechaDoc = fechaPago ? `${fechaPago}T00:00:00` : now
+    const fechaDoc = fechaPago ? `${fechaPago}T00:00:00${VE_OFFSET}` : now
 
     // 1. Leer el vencimiento
     const vencResult = await tx.execute(
@@ -981,36 +1153,38 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
     }
     if (venc.status === 'PAGADO') throw new Error('Este préstamo ya está completamente pagado')
 
-    const saldoActual = parseFloat(venc.saldo_pendiente_usd)
-    const pagadoActual = parseFloat(venc.monto_pagado_usd)
+    const saldoActual = new Decimal(venc.saldo_pendiente_usd || '0')
+    const pagadoActual = new Decimal(venc.monto_pagado_usd || '0')
+    const tasaD = new Decimal(tasa)
+    const montoD = new Decimal(monto)
 
     // 2. Calcular monto en USD (monto del método de cobro)
-    const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
-    const montoSafNum = (aplicarSaf && montoSaf && montoSaf > 0) ? montoSaf : 0
+    const montoUsd = moneda === 'BS' ? bsToUsd(montoD, tasaD) : montoD
+    const montoSafNum = (aplicarSaf && montoSaf && montoSaf > 0) ? new Decimal(montoSaf) : new Decimal(0)
 
     // 3. Validar que el total (método + SAF) no exceda saldo
-    if (montoUsd + montoSafNum > saldoActual + 0.01) {
+    if (montoUsd.plus(montoSafNum).gt(saldoActual.plus(new Decimal('0.01')))) {
       throw new Error(
-        `El abono (${(montoUsd + montoSafNum).toFixed(2)}) excede el saldo pendiente del préstamo ($${saldoActual.toFixed(2)})`
+        `El abono (${toStorageString(montoUsd.plus(montoSafNum))}) excede el saldo pendiente del préstamo ($${toStorageString(saldoActual)})`
       )
     }
 
     // 3a. SAF pre-step: aplicar crédito del cliente al préstamo
-    if (montoSafNum > 0) {
+    if (montoSafNum.gt(0)) {
       const clienteSafRes = await tx.execute(
         'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
         [venc.cliente_id]
       )
       if (!clienteSafRes.rows?.length) throw new Error('Cliente no encontrado')
-      const saldoClienteSaf = parseFloat(
-        (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+      const saldoClienteSaf = new Decimal(
+        (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
       )
-      if (saldoClienteSaf >= -0.001) throw new Error('El cliente no tiene saldo a favor disponible')
-      if (montoSafNum > Math.abs(saldoClienteSaf) + 0.01) {
-        throw new Error(`El monto SAF excede el saldo disponible ($${Math.abs(saldoClienteSaf).toFixed(2)})`)
+      if (saldoClienteSaf.gte(new Decimal('-0.001'))) throw new Error('El cliente no tiene saldo a favor disponible')
+      if (montoSafNum.gt(saldoClienteSaf.abs().plus(new Decimal('0.01')))) {
+        throw new Error(`El monto SAF excede el saldo disponible ($${toStorageString(saldoClienteSaf.abs())})`)
       }
 
-      const saldoClienteDespuesSaf = Number((saldoClienteSaf + montoSafNum).toFixed(2))
+      const saldoClienteDespuesSaf = saldoClienteSaf.plus(montoSafNum)
       const safRef = `PREST-${vencimiento_id.slice(0, 8).toUpperCase()}`
 
       await tx.execute(
@@ -1022,14 +1196,14 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         [
           uuidv4(), empresa_id, venc.cliente_id,
           `SAF-${safRef}`,
-          montoSafNum.toFixed(2),
-          saldoClienteSaf.toFixed(2),
-          saldoClienteDespuesSaf.toFixed(2),
+          toStorageString(montoSafNum),
+          toStorageString(saldoClienteSaf),
+          toStorageString(saldoClienteDespuesSaf),
           `Saldo a favor aplicado a préstamo ${safRef}`,
           venc.venta_id,
           fechaDoc, now, procesado_por,
-          montoSafNum.toFixed(2),
-          tasa.toFixed(4),
+          toStorageString(montoSafNum),
+          toStorageString(tasaD),
           safOrigenRefs && safOrigenRefs.length > 0
             ? JSON.stringify(safOrigenRefs)
             : JSON.stringify([safRef]),
@@ -1037,26 +1211,26 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
       )
 
       await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-        saldoClienteDespuesSaf.toFixed(2), now, venc.cliente_id,
+        toStorageString(saldoClienteDespuesSaf), now, venc.cliente_id,
       ])
     }
 
     // 4. Nuevos valores del vencimiento (SAF + método)
-    const aplicadoTotal = montoUsd + montoSafNum
-    const nuevoSaldo = Math.max(0, Number((saldoActual - aplicadoTotal).toFixed(2)))
-    const nuevoPagado = Number((pagadoActual + aplicadoTotal).toFixed(2))
-    const nuevoStatus = nuevoSaldo <= 0.005 ? 'PAGADO' : venc.status
+    const aplicadoTotal = montoUsd.plus(montoSafNum)
+    const nuevoSaldo = Decimal.max(new Decimal(0), saldoActual.minus(aplicadoTotal))
+    const nuevoPagado = pagadoActual.plus(aplicadoTotal)
+    const nuevoStatus = nuevoSaldo.lte(new Decimal('0.005')) ? 'PAGADO' : venc.status
 
     // 5. Actualizar vencimiento
     await tx.execute(
       `UPDATE vencimientos_cobrar
        SET monto_pagado_usd = ?, saldo_pendiente_usd = ?, status = ?
        WHERE id = ?`,
-      [nuevoPagado.toFixed(2), nuevoSaldo.toFixed(2), nuevoStatus, vencimiento_id]
+      [toStorageString(nuevoPagado), toStorageString(nuevoSaldo), nuevoStatus, vencimiento_id]
     )
 
     // 6. Registrar ingreso en metodo_cobro (solo si hay pago por método)
-    if (montoUsd > 0) {
+    if (montoUsd.gt(0)) {
       const movId = uuidv4()
       await tx.execute(
         `INSERT INTO movimientos_metodo_cobro
@@ -1065,9 +1239,9 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
          VALUES (?, ?, ?, 'INGRESO', 'COBRO_PRESTAMO', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movId, empresa_id, metodo_cobro_id,
-          montoUsd.toFixed(2),
-          saldoActual.toFixed(2),
-          nuevoSaldo.toFixed(2),
+          toStorageString(montoUsd),
+          toStorageString(saldoActual),
+          toStorageString(nuevoSaldo),
           vencimiento_id,
           `PREST-${vencimiento_id.slice(0, 8).toUpperCase()}`,
           `Abono préstamo${referencia ? ` - ${referencia}` : ''}`,
@@ -1081,7 +1255,7 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
     if (venc.venta_id) {
       // 7a. Leer UUID de moneda (solo necesario si hay método de cobro)
       let monedaId: string | null = null
-      if (montoUsd > 0) {
+      if (montoUsd.gt(0)) {
         const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
         const monedaResult = await tx.execute(
           'SELECT id FROM monedas WHERE codigo_iso = ? LIMIT 1',
@@ -1099,14 +1273,14 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         [venc.venta_id]
       )
       if (ventaResult.rows?.length) {
-        const saldoFacturaActual = parseFloat(
-          (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
+        const saldoFacturaActual = new Decimal(
+          (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd || '0'
         )
         // Reducir por el total aplicado: método + SAF
-        const nuevoSaldoFactura = Math.max(0, Number((saldoFacturaActual - aplicadoTotal).toFixed(2)))
+        const nuevoSaldoFactura = Decimal.max(new Decimal(0), saldoFacturaActual.minus(aplicadoTotal))
 
         // 7c. Registrar pago en tabla pagos (solo si hay pago por método)
-        if (montoUsd > 0 && monedaId) {
+        if (montoUsd.gt(0) && monedaId) {
           await tx.execute(
             `INSERT INTO pagos
                (id, venta_id, cliente_id, metodo_cobro_id, moneda_id, tasa, monto, monto_usd,
@@ -1115,8 +1289,8 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
             [
               uuidv4(), venc.venta_id, venc.cliente_id, metodo_cobro_id,
               monedaId,
-              tasa.toFixed(4),
-              monto.toFixed(2), montoUsd.toFixed(2),
+              toStorageString(tasaD),
+              toStorageString(montoD), toStorageString(montoUsd),
               referencia ?? null, sesion_caja_id ?? null,
               fechaDoc, empresa_id, now, procesado_por,
               params.procesado_por_nombre ?? null,
@@ -1127,20 +1301,20 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
         // 7d. Actualizar saldo pendiente de la factura (total: método + SAF)
         await tx.execute(
           'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-          [nuevoSaldoFactura.toFixed(2), venc.venta_id]
+          [toStorageString(nuevoSaldoFactura), venc.venta_id]
         )
 
         // 7e. Registrar movimiento de cuenta PAG y actualizar saldo cliente (solo por método)
-        if (montoUsd > 0) {
+        if (montoUsd.gt(0)) {
           const clienteResult = await tx.execute(
             'SELECT saldo_actual FROM clientes WHERE id = ?',
             [venc.cliente_id]
           )
           if (clienteResult.rows?.length) {
-            const saldoClienteActual = parseFloat(
-              (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+            const saldoClienteActual = new Decimal(
+              (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
             )
-            const nuevoSaldoCliente = Math.max(0, Number((saldoClienteActual - montoUsd).toFixed(2)))
+            const nuevoSaldoCliente = Decimal.max(new Decimal(0), saldoClienteActual.minus(montoUsd))
 
             await tx.execute(
               `INSERT INTO movimientos_cuenta
@@ -1150,19 +1324,19 @@ export async function registrarAbonoPrestamo(params: AbonoPrestamoParams): Promi
               [
                 uuidv4(), empresa_id, venc.cliente_id,
                 `PAG-PREST-${vencimiento_id.slice(0, 8).toUpperCase()}`,
-                montoUsd.toFixed(2),
-                saldoClienteActual.toFixed(2),
-                nuevoSaldoCliente.toFixed(2),
+                toStorageString(montoUsd),
+                toStorageString(saldoClienteActual),
+                toStorageString(nuevoSaldoCliente),
                 `Pago préstamo${referencia ? ` - ${referencia}` : ''}`,
                 venc.venta_id,
                 fechaDoc, now, procesado_por,
-                moneda, monto.toFixed(2), tasa.toFixed(4),
+                moneda, toStorageString(montoD), toStorageString(tasaD),
               ]
             )
 
             await tx.execute(
               'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-              [nuevoSaldoCliente.toFixed(2), now, venc.cliente_id]
+              [toStorageString(nuevoSaldoCliente), now, venc.cliente_id]
             )
           }
         }
@@ -1197,6 +1371,11 @@ export interface AbonoPrestamo {
   metodo_nombre: string
   fecha: string
   created_by: string | null
+  /** Monto en Bs al tipo de cambio del MOMENTO del registro (no la tasa actual).
+   *  Para pagos: monto_usd * tasa_pago.
+   *  Para mmc (standalone): monto_usd * tasa histórica de la fecha del movimiento.
+   *  Nunca revaluar abonos históricos con la tasa vigente. */
+  monto_bs_historico: string | null
 }
 
 /**
@@ -1221,7 +1400,8 @@ export function useHistorialPrestamo(
                '' as saldo_anterior, '' as saldo_nuevo,
                COALESCE(p.referencia, 'Pago registrado') as concepto,
                p.fecha, p.created_by,
-               mc.nombre as metodo_nombre
+               mc.nombre as metodo_nombre,
+               CAST(CAST(p.monto_usd AS REAL) * CAST(p.tasa AS REAL) AS TEXT) as monto_bs_historico
          FROM pagos p
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          WHERE p.venta_id = ? AND (p.is_reversed IS NULL OR p.is_reversed = 0)
@@ -1229,7 +1409,13 @@ export function useHistorialPrestamo(
       : vencimientoId
         ? `SELECT mmc.id, mmc.monto, mmc.saldo_anterior, mmc.saldo_nuevo,
                  mmc.concepto, mmc.fecha, mmc.created_by,
-                 mc.nombre as metodo_nombre
+                 mc.nombre as metodo_nombre,
+                 CAST(CAST(mmc.monto AS REAL) * COALESCE(
+                   (SELECT CAST(tc.valor AS REAL) FROM tasas_cambio tc
+                    WHERE DATE(tc.fecha) <= DATE(mmc.fecha)
+                    ORDER BY tc.fecha DESC, tc.created_at DESC LIMIT 1),
+                   1.0
+                 ) AS TEXT) as monto_bs_historico
            FROM movimientos_metodo_cobro mmc
            JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
            WHERE mmc.doc_origen_id = ? AND mmc.origen = 'COBRO_PRESTAMO'
@@ -1282,7 +1468,7 @@ export async function registrarReversoAbono(params: {
       throw new Error('Este pago ya fue reversado anteriormente')
     }
 
-    const montoUsd = parseFloat(pago.monto_usd)
+    const montoUsd = new Decimal(pago.monto_usd || '0')
 
     // 2. Marcar el pago como reversado
     await tx.execute(
@@ -1304,11 +1490,11 @@ export async function registrarReversoAbono(params: {
           total_usd: string
         }
         nroFactura = venta.nro_factura
-        const saldoPendActual = parseFloat(venta.saldo_pend_usd)
-        const totalFactura = parseFloat(venta.total_usd)
-        const nuevoSaldoFactura = Math.min(totalFactura, Number((saldoPendActual + montoUsd).toFixed(2)))
+        const saldoPendActual = new Decimal(venta.saldo_pend_usd || '0')
+        const totalFactura = new Decimal(venta.total_usd || '0')
+        const nuevoSaldoFactura = Decimal.min(totalFactura, saldoPendActual.plus(montoUsd))
         await tx.execute(`UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?`, [
-          nuevoSaldoFactura.toFixed(2),
+          toStorageString(nuevoSaldoFactura),
           pago.venta_id,
         ])
       }
@@ -1322,13 +1508,13 @@ export async function registrarReversoAbono(params: {
     if (!clienteResult.rows || clienteResult.rows.length === 0) {
       throw new Error('Cliente no encontrado')
     }
-    const saldoActual = parseFloat(
-      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
+    const saldoActual = new Decimal(
+      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
     )
-    const saldoNuevo = Number((saldoActual + montoUsd).toFixed(2))
+    const saldoNuevo = saldoActual.plus(montoUsd)
 
     await tx.execute(`UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?`, [
-      saldoNuevo.toFixed(2),
+      toStorageString(saldoNuevo),
       now,
       pago.cliente_id,
     ])
@@ -1358,9 +1544,9 @@ export async function registrarReversoAbono(params: {
         movId,
         pago.cliente_id,
         referencia,
-        montoUsd.toFixed(2),
-        saldoActual.toFixed(2),
-        saldoNuevo.toFixed(2),
+        toStorageString(montoUsd),
+        toStorageString(saldoActual),
+        toStorageString(saldoNuevo),
         `Reverso de abono${nroFactura ? ` factura ${nroFactura}` : ''}: ${reason.trim()} (por ${reversed_by_nombre})`,
         pago.venta_id ?? null,
         now,
@@ -1368,8 +1554,8 @@ export async function registrarReversoAbono(params: {
         now,
         reversed_by,
         monedaPagoLabel,
-        pago.monto != null ? parseFloat(pago.monto).toFixed(2) : null,
-        pago.tasa != null ? parseFloat(pago.tasa).toFixed(4) : null,
+        pago.monto != null ? toStorageString(new Decimal(pago.monto)) : null,
+        pago.tasa != null ? toStorageString(new Decimal(pago.tasa)) : null,
       ]
     )
 
@@ -1425,7 +1611,12 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
   await db.writeTransaction(async (tx) => {
     const now = localNow()
 
-    // 1. Validar que el cliente tenga crédito SAF disponible
+    // 1. Validar que el cliente tenga crédito SAF disponible.
+    // saldo_actual sigue siendo la fuente del ledger crudo (para
+    // saldo_anterior/saldo_nuevo mas abajo), pero el GATE de validacion usa
+    // la fuente confiable SUM(SAFC)-SUM(SAF) — saldo_actual mezcla deuda y
+    // credito y puede leer casi-cero con credito real disponible. Ver
+    // design.md Decision 1/3.
     const clienteResult = await tx.execute(
       'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
       [clienteId, empresaId]
@@ -1433,19 +1624,30 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
     if (!clienteResult.rows?.length) {
       throw new Error('Cliente no encontrado')
     }
-    const saldoActualRaw = (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
-    const saldoActualInit = parseFloat(saldoActualRaw)
+    const saldoActualInit = new Decimal(
+      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+    )
+    const tasaD = new Decimal(tasa)
+    const totalAplicadoD = new Decimal(totalAplicadoUsd)
 
-    if (saldoActualInit >= -0.001) {
+    const creditoResult = await tx.execute(
+      `SELECT
+         COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
+         COALESCE(SUM(CASE WHEN tipo = 'SAF' THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
+       FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
+      [clienteId, empresaId]
+    )
+    const creditoRow = creditoResult.rows?.item(0) as { creado: number; consumido: number } | undefined
+    const creditoDisponible = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0)
+
+    if (creditoDisponible.lte('0.001')) {
       throw new Error('El cliente no tiene saldo a favor disponible')
     }
 
-    const creditoDisponible = Math.abs(saldoActualInit)
-
     // 2. Validar que el total a aplicar no exceda el crédito disponible
-    if (totalAplicadoUsd > creditoDisponible + 0.01) {
+    if (totalAplicadoD.gt(creditoDisponible.plus(new Decimal('0.01')))) {
       throw new Error(
-        `El monto a aplicar ($${totalAplicadoUsd.toFixed(2)}) excede el crédito disponible ($${creditoDisponible.toFixed(2)})`
+        `El monto a aplicar ($${toStorageString(totalAplicadoD)}) excede el crédito disponible ($${toStorageString(creditoDisponible)})`
       )
     }
 
@@ -1455,6 +1657,8 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
     for (const factura of facturas) {
       if (factura.montoAplicarUsd <= 0) continue
 
+      const montoAplicarD = new Decimal(factura.montoAplicarUsd)
+
       // a. Leer saldo pendiente actual de la factura
       const ventaResult = await tx.execute(
         'SELECT saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?',
@@ -1463,22 +1667,22 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
       if (!ventaResult.rows?.length) {
         throw new Error(`Factura #${factura.nroFactura} no encontrada`)
       }
-      const saldoPendUsd = parseFloat(
-        (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
+      const saldoPendUsd = new Decimal(
+        (ventaResult.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd || '0'
       )
 
       // b. Calcular nuevo pendiente
-      const nuevoPendiente = Math.max(0, Number((saldoPendUsd - factura.montoAplicarUsd).toFixed(2)))
+      const nuevoPendiente = Decimal.max(new Decimal(0), saldoPendUsd.minus(montoAplicarD))
 
       // c. Reducir saldo pendiente de la factura
       await tx.execute(
         'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
-        [nuevoPendiente.toFixed(2), factura.ventaId]
+        [toStorageString(nuevoPendiente), factura.ventaId]
       )
 
       // d. Insertar movimiento_cuenta tipo SAF
       const saldoAntes = saldoActual
-      const saldoDespues = Number((saldoActual + factura.montoAplicarUsd).toFixed(2))
+      const saldoDespues = saldoActual.plus(montoAplicarD)
 
       const movId = uuidv4()
       await tx.execute(
@@ -1488,9 +1692,9 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
           movId,
           clienteId,
           `SAF-CXC-${factura.nroFactura}`,
-          factura.montoAplicarUsd.toFixed(2),
-          saldoAntes.toFixed(2),
-          saldoDespues.toFixed(2),
+          toStorageString(montoAplicarD),
+          toStorageString(saldoAntes),
+          toStorageString(saldoDespues),
           `Saldo a favor aplicado a factura ${factura.nroFactura}`,
           factura.ventaId,
           now,
@@ -1498,8 +1702,8 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
           now,
           cajeroId,
           'USD',
-          factura.montoAplicarUsd.toFixed(2),
-          tasa.toFixed(4),
+          toStorageString(montoAplicarD),
+          toStorageString(tasaD),
         ]
       )
 
@@ -1509,7 +1713,7 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
     // 4. Actualizar saldo del cliente
     await tx.execute(
       'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-      [saldoActual.toFixed(2), now, clienteId]
+      [toStorageString(saldoActual), now, clienteId]
     )
   })
 }
@@ -1554,16 +1758,18 @@ export async function crearPrestamoStandalone(
   await db.writeTransaction(async (tx) => {
     const now = localNow()
 
+    const tasaD = new Decimal(tasaActual)
+    const montoUsdD = new Decimal(montoPrestamoUsd)
+    const montoBsD = new Decimal(montoPrestamoBs)
+
     // Calcular montos
-    const bsEnUsd = tasaActual > 0 ? Number((montoPrestamoBs / tasaActual).toFixed(2)) : 0
-    const principalUsd = Number((montoPrestamoUsd + bsEnUsd).toFixed(2))
-    const interesUsd = Number((principalUsd * porcentajeInteres / 100).toFixed(2))
-    const totalDeudaUsd = Number((principalUsd + interesUsd).toFixed(2))
+    const bsEnUsd = tasaD.gt(0) ? bsToUsd(montoBsD, tasaD) : new Decimal(0)
+    const principalUsd = montoUsdD.plus(bsEnUsd)
+    const interesUsd = principalUsd.times(new Decimal(porcentajeInteres)).dividedBy(100)
+    const totalDeudaUsd = principalUsd.plus(interesUsd)
 
     // Fecha de vencimiento
-    const hoy = new Date(localNow().slice(0, 10) + 'T00:00:00')
-    hoy.setDate(hoy.getDate() + diasPlazo)
-    const fechaVencimiento = hoy.toISOString().split('T')[0]
+    const fechaVencimiento = daysFromNow(diasPlazo)
 
     // Egreso de caja (solo si origen = CAJA)
     if (origenFondos === 'CAJA') {
@@ -1577,13 +1783,13 @@ export async function crearPrestamoStandalone(
         )
         if (!r.rows?.length) throw new Error('No hay metodo EFECTIVO en USD configurado')
         const m = r.rows.item(0) as { id: string; saldo_actual: string }
-        const saldo = parseFloat(m.saldo_actual)
-        if (saldo < montoPrestamoUsd) {
+        const saldo = new Decimal(m.saldo_actual || '0')
+        if (saldo.lt(montoUsdD)) {
           throw new Error(
-            `Saldo insuficiente en USD. Disponible: ${saldo.toFixed(2)}, Solicitado: ${montoPrestamoUsd.toFixed(2)}`
+            `Saldo insuficiente en USD. Disponible: ${toStorageString(saldo)}, Solicitado: ${toStorageString(montoUsdD)}`
           )
         }
-        const nuevoSaldo = Number((saldo - montoPrestamoUsd).toFixed(2))
+        const nuevoSaldo = saldo.minus(montoUsdD)
         await tx.execute(
           `INSERT INTO movimientos_metodo_cobro
              (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
@@ -1591,13 +1797,13 @@ export async function crearPrestamoStandalone(
            VALUES (?, ?, ?, 'EGRESO', 'PRESTAMO', ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
           [
             uuidv4(), empresaId, m.id,
-            montoPrestamoUsd.toFixed(2), saldo.toFixed(2), nuevoSaldo.toFixed(2),
+            toStorageString(montoUsdD), toStorageString(saldo), toStorageString(nuevoSaldo),
             concepto.trim(), sesionCajaId, now, now, usuarioId,
           ]
         )
         await tx.execute(
           'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-          [nuevoSaldo.toFixed(2), now, m.id]
+          [toStorageString(nuevoSaldo), now, m.id]
         )
       }
 
@@ -1611,13 +1817,13 @@ export async function crearPrestamoStandalone(
         )
         if (!r.rows?.length) throw new Error('No hay metodo EFECTIVO en Bs configurado')
         const m = r.rows.item(0) as { id: string; saldo_actual: string }
-        const saldo = parseFloat(m.saldo_actual)
-        if (saldo < montoPrestamoBs) {
+        const saldo = new Decimal(m.saldo_actual || '0')
+        if (saldo.lt(montoBsD)) {
           throw new Error(
-            `Saldo insuficiente en Bs. Disponible: ${saldo.toFixed(2)}, Solicitado: ${montoPrestamoBs.toFixed(2)}`
+            `Saldo insuficiente en Bs. Disponible: ${toStorageString(saldo)}, Solicitado: ${toStorageString(montoBsD)}`
           )
         }
-        const nuevoSaldo = Number((saldo - montoPrestamoBs).toFixed(2))
+        const nuevoSaldo = saldo.minus(montoBsD)
         await tx.execute(
           `INSERT INTO movimientos_metodo_cobro
              (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
@@ -1625,13 +1831,13 @@ export async function crearPrestamoStandalone(
            VALUES (?, ?, ?, 'EGRESO', 'PRESTAMO', ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?)`,
           [
             uuidv4(), empresaId, m.id,
-            montoPrestamoBs.toFixed(2), saldo.toFixed(2), nuevoSaldo.toFixed(2),
+            toStorageString(montoBsD), toStorageString(saldo), toStorageString(nuevoSaldo),
             concepto.trim(), sesionCajaId, now, now, usuarioId,
           ]
         )
         await tx.execute(
           'UPDATE metodos_cobro SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-          [nuevoSaldo.toFixed(2), now, m.id]
+          [toStorageString(nuevoSaldo), now, m.id]
         )
       }
     }
@@ -1646,8 +1852,8 @@ export async function crearPrestamoStandalone(
       [
         uuidv4(), empresaId, clienteId,
         fechaVencimiento,
-        totalDeudaUsd.toFixed(2),
-        totalDeudaUsd.toFixed(2),
+        toStorageString(totalDeudaUsd),
+        toStorageString(totalDeudaUsd),
         origenFondos,
         now, now,
       ]
@@ -1679,7 +1885,9 @@ export async function registrarDiscrepanciaCxC(params: RegistrarDiscrepanciaCxCP
 
   if (!Number.isFinite(monto) || monto <= 0) return   // nada que registrar
 
-  const montoUsd = moneda === 'BS' ? Number((monto / tasa).toFixed(2)) : monto
+  const montoD = new Decimal(monto)
+  const tasaD = new Decimal(tasa)
+  const montoUsd = moneda === 'BS' ? bsToUsd(montoD, tasaD) : montoD
   const tipoMov = tipo === 'VUELTO' ? 'EGRESO' : 'INGRESO'
   const concepto = tipo === 'VUELTO'
     ? `Vuelto fac. ${doc_origen_ref}`
@@ -1694,7 +1902,7 @@ export async function registrarDiscrepanciaCxC(params: RegistrarDiscrepanciaCxCP
     [
       uuidv4(), empresa_id, metodo_cobro_id,
       tipoMov, tipo,
-      montoUsd.toFixed(2),
+      toStorageString(montoUsd),
       doc_origen_id, `PAG-${doc_origen_ref}`,
       concepto,
       now, now, procesado_por,
@@ -1717,8 +1925,11 @@ export interface RegistrarSafExcedenteParams {
 
 /**
  * Registra el excedente de un pago CxC como saldo a favor (crédito) en el cliente.
- * Crea un movimiento_cuenta tipo 'SAF' que deja el saldo_actual negativo.
- * Se llama DESPUÉS de registrarPagoFactura con el saldo exacto.
+ * Crea un movimiento_cuenta tipo 'SAFC' (creación de crédito) que deja el
+ * saldo_actual negativo. Se llama DESPUÉS de registrarPagoFactura con el
+ * saldo exacto. Usa 'SAFC' (no 'SAF') para que la lectura derivada
+ * SUM(SAFC)-SUM(SAF) en useClientesConDeuda/useSaldoAFavor cuente esto como
+ * creación de crédito, no como consumo — ver design.md Decision 1/2.
  */
 export async function registrarSafExcedente(params: RegistrarSafExcedenteParams): Promise<void> {
   const { cliente_id, venta_id, nro_factura, excedenteUsd, tasa, empresa_id, procesado_por, safOrigenRefs } = params
@@ -1731,25 +1942,27 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
     // Leer saldo actual del cliente
     const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [cliente_id])
     if (!clienteResult.rows?.length) throw new Error('Cliente no encontrado')
-    const saldoActual = parseFloat((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual)
+    const excedenteD = new Decimal(excedenteUsd)
+    const tasaD = new Decimal(tasa)
+    const saldoActual = new Decimal((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0')
 
     // El excedente que el cliente pagó de más queda como crédito (saldo negativo)
-    const saldoNuevo = Number((saldoActual - excedenteUsd).toFixed(2))
+    const saldoNuevo = saldoActual.minus(excedenteD)
 
     await tx.execute(
       `INSERT INTO movimientos_cuenta
          (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
           observacion, venta_id, fecha, empresa_id, created_at, created_by,
           moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
-       VALUES (?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
+       VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
       [
         uuidv4(), cliente_id,
         `SAF-CXC-${nro_factura}`,
-        excedenteUsd.toFixed(2),
-        saldoActual.toFixed(2), saldoNuevo.toFixed(2),
+        toStorageString(excedenteD),
+        toStorageString(saldoActual), toStorageString(saldoNuevo),
         `Saldo a favor generado en pago de factura ${nro_factura}`,
         venta_id, now, empresa_id, now, procesado_por,
-        excedenteUsd.toFixed(2), tasa.toFixed(4),
+        toStorageString(excedenteD), toStorageString(tasaD),
         safOrigenRefs && safOrigenRefs.length > 0
           ? JSON.stringify(safOrigenRefs)
           : JSON.stringify([nro_factura]),
@@ -1757,7 +1970,265 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
     )
 
     await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
-      saldoNuevo.toFixed(2), now, cliente_id,
+      toStorageString(saldoNuevo), now, cliente_id,
     ])
+  })
+}
+
+// ─── Diferencial cambiario CxC ───────────────────────────────
+
+export interface DiferencialCxCParams {
+  ventaId: string
+  clienteId: string
+  empresaId: string
+  procesadoPor: string
+  tasa: number  // para calcular el equivalente en Bs
+}
+
+/**
+ * Registrar el saldo residual sub-centavo de una factura de venta como
+ * diferencial cambiario. Crea un abono de sistema (sin movimiento bancario)
+ * que cierra la factura y reduce el saldo del cliente.
+ * Solo aplica cuando ventas.saldo_pend_usd > 0 y < $0.01.
+ */
+export interface ReversoDiferencialCxCParams {
+  ventaId: string
+  clienteId: string
+  nroFactura: string
+  empresaId: string
+  procesadoPor: string
+}
+
+/**
+ * Lógica core del reverso de diferencial cambiario — reutilizable dentro de
+ * una writeTransaction existente (ej: anulación NCR) o desde la propia función standalone.
+ */
+export async function reversarDiferencialEnTx(
+  tx: Transaction,
+  params: ReversoDiferencialCxCParams,
+  now: string
+): Promise<void> {
+  const { ventaId, clienteId, nroFactura, empresaId, procesadoPor } = params
+  const refDife = `DIFE-${nroFactura}`
+  const refRev  = `REV-DIFE-${nroFactura}`
+
+  // 1. Buscar el movimiento DIFE original
+  const difeRes = await tx.execute(
+    `SELECT id, monto FROM movimientos_cuenta
+     WHERE venta_id = ? AND referencia = ? AND tipo = 'PAG'
+     LIMIT 1`,
+    [ventaId, refDife]
+  )
+  if (!difeRes.rows?.length) return  // No hay diferencial para este venta — no es error
+
+  const dife = difeRes.rows.item(0) as { id: string; monto: string }
+  const montoUsd = new Decimal(dife.monto || '0')
+  if (montoUsd.lte(0)) return
+
+  // 2. Verificar que no esté ya reversado
+  const revExistsRes = await tx.execute(
+    `SELECT id FROM movimientos_cuenta WHERE venta_id = ? AND referencia = ? LIMIT 1`,
+    [ventaId, refRev]
+  )
+  if (revExistsRes.rows?.length) return  // Ya reversado — silencioso
+
+  // 3. Leer saldo actual del cliente
+  const clienteRes = await tx.execute(
+    'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+    [clienteId, empresaId]
+  )
+  if (!clienteRes.rows?.length) throw new Error('Cliente no encontrado')
+  const saldoActual = new Decimal(
+    (clienteRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+  )
+  const saldoNuevo = saldoActual.plus(montoUsd)
+
+  // 4. Insertar movimiento REV (movimientos_cuenta es inmutable — no se puede editar el original)
+  await tx.execute(
+    `INSERT INTO movimientos_cuenta
+       (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+        observacion, venta_id, fecha, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
+     VALUES (?, ?, ?, 'REV', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, '1')`,
+    [
+      uuidv4(), empresaId, clienteId,
+      refRev,
+      toStorageString(montoUsd),
+      toStorageString(saldoActual),
+      toStorageString(saldoNuevo),
+      `Reverso diferencial cambiario — Factura ${nroFactura}`,
+      ventaId, now, now, procesadoPor,
+      toStorageString(montoUsd),
+    ]
+  )
+
+  // 5. Restaurar saldo_pend_usd en la factura (ventas no tiene updated_at)
+  await tx.execute(
+    'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+    [toStorageString(montoUsd), ventaId]
+  )
+
+  // 6. Actualizar saldo cliente en SQLite local
+  await tx.execute(
+    'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+    [toStorageString(saldoNuevo), now, clienteId]
+  )
+}
+
+/**
+ * Reversa un diferencial cambiario registrado vía registrarDiferencialCxC.
+ * Wrapper standalone que abre su propia writeTransaction.
+ */
+export async function registrarReversoDiferencialCxC(
+  params: ReversoDiferencialCxCParams
+): Promise<void> {
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+    const refDife = `DIFE-${params.nroFactura}`
+    // Re-check for existing DIFE before delegating (to give user-facing error)
+    const difeRes = await tx.execute(
+      `SELECT id FROM movimientos_cuenta WHERE venta_id = ? AND referencia = ? AND tipo = 'PAG' LIMIT 1`,
+      [params.ventaId, refDife]
+    )
+    if (!difeRes.rows?.length) {
+      throw new Error(`No se encontró el movimiento diferencial para la factura ${params.nroFactura}`)
+    }
+    const refRev = `REV-DIFE-${params.nroFactura}`
+    const revExists = await tx.execute(
+      `SELECT id FROM movimientos_cuenta WHERE venta_id = ? AND referencia = ? LIMIT 1`,
+      [params.ventaId, refRev]
+    )
+    if (revExists.rows?.length) {
+      throw new Error('El diferencial cambiario ya fue reversado')
+    }
+    await reversarDiferencialEnTx(tx, params, now)
+  })
+}
+
+export async function registrarDiferencialCxC(params: DiferencialCxCParams): Promise<void> {
+  const { ventaId, clienteId, empresaId, procesadoPor, tasa } = params
+
+  await db.writeTransaction(async (tx) => {
+    const now = localNow()
+
+    // 1. Leer factura
+    const ventaResult = await tx.execute(
+      'SELECT nro_factura, saldo_pend_usd FROM ventas WHERE id = ? AND empresa_id = ?',
+      [ventaId, empresaId]
+    )
+    if (!ventaResult.rows?.length) throw new Error('Factura no encontrada')
+    const venta = ventaResult.rows.item(0) as { nro_factura: string; saldo_pend_usd: string }
+    const saldoUsd = new Decimal(venta.saldo_pend_usd || '0')
+
+    if (saldoUsd.lte(0)) {
+      // Factura ya saldada en DB — puede ocurrir si un pago exacto disparó un
+      // microBalance falso por imprecisión de float en JS; no hay nada que registrar.
+      return
+    }
+    if (saldoUsd.gte(new Decimal('0.01'))) {
+      throw new Error('El diferencial cambiario solo aplica para saldos sub-centavo (< $0.01)')
+    }
+
+    // 2. Leer saldo actual del cliente
+    const clienteResult = await tx.execute(
+      'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+      [clienteId, empresaId]
+    )
+    if (!clienteResult.rows?.length) throw new Error('Cliente no encontrado')
+    const saldoActual = new Decimal(
+      (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+    )
+    const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(saldoUsd))
+
+    const dTasa = new Decimal(tasa)
+    const saldoBs = saldoUsd.times(dTasa)
+
+    // 3. Movimiento de cuenta (abono de sistema — sin metodo de cobro real)
+    await tx.execute(
+      `INSERT INTO movimientos_cuenta
+         (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+          observacion, venta_id, fecha, empresa_id, created_at, created_by,
+          moneda_pago, monto_moneda, tasa_pago)
+       VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'BS', ?, ?)`,
+      [
+        uuidv4(), clienteId,
+        `DIFE-${venta.nro_factura}`,
+        toStorageString(saldoUsd),
+        toStorageString(saldoActual),
+        toStorageString(saldoNuevo),
+        `Diferencial cambiario - Factura ${venta.nro_factura}`,
+        ventaId, now, empresaId, now, procesadoPor,
+        toStorageString(saldoBs),
+        toStorageString(dTasa),
+      ]
+    )
+
+    // 4. Cerrar la factura (ventas no tiene updated_at)
+    await tx.execute(
+      'UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?',
+      [toStorageString(new Decimal(0)), ventaId]
+    )
+
+    // 5. Actualizar saldo cliente en SQLite local inmediatamente
+    // (En Supabase el trigger actualizar_saldo_cliente lo gestiona via movimientos_cuenta)
+    await tx.execute(
+      'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+      [toStorageString(saldoNuevo), now, clienteId]
+    )
+
+    // 6. Registrar gasto de diferencial cambiario en el libro de gastos
+    try {
+      const monedaUsdRes = await tx.execute(
+        `SELECT id FROM monedas WHERE codigo_iso = 'USD' LIMIT 1`
+      )
+      const monedaUsdId = (monedaUsdRes.rows?.item(0) as { id: string } | undefined)?.id ?? ''
+
+      // Cuenta contable: intentar PERDIDA_DIFERENCIAL_CAMBIARIO, fallback a gastos_generales
+      const cuentaDiffRes = await tx.execute(
+        `SELECT cuenta_contable_id FROM cuentas_config
+         WHERE empresa_id = ? AND clave = 'PERDIDA_DIFERENCIAL_CAMBIARIO' LIMIT 1`,
+        [empresaId]
+      )
+      let cuentaDiffId = (
+        cuentaDiffRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+      )?.cuenta_contable_id ?? ''
+      if (!cuentaDiffId) {
+        const fallbackRes = await tx.execute(
+          `SELECT cuenta_contable_id FROM cuentas_config
+           WHERE empresa_id = ? AND clave = 'gastos_generales' LIMIT 1`,
+          [empresaId]
+        )
+        cuentaDiffId = (
+          fallbackRes.rows?.item(0) as { cuenta_contable_id: string } | undefined
+        )?.cuenta_contable_id ?? ''
+      }
+      if (!cuentaDiffId || !monedaUsdId) throw new Error('sin-cuenta')
+
+      const nroGastoDiff = `CXC-DIFF-${ventaId.slice(0, 8).toUpperCase()}`
+      const obsDiff = `Diferencial cambiario CxC. Fac. ${venta.nro_factura}. Procesado por: ${procesadoPor}`
+
+      await tx.execute(
+        `INSERT INTO gastos
+           (id, empresa_id, nro_gasto, nro_factura, cuenta_id, descripcion, fecha,
+            moneda_id, moneda_factura, usa_tasa_paralela, tasa, monto_factura, monto_usd,
+            tipo_impuesto, porcentaje_iva, base_imponible_usd, monto_iva_usd,
+            saldo_pendiente_usd, observaciones, status, created_at, updated_at, created_by)
+         VALUES (?, ?, ?, ?, ?, 'DIFERENCIAL_CAMBIARIO_CXC', ?,
+                 ?, 'USD', 0, ?, ?, ?,
+                 'Exento', '0.00', ?, '0.00',
+                 '0.00', ?, 'REGISTRADO', ?, ?, ?)`,
+        [
+          uuidv4(), empresaId, nroGastoDiff, venta.nro_factura, cuentaDiffId,
+          todayStr(), monedaUsdId,
+          toStorageString(dTasa),
+          toStorageString(saldoUsd),
+          toStorageString(saldoUsd),
+          toStorageString(saldoUsd),
+          obsDiff, now, now, procesadoPor,
+        ]
+      )
+    } catch {
+      // El gasto es opcional — no bloquea el diferencial
+      console.warn('⚠️ DIFERENCIAL_CXC: fallo al registrar gasto para factura', venta.nro_factura)
+    }
   })
 }

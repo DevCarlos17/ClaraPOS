@@ -10,6 +10,7 @@ import {
 } from '@/features/contabilidad/hooks/use-libro-contable'
 import { LibroContableForm } from './libro-contable-form'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { formatDate } from '@/lib/format'
 import { MODULO_LABELS } from '@/features/contabilidad/schemas/libro-contable-schema'
 import { NativeSelect } from '@/components/ui/native-select'
 
@@ -232,9 +233,7 @@ export function LibroContableList() {
                   >
                     <td className="px-3 py-2 font-mono text-gray-700">{a.nro_asiento}</td>
                     <td className="px-3 py-2 text-gray-600">
-                      {new Date(a.fecha_registro).toLocaleDateString('es-VE', {
-                        day: '2-digit', month: '2-digit', year: '2-digit',
-                      })}
+                      {formatDate(a.fecha_registro)}
                     </td>
                     <td className="px-3 py-2">
                       <ModuloBadge modulo={a.modulo_origen} />

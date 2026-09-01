@@ -1,13 +1,28 @@
-import { useEffect } from 'react'
-import { SealCheck } from '@phosphor-icons/react'
+import { useEffect, useState } from 'react'
+import { SealCheck, DownloadSimple, ShareNetwork } from '@phosphor-icons/react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { localNow } from '@/lib/dates'
+import { useDetalleFactura, useVentaFecha } from '@/features/cxc/hooks/use-cxc'
+import { useCompany, parseEmpresaConfig } from '@/features/configuracion/hooks/use-company'
+import {
+  buildReciboData,
+  descargarReciboPdf,
+  compartirReciboImagen,
+  type ReciboData,
+  type TipoImpuestoLinea,
+} from '../utils/factura-export'
+import type { ReciboDiscrepancyInput } from '../utils/recibo-pagos'
 import type { PagoEntryForm } from '../schemas/venta-schema'
 import type { CargoEspecial } from '../hooks/use-ventas'
 
 export interface VentaExitosaData {
+  ventaId: string
   nroFactura: string
   clienteNombre: string
+  clienteIdentificacion: string
+  clienteDireccion: string | null
   totalUsd: number
   totalBs: number
   tipo: 'CONTADO' | 'CREDITO'
@@ -17,7 +32,14 @@ export interface VentaExitosaData {
   igtfUsd?: number
   igtfBs?: number
   tasaIgtfPct?: number
+  discrepancy: ReciboDiscrepancyInput | null
 }
+
+function toTipoImpuestoLinea(val: string): TipoImpuestoLinea {
+  return val === 'Gravable' || val === 'Exonerado' ? val : 'Exento'
+}
+
+const puedeCompartir = typeof navigator !== 'undefined' && typeof navigator.share === 'function'
 
 interface VentaExitosaModalProps {
   isOpen: boolean
@@ -38,6 +60,12 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
     return () => document.removeEventListener('keydown', handleKey)
   }, [isOpen, onClose])
 
+  const { detalle, isLoading: loadingDetalle } = useDetalleFactura(data?.ventaId ?? null)
+  const { fecha: fechaVenta, isLoading: loadingFecha } = useVentaFecha(data?.ventaId ?? null)
+  const { company } = useCompany()
+  const [generandoDescarga, setGenerandoDescarga] = useState(false)
+  const [generandoCompartir, setGenerandoCompartir] = useState(false)
+
   if (!isOpen || !data) return null
 
   const totalAbonadoUsd = data.pagos.reduce((sum, p) => {
@@ -45,6 +73,69 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
     return sum + montoUsd
   }, 0)
   const saldoPendUsd = Math.max(0, Number((data.totalUsd - totalAbonadoUsd).toFixed(2)))
+
+  function construirRecibo(ventaData: VentaExitosaData): ReciboData {
+    return buildReciboData({
+      nroFactura: ventaData.nroFactura,
+      // Fecha persistida de la venta (ventas.fecha via useVentaFecha), no el
+      // momento del click. Fallback a localNow() solo en el caso extremo de
+      // que la fila aun no se haya sincronizado/leido localmente.
+      fecha: fechaVenta ?? localNow(),
+      emisor: {
+        nombre: company?.nombre ?? '',
+        rif: company?.rif ?? null,
+        direccion: company?.direccion ?? null,
+      },
+      cliente: {
+        nombre: ventaData.clienteNombre,
+        identificacion: ventaData.clienteIdentificacion,
+        direccion: ventaData.clienteDireccion,
+      },
+      lineas: detalle.map((d) => ({
+        codigo: d.producto_codigo,
+        nombre: d.producto_nombre,
+        cantidad: d.cantidad,
+        precioUnitarioUsd: d.precio_unitario_usd,
+        tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
+        impuestoPct: d.impuesto_pct,
+      })),
+      tasa: ventaData.tasa,
+      igtfUsd: ventaData.igtfUsd && ventaData.igtfUsd > 0 ? ventaData.igtfUsd : null,
+      pagos: ventaData.pagos.map((p) => ({
+        metodo_cobro_id: p.metodo_cobro_id,
+        metodo_nombre: p.metodo_nombre,
+        moneda: p.moneda,
+        monto: p.monto,
+      })),
+      discrepancy: ventaData.discrepancy,
+      saldoPendUsd,
+      monedaPresentacion: parseEmpresaConfig(company?.config).moneda_presentacion_documentos ?? 'USD',
+    })
+  }
+
+  function handleDescargar() {
+    if (!data) return
+    setGenerandoDescarga(true)
+    try {
+      descargarReciboPdf(construirRecibo(data))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al generar el PDF del recibo')
+    } finally {
+      setGenerandoDescarga(false)
+    }
+  }
+
+  async function handleCompartir() {
+    if (!data) return
+    setGenerandoCompartir(true)
+    try {
+      await compartirReciboImagen(construirRecibo(data))
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al compartir el recibo')
+    } finally {
+      setGenerandoCompartir(false)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -192,6 +283,32 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
               </div>
             </div>
           )}
+
+          {/* Recibo: Descargar (PDF) + Compartir (imagen PNG, si el dispositivo lo soporta) */}
+          <div className={puedeCompartir ? 'grid grid-cols-2 gap-2' : ''}>
+            <Button
+              className="w-full"
+              size="lg"
+              variant="outline"
+              disabled={!data.ventaId || loadingDetalle || loadingFecha || generandoDescarga}
+              onClick={handleDescargar}
+            >
+              <DownloadSimple className="size-4" />
+              {generandoDescarga ? 'Generando...' : 'Descargar'}
+            </Button>
+            {puedeCompartir && (
+              <Button
+                className="w-full"
+                size="lg"
+                variant="outline"
+                disabled={!data.ventaId || loadingDetalle || loadingFecha || generandoCompartir}
+                onClick={handleCompartir}
+              >
+                <ShareNetwork className="size-4" />
+                {generandoCompartir ? 'Generando...' : 'Compartir'}
+              </Button>
+            )}
+          </div>
 
           {/* CTA */}
           <Button

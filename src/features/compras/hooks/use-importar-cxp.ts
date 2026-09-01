@@ -1,6 +1,8 @@
+import Decimal from 'decimal.js'
 import { db } from '@/core/db/powersync/db'
 import { v4 as uuidv4 } from 'uuid'
 import { localNow } from '@/lib/dates'
+import { toStorageString } from '@/lib/currency'
 import type { CxpImportRow, CxpImportRowResult, CxpImportSummary } from '../schemas/cxp-import-schema'
 
 interface ImportarCxpParams {
@@ -108,9 +110,9 @@ async function importarFilaCxp(
     }
 
     // 3. Obtener tasa de cambio
-    let tasa: number
+    let dTasa: Decimal
     if (fila.tasa && fila.tasa > 0) {
-      tasa = fila.tasa
+      dTasa = new Decimal(fila.tasa)
     } else {
       const tasaResult = await tx.execute(
         'SELECT valor FROM tasas_cambio WHERE empresa_id = ? ORDER BY fecha DESC, created_at DESC LIMIT 1',
@@ -119,8 +121,8 @@ async function importarFilaCxp(
       if (!tasaResult.rows?.length) {
         throw new Error('No hay tasa de cambio registrada. Incluya la tasa en el archivo.')
       }
-      tasa = parseFloat((tasaResult.rows.item(0) as { valor: string }).valor)
-      if (tasa <= 0) {
+      dTasa = new Decimal((tasaResult.rows.item(0) as { valor: string }).valor)
+      if (dTasa.lte(0)) {
         throw new Error('La tasa de cambio registrada no es valida.')
       }
     }
@@ -134,8 +136,8 @@ async function importarFilaCxp(
     const nroFactura = `SIP-${String(count + 1).padStart(6, '0')}`
 
     // 5. Calcular totales
-    const montoUsd = fila.monto_usd
-    const montoBs = Number((montoUsd * tasa).toFixed(2))
+    const montoUsd = new Decimal(fila.monto_usd)
+    const montoBs = montoUsd.times(dTasa)
     const fechaDoc = fila.fecha
 
     // 5b. Resolver moneda USD (NOT NULL en PostgreSQL — sin esto el upload falla con 23502)
@@ -154,9 +156,8 @@ async function importarFilaCxp(
        FROM facturas_compra WHERE proveedor_id = ? AND empresa_id = ?`,
       [proveedor.id, empresaId]
     )
-    const saldoProvAnterior =
-      parseFloat((saldoProvResult.rows?.item(0) as { saldo: string })?.saldo ?? '0') || 0
-    const saldoProvNuevo = Number((saldoProvAnterior + montoUsd).toFixed(2))
+    const saldoProvAnterior = new Decimal((saldoProvResult.rows?.item(0) as { saldo: string })?.saldo ?? '0')
+    const saldoProvNuevo = saldoProvAnterior.plus(montoUsd)
 
     // 7. INSERT facturas_compra (deposito_id = NULL para saldos iniciales)
     const facturaId = uuidv4()
@@ -181,14 +182,14 @@ async function importarFilaCxp(
         empresaId,
         proveedor.id,
         nroFactura,
-        fila.nro_documento,   // nro_control = numero original del sistema anterior
-        monedaUsdId,          // moneda_id: NOT NULL en PostgreSQL, siempre USD para CxP
-        tasa.toFixed(4),
-        tasa.toFixed(4),      // tasa_costo = tasa (sin diferencial en saldos iniciales)
-        montoUsd.toFixed(2),  // total_exento_usd = monto total (todo exento)
-        montoUsd.toFixed(2),  // total_usd
-        montoBs.toFixed(2),   // total_bs
-        montoUsd.toFixed(2),  // saldo_pend_usd = monto completo pendiente
+        fila.nro_documento,          // nro_control = numero original del sistema anterior
+        monedaUsdId,                 // moneda_id: NOT NULL en PostgreSQL, siempre USD para CxP
+        toStorageString(dTasa),
+        toStorageString(dTasa),      // tasa_costo = tasa (sin diferencial en saldos iniciales)
+        toStorageString(montoUsd),   // total_exento_usd = monto total (todo exento)
+        toStorageString(montoUsd),   // total_usd
+        toStorageString(montoBs),    // total_bs
+        toStorageString(montoUsd),   // saldo_pend_usd = monto completo pendiente
         fechaDoc,
         usuarioId,
         now,
@@ -219,14 +220,14 @@ async function importarFilaCxp(
         empresaId,
         proveedor.id,
         fila.nro_documento,
-        montoUsd.toFixed(2),
-        saldoProvAnterior.toFixed(2),
-        saldoProvNuevo.toFixed(2),
+        toStorageString(montoUsd),
+        toStorageString(saldoProvAnterior),
+        toStorageString(saldoProvNuevo),
         observacion,
         facturaId,
-        montoUsd.toFixed(2),
-        tasa.toFixed(4),
-        montoUsd.toFixed(2),
+        toStorageString(montoUsd),
+        toStorageString(dTasa),
+        toStorageString(montoUsd),
         fechaDoc,
         now,
         usuarioId,
