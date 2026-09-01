@@ -61,23 +61,38 @@ Vueltos, "abonos" (`registrarAbonoGlobal`, `registrarPagoFactura`, `aplicarPagoF
 - THEN no existing `movimientos_cuenta` row is edited or deleted
 - AND validation uses a freshly-created test client instead of the corrupted one
 
-### Requirement (CONDITIONAL — NEEDS DESIGN RESOLUTION): POS Credit-Limit Behavior When Standing Credit Exists
+### Requirement: POS Credit-Limit Gate Never Includes Standing Credit as a Term
 
-**STATUS: OPEN.** Whether the POS credit-limit "disponible" gate (`cobro-modal.tsx` enforcement, formula `limite_credito_usd - saldo_actual`) reflects a client's standing credit is a DESIGN DECISION, not a fixed behavior of this spec. Design MUST choose and document exactly ONE mechanism before implementation:
+**STATUS: RESOLVED** (design.md Decision 3, corrected and user-approved — see `openspec/changes/cxc-saldo-favor-modelo/design.md` and the binding business rule captured alongside it). The original guard-rail-vs-structural fork from exploration is resolved in favor of the **structural** path, with the originally-proposed additive formula (`limite - deuda + creditoSAF`) explicitly REJECTED: it was found to be a financial-control hole, allowing standing credit to enlarge how much a client can be invoiced on credit (e.g. limit 800 + SAF 200 would incorrectly authorize a 1000 credit invoice), and would turn a misregistered excess payment into fake credit capacity.
 
-- **Guard-rail**: block/redirect "dejar saldo a favor" when the client has unrelated existing debt on `saldo_actual`, keeping `saldo_actual` writes and credit-limit behavior identical to today.
-- **Structural**: stop standing-credit creation from touching `clientes.saldo_actual` entirely, which changes what `disponible` represents and requires a new formula.
+The POS credit-limit "disponible" gate (`cobro-modal.tsx` enforcement, `pos-terminal.tsx`/`cliente-selector.tsx` display) is re-sourced to:
 
-#### Scenario: Guard-rail path (IF chosen by design)
+```
+disponible = MAX(0, limite_credito_usd - deudaFacturasUsd)
+```
 
-- GIVEN client X has unrelated existing debt reflected in `saldo_actual`
-- WHEN the cajero attempts "dejar saldo a favor"
-- THEN the system blocks or redirects the action, and `saldo_actual`/credit-limit `disponible` behave exactly as before this change
+where `deudaFacturasUsd = SUM(ventas.saldo_pend_usd)` for that client's pending invoices (the same never-netted debt source as Slice A). Standing credit (`creditoDisponibleUsd`, the `SUM(SAFC) - SUM(SAF)` source) is **NEVER** a term in this formula — it is computed and displayed separately. This mirrors the Odoo credit-limit model: the limit measures EXPOSURE (how much a client is authorized to come to owe), not netted by prepayments; standing credit only reduces COLLECTION (how much they currently owe) once explicitly applied to an invoice via "Aplicar saldo a favor."
 
-#### Scenario: Structural path (IF chosen by design)
+This is strictly MORE CONSERVATIVE than the pre-change `limite - saldo_actual` (netted) formula — it can only ever authorize equal-or-less credit than before, never more. It is a correctness fix, not a new financial risk.
 
-- GIVEN client X leaves a $0.70 standing credit under the structural model
+Any client-facing consult (POS `cliente-selector.tsx`, CxC `cxc-cliente-detalle.tsx`/`cxc-list.tsx`) MUST show three independent, never-netted numbers: **Crédito disponible** (`limite - deudaFacturas`), **Deuda acumulada** (`SUM` pending invoices), **Saldo a favor** (`creditoDisponibleUsd`).
+
+#### Scenario: Credit-limit does not grow when standing credit exists
+
+- GIVEN client X has `limite_credito_usd = 800`, pending invoice debt `deudaFacturasUsd = 600`, and a $200 standing credit (SAF)
 - WHEN credit-limit `disponible` is computed at POS
-- THEN `disponible` does NOT increase from this credit event (a documented, visible behavior change from today), and design MUST specify the exact new formula
+- THEN `disponible = MAX(0, 800 - 600) = 200` — the $200 standing credit is NOT added, so `disponible` is NOT `400`
 
-This requirement MUST be resolved explicitly in `sdd-design`, not left implicit.
+#### Scenario: Standing credit must be applied to an invoice before it helps authorize new credit
+
+- GIVEN client X wants to buy a $1000 item on credit, has `limite_credito_usd = 800`, `deudaFacturasUsd = 0`, and a $200 standing credit
+- WHEN the cajero attempts to route the $1000 directly to credit
+- THEN the system rejects it (`disponible = MAX(0, 800 - 0) = 800 < 1000`)
+- WHEN the user first applies the $200 standing credit to reduce the pending amount to $800
+- THEN the remaining $800 fits within `disponible` and the credit sale is authorized
+
+#### Scenario: Disponible stays at 0 when debt equals the limit, regardless of standing credit
+
+- GIVEN client X has `limite_credito_usd = 800`, `deudaFacturasUsd = 800`, and any nonzero standing credit
+- WHEN credit-limit `disponible` is computed
+- THEN `disponible = 0` — the standing credit never "unlocks" additional credit-limit room

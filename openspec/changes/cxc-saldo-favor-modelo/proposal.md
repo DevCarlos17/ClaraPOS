@@ -16,7 +16,8 @@ Also the foundation `notas-credito` needs — credit notes generate client credi
 - Design picks the mechanism (derived aggregation vs. dedicated tracking) — open question from exploration.
 
 ### Out of Scope
-- Trigger `actualizar_saldo_cliente()` / `saldo_actual` semantics (still drives credit-limit).
+- Trigger `actualizar_saldo_cliente()` internals (INSERT-time recalculation of `saldo_actual` for FAC/PAG/NCR/etc.) — untouched.
+- **RESOLVED by design.md Decision 3 (corrected, user-approved — see `openspec/changes/cxc-saldo-favor-modelo/design.md`):** the POS credit-limit gate was originally going to stay `limite_credito_usd - saldo_actual` (netted, unchanged). That formula was rejected during design review as a financial-control hole — it would let standing credit enlarge how much a client can be invoiced on credit. The credit-limit gate is now **structurally re-sourced** to `disponible = MAX(0, limite_credito_usd - deudaFacturasUsd)`, where `deudaFacturasUsd = SUM(ventas.saldo_pend_usd)` (never-netted, same source as Slice A debt reads). Standing credit (SAF) is **never** a term in this formula — it only reduces debt once explicitly applied to an invoice via "Aplicar saldo a favor." This is strictly more conservative than the old netted formula (never over-extends credit), so it is a correctness fix, not a new risk. See "Modified Capabilities" below.
 - "Aplicar a facturas" FIFO, "Dar vuelto", "Propina" — already correct.
 - Historical repair of `movimientos_cuenta` (immutable); V00000001 is test noise, use a fresh client.
 - Building `notas-credito` itself — only its credit foundation.
@@ -27,7 +28,7 @@ Also the foundation `notas-credito` needs — credit notes generate client credi
 - `cxc-saldo-credito`: client standing credit tracked independently of netted `saldo_actual` — source of truth for debt/credit display and credit-creation.
 
 ### Modified Capabilities
-None.
+- POS credit-limit enforcement gate (`cobro-modal.tsx`, `pos-terminal.tsx`, `cliente-selector.tsx`): re-sourced from `limite_credito_usd - saldo_actual` (netted) to `limite_credito_usd - deudaFacturasUsd` (never-netted, standing credit excluded). See design.md Decision 3 (RESOLVED).
 
 ## Affected Areas
 
@@ -40,11 +41,14 @@ None.
 | `cxc-list.tsx:92-97` | KPIs, separate debt/credit |
 | `aplicar-saf-modal.tsx:34` | `creditoDisponible` → new source |
 | `use-cxc-reportes.ts` | KPIs/deudores/utilización |
+| `use-deuda-cliente.ts` (new) | `useDeudaFacturasCliente`/`useDeudaFacturasClientes` — dedicated `SUM(ventas.saldo_pend_usd)` source for the POS credit-limit gate |
+| `deuda-credito-cliente.ts` | `calcularDisponibleCredito(limite, deuda)` — pure, 2-arg, SAF never a term (Decision 3 RESOLVED) |
+| `cobro-modal.tsx` / `pos-terminal.tsx` / `cliente-selector.tsx` | credit-limit gate/display re-sourced to `limite - deudaFacturas` |
 
 ## Risks
 
 - Third partial fix here → structural/root-cause, not another patch.
-- Credit-limit coupling breaks → `saldo_actual` semantics untouched.
+- Credit-limit coupling breaks → mitigated by design: the gate was deliberately RE-SOURCED away from `saldo_actual` to `limite - deudaFacturas` (Decision 3, RESOLVED), which is strictly more conservative than the old netted formula — it can only ever be equal-or-lower, never grant more credit than before.
 - Immutable ledger blocks repair → none attempted.
 - New source diverges from `saldo_actual` → design defines reconciliation invariant.
 
@@ -62,4 +66,4 @@ Additive/query-level changes — revert commits; any new column/table must be nu
 - [ ] CxC list/KPIs/Reportes never show debt reduced by unrelated credit
 - [ ] "Dejar saldo a favor" creates credit without altering any invoice's `saldo_pend_usd`
 - [ ] "Aplicar saldo a favor" works end-to-end on a fresh client
-- [ ] `saldo_actual`/trigger/credit-limit calc unchanged
+- [ ] Trigger `actualizar_saldo_cliente()` internals unchanged; credit-limit `disponible` is re-sourced to `MAX(0, limite_credito_usd - deudaFacturasUsd)` — standing credit (SAF) is never a term (Decision 3, RESOLVED — see design.md)
