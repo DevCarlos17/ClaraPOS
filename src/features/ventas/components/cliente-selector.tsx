@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useLayoutEffect, forwardRef, useImperativeHandle } from 'react'
 import { MagnifyingGlass, X } from '@phosphor-icons/react'
 import { useBuscarClientes, type Cliente } from '@/features/clientes/hooks/use-clientes'
-import { useDeudaFacturasCliente, useDeudaFacturasClientes } from '@/features/cxc/hooks/use-deuda-cliente'
+import { useDeudaFacturasCliente, useDeudaFacturasClientes, useCreditoFavorClientes } from '@/features/cxc/hooks/use-deuda-cliente'
+import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { formatUsd } from '@/lib/currency'
 
@@ -27,7 +28,9 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
   // Deuda real de facturas — fuente del "Disponible" mostrado (nunca
   // saldo_actual neteado, nunca suma saldo a favor). Ver design.md Decision 3.
   const { deudaFacturasUsd: deudaSeleccionado } = useDeudaFacturasCliente(clienteId)
+  const { disponible: creditoSeleccionado } = useSaldoAFavor(clienteId)
   const deudaPorCliente = useDeudaFacturasClientes(clientes.map((c) => c.id))
+  const creditoPorCliente = useCreditoFavorClientes(clientes.map((c) => c.id))
   const wrapperRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -126,7 +129,7 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
             )}
             <p className="text-sm font-semibold truncate">{selectedNombre}</p>
           </div>
-          {/* Fila 2: Saldo + Disponible (sin Limite) */}
+          {/* Fila 2: Deuda + Disponible (sin Limite) + Saldo a favor (nunca neteado) */}
           {selectedCliente && (
             <p className="text-xs mt-0.5">
               <span className="text-muted-foreground">Deuda: {formatUsd(deudaSeleccionado)}</span>
@@ -135,6 +138,14 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
                   <span className="text-muted-foreground mx-1">|</span>
                   <span className={excedido ? 'text-destructive font-medium' : disponible < limite * 0.2 ? 'text-orange-600' : 'text-green-700'}>
                     Disponible: {excedido ? 'Excedido' : formatUsd(disponible)}
+                  </span>
+                </>
+              )}
+              {creditoSeleccionado > 0.001 && (
+                <>
+                  <span className="text-muted-foreground mx-1">|</span>
+                  <span className="text-green-700 font-medium">
+                    Saldo a favor: +{formatUsd(creditoSeleccionado)}
                   </span>
                 </>
               )}
@@ -183,6 +194,7 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
             clientes.map((c, i) => {
               const limite = parseFloat(c.limite_credito_usd)
               const deudaC = deudaPorCliente[c.id] ?? 0
+              const creditoC = creditoPorCliente[c.id] ?? 0
               const disponible = limite > 0 ? calcularDisponibleCredito(limite, deudaC).toNumber() : null
               return (
                 <button
@@ -205,6 +217,11 @@ function ClienteSelector({ clienteId, onSelect, onClear }, ref) {
                       {disponible !== null && (
                         <p className={`text-xs ${disponible === 0 && deudaC > limite ? 'text-destructive' : 'text-green-700'}`}>
                           Disp: {formatUsd(disponible)}
+                        </p>
+                      )}
+                      {creditoC > 0.001 && (
+                        <p className="text-xs text-green-700 font-medium">
+                          Saldo a favor: +{formatUsd(creditoC)}
                         </p>
                       )}
                     </div>
