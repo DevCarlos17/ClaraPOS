@@ -9,7 +9,9 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosVenta, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import { connector } from '@/core/db/powersync/connector'
 import { aplicarPagoFacturaEnTx } from '@/features/cxc/hooks/use-cxc'
+import { calcularCreditoDisponible } from '@/features/cxc/lib/deuda-credito-cliente'
 import { buildStockPorDepositoFragments, resolveDepositoEgresoVenta } from '../lib/deposito-venta'
+import { calcularCierreVentaConSaf } from '../lib/calcular-cierre-venta-saf'
 import {
   upsertStockDeposito,
   leerStockDeposito,
@@ -193,6 +195,10 @@ export interface CrearVentaParams {
 export interface CrearVentaResult {
   ventaId: string
   nroFactura: string
+  /** SAF efectivamente aplicado en USD (capeado). Presente solo cuando se envio `safEntry`. */
+  safAplicadoUsd?: number
+  /** true si el SAF solicitado excedia el credito disponible y fue capeado. */
+  safFueCapeado?: boolean
 }
 
 /**
@@ -297,6 +303,8 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
 
   let ventaId = ''
   let nroFactura = ''
+  let safAplicadoUsdResult: number | undefined
+  let safFueCapeadoResult: boolean | undefined
 
   await db.writeTransaction(async (tx) => {
     const now = localNow()
@@ -862,29 +870,75 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       )
     }
 
-    // 6. UPDATE venta saldo_pend_usd (ancla en Bs, consistente con el calculo del POS)
+    // 6+7+7d (merged, SAF-aware — pos-aplicar-saf-checkout). El bug original era
+    // de ORDEN: el paso 7 escribia el CxC con el remanente SIN descontar el SAF y
+    // ya subia clientes.saldo_actual ANTES de que el ex-paso 7d (mas abajo)
+    // intentara consumir el SAF, gateado sobre saldo_actual ya inflado — por
+    // eso el consumo de SAF fallaba silenciosamente en casi todos los casos de
+    // cobertura parcial. Ahora: se lee el credito disponible (modelo derivado
+    // SUM(SAFC)-SUM(SAF)) y se calcula saldoPend/tipo/SAF-aplicado (capeado)
+    // ANTES de escribir el FAC, y el consumo de SAF se escribe en el mismo
+    // bloque, en la misma writeTransaction — sin estado intermedio SAF-unaware
+    // committeado. Ver design.md Decision 1/2/3 (pos-aplicar-saf-checkout).
     const abonado_BsNativo = pagos.filter((p) => p.moneda === 'BS').reduce((s, p) => s.plus(p.monto), new Decimal(0))
     const abonado_UsdNativo = pagos.filter((p) => p.moneda === 'USD').reduce((s, p) => s.plus(p.monto), new Decimal(0))
-    const pendienteBs4_db = Decimal.max(
-      new Decimal(0),
-      usdToBs(totalUsd, tasa).minus(abonado_BsNativo).minus(usdToBs(abonado_UsdNativo, tasa))
-    )
-    // Si el residuo en Bs es <= $0.01 equivalente Y el usuario NO eligió crédito explícitamente,
-    // es diferencial de redondeo: se absorbe (saldo = 0).
-    // Cuando mode === 'CREDITO', respetar la elección manual del cajero — NO auto-absorber.
-    const umbral = new Decimal(tasa).times('0.01')
-    const esAutoAbsorb = pendienteBs4_db.lte(umbral) && discrepancy?.mode !== 'CREDITO'
-    const saldoPend = esAutoAbsorb ? new Decimal(0) : bsToUsd(pendienteBs4_db, tasa)
+
+    let creditoDisponibleUsd = new Decimal(0)
+    if (safEntry && safEntry.montoUsd > 0.001) {
+      // Fuente del gate: modelo derivado SUM(SAFC)-SUM(SAF), NO clientes.saldo_actual
+      // neteado (que puede estar inflado por deuda de facturas pendientes no
+      // relacionadas) — spec req.2 scn.1.
+      const creditoRes = await tx.execute(
+        `SELECT
+           COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
+           COALESCE(SUM(CASE WHEN tipo = 'SAF'  THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
+         FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
+        [safEntry.clienteId, empresa_id]
+      )
+      const creditoRow = creditoRes.rows?.item(0) as { creado: number; consumido: number } | undefined
+      creditoDisponibleUsd = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0)
+    }
+
+    const cierre = calcularCierreVentaConSaf({
+      totalUsd,
+      tasa,
+      abonadoBsNativo: abonado_BsNativo,
+      abonadoUsdNativo: abonado_UsdNativo,
+      safSolicitadoUsd: safEntry?.montoUsd ?? 0,
+      creditoDisponibleUsd,
+      respetarEleccionCredito: discrepancy?.mode === 'CREDITO',
+    })
+    const saldoPend = cierre.saldoPendUsd
+    const safAplicadoUsd = cierre.safAplicadoUsd
+    safAplicadoUsdResult = safAplicadoUsd.gt(0) ? safAplicadoUsd.toNumber() : undefined
+    safFueCapeadoResult = safEntry ? cierre.safFueCapeado : undefined
+
     await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
       toStorageString(saldoPend),
       ventaId,
     ])
+    // Defensa en profundidad: el `tipoDetectado` del frontend ya es SAF-aware y
+    // normalmente coincide; solo se corrige si el backend discrepa. Excluir
+    // ABSORBER/DIFERENCIAL_FALTANTE: `calcularCierreVentaConSaf` no conoce
+    // discrepancy.mode, por lo que puede devolver 'CREDITO' para un faltante
+    // que el cajero ya absorbio (venta liquidada, sin CxC) — sobreescribir
+    // `tipo` en ese caso corrompe la clasificacion contado/credito aunque
+    // saldo_pend_usd quede en 0 (CRITICAL, review adversarial
+    // pos-aplicar-saf-checkout).
+    if (
+      cierre.tipo !== tipo &&
+      discrepancy?.mode !== 'ABSORBER' &&
+      discrepancy?.mode !== 'DIFERENCIAL_FALTANTE'
+    ) {
+      await tx.execute('UPDATE ventas SET tipo = ? WHERE id = ?', [cierre.tipo, ventaId])
+    }
 
-    // 7. Si CREDITO y deuda > 0: crear movimiento de cuenta
+    // 7. Si CREDITO y deuda > 0: crear movimiento de cuenta con el remanente ya
+    //    neto de SAF (gracias a calcularCierreVentaConSaf).
     //    Umbral 0.001 (no 0.01) para capturar montos sub-centavo en USD que son legítimos
     //    en contexto bimonetario (ej: Bs 0.99 a tasa 500 = $0.00198).
     //    Excluir modos de absorcion: el gasto absorbe el faltante, no queda deuda en CxC.
-    if (tipo === 'CREDITO' && saldoPend.gt('0.001')
+    if (cierre.tipo === 'CREDITO' && saldoPend.gt('0.001')
         && discrepancy?.mode !== 'ABSORBER'
         && discrepancy?.mode !== 'DIFERENCIAL_FALTANTE') {
       const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
@@ -924,6 +978,56 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
         now,
         cliente_id,
       ])
+    }
+
+    // SAF como metodo de pago (ex-paso 7d): consumir el credito ya capeado por
+    // calcularCierreVentaConSaf. Se re-lee saldo_actual fresco (puede haber sido
+    // modificado por el bloque FAC de arriba si el cliente de la venta es el
+    // mismo del SAF, que es siempre el caso). El gate ya NO depende de
+    // saldo_actual neteado — el cap de disponibilidad ya ocurrio en la funcion
+    // pura, arriba (spec req.2, req.3 scn.1).
+    if (safEntry && safAplicadoUsd.gt('0.001')) {
+      const { clienteId: safClienteId, safOrigenRefs = [] } = safEntry
+      const clienteSafRes = await tx.execute(
+        'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
+        [safClienteId]
+      )
+      if (clienteSafRes.rows?.length) {
+        const saldoAntesSaf = new Decimal(
+          (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual
+        )
+        const saldoDespuesSaf = saldoAntesSaf.plus(safAplicadoUsd)
+
+        // INSERT movimiento_cuenta tipo='SAF' — referencia de trazabilidad apunta a esta venta
+        const safOrigenRefsWithVenta = safOrigenRefs.length > 0 ? safOrigenRefs : [ventaId]
+        await tx.execute(
+          `INSERT INTO movimientos_cuenta
+             (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
+              observacion, venta_id, fecha, created_at, created_by,
+              moneda_pago, monto_moneda, tasa_pago, saf_origen_refs, sesion_caja_id)
+           VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)`,
+          [
+            uuidv4(), empresa_id, safClienteId,
+            `SAF-VTA-${nroFactura}`,
+            toStorageString(safAplicadoUsd),
+            toStorageString(saldoAntesSaf),
+            toStorageString(saldoDespuesSaf),
+            `Saldo a favor aplicado en venta ${nroFactura}`,
+            ventaId,
+            now, now, usuario_id,
+            toStorageString(safAplicadoUsd),
+            toStorageString(tasa),
+            JSON.stringify(safOrigenRefsWithVenta),
+            sesion_caja_id ?? null,
+          ]
+        )
+
+        // Consumir credito SAF: actualizar clientes.saldo_actual
+        await tx.execute(
+          'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
+          [toStorageString(saldoDespuesSaf), now, safClienteId]
+        )
+      }
     }
 
     // 7c. Discrepancy resolution records
@@ -1329,69 +1433,6 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       }
     }
 
-    // 7d. SAF as payment method: apply existing client credit to this sale
-    if (safEntry && safEntry.montoUsd > 0.001) {
-      const { clienteId: safClienteId, montoUsd: safMontoUsd, safOrigenRefs = [] } = safEntry
-      const safMontoUsdD = new Decimal(safMontoUsd)
-
-      // Read and validate client SAF credit
-      const clienteSafRes = await tx.execute(
-        'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
-        [safClienteId]
-      )
-      if (clienteSafRes.rows?.length) {
-        const saldoActualSaf = new Decimal(
-          (clienteSafRes.rows.item(0) as { saldo_actual: string }).saldo_actual
-        )
-        if (saldoActualSaf.lt('-0.001')) {
-          const saldoAntesSaf = saldoActualSaf
-          const saldoDespuesSaf = saldoActualSaf.plus(safMontoUsdD)
-
-          // INSERT movimiento_cuenta tipo='SAF' — traceability ref points to this sale
-          const safOrigenRefsWithVenta = safOrigenRefs.length > 0 ? safOrigenRefs : [ventaId]
-          await tx.execute(
-            `INSERT INTO movimientos_cuenta
-               (id, empresa_id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
-                observacion, venta_id, fecha, created_at, created_by,
-                moneda_pago, monto_moneda, tasa_pago, saf_origen_refs, sesion_caja_id)
-             VALUES (?, ?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)`,
-            [
-              uuidv4(), empresa_id, safClienteId,
-              `SAF-VTA-${nroFactura}`,
-              toStorageString(safMontoUsdD),
-              toStorageString(saldoAntesSaf),
-              toStorageString(saldoDespuesSaf),
-              `Saldo a favor aplicado en venta ${nroFactura}`,
-              ventaId,
-              now, now, usuario_id,
-              toStorageString(safMontoUsdD),
-              toStorageString(tasa),
-              JSON.stringify(safOrigenRefsWithVenta),
-              params.sesion_caja_id ?? null,
-            ]
-          )
-
-          // Consume SAF credit: update clientes.saldo_actual
-          await tx.execute(
-            'UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?',
-            [toStorageString(saldoDespuesSaf), now, safClienteId]
-          )
-
-          // Reduce saldo_pend_usd by SAF amount (sale partially covered by credit)
-          const saldoPendRes = await tx.execute('SELECT saldo_pend_usd FROM ventas WHERE id = ?', [ventaId])
-          if (saldoPendRes.rows?.length) {
-            const currentSaldoPend = new Decimal(
-              (saldoPendRes.rows.item(0) as { saldo_pend_usd: string }).saldo_pend_usd
-            )
-            const nuevoSaldoPendSaf = Decimal.max(new Decimal(0), currentSaldoPend.minus(safMontoUsdD))
-            await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
-              toStorageString(nuevoSaldoPendSaf), ventaId,
-            ])
-          }
-        }
-      }
-    }
-
     // 7b. Crear egresos de caja para cargos especiales + vencimientos prestamo
     if (cargosEspeciales.length > 0) {
       for (const cargo of cargosEspeciales) {
@@ -1660,5 +1701,5 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
     }
   })
 
-  return { ventaId, nroFactura }
+  return { ventaId, nroFactura, safAplicadoUsd: safAplicadoUsdResult, safFueCapeado: safFueCapeadoResult }
 }

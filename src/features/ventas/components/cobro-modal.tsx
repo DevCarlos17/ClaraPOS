@@ -18,6 +18,7 @@ import { useFacturasPendientes } from '@/features/cxc/hooks/use-cxc'
 import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
 import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
+import { clampearSafMonto } from '../lib/clamp-saf-monto'
 import type { CargoEspecial } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -96,6 +97,12 @@ export function CobroModal({
 
   // SAF as payment method
   const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(clienteId || null)
+  // safDisponible puede llegar con ruido de punto flotante desde el SUM() de
+  // SQLite (CAST(monto AS REAL)). Se redondea a 2 decimales aqui, en el
+  // limite de UI, para usar como tope en el input y en el clamp de safMonto —
+  // nunca se usa .toNumber() sin redondear sobre un valor que alimenta la
+  // pantalla o el monto aplicado (regla #10: NUNCA float en campos financieros).
+  const safDisponibleDecimal = new Decimal(safDisponible).toDecimalPlaces(2)
   // Deuda real de facturas — fuente del gate de limite de credito (nunca
   // saldo_actual neteado, nunca suma saldo a favor). Ver design.md Decision 3.
   const { deudaFacturasUsd } = useDeudaFacturasCliente(clienteId || null)
@@ -509,6 +516,12 @@ export function CobroModal({
         safEntry,
       })
 
+      if (result.safFueCapeado) {
+        toast.warning(
+          'El saldo a favor disponible cambió durante el checkout: se aplicó el monto disponible en lugar del solicitado.'
+        )
+      }
+
       onSuccess({
         ventaId: result.ventaId,
         nroFactura: result.nroFactura,
@@ -729,8 +742,9 @@ export function CobroModal({
                     const checked = e.target.checked
                     setSafSeleccionado(checked)
                     if (checked) {
-                      // Pre-cargar monto: min(disponible, totalVenta)
-                      setSafMonto(Decimal.min(new Decimal(safDisponible), totalEfectivoUsd).toNumber())
+                      // Pre-cargar monto: min(disponible, totalVenta), redondeado a 2
+                      // decimales — evita mostrar ruido de flotante (ej. 1.29999999).
+                      setSafMonto(clampearSafMonto(safDisponibleDecimal, totalEfectivoUsd))
                     } else {
                       setSafMonto(0)
                     }
@@ -745,9 +759,19 @@ export function CobroModal({
                     type="number"
                     step="0.01"
                     min="0.01"
-                    max={safDisponible}
+                    max={safDisponibleDecimal.toNumber()}
                     value={safMonto || ''}
-                    onChange={(e) => setSafMonto(Math.min(parseFloat(e.target.value) || 0, safDisponible))}
+                    onChange={(e) => {
+                      // Parseo defensivo: un input type="number" a mitad de edicion
+                      // (ej. "1.") puede llegar como string no valida para Decimal.
+                      let ingresado: string | number = e.target.value || 0
+                      try {
+                        new Decimal(ingresado)
+                      } catch {
+                        ingresado = 0
+                      }
+                      setSafMonto(clampearSafMonto(ingresado, safDisponibleDecimal))
+                    }}
                     placeholder="0.00"
                     className="h-7 w-24 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   />
