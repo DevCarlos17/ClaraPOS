@@ -30,6 +30,10 @@ export interface ClienteConDeuda {
   saldo_actual: string
   limite_credito_usd: string
   facturas_pendientes: number
+  /** Deuda real: SUM(ventas.saldo_pend_usd) — nunca neteada contra credito. */
+  deuda_usd: number
+  /** Saldo a favor disponible: MAX(0, SUM(SAFC) - SUM(SAF)) — nunca neteado contra deuda. */
+  credito_disponible_usd: number
 }
 
 export interface PagoFacturaParams {
@@ -68,26 +72,45 @@ export interface AbonoGlobalParams {
   safOrigenRefs?: string[]
 }
 
+// Deuda y credito se calculan por separado, NUNCA neteados entre si (ver
+// openspec/changes/cxc-saldo-favor-modelo/design.md Decision 1/3):
+// - deuda_usd: SUM(ventas.saldo_pend_usd) de facturas realmente pendientes.
+// - credito_disponible_usd: MAX(0, SUM(SAFC) - SUM(SAF)) en movimientos_cuenta.
+//   'SAFC' aun no existe hasta que Slice B lo introduzca (migrations/0090); hasta
+//   entonces esta columna retorna $0 de forma legitima, no es un bug.
+// Se envuelve en subconsulta para poder filtrar/ordenar por los alias calculados.
+const DEUDA_CREDITO_CLIENTE_SELECT = `
+  c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
+  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes,
+  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd,
+  MAX(0,
+    COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.tipo = 'SAFC'), 0)
+    - COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.tipo = 'SAF'), 0)
+  ) as credito_disponible_usd
+`
+
 /**
- * Clientes con saldo pendiente > 0
+ * Clientes con deuda pendiente y/o saldo a favor (nunca neteados).
  */
 export function useClientesConDeuda() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-     `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-       (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes
-     FROM clientes c
-     WHERE c.empresa_id = ? AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001 AND c.is_active = 1
-     ORDER BY CAST(c.saldo_actual AS REAL) DESC`,
+    `SELECT * FROM (
+       SELECT ${DEUDA_CREDITO_CLIENTE_SELECT}
+       FROM clientes c
+       WHERE c.empresa_id = ? AND c.is_active = 1
+     ) t
+     WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+     ORDER BY deuda_usd DESC`,
     [empresaId]
   )
   return { clientes: (data ?? []) as ClienteConDeuda[], isLoading }
 }
 
 /**
- * Buscar clientes con deuda por nombre/identificacion
+ * Buscar clientes con deuda y/o saldo a favor por nombre/identificacion.
  */
 export function useBuscarClientesDeuda(query: string) {
   const { user } = useCurrentUser()
@@ -98,12 +121,14 @@ export function useBuscarClientesDeuda(query: string) {
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-           (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes
-         FROM clientes c
-         WHERE c.empresa_id = ? AND c.is_active = 1 AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001
-           AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
-         ORDER BY c.nombre ASC LIMIT 20`
+      ? `SELECT * FROM (
+           SELECT ${DEUDA_CREDITO_CLIENTE_SELECT}
+           FROM clientes c
+           WHERE c.empresa_id = ? AND c.is_active = 1
+             AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
+         ) t
+         WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+         ORDER BY nombre ASC LIMIT 20`
       : '',
     shouldSearch ? [empresaId, pattern, pattern] : []
   )
