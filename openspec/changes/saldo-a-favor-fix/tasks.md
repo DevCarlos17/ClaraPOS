@@ -37,9 +37,9 @@ Re-evaluate if measured diff exceeds 400 at apply time.
 
 ## Phase 2: Postgres Trigger Fix + Data Repair
 
-- [ ] 2.1 Create `migrations/0088_fix_saf_trigger_sign.sql` — `CREATE OR REPLACE FUNCTION actualizar_saldo_cliente()`; SAF branch trusts `NEW.saldo_nuevo`, raises `P0001` if inconsistent. FAC/NDB/PAG/NCR/REV/SAL branches unchanged.
-- [ ] 2.2 Create `migrations/0089_repair_saldo_actual_saf.sql` — idempotent `DO $$`: loop `DISTINCT (empresa_id, cliente_id)`, replay `movimientos_cuenta` chronologically, re-derive SAF direction from running balance's sign, REV/SAL as trusted checkpoints, `UPDATE clientes` only where drift > 0.005.
-- [ ] 2.3 Add header comments (root cause / consequence chain / fix) matching 0061/0062 style. Do not execute against Supabase — manual step owned by `sdd-verify`.
+- [x] 2.1 Create `migrations/0088_fix_saf_trigger_sign.sql` — `CREATE OR REPLACE FUNCTION actualizar_saldo_cliente()`; SAF branch trusts `NEW.saldo_nuevo`, raises `P0001` if inconsistent. FAC/NDB/PAG/NCR/REV/SAL branches unchanged.
+- [x] 2.2 Create `migrations/0089_repair_saldo_actual_saf.sql` — idempotent `DO $$`: loop `DISTINCT (empresa_id, cliente_id)`, replay `movimientos_cuenta` chronologically, re-derive SAF direction from running balance's sign, REV/SAL as trusted checkpoints, `UPDATE clientes` only where drift > 0.005.
+- [x] 2.3 Add header comments (root cause / consequence chain / fix) matching 0061/0062 style. Do not execute against Supabase — manual step owned by `sdd-verify`.
 
 ## Phase 3: Wire Hook to Shared Function
 
