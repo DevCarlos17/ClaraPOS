@@ -54,7 +54,7 @@ export function useCxcKpis() {
        SUM(CASE WHEN CAST(limite_credito_usd AS REAL) > 0 AND deuda_usd > CAST(limite_credito_usd AS REAL) THEN 1 ELSE 0 END) as sobre_limite
      FROM (
        SELECT c.limite_credito_usd,
-         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
+         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
        FROM clientes c
        WHERE c.empresa_id = ? AND c.is_active = 1
      ) t`,
@@ -144,7 +144,7 @@ export function useTopDeudores(limit = 10) {
     `SELECT nombre, identificacion, limite_credito_usd, deuda_usd as saldo_actual
      FROM (
        SELECT c.nombre, c.identificacion, c.limite_credito_usd,
-         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
+         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
        FROM clientes c
        WHERE c.empresa_id = ? AND c.is_active = 1
      ) t
@@ -177,7 +177,7 @@ export function useUtilizacionCredito(limit = 10) {
     `SELECT nombre, limite_credito_usd, deuda_usd as saldo_actual
      FROM (
        SELECT c.nombre, c.limite_credito_usd,
-         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
+         COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd
        FROM clientes c
        WHERE c.empresa_id = ? AND c.is_active = 1
      ) t

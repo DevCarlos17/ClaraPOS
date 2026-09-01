@@ -82,11 +82,11 @@ export interface AbonoGlobalParams {
 // Se envuelve en subconsulta para poder filtrar/ordenar por los alias calculados.
 const DEUDA_CREDITO_CLIENTE_SELECT = `
   c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes,
-  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd,
+  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes,
+  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd,
   MAX(0,
-    COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.tipo = 'SAFC'), 0)
-    - COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.tipo = 'SAF'), 0)
+    COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.empresa_id = c.empresa_id AND mc.tipo = 'SAFC'), 0)
+    - COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.empresa_id = c.empresa_id AND mc.tipo = 'SAF'), 0)
   ) as credito_disponible_usd
 `
 
