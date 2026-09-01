@@ -43,12 +43,12 @@ Re-evaluate if measured diff exceeds 400 at apply time.
 
 ## Phase 3: Wire Hook to Shared Function
 
-- [ ] 3.1 In `src/features/cxc/hooks/use-cxc.ts`, import `calcularSaldoNuevoMovimientoCuenta` from `../lib/saldo-cliente`.
-- [ ] 3.2 Replace line ~435 `Decimal.max(new Decimal(0), saldoActual.minus(montoUsd))` with `calcularSaldoNuevoMovimientoCuenta('PAG', saldoActual, montoUsd)`. Leave line ~424 (`ventas.saldo_pend_usd` floor) untouched.
-- [ ] 3.3 Run `yarn type-check` to confirm the hook compiles.
+- [x] 3.1 In `src/features/cxc/hooks/use-cxc.ts`, import `calcularSaldoNuevoMovimientoCuenta` from `../lib/saldo-cliente`.
+- [x] 3.2 Replace line ~435 `Decimal.max(new Decimal(0), saldoActual.minus(montoUsd))` with `calcularSaldoNuevoMovimientoCuenta('PAG', saldoActual, montoUsd)`. Leave line ~424 (`ventas.saldo_pend_usd` floor) untouched.
+- [x] 3.3 Run `yarn type-check` to confirm the hook compiles (no errors referencing use-cxc.ts; pre-existing unrelated test-file noise from tsconfig.json excluding vitest globals, see apply-progress).
 
 ## Phase 4: Verification Handoff
 
-- [ ] 4.1 Draft manual checklist (Test 1: create credit via Bs excess; Test 2: consume credit against a new invoice, saldo lands at $0 not -$1.40; adjacent-bug: pay invoice while holding SAF credit, negative saldo preserved) for `sdd-verify` against real Supabase.
+- [x] 4.1 Draft manual checklist (Test 1: create credit via Bs excess; Test 2: consume credit against a new invoice, saldo lands at $0 not -$1.40; adjacent-bug: pay invoice while holding SAF credit, negative saldo preserved) for `sdd-verify` against real Supabase. See `manual-verify.md`.
 
 **Dependencies**: Phase 3 needs Phase 1. Phase 2 ships same PR, independent stack (SQL vs TS). Phase 4 needs Phase 2 + Phase 3 done.
