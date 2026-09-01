@@ -243,10 +243,24 @@ export function CxcList() {
                         {tieneDeuda && ` · ${cliente.facturas_pendientes} factura${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''} pendiente${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''}`}
                       </p>
                     </div>
+                    {/* Deuda y saldo a favor son cifras independientes, nunca
+                        neteadas: si el cliente tiene ambas, se muestran las
+                        dos por separado (ver cxc-cliente-detalle.tsx). */}
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={`text-sm font-bold tabular-nums ${tieneDeuda ? 'text-destructive' : 'text-green-600'}`}>
-                        {tieneDeuda ? formatUsd(cliente.deuda_usd) : `+${formatUsd(cliente.credito_disponible_usd)}`}
-                      </span>
+                      {tieneDeuda && isSAF ? (
+                        <div className="flex flex-col items-end gap-0.5">
+                          <span className="text-sm font-bold tabular-nums text-destructive">
+                            {formatUsd(cliente.deuda_usd)}
+                          </span>
+                          <span className="text-[11px] font-semibold tabular-nums text-green-600">
+                            +{formatUsd(cliente.credito_disponible_usd)}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className={`text-sm font-bold tabular-nums ${tieneDeuda ? 'text-destructive' : 'text-green-600'}`}>
+                          {tieneDeuda ? formatUsd(cliente.deuda_usd) : `+${formatUsd(cliente.credito_disponible_usd)}`}
+                        </span>
+                      )}
                       <CaretRight size={13} className={isSelected ? 'text-primary' : 'text-muted-foreground/40'} />
                     </div>
                   </button>
