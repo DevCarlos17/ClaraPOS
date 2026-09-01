@@ -509,6 +509,12 @@ export function CobroModal({
         safEntry,
       })
 
+      if (result.safFueCapeado) {
+        toast.warning(
+          'El saldo a favor disponible cambió durante el checkout: se aplicó el monto disponible en lugar del solicitado.'
+        )
+      }
+
       onSuccess({
         ventaId: result.ventaId,
         nroFactura: result.nroFactura,
