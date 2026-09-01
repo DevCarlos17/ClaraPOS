@@ -6,6 +6,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
 import { useFacturasPendientes, type ClienteConDeuda, type VentaPendiente } from '../hooks/use-cxc'
+import { calcularCreditoDisponible } from '../lib/deuda-credito-cliente'
 import { AbonoGlobalModal } from './abono-global-modal'
 import { AplicarSafModal } from './aplicar-saf-modal'
 import { FacturaDetalleCxc } from './factura-detalle-cxc'
@@ -38,15 +39,20 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
   const [mostrarPagadas, setMostrarPagadas] = useState(false)
   const { facturas, isLoading } = useFacturasPendientes(cliente.id, mostrarPagadas)
 
-  // Saldo reactivo: query directa a SQLite para reflejar cambios inmediatamente
-  // sin depender del prop `cliente` que puede quedar stale tras un abono global.
-  const { data: clienteLiveData } = useQuery(
-    'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
+  // Saldo a favor reactivo: query directa a movimientos_cuenta para reflejar
+  // cambios inmediatamente sin depender del prop `cliente` que puede quedar
+  // stale tras un abono global. NUNCA se lee clientes.saldo_actual aqui — es
+  // un valor neteado que no distingue deuda de credito (ver spec cxc-deuda-lectura).
+  const { data: creditoLiveData } = useQuery(
+    `SELECT
+       COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
+       COALESCE(SUM(CASE WHEN tipo = 'SAF' THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
+     FROM movimientos_cuenta
+     WHERE cliente_id = ?`,
     [cliente.id]
   )
-  const saldo = clienteLiveData?.[0]
-    ? parseFloat((clienteLiveData[0] as { saldo_actual: string }).saldo_actual)
-    : parseFloat(cliente.saldo_actual)
+  const creditoRow = creditoLiveData?.[0] as { creado: number; consumido: number } | undefined
+  const safCxcValue = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0).toNumber()
 
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<VentaPendiente | null>(null)
   const [abonoGlobalOpen, setAbonoGlobalOpen] = useState(false)
@@ -71,14 +77,9 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
     return String(a[sortField]).localeCompare(String(b[sortField])) * mult
   })
 
-  // Deuda real: suma de saldo pendiente en facturas individuales (fuente de verdad)
-  const deudaFacturas = facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0)
-  // SAF disponible: solo cuando saldo_actual es negativo
-  const safCxcValue = saldo < -0.001 ? Math.abs(saldo) : 0
-  // Para el display, priorizar deuda de facturas sobre saldo_actual
-  const deudaDisplay = !isLoading && deudaFacturas > 0.001
-    ? deudaFacturas
-    : Math.max(0, saldo)
+  // Deuda real: suma de saldo pendiente en facturas individuales (fuente de
+  // verdad, nunca neteada contra el saldo a favor — ver spec cxc-deuda-lectura).
+  const deudaDisplay = facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0)
   const tieneDeudaCxc = deudaDisplay > 0.001
   const tieneSafCxc = safCxcValue > 0.001
 
@@ -126,7 +127,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                   </>
                 )}
               </div>
-              {saldo < -0.001 && (
+              {tieneSafCxc && (
                 <Button
                   size="sm"
                   variant="outline"
@@ -303,7 +304,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
         onClose={() => setAbonoGlobalOpen(false)}
         clienteId={cliente.id}
         clienteNombre={cliente.nombre}
-        saldoActual={saldo}
+        saldoActual={deudaDisplay}
         onSuccess={() => {}}
       />
 

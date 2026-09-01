@@ -74,25 +74,27 @@ export function CxcList() {
 
   const isSearching = searchQuery.trim().length >= 2
   const clientesBase = isSearching ? searchResults : allClientes
-  const clientes = filtroSAF ? clientesBase.filter((c) => parseFloat(c.saldo_actual) < -0.001) : clientesBase
+  const clientes = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
   const clientesLoading = isSearching ? loadingSearch : isLoading
 
   function toggleFiltroSAF() {
     setFiltroSAF((prev) => {
       const next = !prev
-      // Si se activa el filtro SAF, deseleccionar cliente actual si no es SAF
+      // Si se activa el filtro SAF, deseleccionar cliente actual si no tiene saldo a favor
       if (next && clienteSeleccionado) {
-        const isSafCliente = parseFloat(clienteSeleccionado.saldo_actual) < -0.001
+        const isSafCliente = clienteSeleccionado.credito_disponible_usd > 0.001
         if (!isSafCliente) setClienteSeleccionado(null)
       }
       return next
     })
   }
 
-  const clientesDeuda = allClientes.filter((c) => parseFloat(c.saldo_actual) > 0.001)
-  const clientesSAF = allClientes.filter((c) => parseFloat(c.saldo_actual) < -0.001)
-  const totalDeuda = clientesDeuda.reduce((sum, c) => sum + parseFloat(c.saldo_actual), 0)
-  const totalSAF = clientesSAF.reduce((sum, c) => sum + Math.abs(parseFloat(c.saldo_actual)), 0)
+  // Deuda y saldo a favor son cifras independientes, nunca neteadas entre si:
+  // un cliente puede tener ambas al mismo tiempo (ver spec cxc-deuda-lectura).
+  const clientesDeuda = allClientes.filter((c) => c.deuda_usd > 0.001)
+  const clientesSAF = allClientes.filter((c) => c.credito_disponible_usd > 0.001)
+  const totalDeuda = clientesDeuda.reduce((sum, c) => sum + c.deuda_usd, 0)
+  const totalSAF = clientesSAF.reduce((sum, c) => sum + c.credito_disponible_usd, 0)
   const totalClientes = clientesDeuda.length
   const totalFacturas = clientesDeuda.reduce((sum, c) => sum + Number(c.facturas_pendientes), 0)
 
@@ -212,8 +214,8 @@ export function CxcList() {
             <div className="divide-y divide-border">
               {clientes.map((cliente) => {
                 const isSelected = clienteSeleccionado?.id === cliente.id
-                const saldo = parseFloat(cliente.saldo_actual)
-                const isSAF = saldo < -0.001
+                const tieneDeuda = cliente.deuda_usd > 0.001
+                const isSAF = cliente.credito_disponible_usd > 0.001
                 return (
                   <button
                     key={cliente.id}
@@ -238,12 +240,12 @@ export function CxcList() {
                       </div>
                       <p className="text-[11px] text-muted-foreground mt-0.5">
                         {cliente.identificacion}
-                        {!isSAF && ` · ${cliente.facturas_pendientes} factura${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''} pendiente${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''}`}
+                        {tieneDeuda && ` · ${cliente.facturas_pendientes} factura${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''} pendiente${Number(cliente.facturas_pendientes) !== 1 ? 's' : ''}`}
                       </p>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={`text-sm font-bold tabular-nums ${isSAF ? 'text-green-600' : 'text-destructive'}`}>
-                        {isSAF ? `+${formatUsd(Math.abs(saldo))}` : formatUsd(saldo)}
+                      <span className={`text-sm font-bold tabular-nums ${tieneDeuda ? 'text-destructive' : 'text-green-600'}`}>
+                        {tieneDeuda ? formatUsd(cliente.deuda_usd) : `+${formatUsd(cliente.credito_disponible_usd)}`}
                       </span>
                       <CaretRight size={13} className={isSelected ? 'text-primary' : 'text-muted-foreground/40'} />
                     </div>
@@ -267,11 +269,6 @@ export function CxcList() {
                 </div>
               )}
             </div>
-            <p className="text-[10px] text-muted-foreground tabular-nums">
-              Neto: <span className={`font-semibold ${totalDeuda - totalSAF > 0 ? 'text-destructive' : 'text-green-600'}`}>
-                {formatUsd(Math.abs(totalDeuda - totalSAF))}
-              </span>
-            </p>
           </div>
         </div>
 

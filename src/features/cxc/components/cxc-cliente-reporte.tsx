@@ -7,6 +7,7 @@ import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate, formatDateTime } from '@/lib/format'
 import type { ClienteConDeuda, VentaPendiente } from '../hooks/use-cxc'
+import { calcularDisponibleCredito } from '../lib/deuda-credito-cliente'
 
 interface CxcClienteReporteProps {
   cliente: ClienteConDeuda
@@ -136,7 +137,13 @@ export function CxcClienteReporte({ cliente, facturas }: CxcClienteReporteProps)
   const [generating, setGenerating] = useState(false)
 
   const usuario = user?.nombre ?? user?.email ?? 'Desconocido'
-  const saldo = parseFloat(cliente.saldo_actual)
+  // Deuda real: suma de saldo pendiente en facturas (nunca neteada contra
+  // saldo a favor — ver spec cxc-deuda-lectura). NO usar cliente.saldo_actual
+  // para deuda: es un valor neteado.
+  const deudaFacturas = facturas.reduce((s, f) => s + parseFloat(f.saldo_pend_usd), 0)
+  // saldoLedger: balance crudo del ledger, usado SOLO en el Kardex (vista de
+  // movimientos_cuenta cruda), donde reflejar la realidad contable es correcto.
+  const saldoLedger = parseFloat(cliente.saldo_actual)
   const limite = parseFloat(cliente.limite_credito_usd)
   const now = formatDateTime(new Date().toISOString())
 
@@ -174,13 +181,13 @@ export function CxcClienteReporte({ cliente, facturas }: CxcClienteReporteProps)
         </div>
         <div class="summary-card">
           <div class="label">Deuda total USD</div>
-          <div class="value value-red">${formatUsd(saldo)}</div>
-          ${tasaValor > 0 ? `<div class="value-sm">${formatBs(usdToBs(saldo, tasaValor))}</div>` : ''}
+          <div class="value value-red">${formatUsd(deudaFacturas)}</div>
+          ${tasaValor > 0 ? `<div class="value-sm">${formatBs(usdToBs(deudaFacturas, tasaValor))}</div>` : ''}
         </div>
         ${limite > 0 ? `
         <div class="summary-card">
           <div class="label">Credito disponible</div>
-          <div class="value ${saldo > limite ? 'value-red' : 'value-green'}">${formatUsd(Math.max(0, limite - saldo))}</div>
+          <div class="value ${deudaFacturas > limite ? 'value-red' : 'value-green'}">${formatUsd(calcularDisponibleCredito(limite, deudaFacturas).toNumber())}</div>
         </div>
         ` : ''}
       </div>
@@ -273,7 +280,7 @@ export function CxcClienteReporte({ cliente, facturas }: CxcClienteReporteProps)
             <tr class="totals-row">
               <td colspan="3">TOTALES (${facturas.length} factura${facturas.length !== 1 ? 's' : ''})</td>
               <td class="text-right">${formatUsd(facturas.reduce((s, f) => s + parseFloat(f.total_usd) - parseFloat(f.saldo_pend_usd), 0))}</td>
-              <td class="text-right value-red">${formatUsd(saldo)}</td>
+              <td class="text-right value-red">${formatUsd(deudaFacturas)}</td>
             </tr>
           </tfoot>
         </table>
@@ -352,8 +359,8 @@ export function CxcClienteReporte({ cliente, facturas }: CxcClienteReporteProps)
             <tbody>${rows}</tbody>
             <tfoot>
               <tr class="totals-row">
-                <td colspan="5">Saldo Actual</td>
-                <td class="text-right value-red">${formatUsd(saldo)}</td>
+                <td colspan="5">Saldo Actual (ledger)</td>
+                <td class="text-right value-red">${formatUsd(saldoLedger)}</td>
               </tr>
             </tfoot>
           </table>

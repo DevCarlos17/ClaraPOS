@@ -123,7 +123,8 @@ export function CxcReportesGeneral({ clientes }: CxcReportesGeneralProps) {
   const [generating, setGenerating] = useState(false)
 
   const usuario = user?.nombre ?? user?.email ?? 'Desconocido'
-  const totalDeuda = clientes.reduce((s, c) => s + parseFloat(c.saldo_actual), 0)
+  // Deuda real (nunca neteada contra saldo a favor) — ver spec cxc-deuda-lectura.
+  const totalDeuda = clientes.reduce((s, c) => s + c.deuda_usd, 0)
   const totalFacturas = clientes.reduce((s, c) => s + Number(c.facturas_pendientes), 0)
   const now = formatDateTime(new Date().toISOString())
 
@@ -159,7 +160,7 @@ export function CxcReportesGeneral({ clientes }: CxcReportesGeneralProps) {
   function generarResumen() {
     setMenuOpen(false)
     const rows = clientes.map(c => {
-      const saldo = parseFloat(c.saldo_actual)
+      const saldo = c.deuda_usd
       const limite = parseFloat(c.limite_credito_usd)
       return `
         <tr>
@@ -222,7 +223,7 @@ export function CxcReportesGeneral({ clientes }: CxcReportesGeneralProps) {
       let bodyHtml = ''
       for (const c of clientes) {
         const facturas = facturasMap.get(c.id) ?? []
-        const saldo = parseFloat(c.saldo_actual)
+        const saldo = c.deuda_usd
         const facturaRows = facturas.map(f => {
           const totalUsd = parseFloat(f.total_usd)
           const saldoPend = parseFloat(f.saldo_pend_usd)
@@ -305,7 +306,7 @@ export function CxcReportesGeneral({ clientes }: CxcReportesGeneralProps) {
       let bodyHtml = ''
       for (const c of clientes) {
         const facturas = facturasMap.get(c.id) ?? []
-        const saldo = parseFloat(c.saldo_actual)
+        const saldo = c.deuda_usd
 
         let facturasHtml = ''
         for (const f of facturas) {
