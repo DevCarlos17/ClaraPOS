@@ -918,8 +918,18 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
       ventaId,
     ])
     // Defensa en profundidad: el `tipoDetectado` del frontend ya es SAF-aware y
-    // normalmente coincide; solo se corrige si el backend discrepa.
-    if (cierre.tipo !== tipo) {
+    // normalmente coincide; solo se corrige si el backend discrepa. Excluir
+    // ABSORBER/DIFERENCIAL_FALTANTE: `calcularCierreVentaConSaf` no conoce
+    // discrepancy.mode, por lo que puede devolver 'CREDITO' para un faltante
+    // que el cajero ya absorbio (venta liquidada, sin CxC) — sobreescribir
+    // `tipo` en ese caso corrompe la clasificacion contado/credito aunque
+    // saldo_pend_usd quede en 0 (CRITICAL, review adversarial
+    // pos-aplicar-saf-checkout).
+    if (
+      cierre.tipo !== tipo &&
+      discrepancy?.mode !== 'ABSORBER' &&
+      discrepancy?.mode !== 'DIFERENCIAL_FALTANTE'
+    ) {
       await tx.execute('UPDATE ventas SET tipo = ? WHERE id = ?', [cierre.tipo, ventaId])
     }
 

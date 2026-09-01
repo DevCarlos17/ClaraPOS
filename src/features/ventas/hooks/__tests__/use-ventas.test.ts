@@ -498,4 +498,67 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
       expect(ventaSaldoUpdates).toHaveLength(1)
     })
   })
+
+  describe('Defensa en profundidad de `tipo` NO debe corromper ventas ABSORBER/DIFERENCIAL_FALTANTE (CRITICAL, review adversarial pos-aplicar-saf-checkout)', () => {
+    it('ABSORBER: cierre.tipo (CREDITO, saldoPend=$1 > umbral de redondeo) NO debe sobreescribir el tipo CONTADO forzado por el frontend — la venta queda liquidada (saldo_pend_usd=0) y de contado, sin FAC', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO', // forzado por el frontend (cobro-modal.tsx) para ABSORBER
+          tasa: 40,
+          sesion_caja_id: 'sesion-1',
+          // Total $10, pagado $9 -> faltante Bs 40 ($1), por encima del umbral de
+          // auto-absorcion (tasa*0.01 = Bs 0.4) -> calcularCierreVentaConSaf
+          // devuelve tipo='CREDITO' porque no conoce discrepancy.mode.
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 9 })],
+          discrepancy: { mode: 'ABSORBER', montoUsd: 1, montoBs: 40 },
+        })
+      )
+
+      // El guard de la "defensa en profundidad" NO debe disparar el UPDATE de tipo.
+      const tipoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))
+      expect(tipoUpdates).toHaveLength(0)
+
+      // El caso 'ABSORBER' del switch de discrepancia (7c) zerea saldo_pend_usd
+      // incondicionalmente — la venta queda liquidada.
+      const saldoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
+      expect(saldoUpdates.at(-1)!.params[0]).toBe('0.00')
+
+      // No debe crearse CxC (movimiento tipo='FAC') para una venta absorbida.
+      const facInserts = calls.filter(
+        (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'FAC'")
+      )
+      expect(facInserts).toHaveLength(0)
+    })
+
+    it('DIFERENCIAL_FALTANTE: mismo guard — cierre.tipo=CREDITO no debe sobreescribir el tipo CONTADO forzado por el frontend', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          tasa: 40,
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 9 })],
+          discrepancy: { mode: 'DIFERENCIAL_FALTANTE', montoUsd: 1, montoBs: 40 },
+        })
+      )
+
+      const tipoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET tipo'))
+      expect(tipoUpdates).toHaveLength(0)
+    })
+  })
 })
