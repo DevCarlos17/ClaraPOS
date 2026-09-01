@@ -22,7 +22,7 @@ vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
 import { renderHook } from '@testing-library/react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
-import { useDeudaFacturasCliente, useDeudaFacturasClientes } from '../use-deuda-cliente'
+import { useDeudaFacturasCliente, useDeudaFacturasClientes, useCreditoFavorClientes } from '../use-deuda-cliente'
 
 const mockedUseQuery = vi.mocked(useQuery)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
@@ -104,6 +104,55 @@ describe('useDeudaFacturasClientes — batch (IN clause), misma fuente que la ve
     }) as unknown as typeof useQuery)
 
     const { result } = renderHook(() => useDeudaFacturasClientes([]))
+
+    expect(result.current).toEqual({})
+  })
+})
+
+describe('useCreditoFavorClientes — batch de saldo a favor (SUM(SAFC)-SUM(SAF)), escopeado por empresa_id', () => {
+  it('agrupa por cliente_id, escopeado por empresa_id, retorna mapa clienteId -> creditoFavorUsd (MAX(0, creado-consumido))', () => {
+    setCurrentUser('emp-1')
+    mockedUseQuery.mockImplementation(((sql: string, params: unknown[] = []) => {
+      expect(sql).toContain('FROM movimientos_cuenta')
+      expect(sql).toContain("tipo = 'SAFC'")
+      expect(sql).toContain("tipo = 'SAF'")
+      expect(sql).toContain('empresa_id = ? AND cliente_id IN (?,?)')
+      expect(sql).not.toContain('saldo_actual')
+      expect(params).toEqual(['emp-1', 'cliente-1', 'cliente-2'])
+      return {
+        data: [
+          { cliente_id: 'cliente-1', creado: 200, consumido: 50 },
+          { cliente_id: 'cliente-2', creado: 0, consumido: 0 },
+        ],
+        isLoading: false,
+      }
+    }) as unknown as typeof useQuery)
+
+    const { result } = renderHook(() => useCreditoFavorClientes(['cliente-1', 'cliente-2']))
+
+    expect(result.current).toEqual({ 'cliente-1': 150, 'cliente-2': 0 })
+  })
+
+  it('clampa a 0 cuando consumido > creado (dato inconsistente nunca da credito negativo)', () => {
+    setCurrentUser('emp-1')
+    mockedUseQuery.mockImplementation((() => ({
+      data: [{ cliente_id: 'cliente-1', creado: 10, consumido: 40 }],
+      isLoading: false,
+    })) as unknown as typeof useQuery)
+
+    const { result } = renderHook(() => useCreditoFavorClientes(['cliente-1']))
+
+    expect(result.current).toEqual({ 'cliente-1': 0 })
+  })
+
+  it('lista vacia: no ejecuta query, retorna mapa vacio', () => {
+    setCurrentUser('emp-1')
+    mockedUseQuery.mockImplementation(((sql: string) => {
+      expect(sql).toBe('')
+      return { data: [], isLoading: false }
+    }) as unknown as typeof useQuery)
+
+    const { result } = renderHook(() => useCreditoFavorClientes([]))
 
     expect(result.current).toEqual({})
   })
