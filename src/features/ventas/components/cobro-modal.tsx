@@ -15,6 +15,8 @@ import {
   type SafEntry,
 } from '../hooks/use-ventas'
 import { useFacturasPendientes } from '@/features/cxc/hooks/use-cxc'
+import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
+import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import type { CargoEspecial } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
@@ -94,6 +96,9 @@ export function CobroModal({
 
   // SAF as payment method
   const { disponible: safDisponible, tieneSaf } = useSaldoAFavor(clienteId || null)
+  // Deuda real de facturas — fuente del gate de limite de credito (nunca
+  // saldo_actual neteado, nunca suma saldo a favor). Ver design.md Decision 3.
+  const { deudaFacturasUsd } = useDeudaFacturasCliente(clienteId || null)
   const [safMonto, setSafMonto] = useState(0)
   const [safSeleccionado, setSafSeleccionado] = useState(false)
 
@@ -348,12 +353,13 @@ export function CobroModal({
     // NO cuando el modo es faltante de caja (DIFERENCIAL_FALTANTE) o absorción (ABSORBER)
     if (discrepancyMode === 'CREDITO' && clienteData) {
       const limite = new Decimal(clienteData.limite_credito_usd)
-      const saldoActual = new Decimal(clienteData.saldo_actual)
       if (limite.lte(0)) {
         toast.error('Este cliente no tiene credito asignado. Registra un pago para facturar a contado.')
         return
       }
-      const creditoDisponible = Decimal.max(new Decimal(0), limite.minus(saldoActual))
+      // limite - deudaFacturas UNICAMENTE. El saldo a favor (SAF) nunca es un
+      // termino de esta formula — ver design.md Decision 3 (corregida).
+      const creditoDisponible = calcularDisponibleCredito(limite, deudaFacturasUsd)
       if (pendienteUsd.gt(creditoDisponible.plus('0.01'))) {
         toast.error(
           `El monto a credito (${formatUsd(pendienteUsd)}) excede el credito disponible (${formatUsd(creditoDisponible)})`

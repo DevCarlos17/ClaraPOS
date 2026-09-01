@@ -9,6 +9,7 @@ import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/
 import Decimal from 'decimal.js'
 import { bsToUsd, usdToBs, toStorageString } from '@/lib/currency'
 import { calcularSaldoNuevoMovimientoCuenta } from '@/features/cxc/lib/saldo-cliente'
+import { calcularCreditoDisponible } from '@/features/cxc/lib/deuda-credito-cliente'
 
 export interface VentaPendiente {
   id: string
@@ -30,6 +31,10 @@ export interface ClienteConDeuda {
   saldo_actual: string
   limite_credito_usd: string
   facturas_pendientes: number
+  /** Deuda real: SUM(ventas.saldo_pend_usd) — nunca neteada contra credito. */
+  deuda_usd: number
+  /** Saldo a favor disponible: MAX(0, SUM(SAFC) - SUM(SAF)) — nunca neteado contra deuda. */
+  credito_disponible_usd: number
 }
 
 export interface PagoFacturaParams {
@@ -68,26 +73,45 @@ export interface AbonoGlobalParams {
   safOrigenRefs?: string[]
 }
 
+// Deuda y credito se calculan por separado, NUNCA neteados entre si (ver
+// openspec/changes/cxc-saldo-favor-modelo/design.md Decision 1/3):
+// - deuda_usd: SUM(ventas.saldo_pend_usd) de facturas realmente pendientes.
+// - credito_disponible_usd: MAX(0, SUM(SAFC) - SUM(SAF)) en movimientos_cuenta.
+//   'SAFC' aun no existe hasta que Slice B lo introduzca (migrations/0090); hasta
+//   entonces esta columna retorna $0 de forma legitima, no es un bug.
+// Se envuelve en subconsulta para poder filtrar/ordenar por los alias calculados.
+const DEUDA_CREDITO_CLIENTE_SELECT = `
+  c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
+  (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes,
+  COALESCE((SELECT SUM(CAST(v.saldo_pend_usd AS REAL)) FROM ventas v WHERE v.cliente_id = c.id AND v.empresa_id = c.empresa_id AND CAST(v.saldo_pend_usd AS REAL) > 0.001), 0) as deuda_usd,
+  MAX(0,
+    COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.empresa_id = c.empresa_id AND mc.tipo = 'SAFC'), 0)
+    - COALESCE((SELECT SUM(CAST(mc.monto AS REAL)) FROM movimientos_cuenta mc WHERE mc.cliente_id = c.id AND mc.empresa_id = c.empresa_id AND mc.tipo = 'SAF'), 0)
+  ) as credito_disponible_usd
+`
+
 /**
- * Clientes con saldo pendiente > 0
+ * Clientes con deuda pendiente y/o saldo a favor (nunca neteados).
  */
 export function useClientesConDeuda() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
   const { data, isLoading } = useQuery(
-     `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-       (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes
-     FROM clientes c
-     WHERE c.empresa_id = ? AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001 AND c.is_active = 1
-     ORDER BY CAST(c.saldo_actual AS REAL) DESC`,
+    `SELECT * FROM (
+       SELECT ${DEUDA_CREDITO_CLIENTE_SELECT}
+       FROM clientes c
+       WHERE c.empresa_id = ? AND c.is_active = 1
+     ) t
+     WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+     ORDER BY deuda_usd DESC`,
     [empresaId]
   )
   return { clientes: (data ?? []) as ClienteConDeuda[], isLoading }
 }
 
 /**
- * Buscar clientes con deuda por nombre/identificacion
+ * Buscar clientes con deuda y/o saldo a favor por nombre/identificacion.
  */
 export function useBuscarClientesDeuda(query: string) {
   const { user } = useCurrentUser()
@@ -98,12 +122,14 @@ export function useBuscarClientesDeuda(query: string) {
 
   const { data, isLoading } = useQuery(
     shouldSearch
-      ? `SELECT c.id, c.identificacion, c.nombre, c.telefono, c.saldo_actual, c.limite_credito_usd,
-           (SELECT COUNT(*) FROM ventas v WHERE v.cliente_id = c.id AND CAST(v.saldo_pend_usd AS REAL) > 0.001) as facturas_pendientes
-         FROM clientes c
-         WHERE c.empresa_id = ? AND c.is_active = 1 AND ABS(CAST(c.saldo_actual AS REAL)) > 0.001
-           AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
-         ORDER BY c.nombre ASC LIMIT 20`
+      ? `SELECT * FROM (
+           SELECT ${DEUDA_CREDITO_CLIENTE_SELECT}
+           FROM clientes c
+           WHERE c.empresa_id = ? AND c.is_active = 1
+             AND (c.identificacion LIKE ? OR c.nombre LIKE ?)
+         ) t
+         WHERE deuda_usd > 0.001 OR credito_disponible_usd > 0.001
+         ORDER BY nombre ASC LIMIT 20`
       : '',
     shouldSearch ? [empresaId, pattern, pattern] : []
   )
@@ -599,16 +625,32 @@ export async function registrarPagoFactura(params: PagoFacturaParams): Promise<v
       const montoSaf = new Decimal(params.montoSaf)
       const safOrigenRefs = params.safOrigenRefs ?? []
 
-      // 1. Validate client has enough SAF credit
+      // 1. Validate client has enough SAF credit.
+      // saldo_actual sigue siendo la fuente del ledger crudo (para
+      // saldo_anterior/saldo_nuevo mas abajo), pero el GATE de validacion usa
+      // la fuente confiable SUM(SAFC)-SUM(SAF) — saldo_actual mezcla deuda y
+      // credito y puede leer casi-cero con credito real disponible. Ver
+      // design.md Decision 1/3.
       const clienteRes = await tx.execute(
         'SELECT saldo_actual FROM clientes WHERE id = ? LIMIT 1',
         [cliente_id]
       )
       if (!clienteRes.rows?.length) throw new Error('Cliente no encontrado')
       const saldoActualSaf = new Decimal((clienteRes.rows.item(0) as { saldo_actual: string }).saldo_actual || '0')
-      if (saldoActualSaf.gte(new Decimal('-0.001'))) throw new Error('El cliente no tiene saldo a favor disponible')
-      if (montoSaf.gt(saldoActualSaf.abs().plus(new Decimal('0.01')))) {
-        throw new Error(`El monto SAF ($${toStorageString(montoSaf)}) excede el saldo disponible ($${toStorageString(saldoActualSaf.abs())})`)
+
+      const creditoSafRes = await tx.execute(
+        `SELECT
+           COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
+           COALESCE(SUM(CASE WHEN tipo = 'SAF' THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
+         FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
+        [cliente_id, empresa_id]
+      )
+      const creditoSafRow = creditoSafRes.rows?.item(0) as { creado: number; consumido: number } | undefined
+      const creditoSafDisponible = calcularCreditoDisponible(creditoSafRow?.creado ?? 0, creditoSafRow?.consumido ?? 0)
+
+      if (creditoSafDisponible.lte('0.001')) throw new Error('El cliente no tiene saldo a favor disponible')
+      if (montoSaf.gt(creditoSafDisponible.plus(new Decimal('0.01')))) {
+        throw new Error(`El monto SAF ($${toStorageString(montoSaf)}) excede el saldo disponible ($${toStorageString(creditoSafDisponible)})`)
       }
 
       // 2. Read factura for validation and nro_factura
@@ -1569,7 +1611,12 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
   await db.writeTransaction(async (tx) => {
     const now = localNow()
 
-    // 1. Validar que el cliente tenga crédito SAF disponible
+    // 1. Validar que el cliente tenga crédito SAF disponible.
+    // saldo_actual sigue siendo la fuente del ledger crudo (para
+    // saldo_anterior/saldo_nuevo mas abajo), pero el GATE de validacion usa
+    // la fuente confiable SUM(SAFC)-SUM(SAF) — saldo_actual mezcla deuda y
+    // credito y puede leer casi-cero con credito real disponible. Ver
+    // design.md Decision 1/3.
     const clienteResult = await tx.execute(
       'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
       [clienteId, empresaId]
@@ -1583,11 +1630,19 @@ export async function aplicarSaldoFavor(params: AplicarSaldoFavorParams): Promis
     const tasaD = new Decimal(tasa)
     const totalAplicadoD = new Decimal(totalAplicadoUsd)
 
-    if (saldoActualInit.gte(new Decimal('-0.001'))) {
+    const creditoResult = await tx.execute(
+      `SELECT
+         COALESCE(SUM(CASE WHEN tipo = 'SAFC' THEN CAST(monto AS REAL) ELSE 0 END), 0) as creado,
+         COALESCE(SUM(CASE WHEN tipo = 'SAF' THEN CAST(monto AS REAL) ELSE 0 END), 0) as consumido
+       FROM movimientos_cuenta WHERE cliente_id = ? AND empresa_id = ?`,
+      [clienteId, empresaId]
+    )
+    const creditoRow = creditoResult.rows?.item(0) as { creado: number; consumido: number } | undefined
+    const creditoDisponible = calcularCreditoDisponible(creditoRow?.creado ?? 0, creditoRow?.consumido ?? 0)
+
+    if (creditoDisponible.lte('0.001')) {
       throw new Error('El cliente no tiene saldo a favor disponible')
     }
-
-    const creditoDisponible = saldoActualInit.abs()
 
     // 2. Validar que el total a aplicar no exceda el crédito disponible
     if (totalAplicadoD.gt(creditoDisponible.plus(new Decimal('0.01')))) {
@@ -1870,8 +1925,11 @@ export interface RegistrarSafExcedenteParams {
 
 /**
  * Registra el excedente de un pago CxC como saldo a favor (crédito) en el cliente.
- * Crea un movimiento_cuenta tipo 'SAF' que deja el saldo_actual negativo.
- * Se llama DESPUÉS de registrarPagoFactura con el saldo exacto.
+ * Crea un movimiento_cuenta tipo 'SAFC' (creación de crédito) que deja el
+ * saldo_actual negativo. Se llama DESPUÉS de registrarPagoFactura con el
+ * saldo exacto. Usa 'SAFC' (no 'SAF') para que la lectura derivada
+ * SUM(SAFC)-SUM(SAF) en useClientesConDeuda/useSaldoAFavor cuente esto como
+ * creación de crédito, no como consumo — ver design.md Decision 1/2.
  */
 export async function registrarSafExcedente(params: RegistrarSafExcedenteParams): Promise<void> {
   const { cliente_id, venta_id, nro_factura, excedenteUsd, tasa, empresa_id, procesado_por, safOrigenRefs } = params
@@ -1896,7 +1954,7 @@ export async function registrarSafExcedente(params: RegistrarSafExcedenteParams)
          (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo,
           observacion, venta_id, fecha, empresa_id, created_at, created_by,
           moneda_pago, monto_moneda, tasa_pago, saf_origen_refs)
-       VALUES (?, ?, 'SAF', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
+       VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?)`,
       [
         uuidv4(), cliente_id,
         `SAF-CXC-${nro_factura}`,
