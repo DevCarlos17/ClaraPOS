@@ -26,8 +26,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    // main.tsx corre connector.init() antes de montar el árbol, así que en el caso
+    // normal currentSession ya refleja la sesión persistida. Igual nos suscribimos a
+    // sessionStarted para cubrir el login en caliente y los refreshes de token que
+    // supabase-js propaga vía onAuthStateChange → updateSession → sessionStarted.
     setSession(connector.currentSession)
-    setLoading(false)
 
     const cleanup = connector.registerListener({
       initialized: () => {},
@@ -36,13 +39,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       },
     })
 
+    // Solo dejamos de "cargar" cuando el connector terminó de restaurar la sesión.
+    // Evita un flash de estado no-autenticado si el effect corriera antes de init().
+    if (connector.ready) {
+      setLoading(false)
+    } else {
+      connector
+        .init()
+        .catch(() => {})
+        .finally(() => {
+          setSession(connector.currentSession)
+          setLoading(false)
+        })
+    }
+
     return cleanup
   }, [])
 
   const signOut = async () => {
-    await connector.logout()
-    await db.disconnect()
-    setSession(null)
+    // try/finally: si db.disconnect() falla, igual limpiamos la sesión en React.
+    // Sin esto, un error en disconnect dejaría la UI en estado "autenticado fantasma"
+    // aunque la sesión de Supabase ya esté cerrada.
+    try {
+      await connector.logout()
+      await db.disconnect()
+    } finally {
+      setSession(null)
+    }
   }
 
   const value = {

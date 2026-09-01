@@ -8,6 +8,7 @@ import './index.css'
 import { AuthProvider } from '@/core/auth/auth-provider'
 import { PowerSyncProvider } from '@/core/db/powersync/provider'
 import { db } from '@/core/db/powersync/db'
+import { connector } from '@/core/db/powersync/connector'
 import { initCurrencyConfig } from '@/lib/currency'
 
 import { routeTree } from './routeTree.gen'
@@ -96,8 +97,31 @@ async function loadCurrencyConfig(): Promise<void> {
   }
 }
 
-// Load currency config before rendering the app
-loadCurrencyConfig().then(() => {
+/**
+ * Restaura la sesión persistida ANTES de montar el árbol de React.
+ *
+ * Los guards de ruta (beforeLoad en /_app, /, /(auth)) leen `connector.currentSession`
+ * de forma síncrona. Si el connector se inicializa recién dentro de PowerSyncProvider
+ * (ya montado), existe una ventana donde `currentSession` es null aunque haya un token
+ * válido en localStorage → el guard redirige a /login (falso deslogueo, sobre todo al
+ * refrescar la página estando offline). Inicializar acá elimina esa race condition:
+ * cuando el árbol monta, `currentSession` ya refleja la sesión persistida.
+ *
+ * connector.init() es idempotente (early-return por `this.ready`), así que la llamada
+ * posterior dentro de PowerSyncProvider no repite el trabajo.
+ */
+async function bootstrapSession(): Promise<void> {
+  try {
+    await connector.init()
+  } catch (err) {
+    // Sin red o localStorage inaccesible: seguimos igual. Si había sesión válida,
+    // getSession() la restaura offline; si no, el usuario verá /login (correcto).
+    console.warn('[ClaraPOS] bootstrap de sesion fallo, continuando:', err)
+  }
+}
+
+// Restaurar sesión y config antes de renderizar la app
+Promise.all([loadCurrencyConfig(), bootstrapSession()]).then(() => {
   const rootElement = document.getElementById('app')!
   if (!rootElement.innerHTML) {
     const root = ReactDOM.createRoot(rootElement)
