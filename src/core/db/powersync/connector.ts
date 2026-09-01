@@ -154,6 +154,13 @@ export class SupabaseConnector
   currentSession: Session | null
 
   /**
+   * Suscripción al onAuthStateChange de supabase-js. Se guarda para poder
+   * limpiarla y, sobre todo, para no registrar listeners duplicados si init()
+   * se llegara a invocar más de una vez (ver guard eager de `ready` en init()).
+   */
+  private authSubscription: { unsubscribe: () => void } | null = null
+
+  /**
    * Reintentos por transacción (clave = ID del primer op de la tx).
    * Permite abandonar transacciones que fallan repetidamente con errores
    * transitorios (red caída, token expirado) en lugar de bloquear la cola.
@@ -175,8 +182,15 @@ export class SupabaseConnector
 
     this.client = createClient(this.config.supabaseUrl, this.config.supabaseAnonKey, {
       auth: {
+        // persistSession: guarda la sesión (incluido refresh_token) en localStorage
+        // para sobrevivir reloads y cierres de la PWA.
         persistSession: true,
-        autoRefreshToken: false,
+        // autoRefreshToken: true (default) — supabase-js corre un timer que renueva
+        // el access_token ANTES de que expire (JWT vive 1h) y también al reconectar
+        // tras estar offline. Es el ÚNICO mecanismo de refresh: NO refrescar a mano
+        // en paralelo, porque la rotación de refresh tokens está activada en el
+        // proyecto (un token rotado invalida el anterior → refresh concurrente = logout).
+        autoRefreshToken: true,
         detectSessionInUrl: false,
       },
     })
@@ -188,22 +202,61 @@ export class SupabaseConnector
     if (this.ready) {
       return
     }
+    // Guard EAGER: marcamos ready ANTES del primer await. init() se invoca desde
+    // varios lugares (bootstrap en main.tsx, PowerSyncProvider, AuthProvider). Como
+    // son async y ceden el event loop en el await de getSession(), un flag seteado
+    // recién al final dejaría pasar llamadas concurrentes → doble getSession() y,
+    // peor, doble suscripción a onAuthStateChange. Setearlo acá hace el guard atómico.
+    this.ready = true
 
     try {
-      const projectId = new URL(this.config.supabaseUrl).hostname.split('.')[0]
-      const storageKey = `sb-${projectId}-auth-token`
-      const storedData = localStorage.getItem(storageKey)
+      // getSession() lee la sesión persistida desde localStorage. Funciona OFFLINE
+      // (no hace request de red): devuelve la sesión guardada aunque el access_token
+      // esté vencido. supabase-js la refresca solo cuando vuelva la conexión.
+      // Reemplaza la lectura manual de localStorage, que no validaba expiración y
+      // duplicaba (mal) la lógica interna de supabase-js.
+      const {
+        data: { session },
+      } = await this.client.auth.getSession()
 
-      if (storedData) {
-        const parsed = JSON.parse(storedData)
-        this.updateSession(parsed)
+      if (session) {
+        this.updateSession(session)
       }
     } catch (error) {
-      console.warn('No se pudo cargar sesion de localStorage:', error)
+      console.warn('No se pudo cargar sesion persistida:', error)
     }
 
-    this.ready = true
+    // onAuthStateChange: mantiene currentSession sincronizado con los refreshes
+    // automáticos de supabase-js. Sin esto, cuando el timer interno renueva el
+    // access_token, el connector seguiría usando el token viejo hasta el próximo
+    // reload. TOKEN_REFRESHED/SIGNED_IN/INITIAL_SESSION actualizan; SIGNED_OUT limpia.
+    // Guardamos la suscripción para evitar duplicados y permitir cleanup.
+    // Defensa extra: si ya había una suscripción (init() reentrante), la liberamos.
+    this.authSubscription?.unsubscribe()
+    const {
+      data: { subscription },
+    } = this.client.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        this.currentSession = null
+        return
+      }
+      if (session) {
+        this.updateSession(session)
+      }
+    })
+    this.authSubscription = subscription
+
     this.iterateListeners((cb) => cb.initialized?.())
+  }
+
+  /**
+   * Libera la suscripción a onAuthStateChange. Para un singleton que vive toda la
+   * app no es estrictamente necesario, pero evita listeners colgados en escenarios
+   * de teardown (tests, hot-reload) y documenta el ciclo de vida de la suscripción.
+   */
+  dispose() {
+    this.authSubscription?.unsubscribe()
+    this.authSubscription = null
   }
 
   async login(username: string, password: string) {
@@ -315,29 +368,37 @@ export class SupabaseConnector
   }
 
   async fetchCredentials() {
-    if (!navigator.onLine) {
-      if (this.currentSession) {
-        return {
-          endpoint: this.config.powersyncUrl,
-          token: this.currentSession.access_token ?? '',
-        } satisfies PowerSyncCredentials
-      }
-
-      throw new Error('Sin sesion disponible. Conecta a internet e inicia sesion.')
-    }
-
+    // getSession() lee de localStorage y funciona online y offline sin lógica
+    // condicional. Online y con token por vencer, supabase-js lo refresca acá
+    // mismo (autoRefreshToken:true). Offline devuelve la sesión persistida con el
+    // token actual (posiblemente vencido): PowerSync no podrá conectar al servicio
+    // de sync mientras no haya red, pero NO desloguea al usuario — reintenta
+    // fetchCredentials al reconectar. El error solo se lanza si NO hay sesión.
     const {
       data: { session },
       error,
     } = await this.client.auth.getSession()
 
     if (!session || error) {
-      throw new Error(`No se pudo obtener credenciales: ${error}`)
+      throw new Error('Sin sesion disponible. Conecta a internet e inicia sesion.')
+    }
+
+    // Offline con token ya vencido: lanzar en vez de devolver credenciales muertas.
+    // Devolver un token expirado haría que PowerSync intente conectar, reciba 401 y
+    // pueda reintentar en caliente (quema batería del dispositivo del cajero). Al
+    // lanzar, PowerSync aplica backoff y reintenta fetchCredentials al reconectar,
+    // momento en que autoRefreshToken ya habrá renovado el access_token.
+    const isExpired = session.expires_at ? Date.now() / 1000 >= session.expires_at : false
+    if (!navigator.onLine && isExpired) {
+      throw new Error('Sin conexion y token vencido — reintentando al reconectar.')
     }
 
     return {
       endpoint: this.config.powersyncUrl,
       token: session.access_token ?? '',
+      // expiresAt permite a PowerSync pre-renovar credenciales ~30s antes de
+      // que el token expire, evitando un hueco de autenticación durante el sync.
+      expiresAt: session.expires_at ? new Date(session.expires_at * 1000) : undefined,
     } satisfies PowerSyncCredentials
   }
 
