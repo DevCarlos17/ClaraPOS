@@ -8,6 +8,7 @@ import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-con
 import { generarAsientosPagoCxC, reversarAsientos, leerMonedaContable } from '@/features/contabilidad/lib/generar-asientos'
 import Decimal from 'decimal.js'
 import { bsToUsd, usdToBs, toStorageString } from '@/lib/currency'
+import { calcularSaldoNuevoMovimientoCuenta } from '@/features/cxc/lib/saldo-cliente'
 
 export interface VentaPendiente {
   id: string
@@ -432,7 +433,10 @@ export async function aplicarPagoFacturaEnTx(
     throw new Error('Cliente no encontrado')
   }
   const saldoActual = new Decimal((clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0')
-  const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(montoUsd))
+  // Sin clamp a 0: si el cliente tenia saldo a favor (credito), el pago puede
+  // dejarlo con saldo negativo remanente — eso es correcto, no un error.
+  // Ver openspec/changes/saldo-a-favor-fix/specs/cxc-pago-factura/spec.md
+  const saldoNuevo = calcularSaldoNuevoMovimientoCuenta('PAG', saldoActual, montoUsd)
 
   const movId = uuidv4()
   await tx.execute(
