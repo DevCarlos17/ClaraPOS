@@ -16,6 +16,8 @@ import { localNow } from '@/lib/dates'
 import { type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
 import { useDepositoActivoVenta } from '../hooks/use-deposito-activo'
+import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
+import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useInventarioStockBackfillListo } from '@/features/inventario/stores/inventario-stock-backfill-gate-store'
 import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import type { LineaVentaForm } from '../schemas/venta-schema'
@@ -88,6 +90,9 @@ export function PosTerminal() {
   const [clienteId, setClienteId] = useState<string | null>(null)
   const [clienteNombre, setClienteNombre] = useState('')
   const [clienteData, setClienteData] = useState<Cliente | null>(null)
+  // Deuda real de facturas — fuente del badge de credito (nunca saldo_actual
+  // neteado, nunca suma saldo a favor). Ver design.md Decision 3.
+  const { deudaFacturasUsd } = useDeudaFacturasCliente(clienteId)
   const [lineas, setLineas] = useState<LineaVentaForm[]>([])
   const [cargosEspeciales, setCargosEspeciales] = useState<CargoEspecial[]>([])
 
@@ -730,7 +735,7 @@ export function PosTerminal() {
                 <div className="hidden sm:flex shrink-0 items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
                   <span>Credito:</span>
                   <span className="font-semibold text-green-600">
-                    {formatUsd(Math.max(0, parseFloat(clienteData.limite_credito_usd) - parseFloat(clienteData.saldo_actual)))}
+                    {formatUsd(calcularDisponibleCredito(clienteData.limite_credito_usd, deudaFacturasUsd).toNumber())}
                   </span>
                   <span>/ {formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
                 </div>
