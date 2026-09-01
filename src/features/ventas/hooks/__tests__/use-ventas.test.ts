@@ -451,4 +451,51 @@ describe('crearVenta — Slice 2b (egreso de venta escrito en el deposito de la 
     expect(kardexInsert).toBeDefined()
     expect(kardexInsert!.params).toContain('dep-caja-A')
   })
+
+  describe('Paso B — SAF remanente (discrepancy.mode=SAF sin invoiceAssignments) crea credito SAFC, no reduce facturas (cxc-saldo-favor-modelo, WARNING 2)', () => {
+    it('el excedente SAF sin facturas asignadas escribe UN SOLO movimiento_cuenta tipo=SAFC (nunca PAG/SAF), con saldo_anterior/saldo_nuevo provistos, y NO reduce saldo_pend_usd de ninguna OTRA factura — la unica UPDATE de saldo_pend_usd es la de la propia venta (paso 6, factura de contado ya cubierta)', async () => {
+      const calls = mockCrearVentaTx({
+        cajaDepositoRow: { deposito_id: 'dep-caja-A' },
+        principalDepositoId: 'dep-principal',
+        productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1', maneja_lotes: 0 } },
+        inventarioStock: { 'prod-1::dep-caja-A': '10.000' },
+      })
+
+      await crearVenta(
+        baseParams({
+          tipo: 'CONTADO',
+          cliente_id: 'cliente-1',
+          sesion_caja_id: 'sesion-1',
+          lineas: [linea({ producto_id: 'prod-1', cantidad: 1, precio_unitario_usd: 10 })],
+          // Pago de $15 sobre una factura de $10 -> excedente de $5 (overpago)
+          pagos: [pago({ metodo_cobro_id: 'metodo-1', moneda: 'USD', monto: 15 })],
+          discrepancy: {
+            mode: 'SAF',
+            montoUsd: 5,
+            montoBs: 200,
+            clienteId: 'cliente-1',
+            // Sin invoiceAssignments: Paso A no corre, todo el excedente cae en Paso B
+          },
+        })
+      )
+
+      const movCuentaInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO movimientos_cuenta'))
+      expect(movCuentaInserts).toHaveLength(1)
+      expect(movCuentaInserts[0]!.sql).toContain("'SAFC'")
+
+      // Columnas: id, cliente_id, [tipo literal 'SAFC'], referencia, monto,
+      // saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id,
+      // created_at, created_by, moneda_pago, monto_moneda, tasa_pago
+      const params = movCuentaInserts[0]!.params
+      expect(params[3]).toBe('5.00000000') // monto = remainingSaf
+      expect(params[4]).not.toBeNull() // saldo_anterior provisto
+      expect(params[5]).not.toBeNull() // saldo_nuevo provisto
+      expect(params[5]).toBe('-5.00000000') // saldo_anterior(0, sin fila previa) - 5
+
+      // Unica actualizacion de saldo_pend_usd: la de la propia venta (paso 6).
+      // Paso B (creacion de SAFC) jamas toca ventas.saldo_pend_usd de NINGUNA factura.
+      const ventaSaldoUpdates = calls.filter((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
+      expect(ventaSaldoUpdates).toHaveLength(1)
+    })
+  })
 })
