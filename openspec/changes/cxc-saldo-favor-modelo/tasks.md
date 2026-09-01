@@ -43,18 +43,18 @@ Chain strategy: pending — sequential, rebase onto develop first
 
 ## Phase 2: Slice B — Migration + SAFC Write Path
 
-- [ ] 2.1 Rebase branch onto `develop` (pulls migrations 0088/0089, PR #65).
-- [ ] 2.2 `migrations/0090_add_safc_tipo_movimientos_cuenta.sql` — widen movimientos_cuenta_tipo_check, add 'SAFC' (follow 0057 pattern).
-- [ ] 2.3 `use-ventas.ts` (~987–1029) — Paso B "dejar saldo a favor" writes tipo='SAFC' not 'PAG'.
-- [ ] 2.4 `use-cxc.ts` registrarSafExcedente (~1872–1914) — writes tipo='SAFC'.
-- [ ] 2.5 `use-cxc.ts` aplicarSaldoFavor (~1558–1660) — gate re-source: credit from SUM(SAFC)-SUM(SAF), not saldo_actual.
-- [ ] 2.6 `use-cxc.ts` registrarPagoFactura inline SAF branch (~590–658) — same gate re-source (same bug, same file).
+- [x] 2.1 Branch already based on develop@892a3d1 (includes 0088/0089); no rebase needed, 0090 was the next free number.
+- [x] 2.2 `migrations/0090_add_safc_tipo_movimientos_cuenta.sql` — widen movimientos_cuenta_tipo_check, add 'SAFC' (follows 0057 pattern).
+- [x] 2.3 `use-ventas.ts` (~987–1029) — Paso B "dejar saldo a favor" writes tipo='SAFC' not 'PAG'.
+- [x] 2.4 `use-cxc.ts` registrarSafExcedente (~1872–1914) — writes tipo='SAFC'.
+- [x] 2.5 `use-cxc.ts` aplicarSaldoFavor (~1558–1660) — gate re-source: credit from SUM(SAFC)-SUM(SAF), not saldo_actual.
+- [x] 2.6 `use-cxc.ts` registrarPagoFactura inline SAF branch (~590–658) — same gate re-source (same bug, same file).
 
 ## Phase 3: Slice B — Credit-Limit Re-Source (limite − deudaFacturas, no SAF term)
 
-- [ ] 3.1 `src/core/hooks/use-saldo-a-favor.ts` — disponible via calcularCreditoDisponible(SUM SAFC, SUM SAF), replacing saldo_actual logic.
-- [ ] 3.2 New small hook/type for POS deudaFacturas — do NOT touch `use-clientes.ts` (Clientes module untouched); consumed by 3.3–3.5.
-- [ ] 3.3 `cliente-selector.tsx` (~106–149, ~178–181) — disponible = calcularDisponibleCredito(limite, deudaFacturas).
-- [ ] 3.4 `pos-terminal.tsx` (~729–736) — same corrected formula for credit badge.
-- [ ] 3.5 `cobro-modal.tsx` (~349–362) — credit-limit gate uses corrected formula only, no SAF term.
-- [ ] 3.6 `manual-verify.md` — Slice B: SAFC trigger check (fresh client), credit-limit-not-inflated-by-SAF regression, FIFO apply scenario.
+- [x] 3.1 `src/core/hooks/use-saldo-a-favor.ts` — disponible via calcularCreditoDisponible(SUM SAFC, SUM SAF), replacing saldo_actual logic.
+- [x] 3.2 NEW `src/features/cxc/hooks/use-deuda-cliente.ts` — useDeudaFacturasCliente (single) + useDeudaFacturasClientes (batch IN) for POS deudaFacturas; does NOT touch `use-clientes.ts` (Clientes module untouched); consumed by 3.3–3.5.
+- [x] 3.3 `cliente-selector.tsx` (~106–149, ~178–181) — disponible = calcularDisponibleCredito(limite, deudaFacturas); "Saldo" label changed to "Deuda" (never-netted) for consistency.
+- [x] 3.4 `pos-terminal.tsx` (~729–736) — same corrected formula for credit badge.
+- [x] 3.5 `cobro-modal.tsx` (~349–362) — credit-limit gate uses corrected formula only, no SAF term.
+- [x] 3.6 `manual-verify.md` — Slice B: SAFC trigger check (fresh client, POS Paso B + registrarSafExcedente CxC overpayment path), credit-limit-not-inflated-by-SAF regression, FIFO apply scenario.
