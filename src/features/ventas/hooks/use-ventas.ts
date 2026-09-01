@@ -1017,7 +1017,11 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
                 ]
               )
 
-              // Movimiento de cuenta (crédito: saldo puede quedar negativo)
+              // Movimiento de cuenta: CREACION de credito puro (tipo='SAFC', no
+              // 'PAG'). saldo_actual (ledger crudo) baja a negativo igual que
+              // antes — solo cambia la etiqueta, para que la lectura derivada
+              // SUM(SAFC)-SUM(SAF) en use-cxc.ts la cuente como creacion y no
+              // como consumo. Ver design.md Decision 1/2.
               const clienteRemRes = await tx.execute(
                 'SELECT saldo_actual FROM clientes WHERE id = ?',
                 [discrepancy.clienteId]
@@ -1030,7 +1034,7 @@ export async function crearVenta(params: CrearVentaParams): Promise<CrearVentaRe
               const movRemId = uuidv4()
               await tx.execute(
                 `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, moneda_pago, monto_moneda, tasa_pago)
-                 VALUES (?, ?, 'PAG', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                   movRemId, discrepancy.clienteId,
                   `SAF-ANTICIPO-${nroFactura}`,
