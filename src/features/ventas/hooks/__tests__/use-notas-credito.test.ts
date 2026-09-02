@@ -662,6 +662,16 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
     const ncrId = ncrInsert!.params[0] as string
     expect(safcInsert!.params).toContain(ncrId)
 
+    // BUGFIX (verify obs #2815): doc_origen_tipo del SAFC debe ser un valor
+    // valido para el CHECK `movimientos_cuenta_doc_origen_tipo_check`
+    // (migrations/0043_saldo_inicial_import.sql: VENTA | PAGO | NOTA_CREDITO |
+    // NOTA_DEBITO | SALDO_INICIAL). 'NCR' NO esta en esa lista — es un valor
+    // valido para `movimientos_cuenta.tipo` y para el CHECK de
+    // `movimientos_metodo_cobro.origen`, pero NO para `doc_origen_tipo` de
+    // `movimientos_cuenta`, y por eso el INSERT violaba el constraint.
+    expect(safcInsert!.params).toContain('NOTA_CREDITO')
+    expect(safcInsert!.params).not.toContain('NCR')
+
     const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro'))
     expect(egresoInsert).toBeUndefined()
 

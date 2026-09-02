@@ -692,7 +692,7 @@ export async function crearNotaCredito(
             now,
             usuario_id,
             ncrId,
-            'NCR',
+            'NOTA_CREDITO',
           ]
         )
 
