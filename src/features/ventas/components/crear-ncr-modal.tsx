@@ -46,6 +46,10 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         motivo,
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
+        // Este modal vive en el modulo Tradicional dedicado (notas-credito-page.tsx),
+        // no en el POS express — Regla de Oro (obs #2804): nunca vincula la sesion
+        // activa ni toca el cajon fisico sin un egreso administrativo explicito.
+        entryPoint: 'TRADICIONAL',
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()

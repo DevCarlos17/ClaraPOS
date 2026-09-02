@@ -44,6 +44,8 @@ interface NcrTxFixtures {
     tipo: string
     status: string
     deposito_id: string
+    /** Slice 2: sesion de caja en la que se emitio la venta original. */
+    sesion_caja_id?: string | null
   }
   ventaDet: Array<{ producto_id: string; cantidad: string; lote_id: string | null }>
   productos: Record<string, { tipo: string; stock: string; nombre: string }>
@@ -59,6 +61,8 @@ interface NcrTxFixtures {
   depositoOrigenIsActive?: boolean
   /** Id del deposito principal activo de la empresa — solo se consulta/usa cuando `depositoOrigenIsActive` es `false` (fallback NCR). */
   principalDepositoId?: string
+  /** Slice 2: pagos NO reversados de la venta (fuente del egreso condicional + reversa). */
+  pagos?: Array<{ id: string; metodo_cobro_id: string; monto: string; moneda_id: string }>
 }
 
 /**
@@ -134,6 +138,16 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
         if (sql.startsWith('UPDATE ventas SET status')) {
           return { rows: { length: 0, item: () => undefined } }
         }
+        if (sql.startsWith('SELECT id, metodo_cobro_id, monto, moneda_id FROM pagos')) {
+          const pagos = opts.pagos ?? []
+          return { rows: { length: pagos.length, item: (i: number) => pagos[i] } }
+        }
+        if (sql.startsWith('UPDATE pagos SET is_reversed')) {
+          return { rows: { length: 0, item: () => undefined } }
+        }
+        if (sql.startsWith('INSERT INTO movimientos_metodo_cobro')) {
+          return { rows: { length: 0, item: () => undefined } }
+        }
 
         return { rows: { length: 0, item: () => undefined } }
       }),
@@ -150,6 +164,7 @@ function baseParams(overrides: Partial<CrearNotaCreditoParams> = {}): CrearNotaC
     motivo: 'Devolucion cliente',
     usuario_id: 'user-1',
     empresa_id: 'emp-1',
+    entryPoint: 'TRADICIONAL',
     ...overrides,
   }
 }
@@ -381,5 +396,146 @@ describe('crearNotaCredito — Slice B (change guarda-deposito-inactivo): fallba
     })
 
     await expect(crearNotaCredito(baseParams())).rejects.toThrow(/deposito/i)
+  })
+})
+
+describe('crearNotaCredito — Slice 2 (sesion_caja_id link + Regla de Oro egreso condicional + reversa de pagos)', () => {
+  function fixturesConPagos(overrides: Partial<NcrTxFixtures['venta']> = {}, pagos?: NcrTxFixtures['pagos']) {
+    return {
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '30.00',
+        total_bs: '1200.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+        sesion_caja_id: 'sesion-activa-1',
+        ...overrides,
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      pagos,
+    }
+  }
+
+  it('POS + venta.sesion_caja_id === sesionCajaActivaId: inserta EGRESO en movimientos_metodo_cobro (origen NCR) con el sesion_caja_id activo', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesConPagos({ sesion_caja_id: 'sesion-activa-1' }, [
+        { id: 'pago-1', metodo_cobro_id: 'metodo-efectivo', monto: '30.00', moneda_id: 'usd-id' },
+      ])
+    )
+
+    await crearNotaCredito(
+      baseParams({ entryPoint: 'POS', sesionCajaActivaId: 'sesion-activa-1' })
+    )
+
+    // Nota: 'EGRESO' y 'NCR' van hardcodeados como literales en el SQL
+    // (VALUES (?, ?, ?, 'EGRESO', 'NCR', ...)), no como parametros bindeados
+    // — se detectan via c.sql.includes(), no c.params.includes().
+    const egresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(egresoInsert).toBeDefined()
+    expect(egresoInsert!.sql).toContain('EGRESO')
+    expect(egresoInsert!.params).toContain('metodo-efectivo')
+    expect(egresoInsert!.params).toContain('30.00')
+    expect(egresoInsert!.params).toContain('sesion-activa-1')
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito'))
+    expect(ncrInsert).toBeDefined()
+    expect(ncrInsert!.params).toContain('sesion-activa-1')
+  })
+
+  it('POS + venta.sesion_caja_id !== sesionCajaActivaId (factura de otra sesion): NO inserta egreso (defensa en profundidad)', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesConPagos({ sesion_caja_id: 'sesion-vieja' }, [
+        { id: 'pago-1', metodo_cobro_id: 'metodo-efectivo', monto: '30.00', moneda_id: 'usd-id' },
+      ])
+    )
+
+    await crearNotaCredito(
+      baseParams({ entryPoint: 'POS', sesionCajaActivaId: 'sesion-activa-1' })
+    )
+
+    const egresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(egresoInsert).toBeUndefined()
+  })
+
+  it('Tradicional: NO inserta egreso aunque haya pagos, y notas_credito.sesion_caja_id queda NULL', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesConPagos({ sesion_caja_id: 'sesion-vieja' }, [
+        { id: 'pago-1', metodo_cobro_id: 'metodo-efectivo', monto: '30.00', moneda_id: 'usd-id' },
+      ])
+    )
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL' }))
+
+    const egresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(egresoInsert).toBeUndefined()
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito'))
+    expect(ncrInsert).toBeDefined()
+    expect(ncrInsert!.params).toContain(null)
+  })
+
+  it('multiples metodos de pago: inserta UN egreso POR metodo (per-method), cada uno con su metodo_cobro_id y monto nativo', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesConPagos({ sesion_caja_id: 'sesion-activa-1' }, [
+        { id: 'pago-1', metodo_cobro_id: 'metodo-efectivo', monto: '10.00', moneda_id: 'usd-id' },
+        { id: 'pago-2', metodo_cobro_id: 'metodo-tarjeta', monto: '800.00', moneda_id: 'bs-id' },
+      ])
+    )
+
+    await crearNotaCredito(
+      baseParams({ entryPoint: 'POS', sesionCajaActivaId: 'sesion-activa-1' })
+    )
+
+    const egresos = calls.filter(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(egresos).toHaveLength(2)
+    expect(egresos.some((c) => c.params.includes('metodo-efectivo') && c.params.includes('10.00'))).toBe(true)
+    expect(egresos.some((c) => c.params.includes('metodo-tarjeta') && c.params.includes('800.00'))).toBe(true)
+  })
+
+  it('marca is_reversed=1 para los pagos no reversados de la venta (NC tipo TOTAL)', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesConPagos({ sesion_caja_id: 'sesion-activa-1' }, [
+        { id: 'pago-1', metodo_cobro_id: 'metodo-efectivo', monto: '30.00', moneda_id: 'usd-id' },
+      ])
+    )
+
+    await crearNotaCredito(
+      baseParams({ entryPoint: 'POS', sesionCajaActivaId: 'sesion-activa-1' })
+    )
+
+    const reversa = calls.find((c) => c.sql.startsWith('UPDATE pagos SET is_reversed'))
+    expect(reversa).toBeDefined()
+    expect(reversa!.params).toContain('venta-1')
+  })
+
+  it('sin pagos pendientes de reversar: no inserta egresos y no revienta (reversa is un no-op)', async () => {
+    const calls = mockCrearNcrTx(fixturesConPagos({ sesion_caja_id: 'sesion-activa-1' }, []))
+
+    await crearNotaCredito(
+      baseParams({ entryPoint: 'POS', sesionCajaActivaId: 'sesion-activa-1' })
+    )
+
+    const egresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(egresoInsert).toBeUndefined()
+
+    const reversa = calls.find((c) => c.sql.startsWith('UPDATE pagos SET is_reversed'))
+    expect(reversa).toBeDefined()
   })
 })

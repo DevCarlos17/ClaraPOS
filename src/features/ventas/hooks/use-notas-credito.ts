@@ -61,6 +61,16 @@ export interface CrearNotaCreditoParams {
   motivo: string
   usuario_id: string
   empresa_id: string
+  /**
+   * Ambito de emision (Regla de Oro, obs #2804): 'POS' = cajero dentro de su
+   * sesion de caja activa (solo facturas de esa sesion). 'TRADICIONAL' =
+   * modulo dedicado de NC, cualquier factura de la empresa, NUNCA toca el
+   * cajon fisico de una sesion activa sin egreso explicito (fuera de scope
+   * de este slice — ver REFUND_TESORERIA, Slice 6).
+   */
+  entryPoint: 'POS' | 'TRADICIONAL'
+  /** Id de la sesion de caja activa del cajero — solo relevante cuando `entryPoint === 'POS'`. */
+  sesionCajaActivaId?: string
 }
 
 export interface CrearNotaCreditoResult {
@@ -150,7 +160,7 @@ export function useDetalleFactura(ventaId: string | null) {
 export async function crearNotaCredito(
   params: CrearNotaCreditoParams
 ): Promise<CrearNotaCreditoResult> {
-  const { venta_id, motivo, usuario_id, empresa_id } = params
+  const { venta_id, motivo, usuario_id, empresa_id, entryPoint, sesionCajaActivaId } = params
 
   let ncrId = ''
   let nroNcr = ''
@@ -178,8 +188,30 @@ export async function crearNotaCredito(
       tipo: string
       status: string
       deposito_id: string
+      sesion_caja_id: string | null
     }
     const depositoOrigenId = venta.deposito_id
+
+    // Slice 2 (Regla de Oro, obs #2804/#2807 Design §4): la NC solo queda
+    // vinculada a la sesion de caja ACTIVA cuando se emite desde el POS
+    // express — el modulo Tradicional NUNCA la vincula (factura potencialmente
+    // historica, ni idea de que sesion este abierta en este momento).
+    const sesionCajaIdParaNc = entryPoint === 'POS' ? sesionCajaActivaId ?? null : null
+
+    // Tipo TOTAL es el unico soportado hasta Slice 4b (NC parcial). Se deja
+    // como variable explicita porque la reversa de pagos (paso 5c) solo debe
+    // aplicar para tipo='TOTAL' (Design §3) — Slice 4b la extendera.
+    const tipoNc = 'TOTAL'
+
+    // Condicion completa del diseño: entryPoint==='POS' && modalidad==='EFECTIVO_REAL'
+    // && venta.sesion_caja_id===sesionCajaActivaId. Este slice todavia no expone
+    // un selector de modalidad (Slice 3) — crearNotaCredito solo soporta hoy el
+    // flujo TOTAL, que siempre implica "devolver el efectivo/tarjeta tal como
+    // entro" (equivalente a EFECTIVO_REAL). Por eso el termino de modalidad se
+    // reduce: la condicion real que queda por evaluar es el ambito + la misma
+    // sesion.
+    const aplicaReglaDeOro =
+      entryPoint === 'POS' && !!sesionCajaActivaId && venta.sesion_caja_id === sesionCajaActivaId
 
     if (venta.status === 'ANULADA') {
       throw new Error('Esta factura ya fue anulada')
@@ -241,14 +273,14 @@ export async function crearNotaCredito(
 
     // 3. INSERT notas_credito (snapshot de la factura)
     await tx.execute(
-      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, tipo, motivo, tasa_historica, total_usd, total_bs, afecta_inventario, usuario_id, fecha, empresa_id, created_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, tipo, motivo, tasa_historica, total_usd, total_bs, afecta_inventario, usuario_id, fecha, empresa_id, created_at, created_by, sesion_caja_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ncrId,
         nroNcr,
         venta_id,
         venta.cliente_id,
-        'TOTAL',
+        tipoNc,
         motivo,
         venta.tasa,
         venta.total_usd,
@@ -259,6 +291,7 @@ export async function crearNotaCredito(
         empresa_id,
         now,
         usuario_id,
+        sesionCajaIdParaNc,
       ]
     )
 
@@ -455,6 +488,59 @@ export async function crearNotaCredito(
       }, now)
     } catch {
       // DIFE reversal opcional — no bloquea la anulación
+    }
+
+    // 5c. Regla de Oro (Design §4, obs #2804): reversar los pagos originales
+    //     de la venta y, SOLO si aplica la condicion de ambito+sesion, dejar
+    //     un egreso por metodo en `movimientos_metodo_cobro` (origen 'NCR')
+    //     para que el cuadre de la sesion activa refleje la salida real de
+    //     efectivo/tarjeta — sin tocar `use-cuadre.ts`, que ya suma cualquier
+    //     EGRESO no excluido (aditivo, cero cambios de formula).
+    if (tipoNc === 'TOTAL') {
+      const pagosResult = await tx.execute(
+        'SELECT id, metodo_cobro_id, monto, moneda_id FROM pagos WHERE venta_id = ? AND is_reversed = 0',
+        [venta_id]
+      )
+
+      if (aplicaReglaDeOro && pagosResult.rows) {
+        for (let i = 0; i < pagosResult.rows.length; i++) {
+          const pago = pagosResult.rows.item(i) as {
+            id: string
+            metodo_cobro_id: string
+            monto: string
+            moneda_id: string
+          }
+
+          await tx.execute(
+            `INSERT INTO movimientos_metodo_cobro
+               (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+                doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+             VALUES (?, ?, ?, 'EGRESO', 'NCR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              empresa_id,
+              pago.metodo_cobro_id,
+              pago.monto,
+              ncrId,
+              `NCR-${nroNcr}`,
+              `Devolucion NCR ${nroNcr} - Venta ${venta.nro_factura}`,
+              sesionCajaActivaId ?? null,
+              now,
+              now,
+              usuario_id,
+            ]
+          )
+        }
+      }
+
+      // Reversa de pagos: siempre que la NC sea TOTAL, sin importar el ambito
+      // (POS o Tradicional) — evita que el pago original siga contando como
+      // ingreso valido en los totales por metodo (gap #3 en obs #2803).
+      await tx.execute(
+        `UPDATE pagos SET is_reversed = 1, reversed_at = ?, reversed_by = ?, reversed_reason = ?
+         WHERE venta_id = ? AND is_reversed = 0`,
+        [now, usuario_id, motivo, venta_id]
+      )
     }
 
     // 6. Marcar factura como anulada

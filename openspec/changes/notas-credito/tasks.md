@@ -48,11 +48,11 @@ Chain strategy: pending
 | 400-line budget risk | Medium |
 | Chained PRs | No — single PR |
 
-- [ ] 2.1 RED: `use-notas-credito.test.ts` — add scenarios: POS+EFECTIVO_REAL+sesión activa inserta `movimientos_metodo_cobro` EGRESO origen `'NCR'` con `sesion_caja_id` activo; Tradicional/no-efectivo NO inserta nada; `pagos.is_reversed` se marca solo para NC `tipo='TOTAL'`. [Spec notas-credito-pos: Impacto condicional — Regla de Oro; Spec caja: Consumo de egreso condicional]
-- [ ] 2.2 GREEN: extend `crearNotaCredito` params with `entryPoint: 'POS' | 'TRADICIONAL'` and `sesionCajaActivaId?: string`; implement condition `entryPoint==='POS' && modalidad==='EFECTIVO_REAL' && venta.sesion_caja_id===sesionCajaActivaId` gating the `movimientos_metodo_cobro` EGRESO insert (reuse `doc_origen_id=ncrId`, no new FK). [Design §4]
-- [ ] 2.3 GREEN: loop `pagos` for the venta, `UPDATE pagos SET is_reversed=1 WHERE venta_id=? AND is_reversed=0` — only when NC `tipo='TOTAL'` (PARCIAL never flips this, per Design §3).
-- [ ] 2.4 Wire `entryPoint`/`sesionCajaActivaId` from `crear-ncr-modal.tsx` call site (pass current session context via `useCurrentUser`/caja store).
-- [ ] 2.5 Verify: `yarn test:run` + `yarn type-check:test` green; confirm `use-cuadre.ts` is untouched (grep diff — zero lines changed in that file, per Design confirmation).
+- [x] 2.1 RED: `use-notas-credito.test.ts` — add scenarios: POS+EFECTIVO_REAL+sesión activa inserta `movimientos_metodo_cobro` EGRESO origen `'NCR'` con `sesion_caja_id` activo; Tradicional/no-efectivo NO inserta nada; `pagos.is_reversed` se marca solo para NC `tipo='TOTAL'`. [Spec notas-credito-pos: Impacto condicional — Regla de Oro; Spec caja: Consumo de egreso condicional]
+- [x] 2.2 GREEN: extend `crearNotaCredito` params with `entryPoint: 'POS' | 'TRADICIONAL'` and `sesionCajaActivaId?: string`; implement condition `entryPoint==='POS' && modalidad==='EFECTIVO_REAL' && venta.sesion_caja_id===sesionCajaActivaId` gating the `movimientos_metodo_cobro` EGRESO insert (reuse `doc_origen_id=ncrId`, no new FK). [Design §4]. **Note**: slice 2 has no `modalidad` param yet (lands in slice 3) — `crearNotaCredito` only supports the TOTAL/implicit-EFECTIVO_REAL flow today, so the condition is implemented as `entryPoint==='POS' && venta.sesion_caja_id===sesionCajaActivaId` (documented in code comment); slice 3 will thread the real `modalidad` value through.
+- [x] 2.3 GREEN: loop `pagos` for the venta, `UPDATE pagos SET is_reversed=1 WHERE venta_id=? AND is_reversed=0` — only when NC `tipo='TOTAL'` (PARCIAL never flips this, per Design §3).
+- [x] 2.4 Wire `entryPoint`/`sesionCajaActivaId` from `crear-ncr-modal.tsx` call site (pass current session context via `useCurrentUser`/caja store). **Note**: `crear-ncr-modal.tsx`/`notas-credito-page.tsx` IS the Tradicional module (dedicated NC screen, searches ANY factura) — wired `entryPoint: 'TRADICIONAL'` there; no POS-express entry point exists yet (that UI lands in Slice 5a), so `sesionCajaActivaId` wiring for the POS path is deferred to 5a.
+- [x] 2.5 Verify: `yarn test:run` + `yarn type-check:test` green; confirm `use-cuadre.ts` is untouched (grep diff — zero lines changed in that file, per Design confirmation).
 
 ## Slice 3 — Liquidation modalities (SALDO_FAVOR, AJUSTE_CXC) + no-desembolso gate (Design §Regla de Oro condition, Spec notas-credito-liquidacion)
 
