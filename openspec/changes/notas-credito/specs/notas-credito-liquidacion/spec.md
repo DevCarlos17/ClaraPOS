@@ -10,6 +10,8 @@ Define CÓMO se salda una NC ya emitida (ver `notas-credito-emision`). Toda NC M
 
 El sistema MUST exigir que toda NC declare una modalidad de liquidación entre `SALDO_FAVOR`, `COMPENSACION_VENTA`, `AJUSTE_CXC`, o (condicional) `REFUND_TESORERIA`. No existe una modalidad "sin definir".
 
+> Nota de reconciliación (obs #2812, resuelta en Slice 3): el campo persistido `notas_credito.liquidacion_modalidad` acepta un quinto valor, `EFECTIVO_REAL`, que NO es una modalidad de liquidación seleccionable en el sentido de este requisito — es la condición interna que dispara la Regla de Oro (egreso real del cajón POS activo, ver `notas-credito-pos`). Se documenta aquí solo para que el trail de artefactos (spec ↔ design.md Decisión 4/5 ↔ CHECK de `migrations/0091_notas_credito_schema.sql`) quede internamente consistente.
+
 #### Scenario: NC sin modalidad rechazada
 
 - GIVEN un intento de crear NC sin modalidad de liquidación

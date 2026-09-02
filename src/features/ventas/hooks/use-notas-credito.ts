@@ -56,6 +56,61 @@ export interface PagoFacturaItem {
   monto_usd: string
 }
 
+/**
+ * Modalidad de liquidacion (Slice 3, Design §Decision 4, Spec
+ * notas-credito-liquidacion). `EFECTIVO_REAL` es la condicion — no una
+ * "modalidad" del selector de UI en el sentido estricto de la spec — que
+ * dispara la Regla de Oro (egreso real del cajon POS activo); se incluye
+ * aqui porque el mismo campo `liquidacion_modalidad` la persiste (CHECK de
+ * `migrations/0091_notas_credito_schema.sql` y Design §5 tabla de schema
+ * listan 5 valores, no 4 — obs #2812, reconciliado en este slice).
+ * `REFUND_TESORERIA` esta validado por el tipo pero NO implementado hasta
+ * Slice 6 (throw explicito, ver `crearNotaCredito`).
+ */
+export type LiquidacionModalidad =
+  | 'EFECTIVO_REAL'
+  | 'SALDO_FAVOR'
+  | 'COMPENSACION_VENTA'
+  | 'AJUSTE_CXC'
+  | 'REFUND_TESORERIA'
+
+/** Modalidades que MUST NOT generar ninguna salida de efectivo/tarjeta (Spec notas-credito-liquidacion, Gate anti-fraude). */
+const MODALIDADES_NO_DESEMBOLSO: readonly LiquidacionModalidad[] = [
+  'SALDO_FAVOR',
+  'COMPENSACION_VENTA',
+  'AJUSTE_CXC',
+]
+
+export function esModalidadNoDesembolso(modalidad: LiquidacionModalidad): boolean {
+  return (MODALIDADES_NO_DESEMBOLSO as readonly string[]).includes(modalidad)
+}
+
+/** Parametro que representaria un intento explicito de forzar una salida de caja. Solo lo consume el gate — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
+export interface EgresoCajaParams {
+  metodoCobroId: string
+  monto: number
+}
+
+/**
+ * Gate anti-fraude de "comprobante de no-desembolso" (Design §3 paso 0b,
+ * Spec notas-credito-liquidacion req. Gate anti-fraude). Bloquea A NIVEL DE
+ * FUNCION — no depende de que la UI lo impida — cualquier intento de
+ * combinar una modalidad no-efectivo con un pedido explicito de salida de
+ * caja. Se evalua ANTES de abrir la transaccion (ni siquiera toca la DB):
+ * una llamada directa a `crearNotaCredito` que bypasee la UI cae en el
+ * mismo chequeo.
+ */
+export function assertGateAntiFraudeNoDesembolso(
+  modalidad: LiquidacionModalidad,
+  egresoParams: EgresoCajaParams | undefined
+): void {
+  if (egresoParams && esModalidadNoDesembolso(modalidad)) {
+    throw new Error(
+      `Comprobante de no-desembolso violado: la modalidad '${modalidad}' no admite una salida de efectivo/tarjeta. El bloqueo se aplica a nivel de funcion, no de UI.`
+    )
+  }
+}
+
 export interface CrearNotaCreditoParams {
   venta_id: string
   motivo: string
@@ -71,6 +126,17 @@ export interface CrearNotaCreditoParams {
   entryPoint: 'POS' | 'TRADICIONAL'
   /** Id de la sesion de caja activa del cajero — solo relevante cuando `entryPoint === 'POS'`. */
   sesionCajaActivaId?: string
+  /** Modalidad de liquidacion elegida (Slice 3, obligatoria). */
+  modalidad: LiquidacionModalidad
+  /**
+   * Defensa en profundidad / prueba directa del gate anti-fraude: NUNCA se
+   * envia en el flujo normal junto a una modalidad no-efectivo. El egreso
+   * real de la Regla de Oro (EFECTIVO_REAL) se calcula internamente a partir
+   * de `entryPoint`/`sesionCajaActivaId`/`venta.sesion_caja_id` — este
+   * parametro NO lo dispara, solo existe para que el gate tenga algo
+   * explicito que rechazar.
+   */
+  egresoParams?: EgresoCajaParams
 }
 
 export interface CrearNotaCreditoResult {
@@ -160,7 +226,19 @@ export function useDetalleFactura(ventaId: string | null) {
 export async function crearNotaCredito(
   params: CrearNotaCreditoParams
 ): Promise<CrearNotaCreditoResult> {
-  const { venta_id, motivo, usuario_id, empresa_id, entryPoint, sesionCajaActivaId } = params
+  const { venta_id, motivo, usuario_id, empresa_id, entryPoint, sesionCajaActivaId, modalidad, egresoParams } =
+    params
+
+  // 0b. Gate anti-fraude (Design §3 paso 0b): se evalua ANTES de abrir la
+  // transaccion — sin tocar la DB. Ver `assertGateAntiFraudeNoDesembolso`.
+  assertGateAntiFraudeNoDesembolso(modalidad, egresoParams)
+
+  // REFUND_TESORERIA esta validado por el tipo pero se implementa recien en
+  // Slice 6 (Design §5, "no requiere schema nuevo" pero SI logica nueva que
+  // aun no existe en este slice).
+  if (modalidad === 'REFUND_TESORERIA') {
+    throw new Error('REFUND_TESORERIA aun no esta implementado (ver Slice 6)')
+  }
 
   let ncrId = ''
   let nroNcr = ''
@@ -203,15 +281,24 @@ export async function crearNotaCredito(
     // aplicar para tipo='TOTAL' (Design §3) — Slice 4b la extendera.
     const tipoNc = 'TOTAL'
 
-    // Condicion completa del diseño: entryPoint==='POS' && modalidad==='EFECTIVO_REAL'
-    // && venta.sesion_caja_id===sesionCajaActivaId. Este slice todavia no expone
-    // un selector de modalidad (Slice 3) — crearNotaCredito solo soporta hoy el
-    // flujo TOTAL, que siempre implica "devolver el efectivo/tarjeta tal como
-    // entro" (equivalente a EFECTIVO_REAL). Por eso el termino de modalidad se
-    // reduce: la condicion real que queda por evaluar es el ambito + la misma
-    // sesion.
+    // Condicion completa del diseño (Design §Decision 4, obs #2814 — fix
+    // mandatorio de slice 3): entryPoint==='POS' && modalidad==='EFECTIVO_REAL'
+    // && venta.sesion_caja_id===sesionCajaActivaId. Slice 2 dejaba el chequeo
+    // de modalidad afuera (el parametro no existia todavia) — trampa latente
+    // detectada en verify: una NC-POS liquidada como SALDO_FAVOR/AJUSTE_CXC/
+    // COMPENSACION_VENTA hubiera escrito igual el egreso de caja. Ahora la
+    // modalidad es el termino decisivo: solo EFECTIVO_REAL mueve el cajon.
     const aplicaReglaDeOro =
-      entryPoint === 'POS' && !!sesionCajaActivaId && venta.sesion_caja_id === sesionCajaActivaId
+      entryPoint === 'POS' &&
+      modalidad === 'EFECTIVO_REAL' &&
+      !!sesionCajaActivaId &&
+      venta.sesion_caja_id === sesionCajaActivaId
+
+    // Persistido en `notas_credito.no_desembolso` (Design §5, Spec gate
+    // anti-fraude) — TRUE para las 3 modalidades sin efectivo, FALSE para
+    // EFECTIVO_REAL/REFUND_TESORERIA (estas SI mueven dinero, aunque por
+    // rieles distintos: cajon POS vs tesoreria).
+    const noDesembolso = esModalidadNoDesembolso(modalidad)
 
     if (venta.status === 'ANULADA') {
       throw new Error('Esta factura ya fue anulada')
@@ -273,8 +360,8 @@ export async function crearNotaCredito(
 
     // 3. INSERT notas_credito (snapshot de la factura)
     await tx.execute(
-      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, tipo, motivo, tasa_historica, total_usd, total_bs, afecta_inventario, usuario_id, fecha, empresa_id, created_at, created_by, sesion_caja_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, tipo, motivo, tasa_historica, total_usd, total_bs, afecta_inventario, usuario_id, fecha, empresa_id, created_at, created_by, sesion_caja_id, liquidacion_modalidad, no_desembolso)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ncrId,
         nroNcr,
@@ -292,6 +379,8 @@ export async function crearNotaCredito(
         now,
         usuario_id,
         sesionCajaIdParaNc,
+        modalidad,
+        noDesembolso ? 1 : 0,
       ]
     )
 
@@ -498,7 +587,7 @@ export async function crearNotaCredito(
     //     EGRESO no excluido (aditivo, cero cambios de formula).
     if (tipoNc === 'TOTAL') {
       const pagosResult = await tx.execute(
-        'SELECT id, metodo_cobro_id, monto, moneda_id FROM pagos WHERE venta_id = ? AND is_reversed = 0',
+        'SELECT id, metodo_cobro_id, monto FROM pagos WHERE venta_id = ? AND is_reversed = 0',
         [venta_id]
       )
 
@@ -508,7 +597,6 @@ export async function crearNotaCredito(
             id: string
             metodo_cobro_id: string
             monto: string
-            moneda_id: string
           }
 
           await tx.execute(
@@ -541,6 +629,118 @@ export async function crearNotaCredito(
          WHERE venta_id = ? AND is_reversed = 0`,
         [now, usuario_id, motivo, venta_id]
       )
+    }
+
+    // 5d. Step B (Design §3 paso 9): liquidar el REMANENTE ya cobrado —
+    //     total_usd menos lo que Step A (paso 5) ya condono de la deuda
+    //     pendiente — segun la modalidad elegida. Solo aplica si de verdad
+    //     hay algo que devolver (remanente > 0); si la factura nunca se
+    //     cobro (saldoPend == total_usd), Step A ya cubrio el 100% como
+    //     condonacion de deuda y no hay nada que liquidar aqui.
+    //     EFECTIVO_REAL no entra a este switch: su liquidacion ES el egreso
+    //     condicional de la Regla de Oro (paso 5c/10), no un movimiento de
+    //     cuenta adicional.
+    const remanenteALiquidar = Decimal.max(
+      new Decimal(0),
+      new Decimal(venta.total_usd).minus(saldoPend)
+    )
+
+    if (remanenteALiquidar.gt('0.01')) {
+      if (modalidad === 'SALDO_FAVOR' || modalidad === 'COMPENSACION_VENTA') {
+        // SALDO_FAVOR y COMPENSACION_VENTA dejan el MISMO SAFC trazable
+        // (Design §3: "COMPENSACION_VENTA compone con una venta nueva
+        // simultanea... dos transacciones secuenciales"). La diferencia
+        // vive en el LLAMADOR (Slice 5 UI hara un crearVenta() separado que
+        // consume este SAFC via `safEntry`) — crearNotaCredito nunca invoca
+        // crearVenta() internamente (tradeoff aceptado, obs task 3.1).
+        //
+        // Reusa el PATRON de `registrarSafExcedente`
+        // (src/features/cxc/hooks/use-cxc.ts:1934) pero INLINE dentro de
+        // esta misma transaccion — NO se invoca esa funcion standalone
+        // porque abre su propia `db.writeTransaction` y anidar
+        // transacciones rompe la atomicidad unica exigida por el diseño
+        // (Design §Technical Approach: "un unico db.writeTransaction()").
+        // `doc_origen_id`/`doc_origen_tipo` dejan el SAFC trazable hasta
+        // `nota_credito_id` (Spec notas-credito-liquidacion, scenario
+        // "SAFC generado referencia el nota_credito_id de origen").
+        const clienteSafcResult = await tx.execute(
+          'SELECT saldo_actual FROM clientes WHERE id = ?',
+          [venta.cliente_id]
+        )
+        if (!clienteSafcResult.rows || clienteSafcResult.rows.length === 0) {
+          throw new Error('Cliente no encontrado')
+        }
+        const saldoActualSafc = new Decimal(
+          (clienteSafcResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+        )
+        const saldoNuevoSafc = saldoActualSafc.minus(remanenteALiquidar)
+
+        await tx.execute(
+          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo)
+           VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(),
+            venta.cliente_id,
+            `SAF-NCR-${nroNcr}`,
+            toStorageString(remanenteALiquidar),
+            toStorageString(saldoActualSafc),
+            toStorageString(saldoNuevoSafc),
+            `Saldo a favor generado por ${nroNcr} (${modalidad}) - Factura ${venta.nro_factura}`,
+            venta_id,
+            now,
+            empresa_id,
+            now,
+            usuario_id,
+            ncrId,
+            'NCR',
+          ]
+        )
+
+        await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+          toStorageString(saldoNuevoSafc),
+          now,
+          venta.cliente_id,
+        ])
+      } else if (modalidad === 'AJUSTE_CXC') {
+        // Reusa el MISMO patron de reduccion de saldo que Step A (paso 5,
+        // lineas ~440-478) — nunca crea credito, solo cancela deuda
+        // EXISTENTE del cliente (tope en 0). Task 3.4.
+        const clienteAjusteResult = await tx.execute(
+          'SELECT saldo_actual FROM clientes WHERE id = ?',
+          [venta.cliente_id]
+        )
+        if (!clienteAjusteResult.rows || clienteAjusteResult.rows.length === 0) {
+          throw new Error('Cliente no encontrado')
+        }
+        const saldoActualAjuste = new Decimal(
+          (clienteAjusteResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+        )
+        const saldoNuevoAjuste = Decimal.max(new Decimal(0), saldoActualAjuste.minus(remanenteALiquidar))
+
+        await tx.execute(
+          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
+           VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            uuidv4(),
+            venta.cliente_id,
+            `${nroNcr}-AJUSTE`,
+            toStorageString(remanenteALiquidar),
+            toStorageString(saldoActualAjuste),
+            toStorageString(saldoNuevoAjuste),
+            `Ajuste CxC por ${nroNcr} - Factura ${venta.nro_factura}`,
+            venta_id,
+            now,
+            empresa_id,
+            now,
+          ]
+        )
+
+        await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+          toStorageString(saldoNuevoAjuste),
+          now,
+          venta.cliente_id,
+        ])
+      }
     }
 
     // 6. Marcar factura como anulada

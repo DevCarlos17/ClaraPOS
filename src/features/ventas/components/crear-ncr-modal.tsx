@@ -50,6 +50,11 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         // no en el POS express — Regla de Oro (obs #2804): nunca vincula la sesion
         // activa ni toca el cajon fisico sin un egreso administrativo explicito.
         entryPoint: 'TRADICIONAL',
+        // AJUSTE_CXC (default del CHECK de `migrations/0091_notas_credito_schema.sql`)
+        // hasta que Slice 5b agregue el selector de modalidad a este modal —
+        // liquida el remanente cancelando deuda existente del cliente, cero
+        // impacto en caja, sin requerir eleccion del usuario todavia.
+        modalidad: 'AJUSTE_CXC',
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()
