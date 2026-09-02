@@ -3,13 +3,20 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import Decimal from 'decimal.js'
-import { toStorageString } from '@/lib/currency'
+import { toStorageString, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
 import { generarAsientosNCR } from '@/features/contabilidad/lib/generar-asientos'
 import { reversarDiferencialEnTx, useDetalleFactura as useDetalleFacturaCanonica } from '@/features/cxc/hooks/use-cxc'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
 import { resolveDepositoReingresoNcr } from '@/features/inventario/lib/deposito-inactivo'
+import {
+  calcularDesgloseLineaNC,
+  validarTopeDobleCredito,
+  buildSumCantidadYaAcreditadaQuery,
+  mapSumCantidadYaAcreditadaRow,
+  type TipoImpuestoLineaNc,
+} from '@/features/ventas/utils/notas-credito-fiscal'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -111,6 +118,14 @@ export function assertGateAntiFraudeNoDesembolso(
   }
 }
 
+/** Linea seleccionada por el llamador para una NC PARCIAL (Slice 4b, Design §Interfaces). */
+export interface LineaNcSeleccionada {
+  /** FK a `ventas_det.id` — linea original de la factura a acreditar. */
+  venta_det_id: string
+  /** Cantidad a devolver de ESA linea (puede ser parcial respecto a lo vendido). */
+  cantidadDevolver: string
+}
+
 export interface CrearNotaCreditoParams {
   venta_id: string
   motivo: string
@@ -137,6 +152,21 @@ export interface CrearNotaCreditoParams {
    * explicito que rechazar.
    */
   egresoParams?: EgresoCajaParams
+  /**
+   * Tipo de NC (Slice 4b, Design §3/§Interfaces). Default `'TOTAL'` cuando
+   * se omite — preserva el comportamiento previo a este slice byte-a-byte
+   * (todas las lineas de `ventas_det`, cantidad completa). `'PARCIAL'`
+   * requiere `lineas`.
+   */
+  tipo?: 'TOTAL' | 'PARCIAL'
+  /**
+   * Lineas seleccionadas para devolver. Solo se usa cuando `tipo ===
+   * 'PARCIAL'` — para `tipo === 'TOTAL'` (o cuando se omite `tipo`) SIEMPRE
+   * se derivan TODAS las lineas de `ventas_det` con su cantidad completa,
+   * ignorando cualquier valor pasado aqui (Design §2 "mismo codigo, sin
+   * ramas duplicadas").
+   */
+  lineas?: LineaNcSeleccionada[]
 }
 
 export interface CrearNotaCreditoResult {
@@ -226,8 +256,18 @@ export function useDetalleFactura(ventaId: string | null) {
 export async function crearNotaCredito(
   params: CrearNotaCreditoParams
 ): Promise<CrearNotaCreditoResult> {
-  const { venta_id, motivo, usuario_id, empresa_id, entryPoint, sesionCajaActivaId, modalidad, egresoParams } =
-    params
+  const {
+    venta_id,
+    motivo,
+    usuario_id,
+    empresa_id,
+    entryPoint,
+    sesionCajaActivaId,
+    modalidad,
+    egresoParams,
+    tipo,
+    lineas,
+  } = params
 
   // 0b. Gate anti-fraude (Design §3 paso 0b): se evalua ANTES de abrir la
   // transaccion — sin tocar la DB. Ver `assertGateAntiFraudeNoDesembolso`.
@@ -276,10 +316,13 @@ export async function crearNotaCredito(
     // historica, ni idea de que sesion este abierta en este momento).
     const sesionCajaIdParaNc = entryPoint === 'POS' ? sesionCajaActivaId ?? null : null
 
-    // Tipo TOTAL es el unico soportado hasta Slice 4b (NC parcial). Se deja
-    // como variable explicita porque la reversa de pagos (paso 5c) solo debe
-    // aplicar para tipo='TOTAL' (Design §3) — Slice 4b la extendera.
-    const tipoNc = 'TOTAL'
+    // Tipo TOTAL/PARCIAL (Slice 4b, Design §3/§Interfaces). Default 'TOTAL'
+    // cuando el llamador omite `tipo` — preserva el comportamiento previo a
+    // este slice byte-a-byte (todas las lineas, cantidad completa). La
+    // reversa de pagos (paso 6c) solo aplica para tipo='TOTAL' (Design §3
+    // paso 8: "PARCIAL nunca reversa pagos, siguen siendo validos por el
+    // saldo remanente").
+    const tipoNc: 'TOTAL' | 'PARCIAL' = tipo ?? 'TOTAL'
 
     // Condicion completa del diseño (Design §Decision 4, obs #2814 — fix
     // mandatorio de slice 3): entryPoint==='POS' && modalidad==='EFECTIVO_REAL'
@@ -358,10 +401,106 @@ export async function crearNotaCredito(
     const count = Number((countResult.rows?.item(0) as { cnt: number })?.cnt ?? 0)
     nroNcr = `NCR-${String(count + 1).padStart(6, '0')}`
 
-    // 3. INSERT notas_credito (snapshot de la factura)
+    // 3. Leer TODAS las lineas de la venta (Design §3 paso 3/5/6, §2 formula
+    //    de desglose). TOTAL deriva todas las lineas con su cantidad
+    //    completa (Design §2 "mismo codigo, sin ramas duplicadas");
+    //    PARCIAL valida que cada linea seleccionada pertenece a esta
+    //    factura.
+    const ventaDetResult = await tx.execute(
+      'SELECT id, producto_id, cantidad, lote_id, precio_unitario_usd, tipo_impuesto, impuesto_pct FROM ventas_det WHERE venta_id = ?',
+      [venta_id]
+    )
+    type VentaDetRow = {
+      id: string
+      producto_id: string
+      cantidad: string
+      lote_id: string | null
+      precio_unitario_usd: string
+      tipo_impuesto: string
+      impuesto_pct: string
+    }
+    const ventaDetRows: VentaDetRow[] = []
+    if (ventaDetResult.rows) {
+      for (let i = 0; i < ventaDetResult.rows.length; i++) {
+        ventaDetRows.push(ventaDetResult.rows.item(i) as VentaDetRow)
+      }
+    }
+
+    const lineasAProcesar: Array<{ ventaDet: VentaDetRow; cantidadDevolver: Decimal }> =
+      tipoNc === 'TOTAL'
+        ? ventaDetRows.map((row) => ({ ventaDet: row, cantidadDevolver: new Decimal(row.cantidad) }))
+        : (lineas ?? []).map((l) => {
+            const row = ventaDetRows.find((r) => r.id === l.venta_det_id)
+            if (!row) {
+              throw new Error(`La linea ${l.venta_det_id} no pertenece a la factura ${venta.nro_factura}`)
+            }
+            return { ventaDet: row, cantidadDevolver: new Decimal(l.cantidadDevolver) }
+          })
+
+    if (tipoNc === 'PARCIAL' && lineasAProcesar.length === 0) {
+      throw new Error('Una nota de credito PARCIAL requiere al menos una linea seleccionada')
+    }
+
+    // Guard de doble-credito (gap real, Design §2 — el trigger Postgres solo
+    // topea el total de la factura, no la cantidad por linea) + desglose
+    // fiscal por linea (Slice 4a, `calcularDesgloseLineaNC`) — ANTES de
+    // escribir CUALQUIER registro: si una linea excede su cantidad
+    // disponible se lanza y la transaccion completa se revierte (header,
+    // det y kardex quedan sin persistir).
+    const desglosesPorLinea: Array<
+      ReturnType<typeof calcularDesgloseLineaNC> & { ventaDet: VentaDetRow }
+    > = []
+    for (const { ventaDet: ventaDetRow, cantidadDevolver } of lineasAProcesar) {
+      const sumQuery = buildSumCantidadYaAcreditadaQuery()
+      const sumResult = await tx.execute(sumQuery.sql, [ventaDetRow.id, empresa_id])
+      const sumRow =
+        sumResult.rows && sumResult.rows.length > 0
+          ? (sumResult.rows.item(0) as { total: string | number | null })
+          : { total: 0 }
+      const yaAcreditado = mapSumCantidadYaAcreditadaRow(sumRow)
+
+      const guard = validarTopeDobleCredito({
+        ventaDetId: ventaDetRow.id,
+        cantidadOriginalLinea: ventaDetRow.cantidad,
+        yaAcreditado,
+        cantidadDevolver,
+      })
+      if (!guard.valido) {
+        throw new Error(guard.motivo)
+      }
+
+      const desglose = calcularDesgloseLineaNC(
+        {
+          ventaDetId: ventaDetRow.id,
+          cantidadDevolver,
+          precioUnitarioUsd: ventaDetRow.precio_unitario_usd,
+          tipoImpuesto: (ventaDetRow.tipo_impuesto as TipoImpuestoLineaNc) || 'Exento',
+          impuestoPct: ventaDetRow.impuesto_pct,
+        },
+        venta.tasa
+      )
+      desglosesPorLinea.push({ ...desglose, ventaDet: ventaDetRow })
+    }
+
+    // Agregados de header (Design §2 "Header"): TOTAL preserva
+    // venta.total_usd/total_bs VERBATIM (incluyen cargos especiales y
+    // descuento comercial que NO viven en `ventas_det` — sumar solo las
+    // lineas los perderia y romperia la paridad con la factura original).
+    // PARCIAL usa la suma de las lineas seleccionadas — es la UNICA
+    // definicion posible, no existe "factura completa" de referencia.
+    const totalExentoUsd = desglosesPorLinea.reduce((acc, d) => acc.plus(d.exentoUsd), new Decimal(0))
+    const totalBaseUsd = desglosesPorLinea.reduce((acc, d) => acc.plus(d.baseUsd), new Decimal(0))
+    const totalIvaUsd = desglosesPorLinea.reduce((acc, d) => acc.plus(d.ivaUsd), new Decimal(0))
+    const totalLineasUsd = totalExentoUsd.plus(totalBaseUsd).plus(totalIvaUsd)
+    const totalUsdNc = tipoNc === 'TOTAL' ? new Decimal(venta.total_usd) : totalLineasUsd
+    const totalUsdNcStr = tipoNc === 'TOTAL' ? venta.total_usd : toStorageString(totalUsdNc)
+    const totalBsNcStr =
+      tipoNc === 'TOTAL' ? venta.total_bs : toStorageString(usdToBs(totalUsdNc, venta.tasa))
+
+    // 4. INSERT notas_credito (snapshot de la factura + desglose fiscal)
     await tx.execute(
-      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, tipo, motivo, tasa_historica, total_usd, total_bs, afecta_inventario, usuario_id, fecha, empresa_id, created_at, created_by, sesion_caja_id, liquidacion_modalidad, no_desembolso)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notas_credito (id, nro_ncr, venta_id, cliente_id, tipo, motivo, tasa_historica, total_exento_usd, total_base_usd, total_iva_usd, total_usd, total_bs, afecta_inventario, usuario_id, fecha, empresa_id, created_at, created_by, sesion_caja_id, liquidacion_modalidad, no_desembolso)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ncrId,
         nroNcr,
@@ -370,8 +509,11 @@ export async function crearNotaCredito(
         tipoNc,
         motivo,
         venta.tasa,
-        venta.total_usd,
-        venta.total_bs,
+        toStorageString(totalExentoUsd),
+        toStorageString(totalBaseUsd),
+        toStorageString(totalIvaUsd),
+        totalUsdNcStr,
+        totalBsNcStr,
         1,
         usuario_id,
         now,
@@ -384,151 +526,167 @@ export async function crearNotaCredito(
       ]
     )
 
-    // 4. Reversion de stock — leer ventas_det
-    const detalleResult = await tx.execute(
-      'SELECT producto_id, cantidad, lote_id FROM ventas_det WHERE venta_id = ?',
-      [venta_id]
-    )
+    // 5. Por cada linea seleccionada: notas_credito_det + reingreso de stock
+    //    (Design §3 paso 5/6). TOTAL incluye todas las lineas con su
+    //    cantidad completa (comportamiento previo preservado); PARCIAL solo
+    //    las seleccionadas con la cantidad PARCIAL pedida — nunca la
+    //    cantidad completa originalmente vendida.
+    for (const d of desglosesPorLinea) {
+      const ventaDetRow = d.ventaDet
+      const cantidadDevolver = d.cantidadDevolver.toNumber()
 
-    if (detalleResult.rows) {
-      for (let i = 0; i < detalleResult.rows.length; i++) {
-        const linea = detalleResult.rows.item(i) as {
-          producto_id: string
-          cantidad: string
-          lote_id: string | null
-        }
-        const cantidadVendida = parseFloat(linea.cantidad)
+      const prodResult = await tx.execute('SELECT tipo, stock, nombre FROM productos WHERE id = ?', [
+        ventaDetRow.producto_id,
+      ])
+      if (!prodResult.rows || prodResult.rows.length === 0) {
+        throw new Error('Producto no encontrado al revertir stock')
+      }
+      const producto = prodResult.rows.item(0) as { tipo: string; stock: string; nombre: string }
 
-        // Leer producto
-        const prodResult = await tx.execute(
-          'SELECT tipo, stock, nombre FROM productos WHERE id = ?',
-          [linea.producto_id]
-        )
-        if (!prodResult.rows || prodResult.rows.length === 0) {
-          throw new Error('Producto no encontrado al revertir stock')
-        }
-        const producto = prodResult.rows.item(0) as {
-          tipo: string
-          stock: string
-          nombre: string
-        }
+      await tx.execute(
+        `INSERT INTO notas_credito_det (id, empresa_id, nota_credito_id, producto_id, deposito_id, cantidad, precio_unitario_usd, tipo_impuesto, impuesto_pct, subtotal_usd, afecta_inventario, descripcion, lote_id, created_at, venta_det_id, subtotal_bs)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          uuidv4(),
+          empresa_id,
+          ncrId,
+          ventaDetRow.producto_id,
+          depositoId,
+          d.cantidadDevolver.toFixed(3),
+          toStorageString(ventaDetRow.precio_unitario_usd),
+          ventaDetRow.tipo_impuesto || 'Exento',
+          toStorageString(ventaDetRow.impuesto_pct || 0),
+          toStorageString(d.subtotalUsd),
+          producto.tipo === 'P' ? 1 : 0,
+          producto.nombre,
+          ventaDetRow.lote_id ?? null,
+          now,
+          ventaDetRow.id,
+          toStorageString(d.subtotalBs),
+        ]
+      )
 
-        if (producto.tipo === 'P') {
-          // PRODUCTO: reintegrar stock directo
-          const stockActual = parseFloat(producto.stock)
-          const stockNuevo = stockActual + cantidadVendida
-          const movId = uuidv4()
+      if (producto.tipo === 'P') {
+        // PRODUCTO: reintegrar stock directo
+        const stockActual = parseFloat(producto.stock)
+        const stockNuevo = stockActual + cantidadDevolver
+        const movId = uuidv4()
 
-          await tx.execute(
-            `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
-             VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              movId,
-              linea.producto_id,
-              depositoId,
-              cantidadVendida.toFixed(3),
-              stockActual.toFixed(3),
-              stockNuevo.toFixed(3),
-              linea.lote_id ?? null,
-              ncrId,
-              `NCR-${nroNcr}`,
-              `${nroNcr} - Reintegro ${producto.nombre}`,
-              usuario_id,
-              now,
-              empresa_id,
-              now,
-            ]
-          )
-
-          await upsertStockDeposito(tx, {
-            empresa_id,
-            producto_id: linea.producto_id,
-            deposito_id: depositoId,
-            delta: new Decimal(cantidadVendida),
+        await tx.execute(
+          `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, lote_id, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+           VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            movId,
+            ventaDetRow.producto_id,
+            depositoId,
+            cantidadDevolver.toFixed(3),
+            stockActual.toFixed(3),
+            stockNuevo.toFixed(3),
+            ventaDetRow.lote_id ?? null,
+            ncrId,
+            `NCR-${nroNcr}`,
+            `${nroNcr} - Reintegro ${producto.nombre}`,
             usuario_id,
             now,
-            movimientoInventarioId: movId,
-          })
+            empresa_id,
+            now,
+          ]
+        )
 
-          // Si la linea tenia lote, restaurar cantidad en el lote
-          if (linea.lote_id) {
-            const loteResult = await tx.execute(
-              'SELECT cantidad_actual, status FROM lotes WHERE id = ?',
-              [linea.lote_id]
-            )
-            if (loteResult.rows && loteResult.rows.length > 0) {
-              const loteRow = loteResult.rows.item(0) as { cantidad_actual: string; status: string }
-              const nuevaCantLote = parseFloat(loteRow.cantidad_actual) + cantidadVendida
-              await tx.execute(
-                'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
-                [
-                  nuevaCantLote.toFixed(3),
-                  'ACTIVO',
-                  now,
-                  linea.lote_id,
-                ]
-              )
-            }
-          }
-        } else if (producto.tipo === 'S') {
-          // SERVICIO: reintegrar ingredientes via recetas
-          const recetasResult = await tx.execute(
-            'SELECT r.producto_id, r.cantidad, p.stock, p.nombre FROM recetas r JOIN productos p ON r.producto_id = p.id WHERE r.servicio_id = ?',
-            [linea.producto_id]
+        await upsertStockDeposito(tx, {
+          empresa_id,
+          producto_id: ventaDetRow.producto_id,
+          deposito_id: depositoId,
+          delta: new Decimal(cantidadDevolver),
+          usuario_id,
+          now,
+          movimientoInventarioId: movId,
+        })
+
+        // Si la linea tenia lote, restaurar cantidad en el lote
+        if (ventaDetRow.lote_id) {
+          const loteResult = await tx.execute(
+            'SELECT cantidad_actual, status FROM lotes WHERE id = ?',
+            [ventaDetRow.lote_id]
           )
+          if (loteResult.rows && loteResult.rows.length > 0) {
+            const loteRow = loteResult.rows.item(0) as { cantidad_actual: string; status: string }
+            const nuevaCantLote = parseFloat(loteRow.cantidad_actual) + cantidadDevolver
+            await tx.execute(
+              'UPDATE lotes SET cantidad_actual = ?, status = ?, updated_at = ? WHERE id = ?',
+              [nuevaCantLote.toFixed(3), 'ACTIVO', now, ventaDetRow.lote_id]
+            )
+          }
+        }
+      } else if (producto.tipo === 'S') {
+        // SERVICIO: reintegrar ingredientes via recetas, escalado a la
+        // cantidad PARCIAL devuelta (no la cantidad completa vendida).
+        const recetasResult = await tx.execute(
+          'SELECT r.producto_id, r.cantidad, p.stock, p.nombre FROM recetas r JOIN productos p ON r.producto_id = p.id WHERE r.servicio_id = ?',
+          [ventaDetRow.producto_id]
+        )
 
-          if (recetasResult.rows) {
-            for (let j = 0; j < recetasResult.rows.length; j++) {
-              const ingrediente = recetasResult.rows.item(j) as {
-                producto_id: string
-                cantidad: string
-                stock: string
-                nombre: string
-              }
+        if (recetasResult.rows) {
+          for (let j = 0; j < recetasResult.rows.length; j++) {
+            const ingrediente = recetasResult.rows.item(j) as {
+              producto_id: string
+              cantidad: string
+              stock: string
+              nombre: string
+            }
 
-              const cantidadConsumida = parseFloat(ingrediente.cantidad) * cantidadVendida
-              const stockIngrediente = parseFloat(ingrediente.stock)
-              const stockNuevoIng = stockIngrediente + cantidadConsumida
-              const movIngId = uuidv4()
+            const cantidadConsumida = parseFloat(ingrediente.cantidad) * cantidadDevolver
+            const stockIngrediente = parseFloat(ingrediente.stock)
+            const stockNuevoIng = stockIngrediente + cantidadConsumida
+            const movIngId = uuidv4()
 
-              await tx.execute(
-                `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
-                 VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                  movIngId,
-                  ingrediente.producto_id,
-                  depositoId,
-                  cantidadConsumida.toFixed(3),
-                  stockIngrediente.toFixed(3),
-                  stockNuevoIng.toFixed(3),
-                  ncrId,
-                  `NCR-${nroNcr}`,
-                  `${nroNcr} - Reintegro ingrediente "${ingrediente.nombre}" (servicio "${producto.nombre}")`,
-                  usuario_id,
-                  now,
-                  empresa_id,
-                  now,
-                ]
-              )
-
-              await upsertStockDeposito(tx, {
-                empresa_id,
-                producto_id: ingrediente.producto_id,
-                deposito_id: depositoId,
-                delta: new Decimal(cantidadConsumida),
+            await tx.execute(
+              `INSERT INTO movimientos_inventario (id, producto_id, deposito_id, tipo, origen, cantidad, stock_anterior, stock_nuevo, doc_origen_id, doc_origen_ref, motivo, usuario_id, fecha, empresa_id, created_at)
+               VALUES (?, ?, ?, 'E', 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                movIngId,
+                ingrediente.producto_id,
+                depositoId,
+                cantidadConsumida.toFixed(3),
+                stockIngrediente.toFixed(3),
+                stockNuevoIng.toFixed(3),
+                ncrId,
+                `NCR-${nroNcr}`,
+                `${nroNcr} - Reintegro ingrediente "${ingrediente.nombre}" (servicio "${producto.nombre}")`,
                 usuario_id,
                 now,
-                movimientoInventarioId: movIngId,
-              })
-            }
+                empresa_id,
+                now,
+              ]
+            )
+
+            await upsertStockDeposito(tx, {
+              empresa_id,
+              producto_id: ingrediente.producto_id,
+              deposito_id: depositoId,
+              delta: new Decimal(cantidadConsumida),
+              usuario_id,
+              now,
+              movimientoInventarioId: movIngId,
+            })
           }
         }
       }
     }
 
-    // 5. Ajuste de saldo del cliente — solo si hay deuda pendiente
-    const saldoPend = new Decimal(venta.saldo_pend_usd)
-    if (saldoPend.gt('0.01')) {
+    // 6. Step A (Design §3 paso 7): aplicar el monto de esta NC contra la
+    //    deuda YA pendiente de la factura (`venta.saldo_pend_usd`), topeado
+    //    por ambos limites — no se puede aplicar mas de lo pendiente NI mas
+    //    de lo que vale esta NC. Para TOTAL, montoAplicadoAPendiente ==
+    //    saldoPendVenta SIEMPRE (total_usd >= saldo_pend_usd es invariante
+    //    de `ventas`) — preserva el comportamiento exacto pre-Slice-4b. Para
+    //    PARCIAL escala proporcionalmente al valor de las lineas
+    //    seleccionadas.
+    const saldoPendVenta = new Decimal(venta.saldo_pend_usd)
+    const montoAplicadoAPendiente = Decimal.min(saldoPendVenta, totalUsdNc)
+    const nuevoSaldoPendVenta = Decimal.max(new Decimal(0), saldoPendVenta.minus(totalUsdNc))
+
+    if (montoAplicadoAPendiente.gt('0.01')) {
       const clienteResult = await tx.execute('SELECT saldo_actual FROM clientes WHERE id = ?', [
         venta.cliente_id,
       ])
@@ -538,7 +696,7 @@ export async function crearNotaCredito(
       const saldoActual = new Decimal(
         (clienteResult.rows.item(0) as { saldo_actual: string }).saldo_actual
       )
-      const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(saldoPend))
+      const saldoNuevo = Decimal.max(new Decimal(0), saldoActual.minus(montoAplicadoAPendiente))
 
       const movCuentaId = uuidv4()
       await tx.execute(
@@ -548,7 +706,7 @@ export async function crearNotaCredito(
           movCuentaId,
           venta.cliente_id,
           nroNcr,
-          toStorageString(saldoPend),
+          toStorageString(montoAplicadoAPendiente),
           toStorageString(saldoActual),
           toStorageString(saldoNuevo),
           `Anulacion de factura ${venta.nro_factura}`,
@@ -566,7 +724,7 @@ export async function crearNotaCredito(
       ])
     }
 
-    // 5b. Si la factura tenía un diferencial cambiario aplicado, reversarlo también
+    // 6b. Si la factura tenía un diferencial cambiario aplicado, reversarlo también
     try {
       await reversarDiferencialEnTx(tx, {
         ventaId: venta_id,
@@ -579,12 +737,17 @@ export async function crearNotaCredito(
       // DIFE reversal opcional — no bloquea la anulación
     }
 
-    // 5c. Regla de Oro (Design §4, obs #2804): reversar los pagos originales
+    // 6c. Regla de Oro (Design §4, obs #2804): reversar los pagos originales
     //     de la venta y, SOLO si aplica la condicion de ambito+sesion, dejar
     //     un egreso por metodo en `movimientos_metodo_cobro` (origen 'NCR')
     //     para que el cuadre de la sesion activa refleje la salida real de
     //     efectivo/tarjeta — sin tocar `use-cuadre.ts`, que ya suma cualquier
-    //     EGRESO no excluido (aditivo, cero cambios de formula).
+    //     EGRESO no excluido (aditivo, cero cambios de formula). SOLO para
+    //     tipo='TOTAL' (Design §3 paso 8: "PARCIAL nunca reversa pagos,
+    //     siguen siendo validos por el saldo remanente" — el unico llamador
+    //     de PARCIAL hoy fuerza entryPoint TRADICIONAL, que nunca dispara
+    //     la Regla de Oro; EFECTIVO_REAL+PARCIAL vía POS queda deferido a
+    //     Slice 5a, cuando exista ese entry point).
     if (tipoNc === 'TOTAL') {
       const pagosResult = await tx.execute(
         'SELECT id, metodo_cobro_id, monto FROM pagos WHERE venta_id = ? AND is_reversed = 0',
@@ -631,19 +794,15 @@ export async function crearNotaCredito(
       )
     }
 
-    // 5d. Step B (Design §3 paso 9): liquidar el REMANENTE ya cobrado —
-    //     total_usd menos lo que Step A (paso 5) ya condono de la deuda
-    //     pendiente — segun la modalidad elegida. Solo aplica si de verdad
-    //     hay algo que devolver (remanente > 0); si la factura nunca se
-    //     cobro (saldoPend == total_usd), Step A ya cubrio el 100% como
-    //     condonacion de deuda y no hay nada que liquidar aqui.
-    //     EFECTIVO_REAL no entra a este switch: su liquidacion ES el egreso
-    //     condicional de la Regla de Oro (paso 5c/10), no un movimiento de
-    //     cuenta adicional.
-    const remanenteALiquidar = Decimal.max(
-      new Decimal(0),
-      new Decimal(venta.total_usd).minus(saldoPend)
-    )
+    // 7. Step B (Design §3 paso 9): liquidar el REMANENTE ya cobrado — el
+    //     monto de ESTA NC (`totalUsdNc`) menos lo que Step A ya aplico a
+    //     la deuda pendiente (`montoAplicadoAPendiente`) — segun la
+    //     modalidad elegida. Para TOTAL es identico a la formula pre-4b
+    //     (montoAplicadoAPendiente === saldoPendVenta); para PARCIAL queda
+    //     escopeado a las lineas seleccionadas. EFECTIVO_REAL no entra a
+    //     este switch: su liquidacion ES el egreso condicional de la Regla
+    //     de Oro (paso 6c/10), no un movimiento de cuenta adicional.
+    const remanenteALiquidar = totalUsdNc.minus(montoAplicadoAPendiente)
 
     if (remanenteALiquidar.gt('0.01')) {
       if (modalidad === 'SALDO_FAVOR' || modalidad === 'COMPENSACION_VENTA') {
@@ -743,13 +902,24 @@ export async function crearNotaCredito(
       }
     }
 
-    // 6. Marcar factura como anulada
-    await tx.execute("UPDATE ventas SET status = 'ANULADA', saldo_pend_usd = ? WHERE id = ?", [
-      '0.00',
-      venta_id,
-    ])
+    // 8. Actualizar saldo_pend_usd de la factura. TOTAL ademas marca
+    //    status='ANULADA' (unico caso permitido por el trigger
+    //    prevent_venta_mutation) — comportamiento identico a pre-Slice-4b.
+    //    PARCIAL nunca cambia status: la factura sigue ACTIVA con su saldo
+    //    reducido (Design §3 paso 7).
+    if (tipoNc === 'TOTAL') {
+      await tx.execute("UPDATE ventas SET status = 'ANULADA', saldo_pend_usd = ? WHERE id = ?", [
+        '0.00',
+        venta_id,
+      ])
+    } else {
+      await tx.execute('UPDATE ventas SET saldo_pend_usd = ? WHERE id = ?', [
+        toStorageString(nuevoSaldoPendVenta),
+        venta_id,
+      ])
+    }
 
-    // 7. Generar asientos contables NCR
+    // 9. Generar asientos contables NCR
     try {
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
       await generarAsientosNCR(tx, {
@@ -758,7 +928,7 @@ export async function crearNotaCredito(
         nroNcr,
         ventaId: venta_id,
         totalUsd: new Decimal(venta.total_usd).toNumber(),
-        afectaCxC: saldoPend.gt('0.01'),
+        afectaCxC: saldoPendVenta.gt('0.01'),
         banco_empresa_id: null,
         cuentas,
         usuarioId: usuario_id,
