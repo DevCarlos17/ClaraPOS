@@ -5,6 +5,8 @@ import { formatDateTime } from '@/lib/format'
 import { useDetalleFactura, crearNotaCredito } from '../hooks/use-notas-credito'
 import type { FacturaParaAnular } from '../hooks/use-notas-credito'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
+import { NativeSelect } from '@/components/ui/native-select'
 import { toast } from 'sonner'
 
 interface CrearNcrModalProps {
@@ -18,6 +20,16 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
   const [motivo, setMotivo] = useState('Anulacion total de factura')
   const [loading, setLoading] = useState(false)
   const { user } = useCurrentUser()
+  const { depositos: depositosActivos } = useDepositosVentaActivos()
+
+  // Correccion (obs #2835, regla PIN definitiva): la pantalla Tradicional
+  // dedicada NUNCA pide PIN — ya esta protegida a nivel de ACCESO (solo la
+  // ven usuarios con permiso para entrar a este modulo). Pedir PIN encima
+  // seria friccion redundante. El admin elige el deposito de reingreso
+  // LIBREMENTE, sin autorizacion previa (ver notas-credito-pin-gating.ts,
+  // que se conserva intacto para el entry point POS de Slice 5a-2, donde el
+  // PIN SI aplica — por falta de permiso, no por estar en este modulo).
+  const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
 
   const { detalles, pagos, isLoading: loadingDetalle } = useDetalleFactura(
     isOpen ? factura?.id ?? null : null
@@ -27,6 +39,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     if (isOpen) {
       dialogRef.current?.showModal()
       setMotivo('Anulacion total de factura')
+      setDepositoElegidoId(null)
     } else {
       dialogRef.current?.close()
     }
@@ -36,7 +49,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     if (e.target === dialogRef.current) onClose()
   }
 
-  async function handleConfirm() {
+  async function submitAnulacion() {
     if (!factura || !user) return
 
     setLoading(true)
@@ -46,6 +59,22 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         motivo,
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
+        // Este modal vive en el modulo Tradicional dedicado (notas-credito-page.tsx),
+        // no en el POS express — Regla de Oro (obs #2804): nunca vincula la sesion
+        // activa ni toca el cajon fisico sin un egreso administrativo explicito.
+        entryPoint: 'TRADICIONAL',
+        // AJUSTE_CXC (default del CHECK de `migrations/0091_notas_credito_schema.sql`)
+        // hasta que Slice 5b agregue el selector de modalidad a este modal —
+        // liquida el remanente cancelando deuda existente del cliente, cero
+        // impacto en caja, sin requerir eleccion del usuario todavia.
+        modalidad: 'AJUSTE_CXC',
+        // Slice 5a-2a (obs #2840, cierra el WARNING de Slice 5a): la
+        // eleccion del selector libre AHORA SI se threadea —
+        // `crearNotaCredito` valida que sea un deposito activo de la
+        // empresa antes de usarla. Si el usuario no elige ninguno
+        // (`depositoElegidoId === null`, sin preseleccion automatica), cae
+        // al riel automatico existente, exactamente como antes.
+        depositoReingresoId: depositoElegidoId ?? undefined,
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()
@@ -204,6 +233,28 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
               </div>
             )}
 
+            {/* Deposito de reingreso (deposito-inactivo-guard delta: "Reingreso
+                con Eleccion Explicita (Tradicional)"). Correccion obs #2835:
+                sin PIN — el selector esta LIBRE desde el inicio, sin
+                preseleccion automatica silenciosa (spec literal). */}
+            <div className="rounded-lg border p-3">
+              <p className="text-xs font-semibold text-muted-foreground mb-2">
+                Deposito de reingreso de stock
+              </p>
+              <NativeSelect
+                value={depositoElegidoId ?? ''}
+                onChange={(e) => setDepositoElegidoId(e.target.value || null)}
+                className="text-sm"
+              >
+                <option value="">Seleccionar deposito...</option>
+                {depositosActivos.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.nombre}
+                  </option>
+                ))}
+              </NativeSelect>
+            </div>
+
             {/* Motivo */}
             <div>
               <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
@@ -241,7 +292,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
               Cancelar
             </button>
             <button
-              onClick={handleConfirm}
+              onClick={() => void submitAnulacion()}
               disabled={loading || !motivo.trim()}
               className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
             >
