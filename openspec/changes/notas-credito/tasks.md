@@ -150,6 +150,34 @@ Chain strategy: pending
 
 **Deferred to Slice 5a-2b (next, chained off this branch)**: PIN B — POS deposito override (second `SupervisorPinDialog`, `NativeSelect` bound to `useDepositosVentaActivos`, wiring `resolverDepositoOverride` into the `depositoReingresoId` param this slice already added).
 
+## Slice 5a-2b — PIN B, POS deposito override (FINAL slice of Change 1, obs #2842/#2843 split)
+
+### Review Workload Forecast
+
+| Field | Value |
+|---|---|
+| Estimated changed lines | ~150–200 |
+| Actual changed lines | **215** (204 ins/11 del, single commit `d35b1e1`) — within budget |
+| 400-line budget risk | Low (realized) |
+| Chained PRs | Yes — chained off `feat/notas-credito-s5a2-pos-entry` (5a-2a) as `feat/notas-credito-s5a2b-pin-deposito` |
+
+- [x] 5a-2b.1 RED+GREEN (Strict TDD): second `SupervisorPinDialog` instance in `NotaCreditoPosModal` (`nota-credito-pos-modal.tsx`) — PIN B, gates the deposito-de-reingreso override. SEPARATE state (`showPinDeposito`/`pinDepositoAutorizado`) from PIN A's (`showPin`), distinct `titulo` ("Cambiar deposito de reingreso" vs "Emision de Nota de Credito"). By default (PIN B not authorized) the deposito section shows "Automatico (riel de deposito principal)" + a "Cambiar deposito" button; no selector rendered. [Spec notas-credito-pos "Modelo de doble PIN"; obs #2835 Opcion B deliberate friction]
+- [x] 5a-2b.2 RED+GREEN: once PIN B authorizes, a `NativeSelect` bound to `useDepositosVentaActivos()` (reused unchanged — same hook/component as the Tradicional selector, filtered `empresa_id` + `is_active=1` + `permite_venta=1`) replaces the "Automatico" text. The chosen value flows through `resolverDepositoOverride` (from `notas-credito-pin-gating.ts`, reused unchanged — first real consumer of this pure function since it was written in Slice 5a) into `crearNotaCredito`'s `depositoReingresoId` param (accepted + validated since 5a-2a). No override authorized/chosen → `undefined` → existing rail unchanged.
+- [x] 5a-2b.3 RED+GREEN: PIN A and PIN B proven independent via a dedicated test — no emission permission means confirming still requires PIN A even after PIN B already authorized the deposito choice; both PINs can be required in the same emission, sequentially, never merged.
+- [x] 5a-2b.4 Verify: `yarn test:run` → **914/914 passing, 84 test files** (909 prior + 5 new, 0 regressions). `yarn type-check:test` → clean.
+
+**TDD Cycle Evidence** (RED confirmed via real failing test output before GREEN):
+
+| Test | RED | GREEN | REFACTOR |
+|---|---|---|---|
+| Selector locked by default (text + button, no combobox) | Failed — button/text not found | Passes after UI block added | None needed |
+| "Cambiar deposito" opens a SEPARATE PIN dialog from PIN A | Failed — button not found | Passes after 2nd `SupervisorPinDialog` wired | None needed |
+| PIN B authorized → selector appears → chosen value reaches `depositoReingresoId` | Failed — no selector, no param | Passes after `resolverDepositoOverride` wired into `emitirNc` | None needed |
+| PIN B authorized, no choice yet → still `undefined` (rail preserved) | Failed (state didn't exist) | Passes — `resolverDepositoOverride` returns `null` until a choice is made | None needed |
+| PIN A and PIN B independent (both required across the same emission) | Failed twice — mock's "Autorizar" button didn't also call `onClose`, leaving a stale dialog open in the assertion; fixed the **test mock**, not the component, to match `SupervisorPinDialog`'s real `onAuthorized` → `onClose` order | Passes after mock fix | None needed |
+
+**Change 1 (`notas-credito`) is now FEATURE-COMPLETE.** Slices 1–5a-2b delivered: fiscal codes/kardex/CxC (1–4b), Tradicional dedicated screen with free deposito selector and no PIN (5a, corrected by obs #2835), `depositoReingresoId` threaded into both callers (5a-2a), POS-express entry point with session-scoped invoice picker + PIN A emission-by-lack-of-permission (5a-2a), and PIN B deposito override with `useDepositosVentaActivos`/`NativeSelect` (5a-2b, this slice). Remaining for Change 2 (separate, not started): printable document (Slice 7), reporting/Z (Slice 8), refund-tesoreria modalidad wiring, plus deferred debts tracked in obs #2812/#2820/#2823/#2845.
+
 ## Slice 5b — PARCIAL line-selection UI (POS + Tradicional) (Spec notas-credito-emision)
 
 ### Review Workload Forecast
