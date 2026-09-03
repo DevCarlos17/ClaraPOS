@@ -5,24 +5,42 @@ import { crearNotaCredito } from '../../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../../hooks/use-facturas-sesion-activa'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions } from '@/core/hooks/use-permissions'
+import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
 import { toast } from 'sonner'
 import type { FacturaParaAnular } from '../../hooks/use-notas-credito'
 import type { SesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
+import type { Deposito } from '@/features/inventario/hooks/use-depositos'
 
-// PIN A (Spec notas-credito-pos, obs #2835): mockeamos `SupervisorPinDialog`
-// para detectar sin ambiguedad si el componente lo abre — mismo patron que
-// `crear-ncr-modal.test.tsx`.
+// PIN A (emision) y PIN B (override de deposito, Slice 5a-2b) son DOS
+// autorizaciones separadas (obs #2835/#2842) — mockeamos `SupervisorPinDialog`
+// mostrando su `titulo` para poder distinguir CUAL de las dos instancias
+// esta abierta en cada assertion (mismo patron que `crear-ncr-modal.test.tsx`,
+// extendido con el titulo porque aqui coexisten dos instancias).
 vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
   SupervisorPinDialog: ({
     isOpen,
+    titulo,
     onAuthorized,
+    onClose,
   }: {
     isOpen: boolean
+    titulo?: string
     onAuthorized: (id: string) => void
+    onClose: () => void
   }) =>
     isOpen ? (
       <div data-testid="mock-pin-dialog">
-        <button onClick={() => onAuthorized('supervisor-1')}>Autorizar</button>
+        <p>{titulo}</p>
+        <button
+          onClick={() => {
+            // Mismo orden que el `SupervisorPinDialog` real: autoriza y
+            // luego cierra el dialogo (ver `handleVerificar`).
+            onAuthorized('supervisor-1')
+            onClose()
+          }}
+        >
+          Autorizar
+        </button>
       </div>
     ) : null,
 }))
@@ -34,13 +52,32 @@ vi.mock('@/core/hooks/use-permissions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/hooks/use-permissions')>()
   return { ...actual, usePermissions: vi.fn() }
 })
+vi.mock('@/features/inventario/hooks/use-depositos', () => ({ useDepositosVentaActivos: vi.fn() }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
 const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUsePermissions = vi.mocked(usePermissions)
+const mockedUseDepositosVentaActivos = vi.mocked(useDepositosVentaActivos)
 const mockedToastSuccess = vi.mocked(toast.success)
+
+function depositoActivo(overrides: Partial<Deposito> = {}): Deposito {
+  return {
+    id: 'dep-1',
+    empresa_id: 'emp-1',
+    nombre: 'Deposito Secundario',
+    direccion: null,
+    es_principal: 0,
+    permite_venta: 1,
+    is_active: 1,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-01T00:00:00Z',
+    created_by: null,
+    updated_by: null,
+    ...overrides,
+  }
+}
 
 const sesionActiva: SesionCaja = {
   id: 'sesion-1',
@@ -97,6 +134,7 @@ function setup(opts: { hasPermission: boolean }) {
     loading: false,
   })
   mockedCrearNotaCredito.mockResolvedValue({ ncrId: 'ncr-1', nroNcr: 'NCR-000001' })
+  mockedUseDepositosVentaActivos.mockReturnValue({ depositos: [depositoActivo()], isLoading: false })
 }
 
 async function seleccionarPrimeraFactura() {
@@ -181,7 +219,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     })
   })
 
-  it('NUNCA pasa depositoReingresoId (POS-express usa el riel automatico en este slice — override es PIN B, Slice 5a-2b)', async () => {
+  it('por defecto (sin autorizar PIN B) NO pasa depositoReingresoId — usa el riel automatico', async () => {
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
@@ -190,5 +228,90 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBeUndefined()
+  })
+})
+
+describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPARADO de PIN A)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('el selector de deposito permanece bloqueado por defecto: solo muestra el texto "riel automatico" y un boton "Cambiar deposito"', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '' })).toBeInTheDocument() // solo el combobox de modalidad
+    expect(screen.queryByText('Deposito Secundario')).not.toBeInTheDocument()
+  })
+
+  it('click en "Cambiar deposito" abre un PIN de supervisor SEPARADO del PIN de emision (PIN A), incluso con permiso de emision', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+
+    expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
+    expect(screen.getByText(/Cambiar deposito de reingreso/i)).toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('tras autorizar PIN B: aparece el selector de deposito y la eleccion del usuario se envia como depositoReingresoId', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+
+    const selects = screen.getAllByRole('combobox')
+    const depositoSelect = selects[selects.length - 1]
+    await user.selectOptions(depositoSelect, 'dep-1')
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBe('dep-1')
+  })
+
+  it('PIN B autorizado pero sin deposito elegido todavia: sigue sin enviar depositoReingresoId (riel automatico hasta que el usuario elija)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBeUndefined()
+  })
+
+  it('PIN A y PIN B son independientes: sin permiso de emision, autorizar PIN B para el deposito NO exime del PIN A al confirmar', async () => {
+    setup({ hasPermission: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+
+    // Autoriza PIN B (deposito) primero.
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    expect(screen.getByText(/Cambiar deposito de reingreso/i)).toBeInTheDocument()
+    await user.click(screen.getByText('Autorizar'))
+    expect(screen.queryByTestId('mock-pin-dialog')).not.toBeInTheDocument()
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[selects.length - 1], 'dep-1')
+
+    // Confirmar todavia exige PIN A (emision) — es una autorizacion separada.
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+    expect(screen.getByText(/Emision de Nota de Credito/i)).toBeInTheDocument()
+
+    await user.click(screen.getByText('Autorizar'))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBe('dep-1')
   })
 })

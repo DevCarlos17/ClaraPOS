@@ -4,8 +4,10 @@ import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { crearNotaCredito, type LiquidacionModalidad } from '../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../hooks/use-facturas-sesion-activa'
+import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { NativeSelect } from '@/components/ui/native-select'
 import { toast } from 'sonner'
@@ -38,22 +40,33 @@ const MODALIDADES_POS: { value: LiquidacionModalidad; label: string }[] = [
  * `pos-terminal.tsx`, para no arriesgar el flujo de venta.
  *
  * Alcance de este slice: NC tipo TOTAL unicamente (sin seleccion de lineas
- * — esa UI es un slice futuro separado, obs #2842). Solo PIN A (emision
- * por-falta-de-permiso); el override de deposito (PIN B) es Slice 5a-2b —
- * este modal NUNCA pasa `depositoReingresoId`, siempre usa el riel
- * automatico interno de `crearNotaCredito`.
+ * — esa UI es un slice futuro separado, obs #2842).
+ *
+ * DOS autorizaciones SEPARADAS (Slice 5a-2b, obs #2835/#2842/#2802):
+ * - PIN A (emision, por-falta-de-permiso): decide si el usuario actual
+ *   puede emitir la NC sin PIN.
+ * - PIN B (override de deposito, friccion deliberada — Opcion B): por
+ *   defecto el modal usa el riel automatico interno de `crearNotaCredito`
+ *   (sin `depositoReingresoId`). Cambiar el deposito de reingreso requiere
+ *   un SEGUNDO PIN de supervisor, independiente del PIN A — un usuario
+ *   puede enfrentar ninguno, uno o ambos PINs en la misma emision.
  */
 export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
   const { facturas, isLoading } = useFacturasSesionActiva()
+  const { depositos: depositosActivos } = useDepositosVentaActivos()
 
   const [facturaId, setFacturaId] = useState<string | null>(null)
   const [modalidad, setModalidad] = useState<LiquidacionModalidad>('EFECTIVO_REAL')
   const [motivo, setMotivo] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPin, setShowPin] = useState(false)
+  // PIN B (override de deposito, Slice 5a-2b) — SEPARADO de `showPin`/PIN A.
+  const [showPinDeposito, setShowPinDeposito] = useState(false)
+  const [pinDepositoAutorizado, setPinDepositoAutorizado] = useState(false)
+  const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
 
   useEffect(() => {
     if (isOpen) {
@@ -64,6 +77,9 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setModalidad('EFECTIVO_REAL')
       setMotivo('')
       setShowPin(false)
+      setShowPinDeposito(false)
+      setPinDepositoAutorizado(false)
+      setDepositoElegidoId(null)
     }
   }, [isOpen])
 
@@ -89,8 +105,17 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         entryPoint: 'POS',
         sesionCajaActivaId: sesion.id,
         modalidad,
-        // Sin depositoReingresoId: el POS-express usa el riel automatico en
-        // este slice. El override explicito (PIN B) llega en Slice 5a-2b.
+        // PIN B (Slice 5a-2b): `resolverDepositoOverride` retorna `null`
+        // salvo que el segundo PIN ya haya autorizado el override Y el
+        // usuario ya haya elegido un deposito — en cuyo caso retorna ese id.
+        // `null` se convierte a `undefined` para que `crearNotaCredito`
+        // caiga en su riel automatico existente (mismo contrato que el
+        // selector Tradicional en `crear-ncr-modal.tsx`).
+        depositoReingresoId:
+          resolverDepositoOverride({
+            pinOverrideAutorizado: pinDepositoAutorizado,
+            depositoElegidoId,
+          }) ?? undefined,
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()
@@ -215,6 +240,39 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                 )}
               </div>
 
+              <div className="rounded-lg border p-3">
+                <p className="text-xs font-semibold text-muted-foreground mb-2">
+                  Deposito de reingreso de stock
+                </p>
+                {!pinDepositoAutorizado ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-sm text-muted-foreground">
+                      Automatico (riel de deposito principal)
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setShowPinDeposito(true)}
+                      className="text-xs text-primary hover:underline shrink-0"
+                    >
+                      Cambiar deposito
+                    </button>
+                  </div>
+                ) : (
+                  <NativeSelect
+                    value={depositoElegidoId ?? ''}
+                    onChange={(e) => setDepositoElegidoId(e.target.value || null)}
+                    className="text-sm"
+                  >
+                    <option value="">Seleccionar deposito...</option>
+                    {depositosActivos.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.nombre}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                )}
+              </div>
+
               <div>
                 <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
                 <input
@@ -265,6 +323,18 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         onAuthorized={() => void emitirNc()}
         titulo="Emision de Nota de Credito"
         mensaje="No tienes permiso para emitir notas de credito. Ingresa el PIN de un supervisor autorizado."
+        requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
+      />
+
+      {/* PIN B (Slice 5a-2b, obs #2835/#2802) — SEPARADO del PIN A de
+          arriba: autoriza unicamente el cambio del deposito de reingreso,
+          nunca la emision de la NC en si. */}
+      <SupervisorPinDialog
+        isOpen={showPinDeposito}
+        onClose={() => setShowPinDeposito(false)}
+        onAuthorized={() => setPinDepositoAutorizado(true)}
+        titulo="Cambiar deposito de reingreso"
+        mensaje="Cambiar el deposito de reingreso requiere autorizacion de un supervisor."
         requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
       />
     </>
