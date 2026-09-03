@@ -1,10 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
-import { X, Warning } from '@phosphor-icons/react'
+import { X, Warning, LockSimple } from '@phosphor-icons/react'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { useDetalleFactura, crearNotaCredito } from '../hooks/use-notas-credito'
 import type { FacturaParaAnular } from '../hooks/use-notas-credito'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
+import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
+import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
+import { NativeSelect } from '@/components/ui/native-select'
+import { requierePinEmisionNc, puedeElegirDepositoExplicito } from '../utils/notas-credito-pin-gating'
 import { toast } from 'sonner'
 
 interface CrearNcrModalProps {
@@ -18,6 +23,19 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
   const [motivo, setMotivo] = useState('Anulacion total de factura')
   const [loading, setLoading] = useState(false)
   const { user } = useCurrentUser()
+  const { hasPermission } = usePermissions()
+  const { depositos: depositosActivos } = useDepositosVentaActivos()
+
+  // Doble PIN (Slice 5a, Spec notas-credito-pos "Modelo de doble PIN", obs
+  // #2802 decision 3) — DOS autorizaciones SEPARADAS, nunca fusionadas:
+  // PIN A gatea la EMISION de la NC (permiso ventas.nota_credito decide);
+  // PIN B gatea unicamente el override explicito del deposito de reingreso.
+  const [showPinEmision, setShowPinEmision] = useState(false)
+  const [showPinOverrideDeposito, setShowPinOverrideDeposito] = useState(false)
+  const [pinOverrideAutorizado, setPinOverrideAutorizado] = useState(false)
+  const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
+
+  const selectorDepositoDesbloqueado = puedeElegirDepositoExplicito(pinOverrideAutorizado)
 
   const { detalles, pagos, isLoading: loadingDetalle } = useDetalleFactura(
     isOpen ? factura?.id ?? null : null
@@ -27,6 +45,8 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     if (isOpen) {
       dialogRef.current?.showModal()
       setMotivo('Anulacion total de factura')
+      setPinOverrideAutorizado(false)
+      setDepositoElegidoId(null)
     } else {
       dialogRef.current?.close()
     }
@@ -36,7 +56,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     if (e.target === dialogRef.current) onClose()
   }
 
-  async function handleConfirm() {
+  async function submitAnulacion() {
     if (!factura || !user) return
 
     setLoading(true)
@@ -55,6 +75,15 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         // liquida el remanente cancelando deuda existente del cliente, cero
         // impacto en caja, sin requerir eleccion del usuario todavia.
         modalidad: 'AJUSTE_CXC',
+        // NOTA (Slice 5a, obs #2831 — division explicita de slice 5): el
+        // deposito elegido explicitamente (`depositoElegidoId`, solo
+        // disponible cuando `selectorDepositoDesbloqueado` es true) todavia
+        // NO se threadea aqui. `CrearNotaCreditoParams.depositoReingresoId`
+        // (Design §Interfaces) se agrega recien en Slice 5a-2, cuando el
+        // MISMO parametro tambien sirve al entry point POS. Hasta entonces
+        // el backend sigue resolviendo el deposito por riel automatico
+        // (`resolveDepositoReingresoNcr`) sin importar la eleccion visible
+        // en este modal.
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()
@@ -65,10 +94,26 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     }
   }
 
+  function handleConfirmClick() {
+    // PIN A (emision) — el permiso decide, no un PIN fijo (obs #2802
+    // decision 3): con permiso `ventas.nota_credito` se emite directo, sin
+    // permiso se exige autorizacion de supervisor antes de tocar la DB.
+    if (requierePinEmisionNc(hasPermission(PERMISSIONS.SALES_NOTA_CREDITO))) {
+      setShowPinEmision(true)
+      return
+    }
+    void submitAnulacion()
+  }
+
+  function handleCambiarDepositoClick() {
+    setShowPinOverrideDeposito(true)
+  }
+
   const saldoPend = parseFloat(factura?.saldo_pend_usd ?? '0')
   const totalPagado = pagos.reduce((sum, p) => sum + parseFloat(p.monto_usd), 0)
 
   return (
+    <>
     <dialog
       ref={dialogRef}
       onClose={onClose}
@@ -213,6 +258,41 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
               </div>
             )}
 
+            {/* Deposito de reingreso (Slice 5a — deposito-inactivo-guard delta: "Reingreso con Eleccion Explicita") */}
+            <div className="rounded-lg border p-3">
+              <p className="text-xs font-semibold text-muted-foreground mb-2">
+                Deposito de reingreso de stock
+              </p>
+              {!selectorDepositoDesbloqueado ? (
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <LockSimple className="h-3.5 w-3.5 shrink-0" />
+                    Automatico (deposito de origen, o el principal si fue desactivado)
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleCambiarDepositoClick}
+                    className="text-xs font-medium text-primary hover:underline shrink-0"
+                  >
+                    Cambiar deposito
+                  </button>
+                </div>
+              ) : (
+                <NativeSelect
+                  value={depositoElegidoId ?? ''}
+                  onChange={(e) => setDepositoElegidoId(e.target.value || null)}
+                  className="text-sm"
+                >
+                  <option value="">Seleccionar deposito...</option>
+                  {depositosActivos.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.nombre}
+                    </option>
+                  ))}
+                </NativeSelect>
+              )}
+            </div>
+
             {/* Motivo */}
             <div>
               <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
@@ -250,7 +330,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
               Cancelar
             </button>
             <button
-              onClick={handleConfirm}
+              onClick={handleConfirmClick}
               disabled={loading || !motivo.trim()}
               className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
             >
@@ -260,5 +340,29 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         )}
       </div>
     </dialog>
+
+    <SupervisorPinDialog
+      isOpen={showPinEmision}
+      onClose={() => setShowPinEmision(false)}
+      onAuthorized={() => {
+        setShowPinEmision(false)
+        void submitAnulacion()
+      }}
+      titulo="Autorizacion de Emision"
+      mensaje="Esta accion requiere autorizacion de un supervisor para emitir la nota de credito."
+      requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
+    />
+
+    <SupervisorPinDialog
+      isOpen={showPinOverrideDeposito}
+      onClose={() => setShowPinOverrideDeposito(false)}
+      onAuthorized={() => {
+        setPinOverrideAutorizado(true)
+        setShowPinOverrideDeposito(false)
+      }}
+      titulo="Autorizar cambio de deposito"
+      mensaje="Ingresa el PIN de un supervisor para elegir explicitamente el deposito de reingreso."
+    />
+    </>
   )
 }
