@@ -140,4 +140,25 @@ describe('CrearNcrModal (Tradicional) — sin PIN, selector de deposito libre (o
     expect(select).toHaveValue('dep-2')
     expect(screen.queryByTestId('mock-pin-dialog')).not.toBeInTheDocument()
   })
+
+  it('elegir un deposito lo threadea a crearNotaCredito via depositoReingresoId (obs #2840, cierra el WARNING de Slice 5a)', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.selectOptions(screen.getByRole('combobox'), 'dep-2')
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({ depositoReingresoId: 'dep-2' })
+  })
+
+  it('sin elegir deposito: depositoReingresoId es undefined (cae al riel automatico, sin preseleccion silenciosa)', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBeUndefined()
+  })
 })

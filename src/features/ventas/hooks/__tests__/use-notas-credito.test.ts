@@ -93,6 +93,8 @@ interface NcrTxFixtures {
   clienteSaldoActual?: string
   /** Slice 4b: SUM(cantidad) ya acreditado por venta_det_id — alimenta el guard de doble-credito (`buildSumCantidadYaAcreditadaQuery`). */
   yaAcreditadoPorLinea?: Record<string, string>
+  /** Slice 5a-2a: si `false`, la validacion del override de deposito falla (inactivo/otra empresa). Default `true` (valido) cuando no se especifica. */
+  overrideDepositoValido?: boolean
 }
 
 /**
@@ -119,6 +121,13 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
           return opts.principalDepositoId
             ? { rows: { length: 1, item: () => ({ id: opts.principalDepositoId }) } }
             : { rows: { length: 0, item: () => undefined } }
+        }
+        // Slice 5a-2a: validacion del override explicito de deposito
+        // (`depositoReingresoId`, obs #2840) — activo + de la misma empresa.
+        if (sql.startsWith('SELECT id FROM depositos WHERE id = ? AND empresa_id = ? AND is_active = 1')) {
+          return opts.overrideDepositoValido === false
+            ? { rows: { length: 0, item: () => undefined } }
+            : { rows: { length: 1, item: () => ({ id: params[0] }) } }
         }
         if (sql.startsWith('SELECT COUNT(*) as cnt FROM notas_credito')) {
           return { rows: { length: 1, item: () => ({ cnt: 0 }) } }
@@ -782,6 +791,71 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
       (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
     )
     expect(safcInsert).toBeUndefined()
+  })
+})
+
+describe('crearNotaCredito — Slice 5a-2a (depositoReingresoId threading, obs #2840, cierra el WARNING de Slice 5a)', () => {
+  function fixturesDeposito(overrides: Partial<NcrTxFixtures> = {}) {
+    return {
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '30.00',
+        total_bs: '1200.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      ...overrides,
+    }
+  }
+
+  it('depositoReingresoId explicito y activo: se usa en vez del riel automatico, ignorando venta.deposito_id', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesDeposito({ inventarioStock: { 'prod-1::dep-override': '5.000' } })
+    )
+
+    await crearNotaCredito(baseParams({ depositoReingresoId: 'dep-override' }))
+
+    const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(kardexInsert).toBeDefined()
+    expect(kardexInsert!.params).toContain('dep-override')
+    expect(kardexInsert!.params).not.toContain('dep-B')
+
+    // El override evita por completo el riel automatico (nunca consulta
+    // is_active del origen ni busca el principal).
+    expect(calls.find((c) => c.sql.startsWith('SELECT is_active FROM depositos'))).toBeUndefined()
+    expect(calls.find((c) => c.sql.includes('es_principal'))).toBeUndefined()
+  })
+
+  it('depositoReingresoId invalido (inactivo o de otra empresa): rechaza ANTES de escribir cualquier kardex', async () => {
+    const calls = mockCrearNcrTx(fixturesDeposito({ overrideDepositoValido: false }))
+
+    await expect(
+      crearNotaCredito(baseParams({ depositoReingresoId: 'dep-ajena' }))
+    ).rejects.toThrow(/deposito/i)
+
+    expect(calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))).toBeUndefined()
+    expect(calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito'))).toBeUndefined()
+  })
+
+  it('sin depositoReingresoId: preserva el riel automatico existente (regresion — comportamiento previo intacto)', async () => {
+    const calls = mockCrearNcrTx(fixturesDeposito({ inventarioStock: { 'prod-1::dep-B': '10.000' } }))
+
+    await crearNotaCredito(baseParams())
+
+    const overrideValidation = calls.find((c) =>
+      c.sql.startsWith('SELECT id FROM depositos WHERE id = ? AND empresa_id = ? AND is_active = 1')
+    )
+    expect(overrideValidation).toBeUndefined()
+
+    const kardexInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_inventario'))
+    expect(kardexInsert!.params).toContain('dep-B')
   })
 })
 

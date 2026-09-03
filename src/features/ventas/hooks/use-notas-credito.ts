@@ -167,6 +167,21 @@ export interface CrearNotaCreditoParams {
    * ramas duplicadas").
    */
   lineas?: LineaNcSeleccionada[]
+  /**
+   * Override explicito del deposito de reingreso de stock (Slice 5a-2a,
+   * Design §Interfaces, obs #2840 — cierra el WARNING de threading diferido
+   * en Slice 5a). Cuando se provee, DEBE ser un deposito ACTIVO de la MISMA
+   * empresa — se valida dentro de la tx y se rechaza (sin escribir nada) si
+   * no lo es. Cuando se omite, el deposito se resuelve por el riel
+   * automatico existente (`resolveDepositoReingresoNcr`): origen de la
+   * venta si sigue activo, o el principal si no. El modulo Tradicional
+   * (`crear-ncr-modal.tsx`) ya threadea aqui la eleccion libre de su
+   * selector; el POS-express (`nota-credito-pos-modal.tsx`, Slice 5a-2a)
+   * todavia NO expone override propio — siempre omite este parametro y usa
+   * el riel automatico (el override de deposito para POS es PIN B, Slice
+   * 5a-2b, todavia sin construir).
+   */
+  depositoReingresoId?: string
 }
 
 export interface CrearNotaCreditoResult {
@@ -267,6 +282,7 @@ export async function crearNotaCredito(
     egresoParams,
     tipo,
     lineas,
+    depositoReingresoId,
   } = params
 
   // 0b. Gate anti-fraude (Design §3 paso 0b): se evalua ANTES de abrir la
@@ -361,32 +377,50 @@ export async function crearNotaCredito(
     // (lazy) — preserva el comportamiento pre-existente de NUNCA tocar
     // `es_principal` cuando el origen sigue activo (test "NO al deposito
     // principal de la empresa").
-    const depositoOrigenResult = await tx.execute(
-      'SELECT is_active FROM depositos WHERE id = ?',
-      [depositoOrigenId]
-    )
-    const depositoOrigenIsActive =
-      !!depositoOrigenResult.rows &&
-      depositoOrigenResult.rows.length > 0 &&
-      (depositoOrigenResult.rows.item(0) as { is_active: number }).is_active === 1
-
-    let principalDepositoId: string | null = null
-    if (!depositoOrigenIsActive) {
-      const principalResult = await tx.execute(
-        'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
-        [empresa_id]
+    // Override explicito (Slice 5a-2a, obs #2840): si el llamador provee
+    // `depositoReingresoId`, se valida ANTES de tocar cualquier kardex que
+    // sea un deposito activo de la MISMA empresa, y se usa en vez del riel
+    // automatico. Sin override, cae al riel preexistente sin cambios.
+    let depositoId: string | null
+    if (depositoReingresoId) {
+      const overrideResult = await tx.execute(
+        'SELECT id FROM depositos WHERE id = ? AND empresa_id = ? AND is_active = 1',
+        [depositoReingresoId, empresa_id]
       )
-      principalDepositoId =
-        principalResult.rows && principalResult.rows.length > 0
-          ? (principalResult.rows.item(0) as { id: string }).id
-          : null
-    }
+      if (!overrideResult.rows || overrideResult.rows.length === 0) {
+        throw new Error(
+          'El deposito de reingreso seleccionado no esta activo o no pertenece a la empresa.'
+        )
+      }
+      depositoId = depositoReingresoId
+    } else {
+      const depositoOrigenResult = await tx.execute(
+        'SELECT is_active FROM depositos WHERE id = ?',
+        [depositoOrigenId]
+      )
+      const depositoOrigenIsActive =
+        !!depositoOrigenResult.rows &&
+        depositoOrigenResult.rows.length > 0 &&
+        (depositoOrigenResult.rows.item(0) as { is_active: number }).is_active === 1
 
-    const depositoId = resolveDepositoReingresoNcr(
-      depositoOrigenId,
-      depositoOrigenIsActive,
-      principalDepositoId
-    )
+      let principalDepositoId: string | null = null
+      if (!depositoOrigenIsActive) {
+        const principalResult = await tx.execute(
+          'SELECT id FROM depositos WHERE empresa_id = ? AND es_principal = 1 AND is_active = 1 LIMIT 1',
+          [empresa_id]
+        )
+        principalDepositoId =
+          principalResult.rows && principalResult.rows.length > 0
+            ? (principalResult.rows.item(0) as { id: string }).id
+            : null
+      }
+
+      depositoId = resolveDepositoReingresoNcr(
+        depositoOrigenId,
+        depositoOrigenIsActive,
+        principalDepositoId
+      )
+    }
     if (!depositoId) {
       throw new Error(
         'No se pudo reintegrar el stock: no hay un deposito activo disponible en la empresa. Configure un deposito principal.'

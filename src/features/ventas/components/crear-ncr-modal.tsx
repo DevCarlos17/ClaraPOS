@@ -68,15 +68,13 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         // liquida el remanente cancelando deuda existente del cliente, cero
         // impacto en caja, sin requerir eleccion del usuario todavia.
         modalidad: 'AJUSTE_CXC',
-        // NOTA (obs #2831 — division explicita de slice 5, sin cambios en
-        // esta correccion #2835): el deposito elegido en el selector libre
-        // (`depositoElegidoId`) todavia NO se threadea aqui.
-        // `CrearNotaCreditoParams.depositoReingresoId` (Design §Interfaces)
-        // se agrega recien en Slice 5a-2, cuando el MISMO parametro tambien
-        // sirve al entry point POS. Hasta entonces el backend sigue
-        // resolviendo el deposito por riel automatico
-        // (`resolveDepositoReingresoNcr`) sin importar la eleccion visible
-        // en este modal.
+        // Slice 5a-2a (obs #2840, cierra el WARNING de Slice 5a): la
+        // eleccion del selector libre AHORA SI se threadea —
+        // `crearNotaCredito` valida que sea un deposito activo de la
+        // empresa antes de usarla. Si el usuario no elige ninguno
+        // (`depositoElegidoId === null`, sin preseleccion automatica), cae
+        // al riel automatico existente, exactamente como antes.
+        depositoReingresoId: depositoElegidoId ?? undefined,
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()
