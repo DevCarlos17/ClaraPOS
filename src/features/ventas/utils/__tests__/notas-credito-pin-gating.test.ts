@@ -4,6 +4,13 @@ import {
   resolverDepositoOverride,
 } from "../notas-credito-pin-gating";
 
+// Correccion obs #2835: este modulo de gating YA NO se consume desde el
+// modal Tradicional (crear-ncr-modal.tsx) — la regla PIN definitiva dice que
+// esa pantalla nunca pide PIN. Estas funciones puras quedan reservadas para
+// el entry point POS (Slice 5a-2), donde el PIN transaccional SI aplica por
+// falta de permiso. Las pruebas siguen validando la logica pura, generica
+// para cualquier caller que la reuse.
+
 // ─── requierePinEmisionNc ────────────────────────────────────────
 // Spec notas-credito-pos "Modelo de doble PIN": el permiso `ventas.nota_credito`
 // decide el PIN de EMISION — con permiso no se pide PIN, sin permiso se exige
