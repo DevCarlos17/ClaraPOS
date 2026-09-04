@@ -47,6 +47,14 @@ export interface FacturaParaAnular {
   saldo_pend_usd: string
   tipo: string
   fecha: string
+  /** Presente solo en filas devueltas por `useFacturasSesionActiva` (Design §Decision 2). */
+  status?: string
+  /** PowerSync boolean-as-integer: 1 si existe una NC tipo TOTAL asociada a esta venta. */
+  tiene_reverso_total?: number
+  /** PowerSync boolean-as-integer: 1 si existe una NC tipo PARCIAL asociada a esta venta. */
+  tiene_reverso_parcial?: number
+  /** Presente solo en filas de `useFacturasSesionActiva` (Slice 3a) — alimenta `igtfUsd` de `buildReciboData` en el panel de detalle. */
+  total_igtf_usd?: string
 }
 
 export interface DetalleFacturaItem {
@@ -238,6 +246,41 @@ export function useBuscarFacturaParaAnular(query: string) {
   )
 
   return { facturas: (data ?? []) as FacturaParaAnular[], isLoading }
+}
+
+// ─── Historial de reversos de una factura (F1 QA fix, Slice 5a) ─────
+
+export interface ReversoFacturaRow {
+  nota_credito_id: string
+  nro_ncr: string
+  tipo: string
+  fecha: string
+  venta_det_id: string | null
+  producto_descripcion: string
+  cantidad: string
+}
+
+/**
+ * Historial COMPLETO de NCs ya aplicadas a una factura, a nivel de linea
+ * (openspec/changes/notas-credito-ui-pos, QA batch 5a — F1). Alimenta (a) el
+ * panel de detalle (seccion "Notas de credito aplicadas", via
+ * `agruparReversosPorNc`) y (b) el tope de cantidad restante por linea (via
+ * `calcularReversoPorLinea`) que consume `SeleccionLineasNc` para no permitir
+ * sobre-reversar una linea ya parcialmente acreditada. Filtra `empresa_id`.
+ */
+export function useReversosFactura(ventaId: string | null, empresaId: string) {
+  const { data, isLoading } = useQuery(
+    ventaId && empresaId
+      ? `SELECT nc.id as nota_credito_id, nc.nro_ncr, nc.tipo, nc.fecha,
+           ncd.venta_det_id, ncd.descripcion as producto_descripcion, ncd.cantidad
+         FROM notas_credito nc
+         JOIN notas_credito_det ncd ON ncd.nota_credito_id = nc.id
+         WHERE nc.venta_id = ? AND nc.empresa_id = ?
+         ORDER BY nc.fecha ASC`
+      : '',
+    ventaId && empresaId ? [ventaId, empresaId] : []
+  )
+  return { reversos: (data ?? []) as ReversoFacturaRow[], isLoading }
 }
 
 // ─── Detalle de factura (articulos + pagos) ─────────────────

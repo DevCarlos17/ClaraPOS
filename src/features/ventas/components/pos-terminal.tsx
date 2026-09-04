@@ -709,16 +709,17 @@ export function PosTerminal() {
                   <Wallet size={12} />Caja<CaretDown size={10} />
                 </button>
               )}
-              {/* Botón Nota de Credito POS — mobile only, siempre visible con
-                  sesion (independiente de permisos de caja — el PIN A vive
-                  dentro del propio modal, Spec notas-credito-pos) */}
+              {/* Botón Facturas de caja (Slice 2, rename de "Nota de Credito")
+                  — mobile only, siempre visible con sesion (independiente de
+                  permisos de caja — el PIN A vive dentro del propio modal,
+                  Spec notas-credito-pos) */}
               {sesion && (
                 <button
                   type="button"
                   onClick={() => setShowNotaCreditoModal(true)}
                   className="sm:hidden shrink-0 inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md border text-muted-foreground bg-muted/40 hover:bg-muted transition-colors"
                 >
-                  <FileX size={12} />NC
+                  <FileX size={12} />Fact.
                 </button>
               )}
             </div>
@@ -829,12 +830,13 @@ export function PosTerminal() {
                     <XCircle size={12} />Cerrar Caja
                   </button>
                 )}
-                {/* Nota de Credito POS — visible siempre que haya sesion,
-                    independiente de canMovManualPos/canCloseCajaPos: el PIN
-                    A por-falta-de-permiso vive dentro del propio modal. */}
+                {/* Facturas de caja (Slice 2, rename de "Nota de Credito") —
+                    visible siempre que haya sesion, independiente de
+                    canMovManualPos/canCloseCajaPos: el PIN A
+                    por-falta-de-permiso vive dentro del propio modal. */}
                 <button type="button" onClick={() => setShowNotaCreditoModal(true)}
                   className="inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded border text-muted-foreground hover:text-red-700 hover:bg-red-50 hover:border-red-200 transition-colors">
-                  <FileX size={12} />Nota de Credito
+                  <FileX size={12} />Facturas de caja
                 </button>
               </div>
             </>
