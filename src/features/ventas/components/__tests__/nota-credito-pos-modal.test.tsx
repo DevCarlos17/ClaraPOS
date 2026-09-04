@@ -1030,3 +1030,76 @@ describe('NotaCreditoPosModal — Slice 4 (placeholder "Editar metodos de pago" 
     expect(mockedToastInfo).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abierto y se refresca en el lugar tras una emision exitosa)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function detalleUnaLinea() {
+    return [
+      {
+        id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+        precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+        producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+        tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+      },
+    ]
+  }
+
+  it('tras una emision TOTAL exitosa, el modal permanece abierto (onClose NO se llama) y la factura sigue seleccionada', async () => {
+    setup({ hasPermission: true })
+    const onClose = vi.fn()
+    render(<NotaCreditoPosModal isOpen onClose={onClose} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getAllByText(/C01-000001/i).length).toBeGreaterThan(0)
+  })
+
+  it('tras una emision PARCIAL exitosa, SeleccionLineasNc se remonta: la cantidad ingresada se resetea a vacio (anti double-submit), aunque la factura siga seleccionada', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    const { rerender } = render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    expect(screen.getByRole('spinbutton')).toHaveValue(2)
+
+    await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+
+    // Simula el refresco de la live-query tras el commit de la transaccion:
+    // el remanente ya refleja la NC parcial recien creada.
+    mockedUseReversosFactura.mockReturnValue({
+      reversos: [
+        { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-01T00:00:00Z', venta_det_id: 'vd-1', producto_descripcion: 'Botox 50U', cantidad: '2.000' },
+      ],
+      isLoading: false,
+    })
+    rerender(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByRole('spinbutton')).toHaveValue(null)
+  })
+
+  it('tras una emision exitosa, la autorizacion del PIN de deposito (PIN B) se limpia: el selector vuelve a "Automatico" para la siguiente accion sobre la misma factura', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[selects.length - 1], 'dep-1')
+    expect(screen.queryByText(/Automatico/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+
+    expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
+  })
+})

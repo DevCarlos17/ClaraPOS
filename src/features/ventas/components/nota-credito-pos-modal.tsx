@@ -163,6 +163,16 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // unico SupervisorPinDialog — este estado le dice a `onAuthorized` cual de
   // las dos funciones debe disparar tras la autorizacion.
   const [accionPendiente, setAccionPendiente] = useState<'NC' | 'EDITAR_PAGOS' | null>(null)
+  // Behavior F (Slice 5g.5): contador incrementado en CADA emision exitosa
+  // — se usa como parte del `key` de `SeleccionLineasNc` mas abajo. El modal
+  // ya NO se cierra tras emitir (permanece abierto sobre la MISMA factura,
+  // que se refresca sola via las live-queries de PowerSync), por lo que
+  // `SeleccionLineasNc` NUNCA se desmonta entre una emision PARCIAL y la
+  // siguiente. Sin este contador, su estado interno (`cantidades`/
+  // `excedidas`, uncontrolled) sobreviviria la emision y permitiria
+  // re-enviar por accidente la MISMA cantidad ya acreditada (double-submit).
+  // Cambiar el `key` fuerza un remount limpio tras cada emision exitosa.
+  const [emisionGen, setEmisionGen] = useState(0)
 
   /**
    * UX B QA fix (Slice 5e): las autorizaciones de PIN son EFIMERAS —
@@ -192,6 +202,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setModalidad('EFECTIVO_REAL')
       setMotivo('')
       setTipoNc('TOTAL')
+      setEmisionGen(0)
       resetAutorizacionesPin()
     }
   }, [isOpen])
@@ -339,7 +350,19 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
           }) ?? undefined,
       })
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
-      onClose()
+      // Behavior F (Slice 5g.5): el modal ya NO se cierra tras una emision
+      // exitosa — permanece abierto sobre la MISMA factura (`facturaId` y
+      // `searchQuery` se preservan a proposito) para que el usuario vea el
+      // resultado y pueda seguir operando. El listado, los badges, el panel
+      // de detalle y el historial de reversos son TODOS live-queries de
+      // PowerSync (`useQuery`) — se refrescan solos cuando la transaccion de
+      // `crearNotaCredito` hace commit, SIN invalidacion manual. Lo que SI
+      // hay que resetear explicitamente es el estado transitorio de ESTA
+      // accion, que antes limpiaba `onClose()` via el efecto de `isOpen`:
+      resetAutorizacionesPin()
+      setMotivo('')
+      setModalidad('EFECTIVO_REAL')
+      setEmisionGen((gen) => gen + 1)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
     } finally {
@@ -646,6 +669,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       // `derivarLineasNcParcial` (tope facturado, es_decimal,
                       // cantidad negativa, al menos una linea).
                       <SeleccionLineasNc
+                        key={`${facturaId}-${emisionGen}`}
                         lineas={lineasParaNc}
                         factura={{
                           total_usd: Number(factura.total_usd),
