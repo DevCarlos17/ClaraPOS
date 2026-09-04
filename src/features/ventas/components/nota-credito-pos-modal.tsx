@@ -14,7 +14,6 @@ import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
 import {
   derivarEstadoPago,
   facturaCoincideBusqueda,
-  huboAfectacionCxc,
   ESTADO_PAGO_LABEL,
   puedeEmitirNcAdicional,
   puedeElegirTipoTotal,
@@ -25,7 +24,7 @@ import {
 import { buildReciboData, type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
-import { useDetalleFactura, usePagosFactura, useAfectacionCxc } from '@/features/cxc/hooks/use-cxc'
+import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
@@ -187,10 +186,6 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const { detalle } = useDetalleFactura(facturaId)
   const { pagos: pagosFactura } = usePagosFactura(facturaId)
   const { company } = useCompany()
-  // Afectacion a CxC (Design §Decision 6): fuente movimientos_cuenta, NUNCA
-  // construirCierreRecibo/discrepancy (estado efimero de React).
-  const { cantidadMovimientos } = useAfectacionCxc(facturaId, user?.empresa_id ?? '')
-  const afectoCxc = facturaId ? huboAfectacionCxc(cantidadMovimientos) : null
 
   // F1 QA fix (Slice 5a): historial de NC(s) ya aplicadas a la factura
   // seleccionada — alimenta (a) la seccion aditiva del panel de detalle y
@@ -450,7 +445,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   </div>
                 )}
 
-                <FacturaDetallePanel recibo={recibo} afectoCxc={afectoCxc} reversos={historialReversos} />
+                <FacturaDetallePanel recibo={recibo} reversos={historialReversos} />
 
                 {factura && !puedeEmitirNc && (
                   // F1 QA fix: reversado TOTAL -> vista de solo-lectura, sin

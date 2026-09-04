@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { NotaCreditoPosModal } from '../nota-credito-pos-modal'
 import { crearNotaCredito, useReversosFactura } from '../../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../../hooks/use-facturas-sesion-activa'
-import { useDetalleFactura, usePagosFactura, useAfectacionCxc } from '@/features/cxc/hooks/use-cxc'
+import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions } from '@/core/hooks/use-permissions'
@@ -52,7 +52,6 @@ vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({ useFactur
 vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
-  useAfectacionCxc: vi.fn(),
 }))
 vi.mock('@/features/configuracion/hooks/use-company', () => ({ useCompany: vi.fn() }))
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
@@ -68,7 +67,6 @@ const mockedUseReversosFactura = vi.mocked(useReversosFactura)
 const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
-const mockedUseAfectacionCxc = vi.mocked(useAfectacionCxc)
 const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUsePermissions = vi.mocked(usePermissions)
@@ -136,7 +134,6 @@ function setup(opts: { hasPermission: boolean }) {
   mockedUseFacturasSesionActiva.mockReturnValue({ facturas: [facturaSesion()], isLoading: false })
   mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
   mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
-  mockedUseAfectacionCxc.mockReturnValue({ cantidadMovimientos: 0, isLoading: false })
   mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
   mockedUseCompany.mockReturnValue({
     company: { id: 'emp-1', nombre: 'ClaraPOS Estetica C.A.', rif: 'J-12345678-9', direccion: null } as never,
@@ -595,23 +592,13 @@ describe('NotaCreditoPosModal — Slice 3a (panel de detalle montado, Design §D
     expect(screen.getByText('IGTF')).toBeInTheDocument()
   })
 
-  it('afectoCxc=true (cantidadMovimientos>0): el panel indica que la factura afecto cuentas por cobrar', async () => {
-    setup({ hasPermission: true })
-    mockedUseAfectacionCxc.mockReturnValue({ cantidadMovimientos: 1, isLoading: false })
-    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
-
-    await seleccionarPrimeraFactura()
-
-    expect(screen.getByText(/Afect(o|ó) cuentas por cobrar/i)).toBeInTheDocument()
-  })
-
-  it('afectoCxc=false (0 movimientos): el panel indica que NO afecto cuentas por cobrar', async () => {
+  it('Slice 5d: NUNCA muestra la seccion de afectacion a cuentas por cobrar (dato no confiable en flujo SAF, obs #2896/#2897)', async () => {
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     await seleccionarPrimeraFactura()
 
-    expect(screen.getByText(/No afect(o|ó) cuentas por cobrar/i)).toBeInTheDocument()
+    expect(screen.queryByText(/afect(o|ó) cuentas por cobrar/i)).not.toBeInTheDocument()
   })
 
   it('el listado sigue visible en la columna izquierda incluso con una factura seleccionada (layout de dos columnas, no drill-down)', async () => {

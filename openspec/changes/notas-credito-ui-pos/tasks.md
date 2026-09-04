@@ -232,3 +232,32 @@ ya reversado), nunca sobre lo originalmente facturado.
 - [x] 5c.6 Verify: `yarn test:run` (1024/1024 verdes, +7 netos sobre 1017) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals); `crearNotaCredito` (`use-notas-credito.ts`) verificado en CERO líneas cambiadas (`git diff --stat` vacío).
 
 **Resultado real vs. forecast**: 248 inserciones + 18 eliminaciones = 266 líneas cambiadas (`git diff --stat` sobre 8 archivos: `kardex-list.tsx`+test, `nota-credito-pos-modal.tsx`+test, `seleccion-lineas-nc.tsx`+test, `notas-credito-ui.ts`+test) vs. forecast ~190-290 — dentro del budget, sin exception. `crearNotaCredito` verificado en CERO líneas cambiadas. **Los 7 fixes de QA (F1–F7) quedan completos — pendiente re-verify combinado de todo el change (slices 1-5c) antes del merge final del chain a `develop`.**
+
+## Slice 5d (ocultar sección CxC no confiable — pendiente change CxC) — QA manual 2.5/2.6
+
+> Fix DISPLAY-ONLY, no toca `crearVenta`/`crearNotaCredito`. Root cause
+> (obs #2896): cuando el excedente de un pago POS se abona por FIFO a OTRA
+> factura del cliente (flujo SAF), `crearVenta` reparte el pago tendido
+> entre dos `venta_id` distintos sin back-reference persistido hacia la
+> venta origen — `usePagosFactura` trae el monto CAPEADO (no el tendido
+> real) y `useAfectacionCxc` da 0 aunque sí hubo afectación CxC en la
+> factura destino. Fix real requiere persistir ese back-reference en
+> `crearVenta`/`aplicarPagoFacturaEnTx` (flujo financiero, DEFERRED a un
+> change de CxC futuro, obs #2897). Para cerrar este change, se OCULTA la
+> sección en vez de mostrar datos incorrectos.
+
+### Review Workload Forecast
+
+| Field | Value |
+|---|---|
+| Estimated changed lines | ~40–80 |
+| 400-line budget risk | Low |
+| Chained PRs | `feature-branch-chain` — PR sobre `feat/notas-credito-ui-pos-s5c` |
+| Rollback | Revierte a: panel mostrando desglose de métodos de pago (monto capeado, incorrecto en caso SAF-cruzado) y sección "afectó/no afectó cuentas por cobrar" (falso negativo en el mismo caso) |
+
+- [x] 5d.1 `FacturaDetallePanel` (`factura-detalle-panel.tsx`): se ELIMINA el renderizado de la sección "afectación a cuentas por cobrar" (prop `afectoCxc` removida de `FacturaDetallePanelProps` — dead prop wiring limpiado del único caller, `nota-credito-pos-modal.tsx`) y del desglose de métodos de pago/abonos (`Metodos de pago` + `Total abonos`). Se mantiene intacto: desglose fiscal (subtotal/exento/base/IVA/IGTF/total con Bs de tasa histórica, F3), historial de reversos (F1) y overlay diagonal REVERSADA/REVERSO PARCIAL (F7). Comentario en español referenciando obs #2896/#2897 dejado en el JSX en el punto exacto donde antes vivían ambas secciones.
+- [x] 5d.2 `nota-credito-pos-modal.tsx`: removida la llamada a `useAfectacionCxc` y el cómputo `afectoCxc = huboAfectacionCxc(...)` (dead wiring tras 5d.1) — `useAfectacionCxc` (hook, `use-cxc.ts`) y `huboAfectacionCxc` (util, `notas-credito-ui.ts`) se DEJAN definidos e intactos (siguen cubiertos por sus propios tests unitarios en `use-cxc.test.ts`/`notas-credito-ui.test.ts`); solo se retira su uso en este caller. `usePagosFactura`/`pagosFactura` se conservan sin cambios (siguen alimentando `ReciboData.pagos`, campo del tipo compartido usado también por el recibo oficial de venta).
+- [x] 5d.3 Tests actualizados: `factura-detalle-panel.test.tsx` — removida la prop `afectoCxc` de todos los `render()`, eliminados los 2 tests que afirmaban el texto "afectó/no afectó CxC" y el test que afirmaba el desglose de pagos visible; agregado nuevo `describe` "Slice 5d" con 3 tests que confirman AUSENCIA de ambas secciones y que el resto del panel (líneas, totales fiscales) sigue visible. `nota-credito-pos-modal.test.tsx` — removidos el mock/import/const de `useAfectacionCxc` y sus 2 tests `afectoCxc=true/false`, reemplazados por 1 test que confirma que el texto de afectación CxC NUNCA aparece en el modal integrado.
+- [x] 5d.4 Verify: `yarn test:run` (1023/1023 verdes) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals, sin errores nuevos en los 4 archivos tocados).
+
+**Resultado real vs. forecast**: 52+19+53+9 = 133 líneas cambiadas (`git diff --stat` sobre 4 archivos: `factura-detalle-panel.tsx`+test, `nota-credito-pos-modal.tsx`+test) vs. forecast ~40-80 (algo por encima por el volumen de tests actualizados, sin exception — bien dentro del budget de 400). `crearVenta`/`crearNotaCredito` verificados en CERO líneas cambiadas (`git diff --stat` vacío). Display-only confirmado.

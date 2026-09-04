@@ -29,14 +29,14 @@ function baseRecibo(overrides: Partial<Parameters<typeof buildReciboData>[0]> = 
 
 describe('FacturaDetallePanel (Spec notas-credito-pos: Panel de detalle fiscal de la factura seleccionada)', () => {
   it('sin recibo (null): el panel no muestra datos de factura', () => {
-    render(<FacturaDetallePanel recibo={null} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={null} />)
 
     expect(screen.queryByText('C01-000001')).not.toBeInTheDocument()
     expect(screen.queryByText('Botox 50U')).not.toBeInTheDocument()
   })
 
   it('con recibo: muestra articulos (cantidad, precio Bs/USD), subtotal, base imponible, IVA por alicuota y total', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
     expect(screen.getByText('Botox 50U')).toBeInTheDocument()
     expect(screen.getByText('$10.00')).toBeInTheDocument() // precio unitario USD
@@ -60,7 +60,7 @@ describe('FacturaDetallePanel (Spec notas-credito-pos: Panel de detalle fiscal d
       ],
     })
 
-    render(<FacturaDetallePanel recibo={recibo} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={recibo} />)
 
     expect(screen.getByText('Monto Exento')).toBeInTheDocument()
     expect(screen.queryByText('Base Imponible')).not.toBeInTheDocument()
@@ -69,34 +69,44 @@ describe('FacturaDetallePanel (Spec notas-credito-pos: Panel de detalle fiscal d
   it('factura con IGTF aplicado: muestra el monto de IGTF calculado por buildReciboData', () => {
     const recibo = baseRecibo({ igtfUsd: 0.6 })
 
-    render(<FacturaDetallePanel recibo={recibo} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={recibo} />)
 
     expect(screen.getByText('IGTF')).toBeInTheDocument()
     expect(screen.getByText('TOTAL + IGTF')).toBeInTheDocument()
   })
 
   it('sin IGTF: no muestra fila de IGTF', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
     expect(screen.queryByText('IGTF')).not.toBeInTheDocument()
   })
+})
 
-  it('muestra el desglose de metodos de pago', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+// ─── Slice 5d (QA 2.5/2.6, obs #2896/#2897): el desglose de metodos de pago
+// y la seccion de afectacion CxC se OCULTAN — dan datos incorrectos cuando
+// el excedente de un pago se abono por FIFO a OTRA factura (flujo SAF),
+// porque `crearVenta` no persiste back-reference hacia la venta origen. ────
 
-    expect(screen.getByText('Efectivo USD')).toBeInTheDocument()
+describe('FacturaDetallePanel — Slice 5d (ocultar seccion CxC no confiable, pendiente change CxC)', () => {
+  it('NUNCA muestra el desglose de metodos de pago, incluso con pagos presentes en el recibo', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
+
+    expect(screen.queryByText('Metodos de pago')).not.toBeInTheDocument()
+    expect(screen.queryByText('Efectivo USD')).not.toBeInTheDocument()
+    expect(screen.queryByText('Total abonos')).not.toBeInTheDocument()
   })
 
-  it('afectoCxc=true: indica que la factura afecto cuentas por cobrar', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={true} />)
+  it('NUNCA muestra la seccion de afectacion a cuentas por cobrar', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
-    expect(screen.getByText(/Afect(o|ó) cuentas por cobrar/i)).toBeInTheDocument()
+    expect(screen.queryByText(/afect(o|ó) cuentas por cobrar/i)).not.toBeInTheDocument()
   })
 
-  it('afectoCxc=false: indica que la factura NO afecto cuentas por cobrar', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={false} />)
+  it('el resto del panel (lineas, totales fiscales) sigue visible sin las secciones ocultas', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
-    expect(screen.getByText(/No afect(o|ó) cuentas por cobrar/i)).toBeInTheDocument()
+    expect(screen.getByText('Botox 50U')).toBeInTheDocument()
+    expect(screen.getByText('TOTAL FACTURA')).toBeInTheDocument()
   })
 })
 
@@ -106,7 +116,7 @@ describe('FacturaDetallePanel (Spec notas-credito-pos: Panel de detalle fiscal d
 
 describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, junto al detalle original)', () => {
   it('sin reversos (prop omitida o vacia): NO muestra la seccion de notas de credito aplicadas', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
     expect(screen.queryByText(/Notas de credito aplicadas/i)).not.toBeInTheDocument()
   })
@@ -115,7 +125,6 @@ describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, jun
     render(
       <FacturaDetallePanel
         recibo={baseRecibo()}
-        afectoCxc={null}
         reversos={[
           {
             notaCreditoId: 'nc-1',
@@ -140,7 +149,6 @@ describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, jun
     render(
       <FacturaDetallePanel
         recibo={baseRecibo()}
-        afectoCxc={null}
         reversos={[
           {
             notaCreditoId: 'nc-1',
@@ -172,7 +180,7 @@ describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, jun
 
 describe('FacturaDetallePanel — F3 QA fix (Bs en el desglose fiscal, tasa historica)', () => {
   it('Base Imponible e IVA muestran tambien el monto en Bs (tasa=40 de la factura)', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
     // Filas de totales escopeadas (no la tabla de lineas de arriba, que puede
     // coincidir en el monto cuando hay una unica linea).
@@ -199,7 +207,7 @@ describe('FacturaDetallePanel — F3 QA fix (Bs en el desglose fiscal, tasa hist
       ],
     })
 
-    render(<FacturaDetallePanel recibo={recibo} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={recibo} />)
 
     // $15.00 exento * tasa 40 = Bs. 600,00 — escopeado a la fila de totales
     const exentoRow = screen.getByText('Monto Exento').closest('div') as HTMLElement
@@ -209,7 +217,7 @@ describe('FacturaDetallePanel — F3 QA fix (Bs en el desglose fiscal, tasa hist
   it('IGTF tambien muestra su equivalente en Bs', () => {
     const recibo = baseRecibo({ igtfUsd: 0.6 })
 
-    render(<FacturaDetallePanel recibo={recibo} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={recibo} />)
 
     // $0.60 IGTF * tasa 40 = Bs. 24,00
     expect(screen.getByText('Bs. 24,00')).toBeInTheDocument()
@@ -222,7 +230,7 @@ describe('FacturaDetallePanel — F3 QA fix (Bs en el desglose fiscal, tasa hist
 
 describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () => {
   it('sin reversos: no muestra ningun overlay', () => {
-    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
     expect(screen.queryByText('REVERSADA')).not.toBeInTheDocument()
     expect(screen.queryByText('REVERSO PARCIAL')).not.toBeInTheDocument()
@@ -232,7 +240,6 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
     render(
       <FacturaDetallePanel
         recibo={baseRecibo()}
-        afectoCxc={null}
         reversos={[
           { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'TOTAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
         ]}
@@ -248,7 +255,6 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
     render(
       <FacturaDetallePanel
         recibo={baseRecibo()}
-        afectoCxc={null}
         reversos={[
           { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
         ]}

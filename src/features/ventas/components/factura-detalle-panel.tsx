@@ -1,5 +1,5 @@
 import { formatUsd, formatBs } from '@/lib/currency'
-import { formatMontoPago, formatMontoBimonetario, sumarAbonos, construirFilasTotales, type ReciboData } from '../utils/factura-export'
+import { construirFilasTotales, type ReciboData } from '../utils/factura-export'
 import type { ReversoAplicado } from '../utils/notas-credito-ui'
 
 /**
@@ -16,8 +16,6 @@ import type { ReversoAplicado } from '../utils/notas-credito-ui'
 export interface FacturaDetallePanelProps {
   /** `null` cuando ninguna factura esta seleccionada — el panel permanece vacio. */
   recibo: ReciboData | null
-  /** `huboAfectacionCxc(...)` (Design §Decision 6) — `null` mientras no se conoce aun. */
-  afectoCxc: boolean | null
   /**
    * F1 QA fix (Slice 5a): historial de NC(s) ya aplicadas a esta factura
    * (`agruparReversosPorNc`, alimentado por `useReversosFactura`). El
@@ -28,7 +26,7 @@ export interface FacturaDetallePanelProps {
   reversos?: ReversoAplicado[]
 }
 
-export function FacturaDetallePanel({ recibo, afectoCxc, reversos = [] }: FacturaDetallePanelProps) {
+export function FacturaDetallePanel({ recibo, reversos = [] }: FacturaDetallePanelProps) {
   if (!recibo) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
@@ -107,37 +105,22 @@ export function FacturaDetallePanel({ recibo, afectoCxc, reversos = [] }: Factur
         ))}
       </div>
 
-      {recibo.pagos.length > 0 && (
-        <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Metodos de pago</p>
-          {recibo.pagos.map((pago) => (
-            <div key={pago.metodoCobroId} className="flex items-center justify-between">
-              <span>{pago.metodoNombre}</span>
-              <span className="tabular-nums">{formatMontoPago(pago, recibo.monedaPresentacion)}</span>
-            </div>
-          ))}
-          <div className="flex items-center justify-between border-t border-slate-100 pt-1 font-semibold">
-            <span>Total abonos</span>
-            <span className="tabular-nums">
-              {formatMontoBimonetario(
-                sumarAbonos(recibo.pagos).usd,
-                sumarAbonos(recibo.pagos).bs,
-                recibo.monedaPresentacion
-              )}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {afectoCxc !== null && (
-        <div
-          className={`rounded-lg border p-3 text-sm font-medium ${
-            afectoCxc ? 'border-orange-200 bg-orange-50 text-orange-700' : 'border-slate-200 bg-slate-50 text-muted-foreground'
-          }`}
-        >
-          {afectoCxc ? 'Afecto cuentas por cobrar' : 'No afecto cuentas por cobrar'}
-        </div>
-      )}
+      {/*
+        Slice 5d (QA 2.5/2.6, obs #2896/#2897): el desglose de metodos de
+        pago y la seccion de "afectacion a cuentas por cobrar" se OCULTAN
+        deliberadamente. Cuando el excedente de un pago se abona por FIFO a
+        OTRA factura del cliente (flujo SAF desde POS), `crearVenta` reparte
+        el pago tendido entre dos `venta_id` distintos sin back-reference
+        persistido hacia la venta origen: `usePagosFactura` solo trae el
+        monto capeado a esta factura (no el tendido real) y
+        `useAfectacionCxc` da 0 aunque el excedente si afecto CxC en la
+        factura destino. Mostrar cualquiera de las dos secciones aqui seria
+        mostrar datos incorrectos. El fix real requiere persistir ese
+        back-reference en `crearVenta`/`aplicarPagoFacturaEnTx` (flujo
+        financiero, fuera de alcance de este change) — se retoma en un
+        change de CxC futuro que reactivara estas secciones con datos
+        confiables.
+      */}
 
       {reversos.length > 0 && (
         <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50/50 p-3 text-sm">
