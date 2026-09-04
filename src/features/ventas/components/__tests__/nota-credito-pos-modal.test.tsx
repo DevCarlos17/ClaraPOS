@@ -313,6 +313,43 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBeUndefined()
   })
 
+  it('UX B (Slice 5e): hacer clic en "Volver" (deseleccionar factura) limpia la autorizacion del PIN de deposito (PIN B) — al re-seleccionar la misma factura, el selector vuelve a "Automatico"', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+    expect(screen.queryByText(/Automatico/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Volver/i }))
+    await user.click(screen.getByText(/C01-000001/i))
+
+    expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
+  })
+
+  it('UX B (Slice 5e): seleccionar una factura DISTINTA limpia la autorizacion previa del PIN de deposito (PIN B)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [
+        facturaSesion({ id: 'venta-1', nro_factura: 'C01-000001' }),
+        facturaSesion({ id: 'venta-2', nro_factura: 'C01-000002' }),
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/C01-000001/i))
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+    expect(screen.queryByText(/Automatico/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByText(/C01-000002/i))
+
+    expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
+  })
+
   it('PIN A y PIN B son independientes: sin permiso de emision, autorizar PIN B para el deposito NO exime del PIN A al confirmar', async () => {
     setup({ hasPermission: false })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)

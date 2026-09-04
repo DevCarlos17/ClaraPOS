@@ -157,6 +157,24 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // las dos funciones debe disparar tras la autorizacion.
   const [accionPendiente, setAccionPendiente] = useState<'NC' | 'EDITAR_PAGOS' | null>(null)
 
+  /**
+   * UX B QA fix (Slice 5e): las autorizaciones de PIN son EFIMERAS —
+   * escopeadas a un unico proceso de NC sobre UNA factura. Se limpian al
+   * cerrar el modal, al deseleccionar la factura ("Volver") y al
+   * seleccionar una factura distinta — nunca sobreviven a ese cambio de
+   * contexto. Reingresar el MISMO PIN para una accion nueva es aceptable
+   * (obs #2902) — esto NO fusiona PIN A y PIN B, solo evita que una
+   * autorizacion ya usada quede "recordada" para la siguiente factura.
+   */
+  function resetAutorizacionesPin() {
+    setShowPin(false)
+    setShowPinDeposito(false)
+    setPinDepositoAutorizado(false)
+    setDepositoElegidoId(null)
+    setAccionPendiente(null)
+    setLineasParcialPendientes(null)
+  }
+
   useEffect(() => {
     if (isOpen) {
       dialogRef.current?.showModal()
@@ -166,13 +184,8 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setSearchQuery('')
       setModalidad('EFECTIVO_REAL')
       setMotivo('')
-      setShowPin(false)
-      setShowPinDeposito(false)
-      setPinDepositoAutorizado(false)
-      setDepositoElegidoId(null)
       setTipoNc('TOTAL')
-      setLineasParcialPendientes(null)
-      setAccionPendiente(null)
+      resetAutorizacionesPin()
     }
   }, [isOpen])
 
@@ -420,6 +433,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           onClick={() => {
                             setFacturaId(f.id)
                             setTipoNc(puedeElegirTipoTotal(f) ? 'TOTAL' : 'PARCIAL')
+                            // UX B QA fix: seleccionar (incluso re-seleccionar)
+                            // una factura arranca un proceso de NC nuevo — la
+                            // autorizacion de PIN de la factura anterior nunca
+                            // debe quedar vigente para esta.
+                            resetAutorizacionesPin()
                           }}
                           className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
                             seleccionada ? 'border-primary bg-muted' : 'hover:bg-muted'
@@ -608,7 +626,13 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
           {factura && (
             <div className="flex justify-end gap-3 mt-4 pt-4 border-t shrink-0">
               <button
-                onClick={() => setFacturaId(null)}
+                onClick={() => {
+                  setFacturaId(null)
+                  // UX B QA fix: deseleccionar la factura cierra el proceso
+                  // de NC en curso — la autorizacion de PIN no debe persistir
+                  // para la proxima factura que se seleccione.
+                  resetAutorizacionesPin()
+                }}
                 disabled={loading}
                 className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors"
               >
