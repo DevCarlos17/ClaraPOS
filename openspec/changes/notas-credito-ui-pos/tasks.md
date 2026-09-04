@@ -185,3 +185,26 @@ ya reversado), nunca sobre lo originalmente facturado.
 - [x] 5a.9 Verify: `yarn test:run` (1011/1011 verdes) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals, cero errores nuevos); `crearNotaCredito` (`use-notas-credito.ts`) verificado en CERO líneas cambiadas (`git diff` — solo aditivo, nuevo hook `useReversosFactura`).
 
 **Resultado real vs. forecast**: 664 inserciones + 60 eliminaciones = 724 líneas cambiadas (`git diff --stat` sobre 10 archivos) vs. forecast ~300-350 — excede significativamente el budget de 400, mismo patrón que Slices 1/3a/3b de este change (subestimación consistente del costo de TDD estricto con triangulación completa + wiring de gating cross-cutting). Desglose aproximado: `notas-credito-ui.ts` (+127, 3 funciones puras nuevas) + su test (+99, triangulación completa); `use-notas-credito.ts` (+35, un hook nuevo, 100% aditivo) + su test (+54); `nota-credito-pos-modal.tsx` (+122/-, wiring de gating + reindentación menor del bloque de listado) + su test (+85); `factura-detalle-panel.tsx` (+35, sección aditiva) + su test (+65); `seleccion-lineas-nc.tsx` (+56/-, cap por remanente) + su test (+46). Sin scope creep — el exceso es 100% cobertura RED-first + wiring necesario para la gating logic de mayor riesgo del change (el propio F1). `crearNotaCredito` verificado en CERO líneas cambiadas. **F2–F7 permanecen diferidos a batches 5b/5c.**
+
+## Slice 5b (QA fixes F3, F7) — Bs en desglose fiscal + overlay REVERSADA
+
+> Continuación del troceo de QA de Slice 5a. Solo F3 y F7 — ambos tocan
+> exclusivamente `FacturaDetallePanel` (y, para F3, el helper compartido
+> `construirFilasTotales`), display-only, sin riesgo de lógica de negocio.
+
+### Review Workload Forecast
+
+| Field | Value |
+|---|---|
+| Estimated changed lines | ~120–190 |
+| 400-line budget risk | Low |
+| Chained PRs | `feature-branch-chain` — PR sobre `feat/notas-credito-ui-pos-s5a` |
+| Rollback | Revierte a: desglose fiscal solo en moneda primaria (sin Bs en filas intermedias), sin overlay de reverso |
+
+- [x] 5b.1 RED→GREEN (F3): `FilaTotal` (`factura-export.ts`) — nuevo campo `montoBs: string | null`; `montoBsSecundario(bs, monedaPresentacion)` retorna `formatBs(bs)` solo cuando `monedaPresentacion==='USD'` (si es `'BS'`, `monto` ya es Bs primario). Poblado en Monto Exento/Base Imponible/IVA%/IGTF (filas intermedias); `null` en las 2 filas finales bold (`formatMontoBimonetario`, ya bimonetarias). Actualizados los 14 `toEqual` pre-existentes del suite de `construirFilasTotales`/paridad PDF-texto para incluir el campo — CERO cambio de comportamiento para los consumidores existentes (PDF/texto/canvas siguen leyendo solo `.label`/`.monto`/`.bold`).
+- [x] 5b.2 RED→GREEN (F3): `FacturaDetallePanel` — la fila de totales ahora renderiza `fila.montoBs` como segunda línea muted (mismo patrón visual que la tabla de artículos, USD arriba/Bs abajo) cuando no es `null`. Fuente: `recibo.totales`, ya calculado por `buildReciboData` con la tasa histórica de la factura (`venta.tasa` persistida) — nunca la tasa vigente del sistema (invariante bimonetario verificado, sin fetch nuevo).
+- [x] 5b.3 RED→GREEN (F7): overlay diagonal decorativo en `FacturaDetallePanel` — "REVERSADA" cuando algún `reversos[].tipo === 'TOTAL'` (reverso TOTAL es único por regla de negocio F1, su sola presencia implica factura completa reversada); "REVERSO PARCIAL" cuando hay reversos pero ninguno TOTAL; ausente cuando `reversos` está vacío. Derivado 100% del prop `reversos` ya existente (Slice 5a) — sin prop nuevo, sin query nueva.
+- [x] 5b.4 GREEN (F7): overlay implementado con `aria-hidden="true"` + `pointer-events-none` (MANDATORIOS — no debe re-bloquear la interactividad que F1 habilitó sobre facturas reversadas, ni contaminar el árbol de accesibilidad). Contenedor raíz del panel pasa a `relative` para anclar el overlay `absolute inset-0`.
+- [x] 5b.5 Verify: `yarn test:run` (1017/1017 verdes) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals); `crearNotaCredito` (`use-notas-credito.ts`) verificado en CERO líneas cambiadas (`git diff --stat` vacío).
+
+**Resultado real vs. forecast**: 157 inserciones + 17 eliminaciones = 174 líneas cambiadas (`git diff --stat` sobre 4 archivos: `factura-export.ts`, `factura-export.test.ts`, `factura-detalle-panel.tsx`, `factura-detalle-panel.test.tsx`) vs. forecast ~120-190 — dentro del budget, sin exception. `crearNotaCredito` verificado en CERO líneas cambiadas. **F2, F4, F5, F6 permanecen diferidos a batch 5c.**
