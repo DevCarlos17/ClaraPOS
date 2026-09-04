@@ -54,7 +54,86 @@ describe('useFacturasSesionActiva — Slice 5a-2a (Spec notas-credito-pos: alcan
     expect(result.current.facturas).toHaveLength(1)
     const [sql, params] = mockedUseQuery.mock.calls[0]
     expect(sql).toContain('sesion_caja_id')
-    expect(sql).toContain("status != 'ANULADA'")
     expect(params).toEqual(['emp-1', 'sesion-1'])
+  })
+
+  it('Design §Decision 2: ya NO filtra status != ANULADA — una factura reversada de la sesion activa se sigue trayendo', () => {
+    setup({ sesionId: 'sesion-1', rows: [] })
+
+    renderHook(() => useFacturasSesionActiva())
+
+    const [sql] = mockedUseQuery.mock.calls[0]
+    expect(sql).not.toContain("status != 'ANULADA'")
+  })
+
+  it('Design §Decision 2: agrega tiene_reverso_total/tiene_reverso_parcial (EXISTS sobre notas_credito) y v.status al SELECT', () => {
+    setup({ sesionId: 'sesion-1', rows: [] })
+
+    renderHook(() => useFacturasSesionActiva())
+
+    const [sql] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('tiene_reverso_total')
+    expect(sql).toContain('tiene_reverso_parcial')
+    expect(sql).toContain("nc.tipo = 'TOTAL'")
+    expect(sql).toContain("nc.tipo = 'PARCIAL'")
+    expect(sql).toContain('v.status')
+  })
+
+  it('venta ANULADA con NC tipo TOTAL: tiene_reverso_total=1 y tiene_reverso_parcial=0 en la fila retornada', () => {
+    setup({
+      sesionId: 'sesion-1',
+      rows: [
+        {
+          id: 'venta-1',
+          nro_factura: 'C01-000001',
+          status: 'ANULADA',
+          tiene_reverso_total: 1,
+          tiene_reverso_parcial: 0,
+        },
+      ],
+    })
+
+    const { result } = renderHook(() => useFacturasSesionActiva())
+
+    expect(result.current.facturas[0]).toMatchObject({
+      status: 'ANULADA',
+      tiene_reverso_total: 1,
+      tiene_reverso_parcial: 0,
+    })
+  })
+
+  it('venta con NC tipo PARCIAL: tiene_reverso_parcial=1 y tiene_reverso_total=0 en la fila retornada', () => {
+    setup({
+      sesionId: 'sesion-1',
+      rows: [
+        {
+          id: 'venta-2',
+          nro_factura: 'C01-000002',
+          status: null,
+          tiene_reverso_total: 0,
+          tiene_reverso_parcial: 1,
+        },
+      ],
+    })
+
+    const { result } = renderHook(() => useFacturasSesionActiva())
+
+    expect(result.current.facturas[0]).toMatchObject({
+      tiene_reverso_total: 0,
+      tiene_reverso_parcial: 1,
+    })
+  })
+
+  it('venta sin NC asociada: ambos flags en 0', () => {
+    setup({
+      sesionId: 'sesion-1',
+      rows: [
+        { id: 'venta-3', nro_factura: 'C01-000003', status: null, tiene_reverso_total: 0, tiene_reverso_parcial: 0 },
+      ],
+    })
+
+    const { result } = renderHook(() => useFacturasSesionActiva())
+
+    expect(result.current.facturas[0]).toMatchObject({ tiene_reverso_total: 0, tiene_reverso_parcial: 0 })
   })
 })

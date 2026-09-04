@@ -47,6 +47,12 @@ export interface FacturaParaAnular {
   saldo_pend_usd: string
   tipo: string
   fecha: string
+  /** Presente solo en filas devueltas por `useFacturasSesionActiva` (Design §Decision 2). */
+  status?: string
+  /** PowerSync boolean-as-integer: 1 si existe una NC tipo TOTAL asociada a esta venta. */
+  tiene_reverso_total?: number
+  /** PowerSync boolean-as-integer: 1 si existe una NC tipo PARCIAL asociada a esta venta. */
+  tiene_reverso_parcial?: number
 }
 
 export interface DetalleFacturaItem {

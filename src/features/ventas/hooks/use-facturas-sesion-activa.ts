@@ -26,12 +26,14 @@ export function useFacturasSesionActiva() {
     sesionId
       ? `SELECT
            v.id, v.nro_factura, v.cliente_id, v.tasa, v.total_usd, v.total_bs,
-           v.saldo_pend_usd, v.tipo, v.fecha,
+           v.saldo_pend_usd, v.tipo, v.status, v.fecha,
            c.nombre as cliente_nombre,
-           c.identificacion as cliente_identificacion
+           c.identificacion as cliente_identificacion,
+           EXISTS(SELECT 1 FROM notas_credito nc WHERE nc.venta_id = v.id AND nc.tipo = 'TOTAL')   as tiene_reverso_total,
+           EXISTS(SELECT 1 FROM notas_credito nc WHERE nc.venta_id = v.id AND nc.tipo = 'PARCIAL') as tiene_reverso_parcial
          FROM ventas v
          JOIN clientes c ON v.cliente_id = c.id
-         WHERE v.empresa_id = ? AND v.sesion_caja_id = ? AND v.status != 'ANULADA'
+         WHERE v.empresa_id = ? AND v.sesion_caja_id = ?
          ORDER BY v.fecha DESC`
       : '',
     sesionId ? [empresaId, sesionId] : []
