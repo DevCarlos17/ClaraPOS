@@ -342,3 +342,21 @@ ya reversado), nunca sobre lo originalmente facturado.
 - [x] 5g.3.3 Verify: `yarn test:run` (1048/1048 verdes, +3 netos sobre 1045) + `yarn type-check:test` (limpio). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` NUNCA tocados — cambio 100% acotado a `notas-credito-ui.ts` (función pura nueva) y al renderer de `FacturaBadges`.
 
 **Resultado real vs. forecast (5g.3)**: `notas-credito-ui.ts` +29 líneas (función pura + tipo `BadgesFacturaVisibles`), `notas-credito-ui.test.ts` +14 líneas (describe nuevo, 3 tests), `nota-credito-pos-modal.tsx` ~+8/-6 líneas (rewire de `FacturaBadges`), `nota-credito-pos-modal.test.tsx` +9 líneas (3 aserciones nuevas en tests existentes) — muy por debajo del budget de 400. Ships junto con el batch 5g en la misma rama `feat/notas-credito-ui-pos-s5g`.
+
+### 5g.4 (BUG E — el watermark del panel de detalle queda atascado en "REVERSO PARCIAL" en facturas 100% reversadas)
+
+> `FacturaDetallePanel` (`factura-detalle-panel.tsx`) calculaba el estado
+> del watermark diagonal LOCALMENTE a partir del tipo crudo de cada NC en
+> `reversos`: `reversos.some(r => r.tipo === 'TOTAL') ? 'TOTAL' : 'PARCIAL'`.
+> Cuando una factura llega al 100% de reverso por ACUMULACIÓN de varias NCs
+> PARCIALes (ninguna individualmente 'TOTAL'), el watermark quedaba
+> atascado en "REVERSO PARCIAL" en vez de "REVERSADA" — mismatch con el
+> badge de la lista y el mensaje "reversada totalmente", que YA leen
+> correctamente el estado acumulado (`badgesPorVenta`, de
+> `useBadgesReversoSesion`/`calcularBadgesReversoPorVenta`) para ambos
+> caminos (NC única TOTAL o PARCIALes acumuladas).
+
+- [x] 5g.4.1 RED→GREEN: nuevo test en `factura-detalle-panel.test.tsx` (describe F7 QA fix) — renderiza el panel con `reversos` = dos registros PARCIAL y la nueva prop `badgeReverso="TOTAL"`, y confirma que el overlay muestra "REVERSADA" y NO "REVERSO PARCIAL". RED confirmado (la prop no existía; el overlay leía `reversos` crudo y mostraba "REVERSO PARCIAL"). Fix: nueva prop `badgeReverso?: BadgeReverso` (tipo importado de `notas-credito-ui.ts`) en `FacturaDetallePanelProps`; el overlay ahora lee `estadoReverso = badgeReverso` directamente, en vez de derivarlo de `reversos.some(...)`. La sección "Notas de crédito aplicadas" (historial) sigue leyendo `reversos` sin cambios. Call site (`nota-credito-pos-modal.tsx`) actualizado para pasar `badgeReverso={badgesPorVenta[facturaId ?? ''] ?? null}` (misma fuente que `FacturaBadges`, ya usada por el badge de la lista). Los 2 tests pre-existentes de NC única TOTAL/PARCIAL actualizados mínimamente para pasar el `badgeReverso` correspondiente, manteniendo sus aserciones intactas. `crearNotaCredito`, `crearVenta`, `SupervisorPinDialog` NUNCA tocados.
+- [x] 5g.4.2 Verify: `yarn test:run` (1049/1049 verdes, +1 neto sobre 1048) + `yarn type-check:test` (limpio). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` verificados en CERO líneas cambiadas.
+
+**Resultado real vs. forecast (5g.4)**: `factura-detalle-panel.tsx` +16/-7 líneas (prop nueva + doc + rewire del overlay), `factura-detalle-panel.test.tsx` +23 líneas (1 test nuevo + 2 líneas de prop en tests existentes), `nota-credito-pos-modal.tsx` +5/-1 líneas (call site) — muy por debajo del budget de 400. Ships junto con el batch 5g en la misma rama `feat/notas-credito-ui-pos-s5g`.
