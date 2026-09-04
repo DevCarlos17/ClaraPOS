@@ -148,3 +148,40 @@ cualquier wiring — no se implementa "de paso" dentro de otra tarea.
 - Reuso obligatorio, no reescritura: `buildReciboData`/`construirFilasTotales` (`factura-export.ts`) para el panel y el preview PARCIAL; el patrón de stepper de `linea-items.tsx:88-137` para `SeleccionLineasNc`; `SupervisorPinDialog` + `PERMISSIONS.SALES_NOTA_CREDITO` (gating existente, solo extendido en Slice 4).
 - Solo español en toda la UI. TypeScript estricto, sin `any`. `yarn` — nunca `npm`.
 - `useDetalleFactura` (cxc) se extiende de forma 100% aditiva — verificar en Slice 1 que los 3 consumidores existentes no rompen antes de avanzar a Slice 2.
+
+## Slice 5a (QA fix F1) — Facturas reversadas seleccionables + gating de acción + tope de remanente por línea
+
+> QA manual del usuario tras el cierre del change (4 slices) encontró 7
+> ajustes. Este batch cubre **solo F1** — el único con riesgo real de
+> lógica de negocio (permitir sobre-reversar una línea ya acreditada) —
+> aislado en su propia rama/PR para review enfocado. F2–F7 (colores de
+> badges, desglose Bs fiscal, causa de kardex, cap decimal, UX de exceso de
+> cantidad, overlay REVERSADA) quedan diferidos a batches 5b/5c.
+
+### Review Workload Forecast
+
+| Field | Value |
+|---|---|
+| Estimated changed lines | ~300–350 |
+| 400-line budget risk | Alto (real, ver resultado) |
+| Chained PRs | `feature-branch-chain` — PR sobre `feat/notas-credito-ui-pos-s4` |
+| Rollback | Revierte a: fila reversada deshabilitada (Slice 2), sin historial de reverso ni tope por línea |
+
+**Requisito de negocio (QA)**: las facturas reversadas (TOTAL o PARCIAL)
+deben quedar SELECCIONABLES en el listado (antes: `disabled`, ocultando el
+detalle). El gating se mueve de la SELECCIÓN a la ACCIÓN: reversado TOTAL
+bloquea cualquier NC adicional (vista de solo lectura); reversado PARCIAL
+permite una NC adicional pero solo sobre el remanente por línea (facturado −
+ya reversado), nunca sobre lo originalmente facturado.
+
+- [x] 5a.1 RED→GREEN: `puedeEmitirNcAdicional(f)` y `puedeElegirTipoTotal(f)` (`notas-credito-ui.ts`) — tabla de verdad sin-reverso/total/parcial. Gating de ACCIÓN, no de selección.
+- [x] 5a.2 RED→GREEN: `calcularReversoPorLinea(ventaDetId, cantidadFacturada, notasCreditoDet[])` (`notas-credito-ui.ts`) — mismo criterio de acumulación que el guard autoritativo del backend (`validarTopeDobleCredito`/`buildSumCantidadYaAcreditadaQuery`, `notas-credito-fiscal.ts`). Triangulado: sin NCs previas, con una NC previa, línea totalmente reversada (`restante=0`), filtra por `venta_det_id`, acumula múltiples NCs.
+- [x] 5a.3 RED→GREEN: `agruparReversosPorNc(rows)` (`notas-credito-ui.ts`) — agrupa filas planas del historial en entradas por-NC para el panel de detalle (historial additivo).
+- [x] 5a.4 RED→GREEN: `useReversosFactura(ventaId, empresaId)` (`use-notas-credito.ts`) — nuevo hook, JOIN `notas_credito`+`notas_credito_det`, filtra `empresa_id`. Alimenta 5a.2/5a.3.
+- [x] 5a.5 RED→GREEN: `FacturaDetallePanel` — prop opcional `reversos?: ReversoAplicado[]` (default `[]`, 100% aditivo — cero cambio de asserts en tests pre-existentes), sección "Notas de crédito aplicadas" mostrada junto al detalle original (nunca lo reemplaza).
+- [x] 5a.6 RED→GREEN: `SeleccionLineasNc` — prop opcional `cantidadDisponible?: number` en `LineaSeleccionNc` (default = `cantidadFacturada`, compat hacia atrás). El cap real (stepper, `max`, `derivarLineasNcParcial`) usa el remanente, no lo facturado; línea con remanente 0 deshabilita input+stepper.
+- [x] 5a.7 GREEN (wiring): `nota-credito-pos-modal.tsx` — quita el `disabled`/`bloqueada` de la fila (factura reversada ahora SELECCIONABLE); al seleccionar, `tipoNc` por defecto usa `puedeElegirTipoTotal`; oculta el botón "Total" cuando `!puedeTotal`; vista de solo-lectura cuando `!puedeEmitirNc` (oculta Tipo de NC/Modalidad/Depósito/Motivo/confirmar); `lineasParaNc` alimenta `cantidadDisponible` vía `calcularReversoPorLinea`; panel recibe `reversos` vía `agruparReversosPorNc`.
+- [x] 5a.8 Actualizado el test pre-existente "WARNING #2" (Slice 2) — su expectativa de fila `disabled` quedó reemplazada por: selección funciona + acción bloqueada + nota de solo-lectura. Actualizado también el test de `tiene_reverso_parcial=1` (defaultea a PARCIAL, no TOTAL).
+- [x] 5a.9 Verify: `yarn test:run` (1011/1011 verdes) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals, cero errores nuevos); `crearNotaCredito` (`use-notas-credito.ts`) verificado en CERO líneas cambiadas (`git diff` — solo aditivo, nuevo hook `useReversosFactura`).
+
+**Resultado real vs. forecast**: 664 inserciones + 60 eliminaciones = 724 líneas cambiadas (`git diff --stat` sobre 10 archivos) vs. forecast ~300-350 — excede significativamente el budget de 400, mismo patrón que Slices 1/3a/3b de este change (subestimación consistente del costo de TDD estricto con triangulación completa + wiring de gating cross-cutting). Desglose aproximado: `notas-credito-ui.ts` (+127, 3 funciones puras nuevas) + su test (+99, triangulación completa); `use-notas-credito.ts` (+35, un hook nuevo, 100% aditivo) + su test (+54); `nota-credito-pos-modal.tsx` (+122/-, wiring de gating + reindentación menor del bloque de listado) + su test (+85); `factura-detalle-panel.tsx` (+35, sección aditiva) + su test (+65); `seleccion-lineas-nc.tsx` (+56/-, cap por remanente) + su test (+46). Sin scope creep — el exceso es 100% cobertura RED-first + wiring necesario para la gating logic de mayor riesgo del change (el propio F1). `crearNotaCredito` verificado en CERO líneas cambiadas. **F2–F7 permanecen diferidos a batches 5b/5c.**
