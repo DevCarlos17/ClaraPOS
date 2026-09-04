@@ -208,3 +208,27 @@ ya reversado), nunca sobre lo originalmente facturado.
 - [x] 5b.5 Verify: `yarn test:run` (1017/1017 verdes) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals); `crearNotaCredito` (`use-notas-credito.ts`) verificado en CERO líneas cambiadas (`git diff --stat` vacío).
 
 **Resultado real vs. forecast**: 157 inserciones + 17 eliminaciones = 174 líneas cambiadas (`git diff --stat` sobre 4 archivos: `factura-export.ts`, `factura-export.test.ts`, `factura-detalle-panel.tsx`, `factura-detalle-panel.test.tsx`) vs. forecast ~120-190 — dentro del budget, sin exception. `crearNotaCredito` verificado en CERO líneas cambiadas. **F2, F4, F5, F6 permanecen diferidos a batch 5c.**
+
+## Slice 5c (QA fixes F2, F4, F5, F6) — colores de badges + causa NCR en kardex + tope de 3 decimales + UX de sobre-cantidad
+
+> Último batch de QA de este change. F2 y F4 son parches visuales
+> (display-only, sin lógica de negocio nueva); F5 y F6 tocan la validación de
+> cantidad en `SeleccionLineasNc` — ambos con RED-first genuino.
+
+### Review Workload Forecast
+
+| Field | Value |
+|---|---|
+| Estimated changed lines | ~190–290 |
+| 400-line budget risk | Low |
+| Chained PRs | `feature-branch-chain` — PR sobre `feat/notas-credito-ui-pos-s5b` |
+| Rollback | Revierte a: badges de estado de pago compartiendo un solo gris, causa "—" en kardex para reintegros de NC, sin tope de 3 decimales, clampeo silencioso de cantidad sobre el tope |
+
+- [x] 5c.1 GREEN (F2): `ESTADO_PAGO_BADGE_CLASS` en `nota-credito-pos-modal.tsx` — Contado (verde), Crédito (azul), Abonada (ámbar) — antes los tres compartían `border-slate-200`/`bg-slate-50` sin distinción visual. Reverso Total (rojo) y Reverso Parcial (naranja) sin cambios. Parche visual explícito pendiente de rediseño futuro — labels en español sin cambios.
+- [x] 5c.2 GREEN (F4, DISPLAY-ONLY): `tipoSalidaBadge()` en `kardex-list.tsx` — nueva rama `origen === 'NCR'` → `NOTA_CREDITO` ('Nota de crédito'). `crearNotaCredito` ya insertaba `origen:'NCR'` en `movimientos_inventario` (verificado, CERO líneas cambiadas) — el gap era puramente de presentación (la columna "Causa" caía al fallback "—" porque `tipo_salida` es `null` para reintegros de NC y el mapeo previo solo cubría `origen==='VEN'`).
+- [x] 5c.3 RED→GREEN (F5): tope de 3 decimales en el input de cantidad de `SeleccionLineasNc` para líneas `esDecimal=true` — un 4to decimal se rechaza (input controlado se congela en el último valor válido), consistente con la precisión `NUMERIC` de 3 decimales de `inventario_stock`. Líneas enteras (`esDecimal=false`) sin cambio — siguen bloqueando cualquier tecla decimal (comportamiento pre-existente).
+- [x] 5c.4 RED→GREEN (F6): exceder el tope disponible (`cantidadDisponible` o, en su ausencia, `cantidadFacturada` — F1) ya NO se clampea en silencio — el valor excedido se rechaza (el input no lo escribe), el input pasa a estado de error visual (borde/texto rojo, `aria-invalid`) y se muestra "No puedes devolver más de la cantidad disponible." ANTES de que el usuario pueda confirmar. 3 tests pre-existentes de Slice 5a que asumían el clampeo silencioso (`toHaveValue(3)`/`toHaveValue(2)` tras escribir un exceso) actualizados a la nueva semántica de rechazo — sin regresión de intención, la aserción original ("el tope real es el remanente, no lo facturado") se preserva intacta.
+- [x] 5c.5 GREEN (F6, reword): mensaje de `derivarLineasNcParcial` reescrito de "excede lo facturado (X)" a "excede la cantidad disponible (X)" — deuda de review de Slice 5a (obs `sdd/notas-credito-ui-pos/apply-progress`): el parámetro recibido como `cantidadFacturada` es en realidad el remanente cuando el caller ya lo capó vía F1, por lo que "lo facturado" era una etiqueta engañosa para una línea ya parcialmente reversada.
+- [x] 5c.6 Verify: `yarn test:run` (1024/1024 verdes, +7 netos sobre 1017) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals); `crearNotaCredito` (`use-notas-credito.ts`) verificado en CERO líneas cambiadas (`git diff --stat` vacío).
+
+**Resultado real vs. forecast**: 248 inserciones + 18 eliminaciones = 266 líneas cambiadas (`git diff --stat` sobre 8 archivos: `kardex-list.tsx`+test, `nota-credito-pos-modal.tsx`+test, `seleccion-lineas-nc.tsx`+test, `notas-credito-ui.ts`+test) vs. forecast ~190-290 — dentro del budget, sin exception. `crearNotaCredito` verificado en CERO líneas cambiadas. **Los 7 fixes de QA (F1–F7) quedan completos — pendiente re-verify combinado de todo el change (slices 1-5c) antes del merge final del chain a `develop`.**
