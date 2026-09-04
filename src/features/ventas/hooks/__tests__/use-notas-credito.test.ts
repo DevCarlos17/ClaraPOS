@@ -8,6 +8,12 @@ vi.mock('@/core/db/powersync/db', () => ({
     writeTransaction: vi.fn(),
   },
 }))
+// F1 QA fix: `useReversosFactura` (nuevo hook, historial de NC por factura)
+// usa `useQuery` de `@powersync/react` — mismo patron aislado que
+// `use-facturas-sesion-activa.test.ts`. El resto de tests de este archivo
+// (crearNotaCredito, via writeTransaction) no se ven afectados: nunca llaman
+// a un hook basado en `useQuery`.
+vi.mock('@powersync/react', () => ({ useQuery: vi.fn() }))
 vi.mock('@/core/db/powersync/connector', () => ({ connector: {} }))
 
 vi.mock('@/features/contabilidad/hooks/use-cuentas-config', () => ({
@@ -31,14 +37,18 @@ vi.mock('@/features/ventas/hooks/use-ventas', () => ({
 }))
 
 import type { Transaction } from '@powersync/common'
+import { renderHook } from '@testing-library/react'
+import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
 import {
   crearNotaCredito,
   assertGateAntiFraudeNoDesembolso,
+  useReversosFactura,
   type CrearNotaCreditoParams,
 } from '../use-notas-credito'
 
 const mockedDb = vi.mocked(db, true)
+const mockedUseQuery = vi.mocked(useQuery)
 
 interface Call {
   sql: string
@@ -1149,5 +1159,49 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
     expect(ventaUpdate).toBeDefined()
     expect(ventaUpdate!.params).toContain('0.00000000')
+  })
+})
+
+describe('useReversosFactura (F1 QA fix: historial de NC aplicadas a una factura, JOIN notas_credito+notas_credito_det, empresa_id-scoped)', () => {
+  beforeEach(() => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+  })
+
+  it('sin ventaId: no ejecuta la query (sql vacio), retorna lista vacia', () => {
+    const { result } = renderHook(() => useReversosFactura(null, 'emp-1'))
+
+    expect(result.current.reversos).toEqual([])
+    expect(mockedUseQuery).toHaveBeenCalledWith('', [])
+  })
+
+  it('con ventaId + empresaId: ejecuta la query JOIN notas_credito+notas_credito_det escopeada por empresa_id', () => {
+    renderHook(() => useReversosFactura('venta-1', 'emp-1'))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('notas_credito_det')
+    expect(sql).toContain('nc.empresa_id = ?')
+    expect(params).toEqual(['venta-1', 'emp-1'])
+  })
+
+  it('mapea las filas retornadas al shape ReversoFacturaRow (nro_ncr, tipo, venta_det_id, cantidad)', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        {
+          nota_credito_id: 'nc-1',
+          nro_ncr: 'NCR-000001',
+          tipo: 'PARCIAL',
+          fecha: '2026-01-02T00:00:00Z',
+          venta_det_id: 'vd-1',
+          producto_descripcion: 'Botox 50U',
+          cantidad: '2.000',
+        },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useReversosFactura('venta-1', 'emp-1'))
+
+    expect(result.current.reversos).toHaveLength(1)
+    expect(result.current.reversos[0]).toMatchObject({ nro_ncr: 'NCR-000001', venta_det_id: 'vd-1', cantidad: '2.000' })
   })
 })
