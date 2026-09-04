@@ -203,3 +203,130 @@ export function derivarLineasNcParcial(
 
   return { lineas, errores }
 }
+
+// =============================================
+// F1 QA fix (Slice 5a): facturas reversadas selectionables — gating de
+// ACCION, no de SELECCION (openspec/changes/notas-credito-ui-pos, apply-
+// progress obs). Antes (Slice 2) una factura con `status==='ANULADA'` (NC
+// TOTAL ya emitida) quedaba con la fila `disabled` en el listado, ocultando
+// el detalle. Ahora CUALQUIER factura es seleccionable (ver
+// nota-credito-pos-modal.tsx) — estas funciones solo deciden si la ACCION
+// "Nota de credito" (y cual tipo) esta disponible para la factura ya
+// seleccionada.
+// =============================================
+
+export interface FacturaReversoFlags {
+  tiene_reverso_total?: number
+  tiene_reverso_parcial?: number
+}
+
+/**
+ * Reversado TOTAL -> NUNCA se puede emitir otra NC (ni TOTAL ni PARCIAL): la
+ * factura ya quedo completamente acreditada, `validarTopeDobleCredito`
+ * rechazaria cualquier cantidad adicional en TODAS sus lineas. Reversado
+ * PARCIAL (sin total) SI permite una NC adicional, limitada al remanente por
+ * linea (`calcularReversoPorLinea`).
+ */
+export function puedeEmitirNcAdicional(f: FacturaReversoFlags): boolean {
+  return f.tiene_reverso_total !== 1
+}
+
+/**
+ * Restriccion mas fina: el tipo TOTAL especificamente deja de ser una opcion
+ * valida en cuanto existe CUALQUIER reverso previo (total o parcial).
+ * `crearNotaCredito` con tipo=TOTAL siempre deriva TODAS las lineas de
+ * `ventas_det` con su cantidad COMPLETA original (use-notas-credito.ts) —
+ * eso excederia el tope por-linea en cualquier linea ya parcialmente
+ * acreditada. La UI oculta la opcion proactivamente en vez de dejar que el
+ * backend la rechace con un error confuso.
+ */
+export function puedeElegirTipoTotal(f: FacturaReversoFlags): boolean {
+  return f.tiene_reverso_total !== 1 && f.tiene_reverso_parcial !== 1
+}
+
+// =============================================
+// calcularReversoPorLinea — F1 QA fix (remaining-qty por linea)
+// =============================================
+
+export interface NotaCreditoDetParaReverso {
+  venta_det_id: string | null
+  cantidad: DecimalInput
+}
+
+export interface ReversoLineaResult {
+  facturado: Decimal
+  reversado: Decimal
+  restante: Decimal
+}
+
+/**
+ * Cuanto de una linea de factura ya fue devuelto por NCs previas, y cuanto
+ * queda disponible para una NUEVA NC PARCIAL. MISMO criterio de acumulacion
+ * que el guard autoritativo y ya probado del backend
+ * (`validarTopeDobleCredito` + `buildSumCantidadYaAcreditadaQuery`,
+ * `notas-credito-fiscal.ts`): `SUM(cantidad)` de `notas_credito_det` para
+ * esa `venta_det_id`, clampeado a `>= 0`. Una linea con `restante=0` NO
+ * puede re-reversarse — el caller (`SeleccionLineasNc`, via
+ * `nota-credito-pos-modal.tsx`) usa `restante` como el TOPE real en vez de
+ * `cantidadFacturada` (cantidad originalmente vendida).
+ */
+export function calcularReversoPorLinea(
+  ventaDetId: string,
+  cantidadFacturada: DecimalInput,
+  notasCreditoDet: NotaCreditoDetParaReverso[]
+): ReversoLineaResult {
+  const facturado = new Decimal(cantidadFacturada)
+  const reversado = notasCreditoDet
+    .filter((d) => d.venta_det_id === ventaDetId)
+    .reduce((acc, d) => acc.plus(d.cantidad), new Decimal(0))
+  const restante = Decimal.max(new Decimal(0), facturado.minus(reversado))
+  return { facturado, reversado, restante }
+}
+
+// =============================================
+// agruparReversosPorNc — F1 QA fix (historial additivo: original + reverso)
+// =============================================
+
+export interface ReversoFacturaRowInput {
+  nota_credito_id: string
+  nro_ncr: string
+  tipo: string
+  fecha: string
+  producto_descripcion: string
+  cantidad: string
+}
+
+export interface ReversoLineaDetalle {
+  descripcion: string
+  cantidad: string
+}
+
+export interface ReversoAplicado {
+  notaCreditoId: string
+  nroNcr: string
+  tipo: string
+  fecha: string
+  lineas: ReversoLineaDetalle[]
+}
+
+/**
+ * Agrupa las filas planas de `useReversosFactura` (JOIN
+ * `notas_credito`+`notas_credito_det`, una fila por linea de NC) en un
+ * arreglo por-NC para el panel de detalle — Requisito de negocio: el panel
+ * SIEMPRE muestra la factura original completa y, si tiene NC(s) aplicadas,
+ * ADEMAS el historial de lo reversado (aditivo, nunca reemplaza la vista
+ * original). Funcion PURA — el hook resuelve el fetch, esta funcion solo
+ * re-forma la data ya cargada.
+ */
+export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {
+  const porId = new Map<string, ReversoAplicado>()
+  for (const row of rows) {
+    let grupo = porId.get(row.nota_credito_id)
+    if (!grupo) {
+      grupo = { notaCreditoId: row.nota_credito_id, nroNcr: row.nro_ncr, tipo: row.tipo, fecha: row.fecha, lineas: [] }
+      porId.set(row.nota_credito_id, grupo)
+    }
+    grupo.lineas.push({ descripcion: row.producto_descripcion, cantidad: row.cantidad })
+  }
+  return Array.from(porId.values())
+}

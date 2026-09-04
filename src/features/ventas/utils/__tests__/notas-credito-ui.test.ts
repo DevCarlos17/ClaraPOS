@@ -4,6 +4,10 @@ import {
   facturaCoincideBusqueda,
   previewMontoBsNc,
   derivarLineasNcParcial,
+  puedeEmitirNcAdicional,
+  puedeElegirTipoTotal,
+  calcularReversoPorLinea,
+  agruparReversosPorNc,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -242,5 +246,100 @@ describe('derivarLineasNcParcial (Design §Decision 7: mapeo UI -> contrato de c
 
     expect(result.lineas).toEqual([{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }])
     expect(result.errores).toEqual(['La cantidad a devolver de la linea vd-2 no puede ser negativa.'])
+  })
+})
+
+// ─── F1 QA fix (Slice 5a) — facturas reversadas quedan SELECCIONABLES; el
+// gating se mueve de la SELECCION a la ACCION. ────
+
+describe('puedeEmitirNcAdicional (F1: gating de accion — Reversado TOTAL bloquea CUALQUIER NC adicional)', () => {
+  it('factura sin ningun reverso: permite emitir', () => {
+    expect(puedeEmitirNcAdicional({})).toBe(true)
+  })
+
+  it('tiene_reverso_total=1: NO permite ninguna NC adicional', () => {
+    expect(puedeEmitirNcAdicional({ tiene_reverso_total: 1 })).toBe(false)
+  })
+
+  it('tiene_reverso_parcial=1 (sin total): SI permite emitir (una NC adicional sobre el remanente)', () => {
+    expect(puedeEmitirNcAdicional({ tiene_reverso_parcial: 1 })).toBe(true)
+  })
+})
+
+describe('puedeElegirTipoTotal (F1: el tipo TOTAL especificamente se oculta si YA existe cualquier reverso)', () => {
+  it('factura sin ningun reverso: TOTAL es una opcion valida', () => {
+    expect(puedeElegirTipoTotal({})).toBe(true)
+  })
+
+  it('tiene_reverso_total=1: TOTAL ya no es opcion (redundante con puedeEmitirNcAdicional=false)', () => {
+    expect(puedeElegirTipoTotal({ tiene_reverso_total: 1 })).toBe(false)
+  })
+
+  it('tiene_reverso_parcial=1 (sin total): TOTAL tampoco es opcion — solo PARCIAL sobre el remanente', () => {
+    expect(puedeElegirTipoTotal({ tiene_reverso_parcial: 1 })).toBe(false)
+  })
+})
+
+describe('calcularReversoPorLinea (F1: remaining-qty por linea, mismo criterio de acumulacion que validarTopeDobleCredito)', () => {
+  it('sin NCs previas sobre esta linea: reversado=0, restante=facturado completo', () => {
+    const r = calcularReversoPorLinea('vd-1', 5, [])
+    expect(r.facturado.toNumber()).toBe(5)
+    expect(r.reversado.toNumber()).toBe(0)
+    expect(r.restante.toNumber()).toBe(5)
+  })
+
+  it('una NC parcial previa acredito 2 de 5: restante correcto (3)', () => {
+    const r = calcularReversoPorLinea('vd-1', 5, [{ venta_det_id: 'vd-1', cantidad: '2' }])
+    expect(r.reversado.toNumber()).toBe(2)
+    expect(r.restante.toNumber()).toBe(3)
+  })
+
+  it('FULLY-REVERSED GUARD: linea ya acreditada por completo -> restante=0 (no puede re-reversarse)', () => {
+    const r = calcularReversoPorLinea('vd-1', 5, [{ venta_det_id: 'vd-1', cantidad: '5' }])
+    expect(r.restante.toNumber()).toBe(0)
+  })
+
+  it('ignora notas_credito_det de OTRAS lineas de la misma factura (filtra por venta_det_id)', () => {
+    const r = calcularReversoPorLinea('vd-1', 5, [{ venta_det_id: 'vd-2', cantidad: '3' }])
+    expect(r.reversado.toNumber()).toBe(0)
+    expect(r.restante.toNumber()).toBe(5)
+  })
+
+  it('acumula multiples NCs previas sobre la MISMA linea (SUM, no el ultimo valor)', () => {
+    const r = calcularReversoPorLinea('vd-1', 10, [
+      { venta_det_id: 'vd-1', cantidad: '2' },
+      { venta_det_id: 'vd-1', cantidad: '3' },
+    ])
+    expect(r.reversado.toNumber()).toBe(5)
+    expect(r.restante.toNumber()).toBe(5)
+  })
+})
+
+describe('agruparReversosPorNc (F1: historial additivo — original + reverso, Requisito "mostrar ambos")', () => {
+  it('agrupa multiples lineas de la MISMA NC en una sola entrada', () => {
+    const result = agruparReversosPorNc([
+      { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', producto_descripcion: 'Botox 50U', cantidad: '2.000' },
+      { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', producto_descripcion: 'Consulta', cantidad: '1.000' },
+    ])
+
+    expect(result).toHaveLength(1)
+    expect(result[0].nroNcr).toBe('NCR-000001')
+    expect(result[0].lineas).toEqual([
+      { descripcion: 'Botox 50U', cantidad: '2.000' },
+      { descripcion: 'Consulta', cantidad: '1.000' },
+    ])
+  })
+
+  it('separa NCs distintas en entradas distintas', () => {
+    const result = agruparReversosPorNc([
+      { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', producto_descripcion: 'Botox 50U', cantidad: '2.000' },
+      { nota_credito_id: 'nc-2', nro_ncr: 'NCR-000002', tipo: 'TOTAL', fecha: '2026-01-03T00:00:00Z', producto_descripcion: 'Botox 50U', cantidad: '3.000' },
+    ])
+
+    expect(result.map((g) => g.nroNcr)).toEqual(['NCR-000001', 'NCR-000002'])
+  })
+
+  it('lista vacia produce arreglo vacio (sin reversos aplicados aun)', () => {
+    expect(agruparReversosPorNc([])).toEqual([])
   })
 })
