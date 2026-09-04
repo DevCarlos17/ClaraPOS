@@ -83,7 +83,10 @@ export function FacturaDetallePanel({ recibo, afectoCxc, reversos = [] }: Factur
             className={`flex items-center justify-between ${fila.bold ? 'font-bold' : 'text-muted-foreground'}`}
           >
             <span>{fila.label}</span>
-            <span className="tabular-nums">{fila.monto}</span>
+            <div className="text-right tabular-nums">
+              <div>{fila.monto}</div>
+              {fila.montoBs !== null && <div className="text-xs">{fila.montoBs}</div>}
+            </div>
           </div>
         ))}
       </div>

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { FacturaDetallePanel } from '../factura-detalle-panel'
 import { buildReciboData, type ReciboData } from '../../utils/factura-export'
 
@@ -162,5 +162,56 @@ describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, jun
 
     expect(screen.getByText('NCR-000001')).toBeInTheDocument()
     expect(screen.getByText('NCR-000002')).toBeInTheDocument()
+  })
+})
+
+// ─── F3 QA fix (Slice 5b): el desglose fiscal del panel SIEMPRE muestra el
+// monto en Bs (ademas del USD), a la tasa HISTORICA de la factura
+// (`recibo.totales`, ya calculado por `buildReciboData` con la tasa
+// persistida — nunca la tasa vigente del sistema). ────
+
+describe('FacturaDetallePanel — F3 QA fix (Bs en el desglose fiscal, tasa historica)', () => {
+  it('Base Imponible e IVA muestran tambien el monto en Bs (tasa=40 de la factura)', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+
+    // Filas de totales escopeadas (no la tabla de lineas de arriba, que puede
+    // coincidir en el monto cuando hay una unica linea).
+    const baseRow = screen.getByText('Base Imponible').closest('div') as HTMLElement
+    const ivaRow = screen.getByText('IVA 16%').closest('div') as HTMLElement
+
+    // Botox 50U: 2 * $10.00 = $20.00 base imponible -> Bs. 800,00 (tasa 40)
+    expect(within(baseRow).getByText('Bs. 800,00')).toBeInTheDocument()
+    // IVA 16% de $20.00 = $3.20 -> Bs. 128,00
+    expect(within(ivaRow).getByText('Bs. 128,00')).toBeInTheDocument()
+  })
+
+  it('Monto Exento tambien muestra su equivalente en Bs', () => {
+    const recibo = baseRecibo({
+      lineas: [
+        {
+          codigo: 'P002',
+          nombre: 'Consulta',
+          cantidad: '1',
+          precioUnitarioUsd: '15.00',
+          tipoImpuesto: 'Exento',
+          impuestoPct: 0,
+        },
+      ],
+    })
+
+    render(<FacturaDetallePanel recibo={recibo} afectoCxc={null} />)
+
+    // $15.00 exento * tasa 40 = Bs. 600,00 — escopeado a la fila de totales
+    const exentoRow = screen.getByText('Monto Exento').closest('div') as HTMLElement
+    expect(within(exentoRow).getByText('Bs. 600,00')).toBeInTheDocument()
+  })
+
+  it('IGTF tambien muestra su equivalente en Bs', () => {
+    const recibo = baseRecibo({ igtfUsd: 0.6 })
+
+    render(<FacturaDetallePanel recibo={recibo} afectoCxc={null} />)
+
+    // $0.60 IGTF * tasa 40 = Bs. 24,00
+    expect(screen.getByText('Bs. 24,00')).toBeInTheDocument()
   })
 })
