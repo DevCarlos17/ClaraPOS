@@ -171,6 +171,10 @@ export interface DetalleFacturaCxc {
   producto_codigo: string
   tipo_impuesto: string
   impuesto_pct: string
+  /** `unidades.es_decimal` del producto (PowerSync boolean-as-integer). `null` si el producto no tiene unidad_base_id. */
+  es_decimal: number | null
+  /** `precio_unitario_usd` convertido a Bs con la tasa HISTORICA de la venta (`v.tasa`), no la tasa vigente. */
+  precio_unitario_bs: string
 }
 
 export interface PagoFacturaCxc {
@@ -229,9 +233,13 @@ export function useDetalleFactura(ventaId: string | null) {
     ventaId
       ? `SELECT vd.id, vd.venta_id, vd.producto_id, vd.cantidad, vd.precio_unitario_usd, vd.subtotal_usd, vd.subtotal_bs,
            vd.tipo_impuesto, vd.impuesto_pct,
-           p.nombre as producto_nombre, p.codigo as producto_codigo
+           p.nombre as producto_nombre, p.codigo as producto_codigo,
+           u.es_decimal,
+           ROUND(CAST(vd.precio_unitario_usd AS REAL) * CAST(v.tasa AS REAL), 2) as precio_unitario_bs
          FROM ventas_det vd
          JOIN productos p ON vd.producto_id = p.id
+         JOIN ventas v ON vd.venta_id = v.id
+         LEFT JOIN unidades u ON p.unidad_base_id = u.id
          WHERE vd.venta_id = ?`
       : '',
     ventaId ? [ventaId] : []
