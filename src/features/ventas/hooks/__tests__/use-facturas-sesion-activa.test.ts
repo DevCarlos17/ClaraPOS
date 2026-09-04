@@ -79,6 +79,15 @@ describe('useFacturasSesionActiva — Slice 5a-2a (Spec notas-credito-pos: alcan
     expect(sql).toContain('v.status')
   })
 
+  it('Slice 3a: agrega v.total_igtf_usd al SELECT (panel de detalle necesita IGTF de la factura real)', () => {
+    setup({ sesionId: 'sesion-1', rows: [] })
+
+    renderHook(() => useFacturasSesionActiva())
+
+    const [sql] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('v.total_igtf_usd')
+  })
+
   it('venta ANULADA con NC tipo TOTAL: tiene_reverso_total=1 y tiene_reverso_parcial=0 en la fila retornada', () => {
     setup({
       sesionId: 'sesion-1',

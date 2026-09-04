@@ -53,6 +53,8 @@ export interface FacturaParaAnular {
   tiene_reverso_total?: number
   /** PowerSync boolean-as-integer: 1 si existe una NC tipo PARCIAL asociada a esta venta. */
   tiene_reverso_parcial?: number
+  /** Presente solo en filas de `useFacturasSesionActiva` (Slice 3a) — alimenta `igtfUsd` de `buildReciboData` en el panel de detalle. */
+  total_igtf_usd?: string
 }
 
 export interface DetalleFacturaItem {
