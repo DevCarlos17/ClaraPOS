@@ -2,12 +2,18 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { X, Warning, MagnifyingGlass } from '@phosphor-icons/react'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
-import { crearNotaCredito, type LiquidacionModalidad, type FacturaParaAnular } from '../hooks/use-notas-credito'
+import {
+  crearNotaCredito,
+  type LiquidacionModalidad,
+  type FacturaParaAnular,
+  type LineaNcSeleccionada,
+} from '../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../hooks/use-facturas-sesion-activa'
 import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
 import { derivarEstadoPago, facturaCoincideBusqueda, huboAfectacionCxc, ESTADO_PAGO_LABEL } from '../utils/notas-credito-ui'
 import { buildReciboData, type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
 import { FacturaDetallePanel } from './factura-detalle-panel'
+import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
 import { useDetalleFactura, usePagosFactura, useAfectacionCxc } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -104,6 +110,13 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const [showPinDeposito, setShowPinDeposito] = useState(false)
   const [pinDepositoAutorizado, setPinDepositoAutorizado] = useState(false)
   const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
+  // Eleccion TOTAL/PARCIAL (Slice 3b, Spec notas-credito-pos: "Seleccion de
+  // tipo de nota de credito"). TOTAL es el default — preserva el flujo
+  // pre-existente byte-a-byte (mismo `crearNotaCredito` sin `tipo`/`lineas`).
+  const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL'>('TOTAL')
+  // Lineas PARCIAL pendientes de PIN A — solo se usan si el usuario confirmo
+  // sin permiso y debe autorizar antes de que `emitirNc` se dispare de nuevo.
+  const [lineasParcialPendientes, setLineasParcialPendientes] = useState<LineaNcSeleccionada[] | null>(null)
 
   useEffect(() => {
     if (isOpen) {
@@ -118,6 +131,8 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setShowPinDeposito(false)
       setPinDepositoAutorizado(false)
       setDepositoElegidoId(null)
+      setTipoNc('TOTAL')
+      setLineasParcialPendientes(null)
     }
   }, [isOpen])
 
@@ -177,7 +192,31 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     })
   }, [factura, detalle, pagosFactura, company])
 
-  async function emitirNc() {
+  // Lineas candidatas a NC PARCIAL (Slice 3b, Design §Decision 7) — mismo
+  // `detalle` de `useDetalleFactura` ya usado para el panel de detalle,
+  // mapeado al contrato de presentacion de `SeleccionLineasNc`.
+  const lineasParaNc: LineaSeleccionNc[] = useMemo(
+    () =>
+      detalle.map((d) => ({
+        venta_det_id: d.id,
+        producto_nombre: d.producto_nombre,
+        producto_codigo: d.producto_codigo,
+        cantidadFacturada: Number(d.cantidad),
+        esDecimal: d.es_decimal === 1,
+        precioUnitarioUsd: Number(d.precio_unitario_usd),
+        tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
+        impuestoPct: Number(d.impuesto_pct),
+      })),
+    [detalle]
+  )
+
+  /**
+   * `lineasParcial` presente + no vacio → NC PARCIAL (Design §Interfaces,
+   * Slice 3b). Ausente → NC TOTAL, comportamiento pre-existente byte-a-byte
+   * (mismo `crearNotaCredito` sin `tipo`/`lineas`, Spec: "NC TOTAL reversa
+   * la factura completa").
+   */
+  async function emitirNc(lineasParcial?: LineaNcSeleccionada[]) {
     if (!factura || !user?.empresa_id || !sesion) return
     setLoading(true)
     try {
@@ -188,11 +227,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         empresa_id: user.empresa_id,
         // Entrada POS-express: SIEMPRE la sesion activa del cajero — la
         // lista ya viene escopeada query-side (useFacturasSesionActiva).
-        // `tipo` se omite (default 'TOTAL' en crearNotaCredito) — la NC
-        // PARCIAL desde POS es un slice futuro separado (obs #2842).
         entryPoint: 'POS',
         sesionCajaActivaId: sesion.id,
         modalidad,
+        ...(lineasParcial ? { tipo: 'PARCIAL' as const, lineas: lineasParcial } : {}),
         // PIN B (Slice 5a-2b): `resolverDepositoOverride` retorna `null`
         // salvo que el segundo PIN ya haya autorizado el override Y el
         // usuario ya haya elegido un deposito — en cuyo caso retorna ese id.
@@ -218,9 +256,24 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     // PIN A (Spec notas-credito-pos, obs #2835 regla definitiva): solo se
     // pide PIN cuando el usuario actual NO tiene el permiso de emision de
     // NC — con permiso, emite directo, sin friccion.
+    setLineasParcialPendientes(null)
     if (hasPermission(PERMISSIONS.SALES_NOTA_CREDITO)) {
       void emitirNc()
     } else {
+      setShowPin(true)
+    }
+  }
+
+  /**
+   * Confirmar de `SeleccionLineasNc` (Slice 3b, Design §Decision 7): mismo
+   * gating de permiso/PIN A que TOTAL — el permiso NUNCA distingue por tipo
+   * de NC (Spec: "Permiso determina el PIN para ambas acciones").
+   */
+  function handleConfirmarParcialClick(lineas: LineaNcSeleccionada[]) {
+    if (hasPermission(PERMISSIONS.SALES_NOTA_CREDITO)) {
+      void emitirNc(lineas)
+    } else {
+      setLineasParcialPendientes(lineas)
       setShowPin(true)
     }
   }
@@ -290,7 +343,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           key={f.id}
                           type="button"
                           disabled={bloqueada}
-                          onClick={() => setFacturaId(f.id)}
+                          onClick={() => {
+                            setFacturaId(f.id)
+                            setTipoNc('TOTAL')
+                          }}
                           aria-label={bloqueada ? `Factura ${f.nro_factura} ya reversada` : undefined}
                           className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
                             bloqueada
@@ -335,6 +391,34 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
 
                 {factura && (
                   <div className="space-y-4 px-4 pb-4">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">
+                        Tipo de nota de credito
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setTipoNc('TOTAL')}
+                          aria-pressed={tipoNc === 'TOTAL'}
+                          className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                            tipoNc === 'TOTAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
+                          }`}
+                        >
+                          Total
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTipoNc('PARCIAL')}
+                          aria-pressed={tipoNc === 'PARCIAL'}
+                          className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                            tipoNc === 'PARCIAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
+                          }`}
+                        >
+                          Parcial
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="rounded-lg border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-2">
                         Modalidad de liquidacion
@@ -399,15 +483,34 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       />
                     </div>
 
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
-                      <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
-                      <div className="text-sm text-red-700">
-                        <p className="font-medium">Esta accion es irreversible</p>
-                        <p className="text-xs mt-1">
-                          Se reintegrara el stock de todos los productos y la factura quedara anulada.
-                        </p>
+                    {tipoNc === 'PARCIAL' ? (
+                      // PARCIAL (Slice 3b, Design §Decision 7): reemplaza el
+                      // warning/footer generico de TOTAL — la propia
+                      // SeleccionLineasNc trae su boton de confirmar,
+                      // gateado por la misma validacion de
+                      // `derivarLineasNcParcial` (tope facturado, es_decimal,
+                      // cantidad negativa, al menos una linea).
+                      <SeleccionLineasNc
+                        lineas={lineasParaNc}
+                        factura={{
+                          total_usd: Number(factura.total_usd),
+                          total_bs: Number(factura.total_bs),
+                          tasa: Number(factura.tasa),
+                        }}
+                        onConfirm={handleConfirmarParcialClick}
+                        loading={loading}
+                      />
+                    ) : (
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+                        <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                        <div className="text-sm text-red-700">
+                          <p className="font-medium">Esta accion es irreversible</p>
+                          <p className="text-xs mt-1">
+                            Se reintegrara el stock de todos los productos y la factura quedara anulada.
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -423,13 +526,15 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
               >
                 Volver
               </button>
-              <button
-                onClick={handleConfirmarClick}
-                disabled={loading}
-                className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
-                {loading ? 'Procesando...' : 'Confirmar Anulacion'}
-              </button>
+              {tipoNc === 'TOTAL' && (
+                <button
+                  onClick={handleConfirmarClick}
+                  disabled={loading}
+                  className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {loading ? 'Procesando...' : 'Confirmar Anulacion'}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -438,7 +543,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       <SupervisorPinDialog
         isOpen={showPin}
         onClose={() => setShowPin(false)}
-        onAuthorized={() => void emitirNc()}
+        onAuthorized={() => void emitirNc(lineasParcialPendientes ?? undefined)}
         titulo="Emision de Nota de Credito"
         mensaje="No tienes permiso para emitir notas de credito. Ingresa el PIN de un supervisor autorizado."
         requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}

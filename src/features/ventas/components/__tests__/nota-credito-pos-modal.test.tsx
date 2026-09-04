@@ -524,3 +524,98 @@ describe('NotaCreditoPosModal — Slice 3a (panel de detalle montado, Design §D
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
   })
 })
+
+describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring completo a crearNotaCredito, Design §Decision 7)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function detalleUnaLinea() {
+    return [
+      {
+        id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+        precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+        producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+        tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+      },
+    ]
+  }
+
+  it('tras seleccionar una factura, se ofrece explicitamente elegir entre Total y Parcial', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByRole('button', { name: 'Total' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Parcial' })).toBeInTheDocument()
+    // TOTAL es la eleccion por defecto (preserva el flujo pre-existente byte-a-byte).
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+  })
+
+  it('elegir Parcial reemplaza el footer "Confirmar Anulacion" por la seleccion de lineas (SeleccionLineasNc) y NO llama crearNotaCredito todavia', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('con permiso: PARCIAL completo ingresando cantidad y confirmando invoca crearNotaCredito con tipo=PARCIAL y las lineas mapeadas', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      venta_id: 'venta-1',
+      entryPoint: 'POS',
+      tipo: 'PARCIAL',
+      lineas: [{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }],
+    })
+  })
+
+  it('sin permiso: confirmar PARCIAL exige el mismo PIN de emision (PIN A) y, autorizado, invoca crearNotaCredito con tipo=PARCIAL', async () => {
+    setup({ hasPermission: false })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '1')
+    await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
+
+    expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+
+    await user.click(screen.getByText('Autorizar'))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      tipo: 'PARCIAL',
+      lineas: [{ venta_det_id: 'vd-1', cantidadDevolver: '1.000' }],
+    })
+  })
+
+  it('NC TOTAL sigue sin enviar tipo/lineas (contrato preservado byte-a-byte, Spec: NC TOTAL reversa completa)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0].tipo).toBeUndefined()
+    expect(mockedCrearNotaCredito.mock.calls[0][0].lineas).toBeUndefined()
+  })
+})
