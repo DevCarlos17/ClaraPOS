@@ -315,3 +315,117 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBe('dep-1')
   })
 })
+
+describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/reverso, buscador, gating de reverso total)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('factura con saldo_pend_usd == total_usd (sin pagos) muestra el badge "Crédito"', () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_usd: '30.00', saldo_pend_usd: '30.00' })],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText('Crédito')).toBeInTheDocument()
+  })
+
+  it('factura Abonada + tiene_reverso_parcial=1 muestra AMBOS badges en la misma fila', () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_usd: '30.00', saldo_pend_usd: '10.00', tiene_reverso_parcial: 1 })],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText('Abonada')).toBeInTheDocument()
+    expect(screen.getByText('Reverso Parcial')).toBeInTheDocument()
+  })
+
+  it('WARNING #2 resuelto: factura con tiene_reverso_total=1 (status ANULADA) permanece visible con su badge pero la fila queda deshabilitada — clickearla NO navega al flujo de confirmacion', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ status: 'ANULADA', tiene_reverso_total: 1 })],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText('Reverso Total')).toBeInTheDocument()
+    expect(screen.getByText(/C01-000001/i)).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/C01-000001/i))
+
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+  })
+
+  it('factura con tiene_reverso_parcial=1 pero status activo sigue siendo clickable (puede recibir otra NC parcial)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/C01-000001/i))
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+  })
+
+  it('el buscador filtra client-side por numero de factura', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [
+        facturaSesion({ id: 'venta-1', nro_factura: 'C01-000001', cliente_nombre: 'Maria Perez' }),
+        facturaSesion({ id: 'venta-2', nro_factura: 'C01-000002', cliente_nombre: 'Juan Gomez' }),
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText(/Buscar por numero, cliente o estado/i), '000002')
+
+    expect(screen.queryByText(/C01-000001/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/C01-000002/i)).toBeInTheDocument()
+  })
+
+  it('el buscador filtra client-side por nombre de cliente (case-insensitive)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [
+        facturaSesion({ id: 'venta-1', nro_factura: 'C01-000001', cliente_nombre: 'Maria Perez' }),
+        facturaSesion({ id: 'venta-2', nro_factura: 'C01-000002', cliente_nombre: 'Juan Gomez' }),
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText(/Buscar por numero, cliente o estado/i), 'gomez')
+
+    expect(screen.queryByText(/Maria Perez/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/Juan Gomez/i)).toBeInTheDocument()
+  })
+
+  it('el buscador filtra client-side por estado de pago (ej. "credito")', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [
+        facturaSesion({ id: 'venta-1', nro_factura: 'C01-000001', total_usd: '30.00', saldo_pend_usd: '30.00' }),
+        facturaSesion({ id: 'venta-2', nro_factura: 'C01-000002', total_usd: '30.00', saldo_pend_usd: '0.00' }),
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.type(screen.getByPlaceholderText(/Buscar por numero, cliente o estado/i), 'credito')
+
+    expect(screen.getByText(/C01-000001/i)).toBeInTheDocument()
+    expect(screen.queryByText(/C01-000002/i)).not.toBeInTheDocument()
+  })
+})

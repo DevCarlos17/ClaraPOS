@@ -1,15 +1,17 @@
-import { useState, useRef, useEffect } from 'react'
-import { X, Warning, ArrowLeft } from '@phosphor-icons/react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { X, Warning, ArrowLeft, MagnifyingGlass } from '@phosphor-icons/react'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
-import { crearNotaCredito, type LiquidacionModalidad } from '../hooks/use-notas-credito'
+import { crearNotaCredito, type LiquidacionModalidad, type FacturaParaAnular } from '../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../hooks/use-facturas-sesion-activa'
 import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
+import { derivarEstadoPago, facturaCoincideBusqueda, ESTADO_PAGO_LABEL } from '../utils/notas-credito-ui'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { NativeSelect } from '@/components/ui/native-select'
+import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import type { SesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 
@@ -31,6 +33,31 @@ const MODALIDADES_POS: { value: LiquidacionModalidad; label: string }[] = [
   { value: 'AJUSTE_CXC', label: 'Ajuste de cuentas por cobrar' },
   { value: 'COMPENSACION_VENTA', label: 'Compensar con una venta nueva' },
 ]
+
+/**
+ * Badges de estado de pago + reverso de una fila del listado (Slice 2, Spec
+ * notas-credito-pos: "Badges de estado de pago y reverso"). Puede combinar el
+ * badge de pago con uno o ambos badges de reverso simultaneamente.
+ */
+function FacturaBadges({ f }: { f: FacturaParaAnular }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+        {ESTADO_PAGO_LABEL[derivarEstadoPago(f)]}
+      </Badge>
+      {f.tiene_reverso_total === 1 && (
+        <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
+          Reverso Total
+        </Badge>
+      )}
+      {f.tiene_reverso_parcial === 1 && (
+        <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">
+          Reverso Parcial
+        </Badge>
+      )}
+    </div>
+  )
+}
 
 /**
  * Entrada POS-express de Notas de Credito (Slice 5a-2a, Spec
@@ -59,6 +86,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const { depositos: depositosActivos } = useDepositosVentaActivos()
 
   const [facturaId, setFacturaId] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const [modalidad, setModalidad] = useState<LiquidacionModalidad>('EFECTIVO_REAL')
   const [motivo, setMotivo] = useState('')
   const [loading, setLoading] = useState(false)
@@ -74,6 +102,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     } else {
       dialogRef.current?.close()
       setFacturaId(null)
+      setSearchQuery('')
       setModalidad('EFECTIVO_REAL')
       setMotivo('')
       setShowPin(false)
@@ -88,6 +117,14 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   }
 
   const factura = facturas.find((f) => f.id === facturaId) ?? null
+
+  // Filtro client-side sobre la lista ya escopeada por query (Slice 2, Spec
+  // notas-credito-pos: buscador por numero, cliente o estado) — sin nueva
+  // query, se recalcula en cada render sobre `facturas`.
+  const facturasFiltradas = useMemo(
+    () => facturas.filter((f) => facturaCoincideBusqueda(f, searchQuery)),
+    [facturas, searchQuery]
+  )
 
   async function emitirNc() {
     if (!factura || !user?.empresa_id || !sesion) return
@@ -168,34 +205,70 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
           {!sesion ? (
             <p className="text-sm text-muted-foreground">No hay sesion de caja activa</p>
           ) : !factura ? (
-            <div className="flex-1 overflow-y-auto space-y-1.5">
-              {isLoading ? (
-                Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-12 bg-muted rounded animate-pulse" />
-                ))
-              ) : facturas.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-6 text-center">
-                  No hay facturas en esta sesion todavia.
-                </p>
-              ) : (
-                facturas.map((f) => (
-                  <button
-                    key={f.id}
-                    type="button"
-                    onClick={() => setFacturaId(f.id)}
-                    className="w-full flex items-center justify-between rounded-lg border p-3 text-left hover:bg-muted transition-colors"
-                  >
-                    <div>
-                      <p className="text-sm font-medium">#{f.nro_factura}</p>
-                      <p className="text-xs text-muted-foreground">{f.cliente_nombre}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold">{formatUsd(f.total_usd)}</p>
-                      <p className="text-xs text-muted-foreground">{formatBs(f.total_bs)}</p>
-                    </div>
-                  </button>
-                ))
+            <div className="flex-1 flex flex-col min-h-0">
+              {facturas.length > 0 && (
+                <div className="relative mb-2 shrink-0">
+                  <MagnifyingGlass className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar por numero, cliente o estado..."
+                    className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  />
+                </div>
               )}
+              <div className="flex-1 overflow-y-auto space-y-1.5">
+                {isLoading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="h-12 bg-muted rounded animate-pulse" />
+                  ))
+                ) : facturas.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">
+                    No hay facturas en esta sesion todavia.
+                  </p>
+                ) : facturasFiltradas.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">
+                    Ninguna factura coincide con la busqueda.
+                  </p>
+                ) : (
+                  facturasFiltradas.map((f) => {
+                    // WARNING #2 (Slice 1 review, obs #2877) resuelto aqui:
+                    // una factura ya reversada TOTAL (status ANULADA) queda
+                    // visible con su badge pero NO clickable — evita el
+                    // dead-end confuso de navegar a "Confirmar Anulacion"
+                    // sobre una factura que `crearNotaCredito` va a
+                    // rechazar. Reverso PARCIAL sigue siendo accionable
+                    // (puede recibir otra NC parcial dentro del tope).
+                    const bloqueada = f.status === 'ANULADA'
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        disabled={bloqueada}
+                        onClick={() => setFacturaId(f.id)}
+                        aria-label={bloqueada ? `Factura ${f.nro_factura} ya reversada` : undefined}
+                        className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
+                          bloqueada ? 'opacity-60 cursor-not-allowed' : 'hover:bg-muted'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground">{formatDateTime(f.fecha)}</p>
+                          <p className="text-sm font-medium">#{f.nro_factura}</p>
+                          <p className="text-xs text-muted-foreground truncate">{f.cliente_nombre}</p>
+                          <div className="mt-1">
+                            <FacturaBadges f={f} />
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0 pl-2">
+                          <p className="text-sm font-semibold">{formatUsd(f.total_usd)}</p>
+                          <p className="text-xs text-muted-foreground">{formatBs(f.total_bs)}</p>
+                        </div>
+                      </button>
+                    )
+                  })
+                )}
+              </div>
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto space-y-4">
