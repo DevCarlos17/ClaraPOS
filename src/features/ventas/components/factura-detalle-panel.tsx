@@ -1,0 +1,115 @@
+import { formatUsd, formatBs } from '@/lib/currency'
+import { formatMontoPago, formatMontoBimonetario, sumarAbonos, construirFilasTotales, type ReciboData } from '../utils/factura-export'
+
+/**
+ * Panel de detalle fiscal de la factura seleccionada (Design §Decision 5,
+ * openspec/changes/notas-credito-ui-pos). Componente de PRESENTACION puro:
+ * recibe `ReciboData` YA CONSTRUIDO por el llamador — NUNCA llama
+ * `buildReciboData` ni hace fetch internamente. Reusa `construirFilasTotales`
+ * para la seccion de totales (misma fuente que el recibo oficial de la
+ * venta, sin recalcular montos de forma independiente).
+ *
+ * Reuso-ready para POS y el futuro flujo Tradicional (Design §Technical
+ * Approach): sin dependencia de contexto POS-especifico.
+ */
+export interface FacturaDetallePanelProps {
+  /** `null` cuando ninguna factura esta seleccionada — el panel permanece vacio. */
+  recibo: ReciboData | null
+  /** `huboAfectacionCxc(...)` (Design §Decision 6) — `null` mientras no se conoce aun. */
+  afectoCxc: boolean | null
+}
+
+export function FacturaDetallePanel({ recibo, afectoCxc }: FacturaDetallePanelProps) {
+  if (!recibo) {
+    return (
+      <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+        Selecciona una factura del listado para ver su detalle
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4 p-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Factura</p>
+        <p className="text-lg font-bold">{recibo.nroFactura}</p>
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs uppercase text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 text-left">Articulo</th>
+              <th className="px-3 py-2 text-right">Cant.</th>
+              <th className="px-3 py-2 text-right">P. Unit.</th>
+              <th className="px-3 py-2 text-right">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {recibo.lineas.map((linea) => (
+              <tr key={linea.codigo}>
+                <td className="px-3 py-2">
+                  {linea.nombre}
+                  {linea.esExento && <span className="ml-1 text-xs text-muted-foreground">(E)</span>}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">{linea.cantidad}</td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <div>{formatUsd(linea.precioUnitarioUsd)}</div>
+                  <div className="text-xs text-muted-foreground">{formatBs(linea.precioUnitarioBs)}</div>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <div>{formatUsd(linea.totalUsd)}</div>
+                  <div className="text-xs text-muted-foreground">{formatBs(linea.totalBs)}</div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+        {construirFilasTotales(recibo.totales, recibo.monedaPresentacion).map((fila) => (
+          <div
+            key={fila.label}
+            className={`flex items-center justify-between ${fila.bold ? 'font-bold' : 'text-muted-foreground'}`}
+          >
+            <span>{fila.label}</span>
+            <span className="tabular-nums">{fila.monto}</span>
+          </div>
+        ))}
+      </div>
+
+      {recibo.pagos.length > 0 && (
+        <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Metodos de pago</p>
+          {recibo.pagos.map((pago) => (
+            <div key={pago.metodoCobroId} className="flex items-center justify-between">
+              <span>{pago.metodoNombre}</span>
+              <span className="tabular-nums">{formatMontoPago(pago, recibo.monedaPresentacion)}</span>
+            </div>
+          ))}
+          <div className="flex items-center justify-between border-t border-slate-100 pt-1 font-semibold">
+            <span>Total abonos</span>
+            <span className="tabular-nums">
+              {formatMontoBimonetario(
+                sumarAbonos(recibo.pagos).usd,
+                sumarAbonos(recibo.pagos).bs,
+                recibo.monedaPresentacion
+              )}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {afectoCxc !== null && (
+        <div
+          className={`rounded-lg border p-3 text-sm font-medium ${
+            afectoCxc ? 'border-orange-200 bg-orange-50 text-orange-700' : 'border-slate-200 bg-slate-50 text-muted-foreground'
+          }`}
+        >
+          {afectoCxc ? 'Afecto cuentas por cobrar' : 'No afecto cuentas por cobrar'}
+        </div>
+      )}
+    </div>
+  )
+}
