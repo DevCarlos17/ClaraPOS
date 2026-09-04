@@ -37,8 +37,24 @@ export function FacturaDetallePanel({ recibo, afectoCxc, reversos = [] }: Factur
     )
   }
 
+  // F7 QA fix (Slice 5b): un reverso TOTAL siempre es unico (F1 oculta la
+  // opcion "Total" ante cualquier reverso previo) -> su sola presencia
+  // implica que la factura completa quedo reversada.
+  const estadoReverso: 'TOTAL' | 'PARCIAL' | null =
+    reversos.length === 0 ? null : reversos.some((r) => r.tipo === 'TOTAL') ? 'TOTAL' : 'PARCIAL'
+
   return (
-    <div className="space-y-4 p-4">
+    <div className="relative space-y-4 p-4">
+      {estadoReverso !== null && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 flex select-none items-center justify-center overflow-hidden"
+        >
+          <span className="-rotate-12 whitespace-nowrap text-4xl font-black uppercase tracking-widest text-red-600/20">
+            {estadoReverso === 'TOTAL' ? 'REVERSADA' : 'REVERSO PARCIAL'}
+          </span>
+        </div>
+      )}
       <div>
         <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Factura</p>
         <p className="text-lg font-bold">{recibo.nroFactura}</p>

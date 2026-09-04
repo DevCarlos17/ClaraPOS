@@ -215,3 +215,47 @@ describe('FacturaDetallePanel — F3 QA fix (Bs en el desglose fiscal, tasa hist
     expect(screen.getByText('Bs. 24,00')).toBeInTheDocument()
   })
 })
+
+// ─── F7 QA fix (Slice 5b): overlay diagonal "REVERSADA"/"REVERSO PARCIAL" —
+// puramente decorativo (`aria-hidden` + `pointer-events-none`) para no
+// bloquear la interactividad que F1 habilito sobre facturas reversadas. ────
+
+describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () => {
+  it('sin reversos: no muestra ningun overlay', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+
+    expect(screen.queryByText('REVERSADA')).not.toBeInTheDocument()
+    expect(screen.queryByText('REVERSO PARCIAL')).not.toBeInTheDocument()
+  })
+
+  it('con un reverso TOTAL: muestra overlay "REVERSADA", decorativo (aria-hidden + pointer-events-none)', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        afectoCxc={null}
+        reversos={[
+          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'TOTAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
+        ]}
+      />
+    )
+
+    const overlay = screen.getByText('REVERSADA')
+    expect(overlay.closest('[aria-hidden="true"]')).not.toBeNull()
+    expect(overlay.closest('.pointer-events-none')).not.toBeNull()
+  })
+
+  it('con reverso(s) PARCIAL (sin ningun TOTAL): muestra overlay "REVERSO PARCIAL"', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        afectoCxc={null}
+        reversos={[
+          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('REVERSO PARCIAL')).toBeInTheDocument()
+    expect(screen.queryByText('REVERSADA')).not.toBeInTheDocument()
+  })
+})
