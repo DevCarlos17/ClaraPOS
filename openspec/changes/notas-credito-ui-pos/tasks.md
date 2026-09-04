@@ -306,3 +306,22 @@ ya reversado), nunca sobre lo originalmente facturado.
 - [x] 5f.5 Verify: `yarn test:run` (1044/1044 verdes, +3 netos sobre 1041) + `yarn type-check:test` (limpio) + `yarn type-check` (solo ruido preexistente de vitest-globals, sin categorías nuevas). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` verificados en CERO líneas cambiadas.
 
 **Resultado real vs. forecast**: 228 inserciones + 47 eliminaciones = ~181 líneas netas cambiadas (`git diff --stat` sobre 4 archivos: `notas-credito-ui.ts`+test, `nota-credito-pos-modal.tsx`+test) — dentro del budget de 400, sin `size:exception`. Sin scope creep: el tope por-línea (over-reversal guard) NUNCA se tocó, solo la fuente de la que lee el gating de acción. **Cierra el hallazgo del re-verify combinado final** — el change queda listo para el merge completo del chain (s1→s5f) a `develop` vía tracker.
+
+## Slice 5g (BUG 3 / QA C — gap async en el callback `onAuthorized` de PIN A) — fix quirúrgico post-merge
+
+> El chain s1→s5f quedó "listo para merge" (obs #2875), pero una revisión QA
+> posterior encontró que el guard de UX C (`depositoInvalido`, Slice 5e) NO
+> cubría los TRES caminos de emisión — solo `handleConfirmarClick` y
+> `handleConfirmarParcialClick` (ambos síncronos) revalidaban
+> `depositoInvalido`. El callback `onAuthorized` del diálogo de PIN A
+> (`nota-credito-pos-modal.tsx`, único camino async: el usuario puede
+> autorizar el PIN B — deposito — SIN elegir depósito mientras el PIN A
+> sigue pendiente de autorización) llamaba `emitirNc(...)` directo, sin
+> revisar `depositoInvalido` — permitiendo que la NC se emitiera igual y
+> cayera en silencio al riel automático del backend, exactamente lo que UX C
+> prohíbe.
+
+- [x] 5g.1 (BUG 3 / QA C) RED→GREEN: nuevo test `nota-credito-pos-modal.test.tsx` (describe Slice 5a-2b) reproduce el gap — sin permiso de emisión, abre PIN A (síncrono, con el riel automático como default), autoriza PIN B SIN elegir depósito mientras PIN A sigue pendiente, y autoriza PIN A. Antes del fix: `crearNotaCredito` SI se llamaba (`depositoReingresoId: undefined`). Fix: guard `if (depositoInvalido) return` agregado al inicio de la rama `else` del `onAuthorized` de PIN A (`nota-credito-pos-modal.tsx`), mismo estilo/comentario que los guards ya existentes en `handleConfirmarClick`/`handleConfirmarParcialClick`. `handleConfirmarClick`, `handleConfirmarParcialClick`, `SupervisorPinDialog` y `crearNotaCredito`/`crearVenta` NUNCA tocados.
+- [x] 5g.2 Verify: `yarn test:run` (1045/1045 verdes, +1 neto sobre 1044) + `yarn type-check:test` (limpio). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` verificados en CERO líneas cambiadas.
+
+**Resultado real vs. forecast**: 42 líneas cambiadas (`git diff --stat` sobre 2 archivos: `nota-credito-pos-modal.tsx` +6, `nota-credito-pos-modal.test.tsx` +37/-1) — fix quirúrgico de una sola línea de guard + su test dedicado, muy por debajo del budget de 400. Sin scope creep: cambio aislado al único camino de emisión que faltaba el guard.
