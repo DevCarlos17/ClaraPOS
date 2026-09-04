@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event'
 import { NotaCreditoPosModal } from '../nota-credito-pos-modal'
 import { crearNotaCredito } from '../../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../../hooks/use-facturas-sesion-activa'
+import { useDetalleFactura, usePagosFactura, useAfectacionCxc } from '@/features/cxc/hooks/use-cxc'
+import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions } from '@/core/hooks/use-permissions'
 import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
@@ -47,6 +49,12 @@ vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
 
 vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({ crearNotaCredito: vi.fn() }))
 vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({ useFacturasSesionActiva: vi.fn() }))
+vi.mock('@/features/cxc/hooks/use-cxc', () => ({
+  useDetalleFactura: vi.fn(),
+  usePagosFactura: vi.fn(),
+  useAfectacionCxc: vi.fn(),
+}))
+vi.mock('@/features/configuracion/hooks/use-company', () => ({ useCompany: vi.fn() }))
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
 vi.mock('@/core/hooks/use-permissions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/hooks/use-permissions')>()
@@ -57,6 +65,10 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
 const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
+const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
+const mockedUsePagosFactura = vi.mocked(usePagosFactura)
+const mockedUseAfectacionCxc = vi.mocked(useAfectacionCxc)
+const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUsePermissions = vi.mocked(usePermissions)
 const mockedUseDepositosVentaActivos = vi.mocked(useDepositosVentaActivos)
@@ -120,6 +132,13 @@ function facturaSesion(overrides: Partial<FacturaParaAnular> = {}): FacturaParaA
 
 function setup(opts: { hasPermission: boolean }) {
   mockedUseFacturasSesionActiva.mockReturnValue({ facturas: [facturaSesion()], isLoading: false })
+  mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+  mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+  mockedUseAfectacionCxc.mockReturnValue({ cantidadMovimientos: 0, isLoading: false })
+  mockedUseCompany.mockReturnValue({
+    company: { id: 'emp-1', nombre: 'ClaraPOS Estetica C.A.', rif: 'J-12345678-9', direccion: null } as never,
+    isLoading: false,
+  })
   mockedUseCurrentUser.mockReturnValue({
     user: { id: 'user-1', email: 'a@a.com', nombre: 'Cajero', level: 3, rol_id: 'rol-1', rol_nombre: 'Cajero', empresa_id: 'emp-1' },
     loading: false,
@@ -427,5 +446,81 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     expect(screen.getByText(/C01-000001/i)).toBeInTheDocument()
     expect(screen.queryByText(/C01-000002/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('NotaCreditoPosModal — Slice 3a (panel de detalle montado, Design §Decision 5/6)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('sin seleccion: el panel derecho no muestra datos de factura alguna', () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText(/Selecciona una factura del listado/i)).toBeInTheDocument()
+  })
+
+  it('al seleccionar una factura: el panel muestra su detalle fiscal via buildReciboData (linea gravada, linea exenta e IGTF de la factura real)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ total_igtf_usd: '0.60' })],
+      isLoading: false,
+    })
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '2',
+          precio_unitario_usd: '10.00', subtotal_usd: '20.00', subtotal_bs: '800.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+        {
+          id: 'vd-2', venta_id: 'venta-1', producto_id: 'p2', cantidad: '1',
+          precio_unitario_usd: '5.00', subtotal_usd: '5.00', subtotal_bs: '200.00',
+          producto_nombre: 'Consulta', producto_codigo: 'P002',
+          tipo_impuesto: 'Exento', impuesto_pct: '0', es_decimal: 0, precio_unitario_bs: '200.00',
+        },
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByText('Botox 50U')).toBeInTheDocument()
+    expect(screen.getByText('Consulta')).toBeInTheDocument()
+    expect(screen.getByText('Monto Exento')).toBeInTheDocument()
+    expect(screen.getByText('Base Imponible')).toBeInTheDocument()
+    expect(screen.getByText('IGTF')).toBeInTheDocument()
+  })
+
+  it('afectoCxc=true (cantidadMovimientos>0): el panel indica que la factura afecto cuentas por cobrar', async () => {
+    setup({ hasPermission: true })
+    mockedUseAfectacionCxc.mockReturnValue({ cantidadMovimientos: 1, isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByText(/Afect(o|ó) cuentas por cobrar/i)).toBeInTheDocument()
+  })
+
+  it('afectoCxc=false (0 movimientos): el panel indica que NO afecto cuentas por cobrar', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByText(/No afect(o|ó) cuentas por cobrar/i)).toBeInTheDocument()
+  })
+
+  it('el listado sigue visible en la columna izquierda incluso con una factura seleccionada (layout de dos columnas, no drill-down)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getAllByText(/C01-000001/i).length).toBeGreaterThan(0)
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
   })
 })

@@ -1,11 +1,15 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
-import { X, Warning, ArrowLeft, MagnifyingGlass } from '@phosphor-icons/react'
+import { X, Warning, MagnifyingGlass } from '@phosphor-icons/react'
 import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { crearNotaCredito, type LiquidacionModalidad, type FacturaParaAnular } from '../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../hooks/use-facturas-sesion-activa'
 import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
-import { derivarEstadoPago, facturaCoincideBusqueda, ESTADO_PAGO_LABEL } from '../utils/notas-credito-ui'
+import { derivarEstadoPago, facturaCoincideBusqueda, huboAfectacionCxc, ESTADO_PAGO_LABEL } from '../utils/notas-credito-ui'
+import { buildReciboData, type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
+import { FacturaDetallePanel } from './factura-detalle-panel'
+import { useDetalleFactura, usePagosFactura, useAfectacionCxc } from '@/features/cxc/hooks/use-cxc'
+import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
@@ -14,6 +18,11 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 import type { SesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
+
+/** Mismo mapeo que `venta-exitosa-modal.tsx` (Design §Decision 5) — no una formula nueva. */
+function toTipoImpuestoLinea(val: string): TipoImpuestoLinea {
+  return val === 'Gravable' || val === 'Exonerado' ? val : 'Exento'
+}
 
 interface NotaCreditoPosModalProps {
   isOpen: boolean
@@ -126,6 +135,48 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     [facturas, searchQuery]
   )
 
+  // Panel de detalle fiscal (Slice 3a, Design §Decision 5) — reusa
+  // buildReciboData/construirFilasTotales, NUNCA recalcula montos de forma
+  // independiente. Mismo mapeo detalle->ReciboLineaInput que
+  // venta-exitosa-modal.tsx:94-101.
+  const { detalle } = useDetalleFactura(facturaId)
+  const { pagos: pagosFactura } = usePagosFactura(facturaId)
+  const { company } = useCompany()
+  // Afectacion a CxC (Design §Decision 6): fuente movimientos_cuenta, NUNCA
+  // construirCierreRecibo/discrepancy (estado efimero de React).
+  const { cantidadMovimientos } = useAfectacionCxc(facturaId, user?.empresa_id ?? '')
+  const afectoCxc = facturaId ? huboAfectacionCxc(cantidadMovimientos) : null
+
+  const recibo: ReciboData | null = useMemo(() => {
+    if (!factura) return null
+    return buildReciboData({
+      nroFactura: factura.nro_factura,
+      fecha: factura.fecha,
+      emisor: { nombre: company?.nombre ?? '', rif: company?.rif ?? null, direccion: company?.direccion ?? null },
+      cliente: { nombre: factura.cliente_nombre, identificacion: factura.cliente_identificacion, direccion: null },
+      lineas: detalle.map((d) => ({
+        codigo: d.producto_codigo,
+        nombre: d.producto_nombre,
+        cantidad: d.cantidad,
+        precioUnitarioUsd: d.precio_unitario_usd,
+        tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
+        impuestoPct: d.impuesto_pct,
+      })),
+      // SIEMPRE la tasa historica de la factura — nunca la tasa vigente del sistema.
+      tasa: factura.tasa,
+      igtfUsd:
+        factura.total_igtf_usd && Number(factura.total_igtf_usd) > 0 ? Number(factura.total_igtf_usd) : null,
+      pagos: pagosFactura.map((p) => ({
+        metodo_cobro_id: p.metodo_cobro_id,
+        metodo_nombre: p.metodo_nombre,
+        moneda: p.moneda_label as 'USD' | 'BS',
+        monto: Number(p.monto),
+      })),
+      discrepancy: null,
+      saldoPendUsd: Number(factura.saldo_pend_usd),
+    })
+  }, [factura, detalle, pagosFactura, company])
+
   async function emitirNc() {
     if (!factura || !user?.empresa_id || !sesion) return
     setLoading(true)
@@ -180,23 +231,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         ref={dialogRef}
         onClose={onClose}
         onClick={handleBackdropClick}
-        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-lg shadow-xl max-h-[85vh]"
+        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-4xl shadow-xl max-h-[85vh]"
       >
         <div className="p-6 flex flex-col max-h-[85vh]">
           <div className="flex items-start justify-between mb-4 shrink-0">
-            <div className="flex items-center gap-2">
-              {factura && (
-                <button
-                  type="button"
-                  onClick={() => setFacturaId(null)}
-                  className="p-1 rounded-md hover:bg-muted transition-colors"
-                  aria-label="Volver a la lista"
-                >
-                  <ArrowLeft className="h-4 w-4 text-muted-foreground" />
-                </button>
-              )}
-              <h2 className="text-lg font-semibold">Nota de Credito — Sesion Actual</h2>
-            </div>
+            <h2 className="text-lg font-semibold">Nota de Credito — Sesion Actual</h2>
             <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
               <X className="h-5 w-5 text-muted-foreground" />
             </button>
@@ -204,167 +243,173 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
 
           {!sesion ? (
             <p className="text-sm text-muted-foreground">No hay sesion de caja activa</p>
-          ) : !factura ? (
-            <div className="flex-1 flex flex-col min-h-0">
-              {facturas.length > 0 && (
-                <div className="relative mb-2 shrink-0">
-                  <MagnifyingGlass className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar por numero, cliente o estado..."
-                    className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                </div>
-              )}
-              <div className="flex-1 overflow-y-auto space-y-1.5">
-                {isLoading ? (
-                  Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="h-12 bg-muted rounded animate-pulse" />
-                  ))
-                ) : facturas.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-6 text-center">
-                    No hay facturas en esta sesion todavia.
-                  </p>
-                ) : facturasFiltradas.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-6 text-center">
-                    Ninguna factura coincide con la busqueda.
-                  </p>
-                ) : (
-                  facturasFiltradas.map((f) => {
-                    // WARNING #2 (Slice 1 review, obs #2877) resuelto aqui:
-                    // una factura ya reversada TOTAL (status ANULADA) queda
-                    // visible con su badge pero NO clickable — evita el
-                    // dead-end confuso de navegar a "Confirmar Anulacion"
-                    // sobre una factura que `crearNotaCredito` va a
-                    // rechazar. Reverso PARCIAL sigue siendo accionable
-                    // (puede recibir otra NC parcial dentro del tope).
-                    const bloqueada = f.status === 'ANULADA'
-                    return (
-                      <button
-                        key={f.id}
-                        type="button"
-                        disabled={bloqueada}
-                        onClick={() => setFacturaId(f.id)}
-                        aria-label={bloqueada ? `Factura ${f.nro_factura} ya reversada` : undefined}
-                        className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
-                          bloqueada ? 'opacity-60 cursor-not-allowed' : 'hover:bg-muted'
-                        }`}
-                      >
-                        <div className="min-w-0">
-                          <p className="text-xs text-muted-foreground">{formatDateTime(f.fecha)}</p>
-                          <p className="text-sm font-medium">#{f.nro_factura}</p>
-                          <p className="text-xs text-muted-foreground truncate">{f.cliente_nombre}</p>
-                          <div className="mt-1">
-                            <FacturaBadges f={f} />
-                          </div>
-                        </div>
-                        <div className="text-right shrink-0 pl-2">
-                          <p className="text-sm font-semibold">{formatUsd(f.total_usd)}</p>
-                          <p className="text-xs text-muted-foreground">{formatBs(f.total_bs)}</p>
-                        </div>
-                      </button>
-                    )
-                  })
-                )}
-              </div>
-            </div>
           ) : (
-            <div className="flex-1 overflow-y-auto space-y-4">
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Factura:</span>{' '}
-                  <span className="font-medium">#{factura.nro_factura}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Cliente:</span> {factura.cliente_nombre}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Fecha:</span> {formatDateTime(factura.fecha)}
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Tasa:</span> {formatTasa(factura.tasa)}
-                </div>
-                <div className="col-span-2">
-                  <span className="text-muted-foreground">Total:</span>{' '}
-                  <span className="font-bold">{formatUsd(factura.total_usd)}</span> /{' '}
-                  {formatBs(factura.total_bs)}
-                </div>
-              </div>
-
-              <div className="rounded-lg border p-3">
-                <p className="text-xs font-semibold text-muted-foreground mb-2">
-                  Modalidad de liquidacion
-                </p>
-                <NativeSelect
-                  value={modalidad}
-                  onChange={(e) => setModalidad(e.target.value as LiquidacionModalidad)}
-                  className="text-sm"
-                >
-                  {MODALIDADES_POS.map((m) => (
-                    <option key={m.value} value={m.value}>{m.label}</option>
-                  ))}
-                </NativeSelect>
-                {modalidad === 'EFECTIVO_REAL' && (
-                  <p className="text-xs text-amber-600 mt-1.5">
-                    Esta modalidad afecta el cuadre de la sesion activa (salida real de efectivo/tarjeta).
-                  </p>
-                )}
-              </div>
-
-              <div className="rounded-lg border p-3">
-                <p className="text-xs font-semibold text-muted-foreground mb-2">
-                  Deposito de reingreso de stock
-                </p>
-                {!pinDepositoAutorizado ? (
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-sm text-muted-foreground">
-                      Automatico (riel de deposito principal)
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowPinDeposito(true)}
-                      className="text-xs text-primary hover:underline shrink-0"
-                    >
-                      Cambiar deposito
-                    </button>
+            // Layout de dos columnas (Slice 3a, reemplaza el drill-down
+            // single-view anterior): lista+buscador a la izquierda (Slice 2),
+            // panel de detalle fiscal montado a la derecha (Design §Decision 5).
+            <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 min-h-0">
+              <div className="flex flex-col min-h-0">
+                {facturas.length > 0 && (
+                  <div className="relative mb-2 shrink-0">
+                    <MagnifyingGlass className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder="Buscar por numero, cliente o estado..."
+                      className="w-full rounded-md border border-input bg-background pl-8 pr-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    />
                   </div>
-                ) : (
-                  <NativeSelect
-                    value={depositoElegidoId ?? ''}
-                    onChange={(e) => setDepositoElegidoId(e.target.value || null)}
-                    className="text-sm"
-                  >
-                    <option value="">Seleccionar deposito...</option>
-                    {depositosActivos.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.nombre}
-                      </option>
-                    ))}
-                  </NativeSelect>
                 )}
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
-                <input
-                  type="text"
-                  value={motivo}
-                  onChange={(e) => setMotivo(e.target.value)}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  placeholder="Motivo de la anulacion..."
-                />
-              </div>
-
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
-                <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
-                <div className="text-sm text-red-700">
-                  <p className="font-medium">Esta accion es irreversible</p>
-                  <p className="text-xs mt-1">
-                    Se reintegrara el stock de todos los productos y la factura quedara anulada.
-                  </p>
+                <div className="flex-1 overflow-y-auto space-y-1.5">
+                  {isLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="h-12 bg-muted rounded animate-pulse" />
+                    ))
+                  ) : facturas.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-6 text-center">
+                      No hay facturas en esta sesion todavia.
+                    </p>
+                  ) : facturasFiltradas.length === 0 ? (
+                    <p className="text-sm text-muted-foreground py-6 text-center">
+                      Ninguna factura coincide con la busqueda.
+                    </p>
+                  ) : (
+                    facturasFiltradas.map((f) => {
+                      // WARNING #2 (Slice 1 review, obs #2877) resuelto aqui:
+                      // una factura ya reversada TOTAL (status ANULADA) queda
+                      // visible con su badge pero NO clickable — evita el
+                      // dead-end confuso de navegar a "Confirmar Anulacion"
+                      // sobre una factura que `crearNotaCredito` va a
+                      // rechazar. Reverso PARCIAL sigue siendo accionable
+                      // (puede recibir otra NC parcial dentro del tope).
+                      const bloqueada = f.status === 'ANULADA'
+                      const seleccionada = f.id === facturaId
+                      return (
+                        <button
+                          key={f.id}
+                          type="button"
+                          disabled={bloqueada}
+                          onClick={() => setFacturaId(f.id)}
+                          aria-label={bloqueada ? `Factura ${f.nro_factura} ya reversada` : undefined}
+                          className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
+                            bloqueada
+                              ? 'opacity-60 cursor-not-allowed'
+                              : seleccionada
+                                ? 'border-primary bg-muted'
+                                : 'hover:bg-muted'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs text-muted-foreground">{formatDateTime(f.fecha)}</p>
+                            <p className="text-sm font-medium">#{f.nro_factura}</p>
+                            <p className="text-xs text-muted-foreground truncate">{f.cliente_nombre}</p>
+                            <div className="mt-1">
+                              <FacturaBadges f={f} />
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0 pl-2">
+                            <p className="text-sm font-semibold">{formatUsd(f.total_usd)}</p>
+                            <p className="text-xs text-muted-foreground">{formatBs(f.total_bs)}</p>
+                          </div>
+                        </button>
+                      )
+                    })
+                  )}
                 </div>
+              </div>
+
+              <div className="flex flex-col min-h-0 md:border-l md:pl-4 overflow-y-auto">
+                {factura && (
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 px-4 pt-1 pb-2 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Cliente:</span> {factura.cliente_nombre}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Tasa:</span> {formatTasa(factura.tasa)}
+                    </div>
+                  </div>
+                )}
+
+                <FacturaDetallePanel recibo={recibo} afectoCxc={afectoCxc} />
+
+                {factura && (
+                  <div className="space-y-4 px-4 pb-4">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">
+                        Modalidad de liquidacion
+                      </p>
+                      <NativeSelect
+                        value={modalidad}
+                        onChange={(e) => setModalidad(e.target.value as LiquidacionModalidad)}
+                        className="text-sm"
+                      >
+                        {MODALIDADES_POS.map((m) => (
+                          <option key={m.value} value={m.value}>{m.label}</option>
+                        ))}
+                      </NativeSelect>
+                      {modalidad === 'EFECTIVO_REAL' && (
+                        <p className="text-xs text-amber-600 mt-1.5">
+                          Esta modalidad afecta el cuadre de la sesion activa (salida real de efectivo/tarjeta).
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">
+                        Deposito de reingreso de stock
+                      </p>
+                      {!pinDepositoAutorizado ? (
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm text-muted-foreground">
+                            Automatico (riel de deposito principal)
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => setShowPinDeposito(true)}
+                            className="text-xs text-primary hover:underline shrink-0"
+                          >
+                            Cambiar deposito
+                          </button>
+                        </div>
+                      ) : (
+                        <NativeSelect
+                          value={depositoElegidoId ?? ''}
+                          onChange={(e) => setDepositoElegidoId(e.target.value || null)}
+                          className="text-sm"
+                        >
+                          <option value="">Seleccionar deposito...</option>
+                          {depositosActivos.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.nombre}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
+                      <input
+                        type="text"
+                        value={motivo}
+                        onChange={(e) => setMotivo(e.target.value)}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        placeholder="Motivo de la anulacion..."
+                      />
+                    </div>
+
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+                      <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                      <div className="text-sm text-red-700">
+                        <p className="font-medium">Esta accion es irreversible</p>
+                        <p className="text-xs mt-1">
+                          Se reintegrara el stock de todos los productos y la factura quedara anulada.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
