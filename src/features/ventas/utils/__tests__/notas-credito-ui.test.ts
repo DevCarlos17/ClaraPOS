@@ -9,6 +9,7 @@ import {
   calcularReversoPorLinea,
   agruparReversosPorNc,
   calcularBadgesReversoPorVenta,
+  resolverBadgesFactura,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -406,6 +407,20 @@ describe('calcularBadgesReversoPorVenta (Slice 5e QA fix 3.5: badge de reverso A
       { venta_det_id: 'vd-2', cantidad: '1' },
     ]
     expect(calcularBadgesReversoPorVenta(lineas, notas)).toEqual({ 'venta-1': 'TOTAL', 'venta-2': 'PARCIAL' })
+  })
+})
+
+describe('resolverBadgesFactura (BUG D: reverso TOTAL debe suprimir el badge de estado de pago, no combinarse con el)', () => {
+  it('badgeReverso TOTAL: suprime el badge de pago (estadoPago=null) y NUNCA muestra Parcial', () => {
+    expect(resolverBadgesFactura('CONTADO', 'TOTAL')).toEqual({ estadoPago: null, reverso: 'TOTAL' })
+  })
+
+  it('badgeReverso PARCIAL: el badge de pago se mantiene visible junto con Reverso Parcial', () => {
+    expect(resolverBadgesFactura('CREDITO', 'PARCIAL')).toEqual({ estadoPago: 'CREDITO', reverso: 'PARCIAL' })
+  })
+
+  it('badgeReverso null: solo el badge de pago, sin ningun badge de reverso', () => {
+    expect(resolverBadgesFactura('ABONADA', null)).toEqual({ estadoPago: 'ABONADA', reverso: null })
   })
 })
 

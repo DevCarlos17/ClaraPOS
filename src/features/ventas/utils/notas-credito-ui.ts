@@ -395,6 +395,36 @@ export function calcularBadgesReversoPorVenta(
 }
 
 // =============================================
+// resolverBadgesFactura — BUG D fix (payment-method badge no se limpia en
+// reverso total)
+// =============================================
+
+export interface BadgesFacturaVisibles {
+  /** `null` significa "no renderizar el badge de estado de pago". */
+  estadoPago: EstadoPago | null
+  reverso: BadgeReverso
+}
+
+/**
+ * BUG D fix (obs #2875): `FacturaBadges` renderizaba el badge de estado de
+ * pago (Contado/Credito/Abonada) de forma INCONDICIONAL, sin importar
+ * `badgeReverso`. Una factura reversada al 100% (`badgeReverso === 'TOTAL'`,
+ * sin importar si se llego con una sola NC TOTAL o acumulando PARCIALes —
+ * mismo criterio que `calcularBadgesReversoPorVenta`) mostraba a la vez
+ * "Contado"/"Credito"/"Abonada" Y "Reverso Total", cuando el negocio exige
+ * que el reverso total DEJE SIN EFECTO cualquier badge previo (metodo de
+ * pago o "Reverso Parcial") y muestre UNICAMENTE "Reverso Total". Con
+ * cualquier otro estado (`PARCIAL`/`null`) el badge de pago se mantiene,
+ * igual que antes de este fix.
+ */
+export function resolverBadgesFactura(estadoPago: EstadoPago, badgeReverso: BadgeReverso): BadgesFacturaVisibles {
+  if (badgeReverso === 'TOTAL') {
+    return { estadoPago: null, reverso: 'TOTAL' }
+  }
+  return { estadoPago, reverso: badgeReverso }
+}
+
+// =============================================
 // agruparReversosPorNc — F1 QA fix (historial additivo: original + reverso)
 // =============================================
 
