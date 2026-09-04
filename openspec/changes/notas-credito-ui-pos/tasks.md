@@ -128,7 +128,7 @@ cualquier wiring — no se implementa "de paso" dentro de otra tarea.
 ## Cross-cutting invariants (aplican a los 4 slices)
 
 - `crearNotaCredito` (`use-notas-credito.ts`) es CÓDIGO CONGELADO — ningún slice lo modifica; todos lo LLAMAN sin alterar su firma ni lógica interna.
-- Toda query nueva/extendida filtra `empresa_id` (`use-facturas-sesion-activa.ts`, `use-cxc.ts::useDetalleFactura`, query de afectación CxC del Slice 3).
+- Toda query NUEVA filtra `empresa_id` (`use-facturas-sesion-activa.ts`, query de afectación CxC del Slice 3). EXCEPCIÓN documentada: `use-cxc.ts::useDetalleFactura` NO filtra `empresa_id` (solo `WHERE vd.venta_id = ?`) — gap PREEXISTENTE, no introducido por este change. Riesgo práctico bajo porque el `venta_id` siempre proviene de una lista ya escopeada por `empresa_id`. DEUDA: agregar el filtro como defensa en profundidad en un fix aparte (toca un hook compartido con CxC, fuera del scope de este change). Verificado en review de Slice 1 (obs #2877).
 - decimal.js para todo cálculo monetario — nunca `float`/`Number` para montos. Épsilon `0.005` en `derivarEstadoPago` (mismo umbral que `vencimientos_cobrar`).
 - Invariante bimonetaria: NC MUST usar `venta.tasa`/`venta.total_bs` histórica, NUNCA la tasa vigente del sistema — verificado con test dedicado (3.5) antes del wiring (3.6).
 - `FacturaDetallePanel` es un componente de PRESENTACIÓN puro — recibe `ReciboData` ya construido, NUNCA llama `buildReciboData` ni hace fetch internamente (Design §Decisión 5).
