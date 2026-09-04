@@ -117,6 +117,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // Lineas PARCIAL pendientes de PIN A — solo se usan si el usuario confirmo
   // sin permiso y debe autorizar antes de que `emitirNc` se dispare de nuevo.
   const [lineasParcialPendientes, setLineasParcialPendientes] = useState<LineaNcSeleccionada[] | null>(null)
+  // Accion pendiente detras del MISMO PIN A (Slice 4, Design §Decision 9):
+  // "Nota de credito" y el placeholder "Editar metodos de pago" comparten un
+  // unico SupervisorPinDialog — este estado le dice a `onAuthorized` cual de
+  // las dos funciones debe disparar tras la autorizacion.
+  const [accionPendiente, setAccionPendiente] = useState<'NC' | 'EDITAR_PAGOS' | null>(null)
 
   useEffect(() => {
     if (isOpen) {
@@ -133,6 +138,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setDepositoElegidoId(null)
       setTipoNc('TOTAL')
       setLineasParcialPendientes(null)
+      setAccionPendiente(null)
     }
   }, [isOpen])
 
@@ -257,6 +263,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     // pide PIN cuando el usuario actual NO tiene el permiso de emision de
     // NC — con permiso, emite directo, sin friccion.
     setLineasParcialPendientes(null)
+    setAccionPendiente('NC')
     if (hasPermission(PERMISSIONS.SALES_NOTA_CREDITO)) {
       void emitirNc()
     } else {
@@ -270,10 +277,31 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
    * de NC (Spec: "Permiso determina el PIN para ambas acciones").
    */
   function handleConfirmarParcialClick(lineas: LineaNcSeleccionada[]) {
+    setAccionPendiente('NC')
     if (hasPermission(PERMISSIONS.SALES_NOTA_CREDITO)) {
       void emitirNc(lineas)
     } else {
       setLineasParcialPendientes(lineas)
+      setShowPin(true)
+    }
+  }
+
+  /**
+   * Placeholder "Editar metodos de pago" (Slice 4, Design §Decision 9, Spec
+   * notas-credito-pos: "Boton 'Editar metodos de pago' como placeholder").
+   * CERO mutacion de datos — nunca llama `crearNotaCredito` ni ninguna otra
+   * escritura. Existe unicamente para reservar el slot de UI, gateado por el
+   * MISMO permiso/PIN A que "Nota de credito".
+   */
+  function ejecutarEditarPagosPlaceholder() {
+    toast.info('Funcion "Editar metodos de pago" aun no implementada')
+  }
+
+  function handleEditarPagosClick() {
+    setAccionPendiente('EDITAR_PAGOS')
+    if (hasPermission(PERMISSIONS.SALES_NOTA_CREDITO)) {
+      ejecutarEditarPagosPlaceholder()
+    } else {
       setShowPin(true)
     }
   }
@@ -526,6 +554,14 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
               >
                 Volver
               </button>
+              <button
+                type="button"
+                onClick={handleEditarPagosClick}
+                disabled={loading}
+                className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                Editar metodos de pago
+              </button>
               {tipoNc === 'TOTAL' && (
                 <button
                   onClick={handleConfirmarClick}
@@ -543,7 +579,16 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       <SupervisorPinDialog
         isOpen={showPin}
         onClose={() => setShowPin(false)}
-        onAuthorized={() => void emitirNc(lineasParcialPendientes ?? undefined)}
+        onAuthorized={() => {
+          // Un unico dialogo, dos acciones posibles (Slice 4, Design
+          // §Decision 9) — `accionPendiente` decide cual dispara, nunca
+          // ambas ni la equivocada.
+          if (accionPendiente === 'EDITAR_PAGOS') {
+            ejecutarEditarPagosPlaceholder()
+          } else {
+            void emitirNc(lineasParcialPendientes ?? undefined)
+          }
+        }}
         titulo="Emision de Nota de Credito"
         mensaje="No tienes permiso para emitir notas de credito. Ingresa el PIN de un supervisor autorizado."
         requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}

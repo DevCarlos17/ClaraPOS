@@ -61,7 +61,7 @@ vi.mock('@/core/hooks/use-permissions', async (importOriginal) => {
   return { ...actual, usePermissions: vi.fn() }
 })
 vi.mock('@/features/inventario/hooks/use-depositos', () => ({ useDepositosVentaActivos: vi.fn() }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
 const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
 const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
@@ -73,6 +73,7 @@ const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUsePermissions = vi.mocked(usePermissions)
 const mockedUseDepositosVentaActivos = vi.mocked(useDepositosVentaActivos)
 const mockedToastSuccess = vi.mocked(toast.success)
+const mockedToastInfo = vi.mocked(toast.info)
 
 function depositoActivo(overrides: Partial<Deposito> = {}): Deposito {
   return {
@@ -617,5 +618,60 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0].tipo).toBeUndefined()
     expect(mockedCrearNotaCredito.mock.calls[0][0].lineas).toBeUndefined()
+  })
+})
+
+describe('NotaCreditoPosModal — Slice 4 (placeholder "Editar metodos de pago" + gating PIN A extendido, Design §Decision 9)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('con permiso: click en "Editar metodos de pago" dispara un aviso de funcion no implementada y NUNCA llama crearNotaCredito', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Editar metodos de pago/i }))
+
+    expect(mockedToastInfo).toHaveBeenCalledTimes(1)
+    expect(screen.queryByTestId('mock-pin-dialog')).not.toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('sin permiso: click en "Editar metodos de pago" exige el MISMO PIN de supervisor que emision (PIN A)', async () => {
+    setup({ hasPermission: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Editar metodos de pago/i }))
+
+    expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
+    expect(screen.getByText(/Emision de Nota de Credito/i)).toBeInTheDocument()
+    expect(mockedToastInfo).not.toHaveBeenCalled()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+
+    await user.click(screen.getByText('Autorizar'))
+
+    await waitFor(() => expect(mockedToastInfo).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('las dos acciones pendientes (NC y Editar metodos de pago) son independientes en la misma sesion del modal: autorizar cada una dispara solo la accion correcta', async () => {
+    setup({ hasPermission: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+
+    await user.click(screen.getByRole('button', { name: /Editar metodos de pago/i }))
+    expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
+    await user.click(screen.getByText('Autorizar'))
+    await waitFor(() => expect(mockedToastInfo).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+    expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
+    await user.click(screen.getByText('Autorizar'))
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedToastInfo).toHaveBeenCalledTimes(1)
   })
 })
