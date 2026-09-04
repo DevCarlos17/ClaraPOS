@@ -103,6 +103,52 @@ describe('SeleccionLineasNc (Design §Decision 7, Spec notas-credito-pos: Selecc
     expect(onConfirm).toHaveBeenCalledWith([{ venta_det_id: 'vd-1', cantidadDevolver: '3.000' }])
   })
 
+  // ─── F1 QA fix (Slice 5a): lineas parcialmente/totalmente reversadas ya
+  // NO deben capar contra `cantidadFacturada` (cantidad ORIGINAL vendida)
+  // sino contra `cantidadDisponible` (el remanente real tras NCs previas). ──
+
+  it('F1: cantidadDisponible menor a cantidadFacturada (linea ya parcialmente reversada) — el input clampa al REMANENTE, no a lo facturado', async () => {
+    const user = userEvent.setup()
+    const onConfirm = vi.fn()
+    render(
+      <SeleccionLineasNc
+        lineas={[lineaGravable({ cantidadFacturada: 5, cantidadDisponible: 2, esDecimal: false })]}
+        factura={facturaHistorica}
+        onConfirm={onConfirm}
+      />
+    )
+
+    await user.type(screen.getByRole('spinbutton'), '9')
+    expect(screen.getByRole('spinbutton')).toHaveValue(2)
+
+    await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+    expect(onConfirm).toHaveBeenCalledWith([{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }])
+  })
+
+  it('F1: FULLY-REVERSED GUARD — linea con cantidadDisponible=0 (ya reversada por completo): input y stepper quedan deshabilitados', () => {
+    render(
+      <SeleccionLineasNc
+        lineas={[lineaGravable({ cantidadFacturada: 5, cantidadDisponible: 0 })]}
+        factura={facturaHistorica}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    expect(screen.getByRole('spinbutton')).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Incrementar cantidad/i })).toBeDisabled()
+  })
+
+  it('F1: sin cantidadDisponible especificado (compatibilidad hacia atras): el cap sigue siendo cantidadFacturada, comportamiento identico al pre-F1', async () => {
+    const user = userEvent.setup()
+    const onConfirm = vi.fn()
+    render(
+      <SeleccionLineasNc lineas={[lineaGravable({ cantidadFacturada: 3, esDecimal: false })]} factura={facturaHistorica} onConfirm={onConfirm} />
+    )
+
+    await user.type(screen.getByRole('spinbutton'), '9')
+    expect(screen.getByRole('spinbutton')).toHaveValue(3)
+  })
+
   it('muestra el preview de monto en Bs derivado de la tasa historica de la factura (nunca la tasa vigente)', async () => {
     const user = userEvent.setup()
     render(

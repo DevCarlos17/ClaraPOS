@@ -20,6 +20,15 @@ export interface LineaSeleccionNc {
   precioUnitarioUsd: number
   tipoImpuesto: TipoImpuestoLinea
   impuestoPct: number
+  /**
+   * F1 QA fix (Slice 5a): remanente real disponible para devolver
+   * (`cantidadFacturada` menos lo ya acreditado por NCs previas — ver
+   * `calcularReversoPorLinea`). Opcional: cuando se omite, el cap sigue
+   * siendo `cantidadFacturada` (comportamiento pre-F1 intacto para
+   * facturas sin ningun reverso previo). Una linea con `0` esta totalmente
+   * reversada y NO puede recibir otra NC.
+   */
+  cantidadDisponible?: number
 }
 
 interface SeleccionLineasNcProps {
@@ -41,16 +50,27 @@ interface SeleccionLineasNcProps {
 export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false }: SeleccionLineasNcProps) {
   const [cantidades, setCantidades] = useState<Record<string, number>>({})
 
-  function setCantidad(ventaDetId: string, cantidadFacturada: number, valor: number) {
+  // F1 QA fix: el TOPE real de una linea es su remanente
+  // (`cantidadDisponible`) cuando ya recibio NCs previas, NO la cantidad
+  // originalmente facturada. Sin `cantidadDisponible` (factura sin ningun
+  // reverso previo) el cap sigue siendo `cantidadFacturada`.
+  function cap(l: LineaSeleccionNc): number {
+    return l.cantidadDisponible ?? l.cantidadFacturada
+  }
+
+  function setCantidad(ventaDetId: string, tope: number, valor: number) {
     // Defensa en profundidad en la UI (clamp) — el guardrail real y
     // autoritativo contra negativos/excesos vive en `derivarLineasNcParcial`.
-    const clamped = Math.max(0, Math.min(valor, cantidadFacturada))
+    const clamped = Math.max(0, Math.min(valor, tope))
     setCantidades((prev) => ({ ...prev, [ventaDetId]: clamped }))
   }
 
   const facturaLineasParaNc: LineaFacturaParaNc[] = lineas.map((l) => ({
     venta_det_id: l.venta_det_id,
-    cantidadFacturada: l.cantidadFacturada,
+    // El pure-function guard (`derivarLineasNcParcial`) recibe el REMANENTE
+    // como su "cantidadFacturada" — asi el tope de linea-ya-parcialmente-
+    // reversada se hace cumplir sin duplicar logica de validacion.
+    cantidadFacturada: cap(l),
     esDecimal: l.esDecimal,
   }))
   const { lineas: lineasValidas, errores } = derivarLineasNcParcial(facturaLineasParaNc, cantidades)
@@ -86,6 +106,8 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
             {lineas.map((linea) => {
               const cantidad = cantidades[linea.venta_det_id] ?? 0
               const step = linea.esDecimal ? 0.001 : 1
+              const tope = cap(linea)
+              const totalmenteReversada = tope <= 0
               return (
                 <tr key={linea.venta_det_id} className="border-b last:border-b-0">
                   <td className="px-2 py-1.5">
@@ -94,14 +116,21 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
                   </td>
                   <td className="px-2 py-1.5 text-center text-muted-foreground">
                     {linea.cantidadFacturada.toFixed(linea.esDecimal ? 3 : 0)}
+                    {/* F1 QA fix: linea ya (parcialmente) reversada — el remanente
+                        real difiere de lo facturado, se aclara explicitamente. */}
+                    {tope < linea.cantidadFacturada && (
+                      <p className="text-[10px] text-orange-600">
+                        {totalmenteReversada ? 'Ya reversada' : `Disp. ${tope.toFixed(linea.esDecimal ? 3 : 0)}`}
+                      </p>
+                    )}
                   </td>
                   <td className="px-1.5 py-1.5">
                     <div className="flex items-center justify-center gap-0.5">
                       <button
                         type="button"
                         aria-label="Disminuir cantidad"
-                        onClick={() => setCantidad(linea.venta_det_id, linea.cantidadFacturada, cantidad - step)}
-                        disabled={cantidad <= 0}
+                        onClick={() => setCantidad(linea.venta_det_id, tope, cantidad - step)}
+                        disabled={cantidad <= 0 || totalmenteReversada}
                         className="shrink-0 flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <Minus size={10} />
@@ -110,36 +139,37 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
                         type="number"
                         role="spinbutton"
                         min="0"
-                        max={linea.cantidadFacturada}
+                        max={tope}
                         step={linea.esDecimal ? 'any' : '1'}
                         value={cantidad === 0 ? '' : cantidad}
+                        disabled={totalmenteReversada}
                         onChange={(e) => {
                           const raw = e.target.value
                           if (raw === '') {
-                            setCantidad(linea.venta_det_id, linea.cantidadFacturada, 0)
+                            setCantidad(linea.venta_det_id, tope, 0)
                             return
                           }
                           const val = linea.esDecimal ? parseFloat(raw) : parseInt(raw, 10)
-                          if (!isNaN(val)) setCantidad(linea.venta_det_id, linea.cantidadFacturada, val)
+                          if (!isNaN(val)) setCantidad(linea.venta_det_id, tope, val)
                         }}
                         onKeyDown={(e) => {
                           if (!linea.esDecimal && (e.key === '.' || e.key === ',')) e.preventDefault()
                           if (e.key === '+') {
                             e.preventDefault()
-                            setCantidad(linea.venta_det_id, linea.cantidadFacturada, cantidad + step)
+                            setCantidad(linea.venta_det_id, tope, cantidad + step)
                           }
                           if (e.key === '-') {
                             e.preventDefault()
-                            setCantidad(linea.venta_det_id, linea.cantidadFacturada, cantidad - step)
+                            setCantidad(linea.venta_det_id, tope, cantidad - step)
                           }
                         }}
-                        className="min-w-0 w-16 text-center rounded border bg-white px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
+                        className="min-w-0 w-16 text-center rounded border bg-white px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40 disabled:cursor-not-allowed"
                       />
                       <button
                         type="button"
                         aria-label="Incrementar cantidad"
-                        onClick={() => setCantidad(linea.venta_det_id, linea.cantidadFacturada, cantidad + step)}
-                        disabled={cantidad >= linea.cantidadFacturada}
+                        onClick={() => setCantidad(linea.venta_det_id, tope, cantidad + step)}
+                        disabled={cantidad >= tope || totalmenteReversada}
                         className="shrink-0 flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <Plus size={10} />
