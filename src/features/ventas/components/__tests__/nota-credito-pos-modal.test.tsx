@@ -530,6 +530,26 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
       isLoading: false,
     })
     mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: { 'venta-1': 'TOTAL' }, isLoading: false })
+    // QA fix 5f: el gating de accion ahora deriva del acumulado por-linea
+    // (detalle + reversos), NUNCA de los flags crudos — la unica linea de
+    // la factura fue reversada al 100% por su unica NC TOTAL.
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+          precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+      ],
+      isLoading: false,
+    })
+    mockedUseReversosFactura.mockReturnValue({
+      reversos: [
+        { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'TOTAL', fecha: '2026-01-01T00:00:00Z', venta_det_id: 'vd-1', producto_descripcion: 'Botox 50U', cantidad: '5.000' },
+      ],
+      isLoading: false,
+    })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     expect(screen.getByText('Reverso Total')).toBeInTheDocument()
@@ -553,6 +573,26 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
       facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
       isLoading: false,
     })
+    // QA fix 5f: el gating de TOTAL ahora deriva del acumulado por-linea —
+    // una NC PARCIAL previa que NO completa el 100% (2 de 5) bloquea TOTAL
+    // pero deja PARCIAL disponible sobre el remanente.
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+          precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+      ],
+      isLoading: false,
+    })
+    mockedUseReversosFactura.mockReturnValue({
+      reversos: [
+        { nota_credito_id: 'nc-0', nro_ncr: 'NCR-000000', tipo: 'PARCIAL', fecha: '2026-01-01T00:00:00Z', venta_det_id: 'vd-1', producto_descripcion: 'Botox 50U', cantidad: '2.000' },
+      ],
+      isLoading: false,
+    })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = userEvent.setup()
@@ -561,6 +601,51 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
+  })
+
+  it('QA fix 5f (consistencia badge/gating, obs verify-combined-final-v2): DOS NCs PARCIALes que juntas reversan el 100% de la unica linea -> el badge ya dice "Reverso Total" Y la accion queda bloqueada (read-only), consistentes por construccion', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      // El flag por-NC dice "parcial" (ninguna NC individual es tipo TOTAL)...
+      facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
+      isLoading: false,
+    })
+    // ...pero el badge acumulado (misma fuente que el gating tras este fix)
+    // ya dice TOTAL: dos NCs PARCIALes (2 + 3) suman exactamente los 5
+    // facturados.
+    mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: { 'venta-1': 'TOTAL' }, isLoading: false })
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+          precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+      ],
+      isLoading: false,
+    })
+    mockedUseReversosFactura.mockReturnValue({
+      reversos: [
+        { nota_credito_id: 'nc-0', nro_ncr: 'NCR-000000', tipo: 'PARCIAL', fecha: '2026-01-01T00:00:00Z', venta_det_id: 'vd-1', producto_descripcion: 'Botox 50U', cantidad: '2.000' },
+        { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', venta_det_id: 'vd-1', producto_descripcion: 'Botox 50U', cantidad: '3.000' },
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText('Reverso Total')).toBeInTheDocument()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/C01-000001/i))
+
+    // ANTES del fix 5f: el gating leia `tiene_reverso_total` (crudo, aun 0
+    // aqui porque ninguna NC individual es TOTAL) y mostraba el formulario
+    // interactivo — INCONSISTENTE con el badge de arriba. DESPUES: bloqueado.
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Parcial' })).not.toBeInTheDocument()
+    expect(screen.getByText(/ya fue reversada totalmente/i)).toBeInTheDocument()
   })
 
   it('F1+F6 QA fix: linea ya parcialmente reversada limita el stepper de SeleccionLineasNc al REMANENTE — el input RECHAZA valores por encima, no a lo facturado originalmente', async () => {

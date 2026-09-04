@@ -222,33 +222,87 @@ export function derivarLineasNcParcial(
 // seleccionada.
 // =============================================
 
-export interface FacturaReversoFlags {
-  tiene_reverso_total?: number
-  tiene_reverso_parcial?: number
+/**
+ * Linea minima requerida para derivar estado de reverso acumulado: el
+ * `venta_det_id` (para casar contra `notas_credito_det`) y la cantidad
+ * ORIGINALMENTE facturada de esa linea.
+ */
+export interface LineaConCantidadFacturada {
+  venta_det_id: string
+  cantidad_facturada: DecimalInput
+}
+
+export interface EstadoReversoLineas {
+  /** Al menos una linea tiene `reversado > 0` (alguna NC previa la afecto). */
+  algunaConReverso: boolean
+  /** TODAS las lineas tienen `reversado >= facturado` (100% acreditado). */
+  todasCompletas: boolean
 }
 
 /**
- * Reversado TOTAL -> NUNCA se puede emitir otra NC (ni TOTAL ni PARCIAL): la
- * factura ya quedo completamente acreditada, `validarTopeDobleCredito`
- * rechazaria cualquier cantidad adicional en TODAS sus lineas. Reversado
- * PARCIAL (sin total) SI permite una NC adicional, limitada al remanente por
- * linea (`calcularReversoPorLinea`).
+ * QA fix 5f (consistencia badge/gating, obs verify-combined-final-v2): NUCLEO
+ * COMPARTIDO de acumulacion reverso por-linea — UNICA fuente de verdad,
+ * consumida tanto por el badge del listado (`calcularBadgesReversoPorVenta`)
+ * como por el gating de accion (`puedeEmitirNcAdicional`/
+ * `puedeElegirTipoTotal`). Antes de este fix el gating leia el flag CRUDO
+ * `tiene_reverso_total` (solo `true` si ALGUNA NC individual tenia
+ * `tipo='TOTAL'` literal), lo que lo desincronizaba del badge cuando 2+ NCs
+ * PARCIALes sumaban juntas el 100% de la factura: el badge ya mostraba
+ * "Reverso Total" (calculo acumulado) pero el gating de accion seguia
+ * habilitando el formulario de NC (calculo NO acumulado). Reusa
+ * `calcularReversoPorLinea` — mismo criterio de acumulacion que el guard
+ * autoritativo del backend (`validarTopeDobleCredito`).
  */
-export function puedeEmitirNcAdicional(f: FacturaReversoFlags): boolean {
-  return f.tiene_reverso_total !== 1
+export function calcularEstadoReversoLineas(
+  lineas: LineaConCantidadFacturada[],
+  notasCreditoDet: NotaCreditoDetParaReverso[]
+): EstadoReversoLineas {
+  let algunaConReverso = false
+  let todasCompletas = true
+  for (const linea of lineas) {
+    const { facturado, reversado } = calcularReversoPorLinea(
+      linea.venta_det_id,
+      linea.cantidad_facturada,
+      notasCreditoDet
+    )
+    if (reversado.gt(0)) algunaConReverso = true
+    if (reversado.lt(facturado)) todasCompletas = false
+  }
+  return { algunaConReverso, todasCompletas }
+}
+
+/**
+ * Reversado TOTAL (TODAS las lineas de la factura ya alcanzaron su cantidad
+ * facturada, via CUALQUIER combinacion de NCs TOTAL/PARCIAL — mismo
+ * criterio acumulado que el badge) -> NUNCA se puede emitir otra NC:
+ * `validarTopeDobleCredito` rechazaria cualquier cantidad adicional en
+ * TODAS sus lineas. Con reverso PARCIAL (sin completar el 100%) SI permite
+ * una NC adicional, limitada al remanente por linea. Sin lineas disponibles
+ * todavia (data en vuelo) se asume permisivo por defecto.
+ */
+export function puedeEmitirNcAdicional(
+  lineas: LineaConCantidadFacturada[],
+  notasCreditoDet: NotaCreditoDetParaReverso[]
+): boolean {
+  if (lineas.length === 0) return true
+  return !calcularEstadoReversoLineas(lineas, notasCreditoDet).todasCompletas
 }
 
 /**
  * Restriccion mas fina: el tipo TOTAL especificamente deja de ser una opcion
- * valida en cuanto existe CUALQUIER reverso previo (total o parcial).
- * `crearNotaCredito` con tipo=TOTAL siempre deriva TODAS las lineas de
- * `ventas_det` con su cantidad COMPLETA original (use-notas-credito.ts) —
- * eso excederia el tope por-linea en cualquier linea ya parcialmente
- * acreditada. La UI oculta la opcion proactivamente en vez de dejar que el
- * backend la rechace con un error confuso.
+ * valida en cuanto existe CUALQUIER reverso acumulado previo (total o
+ * parcial, en cualquier linea). `crearNotaCredito` con tipo=TOTAL siempre
+ * deriva TODAS las lineas de `ventas_det` con su cantidad COMPLETA original
+ * (use-notas-credito.ts) — eso excederia el tope por-linea en cualquier
+ * linea ya parcialmente acreditada. La UI oculta la opcion proactivamente
+ * en vez de dejar que el backend la rechace con un error confuso.
  */
-export function puedeElegirTipoTotal(f: FacturaReversoFlags): boolean {
-  return f.tiene_reverso_total !== 1 && f.tiene_reverso_parcial !== 1
+export function puedeElegirTipoTotal(
+  lineas: LineaConCantidadFacturada[],
+  notasCreditoDet: NotaCreditoDetParaReverso[]
+): boolean {
+  if (lineas.length === 0) return true
+  return !calcularEstadoReversoLineas(lineas, notasCreditoDet).algunaConReverso
 }
 
 // =============================================
@@ -315,6 +369,11 @@ export interface LineaFacturaReversoRow {
  * reversado >= facturado; "PARCIAL" cuando alguna linea tiene reversado > 0
  * pero no todas llegan al 100%; `null` (sin badge) cuando ninguna linea
  * tiene reverso. NUNCA lee `notas_credito.tipo` para esta decision.
+ *
+ * QA fix 5f: la acumulacion por-linea vive en `calcularEstadoReversoLineas`
+ * (compartida con el gating de accion `puedeEmitirNcAdicional`/
+ * `puedeElegirTipoTotal`) — este badge y ese gating son AHORA consistentes
+ * por construccion, nunca pueden divergir.
  */
 export function calcularBadgesReversoPorVenta(
   lineasFacturas: LineaFacturaReversoRow[],
@@ -329,17 +388,7 @@ export function calcularBadgesReversoPorVenta(
 
   const resultado: Record<string, BadgeReverso> = {}
   for (const [ventaId, lineas] of lineasPorVenta) {
-    let algunaConReverso = false
-    let todasCompletas = true
-    for (const linea of lineas) {
-      const { facturado, reversado } = calcularReversoPorLinea(
-        linea.venta_det_id,
-        linea.cantidad_facturada,
-        notasCreditoDet
-      )
-      if (reversado.gt(0)) algunaConReverso = true
-      if (reversado.lt(facturado)) todasCompletas = false
-    }
+    const { algunaConReverso, todasCompletas } = calcularEstadoReversoLineas(lineas, notasCreditoDet)
     resultado[ventaId] = algunaConReverso ? (todasCompletas ? 'TOTAL' : 'PARCIAL') : null
   }
   return resultado

@@ -268,31 +268,57 @@ describe('derivarLineasNcParcial (Design §Decision 7: mapeo UI -> contrato de c
 // ─── F1 QA fix (Slice 5a) — facturas reversadas quedan SELECCIONABLES; el
 // gating se mueve de la SELECCION a la ACCION. ────
 
-describe('puedeEmitirNcAdicional (F1: gating de accion — Reversado TOTAL bloquea CUALQUIER NC adicional)', () => {
+describe('puedeEmitirNcAdicional (F1+5f: gating de accion — deriva del MISMO acumulado por-linea que el badge, NUNCA de tiene_reverso_total/parcial)', () => {
   it('factura sin ningun reverso: permite emitir', () => {
-    expect(puedeEmitirNcAdicional({})).toBe(true)
+    expect(puedeEmitirNcAdicional([{ venta_det_id: 'vd-1', cantidad_facturada: 5 }], [])).toBe(true)
   })
 
-  it('tiene_reverso_total=1: NO permite ninguna NC adicional', () => {
-    expect(puedeEmitirNcAdicional({ tiene_reverso_total: 1 })).toBe(false)
+  it('una NC TOTAL que reversa el 100% de la unica linea: NO permite ninguna NC adicional', () => {
+    const lineas = [{ venta_det_id: 'vd-1', cantidad_facturada: 5 }]
+    const notas = [{ venta_det_id: 'vd-1', cantidad: '5' }]
+    expect(puedeEmitirNcAdicional(lineas, notas)).toBe(false)
   })
 
-  it('tiene_reverso_parcial=1 (sin total): SI permite emitir (una NC adicional sobre el remanente)', () => {
-    expect(puedeEmitirNcAdicional({ tiene_reverso_parcial: 1 })).toBe(true)
+  it('una NC PARCIAL que NO completa el 100%: SI permite emitir (una NC adicional sobre el remanente)', () => {
+    const lineas = [{ venta_det_id: 'vd-1', cantidad_facturada: 5 }]
+    const notas = [{ venta_det_id: 'vd-1', cantidad: '2' }]
+    expect(puedeEmitirNcAdicional(lineas, notas)).toBe(true)
+  })
+
+  it('QA fix 5f (mismatch badge/gating, obs verify-combined-final-v2): DOS NCs PARCIALes que juntas suman el 100% de cada linea de la factura -> bloquea igual que una sola NC TOTAL, CONSISTENTE con el badge (`calcularBadgesReversoPorVenta` marcaria esta misma factura como "Reverso Total")', () => {
+    const lineas = [
+      { venta_det_id: 'vd-1', cantidad_facturada: 5 },
+      { venta_det_id: 'vd-2', cantidad_facturada: 3 },
+    ]
+    const notas = [
+      { venta_det_id: 'vd-1', cantidad: '2' },
+      { venta_det_id: 'vd-2', cantidad: '1' },
+      { venta_det_id: 'vd-1', cantidad: '3' },
+      { venta_det_id: 'vd-2', cantidad: '2' },
+    ]
+    expect(puedeEmitirNcAdicional(lineas, notas)).toBe(false)
+  })
+
+  it('sin lineas disponibles todavia (data en vuelo): permisivo por defecto, no bloquea antes de tener informacion real', () => {
+    expect(puedeEmitirNcAdicional([], [])).toBe(true)
   })
 })
 
-describe('puedeElegirTipoTotal (F1: el tipo TOTAL especificamente se oculta si YA existe cualquier reverso)', () => {
+describe('puedeElegirTipoTotal (F1+5f: el tipo TOTAL se oculta si YA existe CUALQUIER reverso acumulado, mismo criterio que el badge)', () => {
   it('factura sin ningun reverso: TOTAL es una opcion valida', () => {
-    expect(puedeElegirTipoTotal({})).toBe(true)
+    expect(puedeElegirTipoTotal([{ venta_det_id: 'vd-1', cantidad_facturada: 5 }], [])).toBe(true)
   })
 
-  it('tiene_reverso_total=1: TOTAL ya no es opcion (redundante con puedeEmitirNcAdicional=false)', () => {
-    expect(puedeElegirTipoTotal({ tiene_reverso_total: 1 })).toBe(false)
+  it('una NC TOTAL que reversa el 100%: TOTAL ya no es opcion (redundante con puedeEmitirNcAdicional=false)', () => {
+    const lineas = [{ venta_det_id: 'vd-1', cantidad_facturada: 5 }]
+    const notas = [{ venta_det_id: 'vd-1', cantidad: '5' }]
+    expect(puedeElegirTipoTotal(lineas, notas)).toBe(false)
   })
 
-  it('tiene_reverso_parcial=1 (sin total): TOTAL tampoco es opcion — solo PARCIAL sobre el remanente', () => {
-    expect(puedeElegirTipoTotal({ tiene_reverso_parcial: 1 })).toBe(false)
+  it('una NC PARCIAL que NO completa el 100%: TOTAL tampoco es opcion — solo PARCIAL sobre el remanente', () => {
+    const lineas = [{ venta_det_id: 'vd-1', cantidad_facturada: 5 }]
+    const notas = [{ venta_det_id: 'vd-1', cantidad: '2' }]
+    expect(puedeElegirTipoTotal(lineas, notas)).toBe(false)
   })
 })
 

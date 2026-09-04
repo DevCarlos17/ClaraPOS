@@ -217,11 +217,24 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const { reversos } = useReversosFactura(facturaId, user?.empresa_id ?? '')
   const historialReversos = useMemo(() => agruparReversosPorNc(reversos), [reversos])
 
-  // Gating de ACCION (NO de seleccion, Spec/QA fix F1): reversado TOTAL
-  // bloquea cualquier NC adicional; reversado PARCIAL (sin total) solo
-  // bloquea la opcion TOTAL, PARCIAL sigue disponible sobre el remanente.
-  const puedeEmitirNc = factura ? puedeEmitirNcAdicional(factura) : false
-  const puedeTotal = factura ? puedeElegirTipoTotal(factura) : false
+  // QA fix 5f (consistencia badge/gating): MISMA fuente acumulada por-linea
+  // que alimenta el badge del listado (`calcularBadgesReversoPorVenta`, via
+  // `useBadgesReversoSesion`) — `reversos` ya esta cargado arriba para el
+  // historial, se reusa aqui SIN disparar una query redundante.
+  const lineasFacturaParaReverso = useMemo(
+    () => detalle.map((d) => ({ venta_det_id: d.id, cantidad_facturada: d.cantidad })),
+    [detalle]
+  )
+
+  // Gating de ACCION (NO de seleccion, Spec/QA fix F1+5f): reversado TOTAL
+  // ACUMULADO (cualquier combinacion de NCs TOTAL/PARCIAL que complete el
+  // 100% de cada linea) bloquea cualquier NC adicional; reversado PARCIAL
+  // (sin completar el 100%) solo bloquea la opcion TOTAL, PARCIAL sigue
+  // disponible sobre el remanente. Antes de este fix se leia el flag CRUDO
+  // `tiene_reverso_total`/`tiene_reverso_parcial` (solo por-NC individual),
+  // desincronizado del badge acumulado — ver `calcularEstadoReversoLineas`.
+  const puedeEmitirNc = puedeEmitirNcAdicional(lineasFacturaParaReverso, reversos)
+  const puedeTotal = puedeElegirTipoTotal(lineasFacturaParaReverso, reversos)
 
   // UX C QA fix (Slice 5e): con el selector de deposito desbloqueado (PIN B
   // autorizado) el usuario DEBE elegir un deposito concreto — el placeholder
@@ -444,7 +457,15 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           type="button"
                           onClick={() => {
                             setFacturaId(f.id)
-                            setTipoNc(puedeElegirTipoTotal(f) ? 'TOTAL' : 'PARCIAL')
+                            // Guess INICIAL del tab (TOTAL/PARCIAL) a partir
+                            // de los flags crudos ya disponibles en el
+                            // listado (sin gap async, a diferencia de
+                            // `detalle`/`reversos` que aun no cargaron para
+                            // ESTA factura) — es solo el tab por defecto, NO
+                            // el gating real: `puedeTotal`/`puedeEmitirNc`
+                            // (fuente acumulada) son los que deciden que
+                            // botones se muestran una vez cargados los datos.
+                            setTipoNc(f.tiene_reverso_total !== 1 && f.tiene_reverso_parcial !== 1 ? 'TOTAL' : 'PARCIAL')
                             // UX B QA fix: seleccionar (incluso re-seleccionar)
                             // una factura arranca un proceso de NC nuevo — la
                             // autorizacion de PIN de la factura anterior nunca
