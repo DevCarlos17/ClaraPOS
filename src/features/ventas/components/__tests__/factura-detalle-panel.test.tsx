@@ -99,3 +99,68 @@ describe('FacturaDetallePanel (Spec notas-credito-pos: Panel de detalle fiscal d
     expect(screen.getByText(/No afect(o|ó) cuentas por cobrar/i)).toBeInTheDocument()
   })
 })
+
+// ─── F1 QA fix (Slice 5a): historial de reversos additivo — el panel SIEMPRE
+// muestra la factura original completa y, si tiene NC(s) aplicadas, ADEMAS
+// el historial de lo reversado (nunca reemplaza la vista original). ────
+
+describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, junto al detalle original)', () => {
+  it('sin reversos (prop omitida o vacia): NO muestra la seccion de notas de credito aplicadas', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} afectoCxc={null} />)
+
+    expect(screen.queryByText(/Notas de credito aplicadas/i)).not.toBeInTheDocument()
+  })
+
+  it('con reversos: el detalle ORIGINAL sigue visible Y ademas se muestra cada NC con su numero/tipo y las lineas devueltas', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        afectoCxc={null}
+        reversos={[
+          {
+            notaCreditoId: 'nc-1',
+            nroNcr: 'NCR-000001',
+            tipo: 'PARCIAL',
+            fecha: '2026-01-02T00:00:00Z',
+            lineas: [{ descripcion: 'Botox 50U', cantidad: '1.000' }],
+          },
+        ]}
+      />
+    )
+
+    // Original sigue completo (aditivo, no reemplazado).
+    expect(screen.getAllByText('Botox 50U').length).toBeGreaterThan(0)
+    // Historial de reverso agregado.
+    expect(screen.getByText(/Notas de credito aplicadas/i)).toBeInTheDocument()
+    expect(screen.getByText('NCR-000001')).toBeInTheDocument()
+    expect(screen.getByText(/1\.000/)).toBeInTheDocument()
+  })
+
+  it('multiples NCs aplicadas: cada una se muestra en su propia entrada', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        afectoCxc={null}
+        reversos={[
+          {
+            notaCreditoId: 'nc-1',
+            nroNcr: 'NCR-000001',
+            tipo: 'PARCIAL',
+            fecha: '2026-01-02T00:00:00Z',
+            lineas: [{ descripcion: 'Botox 50U', cantidad: '1.000' }],
+          },
+          {
+            notaCreditoId: 'nc-2',
+            nroNcr: 'NCR-000002',
+            tipo: 'TOTAL',
+            fecha: '2026-01-03T00:00:00Z',
+            lineas: [{ descripcion: 'Consulta', cantidad: '1.000' }],
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('NCR-000001')).toBeInTheDocument()
+    expect(screen.getByText('NCR-000002')).toBeInTheDocument()
+  })
+})

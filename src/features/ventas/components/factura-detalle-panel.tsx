@@ -1,5 +1,6 @@
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatMontoPago, formatMontoBimonetario, sumarAbonos, construirFilasTotales, type ReciboData } from '../utils/factura-export'
+import type { ReversoAplicado } from '../utils/notas-credito-ui'
 
 /**
  * Panel de detalle fiscal de la factura seleccionada (Design §Decision 5,
@@ -17,9 +18,17 @@ export interface FacturaDetallePanelProps {
   recibo: ReciboData | null
   /** `huboAfectacionCxc(...)` (Design §Decision 6) — `null` mientras no se conoce aun. */
   afectoCxc: boolean | null
+  /**
+   * F1 QA fix (Slice 5a): historial de NC(s) ya aplicadas a esta factura
+   * (`agruparReversosPorNc`, alimentado por `useReversosFactura`). El
+   * detalle ORIGINAL de arriba SIEMPRE se muestra completo — esta seccion
+   * es ADITIVA (nunca lo reemplaza): si la factura no tiene ninguna NC
+   * aplicada, se omite prop o se pasa vacio y la seccion no se renderiza.
+   */
+  reversos?: ReversoAplicado[]
 }
 
-export function FacturaDetallePanel({ recibo, afectoCxc }: FacturaDetallePanelProps) {
+export function FacturaDetallePanel({ recibo, afectoCxc, reversos = [] }: FacturaDetallePanelProps) {
   if (!recibo) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
@@ -108,6 +117,30 @@ export function FacturaDetallePanel({ recibo, afectoCxc }: FacturaDetallePanelPr
           }`}
         >
           {afectoCxc ? 'Afecto cuentas por cobrar' : 'No afecto cuentas por cobrar'}
+        </div>
+      )}
+
+      {reversos.length > 0 && (
+        <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50/50 p-3 text-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">
+            Notas de credito aplicadas
+          </p>
+          {reversos.map((nc) => (
+            <div key={nc.notaCreditoId} className="rounded-md border border-orange-200 bg-white p-2">
+              <div className="flex items-center justify-between text-xs font-medium text-orange-700">
+                <span>{nc.nroNcr}</span>
+                <span>{nc.tipo === 'TOTAL' ? 'Reverso Total' : 'Reverso Parcial'}</span>
+              </div>
+              <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                {nc.lineas.map((linea, i) => (
+                  <li key={`${nc.notaCreditoId}-${i}`} className="flex items-center justify-between">
+                    <span>{linea.descripcion}</span>
+                    <span className="tabular-nums">{linea.cantidad}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
     </div>
