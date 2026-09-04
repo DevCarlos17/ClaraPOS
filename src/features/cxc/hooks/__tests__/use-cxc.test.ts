@@ -40,6 +40,7 @@ import {
   aplicarSaldoFavor,
   registrarPagoFactura,
   useDetalleFactura,
+  useAfectacionCxc,
   type RegistrarSafExcedenteParams,
   type AplicarSaldoFavorParams,
   type PagoFacturaParams,
@@ -356,5 +357,43 @@ describe('useDetalleFactura — extension aditiva (Design §Decision 3)', () => 
     const { result } = renderHook(() => useDetalleFactura('venta-1'))
 
     expect(result.current.detalle[0]).toMatchObject({ es_decimal: 0, precio_unitario_bs: '500.00' })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// useAfectacionCxc — Design §Decision 6: fuente correcta de "afectacion CxC"
+// para el panel de detalle (Slice 3a). COUNT(*) sobre movimientos_cuenta,
+// NUNCA construirCierreRecibo/discrepancy (estado efimero de React).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('useAfectacionCxc (Design §Decision 6: COUNT movimientos_cuenta WHERE venta_id + empresa_id)', () => {
+  it('sin ventaId: no ejecuta la query (sql vacio) y retorna 0', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    const { result } = renderHook(() => useAfectacionCxc(null, 'emp-1'))
+
+    expect(result.current.cantidadMovimientos).toBe(0)
+    expect(mockedUseQuery).toHaveBeenCalledWith('', [])
+  })
+
+  it('con ventaId: ejecuta COUNT escopeado a venta_id + empresa_id y retorna el conteo', () => {
+    mockedUseQuery.mockReturnValue({ data: [{ n: 2 }], isLoading: false } as never)
+
+    const { result } = renderHook(() => useAfectacionCxc('venta-1', 'emp-1'))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('COUNT(*)')
+    expect(sql).toContain('FROM movimientos_cuenta')
+    expect(sql).toContain('WHERE venta_id = ? AND empresa_id = ?')
+    expect(params).toEqual(['venta-1', 'emp-1'])
+    expect(result.current.cantidadMovimientos).toBe(2)
+  })
+
+  it('0 movimientos: retorna cantidadMovimientos=0 (huboAfectacionCxc(0) sera false en el llamador)', () => {
+    mockedUseQuery.mockReturnValue({ data: [{ n: 0 }], isLoading: false } as never)
+
+    const { result } = renderHook(() => useAfectacionCxc('venta-2', 'emp-1'))
+
+    expect(result.current.cantidadMovimientos).toBe(0)
   })
 })

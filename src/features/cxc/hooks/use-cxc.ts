@@ -247,6 +247,30 @@ export function useDetalleFactura(ventaId: string | null) {
   return { detalle: (data ?? []) as DetalleFacturaCxc[], isLoading }
 }
 
+interface AfectacionCxcRow {
+  n: number
+}
+
+/**
+ * Fuente correcta y persistida de "afectacion a CxC" de una factura (Design
+ * §Decision 6, openspec/changes/notas-credito-ui-pos): COUNT(*) de
+ * `movimientos_cuenta WHERE venta_id = ?`. NUNCA `construirCierreRecibo`/
+ * `discrepancy` de `recibo-pagos.ts` — ese estado es efimero de React
+ * (calculado en el momento del cobro, nunca persistido) e irrecuperable
+ * para facturas historicas. El llamador deriva el booleano final via
+ * `huboAfectacionCxc(cantidadMovimientos)` (notas-credito-ui.ts).
+ */
+export function useAfectacionCxc(ventaId: string | null, empresaId: string) {
+  const { data, isLoading } = useQuery(
+    ventaId && empresaId
+      ? 'SELECT COUNT(*) as n FROM movimientos_cuenta WHERE venta_id = ? AND empresa_id = ?'
+      : '',
+    ventaId && empresaId ? [ventaId, empresaId] : []
+  )
+  const row = (data?.[0] as AfectacionCxcRow | undefined) ?? null
+  return { cantidadMovimientos: row?.n ?? 0, isLoading }
+}
+
 interface VentaFechaRow {
   fecha: string
 }
