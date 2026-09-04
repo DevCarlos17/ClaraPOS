@@ -217,4 +217,30 @@ describe('derivarLineasNcParcial (Design §Decision 7: mapeo UI -> contrato de c
     expect(result.lineas).toEqual([{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }])
     expect(result.errores.length).toBeGreaterThan(0)
   })
+
+  // ─── Deuda de Slice 3a (obs #2875): cantidad negativa NUNCA se descarta en
+  // silencio como si fuera 0 — debe generar su PROPIO error explicito. ────
+
+  it('NEGATIVE-QTY GUARD: cantidad negativa se rechaza EXPLICITAMENTE con su propio error (no en silencio)', () => {
+    const result = derivarLineasNcParcial(
+      [{ venta_det_id: 'vd-1', cantidadFacturada: 5, esDecimal: true }],
+      { 'vd-1': -2 }
+    )
+
+    expect(result.lineas).toEqual([])
+    expect(result.errores).toEqual(['La cantidad a devolver de la linea vd-1 no puede ser negativa.'])
+  })
+
+  it('NEGATIVE-QTY GUARD: mezcla negativa + valida -> la valida se incluye, la negativa genera SU error especifico (no el generico de "al menos una")', () => {
+    const result = derivarLineasNcParcial(
+      [
+        { venta_det_id: 'vd-1', cantidadFacturada: 5, esDecimal: true },
+        { venta_det_id: 'vd-2', cantidadFacturada: 3, esDecimal: true },
+      ],
+      { 'vd-1': 2, 'vd-2': -1 }
+    )
+
+    expect(result.lineas).toEqual([{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }])
+    expect(result.errores).toEqual(['La cantidad a devolver de la linea vd-2 no puede ser negativa.'])
+  })
 })

@@ -166,7 +166,16 @@ export function derivarLineasNcParcial(
 
   for (const linea of facturaLineas) {
     const cantidad = cantidadesUi[linea.venta_det_id] ?? 0
-    if (cantidad <= 0) continue
+
+    // NEGATIVE-QTY GUARD (deuda de Slice 3a, obs #2875): una cantidad
+    // negativa NUNCA se descarta en silencio como si fuera 0 — genera su
+    // PROPIO error explicito, distinto del error generico "selecciona al
+    // menos una linea" (que solo aplica cuando NINGUNA linea es valida).
+    if (cantidad < 0) {
+      errores.push(`La cantidad a devolver de la linea ${linea.venta_det_id} no puede ser negativa.`)
+      continue
+    }
+    if (cantidad === 0) continue
 
     if (cantidad > linea.cantidadFacturada) {
       errores.push(
@@ -185,7 +194,10 @@ export function derivarLineasNcParcial(
     })
   }
 
-  if (lineas.length === 0) {
+  // El mensaje generico solo aplica cuando NINGUNA linea tiene una razon ya
+  // explicada (negativa/excede/decimal invalido) — evita ruido redundante
+  // cuando ya existe un error especifico por linea.
+  if (lineas.length === 0 && errores.length === 0) {
     errores.push('Selecciona al menos una linea con cantidad mayor a 0.')
   }
 
