@@ -20,6 +20,7 @@ import {
   puedeElegirTipoTotal,
   calcularReversoPorLinea,
   agruparReversosPorNc,
+  type EstadoPago,
 } from '../utils/notas-credito-ui'
 import { buildReciboData, type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
 import { FacturaDetallePanel } from './factura-detalle-panel'
@@ -60,15 +61,28 @@ const MODALIDADES_POS: { value: LiquidacionModalidad; label: string }[] = [
 ]
 
 /**
+ * F2 QA fix (Slice 5c, parche visual pendiente de rediseno futuro): cada
+ * estado de pago tiene su propio color — antes de este fix "Contado",
+ * "Crédito" y "Abonada" compartian el mismo gris (`border-slate-200`), sin
+ * distincion visual entre ellos.
+ */
+const ESTADO_PAGO_BADGE_CLASS: Record<EstadoPago, string> = {
+  CONTADO: 'border-green-200 bg-green-50 text-green-700',
+  CREDITO: 'border-blue-200 bg-blue-50 text-blue-700',
+  ABONADA: 'border-amber-200 bg-amber-50 text-amber-700',
+}
+
+/**
  * Badges de estado de pago + reverso de una fila del listado (Slice 2, Spec
  * notas-credito-pos: "Badges de estado de pago y reverso"). Puede combinar el
  * badge de pago con uno o ambos badges de reverso simultaneamente.
  */
 function FacturaBadges({ f }: { f: FacturaParaAnular }) {
+  const estadoPago = derivarEstadoPago(f)
   return (
     <div className="flex flex-wrap items-center gap-1">
-      <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
-        {ESTADO_PAGO_LABEL[derivarEstadoPago(f)]}
+      <Badge variant="outline" className={ESTADO_PAGO_BADGE_CLASS[estadoPago]}>
+        {ESTADO_PAGO_LABEL[estadoPago]}
       </Badge>
       {f.tiene_reverso_total === 1 && (
         <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">

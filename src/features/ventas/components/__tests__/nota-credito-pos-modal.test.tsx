@@ -366,6 +366,27 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     expect(screen.getByText('Reverso Parcial')).toBeInTheDocument()
   })
 
+  it('F2 QA fix: Contado, Crédito y Abonada usan cada uno un color de badge distinto (antes compartian el mismo gris)', () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [
+        facturaSesion({ id: 'venta-contado', nro_factura: 'C01-000001', total_usd: '30.00', saldo_pend_usd: '0.00' }),
+        facturaSesion({ id: 'venta-credito', nro_factura: 'C01-000002', total_usd: '30.00', saldo_pend_usd: '30.00' }),
+        facturaSesion({ id: 'venta-abonada', nro_factura: 'C01-000003', total_usd: '30.00', saldo_pend_usd: '10.00' }),
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const claseContado = screen.getByText('Contado').className
+    const claseCredito = screen.getByText('Crédito').className
+    const claseAbonada = screen.getByText('Abonada').className
+
+    expect(claseContado).not.toBe(claseCredito)
+    expect(claseContado).not.toBe(claseAbonada)
+    expect(claseCredito).not.toBe(claseAbonada)
+  })
+
   it('F1 QA fix: factura con tiene_reverso_total=1 (status ANULADA) permanece SELECCIONABLE — clickearla SI muestra su detalle, pero la ACCION "Nota de credito" queda bloqueada (read-only)', async () => {
     setup({ hasPermission: true })
     mockedUseFacturasSesionActiva.mockReturnValue({
