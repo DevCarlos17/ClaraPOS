@@ -525,6 +525,9 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     expect(screen.getByText('Reverso Total')).toBeInTheDocument()
     expect(screen.queryByText('Reverso Parcial')).not.toBeInTheDocument()
+    // BUG D fix: reverso TOTAL suprime el badge de pago, aunque la factura
+    // tenga saldo_pend_usd == total_usd (que solo mostraria "Contado").
+    expect(screen.queryByText('Contado')).not.toBeInTheDocument()
   })
 
   it('Slice 5e QA fix 3.5: sin entrada en badgesPorVenta para la factura, no muestra ningun badge de reverso', () => {
@@ -589,6 +592,9 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     expect(screen.getByText('Reverso Total')).toBeInTheDocument()
     expect(screen.getByText(/C01-000001/i)).toBeInTheDocument()
+    // BUG D fix: la factura (status ANULADA, 100% reversada) ya NO combina
+    // "Reverso Total" con su badge de metodo de pago previo ("Contado").
+    expect(screen.queryByText('Contado')).not.toBeInTheDocument()
 
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
@@ -670,6 +676,9 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     expect(screen.getByText('Reverso Total')).toBeInTheDocument()
+    // BUG D fix: dos NCs PARCIALes que ACUMULAN el 100% (sin ninguna NC
+    // tipo TOTAL literal) tambien deben suprimir el badge de pago.
+    expect(screen.queryByText('Contado')).not.toBeInTheDocument()
 
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))

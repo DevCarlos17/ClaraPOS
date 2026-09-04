@@ -19,6 +19,7 @@ import {
   puedeElegirTipoTotal,
   calcularReversoPorLinea,
   agruparReversosPorNc,
+  resolverBadgesFactura,
   type EstadoPago,
   type BadgeReverso,
 } from '../utils/notas-credito-ui'
@@ -82,20 +83,26 @@ const ESTADO_PAGO_BADGE_CLASS: Record<EstadoPago, string> = {
  * `f.tiene_reverso_total`/`tiene_reverso_parcial` (esos flags siguen vigentes
  * SOLO para el gating de ACCION en `puedeEmitirNcAdicional`/
  * `puedeElegirTipoTotal`, sin relacion con este badge).
+ *
+ * BUG D fix: la decision de que badges mostrar (pago suprimido cuando el
+ * reverso es TOTAL, ver `resolverBadgesFactura`) es PURA — este componente
+ * es un renderer delgado que solo consume su resultado.
  */
 function FacturaBadges({ f, badgeReverso }: { f: FacturaParaAnular; badgeReverso: BadgeReverso }) {
-  const estadoPago = derivarEstadoPago(f)
+  const badges = resolverBadgesFactura(derivarEstadoPago(f), badgeReverso)
   return (
     <div className="flex flex-wrap items-center gap-1">
-      <Badge variant="outline" className={ESTADO_PAGO_BADGE_CLASS[estadoPago]}>
-        {ESTADO_PAGO_LABEL[estadoPago]}
-      </Badge>
-      {badgeReverso === 'TOTAL' && (
+      {badges.estadoPago && (
+        <Badge variant="outline" className={ESTADO_PAGO_BADGE_CLASS[badges.estadoPago]}>
+          {ESTADO_PAGO_LABEL[badges.estadoPago]}
+        </Badge>
+      )}
+      {badges.reverso === 'TOTAL' && (
         <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
           Reverso Total
         </Badge>
       )}
-      {badgeReverso === 'PARCIAL' && (
+      {badges.reverso === 'PARCIAL' && (
         <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">
           Reverso Parcial
         </Badge>
