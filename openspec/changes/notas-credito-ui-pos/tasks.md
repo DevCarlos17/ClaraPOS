@@ -325,3 +325,20 @@ ya reversado), nunca sobre lo originalmente facturado.
 - [x] 5g.2 Verify: `yarn test:run` (1045/1045 verdes, +1 neto sobre 1044) + `yarn type-check:test` (limpio). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` verificados en CERO líneas cambiadas.
 
 **Resultado real vs. forecast**: 42 líneas cambiadas (`git diff --stat` sobre 2 archivos: `nota-credito-pos-modal.tsx` +6, `nota-credito-pos-modal.test.tsx` +37/-1) — fix quirúrgico de una sola línea de guard + su test dedicado, muy por debajo del budget de 400. Sin scope creep: cambio aislado al único camino de emisión que faltaba el guard.
+
+### 5g.3 (BUG D — el badge de método de pago no se limpia en reverso total)
+
+> `FacturaBadges` (`nota-credito-pos-modal.tsx`) renderizaba el badge de
+> estado de pago (Contado/Crédito/Abonada) de forma INCONDICIONAL, sin
+> importar `badgeReverso`. Una factura reversada al 100% (`badgeReverso ===
+> 'TOTAL'`, ya sea vía una sola NC TOTAL o acumulando PARCIALes hasta el
+> 100% — mismo criterio que `calcularBadgesReversoPorVenta`) combinaba a la
+> vez "Contado"/"Crédito"/"Abonada" Y "Reverso Total", cuando el negocio
+> exige que el reverso total DEJE SIN EFECTO cualquier badge previo (método
+> de pago o "Reverso Parcial") y muestre ÚNICAMENTE "Reverso Total".
+
+- [x] 5g.3.1 RED→GREEN: nueva función pura `resolverBadgesFactura(estadoPago, badgeReverso)` en `notas-credito-ui.ts` — dado el estado de pago derivado y el badge de reverso acumulado, decide qué badges renderizar: `badgeReverso === 'TOTAL'` → `{ estadoPago: null, reverso: 'TOTAL' }` (pago suprimido, nunca combina con "Reverso Parcial"); cualquier otro caso → `{ estadoPago, reverso: badgeReverso }` (pago se mantiene, comportamiento sin cambios). 3 tests nuevos en `notas-credito-ui.test.ts` (describe `resolverBadgesFactura`) cubren TOTAL/PARCIAL/null — RED confirmado (función no existía) antes de implementar.
+- [x] 5g.3.2 REFACTOR: `FacturaBadges` reescrito como renderer delgado que consume `resolverBadgesFactura(derivarEstadoPago(f), badgeReverso)` — el badge de pago ahora es condicional (`{badges.estadoPago && <Badge>...}`) en vez de incondicional. Estilos/clases (`ESTADO_PAGO_BADGE_CLASS`, colores rojo/naranja de reverso) sin cambios. 3 tests pre-existentes de `nota-credito-pos-modal.test.tsx` (los dos escenarios `badgeReverso: 'TOTAL'` vía NC única y vía acumulación de PARCIALes, más el de `tiene_reverso_total=1`) reciben una aserción adicional `expect(screen.queryByText('Contado')).not.toBeInTheDocument()` — reproducen exactamente el bug (factura CONTADO + reverso TOTAL combinados) y confirman que ahora el badge de pago queda suprimido.
+- [x] 5g.3.3 Verify: `yarn test:run` (1048/1048 verdes, +3 netos sobre 1045) + `yarn type-check:test` (limpio). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` NUNCA tocados — cambio 100% acotado a `notas-credito-ui.ts` (función pura nueva) y al renderer de `FacturaBadges`.
+
+**Resultado real vs. forecast (5g.3)**: `notas-credito-ui.ts` +29 líneas (función pura + tipo `BadgesFacturaVisibles`), `notas-credito-ui.test.ts` +14 líneas (describe nuevo, 3 tests), `nota-credito-pos-modal.tsx` ~+8/-6 líneas (rewire de `FacturaBadges`), `nota-credito-pos-modal.test.tsx` +9 líneas (3 aserciones nuevas en tests existentes) — muy por debajo del budget de 400. Ships junto con el batch 5g en la misma rama `feat/notas-credito-ui-pos-s5g`.
