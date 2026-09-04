@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NotaCreditoPosModal } from '../nota-credito-pos-modal'
 import { crearNotaCredito, useReversosFactura } from '../../hooks/use-notas-credito'
@@ -373,6 +373,41 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBe('dep-1')
+  })
+
+  it('BUG 3 (QA C, Slice 5g): PIN A autorizado mientras PIN B quedo autorizado SIN deposito elegido — NUNCA debe emitir la NC (el callback async de PIN A debe revalidar depositoInvalido, igual que los handlers sincronos)', async () => {
+    setup({ hasPermission: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+
+    // Sin autorizar PIN B todavia, el riel es automatico -> depositoInvalido
+    // es false y "Confirmar Anulacion" esta habilitado. Sin permiso de
+    // emision, esto abre el PIN A (emision) y lo deja pendiente.
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+    expect(screen.getByText(/Emision de Nota de Credito/i)).toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+
+    // Con el PIN A todavia pendiente de autorizar, el usuario abre y
+    // autoriza el PIN B (deposito) SIN elegir un deposito concreto — el
+    // selector de deposito de reingreso queda con el placeholder vacio.
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    const pinBDialog = screen
+      .getByText(/Cambiar deposito de reingreso/i)
+      .closest('[data-testid="mock-pin-dialog"]') as HTMLElement
+    await user.click(within(pinBDialog).getByText('Autorizar'))
+
+    // Ahora se autoriza el PIN A (emision), que estaba pendiente desde
+    // antes — el deposito de reingreso NUNCA fue elegido. Antes de este
+    // fix, el callback `onAuthorized` de PIN A no revalidaba
+    // `depositoInvalido` y emitia la NC igual, cayendo en silencio al riel
+    // automatico del backend.
+    const pinADialog = screen
+      .getByText(/Emision de Nota de Credito/i)
+      .closest('[data-testid="mock-pin-dialog"]') as HTMLElement
+    await user.click(within(pinADialog).getByText('Autorizar'))
+
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
   })
 })
 

@@ -709,6 +709,12 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
           if (accionPendiente === 'EDITAR_PAGOS') {
             ejecutarEditarPagosPlaceholder()
           } else {
+            // BUG 3 (QA C) QA fix: defensa en profundidad — igual que
+            // `handleConfirmarClick`/`handleConfirmarParcialClick`, este es
+            // el UNICO camino de emision que faltaba revalidar. Como PIN A
+            // es async, el PIN B (deposito) puede autorizarse SIN elegir
+            // deposito mientras PIN A todavia esta pendiente.
+            if (depositoInvalido) return
             void emitirNc(lineasParcialPendientes ?? undefined)
           }
         }}
