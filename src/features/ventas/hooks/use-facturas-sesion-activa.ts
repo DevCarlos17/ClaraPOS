@@ -1,7 +1,14 @@
+import { useMemo } from 'react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
 import type { FacturaParaAnular } from './use-notas-credito'
+import {
+  calcularBadgesReversoPorVenta,
+  type BadgeReverso,
+  type LineaFacturaReversoRow,
+  type NotaCreditoDetParaReverso,
+} from '../utils/notas-credito-ui'
 
 /**
  * Facturas disponibles para emitir NC desde el POS-express (Slice 5a-2a,
@@ -43,4 +50,48 @@ export function useFacturasSesionActiva() {
     facturas: (data ?? []) as FacturaParaAnular[],
     isLoading: sesionLoading || isLoading,
   }
+}
+
+/**
+ * QA fix 3.5 (Slice 5e): badge de reverso ACUMULADO por `venta_id`, para
+ * TODAS las facturas de la sesion activa a la vez — a diferencia de
+ * `useReversosFactura` (escopeado a UNA sola venta seleccionada), este hook
+ * trae en dos queries planas (a) `ventas_det` de cada factura de la sesion
+ * y (b) `notas_credito_det` de las NCs ya aplicadas a esas facturas, y
+ * delega el criterio de acumulacion 100% a `calcularBadgesReversoPorVenta`
+ * (mismo criterio que `calcularReversoPorLinea`, F1) — NUNCA lee
+ * `notas_credito.tipo` para decidir el badge.
+ */
+export function useBadgesReversoSesion(empresaId: string, sesionId: string) {
+  const { data: lineas, isLoading: isLoadingLineas } = useQuery(
+    sesionId
+      ? `SELECT vd.venta_id, vd.id as venta_det_id, vd.cantidad as cantidad_facturada
+         FROM ventas_det vd
+         JOIN ventas v ON v.id = vd.venta_id
+         WHERE v.empresa_id = ? AND v.sesion_caja_id = ?`
+      : '',
+    sesionId ? [empresaId, sesionId] : []
+  )
+
+  const { data: notasCreditoDet, isLoading: isLoadingNotas } = useQuery(
+    sesionId
+      ? `SELECT ncd.venta_det_id, ncd.cantidad
+         FROM notas_credito_det ncd
+         JOIN notas_credito nc ON nc.id = ncd.nota_credito_id
+         JOIN ventas v ON v.id = nc.venta_id
+         WHERE v.empresa_id = ? AND v.sesion_caja_id = ?`
+      : '',
+    sesionId ? [empresaId, sesionId] : []
+  )
+
+  const badgesPorVenta: Record<string, BadgeReverso> = useMemo(
+    () =>
+      calcularBadgesReversoPorVenta(
+        (lineas ?? []) as LineaFacturaReversoRow[],
+        (notasCreditoDet ?? []) as NotaCreditoDetParaReverso[]
+      ),
+    [lineas, notasCreditoDet]
+  )
+
+  return { badgesPorVenta, isLoading: isLoadingLineas || isLoadingNotas }
 }

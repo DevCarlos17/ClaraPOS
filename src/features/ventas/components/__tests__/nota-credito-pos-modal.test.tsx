@@ -2,7 +2,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NotaCreditoPosModal } from '../nota-credito-pos-modal'
 import { crearNotaCredito, useReversosFactura } from '../../hooks/use-notas-credito'
-import { useFacturasSesionActiva } from '../../hooks/use-facturas-sesion-activa'
+import { useFacturasSesionActiva, useBadgesReversoSesion } from '../../hooks/use-facturas-sesion-activa'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -48,7 +48,10 @@ vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
 }))
 
 vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({ crearNotaCredito: vi.fn(), useReversosFactura: vi.fn() }))
-vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({ useFacturasSesionActiva: vi.fn() }))
+vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({
+  useFacturasSesionActiva: vi.fn(),
+  useBadgesReversoSesion: vi.fn(),
+}))
 vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
@@ -65,6 +68,7 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.f
 const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
 const mockedUseReversosFactura = vi.mocked(useReversosFactura)
 const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
+const mockedUseBadgesReversoSesion = vi.mocked(useBadgesReversoSesion)
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
 const mockedUseCompany = vi.mocked(useCompany)
@@ -132,6 +136,7 @@ function facturaSesion(overrides: Partial<FacturaParaAnular> = {}): FacturaParaA
 
 function setup(opts: { hasPermission: boolean }) {
   mockedUseFacturasSesionActiva.mockReturnValue({ facturas: [facturaSesion()], isLoading: false })
+  mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: {}, isLoading: false })
   mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
   mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
   mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
@@ -351,16 +356,42 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     expect(screen.getByText('Crédito')).toBeInTheDocument()
   })
 
-  it('factura Abonada + tiene_reverso_parcial=1 muestra AMBOS badges en la misma fila', () => {
+  it('factura Abonada + badge acumulado PARCIAL muestra AMBOS badges en la misma fila', () => {
     setup({ hasPermission: true })
     mockedUseFacturasSesionActiva.mockReturnValue({
       facturas: [facturaSesion({ total_usd: '30.00', saldo_pend_usd: '10.00', tiene_reverso_parcial: 1 })],
       isLoading: false,
     })
+    mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: { 'venta-1': 'PARCIAL' }, isLoading: false })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     expect(screen.getByText('Abonada')).toBeInTheDocument()
     expect(screen.getByText('Reverso Parcial')).toBeInTheDocument()
+  })
+
+  it('Slice 5e QA fix 3.5: el badge de reverso refleja lo ACUMULADO (via useBadgesReversoSesion), no el tipo de una NC individual — parcial acumulado a 100% muestra "Reverso Total", no "Reverso Parcial"', () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      // El flag por-NC dice "parcial" (existe una NC tipo PARCIAL)...
+      facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
+      isLoading: false,
+    })
+    // ...pero la acumulacion real (varias NCs PARCIALes sumando el 100%) es TOTAL.
+    mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: { 'venta-1': 'TOTAL' }, isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText('Reverso Total')).toBeInTheDocument()
+    expect(screen.queryByText('Reverso Parcial')).not.toBeInTheDocument()
+  })
+
+  it('Slice 5e QA fix 3.5: sin entrada en badgesPorVenta para la factura, no muestra ningun badge de reverso', () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({ facturas: [facturaSesion()], isLoading: false })
+    mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: {}, isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.queryByText('Reverso Total')).not.toBeInTheDocument()
+    expect(screen.queryByText('Reverso Parcial')).not.toBeInTheDocument()
   })
 
   it('F2 QA fix: Contado, Crédito y Abonada usan cada uno un color de badge distinto (antes compartian el mismo gris)', () => {
@@ -390,6 +421,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
       facturas: [facturaSesion({ status: 'ANULADA', tiene_reverso_total: 1 })],
       isLoading: false,
     })
+    mockedUseBadgesReversoSesion.mockReturnValue({ badgesPorVenta: { 'venta-1': 'TOTAL' }, isLoading: false })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     expect(screen.getByText('Reverso Total')).toBeInTheDocument()

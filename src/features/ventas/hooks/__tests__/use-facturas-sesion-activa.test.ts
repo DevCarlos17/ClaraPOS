@@ -9,7 +9,7 @@ import { renderHook } from '@testing-library/react'
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
-import { useFacturasSesionActiva } from '../use-facturas-sesion-activa'
+import { useFacturasSesionActiva, useBadgesReversoSesion } from '../use-facturas-sesion-activa'
 
 const mockedUseQuery = vi.mocked(useQuery)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
@@ -144,5 +144,56 @@ describe('useFacturasSesionActiva — Slice 5a-2a (Spec notas-credito-pos: alcan
     const { result } = renderHook(() => useFacturasSesionActiva())
 
     expect(result.current.facturas[0]).toMatchObject({ tiene_reverso_total: 0, tiene_reverso_parcial: 0 })
+  })
+})
+
+describe('useBadgesReversoSesion (Slice 5e QA fix 3.5: badge de reverso acumulado por venta_id de la sesion activa)', () => {
+  function setupBadges(opts: { lineas?: unknown[]; notas?: unknown[] }) {
+    mockedUseQuery.mockImplementation(((sql: string) => {
+      if (sql.includes('FROM ventas_det')) return { data: opts.lineas ?? [], isLoading: false }
+      if (sql.includes('FROM notas_credito_det')) return { data: opts.notas ?? [], isLoading: false }
+      return { data: [], isLoading: false }
+    }) as unknown as typeof useQuery)
+  }
+
+  it('filtra ambas queries por empresa_id + sesion_caja_id (query-enforced)', () => {
+    setupBadges({})
+
+    renderHook(() => useBadgesReversoSesion('emp-1', 'sesion-1'))
+
+    const lineasCall = mockedUseQuery.mock.calls.find(([sql]) => sql.includes('FROM ventas_det'))
+    const notasCall = mockedUseQuery.mock.calls.find(([sql]) => sql.includes('FROM notas_credito_det'))
+    expect(lineasCall?.[1]).toEqual(['emp-1', 'sesion-1'])
+    expect(notasCall?.[1]).toEqual(['emp-1', 'sesion-1'])
+  })
+
+  it('sin sesion activa: no ejecuta ninguna query (sql vacio)', () => {
+    setupBadges({})
+
+    renderHook(() => useBadgesReversoSesion('emp-1', ''))
+
+    expect(mockedUseQuery).toHaveBeenCalledWith('', [])
+  })
+
+  it('dos NCs PARCIALes que juntas reversan el 100% de la unica linea de una venta -> badge TOTAL', () => {
+    setupBadges({
+      lineas: [{ venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' }],
+      notas: [
+        { venta_det_id: 'vd-1', cantidad: '2' },
+        { venta_det_id: 'vd-1', cantidad: '3' },
+      ],
+    })
+
+    const { result } = renderHook(() => useBadgesReversoSesion('emp-1', 'sesion-1'))
+
+    expect(result.current.badgesPorVenta).toEqual({ 'venta-1': 'TOTAL' })
+  })
+
+  it('sin ninguna nota de credito: badgesPorVenta vacio', () => {
+    setupBadges({ lineas: [{ venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' }], notas: [] })
+
+    const { result } = renderHook(() => useBadgesReversoSesion('emp-1', 'sesion-1'))
+
+    expect(result.current.badgesPorVenta).toEqual({ 'venta-1': null })
   })
 })

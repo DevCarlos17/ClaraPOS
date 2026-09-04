@@ -8,6 +8,7 @@ import {
   puedeElegirTipoTotal,
   calcularReversoPorLinea,
   agruparReversosPorNc,
+  calcularBadgesReversoPorVenta,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -327,6 +328,58 @@ describe('calcularReversoPorLinea (F1: remaining-qty por linea, mismo criterio d
     ])
     expect(r.reversado.toNumber()).toBe(5)
     expect(r.restante.toNumber()).toBe(5)
+  })
+})
+
+describe('calcularBadgesReversoPorVenta (Slice 5e QA fix 3.5: badge de reverso ACUMULADO, no por opcion de NC individual)', () => {
+  it('dos NCs PARCIALes que juntas reversan el 100% de la unica linea -> Reverso Total', () => {
+    const lineas = [{ venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' }]
+    const notas = [
+      { venta_det_id: 'vd-1', cantidad: '2' },
+      { venta_det_id: 'vd-1', cantidad: '3' },
+    ]
+    expect(calcularBadgesReversoPorVenta(lineas, notas)).toEqual({ 'venta-1': 'TOTAL' })
+  })
+
+  it('NCs PARCIALes que NO suman el 100% -> Reverso Parcial', () => {
+    const lineas = [{ venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' }]
+    const notas = [{ venta_det_id: 'vd-1', cantidad: '2' }]
+    expect(calcularBadgesReversoPorVenta(lineas, notas)).toEqual({ 'venta-1': 'PARCIAL' })
+  })
+
+  it('una sola NC que reversa la cantidad completa de la unica linea -> Reverso Total', () => {
+    const lineas = [{ venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' }]
+    const notas = [{ venta_det_id: 'vd-1', cantidad: '5' }]
+    expect(calcularBadgesReversoPorVenta(lineas, notas)).toEqual({ 'venta-1': 'TOTAL' })
+  })
+
+  it('sin ninguna NC aplicada -> sin badge (null)', () => {
+    const lineas = [{ venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' }]
+    expect(calcularBadgesReversoPorVenta(lineas, [])).toEqual({ 'venta-1': null })
+  })
+
+  it('factura con multiples lineas: TODAS deben llegar a 100% para Reverso Total — una sola linea incompleta mantiene Parcial', () => {
+    const lineas = [
+      { venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' },
+      { venta_id: 'venta-1', venta_det_id: 'vd-2', cantidad_facturada: '3' },
+    ]
+    const notas = [
+      { venta_det_id: 'vd-1', cantidad: '5' },
+      { venta_det_id: 'vd-2', cantidad: '1' },
+    ]
+    expect(calcularBadgesReversoPorVenta(lineas, notas)).toEqual({ 'venta-1': 'PARCIAL' })
+  })
+
+  it('calcula independiente por cada venta_id (multiples facturas de la misma sesion)', () => {
+    const lineas = [
+      { venta_id: 'venta-1', venta_det_id: 'vd-1', cantidad_facturada: '5' },
+      { venta_id: 'venta-2', venta_det_id: 'vd-2', cantidad_facturada: '3' },
+    ]
+    const notas = [
+      { venta_det_id: 'vd-1', cantidad: '5' },
+      { venta_det_id: 'vd-2', cantidad: '1' },
+    ]
+    expect(calcularBadgesReversoPorVenta(lineas, notas)).toEqual({ 'venta-1': 'TOTAL', 'venta-2': 'PARCIAL' })
   })
 })
 

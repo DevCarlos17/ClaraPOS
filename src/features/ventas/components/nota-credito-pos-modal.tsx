@@ -9,7 +9,7 @@ import {
   type FacturaParaAnular,
   type LineaNcSeleccionada,
 } from '../hooks/use-notas-credito'
-import { useFacturasSesionActiva } from '../hooks/use-facturas-sesion-activa'
+import { useFacturasSesionActiva, useBadgesReversoSesion } from '../hooks/use-facturas-sesion-activa'
 import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
 import {
   derivarEstadoPago,
@@ -20,6 +20,7 @@ import {
   calcularReversoPorLinea,
   agruparReversosPorNc,
   type EstadoPago,
+  type BadgeReverso,
 } from '../utils/notas-credito-ui'
 import { buildReciboData, type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
 import { FacturaDetallePanel } from './factura-detalle-panel'
@@ -74,21 +75,27 @@ const ESTADO_PAGO_BADGE_CLASS: Record<EstadoPago, string> = {
 /**
  * Badges de estado de pago + reverso de una fila del listado (Slice 2, Spec
  * notas-credito-pos: "Badges de estado de pago y reverso"). Puede combinar el
- * badge de pago con uno o ambos badges de reverso simultaneamente.
+ * badge de pago con el badge de reverso.
+ *
+ * QA fix 3.5 (Slice 5e): `badgeReverso` viene de `useBadgesReversoSesion`
+ * (facturado vs reversado ACUMULADO linea por linea) — NUNCA se deriva de
+ * `f.tiene_reverso_total`/`tiene_reverso_parcial` (esos flags siguen vigentes
+ * SOLO para el gating de ACCION en `puedeEmitirNcAdicional`/
+ * `puedeElegirTipoTotal`, sin relacion con este badge).
  */
-function FacturaBadges({ f }: { f: FacturaParaAnular }) {
+function FacturaBadges({ f, badgeReverso }: { f: FacturaParaAnular; badgeReverso: BadgeReverso }) {
   const estadoPago = derivarEstadoPago(f)
   return (
     <div className="flex flex-wrap items-center gap-1">
       <Badge variant="outline" className={ESTADO_PAGO_BADGE_CLASS[estadoPago]}>
         {ESTADO_PAGO_LABEL[estadoPago]}
       </Badge>
-      {f.tiene_reverso_total === 1 && (
+      {badgeReverso === 'TOTAL' && (
         <Badge variant="outline" className="border-red-200 bg-red-50 text-red-700">
           Reverso Total
         </Badge>
       )}
-      {f.tiene_reverso_parcial === 1 && (
+      {badgeReverso === 'PARCIAL' && (
         <Badge variant="outline" className="border-orange-200 bg-orange-50 text-orange-700">
           Reverso Parcial
         </Badge>
@@ -122,6 +129,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const { hasPermission } = usePermissions()
   const { facturas, isLoading } = useFacturasSesionActiva()
   const { depositos: depositosActivos } = useDepositosVentaActivos()
+  // QA fix 3.5 (Slice 5e): badge de reverso ACUMULADO por venta_id, para
+  // TODAS las facturas de la sesion — se pasa a `FacturaBadges` en el
+  // listado (ver mas abajo).
+  const { badgesPorVenta } = useBadgesReversoSesion(user?.empresa_id ?? '', sesion?.id ?? '')
 
   const [facturaId, setFacturaId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -419,7 +430,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                             <p className="text-sm font-medium">#{f.nro_factura}</p>
                             <p className="text-xs text-muted-foreground truncate">{f.cliente_nombre}</p>
                             <div className="mt-1">
-                              <FacturaBadges f={f} />
+                              <FacturaBadges f={f} badgeReverso={badgesPorVenta[f.id] ?? null} />
                             </div>
                           </div>
                           <div className="text-right shrink-0 pl-2">

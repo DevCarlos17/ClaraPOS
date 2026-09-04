@@ -291,6 +291,61 @@ export function calcularReversoPorLinea(
 }
 
 // =============================================
+// calcularBadgesReversoPorVenta — Slice 5e QA fix 3.5: badge de reverso
+// ACUMULADO, no por opcion de NC individual
+// =============================================
+
+export type BadgeReverso = 'TOTAL' | 'PARCIAL' | null
+
+export interface LineaFacturaReversoRow {
+  venta_id: string
+  venta_det_id: string
+  cantidad_facturada: DecimalInput
+}
+
+/**
+ * QA fix 3.5: el badge de reverso de una factura en el listado debe
+ * reflejar la REALIDAD acumulada (facturado vs reversado por TODAS sus
+ * NCs, cualquier `tipo`), NUNCA el tipo de una NC individual. Antes: dos
+ * NCs PARCIALes que juntas reversan el 100% de cada linea mostraban
+ * "Reverso Parcial" (el badge solo miraba si EXISTIA una NC con
+ * `tipo='TOTAL'`). Reusa `calcularReversoPorLinea` (mismo criterio de
+ * acumulacion que el guard autoritativo del backend, `validarTopeDobleCredito`)
+ * linea por linea: "TOTAL" exige que TODAS las lineas de la factura tengan
+ * reversado >= facturado; "PARCIAL" cuando alguna linea tiene reversado > 0
+ * pero no todas llegan al 100%; `null` (sin badge) cuando ninguna linea
+ * tiene reverso. NUNCA lee `notas_credito.tipo` para esta decision.
+ */
+export function calcularBadgesReversoPorVenta(
+  lineasFacturas: LineaFacturaReversoRow[],
+  notasCreditoDet: NotaCreditoDetParaReverso[]
+): Record<string, BadgeReverso> {
+  const lineasPorVenta = new Map<string, LineaFacturaReversoRow[]>()
+  for (const linea of lineasFacturas) {
+    const grupo = lineasPorVenta.get(linea.venta_id) ?? []
+    grupo.push(linea)
+    lineasPorVenta.set(linea.venta_id, grupo)
+  }
+
+  const resultado: Record<string, BadgeReverso> = {}
+  for (const [ventaId, lineas] of lineasPorVenta) {
+    let algunaConReverso = false
+    let todasCompletas = true
+    for (const linea of lineas) {
+      const { facturado, reversado } = calcularReversoPorLinea(
+        linea.venta_det_id,
+        linea.cantidad_facturada,
+        notasCreditoDet
+      )
+      if (reversado.gt(0)) algunaConReverso = true
+      if (reversado.lt(facturado)) todasCompletas = false
+    }
+    resultado[ventaId] = algunaConReverso ? (todasCompletas ? 'TOTAL' : 'PARCIAL') : null
+  }
+  return resultado
+}
+
+// =============================================
 // agruparReversosPorNc — F1 QA fix (historial additivo: original + reverso)
 // =============================================
 
