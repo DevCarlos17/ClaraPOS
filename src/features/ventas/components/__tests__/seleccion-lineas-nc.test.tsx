@@ -83,7 +83,7 @@ describe('SeleccionLineasNc (Design §Decision 7, Spec notas-credito-pos: Selecc
     expect(input).toHaveValue(15)
   })
 
-  it('cantidad no puede exceder lo facturado: el input clampa al maximo, Confirmar permanece habilitado con el valor clampado', async () => {
+  it('F6 QA fix: cantidad no puede exceder lo facturado — el input RECHAZA el valor excedido (no se escribe), Confirmar permanece deshabilitado y se muestra el mensaje de error', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
     render(
@@ -96,18 +96,18 @@ describe('SeleccionLineasNc (Design §Decision 7, Spec notas-credito-pos: Selecc
 
     await user.type(screen.getByRole('spinbutton'), '9')
 
-    expect(screen.getByRole('spinbutton')).toHaveValue(3)
-
-    await user.click(screen.getByRole('button', { name: /Confirmar/i }))
-
-    expect(onConfirm).toHaveBeenCalledWith([{ venta_det_id: 'vd-1', cantidadDevolver: '3.000' }])
+    expect(screen.getByRole('spinbutton')).toHaveValue(null)
+    expect(screen.getByRole('spinbutton')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByText(/No puedes devolver más de la cantidad disponible/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+    expect(onConfirm).not.toHaveBeenCalled()
   })
 
   // ─── F1 QA fix (Slice 5a): lineas parcialmente/totalmente reversadas ya
   // NO deben capar contra `cantidadFacturada` (cantidad ORIGINAL vendida)
   // sino contra `cantidadDisponible` (el remanente real tras NCs previas). ──
 
-  it('F1: cantidadDisponible menor a cantidadFacturada (linea ya parcialmente reversada) — el input clampa al REMANENTE, no a lo facturado', async () => {
+  it('F1+F6: cantidadDisponible menor a cantidadFacturada (linea ya parcialmente reversada) — el input RECHAZA cualquier valor por encima del REMANENTE, no de lo facturado', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
     render(
@@ -119,7 +119,12 @@ describe('SeleccionLineasNc (Design §Decision 7, Spec notas-credito-pos: Selecc
     )
 
     await user.type(screen.getByRole('spinbutton'), '9')
+    expect(screen.getByRole('spinbutton')).toHaveValue(null)
+    expect(screen.getByText(/No puedes devolver más de la cantidad disponible/i)).toBeInTheDocument()
+
+    await user.type(screen.getByRole('spinbutton'), '2')
     expect(screen.getByRole('spinbutton')).toHaveValue(2)
+    expect(screen.queryByText(/No puedes devolver más de la cantidad disponible/i)).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /Confirmar/i }))
     expect(onConfirm).toHaveBeenCalledWith([{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }])
@@ -138,15 +143,49 @@ describe('SeleccionLineasNc (Design §Decision 7, Spec notas-credito-pos: Selecc
     expect(screen.getByRole('button', { name: /Incrementar cantidad/i })).toBeDisabled()
   })
 
-  it('F1: sin cantidadDisponible especificado (compatibilidad hacia atras): el cap sigue siendo cantidadFacturada, comportamiento identico al pre-F1', async () => {
+  it('F1: sin cantidadDisponible especificado (compatibilidad hacia atras): el cap sigue siendo cantidadFacturada, rechaza cualquier valor por encima', async () => {
     const user = userEvent.setup()
-    const onConfirm = vi.fn()
     render(
-      <SeleccionLineasNc lineas={[lineaGravable({ cantidadFacturada: 3, esDecimal: false })]} factura={facturaHistorica} onConfirm={onConfirm} />
+      <SeleccionLineasNc lineas={[lineaGravable({ cantidadFacturada: 3, esDecimal: false })]} factura={facturaHistorica} onConfirm={vi.fn()} />
     )
 
     await user.type(screen.getByRole('spinbutton'), '9')
-    expect(screen.getByRole('spinbutton')).toHaveValue(3)
+    expect(screen.getByRole('spinbutton')).toHaveValue(null)
+  })
+
+  // ─── F5 QA fix (Slice 5c): tope de 3 decimales en unidades decimales,
+  // consistente con la precision de stock del proyecto (NUMERIC 3 decimales). ──
+
+  it('F5: linea con esDecimal=true rechaza un 4to decimal — "1.2345" se detiene en "1.234" (tope 3 decimales)', async () => {
+    const user = userEvent.setup()
+    render(
+      <SeleccionLineasNc
+        lineas={[lineaGravable({ esDecimal: true, cantidadFacturada: 5 })]}
+        factura={facturaHistorica}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    const input = screen.getByRole('spinbutton')
+    await user.type(input, '1.2345')
+
+    expect(input).toHaveValue(1.234)
+  })
+
+  it('F5: linea con esDecimal=false sigue rechazando cualquier decimal (regresion — el cap de 3 decimales es exclusivo de unidades decimales)', async () => {
+    const user = userEvent.setup()
+    render(
+      <SeleccionLineasNc
+        lineas={[lineaGravable({ esDecimal: false, cantidadFacturada: 20 })]}
+        factura={facturaHistorica}
+        onConfirm={vi.fn()}
+      />
+    )
+
+    const input = screen.getByRole('spinbutton')
+    await user.type(input, '1.5')
+
+    expect(input).toHaveValue(15)
   })
 
   it('muestra el preview de monto en Bs derivado de la tasa historica de la factura (nunca la tasa vigente)', async () => {

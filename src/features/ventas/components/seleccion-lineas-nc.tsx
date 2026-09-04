@@ -49,6 +49,12 @@ interface SeleccionLineasNcProps {
  */
 export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false }: SeleccionLineasNcProps) {
   const [cantidades, setCantidades] = useState<Record<string, number>>({})
+  // F6 QA fix (Slice 5c): estado de error POR LINEA cuando el usuario intenta
+  // escribir una cantidad por encima del tope (`cantidadDisponible` o, en su
+  // ausencia, `cantidadFacturada`) — antes se clampeaba en silencio, ahora se
+  // rechaza el valor y se avisa visualmente (input en rojo + mensaje) ANTES
+  // de que la accion pueda procesarse.
+  const [excedidas, setExcedidas] = useState<Record<string, boolean>>({})
 
   // F1 QA fix: el TOPE real de una linea es su remanente
   // (`cantidadDisponible`) cuando ya recibio NCs previas, NO la cantidad
@@ -143,14 +149,36 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
                         step={linea.esDecimal ? 'any' : '1'}
                         value={cantidad === 0 ? '' : cantidad}
                         disabled={totalmenteReversada}
+                        aria-invalid={excedidas[linea.venta_det_id] ?? false}
                         onChange={(e) => {
                           const raw = e.target.value
                           if (raw === '') {
                             setCantidad(linea.venta_det_id, tope, 0)
+                            setExcedidas((prev) => ({ ...prev, [linea.venta_det_id]: false }))
                             return
                           }
+                          // F5 QA fix: tope de 3 decimales en unidades decimales
+                          // (misma precision NUMERIC de `inventario_stock`) — un
+                          // 4to decimal se rechaza, el input controlado se
+                          // congela en el ultimo valor valido en vez de aceptar
+                          // mas precision de la que el backend puede persistir.
+                          if (linea.esDecimal) {
+                            const decimales = raw.split('.')[1]
+                            if (decimales && decimales.length > 3) return
+                          }
                           const val = linea.esDecimal ? parseFloat(raw) : parseInt(raw, 10)
-                          if (!isNaN(val)) setCantidad(linea.venta_det_id, tope, val)
+                          if (isNaN(val)) return
+                          // F6 QA fix: exceder el tope disponible NUNCA se
+                          // clampea en silencio — se rechaza el valor (el input
+                          // controlado vuelve a su ultimo valor valido, "no se
+                          // escribe" el exceso) y se avisa ANTES de que el
+                          // usuario intente confirmar (input en rojo + mensaje).
+                          if (val > tope) {
+                            setExcedidas((prev) => ({ ...prev, [linea.venta_det_id]: true }))
+                            return
+                          }
+                          setExcedidas((prev) => ({ ...prev, [linea.venta_det_id]: false }))
+                          setCantidad(linea.venta_det_id, tope, val)
                         }}
                         onKeyDown={(e) => {
                           if (!linea.esDecimal && (e.key === '.' || e.key === ',')) e.preventDefault()
@@ -163,7 +191,9 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
                             setCantidad(linea.venta_det_id, tope, cantidad - step)
                           }
                         }}
-                        className="min-w-0 w-16 text-center rounded border bg-white px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40 disabled:cursor-not-allowed"
+                        className={`min-w-0 w-16 text-center rounded border px-1 py-0.5 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-40 disabled:cursor-not-allowed ${
+                          excedidas[linea.venta_det_id] ? 'border-destructive text-destructive bg-destructive/5' : 'bg-white'
+                        }`}
                       />
                       <button
                         type="button"
@@ -175,6 +205,13 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
                         <Plus size={10} />
                       </button>
                     </div>
+                    {/* F6 QA fix: mensaje de error visible ANTES de procesar —
+                        reemplaza el clampeo silencioso pre-existente. */}
+                    {excedidas[linea.venta_det_id] && (
+                      <p className="text-[10px] text-destructive mt-0.5 text-center">
+                        No puedes devolver más de la cantidad disponible.
+                      </p>
+                    )}
                   </td>
                 </tr>
               )

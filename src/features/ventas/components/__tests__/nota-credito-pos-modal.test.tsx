@@ -426,7 +426,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
   })
 
-  it('F1 QA fix: linea ya parcialmente reversada limita el stepper de SeleccionLineasNc al REMANENTE, no a lo facturado originalmente', async () => {
+  it('F1+F6 QA fix: linea ya parcialmente reversada limita el stepper de SeleccionLineasNc al REMANENTE — el input RECHAZA valores por encima, no a lo facturado originalmente', async () => {
     setup({ hasPermission: true })
     mockedUseFacturasSesionActiva.mockReturnValue({
       facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
@@ -456,6 +456,9 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     await user.click(screen.getByText(/C01-000001/i))
     await user.type(screen.getByRole('spinbutton'), '9')
 
+    expect(screen.getByRole('spinbutton')).toHaveValue(null)
+
+    await user.type(screen.getByRole('spinbutton'), '2')
     expect(screen.getByRole('spinbutton')).toHaveValue(2)
   })
 
