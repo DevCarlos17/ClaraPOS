@@ -4,13 +4,23 @@ import { formatUsd, formatBs, formatTasa } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import {
   crearNotaCredito,
+  useReversosFactura,
   type LiquidacionModalidad,
   type FacturaParaAnular,
   type LineaNcSeleccionada,
 } from '../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../hooks/use-facturas-sesion-activa'
 import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
-import { derivarEstadoPago, facturaCoincideBusqueda, huboAfectacionCxc, ESTADO_PAGO_LABEL } from '../utils/notas-credito-ui'
+import {
+  derivarEstadoPago,
+  facturaCoincideBusqueda,
+  huboAfectacionCxc,
+  ESTADO_PAGO_LABEL,
+  puedeEmitirNcAdicional,
+  puedeElegirTipoTotal,
+  calcularReversoPorLinea,
+  agruparReversosPorNc,
+} from '../utils/notas-credito-ui'
 import { buildReciboData, type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
@@ -168,6 +178,18 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const { cantidadMovimientos } = useAfectacionCxc(facturaId, user?.empresa_id ?? '')
   const afectoCxc = facturaId ? huboAfectacionCxc(cantidadMovimientos) : null
 
+  // F1 QA fix (Slice 5a): historial de NC(s) ya aplicadas a la factura
+  // seleccionada — alimenta (a) la seccion aditiva del panel de detalle y
+  // (b) el tope de remanente por linea que consume SeleccionLineasNc.
+  const { reversos } = useReversosFactura(facturaId, user?.empresa_id ?? '')
+  const historialReversos = useMemo(() => agruparReversosPorNc(reversos), [reversos])
+
+  // Gating de ACCION (NO de seleccion, Spec/QA fix F1): reversado TOTAL
+  // bloquea cualquier NC adicional; reversado PARCIAL (sin total) solo
+  // bloquea la opcion TOTAL, PARCIAL sigue disponible sobre el remanente.
+  const puedeEmitirNc = factura ? puedeEmitirNcAdicional(factura) : false
+  const puedeTotal = factura ? puedeElegirTipoTotal(factura) : false
+
   const recibo: ReciboData | null = useMemo(() => {
     if (!factura) return null
     return buildReciboData({
@@ -203,17 +225,25 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // mapeado al contrato de presentacion de `SeleccionLineasNc`.
   const lineasParaNc: LineaSeleccionNc[] = useMemo(
     () =>
-      detalle.map((d) => ({
-        venta_det_id: d.id,
-        producto_nombre: d.producto_nombre,
-        producto_codigo: d.producto_codigo,
-        cantidadFacturada: Number(d.cantidad),
-        esDecimal: d.es_decimal === 1,
-        precioUnitarioUsd: Number(d.precio_unitario_usd),
-        tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
-        impuestoPct: Number(d.impuesto_pct),
-      })),
-    [detalle]
+      detalle.map((d) => {
+        // F1 QA fix: el remanente real (facturado - ya reversado por NCs
+        // previas) es el TOPE efectivo, no la cantidad originalmente
+        // facturada — evita sobre-reversar una linea ya parcialmente
+        // acreditada (mismo criterio que el guard del backend).
+        const { restante } = calcularReversoPorLinea(d.id, d.cantidad, reversos)
+        return {
+          venta_det_id: d.id,
+          producto_nombre: d.producto_nombre,
+          producto_codigo: d.producto_codigo,
+          cantidadFacturada: Number(d.cantidad),
+          cantidadDisponible: restante.toNumber(),
+          esDecimal: d.es_decimal === 1,
+          precioUnitarioUsd: Number(d.precio_unitario_usd),
+          tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
+          impuestoPct: Number(d.impuesto_pct),
+        }
+      }),
+    [detalle, reversos]
   )
 
   /**
@@ -357,31 +387,22 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                     </p>
                   ) : (
                     facturasFiltradas.map((f) => {
-                      // WARNING #2 (Slice 1 review, obs #2877) resuelto aqui:
-                      // una factura ya reversada TOTAL (status ANULADA) queda
-                      // visible con su badge pero NO clickable — evita el
-                      // dead-end confuso de navegar a "Confirmar Anulacion"
-                      // sobre una factura que `crearNotaCredito` va a
-                      // rechazar. Reverso PARCIAL sigue siendo accionable
-                      // (puede recibir otra NC parcial dentro del tope).
-                      const bloqueada = f.status === 'ANULADA'
+                      // F1 QA fix (resuelve WARNING #2, obs #2877): una
+                      // factura ya reversada (TOTAL o PARCIAL) permanece
+                      // SELECCIONABLE — el gating se movio de la SELECCION a
+                      // la ACCION (ver `puedeEmitirNc`/`puedeTotal` mas
+                      // abajo, sobre la factura ya seleccionada).
                       const seleccionada = f.id === facturaId
                       return (
                         <button
                           key={f.id}
                           type="button"
-                          disabled={bloqueada}
                           onClick={() => {
                             setFacturaId(f.id)
-                            setTipoNc('TOTAL')
+                            setTipoNc(puedeElegirTipoTotal(f) ? 'TOTAL' : 'PARCIAL')
                           }}
-                          aria-label={bloqueada ? `Factura ${f.nro_factura} ya reversada` : undefined}
                           className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
-                            bloqueada
-                              ? 'opacity-60 cursor-not-allowed'
-                              : seleccionada
-                                ? 'border-primary bg-muted'
-                                : 'hover:bg-muted'
+                            seleccionada ? 'border-primary bg-muted' : 'hover:bg-muted'
                           }`}
                         >
                           <div className="min-w-0">
@@ -415,25 +436,39 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   </div>
                 )}
 
-                <FacturaDetallePanel recibo={recibo} afectoCxc={afectoCxc} />
+                <FacturaDetallePanel recibo={recibo} afectoCxc={afectoCxc} reversos={historialReversos} />
 
-                {factura && (
+                {factura && !puedeEmitirNc && (
+                  // F1 QA fix: reversado TOTAL -> vista de solo-lectura, sin
+                  // ofrecer ninguna accion de emision de NC (el detalle de
+                  // arriba, incluido el historial de reversos, ya cubre la
+                  // trazabilidad completa de lo ocurrido con esta factura).
+                  <div className="px-4 pb-4">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-muted-foreground">
+                      Esta factura ya fue reversada totalmente. No es posible emitir una nueva nota de credito.
+                    </div>
+                  </div>
+                )}
+
+                {factura && puedeEmitirNc && (
                   <div className="space-y-4 px-4 pb-4">
                     <div className="rounded-lg border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-2">
                         Tipo de nota de credito
                       </p>
                       <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setTipoNc('TOTAL')}
-                          aria-pressed={tipoNc === 'TOTAL'}
-                          className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                            tipoNc === 'TOTAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                          }`}
-                        >
-                          Total
-                        </button>
+                        {puedeTotal && (
+                          <button
+                            type="button"
+                            onClick={() => setTipoNc('TOTAL')}
+                            aria-pressed={tipoNc === 'TOTAL'}
+                            className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                              tipoNc === 'TOTAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
+                            }`}
+                          >
+                            Total
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => setTipoNc('PARCIAL')}
@@ -445,6 +480,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           Parcial
                         </button>
                       </div>
+                      {!puedeTotal && (
+                        <p className="text-xs text-orange-600 mt-1.5">
+                          Esta factura ya tiene una NC parcial aplicada — solo se puede reversar el remanente por linea.
+                        </p>
+                      )}
                     </div>
 
                     <div className="rounded-lg border p-3">
@@ -562,7 +602,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
               >
                 Editar metodos de pago
               </button>
-              {tipoNc === 'TOTAL' && (
+              {puedeEmitirNc && tipoNc === 'TOTAL' && (
                 <button
                   onClick={handleConfirmarClick}
                   disabled={loading}

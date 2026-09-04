@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NotaCreditoPosModal } from '../nota-credito-pos-modal'
-import { crearNotaCredito } from '../../hooks/use-notas-credito'
+import { crearNotaCredito, useReversosFactura } from '../../hooks/use-notas-credito'
 import { useFacturasSesionActiva } from '../../hooks/use-facturas-sesion-activa'
 import { useDetalleFactura, usePagosFactura, useAfectacionCxc } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
@@ -47,7 +47,7 @@ vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
     ) : null,
 }))
 
-vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({ crearNotaCredito: vi.fn() }))
+vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({ crearNotaCredito: vi.fn(), useReversosFactura: vi.fn() }))
 vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({ useFacturasSesionActiva: vi.fn() }))
 vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
@@ -64,6 +64,7 @@ vi.mock('@/features/inventario/hooks/use-depositos', () => ({ useDepositosVentaA
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }))
 
 const mockedCrearNotaCredito = vi.mocked(crearNotaCredito)
+const mockedUseReversosFactura = vi.mocked(useReversosFactura)
 const mockedUseFacturasSesionActiva = vi.mocked(useFacturasSesionActiva)
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
@@ -136,6 +137,7 @@ function setup(opts: { hasPermission: boolean }) {
   mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
   mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
   mockedUseAfectacionCxc.mockReturnValue({ cantidadMovimientos: 0, isLoading: false })
+  mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
   mockedUseCompany.mockReturnValue({
     company: { id: 'emp-1', nombre: 'ClaraPOS Estetica C.A.', rif: 'J-12345678-9', direccion: null } as never,
     isLoading: false,
@@ -364,7 +366,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     expect(screen.getByText('Reverso Parcial')).toBeInTheDocument()
   })
 
-  it('WARNING #2 resuelto: factura con tiene_reverso_total=1 (status ANULADA) permanece visible con su badge pero la fila queda deshabilitada — clickearla NO navega al flujo de confirmacion', async () => {
+  it('F1 QA fix: factura con tiene_reverso_total=1 (status ANULADA) permanece SELECCIONABLE — clickearla SI muestra su detalle, pero la ACCION "Nota de credito" queda bloqueada (read-only)', async () => {
     setup({ hasPermission: true })
     mockedUseFacturasSesionActiva.mockReturnValue({
       facturas: [facturaSesion({ status: 'ANULADA', tiene_reverso_total: 1 })],
@@ -378,10 +380,16 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
 
+    // SELECCION funciona: el detalle de la factura se muestra (panel montado).
+    expect(screen.getAllByText(/C01-000001/i).length).toBeGreaterThan(0)
+    // ACCION bloqueada: no se ofrece emitir otra NC sobre esta factura.
     expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Parcial' })).not.toBeInTheDocument()
+    expect(screen.getByText(/ya fue reversada totalmente/i)).toBeInTheDocument()
   })
 
-  it('factura con tiene_reverso_parcial=1 pero status activo sigue siendo clickable (puede recibir otra NC parcial)', async () => {
+  it('F1 QA fix: factura con tiene_reverso_parcial=1 (sin total) — la accion SIGUE disponible pero el tipo TOTAL ya no se ofrece, solo PARCIAL sobre el remanente', async () => {
     setup({ hasPermission: true })
     mockedUseFacturasSesionActiva.mockReturnValue({
       facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
@@ -392,7 +400,74 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
 
-    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
+  })
+
+  it('F1 QA fix: linea ya parcialmente reversada limita el stepper de SeleccionLineasNc al REMANENTE, no a lo facturado originalmente', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
+      isLoading: false,
+    })
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+          precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+      ],
+      isLoading: false,
+    })
+    // Ya se acredito 3 de 5 en una NC previa — el remanente real es 2.
+    mockedUseReversosFactura.mockReturnValue({
+      reversos: [
+        { nota_credito_id: 'nc-0', nro_ncr: 'NCR-000000', tipo: 'PARCIAL', fecha: '2026-01-01T00:00:00Z', venta_det_id: 'vd-1', producto_descripcion: 'Botox 50U', cantidad: '3.000' },
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/C01-000001/i))
+    await user.type(screen.getByRole('spinbutton'), '9')
+
+    expect(screen.getByRole('spinbutton')).toHaveValue(2)
+  })
+
+  it('F1 QA fix: el panel muestra el historial de NC(s) aplicadas junto al detalle original de la factura', async () => {
+    setup({ hasPermission: true })
+    mockedUseReversosFactura.mockReturnValue({
+      reversos: [
+        { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000005', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', venta_det_id: 'vd-9', producto_descripcion: 'Botox 50U', cantidad: '1.000' },
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByText(/Notas de credito aplicadas/i)).toBeInTheDocument()
+    expect(screen.getByText('NCR-000005')).toBeInTheDocument()
+  })
+
+  it('factura con tiene_reverso_parcial=1 pero status activo sigue siendo clickable (puede recibir otra NC parcial, F1: por defecto en PARCIAL, no TOTAL)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/C01-000001/i))
+
+    // F1 QA fix: TOTAL ya no es opcion valida sobre una factura con reverso
+    // parcial previo — la seleccion cae por defecto en PARCIAL.
+    expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
   })
 
   it('el buscador filtra client-side por numero de factura', async () => {
