@@ -161,8 +161,8 @@ describe('useBadgesReversoSesion (Slice 5e QA fix 3.5: badge de reverso acumulad
 
     renderHook(() => useBadgesReversoSesion('emp-1', 'sesion-1'))
 
-    const lineasCall = mockedUseQuery.mock.calls.find(([sql]) => sql.includes('FROM ventas_det'))
-    const notasCall = mockedUseQuery.mock.calls.find(([sql]) => sql.includes('FROM notas_credito_det'))
+    const lineasCall = mockedUseQuery.mock.calls.find(([sql]) => (sql as string).includes('FROM ventas_det'))
+    const notasCall = mockedUseQuery.mock.calls.find(([sql]) => (sql as string).includes('FROM notas_credito_det'))
     expect(lineasCall?.[1]).toEqual(['emp-1', 'sesion-1'])
     expect(notasCall?.[1]).toEqual(['emp-1', 'sesion-1'])
   })

@@ -223,6 +223,12 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const puedeEmitirNc = factura ? puedeEmitirNcAdicional(factura) : false
   const puedeTotal = factura ? puedeElegirTipoTotal(factura) : false
 
+  // UX C QA fix (Slice 5e): con el selector de deposito desbloqueado (PIN B
+  // autorizado) el usuario DEBE elegir un deposito concreto — el placeholder
+  // "Seleccionar deposito..." nunca puede quedar seleccionado al confirmar.
+  // Sin autorizar PIN B (riel automatico por defecto) esto nunca bloquea.
+  const depositoInvalido = pinDepositoAutorizado && !depositoElegidoId
+
   const recibo: ReciboData | null = useMemo(() => {
     if (!factura) return null
     return buildReciboData({
@@ -322,6 +328,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   }
 
   function handleConfirmarClick() {
+    // UX C QA fix: defensa en profundidad — el boton ya viene `disabled`
+    // cuando falta elegir deposito, este guard cubre cualquier disparo
+    // programatico del handler.
+    if (depositoInvalido) return
     // PIN A (Spec notas-credito-pos, obs #2835 regla definitiva): solo se
     // pide PIN cuando el usuario actual NO tiene el permiso de emision de
     // NC — con permiso, emite directo, sin friccion.
@@ -340,6 +350,8 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
    * de NC (Spec: "Permiso determina el PIN para ambas acciones").
    */
   function handleConfirmarParcialClick(lineas: LineaNcSeleccionada[]) {
+    // UX C QA fix: mismo guard de defensa en profundidad que TOTAL.
+    if (depositoInvalido) return
     setAccionPendiente('NC')
     if (hasPermission(PERMISSIONS.SALES_NOTA_CREDITO)) {
       void emitirNc(lineas)
@@ -576,6 +588,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           ))}
                         </NativeSelect>
                       )}
+                      {depositoInvalido && (
+                        <p className="text-xs text-destructive mt-1.5">
+                          Debes seleccionar el deposito de reingreso.
+                        </p>
+                      )}
                     </div>
 
                     <div>
@@ -605,6 +622,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         }}
                         onConfirm={handleConfirmarParcialClick}
                         loading={loading}
+                        depositoInvalido={depositoInvalido}
                       />
                     ) : (
                       <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
@@ -649,7 +667,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
               {puedeEmitirNc && tipoNc === 'TOTAL' && (
                 <button
                   onClick={handleConfirmarClick}
-                  disabled={loading}
+                  disabled={loading || depositoInvalido}
                   className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
                 >
                   {loading ? 'Procesando...' : 'Confirmar Anulacion'}

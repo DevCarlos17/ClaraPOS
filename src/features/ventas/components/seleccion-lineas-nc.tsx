@@ -37,6 +37,13 @@ interface SeleccionLineasNcProps {
   factura: { total_usd: number; total_bs: number; tasa: number }
   onConfirm: (lineas: LineaNcSeleccionada[]) => void
   loading?: boolean
+  /**
+   * UX C QA fix (Slice 5e): true cuando el selector de deposito de reingreso
+   * esta desbloqueado (PIN B autorizado) pero el usuario todavia no eligio
+   * un deposito concreto — bloquea la confirmacion sin importar que las
+   * cantidades ya sean validas.
+   */
+  depositoInvalido?: boolean
 }
 
 /**
@@ -47,7 +54,13 @@ interface SeleccionLineasNcProps {
  * cantidad negativa) vive en la funcion pura `derivarLineasNcParcial` —
  * este componente solo la invoca, nunca reimplementa las reglas.
  */
-export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false }: SeleccionLineasNcProps) {
+export function SeleccionLineasNc({
+  lineas,
+  factura,
+  onConfirm,
+  loading = false,
+  depositoInvalido = false,
+}: SeleccionLineasNcProps) {
   const [cantidades, setCantidades] = useState<Record<string, number>>({})
   // F6 QA fix (Slice 5c): estado de error POR LINEA cuando el usuario intenta
   // escribir una cantidad por encima del tope (`cantidadDisponible` o, en su
@@ -95,7 +108,7 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
     })),
   })
 
-  const puedeConfirmar = !loading && errores.length === 0
+  const puedeConfirmar = !loading && errores.length === 0 && !depositoInvalido
 
   return (
     <div className="space-y-3">
@@ -226,6 +239,10 @@ export function SeleccionLineasNc({ lineas, factura, onConfirm, loading = false 
             <li key={error}>{error}</li>
           ))}
         </ul>
+      )}
+
+      {depositoInvalido && (
+        <p className="text-xs text-destructive">Debes seleccionar el deposito de reingreso.</p>
       )}
 
       <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-2 text-sm">

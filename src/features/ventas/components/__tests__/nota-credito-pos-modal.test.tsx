@@ -300,17 +300,16 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBe('dep-1')
   })
 
-  it('PIN B autorizado pero sin deposito elegido todavia: sigue sin enviar depositoReingresoId (riel automatico hasta que el usuario elija)', async () => {
+  it('UX C QA fix (Slice 5e): PIN B autorizado pero sin deposito elegido todavia — "Confirmar Anulacion" queda bloqueado, NUNCA cae en silencio al riel automatico (antes de este fix si lo hacia)', async () => {
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
-    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
-    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
-    expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBeUndefined()
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeDisabled()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
   })
 
   it('UX B (Slice 5e): hacer clic en "Volver" (deseleccionar factura) limpia la autorizacion del PIN de deposito (PIN B) — al re-seleccionar la misma factura, el selector vuelve a "Automatico"', async () => {
@@ -374,6 +373,78 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBe('dep-1')
+  })
+})
+
+describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede quedar vacio al confirmar)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('TOTAL: tras autorizar PIN B sin elegir deposito, "Confirmar Anulacion" queda deshabilitado y se muestra el mensaje de validacion', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeDisabled()
+    expect(screen.getByText(/Debes seleccionar el deposito de reingreso/i)).toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('TOTAL: elegir un deposito concreto habilita "Confirmar Anulacion" y limpia el mensaje de validacion', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+
+    const selects = screen.getAllByRole('combobox')
+    await user.selectOptions(selects[selects.length - 1], 'dep-1')
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).not.toBeDisabled()
+    expect(screen.queryByText(/Debes seleccionar el deposito de reingreso/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+  })
+
+  it('sin autorizar PIN B (riel automatico): "Confirmar Anulacion" nunca se bloquea por deposito', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).not.toBeDisabled()
+    expect(screen.queryByText(/Debes seleccionar el deposito de reingreso/i)).not.toBeInTheDocument()
+  })
+
+  it('PARCIAL: tras autorizar PIN B sin elegir deposito, "Confirmar Nota de Credito Parcial" queda deshabilitado aun con cantidad valida', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+          precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
+    await user.click(screen.getByText('Autorizar'))
+    await user.type(screen.getByRole('spinbutton'), '2')
+
+    expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeDisabled()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
   })
 })
 
