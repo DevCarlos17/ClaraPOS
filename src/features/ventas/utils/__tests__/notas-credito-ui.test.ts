@@ -1,4 +1,10 @@
-import { derivarEstadoPago, huboAfectacionCxc, facturaCoincideBusqueda } from '../notas-credito-ui'
+import {
+  derivarEstadoPago,
+  huboAfectacionCxc,
+  facturaCoincideBusqueda,
+  previewMontoBsNc,
+  derivarLineasNcParcial,
+} from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
 
@@ -77,5 +83,138 @@ describe('facturaCoincideBusqueda (Slice 2: buscador client-side sobre nro_factu
 
   it('no coincide si ningun campo contiene el query', () => {
     expect(facturaCoincideBusqueda(base, 'xyz-no-existe')).toBe(false)
+  })
+})
+
+// ─── previewMontoBsNc (Design §Decision 8 — INVARIANTE BIMONETARIA) ────────
+//
+// Guardrail mas importante de todo el change: el preview de Bs de una NC
+// jamas se recalcula con la tasa vigente del sistema — SIEMPRE la tasa
+// historica de la factura original (`venta.tasa`). Slice 3a task 3.5/3.6.
+
+describe('previewMontoBsNc (Design §Decision 8: invariante de tasa historica, NUNCA la tasa vigente)', () => {
+  it('TOTAL usa factura.total_bs verbatim, sin ningun recalculo', () => {
+    const result = previewMontoBsNc({
+      tipo: 'TOTAL',
+      factura: { total_usd: 100, total_bs: 4000, tasa: 40 },
+    })
+
+    expect(result).toEqual({ totalUsd: 100, totalBs: 4000 })
+  })
+
+  it('INVARIANTE: PARCIAL usa SIEMPRE la tasa historica de la factura (R1), NUNCA una tasa vigente distinta (R2)', () => {
+    const tasaHistoricaR1 = 40
+    const tasaVigenteSimuladaR2 = 130 // tasa "actual" del sistema, deliberadamente muy distinta de R1
+
+    const result = previewMontoBsNc({
+      tipo: 'PARCIAL',
+      // factura.tasa es SIEMPRE R1 — el input nunca recibe la tasa vigente.
+      factura: { total_usd: 100, total_bs: 4000, tasa: tasaHistoricaR1 },
+      lineasSeleccionadas: [
+        {
+          codigo: 'P001',
+          nombre: 'Botox 50U',
+          cantidad: '1',
+          precioUnitarioUsd: '10.00',
+          tipoImpuesto: 'Gravable',
+          impuestoPct: 16,
+        },
+      ],
+    })
+
+    // 10 USD + 16% IVA = 11.60 USD. A tasa historica R1=40 -> 464 Bs.
+    expect(result.totalUsd).toBeCloseTo(11.6, 6)
+    expect(result.totalBs).toBeCloseTo(464, 6)
+    // Si el bug reapareciera (leer la tasa vigente), el monto seria 11.6*130=1508 — se prueba explicitamente que NO es ese valor.
+    expect(result.totalBs).not.toBeCloseTo(11.6 * tasaVigenteSimuladaR2, 0)
+  })
+
+  it('PARCIAL con lineas mixtas gravadas/exentas: preserva el tratamiento de IVA de cada linea original', () => {
+    const result = previewMontoBsNc({
+      tipo: 'PARCIAL',
+      factura: { total_usd: 100, total_bs: 4000, tasa: 40 },
+      lineasSeleccionadas: [
+        {
+          codigo: 'P001',
+          nombre: 'Gravado',
+          cantidad: '1',
+          precioUnitarioUsd: '10.00',
+          tipoImpuesto: 'Gravable',
+          impuestoPct: 16,
+        },
+        {
+          codigo: 'P002',
+          nombre: 'Exento',
+          cantidad: '1',
+          precioUnitarioUsd: '5.00',
+          tipoImpuesto: 'Exento',
+          impuestoPct: 0,
+        },
+      ],
+    })
+
+    // (10*1.16) + 5 = 16.60 USD a tasa 40 -> 664 Bs.
+    expect(result.totalUsd).toBeCloseTo(16.6, 6)
+    expect(result.totalBs).toBeCloseTo(664, 6)
+  })
+})
+
+// ─── derivarLineasNcParcial (Design §Decision 7) ────────
+
+describe('derivarLineasNcParcial (Design §Decision 7: mapeo UI -> contrato de crearNotaCredito)', () => {
+  it('cantidad > 0 incluye la linea, mapeada a cantidadDevolver como string de 3 decimales', () => {
+    const result = derivarLineasNcParcial(
+      [{ venta_det_id: 'vd-1', cantidadFacturada: 5, esDecimal: true }],
+      { 'vd-1': 2 }
+    )
+
+    expect(result.errores).toEqual([])
+    expect(result.lineas).toEqual([{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }])
+  })
+
+  it('cantidad > cantidadFacturada rechaza la linea con error, excluida del resultado valido', () => {
+    const result = derivarLineasNcParcial(
+      [{ venta_det_id: 'vd-1', cantidadFacturada: 3, esDecimal: true }],
+      { 'vd-1': 5 }
+    )
+
+    expect(result.lineas).toEqual([])
+    expect(result.errores.length).toBeGreaterThan(0)
+  })
+
+  it('esDecimal=false rechaza cantidades no enteras', () => {
+    const result = derivarLineasNcParcial(
+      [{ venta_det_id: 'vd-1', cantidadFacturada: 5, esDecimal: false }],
+      { 'vd-1': 1.5 }
+    )
+
+    expect(result.lineas).toEqual([])
+    expect(result.errores.length).toBeGreaterThan(0)
+  })
+
+  it('todas las cantidades en 0: lineas vacio + al menos un error generico', () => {
+    const result = derivarLineasNcParcial(
+      [
+        { venta_det_id: 'vd-1', cantidadFacturada: 5, esDecimal: true },
+        { venta_det_id: 'vd-2', cantidadFacturada: 3, esDecimal: true },
+      ],
+      { 'vd-1': 0, 'vd-2': 0 }
+    )
+
+    expect(result.lineas).toEqual([])
+    expect(result.errores.length).toBeGreaterThan(0)
+  })
+
+  it('mezcla: una linea valida + una invalida -> solo la valida aparece en lineas, la invalida genera error', () => {
+    const result = derivarLineasNcParcial(
+      [
+        { venta_det_id: 'vd-1', cantidadFacturada: 5, esDecimal: true },
+        { venta_det_id: 'vd-2', cantidadFacturada: 2, esDecimal: false },
+      ],
+      { 'vd-1': 2, 'vd-2': 1.5 }
+    )
+
+    expect(result.lineas).toEqual([{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }])
+    expect(result.errores.length).toBeGreaterThan(0)
   })
 })

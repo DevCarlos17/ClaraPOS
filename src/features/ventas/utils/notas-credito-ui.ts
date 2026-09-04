@@ -1,5 +1,7 @@
 import Decimal from 'decimal.js'
 import type { DecimalInput } from '@/lib/currency'
+import { buildReciboData, type ReciboLineaInput } from './factura-export'
+import type { LineaNcSeleccionada } from '../hooks/use-notas-credito'
 
 /**
  * Modulo PURO (sin I/O) compartido POS/Tradicional para el rediseno UI de
@@ -87,4 +89,105 @@ export function facturaCoincideBusqueda(f: FacturaBuscable, query: string): bool
     f.tiene_reverso_parcial === 1 ? 'Reverso Parcial' : '',
   ]
   return haystack.some((campo) => normalizarBusqueda(campo).includes(q))
+}
+
+// =============================================
+// previewMontoBsNc — Design §Decision 8 (INVARIANTE BIMONETARIA)
+// =============================================
+
+/**
+ * Preview del monto de NC en USD/Bs. GUARDRAIL mas importante del change:
+ * el monto en Bs NUNCA se deriva de la tasa vigente del sistema — SIEMPRE
+ * de `factura.tasa` (tasa historica ya persistida en `ventas`).
+ *
+ * TOTAL: `factura.total_bs` verbatim, sin ningun calculo (la NC TOTAL replica
+ * exactamente el total de la factura original).
+ *
+ * PARCIAL: reusa `buildReciboData` sobre el subconjunto de lineas
+ * seleccionadas con `tasa: factura.tasa` — estructuralmente igual a
+ * `calcularDesgloseLineaNC` del backend (misma `applyImpuesto` de
+ * `lib/currency.ts`), imposible de divergir del monto que `crearNotaCredito`
+ * calculara al confirmar. CERO formula paralela nueva.
+ */
+export function previewMontoBsNc(input: {
+  tipo: 'TOTAL' | 'PARCIAL'
+  factura: { total_usd: number; total_bs: number; tasa: number }
+  lineasSeleccionadas?: ReciboLineaInput[]
+}): { totalUsd: number; totalBs: number } {
+  if (input.tipo === 'TOTAL') {
+    return { totalUsd: input.factura.total_usd, totalBs: input.factura.total_bs }
+  }
+
+  const preview = buildReciboData({
+    nroFactura: '',
+    fecha: '',
+    emisor: { nombre: '', rif: null, direccion: null },
+    cliente: { nombre: '', identificacion: '', direccion: null },
+    lineas: input.lineasSeleccionadas ?? [],
+    // SIEMPRE la tasa historica de la factura — nunca la tasa vigente del sistema.
+    tasa: input.factura.tasa,
+    igtfUsd: null,
+    pagos: [],
+    discrepancy: null,
+    saldoPendUsd: 0,
+  })
+
+  return { totalUsd: preview.totales.totalFacturaUsd, totalBs: preview.totales.totalFacturaBs }
+}
+
+// =============================================
+// derivarLineasNcParcial — Design §Decision 7
+// =============================================
+
+export interface LineaFacturaParaNc {
+  venta_det_id: string
+  cantidadFacturada: number
+  esDecimal: boolean
+}
+
+export interface DerivarLineasNcResult {
+  lineas: LineaNcSeleccionada[]
+  errores: string[]
+}
+
+/**
+ * Mapea las cantidades ingresadas en la UI de seleccion PARCIAL al contrato
+ * exacto de `crearNotaCredito` (`LineaNcSeleccionada[]`). El tope acumulado
+ * cross-NC (`validarTopeDobleCredito`) sigue siendo responsabilidad exclusiva
+ * del backend — esta funcion solo valida contra la cantidad facturada de
+ * ESTA factura y el `es_decimal` de la unidad.
+ */
+export function derivarLineasNcParcial(
+  facturaLineas: LineaFacturaParaNc[],
+  cantidadesUi: Record<string, number>
+): DerivarLineasNcResult {
+  const lineas: LineaNcSeleccionada[] = []
+  const errores: string[] = []
+
+  for (const linea of facturaLineas) {
+    const cantidad = cantidadesUi[linea.venta_det_id] ?? 0
+    if (cantidad <= 0) continue
+
+    if (cantidad > linea.cantidadFacturada) {
+      errores.push(
+        `La cantidad a devolver de la linea ${linea.venta_det_id} excede lo facturado (${linea.cantidadFacturada}).`
+      )
+      continue
+    }
+    if (!linea.esDecimal && !Number.isInteger(cantidad)) {
+      errores.push(`La linea ${linea.venta_det_id} no admite cantidades decimales.`)
+      continue
+    }
+
+    lineas.push({
+      venta_det_id: linea.venta_det_id,
+      cantidadDevolver: new Decimal(cantidad).toFixed(3),
+    })
+  }
+
+  if (lineas.length === 0) {
+    errores.push('Selecciona al menos una linea con cantidad mayor a 0.')
+  }
+
+  return { lineas, errores }
 }
