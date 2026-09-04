@@ -1,4 +1,4 @@
-import { derivarEstadoPago, huboAfectacionCxc } from '../notas-credito-ui'
+import { derivarEstadoPago, huboAfectacionCxc, facturaCoincideBusqueda } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
 
@@ -38,5 +38,44 @@ describe('huboAfectacionCxc (Design §Decision 6: fuente movimientos_cuenta, no 
   it('1 o mas movimientos -> true (afecto CxC)', () => {
     expect(huboAfectacionCxc(1)).toBe(true)
     expect(huboAfectacionCxc(3)).toBe(true)
+  })
+})
+
+// ─── facturaCoincideBusqueda (Slice 2 — buscador por nro/cliente/estado) ────────
+
+describe('facturaCoincideBusqueda (Slice 2: buscador client-side sobre nro_factura, cliente, estado y reverso)', () => {
+  const base = {
+    nro_factura: 'C01-000042',
+    cliente_nombre: 'Maria Perez',
+    total_usd: '100.00',
+    saldo_pend_usd: '0.00',
+  }
+
+  it('query vacio coincide con cualquier factura', () => {
+    expect(facturaCoincideBusqueda(base, '')).toBe(true)
+  })
+
+  it('coincide por substring de nro_factura', () => {
+    expect(facturaCoincideBusqueda(base, '000042')).toBe(true)
+  })
+
+  it('coincide por cliente_nombre, case-insensitive', () => {
+    expect(facturaCoincideBusqueda(base, 'MARIA')).toBe(true)
+  })
+
+  it('coincide por el estado de pago derivado (ej. "contado")', () => {
+    expect(facturaCoincideBusqueda(base, 'contado')).toBe(true)
+  })
+
+  it('coincide por badge "Reverso Total" cuando tiene_reverso_total=1', () => {
+    expect(facturaCoincideBusqueda({ ...base, tiene_reverso_total: 1 }, 'reverso total')).toBe(true)
+  })
+
+  it('coincide por badge "Reverso Parcial" cuando tiene_reverso_parcial=1', () => {
+    expect(facturaCoincideBusqueda({ ...base, tiene_reverso_parcial: 1 }, 'parcial')).toBe(true)
+  })
+
+  it('no coincide si ningun campo contiene el query', () => {
+    expect(facturaCoincideBusqueda(base, 'xyz-no-existe')).toBe(false)
   })
 })
