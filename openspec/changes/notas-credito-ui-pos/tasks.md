@@ -360,3 +360,24 @@ ya reversado), nunca sobre lo originalmente facturado.
 - [x] 5g.4.2 Verify: `yarn test:run` (1049/1049 verdes, +1 neto sobre 1048) + `yarn type-check:test` (limpio). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` verificados en CERO líneas cambiadas.
 
 **Resultado real vs. forecast (5g.4)**: `factura-detalle-panel.tsx` +16/-7 líneas (prop nueva + doc + rewire del overlay), `factura-detalle-panel.test.tsx` +23 líneas (1 test nuevo + 2 líneas de prop en tests existentes), `nota-credito-pos-modal.tsx` +5/-1 líneas (call site) — muy por debajo del budget de 400. Ships junto con el batch 5g en la misma rama `feat/notas-credito-ui-pos-s5g`.
+
+### 5g.5 (CAMBIO DE COMPORTAMIENTO, no bugfix — el modal permanece abierto y se refresca en el lugar tras una emisión exitosa)
+
+> Comportamiento anterior: `emitirNc` (`nota-credito-pos-modal.tsx`) llamaba
+> `onClose()` tras el `toast.success(...)` de una emisión exitosa —
+> `onClose()` era el ÚNICO mecanismo que limpiaba el estado transitorio
+> post-emisión (vía el efecto de `isOpen`: reseteaba `facturaId`,
+> `searchQuery`, `modalidad`, `motivo`, `tipoNc` y las autorizaciones de
+> PIN). Nuevo comportamiento deseado: tras una emisión EXITOSA, el modal
+> permanece ABIERTO sobre la MISMA factura para que el usuario vea el
+> resultado y pueda seguir operando — el listado, los badges, el panel de
+> detalle y el historial de reversos son TODOS live-queries de PowerSync
+> (`useQuery`) que se refrescan solos cuando la transacción de
+> `crearNotaCredito` hace commit, SIN invalidación manual ni re-selección
+> manual de la factura (`facturas.find(...)` ya re-deriva de la lista viva).
+
+- [x] 5g.5.1 RED→GREEN: 3 tests nuevos en `nota-credito-pos-modal.test.tsx` (describe Slice 5g.5) — (A) tras emisión TOTAL exitosa, `onClose` (mock real, no el no-op inline usado en el resto del archivo) NUNCA se llama y la factura sigue visible/seleccionada; (B) tras emisión PARCIAL exitosa, simulando el refresco de la live-query (`useReversosFactura` devolviendo el nuevo remanente en el siguiente render vía `rerender`), el input de cantidad de `SeleccionLineasNc` vuelve a estar vacío (prueba el remount, no un simple `setCantidad(0)`); (C) tras emisión exitosa, la autorización del PIN de depósito (PIN B) se limpia — el selector vuelve a "Automático" para la siguiente acción sobre la misma factura. Los 3 confirmados en RED (fallan hoy: `onClose()` SI se llama, no hay reset explícito de `pinDepositoAutorizado`/`depositoElegidoId`, `SeleccionLineasNc` no se remonta).
+- [x] 5g.5.2 GREEN — fix: (1) se removió el `onClose()` de la rama de éxito de `emitirNc`; (2) se agregó reset explícito en su lugar: `resetAutorizacionesPin()`, `setMotivo('')`, `setModalidad('EFECTIVO_REAL')` — `facturaId`/`searchQuery`/`tipoNc` se preservan DELIBERADAMENTE (mantener la factura seleccionada y el tab TOTAL/PARCIAL activo permite seguir operando la misma factura, p. ej. varias NC PARCIALes consecutivas sobre líneas distintas); (3) nuevo estado `emisionGen` (contador) incrementado en cada emisión exitosa, usado como parte del `key` de `<SeleccionLineasNc key={`${facturaId}-${emisionGen}`}>` — como el modal ya no se cierra, `SeleccionLineasNc` NUNCA se desmonta entre una emisión PARCIAL y la siguiente, y su estado interno (`cantidades`/`excedidas`, uncontrolled) sobreviviría permitiendo re-enviar por accidente la MISMA cantidad ya acreditada (double-submit); el cambio de `key` fuerza un remount limpio. `crearNotaCredito`, `crearVenta`, `SupervisorPinDialog` NUNCA tocados — solo se agregaron/quitaron llamadas a setters de estado local ya existentes en el componente.
+- [x] 5g.5.3 Verify: `yarn test:run` (1052/1052 verdes, +3 netos sobre 1049, 0 tests pre-existentes requirieron actualización — ninguno usaba un mock real de `onClose`) + `yarn type-check:test` (limpio). `crearNotaCredito`/`crearVenta`/`SupervisorPinDialog` verificados en CERO líneas cambiadas.
+
+**Resultado real vs. forecast (5g.5)**: `nota-credito-pos-modal.tsx` +26/-1 líneas (estado `emisionGen`, reset explícito post-éxito, `key` en `SeleccionLineasNc`), `nota-credito-pos-modal.test.tsx` +73 líneas (1 describe nuevo, 3 tests) — muy por debajo del budget de 400. Ships junto con el batch 5g en la misma rama `feat/notas-credito-ui-pos-s5g`. Riesgo residual: `SeleccionLineasNc` sigue siendo un componente NO controlado por el padre para sus cantidades (`useState` interno) — el remount por `key` es la defensa elegida (mínima, sin refactor a estado controlado) contra el double-submit; si en el futuro se agregan más piezas de estado interno no controlado a ese componente, deberán quedar cubiertas por el mismo remount o requerirán su propio reset explícito.
