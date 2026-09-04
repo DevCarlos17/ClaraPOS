@@ -178,8 +178,15 @@ export function derivarLineasNcParcial(
     if (cantidad === 0) continue
 
     if (cantidad > linea.cantidadFacturada) {
+      // F6 QA fix (Slice 5c, deuda de review de Slice 5a): el tope aqui
+      // recibido como `cantidadFacturada` es en realidad el REMANENTE
+      // disponible (el caller, `SeleccionLineasNc`, ya lo capa a
+      // `cantidadDisponible` — ver F1). Llamarlo "lo facturado" era enganoso
+      // para una linea ya parcialmente reversada; "cantidad disponible" es
+      // preciso en ambos casos (factura sin reversos previos: coincide con
+      // lo facturado; con reversos previos: es el remanente real).
       errores.push(
-        `La cantidad a devolver de la linea ${linea.venta_det_id} excede lo facturado (${linea.cantidadFacturada}).`
+        `La cantidad a devolver de la linea ${linea.venta_det_id} excede la cantidad disponible (${linea.cantidadFacturada}).`
       )
       continue
     }

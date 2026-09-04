@@ -186,6 +186,21 @@ describe('derivarLineasNcParcial (Design §Decision 7: mapeo UI -> contrato de c
     expect(result.errores.length).toBeGreaterThan(0)
   })
 
+  // F6 QA fix (Slice 5c, deuda de review de Slice 5a): el parametro
+  // `cantidadFacturada` puede en realidad ser el REMANENTE (cuando el caller
+  // lo capa via F1) — el mensaje decia "excede lo facturado", enganoso para
+  // una linea ya parcialmente reversada. Ahora dice "cantidad disponible".
+  it('F6: el mensaje de error usa "cantidad disponible" (no "lo facturado" — el tope puede ser un remanente, no lo originalmente facturado)', () => {
+    const result = derivarLineasNcParcial(
+      [{ venta_det_id: 'vd-1', cantidadFacturada: 2, esDecimal: true }],
+      { 'vd-1': 5 }
+    )
+
+    expect(result.errores).toEqual([
+      'La cantidad a devolver de la linea vd-1 excede la cantidad disponible (2).',
+    ])
+  })
+
   it('esDecimal=false rechaza cantidades no enteras', () => {
     const result = derivarLineasNcParcial(
       [{ venta_det_id: 'vd-1', cantidadFacturada: 5, esDecimal: false }],
