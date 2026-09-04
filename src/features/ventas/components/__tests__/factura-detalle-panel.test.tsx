@@ -240,6 +240,7 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
     render(
       <FacturaDetallePanel
         recibo={baseRecibo()}
+        badgeReverso="TOTAL"
         reversos={[
           { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'TOTAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
         ]}
@@ -255,6 +256,7 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
     render(
       <FacturaDetallePanel
         recibo={baseRecibo()}
+        badgeReverso="PARCIAL"
         reversos={[
           { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
         ]}
@@ -263,5 +265,26 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
 
     expect(screen.getByText('REVERSO PARCIAL')).toBeInTheDocument()
     expect(screen.queryByText('REVERSADA')).not.toBeInTheDocument()
+  })
+
+  // BUG E: la factura alcanza el 100% de reverso por ACUMULACION de NCs
+  // PARCIALes (ninguna individualmente 'TOTAL') — el overlay debe reflejar
+  // el estado ACUMULADO (badgeReverso, misma fuente que el badge de la
+  // lista y el mensaje "reversada totalmente"), NO el tipo crudo de cada
+  // registro de `reversos` (que aqui son todos 'PARCIAL').
+  it('reverso TOTAL alcanzado por PARCIALes acumulados: muestra overlay "REVERSADA", NO "REVERSO PARCIAL"', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        badgeReverso="TOTAL"
+        reversos={[
+          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
+          { notaCreditoId: 'nc-2', nroNcr: 'NCR-000002', tipo: 'PARCIAL', fecha: '2026-01-03T00:00:00Z', lineas: [] },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('REVERSADA')).toBeInTheDocument()
+    expect(screen.queryByText('REVERSO PARCIAL')).not.toBeInTheDocument()
   })
 })

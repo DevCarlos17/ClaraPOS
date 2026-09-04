@@ -1,6 +1,6 @@
 import { formatUsd, formatBs } from '@/lib/currency'
 import { construirFilasTotales, type ReciboData } from '../utils/factura-export'
-import type { ReversoAplicado } from '../utils/notas-credito-ui'
+import type { BadgeReverso, ReversoAplicado } from '../utils/notas-credito-ui'
 
 /**
  * Panel de detalle fiscal de la factura seleccionada (Design §Decision 5,
@@ -24,9 +24,19 @@ export interface FacturaDetallePanelProps {
    * aplicada, se omite prop o se pasa vacio y la seccion no se renderiza.
    */
   reversos?: ReversoAplicado[]
+  /**
+   * BUG E fix (Slice 5g): estado de reverso ACUMULADO de la factura, misma
+   * fuente que alimenta el badge de la lista (`badgesPorVenta`, de
+   * `useBadgesReversoSesion`/`calcularBadgesReversoPorVenta`). El overlay
+   * watermark de abajo DEBE leer este valor — NUNCA derivarlo localmente
+   * del tipo crudo de cada registro de `reversos` — porque una factura
+   * puede llegar a 100% reversada por ACUMULACION de NCs 'PARCIAL' sin que
+   * ninguna sea individualmente 'TOTAL'.
+   */
+  badgeReverso?: BadgeReverso
 }
 
-export function FacturaDetallePanel({ recibo, reversos = [] }: FacturaDetallePanelProps) {
+export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null }: FacturaDetallePanelProps) {
   if (!recibo) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
@@ -35,11 +45,10 @@ export function FacturaDetallePanel({ recibo, reversos = [] }: FacturaDetallePan
     )
   }
 
-  // F7 QA fix (Slice 5b): un reverso TOTAL siempre es unico (F1 oculta la
-  // opcion "Total" ante cualquier reverso previo) -> su sola presencia
-  // implica que la factura completa quedo reversada.
-  const estadoReverso: 'TOTAL' | 'PARCIAL' | null =
-    reversos.length === 0 ? null : reversos.some((r) => r.tipo === 'TOTAL') ? 'TOTAL' : 'PARCIAL'
+  // BUG E fix (Slice 5g): el watermark SIEMPRE lee `badgeReverso` (estado
+  // acumulado), nunca el tipo crudo de `reversos` — una factura llega a
+  // 'TOTAL' tanto por una unica NC TOTAL como por PARCIALes acumuladas.
+  const estadoReverso = badgeReverso
 
   return (
     <div className="relative space-y-4 p-4">

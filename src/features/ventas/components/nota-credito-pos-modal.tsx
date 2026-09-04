@@ -514,7 +514,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   </div>
                 )}
 
-                <FacturaDetallePanel recibo={recibo} reversos={historialReversos} />
+                <FacturaDetallePanel
+                  recibo={recibo}
+                  reversos={historialReversos}
+                  badgeReverso={badgesPorVenta[facturaId ?? ''] ?? null}
+                />
 
                 {factura && !puedeEmitirNc && (
                   // F1 QA fix: reversado TOTAL -> vista de solo-lectura, sin
