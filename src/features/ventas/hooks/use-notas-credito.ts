@@ -17,6 +17,10 @@ import {
   mapSumCantidadYaAcreditadaRow,
   type TipoImpuestoLineaNc,
 } from '@/features/ventas/utils/notas-credito-fiscal'
+import {
+  buildNotasCreditoFiltro,
+  rangoMesActual,
+} from '@/features/ventas/utils/notas-credito-admin-filters'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -199,12 +203,59 @@ export interface CrearNotaCreditoResult {
 
 // ─── Listado de NCR ─────────────────────────────────────────
 
-export function useNotasCredito() {
+/**
+ * Filtros opcionales de `useNotasCredito` (Slice B,
+ * notas-credito-ruta-administrativa, Design §Decision 4). `fechaDesde`/
+ * `fechaHasta` son opcionales a este nivel — a diferencia de
+ * `FiltroNotasCredito` (el builder puro de Slice A, donde son
+ * obligatorios): cuando el llamador pasa un objeto `filtros` pero omite el
+ * rango, el hook aplica `rangoMesActual()` (Spec: "Carga por defecto
+ * limitada al mes en curso"). Pasar un rango explicito amplio es el
+ * mecanismo de escape para "ver todo el historial" (Design §Riesgos) — no
+ * existe un flag separado.
+ *
+ * Slice E.2 (tester QA feedback): `busqueda` reemplaza los campos
+ * separados `nroNcr`/`tipo`/`clienteNombre`/`clienteIdentificacion`
+ * (retirados, la UI ya no los expone por separado — un solo input de
+ * busqueda, patron POS). Slice E.b (correccion sobre E.3): el filtro de
+ * Estado (`EstadoFiltroNotaCredito`, Reverso Total/Reverso Parcial) se
+ * RETIRO por completo de esta pestaña — a diferencia de Facturas, NO se
+ * folded en la busqueda.
+ */
+export interface FiltroNotasCreditoHook {
+  fechaDesde?: string
+  fechaHasta?: string
+  busqueda?: string
+}
+
+/**
+ * `useNotasCredito()` sin argumentos preserva byte-a-byte el query historico
+ * completo pre-existente (consumidores no migrados, p.ej.
+ * `notas-credito-page.tsx` hasta que Slice C reescriba la pagina en tabs).
+ * `useNotasCredito(filtros)` delega la construccion del SQL a
+ * `buildNotasCreditoFiltro` (Slice A) aplicando `rangoMesActual()` cuando el
+ * llamador omite `fechaDesde`/`fechaHasta`.
+ */
+export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
-  const { data, isLoading } = useQuery(
-    `SELECT
+  let sql: string
+  let params: unknown[]
+
+  if (filtros) {
+    const fechaDesde = filtros.fechaDesde ?? rangoMesActual().fechaDesde
+    const fechaHasta = filtros.fechaHasta ?? rangoMesActual().fechaHasta
+    const built = buildNotasCreditoFiltro({
+      empresaId,
+      fechaDesde,
+      fechaHasta,
+      busqueda: filtros.busqueda,
+    })
+    sql = built.sql
+    params = built.params
+  } else {
+    sql = `SELECT
        nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.tipo, nc.motivo,
        nc.tasa_historica, nc.total_usd, nc.total_bs, nc.fecha,
        v.nro_factura,
@@ -213,39 +264,13 @@ export function useNotasCredito() {
      JOIN ventas v ON nc.venta_id = v.id
      JOIN clientes c ON nc.cliente_id = c.id
      WHERE nc.empresa_id = ?
-     ORDER BY nc.fecha DESC`,
-    [empresaId]
-  )
+     ORDER BY nc.fecha DESC`
+    params = [empresaId]
+  }
+
+  const { data, isLoading } = useQuery(sql, params)
 
   return { notas: (data ?? []) as NotaCreditoRow[], isLoading }
-}
-
-// ─── Buscar factura para anular ─────────────────────────────
-
-export function useBuscarFacturaParaAnular(query: string) {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
-  const searchTerm = query.trim()
-  const shouldSearch = searchTerm.length >= 1
-
-  const { data, isLoading } = useQuery(
-    shouldSearch
-      ? `SELECT
-           v.id, v.nro_factura, v.cliente_id, v.tasa, v.total_usd, v.total_bs,
-           v.saldo_pend_usd, v.tipo, v.fecha,
-           c.nombre as cliente_nombre,
-           c.identificacion as cliente_identificacion
-         FROM ventas v
-         JOIN clientes c ON v.cliente_id = c.id
-         WHERE v.empresa_id = ? AND v.status != 'ANULADA'
-           AND v.nro_factura LIKE ?
-         ORDER BY v.fecha DESC
-         LIMIT 10`
-      : '',
-    shouldSearch ? [empresaId, `%${searchTerm}%`] : []
-  )
-
-  return { facturas: (data ?? []) as FacturaParaAnular[], isLoading }
 }
 
 // ─── Historial de reversos de una factura (F1 QA fix, Slice 5a) ─────

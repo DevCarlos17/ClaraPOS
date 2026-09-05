@@ -459,6 +459,24 @@ export interface ReversoAplicado {
  * original). Funcion PURA — el hook resuelve el fetch, esta funcion solo
  * re-forma la data ya cargada.
  */
+// =============================================
+// filaFacturaAtenuada — Slice E.5 (notas-credito-ruta-administrativa, QA
+// feedback del tester)
+// =============================================
+
+/**
+ * Una factura con reverso TOTAL (`tiene_reverso_total === 1`) debe
+ * renderizarse con la FILA COMPLETA atenuada en la tabla de "Facturas
+ * emitidas" — EXCEPTO el badge "Reverso Total", que conserva su color
+ * explicito. El consumidor (`facturas-empresa-tab.tsx`) aplica esto via un
+ * color de texto HEREDABLE en el `<tr>` (p.ej. `text-muted-foreground`),
+ * nunca `opacity` — `opacity` atenuaria tambien el badge (afecta a todos
+ * los descendientes por igual, sin importar su color explicito).
+ */
+export function filaFacturaAtenuada(f: { tiene_reverso_total?: number }): boolean {
+  return f.tiene_reverso_total === 1
+}
+
 export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {
   const porId = new Map<string, ReversoAplicado>()
   for (const row of rows) {
