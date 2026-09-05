@@ -15,6 +15,10 @@ vi.mock('@/core/db/powersync/db', () => ({
 // a un hook basado en `useQuery`.
 vi.mock('@powersync/react', () => ({ useQuery: vi.fn() }))
 vi.mock('@/core/db/powersync/connector', () => ({ connector: {} }))
+// Slice B (notas-credito-ruta-administrativa): `useNotasCredito(filtros?)`
+// resuelve `empresaId` via `useCurrentUser()` — mismo patron de mock aislado
+// que `use-facturas-sesion-activa.test.ts`.
+vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
 
 vi.mock('@/features/contabilidad/hooks/use-cuentas-config', () => ({
   cargarMapaCuentas: vi.fn(async () => ({})),
@@ -40,15 +44,18 @@ import type { Transaction } from '@powersync/common'
 import { renderHook } from '@testing-library/react'
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import {
   crearNotaCredito,
   assertGateAntiFraudeNoDesembolso,
   useReversosFactura,
+  useNotasCredito,
   type CrearNotaCreditoParams,
 } from '../use-notas-credito'
 
 const mockedDb = vi.mocked(db, true)
 const mockedUseQuery = vi.mocked(useQuery)
+const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 
 interface Call {
   sql: string
@@ -1203,5 +1210,84 @@ describe('useReversosFactura (F1 QA fix: historial de NC aplicadas a una factura
 
     expect(result.current.reversos).toHaveLength(1)
     expect(result.current.reversos[0]).toMatchObject({ nro_ncr: 'NCR-000001', venta_det_id: 'vd-1', cantidad: '2.000' })
+  })
+})
+
+describe('useNotasCredito — Slice B (notas-credito-ruta-administrativa, Design §Decision 4): filtros opcionales con default mes actual', () => {
+  beforeEach(() => {
+    mockedUseCurrentUser.mockReturnValue({
+      user: { id: 'user-1', empresa_id: 'emp-1', email: '', nombre: '', level: 1, rol_id: null, rol_nombre: null },
+      loading: false,
+    })
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+  })
+
+  it('sin args: preserva el comportamiento actual byte-a-byte (consumidores no migrados, smoke) — sin rango de fecha, params = [empresaId]', () => {
+    renderHook(() => useNotasCredito())
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]!
+    expect(sql).not.toContain('datetime(')
+    expect(sql).not.toContain('nc.fecha >=')
+    expect(params).toEqual(['emp-1'])
+  })
+
+  it('con filtros={} (sin fecha explicita): aplica rangoMesActual() por defecto', () => {
+    vi.setSystemTime(new Date('2026-05-21T12:00:00'))
+
+    renderHook(() => useNotasCredito({}))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]!
+    expect(sql).toContain('nc.empresa_id = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+    vi.useRealTimers()
+  })
+
+  it('fechaDesde/fechaHasta explicitos bypasean el default de mes actual (escape hatch "ver todo el historial")', () => {
+    renderHook(() => useNotasCredito({ fechaDesde: '2020-01-01', fechaHasta: '2026-05-21' }))
+
+    const [, params] = mockedUseQuery.mock.calls[0]!
+    expect(params).toEqual(['emp-1', '2020-01-01', '2026-05-21'])
+  })
+
+  it('filtro nroNcr se aplica via buildNotasCreditoFiltro', () => {
+    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', nroNcr: 'NCR-000012' }))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]!
+    expect(sql).toContain('AND nc.nro_ncr LIKE ?')
+    expect(params).toContain('%NCR-000012%')
+  })
+
+  it('filtro tipo TOTAL/PARCIAL se aplica exacto (sin LIKE)', () => {
+    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', tipo: 'PARCIAL' }))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]!
+    expect(sql).toContain('AND nc.tipo = ?')
+    expect(params).toContain('PARCIAL')
+  })
+
+  it('filtros cliente/RIF combinables', () => {
+    renderHook(() =>
+      useNotasCredito({
+        fechaDesde: '2026-05-01',
+        fechaHasta: '2026-05-21',
+        clienteNombre: 'Maria',
+        clienteIdentificacion: 'V-123',
+      })
+    )
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]!
+    expect(sql).toContain('AND c.nombre LIKE ?')
+    expect(sql).toContain('AND c.identificacion LIKE ?')
+    expect(params).toContain('%Maria%')
+    expect(params).toContain('%V-123%')
+  })
+
+  it('empresa_id SIEMPRE presente en params, con o sin filtros', () => {
+    renderHook(() => useNotasCredito())
+    expect(mockedUseQuery.mock.calls[0]![1]).toContain('emp-1')
+
+    mockedUseQuery.mockClear()
+    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21' }))
+    expect(mockedUseQuery.mock.calls[0]![1]).toContain('emp-1')
   })
 })

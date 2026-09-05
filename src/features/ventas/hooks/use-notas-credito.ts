@@ -17,6 +17,10 @@ import {
   mapSumCantidadYaAcreditadaRow,
   type TipoImpuestoLineaNc,
 } from '@/features/ventas/utils/notas-credito-fiscal'
+import {
+  buildNotasCreditoFiltro,
+  rangoMesActual,
+} from '@/features/ventas/utils/notas-credito-admin-filters'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -199,12 +203,57 @@ export interface CrearNotaCreditoResult {
 
 // ─── Listado de NCR ─────────────────────────────────────────
 
-export function useNotasCredito() {
+/**
+ * Filtros opcionales de `useNotasCredito` (Slice B,
+ * notas-credito-ruta-administrativa, Design §Decision 4). `fechaDesde`/
+ * `fechaHasta` son opcionales a este nivel — a diferencia de
+ * `FiltroNotasCredito` (el builder puro de Slice A, donde son
+ * obligatorios): cuando el llamador pasa un objeto `filtros` pero omite el
+ * rango, el hook aplica `rangoMesActual()` (Spec: "Carga por defecto
+ * limitada al mes en curso"). Pasar un rango explicito amplio es el
+ * mecanismo de escape para "ver todo el historial" (Design §Riesgos) — no
+ * existe un flag separado.
+ */
+export interface FiltroNotasCreditoHook {
+  fechaDesde?: string
+  fechaHasta?: string
+  nroNcr?: string
+  tipo?: 'TOTAL' | 'PARCIAL'
+  clienteNombre?: string
+  clienteIdentificacion?: string
+}
+
+/**
+ * `useNotasCredito()` sin argumentos preserva byte-a-byte el query historico
+ * completo pre-existente (consumidores no migrados, p.ej.
+ * `notas-credito-page.tsx` hasta que Slice C reescriba la pagina en tabs).
+ * `useNotasCredito(filtros)` delega la construccion del SQL a
+ * `buildNotasCreditoFiltro` (Slice A) aplicando `rangoMesActual()` cuando el
+ * llamador omite `fechaDesde`/`fechaHasta`.
+ */
+export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
-  const { data, isLoading } = useQuery(
-    `SELECT
+  let sql: string
+  let params: unknown[]
+
+  if (filtros) {
+    const fechaDesde = filtros.fechaDesde ?? rangoMesActual().fechaDesde
+    const fechaHasta = filtros.fechaHasta ?? rangoMesActual().fechaHasta
+    const built = buildNotasCreditoFiltro({
+      empresaId,
+      fechaDesde,
+      fechaHasta,
+      nroNcr: filtros.nroNcr,
+      tipo: filtros.tipo,
+      clienteNombre: filtros.clienteNombre,
+      clienteIdentificacion: filtros.clienteIdentificacion,
+    })
+    sql = built.sql
+    params = built.params
+  } else {
+    sql = `SELECT
        nc.id, nc.nro_ncr, nc.venta_id, nc.cliente_id, nc.tipo, nc.motivo,
        nc.tasa_historica, nc.total_usd, nc.total_bs, nc.fecha,
        v.nro_factura,
@@ -213,9 +262,11 @@ export function useNotasCredito() {
      JOIN ventas v ON nc.venta_id = v.id
      JOIN clientes c ON nc.cliente_id = c.id
      WHERE nc.empresa_id = ?
-     ORDER BY nc.fecha DESC`,
-    [empresaId]
-  )
+     ORDER BY nc.fecha DESC`
+    params = [empresaId]
+  }
+
+  const { data, isLoading } = useQuery(sql, params)
 
   return { notas: (data ?? []) as NotaCreditoRow[], isLoading }
 }
