@@ -10,6 +10,7 @@ import {
   agruparReversosPorNc,
   calcularBadgesReversoPorVenta,
   resolverBadgesFactura,
+  filaFacturaAtenuada,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -450,5 +451,21 @@ describe('agruparReversosPorNc (F1: historial additivo — original + reverso, R
 
   it('lista vacia produce arreglo vacio (sin reversos aplicados aun)', () => {
     expect(agruparReversosPorNc([])).toEqual([])
+  })
+})
+
+// ─── filaFacturaAtenuada (Slice E.5, notas-credito-ruta-administrativa — QA feedback) ────────
+
+describe('filaFacturaAtenuada (Slice E.5: fila 100% reversada se atenua en la tabla de Facturas emitidas)', () => {
+  it('tiene_reverso_total=1 -> true (fila atenuada)', () => {
+    expect(filaFacturaAtenuada({ tiene_reverso_total: 1 })).toBe(true)
+  })
+
+  it('tiene_reverso_total=0 -> false (fila normal)', () => {
+    expect(filaFacturaAtenuada({ tiene_reverso_total: 0 })).toBe(false)
+  })
+
+  it('tiene_reverso_total ausente (undefined) -> false, nunca revienta', () => {
+    expect(filaFacturaAtenuada({})).toBe(false)
   })
 })

@@ -28,7 +28,7 @@ vi.mock('../crear-ncr-modal', () => ({
     ) : null,
 }))
 
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useFacturasEmpresa } from '../../hooks/use-facturas-empresa'
 import { FacturasEmpresaTab } from '../facturas-empresa-tab'
@@ -83,29 +83,42 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
     vi.useRealTimers()
   })
 
-  it('filtrar por numero de factura actualiza el argumento pasado al hook', async () => {
+  it('Slice E.2: input de busqueda UNIFICADO (unico) actualiza el argumento `busqueda` pasado al hook', async () => {
     const user = userEvent.setup()
     render(<FacturasEmpresaTab />)
 
-    await user.type(screen.getByLabelText(/nro factura/i), 'C01-0042')
+    await user.type(screen.getByLabelText(/buscar/i), 'C01-0042')
 
     await waitFor(() => {
       expect(mockedUseFacturasEmpresa).toHaveBeenLastCalledWith(
-        expect.objectContaining({ nroFactura: 'C01-0042' })
+        expect.objectContaining({ busqueda: 'C01-0042' })
       )
     })
   })
 
-  it('filtrar por cliente y RIF actualiza el argumento pasado al hook (combinables)', async () => {
+  it('Slice E.2: los 3 inputs separados (nro factura, cliente, RIF) YA NO existen', () => {
+    render(<FacturasEmpresaTab />)
+    expect(screen.queryByLabelText(/nro factura/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^cliente$/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^rif$/i)).not.toBeInTheDocument()
+  })
+
+  it('Slice E.3: selector de estado presente con las 4 opciones (Contado/Credito/Reverso Parcial/Reverso Total)', () => {
+    render(<FacturasEmpresaTab />)
+    const select = screen.getByLabelText(/^estado$/i)
+    const opciones = Array.from(select.querySelectorAll('option')).map((o) => o.textContent)
+    expect(opciones).toEqual(['Todos', 'Contado', 'Crédito', 'Reverso Parcial', 'Reverso Total'])
+  })
+
+  it('Slice E.3: elegir "Reverso Total" en el selector de estado actualiza el argumento pasado al hook', async () => {
     const user = userEvent.setup()
     render(<FacturasEmpresaTab />)
 
-    await user.type(screen.getByLabelText(/^cliente$/i), 'Maria')
-    await user.type(screen.getByLabelText(/^rif$/i), 'V-123')
+    await user.selectOptions(screen.getByLabelText(/^estado$/i), 'REVERSO_TOTAL')
 
     await waitFor(() => {
       expect(mockedUseFacturasEmpresa).toHaveBeenLastCalledWith(
-        expect.objectContaining({ clienteNombre: 'Maria', clienteIdentificacion: 'V-123' })
+        expect.objectContaining({ estado: 'REVERSO_TOTAL' })
       )
     })
   })
@@ -191,6 +204,28 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
 
       expect(onAplicarNc).toHaveBeenCalledWith(f)
       expect(screen.getByTestId('mock-crear-ncr-modal')).toBeInTheDocument()
+    })
+  })
+
+  describe('Slice E.5 — fila atenuada para facturas 100% reversadas (tester QA feedback)', () => {
+    it('factura con tiene_reverso_total=1: la fila queda marcada data-atenuada, el badge "Reverso Total" sigue visible', () => {
+      mockedUseFacturasEmpresa.mockReturnValue({
+        facturas: [factura({ tiene_reverso_total: 1 })],
+        isLoading: false,
+      })
+      render(<FacturasEmpresaTab />)
+
+      const row = screen.getByText('#C01-000001').closest('tr') as HTMLElement
+      expect(row).toHaveAttribute('data-atenuada', 'true')
+      expect(within(row).getByText('Reverso Total')).toBeInTheDocument()
+    })
+
+    it('factura sin reverso total: la fila NO queda marcada como atenuada', () => {
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [factura()], isLoading: false })
+      render(<FacturasEmpresaTab />)
+
+      const row = screen.getByText('#C01-000001').closest('tr')
+      expect(row).not.toHaveAttribute('data-atenuada')
     })
   })
 })

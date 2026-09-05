@@ -59,55 +59,54 @@ describe('NotasCreditoTab (Slice C3b) — filtros ampliados sobre useNotasCredit
     vi.useRealTimers()
   })
 
-  it('filtro nro NC actualiza el argumento pasado al hook', async () => {
+  it('Slice E.2: input de busqueda UNIFICADO (unico) actualiza el argumento `busqueda` pasado al hook', async () => {
     const user = userEvent.setup()
     render(<NotasCreditoTab />)
 
-    await user.type(screen.getByLabelText(/nro nc/i), 'NCR-000012')
+    await user.type(screen.getByLabelText(/buscar/i), 'NCR-000012')
 
     await waitFor(() => {
       expect(mockedUseNotasCredito).toHaveBeenLastCalledWith(
-        expect.objectContaining({ nroNcr: 'NCR-000012' })
+        expect.objectContaining({ busqueda: 'NCR-000012' })
       )
     })
   })
 
-  it('filtro tipo TOTAL/PARCIAL se aplica al hook (sin transformar a LIKE)', async () => {
-    const user = userEvent.setup()
+  it('Slice E.2: los 3 inputs separados (nro NC, cliente, RIF) YA NO existen', () => {
     render(<NotasCreditoTab />)
-
-    await user.selectOptions(screen.getByLabelText(/^tipo$/i), 'PARCIAL')
-
-    await waitFor(() => {
-      expect(mockedUseNotasCredito).toHaveBeenLastCalledWith(expect.objectContaining({ tipo: 'PARCIAL' }))
-    })
+    expect(screen.queryByLabelText(/nro nc/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^cliente$/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/^rif$/i)).not.toBeInTheDocument()
   })
 
-  it('filtro cliente/RIF combinables', async () => {
+  it('Slice E.4: el filtro "Tipo" YA NO existe (reemplazado por el selector de Estado)', () => {
+    render(<NotasCreditoTab />)
+    expect(screen.queryByLabelText(/^tipo$/i)).not.toBeInTheDocument()
+  })
+
+  it('Slice E.3: selector de estado presente con SOLO 2 opciones (Reverso Total/Reverso Parcial, sin Contado/Credito)', () => {
+    render(<NotasCreditoTab />)
+    const select = screen.getByLabelText(/^estado$/i)
+    const opciones = Array.from(select.querySelectorAll('option')).map((o) => o.textContent)
+    expect(opciones).toEqual(['Todos', 'Reverso Total', 'Reverso Parcial'])
+  })
+
+  it('Slice E.3: elegir "Reverso Parcial" en el selector de estado actualiza el argumento pasado al hook (sin transformar a LIKE)', async () => {
     const user = userEvent.setup()
     render(<NotasCreditoTab />)
 
-    await user.type(screen.getByLabelText(/^cliente$/i), 'Maria')
-    await user.type(screen.getByLabelText(/^rif$/i), 'V-123')
+    await user.selectOptions(screen.getByLabelText(/^estado$/i), 'REVERSO_PARCIAL')
 
     await waitFor(() => {
       expect(mockedUseNotasCredito).toHaveBeenLastCalledWith(
-        expect.objectContaining({ clienteNombre: 'Maria', clienteIdentificacion: 'V-123' })
+        expect.objectContaining({ estado: 'REVERSO_PARCIAL' })
       )
     })
   })
 
-  it('boton "Ver todo el historial" limpia el rango de fecha sin tope maximo', async () => {
-    const user = userEvent.setup()
+  it('Slice E.4: el boton "Ver todo el historial" YA NO existe — el rango de fecha es el UNICO control de amplitud', () => {
     render(<NotasCreditoTab />)
-
-    await user.click(screen.getByRole('button', { name: /ver todo el historial/i }))
-
-    await waitFor(() => {
-      const lastCallArgs = mockedUseNotasCredito.mock.calls.at(-1)?.[0]
-      expect(lastCallArgs?.fechaDesde).toBe('2000-01-01')
-      expect(lastCallArgs?.fechaHasta).toBe('2100-12-31')
-    })
+    expect(screen.queryByRole('button', { name: /ver todo el historial/i })).not.toBeInTheDocument()
   })
 
   it('estado vacio: sin NC, sin error, muestra mensaje explicito', () => {

@@ -1,38 +1,38 @@
 import { useState } from 'react'
-import { FileX } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
+import { FileX, MagnifyingGlass } from '@phosphor-icons/react'
 import { Input } from '@/components/ui/input'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { useNotasCredito } from '../hooks/use-notas-credito'
-import { rangoMesActual } from '../utils/notas-credito-admin-filters'
+import { rangoMesActual, type EstadoFiltroNotaCredito } from '../utils/notas-credito-admin-filters'
 
 /**
  * Pestana secundaria de "Facturas emitidas" (Slice C3b — design.md
- * §Decision 4/7). Gana filtros ampliados (fecha, nro NC, tipo TOTAL/PARCIAL,
- * cliente, RIF) sobre `useNotasCredito(filtros)` + boton "Ver todo el
- * historial" (mitigacion del cambio de default a mes actual, Design
- * §Riesgos). El buscador de facturas (`useBuscarFacturaParaAnular`) y el
- * modal de C3a se retiran: la pestana "Facturas" (empresa-wide, primaria)
- * es ahora el unico punto de entrada para seleccionar una factura y aplicar
- * una NC (Design §Decision 7 — dead code una vez migrado este consumidor).
+ * §Decision 4/7). El buscador de facturas (`useBuscarFacturaParaAnular`) y
+ * el modal de C3a se retiran: la pestana "Facturas" (empresa-wide,
+ * primaria) es ahora el unico punto de entrada para seleccionar una
+ * factura y aplicar una NC (Design §Decision 7 — dead code una vez
+ * migrado este consumidor).
+ *
+ * Slice E.2/E.3/E.4 (tester QA feedback): los 3 inputs separados
+ * (nro_ncr, cliente, RIF) se reemplazaron por UN SOLO input de busqueda
+ * (patron POS); el selector "Tipo" y el boton "Ver todo el historial" se
+ * RETIRARON — el selector de "Estado" (Reverso Total/Reverso Parcial)
+ * ocupa el lugar de "Tipo" con labels de negocio, y el rango de fecha
+ * (default `rangoMesActual()`) queda como UNICO control de amplitud: no
+ * existe ningun escape hatch de historial completo en esta pestaña.
  */
-
-const FECHA_MINIMA_HISTORIAL = '2000-01-01'
-const FECHA_MAXIMA_HISTORIAL = '2100-12-31'
 
 interface FiltrosNotasCreditoState {
   fechaDesde: string
   fechaHasta: string
-  nroNcr: string
-  tipo: '' | 'TOTAL' | 'PARCIAL'
-  clienteNombre: string
-  clienteIdentificacion: string
+  busqueda: string
+  estado: '' | EstadoFiltroNotaCredito
 }
 
 function filtrosIniciales(): FiltrosNotasCreditoState {
-  return { ...rangoMesActual(), nroNcr: '', tipo: '', clienteNombre: '', clienteIdentificacion: '' }
+  return { ...rangoMesActual(), busqueda: '', estado: '' }
 }
 
 export function NotasCreditoTab() {
@@ -41,18 +41,12 @@ export function NotasCreditoTab() {
   const { notas, isLoading: loadingNotas } = useNotasCredito({
     fechaDesde: filtros.fechaDesde,
     fechaHasta: filtros.fechaHasta,
-    nroNcr: filtros.nroNcr,
-    tipo: filtros.tipo || undefined,
-    clienteNombre: filtros.clienteNombre,
-    clienteIdentificacion: filtros.clienteIdentificacion,
+    busqueda: filtros.busqueda,
+    estado: filtros.estado || undefined,
   })
 
   function set<K extends keyof FiltrosNotasCreditoState>(key: K, value: FiltrosNotasCreditoState[K]) {
     setFiltros((prev) => ({ ...prev, [key]: value }))
-  }
-
-  function verTodoElHistorial() {
-    setFiltros((prev) => ({ ...prev, fechaDesde: FECHA_MINIMA_HISTORIAL, fechaHasta: FECHA_MAXIMA_HISTORIAL }))
   }
 
   return (
@@ -84,56 +78,38 @@ export function NotasCreditoTab() {
               className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          <div className="flex flex-col gap-1 min-w-[160px]">
-            <label htmlFor="nc-nro" className="text-xs text-muted-foreground">
-              Nro NC
+          <div className="flex flex-col gap-1 min-w-[240px] flex-1">
+            <label htmlFor="nc-busqueda" className="text-xs text-muted-foreground">
+              Buscar
             </label>
-            <Input
-              id="nc-nro"
-              value={filtros.nroNcr}
-              placeholder="NCR-000123"
-              onChange={(e) => set('nroNcr', e.target.value)}
-            />
+            <div className="relative">
+              <MagnifyingGlass
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                id="nc-busqueda"
+                value={filtros.busqueda}
+                placeholder="NC, cliente o RIF..."
+                onChange={(e) => set('busqueda', e.target.value)}
+                className="pl-9"
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1 min-w-[140px]">
-            <label htmlFor="nc-tipo" className="text-xs text-muted-foreground">
-              Tipo
+          <div className="flex flex-col gap-1 min-w-[160px]">
+            <label htmlFor="nc-estado" className="text-xs text-muted-foreground">
+              Estado
             </label>
             <NativeSelect
-              id="nc-tipo"
-              value={filtros.tipo}
-              onChange={(e) => set('tipo', e.target.value as FiltrosNotasCreditoState['tipo'])}
+              id="nc-estado"
+              value={filtros.estado}
+              onChange={(e) => set('estado', e.target.value as FiltrosNotasCreditoState['estado'])}
             >
               <option value="">Todos</option>
-              <option value="TOTAL">Total</option>
-              <option value="PARCIAL">Parcial</option>
+              <option value="REVERSO_TOTAL">Reverso Total</option>
+              <option value="REVERSO_PARCIAL">Reverso Parcial</option>
             </NativeSelect>
           </div>
-          <div className="flex flex-col gap-1 min-w-[180px]">
-            <label htmlFor="nc-cliente" className="text-xs text-muted-foreground">
-              Cliente
-            </label>
-            <Input
-              id="nc-cliente"
-              value={filtros.clienteNombre}
-              placeholder="Nombre del cliente"
-              onChange={(e) => set('clienteNombre', e.target.value)}
-            />
-          </div>
-          <div className="flex flex-col gap-1 min-w-[140px]">
-            <label htmlFor="nc-rif" className="text-xs text-muted-foreground">
-              RIF
-            </label>
-            <Input
-              id="nc-rif"
-              value={filtros.clienteIdentificacion}
-              placeholder="V-12345678"
-              onChange={(e) => set('clienteIdentificacion', e.target.value)}
-            />
-          </div>
-          <Button type="button" variant="outline" size="sm" onClick={verTodoElHistorial}>
-            Ver todo el historial
-          </Button>
         </div>
       </div>
 

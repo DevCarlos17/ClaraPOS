@@ -1,15 +1,18 @@
 import { useState } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
+import { MagnifyingGlass } from '@phosphor-icons/react'
 import { DataTable } from '@/components/data-table/data-table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
-import { rangoMesActual } from '../utils/notas-credito-admin-filters'
+import { rangoMesActual, type EstadoFiltroFactura } from '../utils/notas-credito-admin-filters'
 import {
   derivarEstadoPago,
   resolverBadgesFactura,
+  filaFacturaAtenuada,
   ESTADO_PAGO_LABEL,
   type EstadoPago,
   type BadgeReverso,
@@ -21,10 +24,15 @@ import { CrearNcrModal } from './crear-ncr-modal'
 /**
  * Slice C3b (notas-credito-ruta-administrativa, Design §Decision 3/File
  * Changes): reemplaza el placeholder de C3a por el listado empresa-wide
- * real sobre `useFacturasEmpresa(filtros)` + filtros (fecha, nro_factura,
- * cliente, RIF) + accion "Aplicar nota de credito" por fila. El wiring del
- * modal real es Slice D (`onAplicarNc` es un callback prop que hoy no tiene
- * consumidor por defecto — stub inofensivo).
+ * real sobre `useFacturasEmpresa(filtros)` + accion "Aplicar nota de
+ * credito" por fila. El wiring del modal real es Slice D (`onAplicarNc` es
+ * un callback prop que hoy no tiene consumidor por defecto — stub
+ * inofensivo).
+ *
+ * Slice E.2/E.3 (tester QA feedback): los 3 inputs separados (nro_factura,
+ * cliente, RIF) se reemplazaron por UN SOLO input de busqueda (patron POS —
+ * ver `producto-buscador.tsx`), y se agrego un selector de "Estado"
+ * (Contado/Credito/Reverso Parcial/Reverso Total).
  *
  * `showToolbar`/`showPagination` del `DataTable` generico se dejan en
  * `false`: ese componente registra el `useReactTable` solo con
@@ -43,13 +51,12 @@ const ESTADO_PAGO_BADGE_CLASS: Record<EstadoPago, string> = {
 interface FiltrosFacturasEmpresaState {
   fechaDesde: string
   fechaHasta: string
-  nroFactura: string
-  clienteNombre: string
-  clienteIdentificacion: string
+  busqueda: string
+  estado: '' | EstadoFiltroFactura
 }
 
 function filtrosIniciales(): FiltrosFacturasEmpresaState {
-  return { ...rangoMesActual(), nroFactura: '', clienteNombre: '', clienteIdentificacion: '' }
+  return { ...rangoMesActual(), busqueda: '', estado: '' }
 }
 
 interface FacturasEmpresaFiltrosProps {
@@ -90,38 +97,39 @@ function FacturasEmpresaFiltros({ filtros, onChange }: FacturasEmpresaFiltrosPro
             className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
+        <div className="flex flex-col gap-1 min-w-[240px] flex-1">
+          <label htmlFor="facturas-busqueda" className="text-xs text-muted-foreground">
+            Buscar
+          </label>
+          <div className="relative">
+            <MagnifyingGlass
+              size={16}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              id="facturas-busqueda"
+              value={filtros.busqueda}
+              placeholder="Factura, cliente o RIF..."
+              onChange={(e) => set('busqueda', e.target.value)}
+              className="pl-9"
+            />
+          </div>
+        </div>
         <div className="flex flex-col gap-1 min-w-[160px]">
-          <label htmlFor="facturas-nro" className="text-xs text-muted-foreground">
-            Nro factura
+          <label htmlFor="facturas-estado" className="text-xs text-muted-foreground">
+            Estado
           </label>
-          <Input
-            id="facturas-nro"
-            value={filtros.nroFactura}
-            placeholder="C01-000123"
-            onChange={(e) => set('nroFactura', e.target.value)}
-          />
-        </div>
-        <div className="flex flex-col gap-1 min-w-[180px]">
-          <label htmlFor="facturas-cliente" className="text-xs text-muted-foreground">
-            Cliente
-          </label>
-          <Input
-            id="facturas-cliente"
-            value={filtros.clienteNombre}
-            placeholder="Nombre del cliente"
-            onChange={(e) => set('clienteNombre', e.target.value)}
-          />
-        </div>
-        <div className="flex flex-col gap-1 min-w-[140px]">
-          <label htmlFor="facturas-rif" className="text-xs text-muted-foreground">
-            RIF
-          </label>
-          <Input
-            id="facturas-rif"
-            value={filtros.clienteIdentificacion}
-            placeholder="V-12345678"
-            onChange={(e) => set('clienteIdentificacion', e.target.value)}
-          />
+          <NativeSelect
+            id="facturas-estado"
+            value={filtros.estado}
+            onChange={(e) => set('estado', e.target.value as FiltrosFacturasEmpresaState['estado'])}
+          >
+            <option value="">Todos</option>
+            <option value="CONTADO">Contado</option>
+            <option value="CREDITO">Crédito</option>
+            <option value="REVERSO_PARCIAL">Reverso Parcial</option>
+            <option value="REVERSO_TOTAL">Reverso Total</option>
+          </NativeSelect>
         </div>
       </div>
     </div>
@@ -239,6 +247,8 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc }: Factu
       emptyMessage="No hay facturas para el periodo o filtros seleccionados."
       showToolbar={false}
       showPagination={false}
+      rowClassName={(f) => (filaFacturaAtenuada(f) ? 'text-muted-foreground/70' : undefined)}
+      rowProps={(f): Record<string, string> => (filaFacturaAtenuada(f) ? { 'data-atenuada': 'true' } : {})}
     />
   )
 }
@@ -256,7 +266,12 @@ export interface FacturasEmpresaTabProps {
  */
 export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}) {
   const [filtros, setFiltros] = useState<FiltrosFacturasEmpresaState>(filtrosIniciales)
-  const { facturas, isLoading } = useFacturasEmpresa(filtros)
+  const { facturas, isLoading } = useFacturasEmpresa({
+    fechaDesde: filtros.fechaDesde,
+    fechaHasta: filtros.fechaHasta,
+    busqueda: filtros.busqueda,
+    estado: filtros.estado || undefined,
+  })
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
 
