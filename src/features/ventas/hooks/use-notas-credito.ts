@@ -271,34 +271,6 @@ export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
   return { notas: (data ?? []) as NotaCreditoRow[], isLoading }
 }
 
-// ─── Buscar factura para anular ─────────────────────────────
-
-export function useBuscarFacturaParaAnular(query: string) {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
-  const searchTerm = query.trim()
-  const shouldSearch = searchTerm.length >= 1
-
-  const { data, isLoading } = useQuery(
-    shouldSearch
-      ? `SELECT
-           v.id, v.nro_factura, v.cliente_id, v.tasa, v.total_usd, v.total_bs,
-           v.saldo_pend_usd, v.tipo, v.fecha,
-           c.nombre as cliente_nombre,
-           c.identificacion as cliente_identificacion
-         FROM ventas v
-         JOIN clientes c ON v.cliente_id = c.id
-         WHERE v.empresa_id = ? AND v.status != 'ANULADA'
-           AND v.nro_factura LIKE ?
-         ORDER BY v.fecha DESC
-         LIMIT 10`
-      : '',
-    shouldSearch ? [empresaId, `%${searchTerm}%`] : []
-  )
-
-  return { facturas: (data ?? []) as FacturaParaAnular[], isLoading }
-}
-
 // ─── Historial de reversos de una factura (F1 QA fix, Slice 5a) ─────
 
 export interface ReversoFacturaRow {

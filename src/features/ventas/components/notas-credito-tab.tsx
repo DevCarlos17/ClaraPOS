@@ -1,91 +1,139 @@
 import { useState } from 'react'
-import { MagnifyingGlass, FileX } from '@phosphor-icons/react'
+import { FileX } from '@phosphor-icons/react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
-import {
-  useNotasCredito,
-  useBuscarFacturaParaAnular,
-} from '../hooks/use-notas-credito'
-import type { FacturaParaAnular } from '../hooks/use-notas-credito'
-import { CrearNcrModal } from './crear-ncr-modal'
+import { useNotasCredito } from '../hooks/use-notas-credito'
+import { rangoMesActual } from '../utils/notas-credito-admin-filters'
 
 /**
- * Pestana secundaria de "Facturas emitidas" (Slice C3a — design.md §Decision
- * 1). Contenido movido tal cual desde la vieja `NotasCreditoPage` (sin
- * `PageHeader`, que ahora vive en el contenedor de pestanas) — mismo
- * comportamiento, sin filtros nuevos todavia (esos llegan en Slice C3b).
+ * Pestana secundaria de "Facturas emitidas" (Slice C3b — design.md
+ * §Decision 4/7). Gana filtros ampliados (fecha, nro NC, tipo TOTAL/PARCIAL,
+ * cliente, RIF) sobre `useNotasCredito(filtros)` + boton "Ver todo el
+ * historial" (mitigacion del cambio de default a mes actual, Design
+ * §Riesgos). El buscador de facturas (`useBuscarFacturaParaAnular`) y el
+ * modal de C3a se retiran: la pestana "Facturas" (empresa-wide, primaria)
+ * es ahora el unico punto de entrada para seleccionar una factura y aplicar
+ * una NC (Design §Decision 7 — dead code una vez migrado este consumidor).
  */
+
+const FECHA_MINIMA_HISTORIAL = '2000-01-01'
+const FECHA_MAXIMA_HISTORIAL = '2100-12-31'
+
+interface FiltrosNotasCreditoState {
+  fechaDesde: string
+  fechaHasta: string
+  nroNcr: string
+  tipo: '' | 'TOTAL' | 'PARCIAL'
+  clienteNombre: string
+  clienteIdentificacion: string
+}
+
+function filtrosIniciales(): FiltrosNotasCreditoState {
+  return { ...rangoMesActual(), nroNcr: '', tipo: '', clienteNombre: '', clienteIdentificacion: '' }
+}
+
 export function NotasCreditoTab() {
-  const [searchQuery, setSearchQuery] = useState('')
-  const [modalOpen, setModalOpen] = useState(false)
-  const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
+  const [filtros, setFiltros] = useState<FiltrosNotasCreditoState>(filtrosIniciales)
 
-  const { notas, isLoading: loadingNotas } = useNotasCredito()
-  const { facturas, isLoading: loadingSearch } = useBuscarFacturaParaAnular(searchQuery)
+  const { notas, isLoading: loadingNotas } = useNotasCredito({
+    fechaDesde: filtros.fechaDesde,
+    fechaHasta: filtros.fechaHasta,
+    nroNcr: filtros.nroNcr,
+    tipo: filtros.tipo || undefined,
+    clienteNombre: filtros.clienteNombre,
+    clienteIdentificacion: filtros.clienteIdentificacion,
+  })
 
-  function handleSelectFactura(factura: FacturaParaAnular) {
-    setFacturaSeleccionada(factura)
-    setModalOpen(true)
-    setSearchQuery('')
+  function set<K extends keyof FiltrosNotasCreditoState>(key: K, value: FiltrosNotasCreditoState[K]) {
+    setFiltros((prev) => ({ ...prev, [key]: value }))
   }
 
-  function handleCloseModal() {
-    setModalOpen(false)
-    setFacturaSeleccionada(null)
+  function verTodoElHistorial() {
+    setFiltros((prev) => ({ ...prev, fechaDesde: FECHA_MINIMA_HISTORIAL, fechaHasta: FECHA_MAXIMA_HISTORIAL }))
   }
 
   return (
     <div className="space-y-6">
-      {/* Buscar factura */}
+      {/* Filtros */}
       <div className="rounded-2xl bg-card shadow-lg p-4">
-        <div className="relative">
-          <MagnifyingGlass className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar factura por numero..."
-            className="w-full pl-10 pr-4 py-2 rounded-md border border-input bg-white text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          />
-
-          {/* Resultados de busqueda */}
-          {searchQuery.trim().length >= 1 && (
-            <div className="absolute z-10 w-full mt-1 bg-white border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto">
-              {loadingSearch ? (
-                <div className="p-3 text-sm text-muted-foreground">Buscando...</div>
-              ) : facturas.length === 0 ? (
-                <div className="p-3 text-sm text-muted-foreground">
-                  No se encontraron facturas activas
-                </div>
-              ) : (
-                facturas.map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => handleSelectFactura(f)}
-                    className="w-full text-left px-4 py-3 hover:bg-muted transition-colors border-b border-muted last:border-b-0"
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <span className="font-mono text-sm font-bold">#{f.nro_factura}</span>
-                        <span className="ml-2 text-sm text-muted-foreground">
-                          {f.cliente_nombre}
-                        </span>
-                        {f.tipo === 'CREDITO' && (
-                          <span className="ml-2 inline-flex items-center rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-medium text-red-700 ring-1 ring-red-600/20 ring-inset">
-                            CREDITO
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-sm font-bold">{formatUsd(f.total_usd)}</span>
-                    </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {formatDateTime(f.fecha)} &middot; Saldo pend: {formatUsd(f.saldo_pend_usd)}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <label htmlFor="nc-fecha-desde" className="text-xs text-muted-foreground">
+              Desde
+            </label>
+            <input
+              id="nc-fecha-desde"
+              type="date"
+              value={filtros.fechaDesde}
+              onChange={(e) => set('fechaDesde', e.target.value)}
+              className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label htmlFor="nc-fecha-hasta" className="text-xs text-muted-foreground">
+              Hasta
+            </label>
+            <input
+              id="nc-fecha-hasta"
+              type="date"
+              value={filtros.fechaHasta}
+              onChange={(e) => set('fechaHasta', e.target.value)}
+              className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[160px]">
+            <label htmlFor="nc-nro" className="text-xs text-muted-foreground">
+              Nro NC
+            </label>
+            <Input
+              id="nc-nro"
+              value={filtros.nroNcr}
+              placeholder="NCR-000123"
+              onChange={(e) => set('nroNcr', e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[140px]">
+            <label htmlFor="nc-tipo" className="text-xs text-muted-foreground">
+              Tipo
+            </label>
+            <NativeSelect
+              id="nc-tipo"
+              value={filtros.tipo}
+              onChange={(e) => set('tipo', e.target.value as FiltrosNotasCreditoState['tipo'])}
+            >
+              <option value="">Todos</option>
+              <option value="TOTAL">Total</option>
+              <option value="PARCIAL">Parcial</option>
+            </NativeSelect>
+          </div>
+          <div className="flex flex-col gap-1 min-w-[180px]">
+            <label htmlFor="nc-cliente" className="text-xs text-muted-foreground">
+              Cliente
+            </label>
+            <Input
+              id="nc-cliente"
+              value={filtros.clienteNombre}
+              placeholder="Nombre del cliente"
+              onChange={(e) => set('clienteNombre', e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1 min-w-[140px]">
+            <label htmlFor="nc-rif" className="text-xs text-muted-foreground">
+              RIF
+            </label>
+            <Input
+              id="nc-rif"
+              value={filtros.clienteIdentificacion}
+              placeholder="V-12345678"
+              onChange={(e) => set('clienteIdentificacion', e.target.value)}
+            />
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={verTodoElHistorial}>
+            Ver todo el historial
+          </Button>
         </div>
       </div>
 
@@ -100,7 +148,7 @@ export function NotasCreditoTab() {
         ) : notas.length === 0 ? (
           <div className="text-center py-12 text-muted-foreground">
             <FileX className="h-10 w-10 mx-auto mb-3 opacity-40" />
-            <p className="text-sm">No hay notas de credito registradas</p>
+            <p className="text-sm">No hay notas de credito para el periodo o filtros seleccionados</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -141,13 +189,6 @@ export function NotasCreditoTab() {
           </div>
         )}
       </div>
-
-      {/* Modal */}
-      <CrearNcrModal
-        isOpen={modalOpen}
-        onClose={handleCloseModal}
-        factura={facturaSeleccionada}
-      />
     </div>
   )
 }
