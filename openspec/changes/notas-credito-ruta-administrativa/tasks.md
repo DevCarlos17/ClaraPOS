@@ -154,12 +154,157 @@ existentes, sin tests nuevos para la capa pura reusada).
 
 **Resultado real vs forecast (Slice D)**: forecast ~350–450 líneas, riesgo Medium–High. Real: **~801 líneas cambiadas** (545 inserciones + 256 eliminaciones en 4 archivos: `crear-ncr-modal.tsx` reescrito completo de ~300 a ~350 líneas activas [483 líneas de diff], su test reescrito completo [15 tests, 229 líneas de diff], `facturas-empresa-tab.tsx` [+25/-0 líneas de wiring] y su test [+64 líneas, 3 tests nuevos]) — **excede el forecast y el presupuesto de 400 líneas**, principalmente porque `crear-ncr-modal.tsx` es una REESCRITURA COMPLETA (no un delta incremental sobre el componente TOTAL-only anterior) y su test se reescribió íntegramente para cubrir el nuevo contrato (TOTAL/PARCIAL + placeholder + gating + sin PIN). Es la última rebanada de la cadena `feature-branch-chain` ya decidida por el orquestador (D → `-s4`, base=s3b) — sin sub-split adicional (última entrega de la cadena), organizada en 2 commits de work-unit (modal+test; wiring+test) + 1 commit de docs, para que el maintainer pueda re-trocear en sub-PRs antes de merge si lo considera necesario. Sin desviaciones de Design más allá de la documentada arriba (`tipo` explícito vs `nota-credito-pos-modal.tsx`). `crearNotaCredito`, `nota-credito-pos-modal.tsx`, `supervisor-pin-dialog.tsx`, `use-ventas.ts` confirmados con diff vacío.
 
+## Slice E — Refinamientos de QA del tester (post sdd-verify inicial)
+
+Rama `feat/notas-credito-admin-s5` (base=s4). 5 refinamientos puntuales
+sobre la UI/filtros/ruta ya construida en A-D, sin features nuevas. Modo
+Strict TDD, RED→GREEN confirmado en cada archivo de test tocado.
+
+### Review Workload
+
+| Field | Value |
+|---|---|
+| Estimated changed lines (real) | ~812 total (route rename 58 · builders+hooks 410 · UI+dimmed rows 344) |
+| 400-line budget risk | Medium — el commit de builders+hooks (410) excede el presupuesto por 10 líneas |
+| Chained PRs | No — slice unica, aplicada completa en esta sesión (instrucción explícita del prompt) |
+| Rollback | Cada uno de los 3 commits de trabajo es revertible independientemente sin romper los anteriores (ver "Commits" abajo) |
+
+**Nota sobre el commit de builders+hooks (410 líneas, sobre el presupuesto
+de 400 por 10 líneas)**: se mantuvo como una sola unidad porque `busqueda`
+y `estado` se diseñaron y probaron juntos en cada builder puro (mismo ciclo
+RED→GREEN por archivo, ver evidencia abajo) — partirlo habría dejado un
+commit intermedio con un builder a medio migrar (tipos inconsistentes entre
+`FiltroFacturasEmpresa` y `FiltroFacturasEmpresaHook`). Riesgo bajo: es
+capa 100% pura/hooks sin UI, con 30+22 tests unitarios cubriendo cada rama.
+
+### E.1 — Rename de ruta `/ventas/notas-credito` -> `/ventas/facturas-emitidas`
+
+- [x] E.1.1 Mover `src/routes/_app/ventas/notas-credito.tsx` ->
+  `facturas-emitidas.tsx`, `createFileRoute('/_app/ventas/facturas-emitidas')`.
+  Guard `SALES_VOID` preservado sin cambios.
+- [x] E.1.2 `src/components/layout/sidebar.tsx:85` — `url` actualizada a
+  `/ventas/facturas-emitidas` (label "Facturas emitidas" sin cambios, ya
+  renombrado en Slice C3a).
+- [x] E.1.3 Regenerar `src/routeTree.gen.ts` via `yarn build` (TanStack
+  Router plugin auto-codegen — no existe comando de codegen standalone en
+  este repo). **Verificado**: build exitoso, chunk `facturas-emitidas-*.js`
+  generado, `routeTree.gen.ts` referencia
+  `/_app/ventas/facturas-emitidas` en las 13 ubicaciones esperadas (imports,
+  tipos de ruta, registro de rutas).
+- [x] E.1.4 Grep de `ventas/notas-credito` y `notas-credito.tsx` en todo
+  `src/` — CERO referencias remanentes tras el rename.
+
+**Resultado real vs forecast**: 58 líneas (21 inserciones + 37 eliminaciones,
+3 archivos: sidebar, routeTree.gen.ts, delete+create de la ruta). Sin
+desviaciones — cambio puramente mecánico de path.
+
+### E.2 — Buscador unificado (patrón POS) en ambas pestañas
+
+- [x] E.2.1 RED: extender
+  `notas-credito-admin-filters.test.ts` con casos `busqueda` (OR sobre
+  `nro_factura`/`nro_ncr` + `cliente_nombre` + `cliente_identificacion`,
+  parametrizado 3 veces, vacío/whitespace ignorado, SQL-injection-safe) para
+  ambos builders. **RED confirmado**: 14/30 tests fallaron contra los
+  builders viejos (campos separados `nroFactura`/`clienteNombre`/etc. aún
+  no existían como `busqueda`).
+- [x] E.2.2 GREEN: `buildFacturasEmpresaFiltro`/`buildNotasCreditoFiltro`
+  reemplazan los 3 campos separados por `busqueda?: string` — clausula
+  `AND (col LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)`, mismo
+  término repetido 3 veces en `params` (nunca interpolado). **GREEN
+  confirmado**: 30/30 tests del archivo pasan.
+- [x] E.2.3 Hooks (`use-facturas-empresa.ts`, `use-notas-credito.ts`):
+  `FiltroFacturasEmpresaHook`/`FiltroNotasCreditoHook` migrados a
+  `busqueda?: string` (campos viejos removidos — grep confirmó que solo los
+  2 tabs los consumían, ambos migrados en el mismo slice). RED→GREEN sobre
+  `use-facturas-empresa.test.ts` (7/7) y `use-notas-credito.test.ts` (45/45).
+- [x] E.2.4 UI: `facturas-empresa-tab.tsx`/`notas-credito-tab.tsx` — los 3
+  inputs separados (nro/cliente/RIF) se reemplazan por UN input `Buscar`
+  (icono `MagnifyingGlass` embebido, mismo patrón visual que
+  `producto-buscador.tsx` del POS). Label visible asociado via `htmlFor`
+  (no solo `placeholder` — accesibilidad, modern-web-guidance "forms"). RED
+  confirmado en ambos archivos de test (inputs viejos ausentes, input nuevo
+  ausente) antes de reescribir los componentes.
+
+### E.3 — Filtro de Estado
+
+- [x] E.3.1 RED+GREEN: `buildFacturasEmpresaFiltro` gana `estado?:
+  'CONTADO' | 'CREDITO' | 'REVERSO_PARCIAL' | 'REVERSO_TOTAL'`. CONTADO/CREDITO
+  usan `CAST(v.saldo_pend_usd AS REAL)` con el mismo épsilon 0.005 que
+  `derivarEstadoPago` (comparación numérica sobre columna TEXT — mismo
+  patrón `CAST(...AS REAL)` ya usado en `deposito-venta.ts` para stock).
+  REVERSO_PARCIAL/REVERSO_TOTAL usan `EXISTS` sobre `notas_credito.tipo`
+  (mismo criterio que las columnas `tiene_reverso_*` ya seleccionadas).
+- [x] E.3.2 RED+GREEN: `buildNotasCreditoFiltro` gana `estado?:
+  'REVERSO_PARCIAL' | 'REVERSO_TOTAL'` — reusa la MISMA columna
+  `nc.tipo`/mismo valor TOTAL/PARCIAL que el viejo filtro `tipo` (Slice
+  A/B), solo cambia el label expuesto en la UI ("Reverso Total"/"Reverso
+  Parcial" en vez de "Total"/"Parcial").
+- [x] E.3.3 UI: selector `NativeSelect` "Estado" en ambas pestañas.
+  Facturas: 4 opciones (Contado/Crédito/Reverso Parcial/Reverso Total) +
+  "Todos". NC: 2 opciones (Reverso Total/Reverso Parcial) + "Todos" — SIN
+  Contado/Crédito (NC no tiene estado de pago propio). Confirmado via test
+  de opciones exactas en ambos archivos.
+
+### E.4 — Limpieza de la pestaña NC
+
+- [x] E.4.1 Retirado el filtro "Tipo" (`NativeSelect` viejo,
+  Total/Parcial/Todos) — reemplazado conceptualmente por el selector
+  "Estado" de E.3.3 (misma columna `nc.tipo`, distinto label de negocio).
+- [x] E.4.2 Retirado el botón "Ver todo el historial" + su handler
+  `verTodoElHistorial` + las constantes `FECHA_MINIMA_HISTORIAL`/
+  `FECHA_MAXIMA_HISTORIAL` (dead code tras el retiro del botón). **Confirmado**:
+  el rango de fecha (`Desde`/`Hasta`, default `rangoMesActual()`) queda como
+  el ÚNICO control de amplitud en la pestaña NC — no existe ningún escape
+  hatch de historial completo (test dedicado: `queryByRole('button', {name:
+  /ver todo el historial/i})` ausente).
+
+### E.5 — Fila atenuada para facturas 100% reversadas
+
+- [x] E.5.1 RED+GREEN: `filaFacturaAtenuada(f): boolean` — helper puro
+  nuevo en `notas-credito-ui.ts` (mismo módulo compartido que
+  `resolverBadgesFactura`/`derivarEstadoPago`), `f.tiene_reverso_total ===
+  1`. 3 tests unitarios (true/false/undefined), 0 mocks.
+- [x] E.5.2 `DataTable` genérico (`src/components/data-table/data-table.tsx`)
+  extendido: `rowClassName` ahora acepta `string | ((row: TData) => string |
+  undefined)` (retrocompatible — los demás consumidores del repo no usaban
+  esta prop); nuevo prop opcional `rowProps?: (row: TData) => Record<string,
+  string>` para atributos HTML extra por fila (usado para un marcador
+  semántico `data-atenuada`, NO una clase CSS — ver nota de testing abajo).
+- [x] E.5.3 `FacturasEmpresaTable` pasa `rowClassName={(f) =>
+  filaFacturaAtenuada(f) ? 'text-muted-foreground/70' : undefined}` (color
+  de texto HEREDABLE, nunca `opacity` — `opacity` atenuaría también el badge
+  "Reverso Total", que debe conservar su color explícito) +
+  `rowProps={(f) => filaFacturaAtenuada(f) ? {'data-atenuada':'true'} : {}}`.
+  **Nota de testing (strict-tdd Assertion Quality Rules — "CSS class
+  assertions are NEVER valid")**: el test de componente NO assert la clase
+  Tailwind; assert el atributo semántico `data-atenuada="true"` en el `<tr>`
+  (via `toHaveAttribute`, no `toHaveClass`) + que el badge "Reverso Total"
+  sigue visible dentro de esa misma fila (`within(row)`).
+
+**Resultado real vs forecast (E.2+E.3+E.4+E.5, UI layer)**: 344 líneas (204
+inserciones + 140 eliminaciones, 7 archivos: `facturas-empresa-tab.tsx` +
+test, `notas-credito-tab.tsx` + test, `notas-credito-ui.ts` + test,
+`data-table.tsx`). Sin desviaciones de los criterios de aceptación del
+prompt de apply. `empresa_id` confirmado SIEMPRE presente en los builders
+extendidos (tests dedicados en ambos). Bimonetario/decimal intactos (Slice
+E no toca montos). Español/TypeScript estricto preservados.
+
+## Deferred (fuera de alcance de Slice E, explícito)
+
+- **Modal de consulta de detalle de factura** (ver una factura sin abrir el
+  flujo de "Aplicar nota de crédito") — diferido a un change futuro.
+- **Textos de reverso enriquecidos** (historial expandido, notas al detalle
+  de una NC aplicada) — diferido hasta que las NC estén operativamente
+  conectadas a cuadre/tesorería (ver design.md "Costuras para el próximo
+  change").
+
 ## Estado final del change
 
-**TODAS las 4 slices (A, B, C, D) completas — 20/20 tasks marcadas `[x]`.** El
-change queda feature-complete a nivel de base visual/funcional (sidebar
-renombrado, 2 pestañas con contenido real y filtros, modal admin delgado
-reversando cualquier factura de la empresa sin PIN, wiring completo),
+**TODAS las 5 slices (A, B, C, D, E) completas.** El change queda
+feature-complete a nivel de base visual/funcional (sidebar renombrado, ruta
+en `/ventas/facturas-emitidas`, 2 pestañas con contenido real + búsqueda
+unificada + filtro de estado, modal admin delgado reversando cualquier
+factura de la empresa sin PIN, filas 100% reversadas atenuadas visualmente),
 pendiente de la fase `sdd-verify` para la prueba formal contra
 specs/design/tasks. Sin tareas remanentes en este archivo.
 
