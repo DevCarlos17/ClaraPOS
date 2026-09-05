@@ -289,6 +289,106 @@ prompt de apply. `empresa_id` confirmado SIEMPRE presente en los builders
 extendidos (tests dedicados en ambos). Bimonetario/decimal intactos (Slice
 E no toca montos). Español/TypeScript estricto preservados.
 
+## Slice E.b — Corrección de tester QA sobre el filtro de Estado (E.3)
+
+Rama `feat/notas-credito-admin-s5b` (base=s5, HEAD de Slice E). El tester
+QA revisó el selector de Estado agregado en E.3 y pidió una corrección
+puntual: en Facturas, el `<select>` separado se retira y el estado se
+detecta como palabra clave DENTRO del input de búsqueda unificado (E.2);
+en Notas de Crédito, el `<select>` de Estado simplemente se retira, sin
+fold — NC no tenía un plan claro de "búsqueda por estado" en el pedido del
+tester. Modo Strict TDD, RED→GREEN confirmado en los 5 archivos de test
+tocados.
+
+### Review Workload
+
+| Field | Value |
+|---|---|
+| Estimated changed lines (real) | 425 (builders+hooks 317 · UI 108) |
+| 400-line budget risk | Bajo — ambos commits de trabajo individualmente están debajo del presupuesto (317 y 108) |
+| Chained PRs | No — corrección puntual de un batch ya aplicado, sin features nuevas |
+| Rollback | Cada commit es revertible independientemente |
+
+### E.b.1 — Facturas: estado FOLDED en la búsqueda (incluye "abonada", nuevo)
+
+- [x] E.b.1.1 RED: `notas-credito-admin-filters.test.ts` — se retiran los 4
+  tests del campo `estado` separado (CONTADO/CREDITO/REVERSO_PARCIAL/REVERSO_TOTAL)
+  y se agregan 9 tests nuevos sobre `busqueda`: keywords "contado",
+  "Crédito" (tilde+mayúscula), "abonada" (NUEVO — no existía en el select
+  viejo), "reverso parcial", "REVERSO TOTAL" (mayúsculas); texto normal
+  ("Maria") sin clausula de estado; "reverso" suelto (no es keyword exacto)
+  sin clausula; busqueda vacía sin clausula; empresa_id siempre presente
+  combinado con estado folded; `estado` como campo YA NO existe en el tipo
+  (`@ts-expect-error`). **RED confirmado**: 12/108 tests fallaron contra el
+  contrato viejo (campo `estado` separado).
+- [x] E.b.1.2 GREEN: `EstadoFiltroFactura` gana `'ABONADA'` (universo
+  completo: CONTADO/CREDITO/ABONADA/REVERSO_PARCIAL/REVERSO_TOTAL).
+  `detectarEstadoFacturaEnBusqueda(busqueda)` — función pura privada,
+  normaliza (trim+lowercase+strip-acentos) y matchea EXACTO contra un mapa
+  de 5 palabras clave (nunca substring — "reverso" solo no dispara nada,
+  preserva el hallazgo de un cliente literal "Reverso"). `busqueda`
+  siempre agrega el OR de nro/cliente/RIF; cuando además detecta una
+  keyword, agrega la clausula de estado como una rama MÁS del mismo OR
+  (wide OR, nunca reemplaza — acceptance criteria del prompt: "nunca
+  pierde resultados"). ABONADA implementada consistente con
+  `derivarEstadoPago` (`notas-credito-ui.ts`): `saldo_pend_usd > 0.005 AND
+  saldo_pend_usd < (total_usd - 0.005)`, mismo épsilon 0.005 que
+  CONTADO/CREDITO. Campo `estado` RETIRADO de `FiltroFacturasEmpresa`
+  (folded en `busqueda`, ya no es un parámetro independiente). **GREEN
+  confirmado**: 30/30 tests del archivo.
+- [x] E.b.1.3 Hooks: `FiltroFacturasEmpresaHook` pierde el campo `estado`
+  (mecánico — el hook solo pasa `busqueda` al builder, la detección de
+  keyword vive enteramente en la capa pura). RED→GREEN en
+  `use-facturas-empresa.test.ts` (8/8, +1 test neto: se retira el test de
+  `estado` directo y se agregan 2 — folding vía `busqueda` y campo
+  `estado` inexistente).
+- [x] E.b.1.4 UI: `facturas-empresa-tab.tsx` — `<select>` de Estado
+  eliminado por completo (`NativeSelect` ahora sin consumidores en este
+  archivo, import retirado). El input `Buscar` gana un placeholder que
+  documenta las keywords disponibles ("Factura, cliente, RIF o estado
+  (contado, crédito, abonada, reverso total/parcial)..."). RED→GREEN en
+  `facturas-empresa-tab.test.tsx` (16/16 — se retiran los 2 tests del
+  select viejo, se agregan 2: ausencia del select + `busqueda="abonada"`
+  llega intacta al hook).
+
+### E.b.2 — Notas de crédito: estado RETIRADO por completo (sin fold)
+
+- [x] E.b.2.1 RED+GREEN: `buildNotasCreditoFiltro` pierde la rama
+  `if (f.estado === ...)` — `nc.tipo` deja de ser filtrable desde esta
+  pestaña. Grep confirmó que `EstadoFiltroNotaCredito` solo tenía 3
+  consumidores (`FiltroNotasCredito.estado`, `FiltroNotasCreditoHook.estado`,
+  `notas-credito-tab.tsx`) — los 3 se migran en este mismo slice, por lo
+  que el tipo queda 100% muerto y se ELIMINA (no solo se deja de exportar).
+  2 tests viejos de estado NC se retiran, se agregan 2 (nc.tipo nunca
+  filtrable + campo `estado` inexistente).
+- [x] E.b.2.2 Hook: `FiltroNotasCreditoHook` pierde `estado` +
+  `EstadoFiltroNotaCredito` (import retirado de `use-notas-credito.ts`).
+  Diff confinado a la interfaz/llamada de `buildNotasCreditoFiltro` dentro
+  de `useNotasCredito()` (líneas ~208-256) — CERO líneas tocadas dentro de
+  `crearNotaCredito` (línea 339+, FROZEN). RED→GREEN en
+  `use-notas-credito.test.ts` (45/45 — 2 tests viejos de estado NC
+  reemplazados por 2 nuevos).
+- [x] E.b.2.3 UI: `notas-credito-tab.tsx` — `<select>` de Estado eliminado
+  por completo (sin reemplazo, a diferencia de Facturas). Import de
+  `NativeSelect`/`EstadoFiltroNotaCredito` retirado. RED→GREEN en
+  `notas-credito-tab.test.tsx` (9/9 — se retiran los 2 tests del select
+  viejo, se agrega 1: ausencia del select).
+
+**Resultado real vs forecast**: 425 líneas (218 inserciones + 207
+eliminaciones, 10 archivos) — 25 sobre el presupuesto de 400 en el TOTAL
+combinado, pero repartidas en 2 commits de trabajo individualmente sanos
+(builders+hooks 317, UI 108), cada uno revertible por separado. Sin
+desviaciones de los criterios de aceptación del prompt de apply.
+`empresa_id` confirmado SIEMPRE presente (tests dedicados). SQL
+parametrizado en toda `busqueda` (ningún valor de usuario se interpola —
+las constantes de estado, como `'PARCIAL'`/`0.005`, son literales internos,
+no input de usuario, mismo patrón que el resto del builder). Verificado:
+`yarn test:run` 93 archivos / 1136 tests verdes, `yarn type-check:test`
+limpio. FROZEN confirmado sin cambios: `nota-credito-pos-modal.tsx` y
+`supervisor-pin-dialog.tsx` con diff VACÍO; `use-notas-credito.ts` con diff
+confinado a `FiltroNotasCreditoHook`/`useNotasCredito` (0 líneas de
+`crearNotaCredito` en el diff).
+
 ## Deferred (fuera de alcance de Slice E, explícito)
 
 - **Modal de consulta de detalle de factura** (ver una factura sin abrir el
