@@ -20,6 +20,7 @@ import {
 import {
   buildNotasCreditoFiltro,
   rangoMesActual,
+  type EstadoFiltroNotaCredito,
 } from '@/features/ventas/utils/notas-credito-admin-filters'
 
 // ─── Interfaces ─────────────────────────────────────────────
@@ -213,14 +214,17 @@ export interface CrearNotaCreditoResult {
  * limitada al mes en curso"). Pasar un rango explicito amplio es el
  * mecanismo de escape para "ver todo el historial" (Design §Riesgos) — no
  * existe un flag separado.
+ *
+ * Slice E.2/E.3 (tester QA feedback): `busqueda`/`estado` reemplazan los
+ * campos separados `nroNcr`/`tipo`/`clienteNombre`/`clienteIdentificacion`
+ * (retirados, la UI ya no los expone por separado — un solo input de
+ * busqueda, patron POS).
  */
 export interface FiltroNotasCreditoHook {
   fechaDesde?: string
   fechaHasta?: string
-  nroNcr?: string
-  tipo?: 'TOTAL' | 'PARCIAL'
-  clienteNombre?: string
-  clienteIdentificacion?: string
+  busqueda?: string
+  estado?: EstadoFiltroNotaCredito
 }
 
 /**
@@ -245,10 +249,8 @@ export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
       empresaId,
       fechaDesde,
       fechaHasta,
-      nroNcr: filtros.nroNcr,
-      tipo: filtros.tipo,
-      clienteNombre: filtros.clienteNombre,
-      clienteIdentificacion: filtros.clienteIdentificacion,
+      busqueda: filtros.busqueda,
+      estado: filtros.estado,
     })
     sql = built.sql
     params = built.params

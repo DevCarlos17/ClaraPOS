@@ -21,7 +21,7 @@ describe('rangoMesActual (compone startOfMonth()/todayStr() de @/lib/dates)', ()
   })
 })
 
-// ─── buildFacturasEmpresaFiltro (Slice A.3/A.4, Design §Decision 3) ────────
+// ─── buildFacturasEmpresaFiltro (Slice A.3/A.4 + Slice E.2/E.3) ────────
 
 describe('buildFacturasEmpresaFiltro (empresa_id + rango de fecha siempre presentes)', () => {
   const base = { empresaId: 'emp-1', fechaDesde: '2026-05-01', fechaHasta: '2026-05-21' }
@@ -48,63 +48,92 @@ describe('buildFacturasEmpresaFiltro (empresa_id + rango de fecha siempre presen
     expect(sql).not.toContain('sesion_caja_id')
   })
 
-  it('filtro nroFactura aislado: agrega AND v.nro_factura LIKE ? con el parametro wrapeado en %', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, nroFactura: 'C01-0042' })
-    expect(sql).toContain('AND v.nro_factura LIKE ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%C01-0042%'])
+  // ─── Slice E.2 — busqueda unificada (patron POS: un solo input) ────────
+
+  it('busqueda: agrega OR sobre nro_factura/cliente_nombre/cliente_identificacion, con el termino repetido 3 veces en params', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'C01-0042' })
+    expect(sql).toContain('AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%C01-0042%', '%C01-0042%', '%C01-0042%'])
   })
 
-  it('filtro clienteNombre aislado: agrega AND c.nombre LIKE ?', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, clienteNombre: 'Maria' })
-    expect(sql).toContain('AND c.nombre LIKE ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%Maria%'])
+  it('busqueda matchea por nombre de cliente (mismo termino, misma clausula OR)', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'Maria' })
+    expect(sql).toContain('OR c.nombre LIKE ?')
+    expect(params).toContain('%Maria%')
   })
 
-  it('filtro clienteIdentificacion aislado: agrega AND c.identificacion LIKE ?', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, clienteIdentificacion: 'V-123' })
-    expect(sql).toContain('AND c.identificacion LIKE ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%V-123%'])
+  it('busqueda matchea por RIF (mismo termino, misma clausula OR)', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'V-123' })
+    expect(sql).toContain('OR c.identificacion LIKE ?')
+    expect(params).toContain('%V-123%')
   })
 
-  it('filtros combinados: nroFactura + clienteNombre + clienteIdentificacion aparecen en orden y en params', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({
-      ...base,
-      nroFactura: '0042',
-      clienteNombre: 'Maria',
-      clienteIdentificacion: 'V-123',
-    })
-    const idxNro = sql.indexOf('v.nro_factura LIKE')
-    const idxNombre = sql.indexOf('c.nombre LIKE')
-    const idxIdent = sql.indexOf('c.identificacion LIKE')
-    expect(idxNro).toBeGreaterThan(-1)
-    expect(idxNombre).toBeGreaterThan(idxNro)
-    expect(idxIdent).toBeGreaterThan(idxNombre)
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%0042%', '%Maria%', '%V-123%'])
-  })
-
-  it('strings vacios o solo whitespace se ignoran (no agregan clausula ni parametro)', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({
-      ...base,
-      nroFactura: '   ',
-      clienteNombre: '',
-      clienteIdentificacion: '\t',
-    })
+  it('busqueda vacia o solo whitespace: NO agrega la clausula OR ni parametros', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: '   ' })
     expect(sql).not.toContain('LIKE ?')
     expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
   })
 
-  it('params SIEMPRE parametrizados: ningun valor de filtro se interpola directo en el SQL', () => {
-    const { sql } = buildFacturasEmpresaFiltro({
-      ...base,
-      nroFactura: "'; DROP TABLE ventas; --",
-    })
+  it('busqueda omitida: comportamiento identico a busqueda vacia', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro(base)
+    expect(sql).not.toContain('LIKE ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
+
+  it('params SIEMPRE parametrizados: ningun valor de busqueda se interpola directo en el SQL', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, busqueda: "'; DROP TABLE ventas; --" })
     expect(sql).not.toContain('DROP TABLE')
+  })
+
+  // ─── Slice E.3 — filtro de estado (Contado/Credito/Reverso Parcial/Reverso Total) ────────
+
+  it('estado CONTADO: filtra CAST(v.saldo_pend_usd AS REAL) <= 0.005 (mismo epsilon que derivarEstadoPago)', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, estado: 'CONTADO' })
+    expect(sql).toContain('AND CAST(v.saldo_pend_usd AS REAL) <= 0.005')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
+
+  it('estado CREDITO: filtra CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, estado: 'CREDITO' })
+    expect(sql).toContain('AND CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)')
+  })
+
+  it('estado REVERSO_PARCIAL: filtra EXISTS notas_credito con tipo PARCIAL para la venta', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, estado: 'REVERSO_PARCIAL' })
+    expect(sql).toContain("AND EXISTS(SELECT 1 FROM notas_credito")
+    expect(sql).toMatch(/AND EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'PARCIAL'\)/)
+  })
+
+  it('estado REVERSO_TOTAL: filtra EXISTS notas_credito con tipo TOTAL para la venta', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, estado: 'REVERSO_TOTAL' })
+    expect(sql).toMatch(/AND EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'TOTAL'\)/)
+  })
+
+  it('estado omitido: no agrega ninguna clausula de estado', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro(base)
+    expect(sql).not.toContain('saldo_pend_usd AS REAL')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
+
+  it('busqueda + estado combinados: ambas clausulas aparecen, busqueda antes de estado', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'Maria', estado: 'CONTADO' })
+    const idxBusqueda = sql.indexOf('v.nro_factura LIKE')
+    const idxEstado = sql.indexOf('saldo_pend_usd AS REAL')
+    expect(idxBusqueda).toBeGreaterThan(-1)
+    expect(idxEstado).toBeGreaterThan(idxBusqueda)
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%Maria%', '%Maria%', '%Maria%'])
+  })
+
+  it('empresa_id SIEMPRE presente incluso con busqueda y estado combinados', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'x', estado: 'REVERSO_TOTAL' })
+    expect(sql).toContain('v.empresa_id = ?')
+    expect(params[0]).toBe('emp-1')
   })
 })
 
-// ─── buildNotasCreditoFiltro (Slice A.5/A.6, Design §Decision 4) ────────
+// ─── buildNotasCreditoFiltro (Slice A.5/A.6 + Slice E.2/E.3) ────────
 
-describe('buildNotasCreditoFiltro (mismos casos + filtro tipo TOTAL/PARCIAL)', () => {
+describe('buildNotasCreditoFiltro (mismos casos + filtro de estado reverso TOTAL/PARCIAL)', () => {
   const base = { empresaId: 'emp-1', fechaDesde: '2026-05-01', fechaHasta: '2026-05-21' }
 
   it('sin filtros opcionales: WHERE incluye empresa_id y rango de fecha, params = [empresaId, fechaDesde, fechaHasta]', () => {
@@ -115,80 +144,82 @@ describe('buildNotasCreditoFiltro (mismos casos + filtro tipo TOTAL/PARCIAL)', (
     expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
   })
 
-  it('filtro nroNcr aislado: agrega AND nc.nro_ncr LIKE ?', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, nroNcr: 'NCR-000012' })
-    expect(sql).toContain('AND nc.nro_ncr LIKE ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%NCR-000012%'])
-  })
-
-  it('filtro tipo TOTAL: agrega AND nc.tipo = ? (exacto, sin LIKE)', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, tipo: 'TOTAL' })
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'TOTAL'])
-  })
-
-  it('filtro tipo PARCIAL: agrega AND nc.tipo = ?', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, tipo: 'PARCIAL' })
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'PARCIAL'])
-  })
-
-  it('tipo omitido: no agrega clausula de tipo', () => {
-    const { sql, params } = buildNotasCreditoFiltro(base)
-    expect(sql).not.toContain('nc.tipo = ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
-  })
-
-  it('filtro clienteNombre aislado: agrega AND c.nombre LIKE ?', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, clienteNombre: 'Maria' })
-    expect(sql).toContain('AND c.nombre LIKE ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%Maria%'])
-  })
-
-  it('filtro clienteIdentificacion aislado: agrega AND c.identificacion LIKE ?', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, clienteIdentificacion: 'V-123' })
-    expect(sql).toContain('AND c.identificacion LIKE ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%V-123%'])
-  })
-
-  it('filtros combinados: fecha + nroNcr + tipo + cliente + RIF se aplican simultaneamente', () => {
-    const { sql, params } = buildNotasCreditoFiltro({
-      ...base,
-      nroNcr: '000012',
-      tipo: 'TOTAL',
-      clienteNombre: 'Maria',
-      clienteIdentificacion: 'V-123',
-    })
-    expect(sql).toContain('AND nc.nro_ncr LIKE ?')
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(sql).toContain('AND c.nombre LIKE ?')
-    expect(sql).toContain('AND c.identificacion LIKE ?')
-    expect(params).toEqual([
-      'emp-1',
-      '2026-05-01',
-      '2026-05-21',
-      '%000012%',
-      'TOTAL',
-      '%Maria%',
-      '%V-123%',
-    ])
-  })
-
-  it('strings vacios o solo whitespace se ignoran', () => {
-    const { sql, params } = buildNotasCreditoFiltro({
-      ...base,
-      nroNcr: '   ',
-      clienteNombre: '',
-      clienteIdentificacion: '\t',
-    })
-    expect(sql).not.toContain('LIKE ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
-  })
-
   it('preserva el buscador/JOIN existente: nc.venta_id -> ventas v, nc.cliente_id -> clientes c', () => {
     const { sql } = buildNotasCreditoFiltro(base)
     expect(sql).toContain('FROM notas_credito nc')
     expect(sql).toContain('JOIN ventas v ON nc.venta_id = v.id')
     expect(sql).toContain('JOIN clientes c ON nc.cliente_id = c.id')
+  })
+
+  // ─── Slice E.2 — busqueda unificada (patron POS: un solo input) ────────
+
+  it('busqueda: agrega OR sobre nro_ncr/cliente_nombre/cliente_identificacion, con el termino repetido 3 veces en params', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'NCR-000012' })
+    expect(sql).toContain('AND (nc.nro_ncr LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%NCR-000012%', '%NCR-000012%', '%NCR-000012%'])
+  })
+
+  it('busqueda matchea por nombre de cliente', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'Maria' })
+    expect(sql).toContain('OR c.nombre LIKE ?')
+    expect(params).toContain('%Maria%')
+  })
+
+  it('busqueda matchea por RIF', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'V-123' })
+    expect(sql).toContain('OR c.identificacion LIKE ?')
+    expect(params).toContain('%V-123%')
+  })
+
+  it('busqueda vacia o solo whitespace: NO agrega la clausula OR ni parametros', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: '\t' })
+    expect(sql).not.toContain('LIKE ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
+
+  it('params SIEMPRE parametrizados: ningun valor de busqueda se interpola directo en el SQL', () => {
+    const { sql } = buildNotasCreditoFiltro({ ...base, busqueda: "'; DROP TABLE notas_credito; --" })
+    expect(sql).not.toContain('DROP TABLE')
+  })
+
+  // ─── Slice E.3 — filtro de estado (Reverso Total / Reverso Parcial, NC no tiene Contado/Credito) ────────
+
+  it('estado REVERSO_TOTAL: filtra AND nc.tipo = ? con el valor TOTAL parametrizado', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, estado: 'REVERSO_TOTAL' })
+    expect(sql).toContain('AND nc.tipo = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'TOTAL'])
+  })
+
+  it('estado REVERSO_PARCIAL: filtra AND nc.tipo = ? con el valor PARCIAL parametrizado', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, estado: 'REVERSO_PARCIAL' })
+    expect(sql).toContain('AND nc.tipo = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'PARCIAL'])
+  })
+
+  it('estado omitido: no agrega clausula de tipo/estado', () => {
+    const { sql, params } = buildNotasCreditoFiltro(base)
+    expect(sql).not.toContain('nc.tipo = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
+
+  it('busqueda + estado combinados: ambas clausulas se aplican simultaneamente', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'Maria', estado: 'REVERSO_TOTAL' })
+    expect(sql).toContain('AND (nc.nro_ncr LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
+    expect(sql).toContain('AND nc.tipo = ?')
+    expect(params).toEqual([
+      'emp-1',
+      '2026-05-01',
+      '2026-05-21',
+      '%Maria%',
+      '%Maria%',
+      '%Maria%',
+      'TOTAL',
+    ])
+  })
+
+  it('empresa_id SIEMPRE presente incluso con busqueda y estado combinados', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'x', estado: 'REVERSO_PARCIAL' })
+    expect(sql).toContain('nc.empresa_id = ?')
+    expect(params[0]).toBe('emp-1')
   })
 })

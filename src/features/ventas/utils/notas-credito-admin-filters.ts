@@ -38,15 +38,33 @@ export interface SqlFiltroResult {
   params: unknown[]
 }
 
+/**
+ * Estado unico y mutuamente excluyente para el filtro "Estado" de la
+ * pestaña Facturas (Slice E.3, notas-credito-ruta-administrativa — tester
+ * QA feedback). `CONTADO`/`CREDITO` derivan del mismo epsilon 0.005 que
+ * `derivarEstadoPago` (`notas-credito-ui.ts`) sobre `saldo_pend_usd`/
+ * `total_usd`; `REVERSO_PARCIAL`/`REVERSO_TOTAL` derivan de la existencia
+ * de una NC con ese `tipo` para la venta (mismo criterio que las columnas
+ * `tiene_reverso_total`/`tiene_reverso_parcial` ya seleccionadas). No
+ * incluye `ABONADA` — fuera del alcance literal pedido para este selector.
+ */
+export type EstadoFiltroFactura = 'CONTADO' | 'CREDITO' | 'REVERSO_PARCIAL' | 'REVERSO_TOTAL'
+
 export interface FiltroFacturasEmpresa {
   empresaId: string
   /** 'YYYY-MM-DD'. El llamador aplica el default (`rangoMesActual()`) — este builder no asume ninguno. */
   fechaDesde: string
   /** 'YYYY-MM-DD'. Ver `fechaDesde`. */
   fechaHasta: string
-  nroFactura?: string
-  clienteNombre?: string
-  clienteIdentificacion?: string
+  /**
+   * Termino unico de busqueda (Slice E.2 — patron POS "un solo input").
+   * Coincide OR contra `nro_factura`, `cliente_nombre`,
+   * `cliente_identificacion` (RIF) — reemplaza los 3 campos separados de
+   * Slice A (`nroFactura`/`clienteNombre`/`clienteIdentificacion`,
+   * retirados: la UI ya no los expone por separado).
+   */
+  busqueda?: string
+  estado?: EstadoFiltroFactura
 }
 
 /**
@@ -73,22 +91,21 @@ export function buildFacturasEmpresaFiltro(f: FiltroFacturasEmpresa): SqlFiltroR
        AND datetime(v.fecha) >= datetime(? || 'T00:00:00${VE_OFFSET}')
        AND datetime(v.fecha) <= datetime(? || 'T23:59:59${VE_OFFSET}')`
 
-  const nroFactura = f.nroFactura?.trim()
-  if (nroFactura) {
-    sql += `\n       AND v.nro_factura LIKE ?`
-    params.push(`%${nroFactura}%`)
+  const busqueda = f.busqueda?.trim()
+  if (busqueda) {
+    sql += `\n       AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)`
+    const like = `%${busqueda}%`
+    params.push(like, like, like)
   }
 
-  const clienteNombre = f.clienteNombre?.trim()
-  if (clienteNombre) {
-    sql += `\n       AND c.nombre LIKE ?`
-    params.push(`%${clienteNombre}%`)
-  }
-
-  const clienteIdentificacion = f.clienteIdentificacion?.trim()
-  if (clienteIdentificacion) {
-    sql += `\n       AND c.identificacion LIKE ?`
-    params.push(`%${clienteIdentificacion}%`)
+  if (f.estado === 'CONTADO') {
+    sql += `\n       AND CAST(v.saldo_pend_usd AS REAL) <= 0.005`
+  } else if (f.estado === 'CREDITO') {
+    sql += `\n       AND CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)`
+  } else if (f.estado === 'REVERSO_PARCIAL') {
+    sql += `\n       AND EXISTS(SELECT 1 FROM notas_credito nce WHERE nce.venta_id = v.id AND nce.tipo = 'PARCIAL')`
+  } else if (f.estado === 'REVERSO_TOTAL') {
+    sql += `\n       AND EXISTS(SELECT 1 FROM notas_credito nce WHERE nce.venta_id = v.id AND nce.tipo = 'TOTAL')`
   }
 
   sql += `\n     ORDER BY v.fecha DESC`
@@ -96,16 +113,29 @@ export function buildFacturasEmpresaFiltro(f: FiltroFacturasEmpresa): SqlFiltroR
   return { sql, params }
 }
 
+/**
+ * Estado unico para el filtro de la pestaña Notas de credito (Slice E.3).
+ * A diferencia de `EstadoFiltroFactura`, NC no tiene estado de pago propio
+ * (Contado/Credito) — solo los 2 valores de `tipo` ya persistidos en
+ * `notas_credito.tipo`, relabeleados como "Reverso Total"/"Reverso Parcial"
+ * en la UI (mismo dato, mismo nombre de columna, solo cambia el label).
+ */
+export type EstadoFiltroNotaCredito = 'REVERSO_PARCIAL' | 'REVERSO_TOTAL'
+
 export interface FiltroNotasCredito {
   empresaId: string
   /** 'YYYY-MM-DD'. El llamador aplica el default (`rangoMesActual()`) — este builder no asume ninguno. */
   fechaDesde: string
   /** 'YYYY-MM-DD'. Ver `fechaDesde`. */
   fechaHasta: string
-  nroNcr?: string
-  tipo?: 'TOTAL' | 'PARCIAL'
-  clienteNombre?: string
-  clienteIdentificacion?: string
+  /**
+   * Termino unico de busqueda (Slice E.2 — patron POS "un solo input").
+   * Coincide OR contra `nro_ncr`, `cliente_nombre`, `cliente_identificacion`
+   * (RIF) — reemplaza los 3 campos separados de Slice A (`nroNcr`/
+   * `clienteNombre`/`clienteIdentificacion`, retirados).
+   */
+  busqueda?: string
+  estado?: EstadoFiltroNotaCredito
 }
 
 /**
@@ -129,27 +159,19 @@ export function buildNotasCreditoFiltro(f: FiltroNotasCredito): SqlFiltroResult 
        AND datetime(nc.fecha) >= datetime(? || 'T00:00:00${VE_OFFSET}')
        AND datetime(nc.fecha) <= datetime(? || 'T23:59:59${VE_OFFSET}')`
 
-  const nroNcr = f.nroNcr?.trim()
-  if (nroNcr) {
-    sql += `\n       AND nc.nro_ncr LIKE ?`
-    params.push(`%${nroNcr}%`)
+  const busqueda = f.busqueda?.trim()
+  if (busqueda) {
+    sql += `\n       AND (nc.nro_ncr LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)`
+    const like = `%${busqueda}%`
+    params.push(like, like, like)
   }
 
-  if (f.tipo) {
+  if (f.estado === 'REVERSO_TOTAL') {
     sql += `\n       AND nc.tipo = ?`
-    params.push(f.tipo)
-  }
-
-  const clienteNombre = f.clienteNombre?.trim()
-  if (clienteNombre) {
-    sql += `\n       AND c.nombre LIKE ?`
-    params.push(`%${clienteNombre}%`)
-  }
-
-  const clienteIdentificacion = f.clienteIdentificacion?.trim()
-  if (clienteIdentificacion) {
-    sql += `\n       AND c.identificacion LIKE ?`
-    params.push(`%${clienteIdentificacion}%`)
+    params.push('TOTAL')
+  } else if (f.estado === 'REVERSO_PARCIAL') {
+    sql += `\n       AND nc.tipo = ?`
+    params.push('PARCIAL')
   }
 
   sql += `\n     ORDER BY nc.fecha DESC`

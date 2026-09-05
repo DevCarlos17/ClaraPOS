@@ -1249,37 +1249,28 @@ describe('useNotasCredito — Slice B (notas-credito-ruta-administrativa, Design
     expect(params).toEqual(['emp-1', '2020-01-01', '2026-05-21'])
   })
 
-  it('filtro nroNcr se aplica via buildNotasCreditoFiltro', () => {
-    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', nroNcr: 'NCR-000012' }))
+  it('Slice E.2: filtro busqueda (unificado) se aplica via buildNotasCreditoFiltro', () => {
+    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', busqueda: 'NCR-000012' }))
 
     const [sql, params] = mockedUseQuery.mock.calls[0]!
-    expect(sql).toContain('AND nc.nro_ncr LIKE ?')
+    expect(sql).toContain('AND (nc.nro_ncr LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
     expect(params).toContain('%NCR-000012%')
   })
 
-  it('filtro tipo TOTAL/PARCIAL se aplica exacto (sin LIKE)', () => {
-    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', tipo: 'PARCIAL' }))
+  it('Slice E.3: filtro estado REVERSO_PARCIAL se aplica exacto (nc.tipo = PARCIAL, sin LIKE)', () => {
+    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', estado: 'REVERSO_PARCIAL' }))
 
     const [sql, params] = mockedUseQuery.mock.calls[0]!
     expect(sql).toContain('AND nc.tipo = ?')
     expect(params).toContain('PARCIAL')
   })
 
-  it('filtros cliente/RIF combinables', () => {
-    renderHook(() =>
-      useNotasCredito({
-        fechaDesde: '2026-05-01',
-        fechaHasta: '2026-05-21',
-        clienteNombre: 'Maria',
-        clienteIdentificacion: 'V-123',
-      })
-    )
+  it('Slice E.3: filtro estado REVERSO_TOTAL se aplica exacto (nc.tipo = TOTAL, sin LIKE)', () => {
+    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', estado: 'REVERSO_TOTAL' }))
 
     const [sql, params] = mockedUseQuery.mock.calls[0]!
-    expect(sql).toContain('AND c.nombre LIKE ?')
-    expect(sql).toContain('AND c.identificacion LIKE ?')
-    expect(params).toContain('%Maria%')
-    expect(params).toContain('%V-123%')
+    expect(sql).toContain('AND nc.tipo = ?')
+    expect(params).toContain('TOTAL')
   })
 
   it('empresa_id SIEMPRE presente en params, con o sin filtros', () => {

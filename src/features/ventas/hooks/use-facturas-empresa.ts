@@ -1,7 +1,11 @@
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import type { FacturaParaAnular } from './use-notas-credito'
-import { buildFacturasEmpresaFiltro, rangoMesActual } from '../utils/notas-credito-admin-filters'
+import {
+  buildFacturasEmpresaFiltro,
+  rangoMesActual,
+  type EstadoFiltroFactura,
+} from '../utils/notas-credito-admin-filters'
 
 /**
  * Filtros del hook (Slice B, notas-credito-ruta-administrativa, Design
@@ -12,13 +16,17 @@ import { buildFacturasEmpresaFiltro, rangoMesActual } from '../utils/notas-credi
  * Pasar un rango explicito (por ejemplo, una fecha muy antigua) es el
  * mecanismo de escape para "ver todo el historial" — no existe un flag
  * separado, el propio rango explicito bypasea el default.
+ *
+ * Slice E.2/E.3 (tester QA feedback): `busqueda`/`estado` reemplazan los
+ * campos separados `nroFactura`/`clienteNombre`/`clienteIdentificacion`
+ * (retirados, la UI ya no los expone por separado — un solo input de
+ * busqueda, patron POS).
  */
 export interface FiltroFacturasEmpresaHook {
   fechaDesde?: string
   fechaHasta?: string
-  nroFactura?: string
-  clienteNombre?: string
-  clienteIdentificacion?: string
+  busqueda?: string
+  estado?: EstadoFiltroFactura
 }
 
 /**
@@ -41,9 +49,8 @@ export function useFacturasEmpresa(filtros?: FiltroFacturasEmpresaHook) {
     empresaId,
     fechaDesde,
     fechaHasta,
-    nroFactura: filtros?.nroFactura,
-    clienteNombre: filtros?.clienteNombre,
-    clienteIdentificacion: filtros?.clienteIdentificacion,
+    busqueda: filtros?.busqueda,
+    estado: filtros?.estado,
   })
 
   const { data, isLoading } = useQuery(sql, params)

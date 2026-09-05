@@ -58,35 +58,27 @@ describe('useFacturasEmpresa (Slice B, Design §Decision 3) — hook empresa-wid
     expect(params).toEqual(['emp-1', '2020-01-01', '2026-05-21'])
   })
 
-  it('filtro nroFactura se aplica via buildFacturasEmpresaFiltro', () => {
+  it('Slice E.2: filtro busqueda (unificado) se aplica via buildFacturasEmpresaFiltro', () => {
     setup()
 
     renderHook(() =>
-      useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', nroFactura: 'C01-0042' })
+      useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', busqueda: 'C01-0042' })
     )
 
     const [sql, params] = mockedUseQuery.mock.calls[0]!
-    expect(sql).toContain('AND v.nro_factura LIKE ?')
+    expect(sql).toContain('AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
     expect(params).toContain('%C01-0042%')
   })
 
-  it('filtros cliente/RIF se aplican via buildFacturasEmpresaFiltro', () => {
+  it('Slice E.3: filtro estado se aplica via buildFacturasEmpresaFiltro', () => {
     setup()
 
     renderHook(() =>
-      useFacturasEmpresa({
-        fechaDesde: '2026-05-01',
-        fechaHasta: '2026-05-21',
-        clienteNombre: 'Maria',
-        clienteIdentificacion: 'V-123',
-      })
+      useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', estado: 'REVERSO_TOTAL' })
     )
 
-    const [sql, params] = mockedUseQuery.mock.calls[0]!
-    expect(sql).toContain('AND c.nombre LIKE ?')
-    expect(sql).toContain('AND c.identificacion LIKE ?')
-    expect(params).toContain('%Maria%')
-    expect(params).toContain('%V-123%')
+    const [sql] = mockedUseQuery.mock.calls[0]!
+    expect(sql).toMatch(/AND EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'TOTAL'\)/)
   })
 
   it('retorna facturas de MULTIPLES sesiones/dias distintos dentro del rango (a diferencia de useFacturasSesionActiva)', () => {
@@ -100,16 +92,15 @@ describe('useFacturasEmpresa (Slice B, Design §Decision 3) — hook empresa-wid
     expect(result.current.facturas).toHaveLength(2)
   })
 
-  it('empresa_id SIEMPRE presente en params, incluso combinando todos los filtros', () => {
+  it('empresa_id SIEMPRE presente en params, incluso combinando busqueda + estado', () => {
     setup()
 
     renderHook(() =>
       useFacturasEmpresa({
         fechaDesde: '2026-05-01',
         fechaHasta: '2026-05-21',
-        nroFactura: '0042',
-        clienteNombre: 'Maria',
-        clienteIdentificacion: 'V-123',
+        busqueda: '0042',
+        estado: 'CONTADO',
       })
     )
 
