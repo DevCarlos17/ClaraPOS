@@ -6,6 +6,28 @@
 // `nota-credito-pos-modal.test.tsx` (`useFacturasSesionActiva`).
 vi.mock('../../hooks/use-facturas-empresa', () => ({ useFacturasEmpresa: vi.fn() }))
 
+// Slice D: el contenedor monta `CrearNcrModal` real al confirmar la accion
+// por fila. Se mockea aqui (aislado, unit-test de wiring) porque el modal
+// real usa hooks de PowerSync/CXC que no estan disponibles en este entorno
+// de test — su propio contrato ya esta cubierto por `crear-ncr-modal.test.tsx`.
+vi.mock('../crear-ncr-modal', () => ({
+  CrearNcrModal: ({
+    isOpen,
+    factura,
+    onClose,
+  }: {
+    isOpen: boolean
+    factura: FacturaParaAnular | null
+    onClose: () => void
+  }) =>
+    isOpen ? (
+      <div data-testid="mock-crear-ncr-modal">
+        <span>{factura?.nro_factura}</span>
+        <button onClick={onClose}>Cerrar modal</button>
+      </div>
+    ) : null,
+}))
+
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useFacturasEmpresa } from '../../hooks/use-facturas-empresa'
@@ -128,5 +150,47 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
     })
     render(<FacturasEmpresaTab />)
     expect(screen.getByRole('button', { name: /aplicar nota de credito/i })).toBeDisabled()
+  })
+
+  describe('Slice D — wiring del modal admin real', () => {
+    it('click en "Aplicar nota de credito" abre CrearNcrModal con la factura de la fila', async () => {
+      const user = userEvent.setup()
+      const f = factura()
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [f], isLoading: false })
+
+      render(<FacturasEmpresaTab />)
+      expect(screen.queryByTestId('mock-crear-ncr-modal')).not.toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: /aplicar nota de credito/i }))
+
+      expect(screen.getByTestId('mock-crear-ncr-modal')).toBeInTheDocument()
+      expect(screen.getByText('C01-000001')).toBeInTheDocument()
+    })
+
+    it('cerrar el modal (onClose) lo desmonta', async () => {
+      const user = userEvent.setup()
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [factura()], isLoading: false })
+
+      render(<FacturasEmpresaTab />)
+      await user.click(screen.getByRole('button', { name: /aplicar nota de credito/i }))
+      expect(screen.getByTestId('mock-crear-ncr-modal')).toBeInTheDocument()
+
+      await user.click(screen.getByText('Cerrar modal'))
+
+      expect(screen.queryByTestId('mock-crear-ncr-modal')).not.toBeInTheDocument()
+    })
+
+    it('sigue invocando el `onAplicarNc` externo (opcional) ademas de abrir el modal interno', async () => {
+      const user = userEvent.setup()
+      const f = factura()
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [f], isLoading: false })
+      const onAplicarNc = vi.fn()
+
+      render(<FacturasEmpresaTab onAplicarNc={onAplicarNc} />)
+      await user.click(screen.getByRole('button', { name: /aplicar nota de credito/i }))
+
+      expect(onAplicarNc).toHaveBeenCalledWith(f)
+      expect(screen.getByTestId('mock-crear-ncr-modal')).toBeInTheDocument()
+    })
   })
 })

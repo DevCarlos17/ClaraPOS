@@ -16,6 +16,7 @@ import {
 } from '../utils/notas-credito-ui'
 import { useFacturasEmpresa } from '../hooks/use-facturas-empresa'
 import type { FacturaParaAnular } from '../hooks/use-notas-credito'
+import { CrearNcrModal } from './crear-ncr-modal'
 
 /**
  * Slice C3b (notas-credito-ruta-administrativa, Design §Decision 3/File
@@ -243,19 +244,37 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc }: Factu
 }
 
 export interface FacturasEmpresaTabProps {
-  /** Callback de la accion por fila — Slice D lo conecta a `CrearNcrModal` real. Sin handler, el boton queda como stub inofensivo. */
+  /** Costura de extensibilidad opcional (tests, futuros consumidores) — se invoca ADEMAS de abrir `CrearNcrModal`, nunca en su lugar. */
   onAplicarNc?: (factura: FacturaParaAnular) => void
 }
 
-/** Contenedor: mantiene el estado de filtros + el hook, delega el render a los componentes presentacionales de arriba. */
+/**
+ * Contenedor: mantiene el estado de filtros + el hook + la factura
+ * seleccionada para NC, delega el render a los componentes presentacionales
+ * de arriba. Slice D (Design §Decision 2): monta `CrearNcrModal` real —
+ * el modal admin delgado que reversa CUALQUIER factura de la empresa sin PIN.
+ */
 export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}) {
   const [filtros, setFiltros] = useState<FiltrosFacturasEmpresaState>(filtrosIniciales)
   const { facturas, isLoading } = useFacturasEmpresa(filtros)
+  const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
+  const [modalOpen, setModalOpen] = useState(false)
+
+  function handleAplicarNc(f: FacturaParaAnular) {
+    onAplicarNc?.(f)
+    setFacturaSeleccionada(f)
+    setModalOpen(true)
+  }
 
   return (
     <div className="space-y-4">
       <FacturasEmpresaFiltros filtros={filtros} onChange={setFiltros} />
-      <FacturasEmpresaTable facturas={facturas} isLoading={isLoading} onAplicarNc={onAplicarNc} />
+      <FacturasEmpresaTable facturas={facturas} isLoading={isLoading} onAplicarNc={handleAplicarNc} />
+      <CrearNcrModal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        factura={facturaSeleccionada}
+      />
     </div>
   )
 }
