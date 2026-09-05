@@ -84,24 +84,9 @@ describe('NotasCreditoTab (Slice C3b) — filtros ampliados sobre useNotasCredit
     expect(screen.queryByLabelText(/^tipo$/i)).not.toBeInTheDocument()
   })
 
-  it('Slice E.3: selector de estado presente con SOLO 2 opciones (Reverso Total/Reverso Parcial, sin Contado/Credito)', () => {
+  it('Slice E.b (tester QA feedback): el selector de Estado YA NO existe en la pestaña NC — se retiro por completo, sin fold en la busqueda', () => {
     render(<NotasCreditoTab />)
-    const select = screen.getByLabelText(/^estado$/i)
-    const opciones = Array.from(select.querySelectorAll('option')).map((o) => o.textContent)
-    expect(opciones).toEqual(['Todos', 'Reverso Total', 'Reverso Parcial'])
-  })
-
-  it('Slice E.3: elegir "Reverso Parcial" en el selector de estado actualiza el argumento pasado al hook (sin transformar a LIKE)', async () => {
-    const user = userEvent.setup()
-    render(<NotasCreditoTab />)
-
-    await user.selectOptions(screen.getByLabelText(/^estado$/i), 'REVERSO_PARCIAL')
-
-    await waitFor(() => {
-      expect(mockedUseNotasCredito).toHaveBeenLastCalledWith(
-        expect.objectContaining({ estado: 'REVERSO_PARCIAL' })
-      )
-    })
+    expect(screen.queryByLabelText(/^estado$/i)).not.toBeInTheDocument()
   })
 
   it('Slice E.4: el boton "Ver todo el historial" YA NO existe — el rango de fecha es el UNICO control de amplitud', () => {

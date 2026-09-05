@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { FileX, MagnifyingGlass } from '@phosphor-icons/react'
 import { Input } from '@/components/ui/input'
-import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { useNotasCredito } from '../hooks/use-notas-credito'
-import { rangoMesActual, type EstadoFiltroNotaCredito } from '../utils/notas-credito-admin-filters'
+import { rangoMesActual } from '../utils/notas-credito-admin-filters'
 
 /**
  * Pestana secundaria de "Facturas emitidas" (Slice C3b — design.md
@@ -15,24 +14,27 @@ import { rangoMesActual, type EstadoFiltroNotaCredito } from '../utils/notas-cre
  * factura y aplicar una NC (Design §Decision 7 — dead code una vez
  * migrado este consumidor).
  *
- * Slice E.2/E.3/E.4 (tester QA feedback): los 3 inputs separados
- * (nro_ncr, cliente, RIF) se reemplazaron por UN SOLO input de busqueda
- * (patron POS); el selector "Tipo" y el boton "Ver todo el historial" se
- * RETIRARON — el selector de "Estado" (Reverso Total/Reverso Parcial)
- * ocupa el lugar de "Tipo" con labels de negocio, y el rango de fecha
- * (default `rangoMesActual()`) queda como UNICO control de amplitud: no
- * existe ningun escape hatch de historial completo en esta pestaña.
+ * Slice E.2/E.4 (tester QA feedback): los 3 inputs separados (nro_ncr,
+ * cliente, RIF) se reemplazaron por UN SOLO input de busqueda (patron
+ * POS); el selector "Tipo" y el boton "Ver todo el historial" se
+ * RETIRARON — el rango de fecha (default `rangoMesActual()`) queda como
+ * UNICO control de amplitud: no existe ningun escape hatch de historial
+ * completo en esta pestaña.
+ *
+ * Slice E.b (correccion de tester QA sobre E.3): el selector `<select>` de
+ * "Estado" (Reverso Total/Reverso Parcial) agregado en E.3 se RETIRA por
+ * completo — a diferencia de la pestaña Facturas, el estado de NC NO se
+ * folded en la busqueda, simplemente deja de ser un filtro disponible.
  */
 
 interface FiltrosNotasCreditoState {
   fechaDesde: string
   fechaHasta: string
   busqueda: string
-  estado: '' | EstadoFiltroNotaCredito
 }
 
 function filtrosIniciales(): FiltrosNotasCreditoState {
-  return { ...rangoMesActual(), busqueda: '', estado: '' }
+  return { ...rangoMesActual(), busqueda: '' }
 }
 
 export function NotasCreditoTab() {
@@ -42,7 +44,6 @@ export function NotasCreditoTab() {
     fechaDesde: filtros.fechaDesde,
     fechaHasta: filtros.fechaHasta,
     busqueda: filtros.busqueda,
-    estado: filtros.estado || undefined,
   })
 
   function set<K extends keyof FiltrosNotasCreditoState>(key: K, value: FiltrosNotasCreditoState[K]) {
@@ -95,20 +96,6 @@ export function NotasCreditoTab() {
                 className="pl-9"
               />
             </div>
-          </div>
-          <div className="flex flex-col gap-1 min-w-[160px]">
-            <label htmlFor="nc-estado" className="text-xs text-muted-foreground">
-              Estado
-            </label>
-            <NativeSelect
-              id="nc-estado"
-              value={filtros.estado}
-              onChange={(e) => set('estado', e.target.value as FiltrosNotasCreditoState['estado'])}
-            >
-              <option value="">Todos</option>
-              <option value="REVERSO_TOTAL">Reverso Total</option>
-              <option value="REVERSO_PARCIAL">Reverso Parcial</option>
-            </NativeSelect>
           </div>
         </div>
       </div>

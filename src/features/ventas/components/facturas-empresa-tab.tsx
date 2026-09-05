@@ -5,10 +5,9 @@ import { DataTable } from '@/components/data-table/data-table'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
-import { rangoMesActual, type EstadoFiltroFactura } from '../utils/notas-credito-admin-filters'
+import { rangoMesActual } from '../utils/notas-credito-admin-filters'
 import {
   derivarEstadoPago,
   resolverBadgesFactura,
@@ -29,10 +28,17 @@ import { CrearNcrModal } from './crear-ncr-modal'
  * un callback prop que hoy no tiene consumidor por defecto — stub
  * inofensivo).
  *
- * Slice E.2/E.3 (tester QA feedback): los 3 inputs separados (nro_factura,
+ * Slice E.2 (tester QA feedback): los 3 inputs separados (nro_factura,
  * cliente, RIF) se reemplazaron por UN SOLO input de busqueda (patron POS —
- * ver `producto-buscador.tsx`), y se agrego un selector de "Estado"
- * (Contado/Credito/Reverso Parcial/Reverso Total).
+ * ver `producto-buscador.tsx`).
+ *
+ * Slice E.b (correccion de tester QA sobre E.3): el selector `<select>` de
+ * "Estado" agregado en E.3 se RETIRA por completo — el estado se detecta
+ * ahora como palabra clave DENTRO del mismo input de busqueda (ver
+ * `detectarEstadoFacturaEnBusqueda` en `notas-credito-admin-filters.ts`).
+ * Escribir "contado", "credito", "abonada", "reverso parcial" o "reverso
+ * total" agrega la clausula de estado correspondiente ADEMAS del match por
+ * nro/cliente/RIF — nunca en su lugar.
  *
  * `showToolbar`/`showPagination` del `DataTable` generico se dejan en
  * `false`: ese componente registra el `useReactTable` solo con
@@ -52,11 +58,10 @@ interface FiltrosFacturasEmpresaState {
   fechaDesde: string
   fechaHasta: string
   busqueda: string
-  estado: '' | EstadoFiltroFactura
 }
 
 function filtrosIniciales(): FiltrosFacturasEmpresaState {
-  return { ...rangoMesActual(), busqueda: '', estado: '' }
+  return { ...rangoMesActual(), busqueda: '' }
 }
 
 interface FacturasEmpresaFiltrosProps {
@@ -109,27 +114,11 @@ function FacturasEmpresaFiltros({ filtros, onChange }: FacturasEmpresaFiltrosPro
             <Input
               id="facturas-busqueda"
               value={filtros.busqueda}
-              placeholder="Factura, cliente o RIF..."
+              placeholder="Factura, cliente, RIF o estado (contado, crédito, abonada, reverso total/parcial)..."
               onChange={(e) => set('busqueda', e.target.value)}
               className="pl-9"
             />
           </div>
-        </div>
-        <div className="flex flex-col gap-1 min-w-[160px]">
-          <label htmlFor="facturas-estado" className="text-xs text-muted-foreground">
-            Estado
-          </label>
-          <NativeSelect
-            id="facturas-estado"
-            value={filtros.estado}
-            onChange={(e) => set('estado', e.target.value as FiltrosFacturasEmpresaState['estado'])}
-          >
-            <option value="">Todos</option>
-            <option value="CONTADO">Contado</option>
-            <option value="CREDITO">Crédito</option>
-            <option value="REVERSO_PARCIAL">Reverso Parcial</option>
-            <option value="REVERSO_TOTAL">Reverso Total</option>
-          </NativeSelect>
         </div>
       </div>
     </div>
@@ -270,7 +259,6 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
     fechaDesde: filtros.fechaDesde,
     fechaHasta: filtros.fechaHasta,
     busqueda: filtros.busqueda,
-    estado: filtros.estado || undefined,
   })
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
   const [modalOpen, setModalOpen] = useState(false)

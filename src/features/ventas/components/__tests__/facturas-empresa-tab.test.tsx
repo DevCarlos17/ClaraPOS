@@ -103,22 +103,20 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
     expect(screen.queryByLabelText(/^rif$/i)).not.toBeInTheDocument()
   })
 
-  it('Slice E.3: selector de estado presente con las 4 opciones (Contado/Credito/Reverso Parcial/Reverso Total)', () => {
+  it('Slice E.b (tester QA feedback): el selector de Estado separado YA NO existe — el estado se folded en el input de busqueda', () => {
     render(<FacturasEmpresaTab />)
-    const select = screen.getByLabelText(/^estado$/i)
-    const opciones = Array.from(select.querySelectorAll('option')).map((o) => o.textContent)
-    expect(opciones).toEqual(['Todos', 'Contado', 'Crédito', 'Reverso Parcial', 'Reverso Total'])
+    expect(screen.queryByLabelText(/^estado$/i)).not.toBeInTheDocument()
   })
 
-  it('Slice E.3: elegir "Reverso Total" en el selector de estado actualiza el argumento pasado al hook', async () => {
+  it('Slice E.b: escribir "abonada" en el input de busqueda pasa busqueda="abonada" al hook (la deteccion de keyword vive en el builder puro, no en el componente)', async () => {
     const user = userEvent.setup()
     render(<FacturasEmpresaTab />)
 
-    await user.selectOptions(screen.getByLabelText(/^estado$/i), 'REVERSO_TOTAL')
+    await user.type(screen.getByLabelText(/buscar/i), 'abonada')
 
     await waitFor(() => {
       expect(mockedUseFacturasEmpresa).toHaveBeenLastCalledWith(
-        expect.objectContaining({ estado: 'REVERSO_TOTAL' })
+        expect.objectContaining({ busqueda: 'abonada' })
       )
     })
   })
