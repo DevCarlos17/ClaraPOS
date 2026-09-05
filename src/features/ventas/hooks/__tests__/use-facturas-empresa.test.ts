@@ -70,15 +70,15 @@ describe('useFacturasEmpresa (Slice B, Design §Decision 3) — hook empresa-wid
     expect(params).toContain('%C01-0042%')
   })
 
-  it('Slice E.3: filtro estado se aplica via buildFacturasEmpresaFiltro', () => {
+  it('Slice E.b: estado FOLDED en busqueda — pasar busqueda="reverso total" produce la clausula EXISTS via buildFacturasEmpresaFiltro (ya no existe un campo `estado` separado en el hook)', () => {
     setup()
 
     renderHook(() =>
-      useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', estado: 'REVERSO_TOTAL' })
+      useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', busqueda: 'reverso total' })
     )
 
     const [sql] = mockedUseQuery.mock.calls[0]!
-    expect(sql).toMatch(/AND EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'TOTAL'\)/)
+    expect(sql).toMatch(/EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'TOTAL'\)/)
   })
 
   it('retorna facturas de MULTIPLES sesiones/dias distintos dentro del rango (a diferencia de useFacturasSesionActiva)', () => {
@@ -92,19 +92,28 @@ describe('useFacturasEmpresa (Slice B, Design §Decision 3) — hook empresa-wid
     expect(result.current.facturas).toHaveLength(2)
   })
 
-  it('empresa_id SIEMPRE presente en params, incluso combinando busqueda + estado', () => {
+  it('empresa_id SIEMPRE presente en params, incluso cuando busqueda dispara la clausula de estado folded', () => {
     setup()
 
     renderHook(() =>
       useFacturasEmpresa({
         fechaDesde: '2026-05-01',
         fechaHasta: '2026-05-21',
-        busqueda: '0042',
-        estado: 'CONTADO',
+        busqueda: 'contado',
       })
     )
 
     const [, params] = mockedUseQuery.mock.calls[0]!
     expect(params![0]).toBe('emp-1')
+  })
+
+  it('el campo `estado` YA NO existe en FiltroFacturasEmpresaHook (retirado, tester QA feedback Slice E.b)', () => {
+    setup()
+
+    // @ts-expect-error — `estado` fue retirado del contrato publico del hook
+    renderHook(() => useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', estado: 'CONTADO' }))
+
+    const [sql] = mockedUseQuery.mock.calls[0]!
+    expect(sql).not.toContain('saldo_pend_usd AS REAL')
   })
 })

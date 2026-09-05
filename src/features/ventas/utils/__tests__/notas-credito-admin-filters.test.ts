@@ -85,49 +85,77 @@ describe('buildFacturasEmpresaFiltro (empresa_id + rango de fecha siempre presen
     expect(sql).not.toContain('DROP TABLE')
   })
 
-  // ─── Slice E.3 — filtro de estado (Contado/Credito/Reverso Parcial/Reverso Total) ────────
+  // ─── Slice E.b — estado FOLDED en la busqueda (tester QA feedback: el
+  // select separado de Estado se retira; el texto de busqueda reconoce
+  // palabras clave de estado y agrega su clausula ADEMAS del OR de
+  // nro/cliente/RIF, nunca en su lugar) ────────
 
-  it('estado CONTADO: filtra CAST(v.saldo_pend_usd AS REAL) <= 0.005 (mismo epsilon que derivarEstadoPago)', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, estado: 'CONTADO' })
-    expect(sql).toContain('AND CAST(v.saldo_pend_usd AS REAL) <= 0.005')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  it('busqueda="contado": agrega la clausula de estado CONTADO ADEMAS del OR de nro/cliente/rif (wide OR, nunca reemplaza)', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'contado' })
+    expect(sql).toContain('v.nro_factura LIKE ?')
+    expect(sql).toContain('c.nombre LIKE ?')
+    expect(sql).toContain('c.identificacion LIKE ?')
+    expect(sql).toContain('CAST(v.saldo_pend_usd AS REAL) <= 0.005')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%contado%', '%contado%', '%contado%'])
   })
 
-  it('estado CREDITO: filtra CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)', () => {
-    const { sql } = buildFacturasEmpresaFiltro({ ...base, estado: 'CREDITO' })
-    expect(sql).toContain('AND CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)')
+  it('busqueda="Crédito" (con tilde y mayuscula): agrega la clausula CREDITO (case/acento-insensitive)', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'Crédito' })
+    expect(sql).toContain('CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)')
   })
 
-  it('estado REVERSO_PARCIAL: filtra EXISTS notas_credito con tipo PARCIAL para la venta', () => {
-    const { sql } = buildFacturasEmpresaFiltro({ ...base, estado: 'REVERSO_PARCIAL' })
-    expect(sql).toContain("AND EXISTS(SELECT 1 FROM notas_credito")
-    expect(sql).toMatch(/AND EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'PARCIAL'\)/)
+  it('busqueda="abonada": agrega la clausula ABONADA (NUEVO estado, no existia en el select viejo) consistente con derivarEstadoPago', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'abonada' })
+    expect(sql).toContain('CAST(v.saldo_pend_usd AS REAL) > 0.005')
+    expect(sql).toContain('CAST(v.saldo_pend_usd AS REAL) < (CAST(v.total_usd AS REAL) - 0.005)')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%abonada%', '%abonada%', '%abonada%'])
   })
 
-  it('estado REVERSO_TOTAL: filtra EXISTS notas_credito con tipo TOTAL para la venta', () => {
-    const { sql } = buildFacturasEmpresaFiltro({ ...base, estado: 'REVERSO_TOTAL' })
-    expect(sql).toMatch(/AND EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'TOTAL'\)/)
+  it('busqueda="reverso parcial": agrega EXISTS notas_credito con tipo PARCIAL', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'reverso parcial' })
+    expect(sql).toMatch(/EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'PARCIAL'\)/)
   })
 
-  it('estado omitido: no agrega ninguna clausula de estado', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro(base)
+  it('busqueda="REVERSO TOTAL" (mayusculas): agrega EXISTS notas_credito con tipo TOTAL', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'REVERSO TOTAL' })
+    expect(sql).toMatch(/EXISTS\(SELECT 1 FROM notas_credito \w+ WHERE \w+\.venta_id = v\.id AND \w+\.tipo = 'TOTAL'\)/)
+  })
+
+  it('busqueda="Maria" (texto normal de cliente): NO agrega ninguna clausula de estado, solo el OR de nro/cliente/rif', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'Maria' })
     expect(sql).not.toContain('saldo_pend_usd AS REAL')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
-  })
-
-  it('busqueda + estado combinados: ambas clausulas aparecen, busqueda antes de estado', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'Maria', estado: 'CONTADO' })
-    const idxBusqueda = sql.indexOf('v.nro_factura LIKE')
-    const idxEstado = sql.indexOf('saldo_pend_usd AS REAL')
-    expect(idxBusqueda).toBeGreaterThan(-1)
-    expect(idxEstado).toBeGreaterThan(idxBusqueda)
+    // El SELECT-list SIEMPRE tiene 2 EXISTS(...notas_credito nc...) para
+    // tiene_reverso_total/parcial (Slice A) — lo que NO debe aparecer es el
+    // EXISTS de la clausula de estado (alias `nce`, WHERE).
+    expect(sql).not.toContain('notas_credito nce')
+    expect(sql).toContain('AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
     expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%Maria%', '%Maria%', '%Maria%'])
   })
 
-  it('empresa_id SIEMPRE presente incluso con busqueda y estado combinados', () => {
-    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'x', estado: 'REVERSO_TOTAL' })
+  it('busqueda="reverso" (palabra suelta, no es keyword exacto): NO agrega clausula de estado — sigue matcheando por nombre/nro/rif (ej. cliente llamado "Reverso")', () => {
+    const { sql } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'reverso' })
+    expect(sql).not.toContain('notas_credito nce')
+    expect(sql).toContain('AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
+  })
+
+  it('busqueda vacia: no agrega ninguna clausula de estado (sin busqueda no hay deteccion de keyword)', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro(base)
+    expect(sql).not.toContain('saldo_pend_usd AS REAL')
+    expect(sql).not.toContain('notas_credito nce')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
+
+  it('empresa_id SIEMPRE presente incluso cuando la busqueda dispara la clausula de estado', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, busqueda: 'reverso total' })
     expect(sql).toContain('v.empresa_id = ?')
     expect(params[0]).toBe('emp-1')
+  })
+
+  it('el campo `estado` YA NO existe en FiltroFacturasEmpresa (folded en busqueda, tester QA feedback Slice E.b)', () => {
+    // @ts-expect-error — `estado` fue retirado del contrato publico del builder
+    const built = buildFacturasEmpresaFiltro({ ...base, estado: 'CONTADO' })
+    // Un `estado` suelto sin `busqueda` no dispara ninguna deteccion de keyword.
+    expect(built.sql).not.toContain('saldo_pend_usd AS REAL')
   })
 })
 
@@ -182,44 +210,19 @@ describe('buildNotasCreditoFiltro (mismos casos + filtro de estado reverso TOTAL
     expect(sql).not.toContain('DROP TABLE')
   })
 
-  // ─── Slice E.3 — filtro de estado (Reverso Total / Reverso Parcial, NC no tiene Contado/Credito) ────────
+  // ─── Slice E.b — estado RETIRADO por completo de NC (tester QA feedback:
+  // a diferencia de Facturas, el estado de NC NO se folded en la busqueda —
+  // simplemente deja de ser un filtro. `nc.tipo` ya no es filtrable) ────────
 
-  it('estado REVERSO_TOTAL: filtra AND nc.tipo = ? con el valor TOTAL parametrizado', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, estado: 'REVERSO_TOTAL' })
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'TOTAL'])
-  })
-
-  it('estado REVERSO_PARCIAL: filtra AND nc.tipo = ? con el valor PARCIAL parametrizado', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, estado: 'REVERSO_PARCIAL' })
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'PARCIAL'])
-  })
-
-  it('estado omitido: no agrega clausula de tipo/estado', () => {
-    const { sql, params } = buildNotasCreditoFiltro(base)
+  it('nunca agrega clausula de nc.tipo, ni con busqueda ni sin ella (el filtro de estado se retiro por completo)', () => {
+    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'Maria' })
     expect(sql).not.toContain('nc.tipo = ?')
-    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', '%Maria%', '%Maria%', '%Maria%'])
   })
 
-  it('busqueda + estado combinados: ambas clausulas se aplican simultaneamente', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'Maria', estado: 'REVERSO_TOTAL' })
-    expect(sql).toContain('AND (nc.nro_ncr LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(params).toEqual([
-      'emp-1',
-      '2026-05-01',
-      '2026-05-21',
-      '%Maria%',
-      '%Maria%',
-      '%Maria%',
-      'TOTAL',
-    ])
-  })
-
-  it('empresa_id SIEMPRE presente incluso con busqueda y estado combinados', () => {
-    const { sql, params } = buildNotasCreditoFiltro({ ...base, busqueda: 'x', estado: 'REVERSO_PARCIAL' })
-    expect(sql).toContain('nc.empresa_id = ?')
-    expect(params[0]).toBe('emp-1')
+  it('el campo `estado` YA NO existe en FiltroNotasCredito (retirado por completo, tester QA feedback Slice E.b)', () => {
+    // @ts-expect-error — `estado` fue retirado del contrato publico del builder
+    const built = buildNotasCreditoFiltro({ ...base, estado: 'REVERSO_TOTAL' })
+    expect(built.sql).not.toContain('nc.tipo = ?')
   })
 })

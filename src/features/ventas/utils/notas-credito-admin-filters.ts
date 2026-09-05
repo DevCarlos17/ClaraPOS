@@ -39,16 +39,73 @@ export interface SqlFiltroResult {
 }
 
 /**
- * Estado unico y mutuamente excluyente para el filtro "Estado" de la
- * pestaña Facturas (Slice E.3, notas-credito-ruta-administrativa — tester
- * QA feedback). `CONTADO`/`CREDITO` derivan del mismo epsilon 0.005 que
+ * Estado unico de una factura (Slice E.b, notas-credito-ruta-administrativa
+ * — correccion de tester QA sobre Slice E.3: el `<select>` de Estado
+ * separado se RETIRA por completo, el estado se detecta como PALABRA CLAVE
+ * dentro del termino unico de `busqueda`, ver `detectarEstadoFacturaEnBusqueda`
+ * abajo). `CONTADO`/`CREDITO`/`ABONADA` derivan del mismo epsilon 0.005 que
  * `derivarEstadoPago` (`notas-credito-ui.ts`) sobre `saldo_pend_usd`/
- * `total_usd`; `REVERSO_PARCIAL`/`REVERSO_TOTAL` derivan de la existencia
- * de una NC con ese `tipo` para la venta (mismo criterio que las columnas
- * `tiene_reverso_total`/`tiene_reverso_parcial` ya seleccionadas). No
- * incluye `ABONADA` — fuera del alcance literal pedido para este selector.
+ * `total_usd` — `ABONADA` es NUEVO en este slice (Slice E.3 lo excluia
+ * explicitamente del selector viejo; el tester pidio incluirlo en el
+ * universo de busqueda). `REVERSO_PARCIAL`/`REVERSO_TOTAL` derivan de la
+ * existencia de una NC con ese `tipo` para la venta (mismo criterio que las
+ * columnas `tiene_reverso_total`/`tiene_reverso_parcial` ya seleccionadas).
  */
-export type EstadoFiltroFactura = 'CONTADO' | 'CREDITO' | 'REVERSO_PARCIAL' | 'REVERSO_TOTAL'
+export type EstadoFiltroFactura = 'CONTADO' | 'CREDITO' | 'ABONADA' | 'REVERSO_PARCIAL' | 'REVERSO_TOTAL'
+
+/** Normaliza para comparacion de palabra clave: minusculas, sin espacios sobrantes, sin acentos. */
+function normalizarPalabraClaveEstado(texto: string): string {
+  return texto
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
+const ESTADO_FACTURA_POR_PALABRA_CLAVE: Record<string, EstadoFiltroFactura> = {
+  contado: 'CONTADO',
+  credito: 'CREDITO',
+  abonada: 'ABONADA',
+  'reverso parcial': 'REVERSO_PARCIAL',
+  'reverso total': 'REVERSO_TOTAL',
+}
+
+/**
+ * Detecta si el termino de busqueda (ya normalizado, case/acento-insensitive)
+ * ES exactamente una palabra clave de estado conocida — nunca un substring
+ * (una busqueda de "reverso" sola NO dispara ninguna clausula: sigue
+ * matcheando solo por nro/cliente/RIF, preservando el hallazgo de un
+ * cliente literalmente llamado "Reverso"). Retorna `null` cuando el texto
+ * no es una palabra clave reconocida.
+ */
+function detectarEstadoFacturaEnBusqueda(busqueda: string): EstadoFiltroFactura | null {
+  return ESTADO_FACTURA_POR_PALABRA_CLAVE[normalizarPalabraClaveEstado(busqueda)] ?? null
+}
+
+/**
+ * Fragmento SQL (sin el prefijo `AND`) de la clausula de estado, para
+ * insertar como una rama ADICIONAL dentro del OR de busqueda — nunca
+ * reemplaza el match por nro/cliente/RIF (wide OR, Slice E.b acceptance
+ * criteria: "nunca pierde resultados"). Mismo epsilon 0.005 que
+ * `derivarEstadoPago` para CONTADO/CREDITO/ABONADA; mismo patron `EXISTS`
+ * ya usado en Slice E.3 para REVERSO_PARCIAL/REVERSO_TOTAL (alias `nce`
+ * para no colisionar con el alias `nc` ya usado en el SELECT-list de
+ * `tiene_reverso_total`/`tiene_reverso_parcial`).
+ */
+function clausulaEstadoFactura(estado: EstadoFiltroFactura): string {
+  switch (estado) {
+    case 'CONTADO':
+      return 'CAST(v.saldo_pend_usd AS REAL) <= 0.005'
+    case 'CREDITO':
+      return 'CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)'
+    case 'ABONADA':
+      return '(CAST(v.saldo_pend_usd AS REAL) > 0.005 AND CAST(v.saldo_pend_usd AS REAL) < (CAST(v.total_usd AS REAL) - 0.005))'
+    case 'REVERSO_PARCIAL':
+      return "EXISTS(SELECT 1 FROM notas_credito nce WHERE nce.venta_id = v.id AND nce.tipo = 'PARCIAL')"
+    case 'REVERSO_TOTAL':
+      return "EXISTS(SELECT 1 FROM notas_credito nce WHERE nce.venta_id = v.id AND nce.tipo = 'TOTAL')"
+  }
+}
 
 export interface FiltroFacturasEmpresa {
   empresaId: string
@@ -62,9 +119,16 @@ export interface FiltroFacturasEmpresa {
    * `cliente_identificacion` (RIF) — reemplaza los 3 campos separados de
    * Slice A (`nroFactura`/`clienteNombre`/`clienteIdentificacion`,
    * retirados: la UI ya no los expone por separado).
+   *
+   * Slice E.b (correccion de tester QA sobre E.3): cuando el texto
+   * coincide EXACTAMENTE (case/acento-insensitive) con una palabra clave de
+   * `EstadoFiltroFactura` ("contado", "credito", "abonada", "reverso
+   * parcial", "reverso total"), se agrega ADEMAS la clausula de estado
+   * correspondiente como una rama mas del OR — nunca en lugar del match por
+   * nro/cliente/RIF. Ya NO existe un campo `estado` separado — el
+   * `<select>` de Estado de E.3 se retiro por completo de esta pestaña.
    */
   busqueda?: string
-  estado?: EstadoFiltroFactura
 }
 
 /**
@@ -93,34 +157,20 @@ export function buildFacturasEmpresaFiltro(f: FiltroFacturasEmpresa): SqlFiltroR
 
   const busqueda = f.busqueda?.trim()
   if (busqueda) {
-    sql += `\n       AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)`
     const like = `%${busqueda}%`
+    const estadoDetectado = detectarEstadoFacturaEnBusqueda(busqueda)
+    if (estadoDetectado) {
+      sql += `\n       AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ? OR ${clausulaEstadoFactura(estadoDetectado)})`
+    } else {
+      sql += `\n       AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)`
+    }
     params.push(like, like, like)
-  }
-
-  if (f.estado === 'CONTADO') {
-    sql += `\n       AND CAST(v.saldo_pend_usd AS REAL) <= 0.005`
-  } else if (f.estado === 'CREDITO') {
-    sql += `\n       AND CAST(v.saldo_pend_usd AS REAL) >= (CAST(v.total_usd AS REAL) - 0.005)`
-  } else if (f.estado === 'REVERSO_PARCIAL') {
-    sql += `\n       AND EXISTS(SELECT 1 FROM notas_credito nce WHERE nce.venta_id = v.id AND nce.tipo = 'PARCIAL')`
-  } else if (f.estado === 'REVERSO_TOTAL') {
-    sql += `\n       AND EXISTS(SELECT 1 FROM notas_credito nce WHERE nce.venta_id = v.id AND nce.tipo = 'TOTAL')`
   }
 
   sql += `\n     ORDER BY v.fecha DESC`
 
   return { sql, params }
 }
-
-/**
- * Estado unico para el filtro de la pestaña Notas de credito (Slice E.3).
- * A diferencia de `EstadoFiltroFactura`, NC no tiene estado de pago propio
- * (Contado/Credito) — solo los 2 valores de `tipo` ya persistidos en
- * `notas_credito.tipo`, relabeleados como "Reverso Total"/"Reverso Parcial"
- * en la UI (mismo dato, mismo nombre de columna, solo cambia el label).
- */
-export type EstadoFiltroNotaCredito = 'REVERSO_PARCIAL' | 'REVERSO_TOTAL'
 
 export interface FiltroNotasCredito {
   empresaId: string
@@ -133,9 +183,13 @@ export interface FiltroNotasCredito {
    * Coincide OR contra `nro_ncr`, `cliente_nombre`, `cliente_identificacion`
    * (RIF) — reemplaza los 3 campos separados de Slice A (`nroNcr`/
    * `clienteNombre`/`clienteIdentificacion`, retirados).
+   *
+   * Slice E.b (correccion de tester QA sobre E.3): el filtro de Estado
+   * (`EstadoFiltroNotaCredito`, Reverso Total/Reverso Parcial) se RETIRO
+   * por completo de esta pestaña — a diferencia de Facturas, NO se folded
+   * en la busqueda. `nc.tipo` deja de ser filtrable desde esta pestaña.
    */
   busqueda?: string
-  estado?: EstadoFiltroNotaCredito
 }
 
 /**
@@ -164,14 +218,6 @@ export function buildNotasCreditoFiltro(f: FiltroNotasCredito): SqlFiltroResult 
     sql += `\n       AND (nc.nro_ncr LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)`
     const like = `%${busqueda}%`
     params.push(like, like, like)
-  }
-
-  if (f.estado === 'REVERSO_TOTAL') {
-    sql += `\n       AND nc.tipo = ?`
-    params.push('TOTAL')
-  } else if (f.estado === 'REVERSO_PARCIAL') {
-    sql += `\n       AND nc.tipo = ?`
-    params.push('PARCIAL')
   }
 
   sql += `\n     ORDER BY nc.fecha DESC`

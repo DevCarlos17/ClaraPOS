@@ -1,11 +1,7 @@
 import { useQuery } from '@powersync/react'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import type { FacturaParaAnular } from './use-notas-credito'
-import {
-  buildFacturasEmpresaFiltro,
-  rangoMesActual,
-  type EstadoFiltroFactura,
-} from '../utils/notas-credito-admin-filters'
+import { buildFacturasEmpresaFiltro, rangoMesActual } from '../utils/notas-credito-admin-filters'
 
 /**
  * Filtros del hook (Slice B, notas-credito-ruta-administrativa, Design
@@ -17,16 +13,17 @@ import {
  * mecanismo de escape para "ver todo el historial" — no existe un flag
  * separado, el propio rango explicito bypasea el default.
  *
- * Slice E.2/E.3 (tester QA feedback): `busqueda`/`estado` reemplazan los
- * campos separados `nroFactura`/`clienteNombre`/`clienteIdentificacion`
- * (retirados, la UI ya no los expone por separado — un solo input de
- * busqueda, patron POS).
+ * Slice E.2 (tester QA feedback): `busqueda` reemplaza los campos
+ * separados `nroFactura`/`clienteNombre`/`clienteIdentificacion` (retirados,
+ * la UI ya no los expone por separado — un solo input de busqueda, patron
+ * POS). Slice E.b (correccion sobre E.3): ya NO existe un campo `estado`
+ * separado — `buildFacturasEmpresaFiltro` detecta palabras clave de estado
+ * DENTRO de `busqueda` (ver `notas-credito-admin-filters.ts`).
  */
 export interface FiltroFacturasEmpresaHook {
   fechaDesde?: string
   fechaHasta?: string
   busqueda?: string
-  estado?: EstadoFiltroFactura
 }
 
 /**
@@ -50,7 +47,6 @@ export function useFacturasEmpresa(filtros?: FiltroFacturasEmpresaHook) {
     fechaDesde,
     fechaHasta,
     busqueda: filtros?.busqueda,
-    estado: filtros?.estado,
   })
 
   const { data, isLoading } = useQuery(sql, params)

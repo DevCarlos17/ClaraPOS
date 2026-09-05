@@ -20,7 +20,6 @@ import {
 import {
   buildNotasCreditoFiltro,
   rangoMesActual,
-  type EstadoFiltroNotaCredito,
 } from '@/features/ventas/utils/notas-credito-admin-filters'
 
 // ─── Interfaces ─────────────────────────────────────────────
@@ -215,16 +214,18 @@ export interface CrearNotaCreditoResult {
  * mecanismo de escape para "ver todo el historial" (Design §Riesgos) — no
  * existe un flag separado.
  *
- * Slice E.2/E.3 (tester QA feedback): `busqueda`/`estado` reemplazan los
- * campos separados `nroNcr`/`tipo`/`clienteNombre`/`clienteIdentificacion`
+ * Slice E.2 (tester QA feedback): `busqueda` reemplaza los campos
+ * separados `nroNcr`/`tipo`/`clienteNombre`/`clienteIdentificacion`
  * (retirados, la UI ya no los expone por separado — un solo input de
- * busqueda, patron POS).
+ * busqueda, patron POS). Slice E.b (correccion sobre E.3): el filtro de
+ * Estado (`EstadoFiltroNotaCredito`, Reverso Total/Reverso Parcial) se
+ * RETIRO por completo de esta pestaña — a diferencia de Facturas, NO se
+ * folded en la busqueda.
  */
 export interface FiltroNotasCreditoHook {
   fechaDesde?: string
   fechaHasta?: string
   busqueda?: string
-  estado?: EstadoFiltroNotaCredito
 }
 
 /**
@@ -250,7 +251,6 @@ export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
       fechaDesde,
       fechaHasta,
       busqueda: filtros.busqueda,
-      estado: filtros.estado,
     })
     sql = built.sql
     params = built.params

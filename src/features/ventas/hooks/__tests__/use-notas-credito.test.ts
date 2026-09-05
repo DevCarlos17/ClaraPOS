@@ -1257,20 +1257,19 @@ describe('useNotasCredito — Slice B (notas-credito-ruta-administrativa, Design
     expect(params).toContain('%NCR-000012%')
   })
 
-  it('Slice E.3: filtro estado REVERSO_PARCIAL se aplica exacto (nc.tipo = PARCIAL, sin LIKE)', () => {
-    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', estado: 'REVERSO_PARCIAL' }))
+  it('Slice E.b: el filtro de estado se retiro por completo — nc.tipo nunca es filtrable via el hook', () => {
+    renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', busqueda: 'Maria' }))
 
-    const [sql, params] = mockedUseQuery.mock.calls[0]!
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(params).toContain('PARCIAL')
+    const [sql] = mockedUseQuery.mock.calls[0]!
+    expect(sql).not.toContain('nc.tipo = ?')
   })
 
-  it('Slice E.3: filtro estado REVERSO_TOTAL se aplica exacto (nc.tipo = TOTAL, sin LIKE)', () => {
+  it('el campo `estado` YA NO existe en FiltroNotasCreditoHook (retirado, tester QA feedback Slice E.b)', () => {
+    // @ts-expect-error — `estado` fue retirado del contrato publico del hook
     renderHook(() => useNotasCredito({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', estado: 'REVERSO_TOTAL' }))
 
-    const [sql, params] = mockedUseQuery.mock.calls[0]!
-    expect(sql).toContain('AND nc.tipo = ?')
-    expect(params).toContain('TOTAL')
+    const [sql] = mockedUseQuery.mock.calls[0]!
+    expect(sql).not.toContain('nc.tipo = ?')
   })
 
   it('empresa_id SIEMPRE presente en params, con o sin filtros', () => {
