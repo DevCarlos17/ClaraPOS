@@ -82,12 +82,25 @@ hasta que Slice C reemplace la página — Design §Decisión 7).
 
 ## Slice C — Sidebar + 2 tabs + filtros UI (Design §Decisión 1, File Changes)
 
+**Nota de troceo (aplicado al ejecutar)**: siguiendo el mismo patrón
+preventivo que Slice 3→3a/3b en `notas-credito-ui-pos`, Slice C se dividió en
+dos sub-slices al llegar a la fase apply, ANTES de que el riesgo de tamaño se
+materializara:
+- **C3a** (esta entrega): estructura — rename de sidebar, contenedor de
+  pestañas (`Tabs` shadcn), extracción del contenido NC existente sin
+  cambios de comportamiento, placeholder visual para Facturas. Ambas
+  pestañas MONTADAS.
+- **C3b** (próxima entrega): contenido real — `facturas-empresa-tab.tsx` con
+  tabla `DataTable` + filtros sobre `useFacturasEmpresa`, filtros nuevos en
+  `notas-credito-tab.tsx` sobre `useNotasCredito(filtros)`, botón "Ver todo
+  el historial", eliminación de `useBuscarFacturaParaAnular` (dead code).
+
 ### Review Workload Forecast
 
 | Field | Value |
 |---|---|
-| Estimated changed lines | ~450–550 (monitorear — candidato a sub-split C1/C2/C3 si excede significativamente al aplicar) |
-| 400-line budget risk | **High** |
+| Estimated changed lines | ~450–550 total (C3a real: ~395 líneas — ver "Resultado real" abajo) |
+| 400-line budget risk | **High** (mitigado por el split C3a/C3b) |
 | Chained PRs | Yes — depende de Slice A y B |
 | Rollback | Sidebar/página caen a la versión actual (búsqueda simple + tabla NC, sin tabs); `crear-ncr-modal.tsx` viejo sigue siendo el único modal hasta Slice D |
 
@@ -95,12 +108,23 @@ Capa: component-integration, reusa hooks ya testeados de A/B — sin tests
 dedicados nuevos más allá de smoke manual (Design Testing Strategy no pide
 tests de componente para las tabs, solo para `CrearNcrModal` en Slice D).
 
-- [ ] C.1 `src/components/layout/sidebar.tsx:85` — rename `'Nota de Credito'` → `'Facturas emitidas'` (label únicamente; `url`/`icon`/`requiredPermission: SALES_VOID` sin cambios).
-- [ ] C.2 Crear `src/features/ventas/components/facturas-empresa-tab.tsx` — filtros (rango de fecha default mes actual, `nro_factura`, cliente, RIF) + `DataTable` genérico (`@/components/data-table/data-table.tsx`) sobre `useFacturasEmpresa(filtros)`; acción "Aplicar nota de crédito" por fila (abre modal, wiring real en Slice D — en este slice el botón puede quedar con estado local `facturaSeleccionada`/`modalOpen` sin montar aún `CrearNcrModal`); estado vacío sin error. [Spec: listado empresa-wide — todos los scenarios]
-- [ ] C.3 Crear `src/features/ventas/components/notas-credito-tab.tsx` — extrae la tabla NC + buscador YA existentes de `notas-credito-page.tsx` (sin cambio de comportamiento) + filtros nuevos (fecha default mes actual, `nro` NC, `tipo`, cliente, RIF, vía `useNotasCredito(filtros)`) + botón "Ver todo el historial" que limpia el rango de fecha sin tope. [Spec: pestaña Notas de crédito — todos los scenarios]
-- [ ] C.4 Reescribir `src/features/ventas/components/notas-credito-page.tsx` — `Tabs` shadcn + `useState` local (patrón `traspasos.tsx`/`gastos-dashboard.tsx`/`horarios-staff-page.tsx`, sin rutas anidadas ni search param); `PageHeader` renombrado a "Facturas emitidas"; tab "Facturas" primaria/default, tab "Notas de crédito" secundaria; delega a C.2/C.3. [Design §Decisión 1, Spec: sección con pestañas]
-- [ ] C.5 Eliminar `useBuscarFacturaParaAnular` (dead code, Design §Decisión 7) de `use-notas-credito.ts` — confirmar con grep que `notas-credito-page.tsx` (ya reescrito en C.4) era el único consumidor antes de borrar; limpiar su test en `use-notas-credito.test.ts`.
-- [ ] C.6 Verify: `yarn test:run` + `yarn type-check` + `yarn type-check:test` verdes; confirmar `src/routes/_app/ventas/notas-credito.tsx` sin cambios (el path y el gate `SALES_VOID` ya son suficientes, sin permiso nuevo); smoke manual: usuario sin `SALES_VOID` no ve el ítem ni accede; tab por defecto es Facturas; cambio de tab preserva acceso.
+### Sub-slice C3a — Estructura (rename + tabs + guard, contenido movido)
+
+- [x] C3a.1 (=C.1) `src/components/layout/sidebar.tsx:85` — rename `'Nota de Credito'` → `'Facturas emitidas'` (label únicamente; `url`/`icon`/`requiredPermission: SALES_VOID` sin cambios). **Hecho**: solo el string cambió (1 línea).
+- [x] C3a.2 RED: nuevo `src/features/ventas/components/__tests__/notas-credito-page.test.tsx` — mockea `../facturas-empresa-tab` y `../notas-credito-tab` (mismo patrón que `traspasos.test.tsx`), asserts: pestaña "Facturas" activa por defecto (`data-state="active"`), ambos triggers ("Facturas"/"Notas de credito") presentes, click en "Notas de credito" muestra su contenido mockeado y volver a "Facturas" no pierde acceso. **RED confirmado**: 2/2 tests fallaron con `Unable to find an accessible element with the role "tab"` (el componente viejo no tenia tabs todavia).
+- [x] C3a.3 GREEN: crear `src/features/ventas/components/notas-credito-tab.tsx` (153 líneas) — contenido MOVIDO tal cual desde la vieja `NotasCreditoPage` (buscador de factura + tabla NC + `CrearNcrModal`), sin `PageHeader` (pasa al contenedor), sin cambios de comportamiento ni filtros nuevos (eso es C3b). Reusa `useNotasCredito()`/`useBuscarFacturaParaAnular` sin tocar sus hooks.
+- [x] C3a.4 GREEN: crear `src/features/ventas/components/facturas-empresa-tab.tsx` (30 líneas) — placeholder visual (icono + texto "Proximamente"), SIN `useFacturasEmpresa` todavia (eso es C3b), sin `DataTable` todavia.
+- [x] C3a.5 GREEN: reescribir `src/features/ventas/components/notas-credito-page.tsx` (171 líneas → shell de ~56 líneas) — `PageHeader` renombrado a "Facturas emitidas"; `Tabs` shadcn `defaultValue="facturas"` (patrón `traspasos.tsx`/`gastos-dashboard.tsx`, sin rutas anidadas ni search param); pestaña "Facturas" (primaria/default) delega a `FacturasEmpresaTab`; pestaña "Notas de credito" (secundaria) delega a `NotasCreditoTab`. **GREEN confirmado**: 2/2 tests del archivo nuevo pasan.
+- [x] C3a.6 Verify: `yarn test:run` completo (91 archivos/1089 tests) verde; `yarn type-check:test` limpio; `yarn type-check` (app) solo con los mismos errores preexistentes no relacionados ya documentados en Slice B (`src/lib/__tests__/*`, `traspasos.test.tsx` — globals de test faltantes en tsconfig de app, no tocado por este slice); `src/routes/_app/ventas/notas-credito.tsx` SIN cambios (confirmado, el gate `SALES_VOID` ya envuelve `NotasCreditoPage` sin modificaciones); `useBuscarFacturaParaAnular` NO se toco (sigue siendo consumido por `notas-credito-tab.tsx`, se elimina recien en C3b cuando se reemplace por filtros nuevos).
+
+**Resultado real vs forecast (C3a)**: forecast total de Slice C ~450–550 líneas; C3a (mitad estructural) real: `sidebar.tsx` (+1/-1) + `notas-credito-page.tsx` (+29/-144, reescritura neta de 171→~56 líneas activas) + 3 archivos nuevos (`notas-credito-tab.tsx` 153 líneas, `facturas-empresa-tab.tsx` 30 líneas, `notas-credito-page.test.tsx` 37 líneas) ≈ **395 líneas cambiadas** — dentro del presupuesto de 400 líneas por PR individual, confirmando que el split preventivo C3a/C3b fue la decisión correcta (evita que Slice C completo exceda 450–550 en un solo PR). Sin desviaciones del Design (Decision 1 aplicada tal cual — mismo patrón `Tabs` que `traspasos.tsx`). `useBuscarFacturaParaAnular` intacto. Diff FROZEN (`use-notas-credito.ts`, `nota-credito-pos-modal.tsx`, `supervisor-pin-dialog.tsx`, `use-ventas.ts`) confirmado vacío (`git diff --stat` sin salida).
+
+### Sub-slice C3b — Contenido real (pendiente, próxima entrega)
+
+- [ ] C3b.1 (=C.2) Extender `src/features/ventas/components/facturas-empresa-tab.tsx` — filtros (rango de fecha default mes actual, `nro_factura`, cliente, RIF) + `DataTable` genérico (`@/components/data-table/data-table.tsx`) sobre `useFacturasEmpresa(filtros)`; acción "Aplicar nota de crédito" por fila (abre modal, wiring real en Slice D — en este slice el botón puede quedar con estado local `facturaSeleccionada`/`modalOpen` sin montar aún `CrearNcrModal`); estado vacío sin error. [Spec: listado empresa-wide — todos los scenarios]
+- [ ] C3b.2 (=C.3) Extender `src/features/ventas/components/notas-credito-tab.tsx` — agregar filtros nuevos (fecha default mes actual, `nro` NC, `tipo`, cliente, RIF, vía `useNotasCredito(filtros)`) + botón "Ver todo el historial" que limpia el rango de fecha sin tope, preservando el buscador existente. [Spec: pestaña Notas de crédito — todos los scenarios]
+- [ ] C3b.3 (=C.5) Eliminar `useBuscarFacturaParaAnular` (dead code, Design §Decisión 7) de `use-notas-credito.ts` — confirmar con grep que `notas-credito-tab.tsx` (ya migrado a filtros nuevos en C3b.2) ya no lo consume antes de borrar; limpiar su test en `use-notas-credito.test.ts`.
+- [ ] C3b.4 (=C.6) Verify: `yarn test:run` + `yarn type-check` + `yarn type-check:test` verdes; smoke manual: usuario sin `SALES_VOID` no ve el ítem ni accede; filtros combinables en ambas pestañas; "Ver todo el historial" funciona.
 
 ## Slice D — Modal admin delgado (rewrite) + wiring (Design §Decisión 2/5/6)
 
