@@ -291,6 +291,41 @@ function ProyeccionPvpHint({
   )
 }
 
+/**
+ * Formatea el costo USD resuelto en modo exploracion (ver
+ * `recalcularCostoSiExplorando`) para escribirlo en el estado `costoUsd`.
+ *
+ * Preserva hasta 8 decimales (regla de negocio #10, CLAUDE.md: USD es la
+ * moneda base y usa hasta 8 decimales para representar variaciones minimas
+ * de Bs; el redondeo a 2 decimales ocurre SOLO al final de la cadena de
+ * calculo). Redondear aqui a 2 decimales amplificaria el error x `tasaValor`
+ * en cascadas posteriores (ej.: tasa 500 convierte un error de $0.002 en
+ * Bs 1.00).
+ */
+export function formatearCostoExploradoParaEstado(costo: Decimal): string {
+  return costo.toFixed(8)
+}
+
+/**
+ * Resuelve los strings USD y Bs de un nivel de PVP cascadeado desde "Fijar
+ * costo" (ver `handleFijarCosto`).
+ *
+ * El Bs se deriva del Decimal `pvpUsd` de PRECISION COMPLETA (nunca del
+ * string USD ya redondeado a 2 decimales) para que el redondeo ocurra una
+ * sola vez, al final de la cadena (regla de negocio #10). Re-parsear el
+ * string USD redondeado antes de multiplicar por la tasa amplifica el error
+ * de redondeo por `tasaValor`.
+ */
+export function resolverPvpCascadaStrings(
+  pvpUsd: Decimal,
+  tasaValor: number
+): { usdStr: string; bsStr: string | null } {
+  return {
+    usdStr: pvpUsd.toFixed(2),
+    bsStr: tasaValor > 0 ? usdToBs(pvpUsd, tasaValor).toFixed(2) : null,
+  }
+}
+
 type TabId = 'general' | 'precios' | 'inventario'
 
 interface LoteRow {
@@ -773,7 +808,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       margenPct: new Decimal(margenPct || 0),
     })
     if (!costo || costo.isNaN()) return
-    setCostoUsd(costo.toFixed(2))
+    setCostoUsd(formatearCostoExploradoParaEstado(costo))
     const bs = calcularCostoBsBackCalculado(costo, new Decimal(tasaValor))
     if (bs) setCostoBs(bs.toFixed(2))
     setCostoBackCalculado(true)
@@ -794,17 +829,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       margenEspecialPct: new Decimal(margenEspecial.trim() === '' ? '0' : margenEspecial),
     })
 
-    const detalUsdStr = resultado.detalUsd.toFixed(2)
-    setPrecioVentaUsd(detalUsdStr)
-    if (tasaValor > 0) setPrecioVentaBs(usdToBs(parseFloat(detalUsdStr), tasaValor).toFixed(2))
+    const detal = resolverPvpCascadaStrings(resultado.detalUsd, tasaValor)
+    setPrecioVentaUsd(detal.usdStr)
+    if (detal.bsStr) setPrecioVentaBs(detal.bsStr)
 
-    const mayorUsdStr = resultado.mayorUsd.toFixed(2)
-    setPrecioMayorUsd(mayorUsdStr)
-    if (tasaValor > 0) setPrecioMayorBs(usdToBs(parseFloat(mayorUsdStr), tasaValor).toFixed(2))
+    const mayor = resolverPvpCascadaStrings(resultado.mayorUsd, tasaValor)
+    setPrecioMayorUsd(mayor.usdStr)
+    if (mayor.bsStr) setPrecioMayorBs(mayor.bsStr)
 
-    const especialUsdStr = resultado.especialUsd.toFixed(2)
-    setPrecioEspecialUsd(especialUsdStr)
-    if (tasaValor > 0) setPrecioEspecialBs(usdToBs(parseFloat(especialUsdStr), tasaValor).toFixed(2))
+    const especial = resolverPvpCascadaStrings(resultado.especialUsd, tasaValor)
+    setPrecioEspecialUsd(especial.usdStr)
+    if (especial.bsStr) setPrecioEspecialBs(especial.bsStr)
 
     setCostoBackCalculado(false)
   }
