@@ -1515,10 +1515,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   </label>
                   <input
                     id="prod-stock-min"
-                    type="number"
+                    type="text"
                     inputMode="decimal"
-                    step="0.001"
-                    min="0"
                     value={esServicioOComboLocal ? '0' : stockMinimo}
                     onChange={(e) => setStockMinimo(soloNumeroPositivo(e.target.value))}
                     onWheel={stopScroll}
@@ -1643,10 +1641,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     </label>
                     <input
                       id="prod-costo"
-                      type="number"
+                      type="text"
                       inputMode="decimal"
-                      step="any"
-                      min="0"
                       value={esComboLocal ? '0' : costoUsd}
                       onChange={(e) => handleCostoUsdChange(soloNumeroPositivo(e.target.value))}
                       onWheel={stopScroll}
@@ -1672,10 +1668,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     </label>
                     <input
                       id="prod-costo-bs"
-                      type="number"
+                      type="text"
                       inputMode="decimal"
-                      step="any"
-                      min="0"
                       value={esComboLocal ? '0' : costoBs}
                       onChange={(e) => handleCostoBsChange(soloNumeroPositivo(e.target.value))}
                       onWheel={stopScroll}
@@ -1739,9 +1733,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           </td>
                           <td className="px-2 py-1.5">
                             <input
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
                               value={margen}
                               onChange={(e) => handleMargenChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1755,10 +1748,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           <td className="px-2 py-1.5">
                             <input
                               id="prod-venta"
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
-                              min="0"
                               value={precioVentaUsd}
                               onChange={(e) => handlePrecioVentaUsdChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1774,10 +1765,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           </td>
                           <td className="px-2 py-1.5">
                             <input
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
-                              min="0"
                               value={precioVentaBs}
                               onChange={(e) => handlePrecioVentaBsChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1801,10 +1790,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <td className="px-2 py-1.5">
                                 <input
                                   key={`pf-detal-usd-${pfDetalUsd.toFixed(4)}`}
-                                  type="number"
+                                  type="text"
                                   inputMode="decimal"
-                                  step="any"
-                                  min="0"
                                   defaultValue={pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalDetalUsdChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
@@ -1816,10 +1803,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <td className="px-2 py-1.5">
                                 <input
                                   key={`pf-detal-bs-${pfDetalBs.toFixed(4)}`}
-                                  type="number"
+                                  type="text"
                                   inputMode="decimal"
-                                  step="any"
-                                  min="0"
                                   defaultValue={pfDetalBs > 0 ? pfDetalBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalDetalBsChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
@@ -1843,9 +1828,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           </td>
                           <td className="px-2 py-1.5">
                             <input
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
                               value={margenMayor}
                               onChange={(e) => handleMargenMayorChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1859,10 +1843,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           <td className="px-2 py-1.5">
                             <input
                               id="prod-mayor"
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
-                              min="0"
                               value={precioMayorUsd}
                               onChange={(e) => handlePrecioMayorUsdChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1878,10 +1860,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           </td>
                           <td className="px-2 py-1.5">
                             <input
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
-                              min="0"
                               value={precioMayorBs}
                               onChange={(e) => handlePrecioMayorBsChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1905,10 +1885,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <td className="px-2 py-1.5">
                                 <input
                                   key={`pf-mayor-usd-${pfMayorUsd.toFixed(4)}`}
-                                  type="number"
+                                  type="text"
                                   inputMode="decimal"
-                                  step="any"
-                                  min="0"
                                   defaultValue={pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalMayorUsdChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
@@ -1920,10 +1898,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <td className="px-2 py-1.5">
                                 <input
                                   key={`pf-mayor-bs-${pfMayorBs.toFixed(4)}`}
-                                  type="number"
+                                  type="text"
                                   inputMode="decimal"
-                                  step="any"
-                                  min="0"
                                   defaultValue={pfMayorBs > 0 ? pfMayorBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalMayorBsChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
@@ -1948,9 +1924,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           </td>
                           <td className="px-2 py-1.5">
                             <input
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
                               value={margenEspecial}
                               onChange={(e) => handleMargenEspecialChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1964,10 +1939,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           <td className="px-2 py-1.5">
                             <input
                               id="prod-especial"
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
-                              min="0"
                               value={precioEspecialUsd}
                               onChange={(e) => handlePrecioEspecialUsdChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -1983,10 +1956,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                           </td>
                           <td className="px-2 py-1.5">
                             <input
-                              type="number"
+                              type="text"
                               inputMode="decimal"
-                              step="any"
-                              min="0"
                               value={precioEspecialBs}
                               onChange={(e) => handlePrecioEspecialBsChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
@@ -2010,10 +1981,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <td className="px-2 py-1.5">
                                 <input
                                   key={`pf-especial-usd-${pfEspecialUsd.toFixed(4)}`}
-                                  type="number"
+                                  type="text"
                                   inputMode="decimal"
-                                  step="any"
-                                  min="0"
                                   defaultValue={pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalEspecialUsdChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
@@ -2025,10 +1994,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               <td className="px-2 py-1.5">
                                 <input
                                   key={`pf-especial-bs-${pfEspecialBs.toFixed(4)}`}
-                                  type="number"
+                                  type="text"
                                   inputMode="decimal"
-                                  step="any"
-                                  min="0"
                                   defaultValue={pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : ''}
                                   onBlur={(e) => handlePrecioFinalEspecialBsChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
@@ -2084,10 +2051,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     </label>
                     <input
                       id="prod-stock-inicial"
-                      type="number"
+                      type="text"
                       inputMode="decimal"
-                      step="0.001"
-                      min="0"
                       value={stockInicial}
                       onChange={(e) => setStockInicial(soloNumeroPositivo(e.target.value))}
                       onWheel={stopScroll}
