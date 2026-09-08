@@ -1,95 +1,121 @@
-# Design: Back-calcular Costo desde Margen y Precio
+# Design: Modo Exploración de Costo Continuo + "Fijar Costo"
 
 ## Technical Approach
 
-New pure Decimal-based back-calc math lives in `producto-precio-gating.ts` (mirrors `compra-precio-gating.ts` style). `producto-form.tsx` wires it via `onBlur` on 3 DETAL inputs (margen, PVP USD, PVP Bs) plus the two existing `onBlur` precio-final handlers. It bypasses `applyPricesFromCosto` entirely — the two flows never touch the same code path, so no double-recalculation is possible.
+Reemplaza el modelo "blur-and-anchor" por **exploración continua**: mientras ambos costos estén vacíos (o el costo vigente sea un *preview* del sistema), cada `onChange` de margen/PVP de cualquier nivel recalcula el costo en vivo desde ESE nivel. El usuario ajusta libremente y presiona **"Fijar costo"** para anclar y cascadear. Esto es una reescritura de `producto-precio-gating.ts` (nuevas funciones puras, Decimal, redondeo al final) y de la sección de costo/precios en `producto-form.tsx`. Precio final se mantiene en `onBlur` (ver Decisión 3).
 
-## Central Design Problem: "Last Source" State Model
+## Architecture Decisions
 
-| Option | Tradeoff | Verdict |
+### Decisión 1: Eliminar el ref "último nivel" — no hace falta
+
+| Opción | Tradeoff | Verdict |
 |---|---|---|
-| (a) 3 flags via `useState` | Correct shape, but triggers re-render on every margin/price keystroke for a value read only once, at blur | Rejected — needless renders |
-| (b) 1 object via `useState` | Same render cost as (a), extra indirection | Rejected |
-| (a) 3 flags via `useRef` | Read-only-at-blur, zero render cost, matches `rerender-use-ref-transient-values` guidance | **Chosen** |
+| Ref global `ultimoNivelEditadoRef` (lo sugerido originalmente) + `useEffect` que observa los 6 campos margen/PVP y diffea contra el ref | Es el anti-patrón `rerender-derived-state-no-effect`/`rerender-move-effect-to-event`: derivar estado (costo) de otro estado vía efecto duplica renders y complica el orden de escritura | Rechazado |
+| Cada handler (`handleMargenMayorChange`, etc.) ya SABE su propio nivel — llama al recálculo inline pasando sus propios valores frescos (locales, no leídos de state) | Cero estado nuevo, cero riesgo de stale-closure (mismo motivo por el que `ejecutarBackCalcSiAplica` ya recibía `pvpOverrideUsd`) | **Elegido** |
 
-**Chosen**: two refs, `ultimaFuenteMayorRef` and `ultimaFuenteEspecialRef`, typed `FuentePrecio = 'margen' | 'precio' | null`. No ref needed for DETAL — it's the calculation's *input*, never overwritten by cascade, so nothing to track.
+El "nivel editado" nunca fue información que hubiera que *almacenar*: es el handler que se ejecuta. No hay ref, no hay estado para esto en el nuevo diseño.
 
-**Setters**: `handleMargenMayorChange` → `.current = 'margen'`; `handlePrecioMayorUsdChange`, `handlePrecioMayorBsChange`, `handlePrecioFinalMayorUsdChange/BsChange` → `.current = 'precio'`. Mirror for especial.
+### Decisión 2: Distinguir "preview del sistema" de "costo vacío" — reutilizar `costoBackCalculado`
 
-**Default on form open** (in the existing reset `useEffect`):
-- **Create mode**: `'margen'` for both. Prices are empty and margins are pre-filled from `niveles_precio` defaults — nothing hand-typed exists to protect, so cascading is safe and expected.
-- **Edit mode**: `null` for both, treated as "not margin" (cascade skipped). Loaded DB prices must never be silently overwritten by a stray blur until the user actively re-touches a margin field this session.
-
-## New Pure Function (`producto-precio-gating.ts`)
+El predicado de exploración no puede ser solo "ambos costos vacíos": en cuanto el primer recálculo escribe `costoUsd`, el campo deja de estar vacío y la exploración se cortaría tras el primer cálculo. Se reutiliza el booleano existente `costoBackCalculado` (semántica ampliada) como discriminador "este valor es un preview, no una decisión del usuario":
 
 ```ts
-export type FuentePrecio = 'margen' | 'precio' | null
-
-export function debeBackCalcularCosto(p: {
-  costoUsd: string; esCombo: boolean; margenDetalPct: string; pvpDetalUsd: number
-}): boolean
-
-export function backcalcularCostoYCascada(input: {
-  pvpDetalUsd: Decimal; margenDetalPct: Decimal
-  margenMayorPct: Decimal; margenEspecialPct: Decimal
-  ultimaFuenteMayor: FuentePrecio; ultimaFuenteEspecial: FuentePrecio
-}): { costoUsd: Decimal; mayorUsd: Decimal | null; especialUsd: Decimal | null }
+export function debeExplorarCosto(p: { costoUsd: string; costoBs: string; costoEsPreview: boolean }): boolean {
+  if (p.costoEsPreview) return true
+  return p.costoUsd.trim() === '' && p.costoBs.trim() === ''
+}
 ```
 
-`debeBackCalcularCosto` is the **single centralized predicate** — the 4 trigger conditions live in one place, called from every blur site. `backcalcularCostoYCascada` does `costo = pvp / (1 + margen/100)`, then per level: `ultimaFuente !== 'margen' → null` (preserve), else `costo * (1 + margenNivel/100)` (defensively `Decimal.max(0, margen)`). No rounding inside; caller does `.toFixed(2)` once at the state-write boundary.
+Tipeo manual en Costo (USD/Bs) ya hace `setCostoBackCalculado(false)` (código existente) → sale de exploración por construcción, sin lógica extra. "Fijar costo" también hace `setCostoBackCalculado(false)` → mismo efecto (ver Decisión 4).
 
-## Blur Wiring
+### Decisión 3: Precio final se mantiene en `onBlur` (scope reducido, flagueado)
 
-| Input | Existing handler | Change |
+El spec dice "MUST recalcular en CADA cambio... de margen, PVP o final". Los inputs de precio final son **no controlados** (`defaultValue` + `key={pf-...-${valor.toFixed(4)}}` que fuerza remount cuando el PVP fuente cambia). Si se recalculara por `onChange`, cada tecla escrita cambiaría el PVP fuente → cambiaría la `key` → remontaría el input a mitad de tipeo (el cursor/valor se resetea). Migrar a estado controlado string-crudo por campo (6 estados nuevos) es una reescritura mayor fuera de este alcance.
+
+**Decisión**: precio final sigue en `onBlur` (ya llama al recálculo, ver Wiring). Margen y PVP (USD/Bs) de los 3 niveles sí son continuos por `onChange` — son controlados hoy, sin riesgo de remount. Se flaguea como scope reducido intencional, no un olvido.
+
+### Decisión 4: "Fijar costo" no necesita estado propio
+
+Visible cuando `debeExplorarCosto(...) && costoUsd.trim() !== '' && !esComboLocal`. Al click: `fijarCostoYCascada` recalcula PVP de los 3 niveles desde costo+márgenes actuales, escribe USD+Bs, y `setCostoBackCalculado(false)` → el predicado pasa a `false` (costo no vacío, no preview) → exploración termina, botón desaparece, precio final se recalcula solo (ya es derivado en cada render desde PVP+alícuota).
+
+## Nuevas Funciones Puras (`producto-precio-gating.ts`)
+
+```ts
+export function debeExplorarCosto(p: { costoUsd: string; costoBs: string; costoEsPreview: boolean }): boolean
+
+// costo = pvp / (1 + margen/100); null si pvp <= 0 (nada que calcular aún)
+export function calcularCostoDesdeNivel(p: { pvpUsd: Decimal; margenPct: Decimal }): Decimal | null
+
+// cascada al fijar: precio = costo * (1 + margenNivel/100), margen clamp >= 0
+export function fijarCostoYCascada(p: {
+  costoUsd: Decimal; margenDetalPct: Decimal; margenMayorPct: Decimal; margenEspecialPct: Decimal
+}): { detalUsd: Decimal; mayorUsd: Decimal; especialUsd: Decimal }
+```
+
+`calcularCostoBsBackCalculado` se mantiene sin cambios (guard `tasa <= 0 → null`, reusado tal cual).
+
+## Recálculo Centralizado (component-level, `producto-form.tsx`)
+
+```ts
+function recalcularCostoSiExplorando(pvpUsd: number, margenPct: number) {
+  if (esComboLocal) return
+  if (!debeExplorarCosto({ costoUsd, costoBs, costoEsPreview: costoBackCalculado })) return
+  const costo = calcularCostoDesdeNivel({ pvpUsd: new Decimal(pvpUsd), margenPct: new Decimal(margenPct) })
+  if (!costo) return
+  setCostoUsd(costo.toFixed(2))
+  const bs = calcularCostoBsBackCalculado(costo, new Decimal(tasaValor))
+  if (bs) setCostoBs(bs.toFixed(2))
+  setCostoBackCalculado(true)
+}
+```
+
+**Prevención de loop**: escribe `costoUsd`/`costoBs`, nunca margen/PVP → no puede re-disparar los handlers de margen/PVP que la llamaron. `setCostoBackCalculado(true)` es idempotente (mismo valor en cada tecla mientras se explora), React no re-ejecuta efectos por esto (no hay efecto involucrado, es una llamada directa en el handler).
+
+**Costo de render**: corre en cada tecla, pero solo mientras el modal de un producto está abierto y solo escribe 2-3 strings de estado local (`costoUsd`, `costoBs`, `costoBackCalculado`) — mismo orden de magnitud que los handlers de margen/PVP existentes, que ya re-renderizan el formulario en cada tecla hoy. Sin trabajo costoso (Decimal en un solo `dividedBy`), sin listas, sin memo necesario.
+
+## Wiring por Nivel
+
+| Input | Trigger | Llama con |
 |---|---|---|
-| Margen Detal | `onChange` only | Add `onBlur={() => ejecutarBackCalcSiAplica()}` |
-| PVP Detal USD/Bs | `onChange` only | Add same `onBlur` (Bs included for parity — both feed the same DETAL PVP) |
-| Precio Final Detal USD/Bs | Already `onBlur` | Append `ejecutarBackCalcSiAplica(baseUsd)` after existing logic, passing the **freshly computed** `baseUsd` local var (state hasn't flushed yet) |
+| Margen Detal/Mayor/Especial | `onChange` (ya existe) | `(pvpUsdActualDelNivel, margenEfectivoFresco)` |
+| PVP USD Detal/Mayor/Especial | `onChange` (ya existe) | `(pvpFrescoUsd, margenActualDelNivel)` |
+| PVP Bs Detal/Mayor/Especial | `onChange` (ya existe) | `(pvpFrescoDesdeUsd, margenActualDelNivel)` |
+| Precio Final USD/Bs (3 niveles) | `onBlur` (ya existe) | `(baseUsdCalculada, margenActualDelNivel)` |
 
-`ejecutarBackCalcSiAplica(pvpOverrideUsd?)` (component-level, has side effects): reads live `margen`/`precioVentaUsd`/`costoUsd`, calls `debeBackCalcularCosto`, short-circuits if false. If true: calls `backcalcularCostoYCascada`, writes `costoUsd`/`costoBs` (tasa guard: skip Bs if `tasaValor <= 0`), and for each non-null cascade result, directly `setPrecioMayorUsd`/`setPrecioEspecialUsd` (+ Bs) and clears that level's `proyeccion*` — no `applyPricesFromCosto` call.
+`onBlur={() => ejecutarBackCalcSiAplica()}` en margen/PVP Detal se **elimina** (queda redundante; el recálculo ya vive en `onChange`, igualando el patrón que mayor/especial ya usaban).
 
-## `applyPricesFromCosto` Interaction (regression-risk zone)
+## REWORK desde la Implementación Actual
 
-Back-calc and `applyPricesFromCosto` (L554-606) are **mutually exclusive by construction**: back-calc only fires when `costoUsd` is blank; once it sets a value, `debeBackCalcularCosto` returns `false` on any later blur (condition 1 fails) — no loop. `applyPricesFromCosto` is reached only via `handleCostoUsdChange`/`handleCostoBsChange`, which back-calc never calls (it writes `setCostoUsd` directly). Net effect: back-calc auto-applies cascade; the existing proyección-then-"Aplicar" flow is untouched for every other path.
-
-## Notice UX: Inline, Not Toast
-
-| Notice | Mechanism | Rationale |
-|---|---|---|
-| "Costo recalculado por el sistema" | Inline text near Costo USD field (`costoBackCalculado` boolean state) | Matches existing `ProyeccionPvpHint`/"Se calcula desde ingredientes" pattern; toast is disruptive for a convenience fill |
-| Margen negativo clampado | Inline text under the offending margen cell (`avisoMargenNegativo: 'detal'\|'mayor'\|'especial'\|null`) | A toast would fire per keystroke while typing `-100` (spam); inline text coalesces naturally |
-
-`costoBackCalculado` clears in `handleCostoUsdChange`/`handleCostoBsChange` (user-driven paths only — back-calc bypasses them), satisfying "corrección manual limpia el aviso".
-
-## Tasa Guard
-
-Every Bs write (`costoBs`, `precioMayorBs`, `precioEspecialBs`) is gated `tasaValor > 0`, identical to existing pattern elsewhere in the file. USD math is unaffected — tasa never divides.
-
-## Negative Margin Clamp
-
-Added at the top of `handleMargenChange`/`handleMargenMayorChange`/`handleMargenEspecialChange`: if `parseFloat(val) < 0`, use `'0'` as the effective value for both `setMargen*` and downstream PVP math, set `avisoMargenNegativo` to that level. Existing math/guards (`esComboLocal`, `costoN > 0`) unchanged otherwise.
-
-## Files Touched
-
-| File | Nature |
+| Elemento actual | Acción |
 |---|---|
-| `producto-precio-gating.ts` | Modify — add `FuentePrecio`, `debeBackCalcularCosto`, `backcalcularCostoYCascada` |
-| `producto-precio-gating.test.ts` | Create — unit tests (canonical example, guards, clamp) |
-| `producto-form.tsx` | Modify — 2 refs, 2 state flags, 1 orchestrator fn, 3 handler edits (clamp), ~6 fuente-ref writes, 3 `onBlur` additions, 2 inline hints |
+| `ultimaFuenteMayorRef`, `ultimaFuenteEspecialRef`, `FuentePrecio` | **Eliminar** — sin reemplazo (Decisión 1) |
+| `debeBackCalcularCosto`, `backcalcularCostoYCascada` | **Eliminar** — reemplazadas por `debeExplorarCosto` + `calcularCostoDesdeNivel` |
+| `ejecutarBackCalcSiAplica` | **Eliminar** — reemplazada por `recalcularCostoSiExplorando`, llamada inline en 9 handlers de `onChange` en vez de 5 sitios de `onBlur` |
+| `costoBackCalculado` | **Mantener, semántica ampliada**: ya no es solo "mostrar aviso", ahora también gatea `debeExplorarCosto` |
+| `avisoMargenNegativo` | Sin cambios |
+| `handleCostoUsdChange`/`handleCostoBsChange` | **Fix bidireccional**: si `val === ''`, limpiar el otro campo también (bug actual: guard `!isNaN` no cubre `''`) |
+| `onBlur` en margen/PVP Detal (líneas ~1700, 1718, 1738) | **Eliminar** los `onBlur={() => ejecutarBackCalcSiAplica()}` |
+| Botón "Fijar costo" | **Nuevo** — JSX condicional junto a Costos (línea ~1656, tras el grid Costo USD/Bs) |
 
-No schema/migration changes — `margen >= 0` already guarantees `precio_venta_usd >= costo_usd` by construction, so `productoSchema` stays untouched (no scope expansion).
+## File Changes
+
+| File | Action | Description |
+|---|---|---|
+| `producto-precio-gating.ts` | Modify | Quitar `FuentePrecio`/`debeBackCalcularCosto`/`backcalcularCostoYCascada`; agregar `debeExplorarCosto`, `calcularCostoDesdeNivel`, `fijarCostoYCascada` |
+| `producto-precio-gating.test.ts` | Modify | Reescribir suites de las 3 funciones removidas; agregar casos de las 3 nuevas (canónico sin IVA, canónico con IVA, pvp<=0 → null, clamp margen negativo en cascada) |
+| `producto-form.tsx` | Modify | Estado (quitar 2 refs), 1 función orquestadora nueva, 1 función de cascada al fijar, 9 sitios de wiring `onChange`, fix bidireccional Costo, botón "Fijar costo" |
 
 ## Testing Strategy
 
 | Layer | What | How |
 |---|---|---|
-| Unit | `debeBackCalcularCosto`, `backcalcularCostoYCascada`, cascade preserve/overwrite, canonical example, tasa=0 | Vitest, pure functions, no DOM |
-| Component (manual/E2E later) | Blur wiring, inline hints, edit-mode default preserves loaded prices | Out of scope for this design; flagged for `sdd-tasks` |
+| Unit | `debeExplorarCosto` (preview/vacío/con valor), `calcularCostoDesdeNivel` (canónico, pvp=0→null, margen negativo defensivo), `fijarCostoYCascada` (cascada 3 niveles) | Vitest, puro, sin DOM |
+| Component (manual) | Tipeo continuo en margen/PVP de los 3 niveles, aparición/desaparición de "Fijar costo", limpieza bidireccional, combos nunca exploran | Fuera de este scope, flag para `sdd-tasks` |
 
 ## Migration / Rollout
 
-No migration required — isolated to one component and one lib module.
+No requiere migración — cambio aislado a un componente y un módulo lib. Es rework sobre una rama en curso (`feat/producto-costo-backcalculo`), no sobre código en producción.
 
 ## Open Questions
 
-None blocking.
+- [ ] Confirmar con producto si el scope reducido de Decisión 3 (precio final en `onBlur`, no continuo) es aceptable, o si se prioriza una siguiente iteración con estado controlado por campo.

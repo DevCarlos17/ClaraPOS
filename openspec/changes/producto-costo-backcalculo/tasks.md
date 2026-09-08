@@ -1,68 +1,70 @@
-# Tasks: Back-calcular Costo desde Margen y Precio
+# Tasks: Modo Exploración de Costo Continuo + "Fijar Costo"
 
 ## Review Workload Forecast
 
 | Field | Value |
 |-------|-------|
-| Estimated changed lines | ~300-380 (lib ~55, lib tests ~140, form.tsx ~115) |
-| 400-line budget risk | Medium |
-| Chained PRs recommended | No |
-| Suggested split | Single PR, 2 work-unit commits |
+| Estimated changed lines | ~520-580 (lib ~130, lib tests ~200, form.tsx ~220) |
+| 400-line budget risk | High |
+| Chained PRs recommended | Yes |
+| Suggested split | PR 1: lib + tests (~330) → PR 2: form.tsx (~220) |
 | Delivery strategy | ask-on-risk |
-| Chain strategy | pending |
+| Chain strategy | pending — user must pick |
 
-Decision needed before apply: No
-Chained PRs recommended: No
+Decision needed before apply: Yes
+Chained PRs recommended: Yes
 Chain strategy: pending
-400-line budget risk: Medium
+400-line budget risk: High
+
+This REWORKS code already committed (`396d365`, `d4cc005`) on the old blur-anchor model. No history rewrite — new forward commits delete/replace old code. Net per-file diff is larger than the original ~300-380 estimate: 9 continuous-recalc wiring sites (was 5 blur sites), IVA duality on 3 levels, a new button, and two full test-suite rewrites (old fn tests removed, new fn tests added).
 
 ### Suggested Work Units
 
 | Unit | Goal | Likely PR | Notes |
 |------|------|-----------|-------|
-| 1 | Pure Decimal back-calc lib + tests (RED→GREEN) | PR 1 (commit 1) | Zero UI risk; mirrors `compra-precio-gating.ts` style |
-| 2 | Form wiring: refs, clamp, blur orchestrator, inline notices | PR 1 (commit 2) | Depends on Unit 1; if diff nears 400 lines during apply, split into its own PR |
+| 1 | Rework `producto-precio-gating.ts` + tests: remove `debeBackCalcularCosto`/`backcalcularCostoYCascada`/`FuentePrecio`, add `debeExplorarCosto`/`calcularCostoDesdeNivel`/`fijarCostoYCascada` | PR 1 | Zero UI risk; ~330 lines; independent, merges alone |
+| 2 | Remove old form wiring (refs, `ejecutarBackCalcSiAplica`, blur back-calc, old aviso semantics) | PR 2 (commit 1) | Depends on Unit 1 exports |
+| 3 | Wire continuous recalc (9 `onChange` sites + 3 `onBlur` final), bidirectional cost clear, "Fijar costo" button | PR 2 (commit 2) | Same file as Unit 2; keep as 2 commits, 1 PR unless it nears 400 alone |
 
-If actual diff exceeds 400 lines while applying, split at the commit boundary above (Unit 1 already merges cleanly alone).
+If Unit 2+3 combined exceed 400 lines during apply, split PR 2 at the commit boundary (Unit 2 alone, then Unit 3).
 
 ## Phase 1: Pure Lib — Tests First (RED)
 
-- [ ] 1.1 In `src/features/inventario/lib/__tests__/producto-precio-gating.test.ts`, add failing tests for `debeBackCalcularCosto`: all 4 trigger conditions (costo vacío vs `'0'`, margen ausente, PVP/final ausente, combo). Verify: `yarn test:run` fails (RED).
-- [ ] 1.2 Same file, add failing tests for `backcalcularCostoYCascada`: canonical example (pvp150/margen50→100; mayor125; especial100.01), IVA-final (174→150→100), tasa=0 guard, margen 0%, cascade preserves manual `precio` fuente. Verify: RED.
+- [x] 1.1 `producto-precio-gating.test.ts`: add failing tests for `debeExplorarCosto` (preview→true, both empty→true, either has value→false). Verify: `yarn test:run` RED (missing export). **DEVIATION**: old `describe('debeBackCalcularCosto')`/`describe('backcalcularCostoYCascada')` blocks NOT removed — see Phase 2 deviation note.
+- [x] 1.2 Add failing tests for `calcularCostoDesdeNivel`: canonical (pvp150/margen50→100.00), pvp<=0→null, margen 0%→costo=pvp. Verify RED.
+- [x] 1.3 Add failing tests for `fijarCostoYCascada`: cascade (costo100, margen detal50/mayor25/especial0.01→detal150/mayor125/especial100.01), negative margin clamped to 0 before cascading. Verify RED.
 
 ## Phase 2: Pure Lib — Implementation (GREEN)
 
-- [ ] 2.1 In `src/features/inventario/lib/producto-precio-gating.ts`, add `FuentePrecio` type + `debeBackCalcularCosto(p)`. Verify: 1.1 passes.
-- [ ] 2.2 Same file, add `backcalcularCostoYCascada(input)` using `decimal.js`; no internal rounding. Verify: 1.2 passes; `yarn type-check` clean.
+- [x] 2.1 **DEVIATION**: `FuentePrecio`, `debeBackCalcularCosto`, `backcalcularCostoYCascada` NOT removed — `producto-form.tsx` (PR 2 scope) still imports all 3. Removing them now would break `yarn type-check` on the form before PR 2 lands. Kept in place, marked `@deprecated` with JSDoc pointing to their PR-1 replacements; their original tests also kept untouched (18 tests, unmodified). PR 2 deletes both the exports and their tests together with the form rewiring. `calcularCostoBsBackCalculado` untouched as planned.
+- [x] 2.2 Add `debeExplorarCosto(p)` — GREEN 1.1. Signature follows `design.md` exactly (object param incl. `costoEsPreview`), not the simplified 2-positional-arg paraphrase from the orchestrator prompt — design.md is the authoritative source and PR 2's wiring (`costoBackCalculado` → `costoEsPreview`) depends on this shape.
+- [x] 2.3 Add `calcularCostoDesdeNivel({pvpUsd, margenPct})` with `decimal.js`, no rounding, returns `Decimal | null` (null when `pvpUsd <= 0`) — GREEN 1.2. No `ivaPct` param (matches design.md; IVA→PVP resolution is the caller's responsibility per design.md's own canonical-with-IVA example).
+- [x] 2.4 Add `fijarCostoYCascada({costoUsd, margenDetalPct, margenMayorPct, margenEspecialPct})`, clamp margins `>= 0` — GREEN 1.3. Verify: `yarn type-check` clean (zero errors in `producto-precio-gating.ts` or `producto-form.tsx`; only pre-existing test-file global noise elsewhere, unrelated).
 
-**Commit 1**: `producto-precio-gating.ts` + `producto-precio-gating.test.ts` (~195 lines).
+**Commit A (PR 1)**: `producto-precio-gating.ts` + `.test.ts`. ✅ Ready — 30/30 lib tests green, 1160/1160 full suite green, `producto-form.tsx` still compiles.
 
-## Phase 3: Form — State & Refs
+## Phase 3: Form — Remove Old Wiring
 
-- [x] 3.1 In `producto-form.tsx` (~L358, near `proyeccion*` state), add `ultimaFuenteMayorRef`/`ultimaFuenteEspecialRef` (`useRef<FuentePrecio>`), `costoBackCalculado` state, `avisoMargenNegativo` state (`'detal'|'mayor'|'especial'|null`).
-- [x] 3.2 In the reset `useEffect` (~L413-490), set both refs to `'margen'` in the create branch and `null` in the edit branch.
-- [x] 3.3 Set `.current = 'margen'` in `handleMargenMayorChange`/`handleMargenEspecialChange`; `.current = 'precio'` in `handlePrecioMayorUsdChange/BsChange`, `handlePrecioEspecialUsdChange/BsChange`, `handlePrecioFinalMayorUsdChange/BsChange`, `handlePrecioFinalEspecialUsdChange/BsChange` (~L695-861).
+- [ ] 3.1 `producto-form.tsx` (L22-29): drop old lib imports; import `debeExplorarCosto`, `calcularCostoDesdeNivel`, `fijarCostoYCascada`.
+- [ ] 3.2 Remove `ultimaFuenteMayorRef`/`ultimaFuenteEspecialRef` (L373-377) and all `.current` assignments (reset effect L448-449/504-505; handlers L726,745,815,828,845,858,908,923,939,954).
+- [ ] 3.3 Remove `ejecutarBackCalcSiAplica` (L761-810) and its call sites: `onBlur` on margen/PVP Detal (L1700,1718,1738) and calls in `handlePrecioFinalDetalUsd/BsChange` (L884,900). Keep negative-margin clamp (unchanged) and `costoBackCalculado` state/aviso JSX (L1629-1631, semantics widened, no text change).
 
-## Phase 4: Form — Negative Margin Clamp
+## Phase 4: Form — Continuous Recalc Wiring
 
-- [x] 4.1 In `handleMargenChange`/`handleMargenMayorChange`/`handleMargenEspecialChange` (~L682-718), clamp `parseFloat(val) < 0` to `'0'` for state + downstream math, set `avisoMargenNegativo` to that level. Verify: existing PVP math for `margen >= 0` unchanged (regression via 7.1).
+- [ ] 4.1 Add `recalcularCostoSiExplorando(pvpUsd: number, margenPct: number)` near L760: guard `esComboLocal` / `!debeExplorarCosto(...)`, else `calcularCostoDesdeNivel` → `setCostoUsd`/`setCostoBs` (via `calcularCostoBsBackCalculado`) / `setCostoBackCalculado(true)`.
+- [ ] 4.2 Call inline at end of `handleMargenChange`/`handleMargenMayorChange`/`handleMargenEspecialChange` (L706-759).
+- [ ] 4.3 Call inline at end of `handlePrecioVentaUsdChange/BsChange`, `handlePrecioMayorUsdChange/BsChange`, `handlePrecioEspecialUsdChange/BsChange` (L677-870).
+- [ ] 4.4 Call on `onBlur` of Precio Final USD/Bs, all 3 levels: rewire `handlePrecioFinalDetalUsdChange/BsChange` (L873-901) to the new fn; add same call at end of `handlePrecioFinalMayorUsdChange/BsChange` and `handlePrecioFinalEspecialUsdChange/BsChange` (L904-963 — missing today).
 
-## Phase 5: Form — Blur Orchestrator & Wiring
+## Phase 5: Form — Bidirectional Clear + "Fijar Costo"
 
-- [x] 5.1 Add `ejecutarBackCalcSiAplica(pvpOverrideUsd?: number)`: calls `debeBackCalcularCosto`, short-circuits if false; else calls `backcalcularCostoYCascada`, writes `costoUsd`/`costoBs` (tasa guard), cascades `mayor`/`especial` (skip if ref !== `'margen'`), sets `costoBackCalculado(true)`, clears touched `proyeccion*`.
-- [x] 5.2 Add `onBlur={() => ejecutarBackCalcSiAplica()}` on margen Detal, PVP Detal USD, PVP Detal Bs inputs (~L1584-1621).
-- [x] 5.3 Append `ejecutarBackCalcSiAplica(baseUsd)` at the end of `handlePrecioFinalDetalUsdChange`/`handlePrecioFinalDetalBsChange` (~L777-803).
-- [x] 5.4 Clear `costoBackCalculado(false)` in `handleCostoUsdChange`/`handleCostoBsChange` (~L635-650).
+- [ ] 5.1 `handleCostoUsdChange`/`handleCostoBsChange` (L657-674): when `val === ''`, clear the other cost field too (reactivates exploration).
+- [ ] 5.2 Add "Fijar costo" button after Costos block (~L1656), visible when `debeExplorarCosto(...) && costoUsd.trim() !== '' && !esComboLocal`; `onClick` → `fijarCostoYCascada`, write 3 PVP (USD+Bs), `setCostoBackCalculado(false)`.
 
-## Phase 6: Form — Inline Notices
+**Commit B (PR 2)**: `producto-form.tsx` only.
 
-- [x] 6.1 Add inline "costo recalculado por el sistema" text near Costo USD input (~L1516-1521), gated on `costoBackCalculado`, styled like the existing `esComboLocal` hint.
-- [x] 6.2 Add inline "margen ajustado a 0%" text under each margen cell (detal/mayor/especial), gated on `avisoMargenNegativo === nivel`.
+## Phase 6: Verification
 
-**Commit 2**: `producto-form.tsx` only (~115 lines). Actual: +123/-9 (net +114).
-
-## Phase 7: Verification
-
-- [x] 7.1 Run `yarn test:run` — full suite green; confirm combo/servicio (`esComboLocal`) and existing `calcularPrecioPreservandoMargen`/`calcularViolacionCostoPvp` tests unaffected. (93 files / 1148 tests, unchanged from baseline.)
-- [x] 7.2 Run `yarn type-check` + `yarn type-check:test` — no new errors. (Pre-existing noise only, verified via git stash against clean tree.)
-- [ ] 7.3 Manual smoke: canonical example (proposal.md) end-to-end in the form; edit-mode default (`null` fuente) does not overwrite loaded prices on stray blur. **Not performed this session — no dev server available. Pending for sdd-verify or manual QA.**
+- [ ] 6.1 `yarn test:run` — full suite green, no orphan references to removed lib functions.
+- [ ] 6.2 `yarn type-check` + `yarn type-check:test` clean.
+- [ ] 6.3 Regression check: combos never call `recalcularCostoSiExplorando`; normal flow (costo fijo) margen⇄PVP mutual recalc unchanged; canonical Caso1 (margen50/pvp150→costo100) and Caso2 (+IVA16/final174→costo100) verified end-to-end.
