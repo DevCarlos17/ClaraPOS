@@ -19,6 +19,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { usdToBs, bsToUsd } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
+import { soloNumeroPositivo } from '@/lib/numeric-input'
 import {
   calcularPrecioPreservandoMargen,
   calcularViolacionCostoPvp,
@@ -1519,7 +1520,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     step="0.001"
                     min="0"
                     value={esServicioOComboLocal ? '0' : stockMinimo}
-                    onChange={(e) => setStockMinimo(e.target.value)}
+                    onChange={(e) => setStockMinimo(soloNumeroPositivo(e.target.value))}
                     onWheel={stopScroll}
                     disabled={esServicioOComboLocal}
                     placeholder="0"
@@ -1647,7 +1648,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       step="any"
                       min="0"
                       value={esComboLocal ? '0' : costoUsd}
-                      onChange={(e) => handleCostoUsdChange(e.target.value)}
+                      onChange={(e) => handleCostoUsdChange(soloNumeroPositivo(e.target.value))}
                       onWheel={stopScroll}
                       disabled={esComboLocal}
                       placeholder="0.00"
@@ -1676,7 +1677,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       step="any"
                       min="0"
                       value={esComboLocal ? '0' : costoBs}
-                      onChange={(e) => handleCostoBsChange(e.target.value)}
+                      onChange={(e) => handleCostoBsChange(soloNumeroPositivo(e.target.value))}
                       onWheel={stopScroll}
                       disabled={esComboLocal || tasaValor <= 0}
                       placeholder="0,00"
@@ -1742,7 +1743,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               step="any"
                               value={margen}
-                              onChange={(e) => handleMargenChange(e.target.value)}
+                              onChange={(e) => handleMargenChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               placeholder="0"
                               className={`w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner}`}
@@ -1759,7 +1760,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               step="any"
                               min="0"
                               value={precioVentaUsd}
-                              onChange={(e) => handlePrecioVentaUsdChange(e.target.value)}
+                              onChange={(e) => handlePrecioVentaUsdChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               placeholder="0.00"
                               className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
@@ -1778,7 +1779,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               step="any"
                               min="0"
                               value={precioVentaBs}
-                              onChange={(e) => handlePrecioVentaBsChange(e.target.value)}
+                              onChange={(e) => handlePrecioVentaBsChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               disabled={tasaValor <= 0}
                               placeholder="0,00"
@@ -1805,7 +1806,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   step="any"
                                   min="0"
                                   defaultValue={pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalDetalUsdChange(e.target.value)}
+                                  onBlur={(e) => handlePrecioFinalDetalUsdChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   placeholder="0.00"
@@ -1820,7 +1821,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   step="any"
                                   min="0"
                                   defaultValue={pfDetalBs > 0 ? pfDetalBs.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalDetalBsChange(e.target.value)}
+                                  onBlur={(e) => handlePrecioFinalDetalBsChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   disabled={tasaValor <= 0}
@@ -1846,7 +1847,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               step="any"
                               value={margenMayor}
-                              onChange={(e) => handleMargenMayorChange(e.target.value)}
+                              onChange={(e) => handleMargenMayorChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               placeholder="0"
                               className={`w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner}`}
@@ -1863,7 +1864,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               step="any"
                               min="0"
                               value={precioMayorUsd}
-                              onChange={(e) => handlePrecioMayorUsdChange(e.target.value)}
+                              onChange={(e) => handlePrecioMayorUsdChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               placeholder="0.00"
                               className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
@@ -1882,7 +1883,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               step="any"
                               min="0"
                               value={precioMayorBs}
-                              onChange={(e) => handlePrecioMayorBsChange(e.target.value)}
+                              onChange={(e) => handlePrecioMayorBsChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               disabled={tasaValor <= 0}
                               placeholder="0,00"
@@ -1909,7 +1910,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   step="any"
                                   min="0"
                                   defaultValue={pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalMayorUsdChange(e.target.value)}
+                                  onBlur={(e) => handlePrecioFinalMayorUsdChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   placeholder="0.00"
@@ -1924,7 +1925,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   step="any"
                                   min="0"
                                   defaultValue={pfMayorBs > 0 ? pfMayorBs.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalMayorBsChange(e.target.value)}
+                                  onBlur={(e) => handlePrecioFinalMayorBsChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   disabled={tasaValor <= 0}
@@ -1951,7 +1952,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               inputMode="decimal"
                               step="any"
                               value={margenEspecial}
-                              onChange={(e) => handleMargenEspecialChange(e.target.value)}
+                              onChange={(e) => handleMargenEspecialChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               placeholder="0"
                               className={`w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner}`}
@@ -1968,7 +1969,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               step="any"
                               min="0"
                               value={precioEspecialUsd}
-                              onChange={(e) => handlePrecioEspecialUsdChange(e.target.value)}
+                              onChange={(e) => handlePrecioEspecialUsdChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               placeholder="0.00"
                               className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
@@ -1987,7 +1988,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               step="any"
                               min="0"
                               value={precioEspecialBs}
-                              onChange={(e) => handlePrecioEspecialBsChange(e.target.value)}
+                              onChange={(e) => handlePrecioEspecialBsChange(soloNumeroPositivo(e.target.value))}
                               onWheel={stopScroll}
                               disabled={tasaValor <= 0}
                               placeholder="0,00"
@@ -2014,7 +2015,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   step="any"
                                   min="0"
                                   defaultValue={pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalEspecialUsdChange(e.target.value)}
+                                  onBlur={(e) => handlePrecioFinalEspecialUsdChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   placeholder="0.00"
@@ -2029,7 +2030,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                   step="any"
                                   min="0"
                                   defaultValue={pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalEspecialBsChange(e.target.value)}
+                                  onBlur={(e) => handlePrecioFinalEspecialBsChange(soloNumeroPositivo(e.target.value))}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   disabled={tasaValor <= 0}
@@ -2088,7 +2089,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       step="0.001"
                       min="0"
                       value={stockInicial}
-                      onChange={(e) => setStockInicial(e.target.value)}
+                      onChange={(e) => setStockInicial(soloNumeroPositivo(e.target.value))}
                       onWheel={stopScroll}
                       placeholder="0.000"
                       className={`w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${noSpinner}`}
