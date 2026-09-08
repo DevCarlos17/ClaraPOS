@@ -45,26 +45,26 @@ If Unit 2+3 combined exceed 400 lines during apply, split PR 2 at the commit bou
 
 ## Phase 3: Form — Remove Old Wiring
 
-- [ ] 3.1 `producto-form.tsx` (L22-29): drop old lib imports; import `debeExplorarCosto`, `calcularCostoDesdeNivel`, `fijarCostoYCascada`.
-- [ ] 3.2 Remove `ultimaFuenteMayorRef`/`ultimaFuenteEspecialRef` (L373-377) and all `.current` assignments (reset effect L448-449/504-505; handlers L726,745,815,828,845,858,908,923,939,954).
-- [ ] 3.3 Remove `ejecutarBackCalcSiAplica` (L761-810) and its call sites: `onBlur` on margen/PVP Detal (L1700,1718,1738) and calls in `handlePrecioFinalDetalUsd/BsChange` (L884,900). Keep negative-margin clamp (unchanged) and `costoBackCalculado` state/aviso JSX (L1629-1631, semantics widened, no text change).
+- [x] 3.1 `producto-form.tsx`: dropped old lib imports; import `debeExplorarCosto`, `calcularCostoDesdeNivel`, `fijarCostoYCascada`. Also removed the now-unused deprecated lib exports (`debeBackCalcularCosto`, `backcalcularCostoYCascada`, `FuentePrecio`) and their tests, deferred from Phase 2 per the Phase 2 deviation note.
+- [x] 3.2 Removed `ultimaFuenteMayorRef`/`ultimaFuenteEspecialRef` and all `.current` assignments (reset effect + all margen/PVP/precio-final handlers).
+- [x] 3.3 Removed `ejecutarBackCalcSiAplica` and its call sites: `onBlur` on margen/PVP Detal, and the calls in `handlePrecioFinalDetalUsd/BsChange` (replaced with `recalcularCostoSiExplorando`). Kept negative-margin clamp unchanged and `costoBackCalculado` state/aviso JSX (semantics widened, no text change).
 
 ## Phase 4: Form — Continuous Recalc Wiring
 
-- [ ] 4.1 Add `recalcularCostoSiExplorando(pvpUsd: number, margenPct: number)` near L760: guard `esComboLocal` / `!debeExplorarCosto(...)`, else `calcularCostoDesdeNivel` → `setCostoUsd`/`setCostoBs` (via `calcularCostoBsBackCalculado`) / `setCostoBackCalculado(true)`.
-- [ ] 4.2 Call inline at end of `handleMargenChange`/`handleMargenMayorChange`/`handleMargenEspecialChange` (L706-759).
-- [ ] 4.3 Call inline at end of `handlePrecioVentaUsdChange/BsChange`, `handlePrecioMayorUsdChange/BsChange`, `handlePrecioEspecialUsdChange/BsChange` (L677-870).
-- [ ] 4.4 Call on `onBlur` of Precio Final USD/Bs, all 3 levels: rewire `handlePrecioFinalDetalUsdChange/BsChange` (L873-901) to the new fn; add same call at end of `handlePrecioFinalMayorUsdChange/BsChange` and `handlePrecioFinalEspecialUsdChange/BsChange` (L904-963 — missing today).
+- [x] 4.1 Added `recalcularCostoSiExplorando(pvpUsd: number, margenPct: number)`: guards `esComboLocal` / `!debeExplorarCosto(...)`, else `calcularCostoDesdeNivel` → `setCostoUsd`/`setCostoBs` (via `calcularCostoBsBackCalculado`) / `setCostoBackCalculado(true)`. **DEVIATION (defensive)**: passes `pvpUsd || 0`/`margenPct || 0` and checks `costo.isNaN()` before writing — design's pseudocode didn't guard NaN margen mid-edit reaching Decimal; given the PR-1 div-by-zero lesson, this avoids writing literal `"NaN"` into a financial field.
+- [x] 4.2 Wired inline at end of `handleMargenChange`/`handleMargenMayorChange`/`handleMargenEspecialChange`.
+- [x] 4.3 Wired inline at end of `handlePrecioVentaUsdChange/BsChange`, `handlePrecioMayorUsdChange/BsChange`, `handlePrecioEspecialUsdChange/BsChange`.
+- [x] 4.4 Wired on `onBlur` of Precio Final USD/Bs, all 3 levels: rewired `handlePrecioFinalDetalUsdChange/BsChange` to the new fn; added the same call to `handlePrecioFinalMayorUsdChange/BsChange` and `handlePrecioFinalEspecialUsdChange/BsChange` (previously missing).
 
 ## Phase 5: Form — Bidirectional Clear + "Fijar Costo"
 
-- [ ] 5.1 `handleCostoUsdChange`/`handleCostoBsChange` (L657-674): when `val === ''`, clear the other cost field too (reactivates exploration).
-- [ ] 5.2 Add "Fijar costo" button after Costos block (~L1656), visible when `debeExplorarCosto(...) && costoUsd.trim() !== '' && !esComboLocal`; `onClick` → `fijarCostoYCascada`, write 3 PVP (USD+Bs), `setCostoBackCalculado(false)`.
+- [x] 5.1 `handleCostoUsdChange`/`handleCostoBsChange`: when `val === ''`, clear the other cost field too (reactivates exploration).
+- [x] 5.2 Added "Fijar costo" button after Costos block, visible when `!esComboLocal && debeExplorarCosto(...) && costoUsd.trim() !== ''`; `onClick` → `fijarCostoYCascada`, writes 3 PVP (USD+Bs), `setCostoBackCalculado(false)`.
 
-**Commit B (PR 2)**: `producto-form.tsx` only.
+**Commit B (PR 2)**: `producto-form.tsx` (+79/-71) + `producto-precio-gating.ts` (+2/-87) + `producto-precio-gating.test.ts` (+0/-102). Ready — full suite green, type-check clean. Orchestrator handles the actual commit/branch/push.
 
 ## Phase 6: Verification
 
-- [ ] 6.1 `yarn test:run` — full suite green, no orphan references to removed lib functions.
-- [ ] 6.2 `yarn type-check` + `yarn type-check:test` clean.
-- [ ] 6.3 Regression check: combos never call `recalcularCostoSiExplorando`; normal flow (costo fijo) margen⇄PVP mutual recalc unchanged; canonical Caso1 (margen50/pvp150→costo100) and Caso2 (+IVA16/final174→costo100) verified end-to-end.
+- [x] 6.1 `yarn test:run` — full suite green: 93 test files / 1153 tests (lib test file 33→23 after removing 10 deprecated-fn tests). No orphan references to removed lib functions (`ejecutarBackCalcSiAplica`, `FuentePrecio`, `ultimaFuenteMayorRef`, `ultimaFuenteEspecialRef`, `debeBackCalcularCosto`, `backcalcularCostoYCascada` — zero grep hits outside historical doc comments).
+- [x] 6.2 `yarn type-check:test` clean except the pre-existing unrelated `use-pwa-update.ts` swUrl-unused error. `yarn type-check` has expected spurious `describe/it/expect` noise on `*.test.ts` (app tsconfig lacks vitest globals) — zero errors reference `producto-form.tsx` or `producto-precio-gating.ts`.
+- [x] 6.3 Regression check: `esComboLocal` short-circuits `recalcularCostoSiExplorando` as its first guard (combos never explore); normal-flow margen⇄PVP mutual recalc left untouched in all handlers (only appended the new recalc call, didn't alter existing logic); canonical Caso1/Caso2 covered by the 23 lib unit tests (`calcularCostoDesdeNivel`, `fijarCostoYCascada`), form-level manual/component verification flagged out of scope per design.md Testing Strategy.

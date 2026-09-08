@@ -22,10 +22,10 @@ import { localNow } from '@/lib/dates'
 import {
   calcularPrecioPreservandoMargen,
   calcularViolacionCostoPvp,
-  debeBackCalcularCosto,
-  backcalcularCostoYCascada,
   calcularCostoBsBackCalculado,
-  type FuentePrecio,
+  debeExplorarCosto,
+  calcularCostoDesdeNivel,
+  fijarCostoYCascada,
 } from '@/features/inventario/lib/producto-precio-gating'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
@@ -370,11 +370,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [proyeccionMayor, setProyeccionMayor] = useState<ProyeccionPvp | null>(null)
   const [proyeccionEspecial, setProyeccionEspecial] = useState<ProyeccionPvp | null>(null)
 
-  // Fuente del ultimo valor tipeado en mayor/especial, leida solo al blur por
-  // el back-calculo de costo (ver producto-precio-gating.ts). useRef: no debe
-  // disparar re-render en cada tecla (openspec/changes/producto-costo-backcalculo/design.md).
-  const ultimaFuenteMayorRef = useRef<FuentePrecio>(null)
-  const ultimaFuenteEspecialRef = useRef<FuentePrecio>(null)
+  // costoBackCalculado: true cuando el costo actual es un "preview" del
+  // sistema calculado en modo exploracion continua (no una decision tipeada
+  // por el usuario) — gatea `debeExplorarCosto` ademas de mostrar el aviso.
+  // Ver openspec/changes/producto-costo-backcalculo/design.md, Decision 2.
   const [costoBackCalculado, setCostoBackCalculado] = useState(false)
   const [avisoMargenNegativo, setAvisoMargenNegativo] = useState<'detal' | 'mayor' | 'especial' | null>(null)
 
@@ -443,10 +442,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setManejaLotes(producto.maneja_lotes === 1)
         setDepositoId(producto.deposito_id ?? '')
         setStockInicial('')
-        // Edicion: null = "aun no se toco ningun campo de ese nivel esta sesion",
-        // se trata igual que 'precio' (preserva precios ya cargados de la DB).
-        ultimaFuenteMayorRef.current = null
-        ultimaFuenteEspecialRef.current = null
         if (tasaValor > 0) {
           const costoN = parseFloat(producto.costo_usd) || 0
           const ventaN = parseFloat(producto.precio_venta_usd) || 0
@@ -499,10 +494,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setManejaLotes(false)
         setDepositoId('')
         setStockInicial('')
-        // Alta: precios vacios, margenes pre-cargados desde niveles_precio ->
-        // nada tipeado a mano que proteger, la cascada es segura por defecto.
-        ultimaFuenteMayorRef.current = 'margen'
-        ultimaFuenteEspecialRef.current = 'margen'
       }
       setErrors({})
       setProyeccionDetal(null)
@@ -657,6 +648,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handleCostoUsdChange(val: string) {
     setCostoBackCalculado(false)
     setCostoUsd(val)
+    if (val === '') setCostoBs('')
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setCostoBs(usdToBs(num, tasaValor).toFixed(2))
     applyPricesFromCosto(isNaN(num) ? 0 : num)
@@ -665,6 +657,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function handleCostoBsChange(val: string) {
     setCostoBackCalculado(false)
     setCostoBs(val)
+    if (val === '') setCostoUsd('')
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
@@ -684,6 +677,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (costoN > 0 && ventaN > 0) {
       setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
     }
+    recalcularCostoSiExplorando(ventaN, parseFloat(margen) || 0)
   }
 
   function handlePrecioVentaBsChange(val: string) {
@@ -699,6 +693,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       if (costoN > 0 && usdN > 0) {
         setMargen(((usdN - costoN) / costoN * 100).toFixed(2))
       }
+      recalcularCostoSiExplorando(usdN, parseFloat(margen) || 0)
     }
   }
 
@@ -718,12 +713,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioVentaUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
+    recalcularCostoSiExplorando(parseFloat(precioVentaUsd) || 0, margenEfectivoN || 0)
   }
 
   // --- Margen Mayor ---
   function handleMargenMayorChange(val: string) {
     setProyeccionMayor(null)
-    ultimaFuenteMayorRef.current = 'margen'
     const margenN = parseFloat(val)
     const esNegativo = !isNaN(margenN) && margenN < 0
     const margenEfectivo = esNegativo ? '0' : val
@@ -737,12 +732,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioMayorUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
+    recalcularCostoSiExplorando(parseFloat(precioMayorUsd) || 0, margenEfectivoN || 0)
   }
 
   // --- Margen Especial ---
   function handleMargenEspecialChange(val: string) {
     setProyeccionEspecial(null)
-    ultimaFuenteEspecialRef.current = 'margen'
     const margenN = parseFloat(val)
     const esNegativo = !isNaN(margenN) && margenN < 0
     const margenEfectivo = esNegativo ? '0' : val
@@ -756,63 +751,67 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioEspecialUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
+    recalcularCostoSiExplorando(parseFloat(precioEspecialUsd) || 0, margenEfectivoN || 0)
   }
 
   /**
-   * Orquestador del back-calculo de costo (blur-only, ver
-   * `producto-precio-gating.ts`). Lee margen/PVP/costo DETAL vigentes,
-   * delega la decision de disparo a `debeBackCalcularCosto` y, si aplica,
-   * escribe costo (USD/Bs) y cascada mayor/especial segun la ultima fuente
-   * tocada en esta sesion. No llama a `applyPricesFromCosto` — son flujos
-   * mutuamente excluyentes por construccion (ver design.md).
+   * Orquestador del modo de exploracion continua de costo (ver
+   * `producto-precio-gating.ts` y design.md, seccion "Recalculo
+   * Centralizado"). Cada handler de margen/PVP/precio-final de los 3
+   * niveles llama esta funcion con sus propios valores frescos (el nivel
+   * editado). Mientras `debeExplorarCosto` sea verdadero (costos vacios o el
+   * costo actual es un preview del sistema, ver Decision 2), recalcula el
+   * costo desde ESE nivel y lo escribe (USD + Bs, si la tasa es valida) como
+   * nuevo preview. Combos nunca exploran (costo `0` fijo). No escribe
+   * margen/PVP — no puede re-disparar los handlers que la llamaron.
    */
-  function ejecutarBackCalcSiAplica(pvpOverrideUsd?: number) {
-    const pvpDetalUsd = pvpOverrideUsd ?? (parseFloat(precioVentaUsd) || 0)
+  function recalcularCostoSiExplorando(pvpUsd: number, margenPct: number) {
+    if (esComboLocal) return
+    if (!debeExplorarCosto({ costoUsd, costoBs, costoEsPreview: costoBackCalculado })) return
+    const costo = calcularCostoDesdeNivel({
+      pvpUsd: new Decimal(pvpUsd || 0),
+      margenPct: new Decimal(margenPct || 0),
+    })
+    if (!costo || costo.isNaN()) return
+    setCostoUsd(costo.toFixed(2))
+    const bs = calcularCostoBsBackCalculado(costo, new Decimal(tasaValor))
+    if (bs) setCostoBs(bs.toFixed(2))
+    setCostoBackCalculado(true)
+  }
 
-    if (
-      !debeBackCalcularCosto({
-        costoUsd,
-        esCombo: esComboLocal,
-        margenDetalPct: margen,
-        pvpDetalUsd,
-      })
-    ) {
-      return
-    }
-
-    const resultado = backcalcularCostoYCascada({
-      pvpDetalUsd: new Decimal(pvpDetalUsd),
-      margenDetalPct: new Decimal(margen),
+  /**
+   * Accion del boton "Fijar costo" (ver spec.md, Requirement "Boton 'Fijar
+   * Costo'"): ancla el costo actual (deja de ser preview) y cascada el PVP
+   * de los 3 niveles desde sus margenes % vigentes.
+   */
+  function handleFijarCosto() {
+    const costoN = parseFloat(costoUsd) || 0
+    if (costoN <= 0) return
+    const resultado = fijarCostoYCascada({
+      costoUsd: new Decimal(costoN),
+      margenDetalPct: new Decimal(margen.trim() === '' ? '0' : margen),
       margenMayorPct: new Decimal(margenMayor.trim() === '' ? '0' : margenMayor),
       margenEspecialPct: new Decimal(margenEspecial.trim() === '' ? '0' : margenEspecial),
-      ultimaFuenteMayor: ultimaFuenteMayorRef.current,
-      ultimaFuenteEspecial: ultimaFuenteEspecialRef.current,
     })
 
-    setCostoUsd(resultado.costoUsd.toFixed(2))
-    const costoBsCalculado = calcularCostoBsBackCalculado(resultado.costoUsd, new Decimal(tasaValor))
-    if (costoBsCalculado) setCostoBs(costoBsCalculado.toFixed(2))
-    setCostoBackCalculado(true)
+    const detalUsdStr = resultado.detalUsd.toFixed(2)
+    setPrecioVentaUsd(detalUsdStr)
+    if (tasaValor > 0) setPrecioVentaBs(usdToBs(parseFloat(detalUsdStr), tasaValor).toFixed(2))
 
-    if (resultado.mayorUsd !== null) {
-      const mayorUsdStr = resultado.mayorUsd.toFixed(2)
-      setPrecioMayorUsd(mayorUsdStr)
-      if (tasaValor > 0) setPrecioMayorBs(usdToBs(parseFloat(mayorUsdStr), tasaValor).toFixed(2))
-      setProyeccionMayor(null)
-    }
+    const mayorUsdStr = resultado.mayorUsd.toFixed(2)
+    setPrecioMayorUsd(mayorUsdStr)
+    if (tasaValor > 0) setPrecioMayorBs(usdToBs(parseFloat(mayorUsdStr), tasaValor).toFixed(2))
 
-    if (resultado.especialUsd !== null) {
-      const especialUsdStr = resultado.especialUsd.toFixed(2)
-      setPrecioEspecialUsd(especialUsdStr)
-      if (tasaValor > 0) setPrecioEspecialBs(usdToBs(parseFloat(especialUsdStr), tasaValor).toFixed(2))
-      setProyeccionEspecial(null)
-    }
+    const especialUsdStr = resultado.especialUsd.toFixed(2)
+    setPrecioEspecialUsd(especialUsdStr)
+    if (tasaValor > 0) setPrecioEspecialBs(usdToBs(parseFloat(especialUsdStr), tasaValor).toFixed(2))
+
+    setCostoBackCalculado(false)
   }
 
   // --- Bidireccionales: PVP Mayor ---
   function handlePrecioMayorUsdChange(val: string) {
     setProyeccionMayor(null)
-    ultimaFuenteMayorRef.current = 'precio'
     setPrecioMayorUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioMayorBs(usdToBs(num, tasaValor).toFixed(2))
@@ -821,11 +820,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (costoN > 0 && mayorN > 0) {
       setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
     }
+    recalcularCostoSiExplorando(mayorN, parseFloat(margenMayor) || 0)
   }
 
   function handlePrecioMayorBsChange(val: string) {
     setProyeccionMayor(null)
-    ultimaFuenteMayorRef.current = 'precio'
     setPrecioMayorBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
@@ -836,13 +835,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       if (costoN > 0 && usdN > 0) {
         setMargenMayor(((usdN - costoN) / costoN * 100).toFixed(2))
       }
+      recalcularCostoSiExplorando(usdN, parseFloat(margenMayor) || 0)
     }
   }
 
   // --- Bidireccionales: PVP Especial ---
   function handlePrecioEspecialUsdChange(val: string) {
     setProyeccionEspecial(null)
-    ultimaFuenteEspecialRef.current = 'precio'
     setPrecioEspecialUsd(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) setPrecioEspecialBs(usdToBs(num, tasaValor).toFixed(2))
@@ -851,11 +850,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (costoN > 0 && especN > 0) {
       setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
     }
+    recalcularCostoSiExplorando(especN, parseFloat(margenEspecial) || 0)
   }
 
   function handlePrecioEspecialBsChange(val: string) {
     setProyeccionEspecial(null)
-    ultimaFuenteEspecialRef.current = 'precio'
     setPrecioEspecialBs(val)
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
@@ -866,6 +865,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       if (costoN > 0 && usdN > 0) {
         setMargenEspecial(((usdN - costoN) / costoN * 100).toFixed(2))
       }
+      recalcularCostoSiExplorando(usdN, parseFloat(margenEspecial) || 0)
     }
   }
 
@@ -881,7 +881,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
       setMargen(((baseUsd - costoN) / costoN * 100).toFixed(2))
-    ejecutarBackCalcSiAplica(baseUsd)
+    recalcularCostoSiExplorando(baseUsd, parseFloat(margen) || 0)
   }
 
   function handlePrecioFinalDetalBsChange(val: string) {
@@ -897,7 +897,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
       setMargen(((baseUsd - costoN) / costoN * 100).toFixed(2))
-    ejecutarBackCalcSiAplica(baseUsd)
+    recalcularCostoSiExplorando(baseUsd, parseFloat(margen) || 0)
   }
 
   // --- Precio Final Mayor → back-calcula base imponible ---
@@ -905,7 +905,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
     setProyeccionMayor(null)
-    ultimaFuenteMayorRef.current = 'precio'
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioMayorUsd(baseUsd.toFixed(2))
@@ -913,6 +912,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
       setMargenMayor(((baseUsd - costoN) / costoN * 100).toFixed(2))
+    recalcularCostoSiExplorando(baseUsd, parseFloat(margenMayor) || 0)
   }
 
   function handlePrecioFinalMayorBsChange(val: string) {
@@ -920,7 +920,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
     setProyeccionMayor(null)
-    ultimaFuenteMayorRef.current = 'precio'
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
@@ -929,6 +928,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
       setMargenMayor(((baseUsd - costoN) / costoN * 100).toFixed(2))
+    recalcularCostoSiExplorando(baseUsd, parseFloat(margenMayor) || 0)
   }
 
   // --- Precio Final Especial → back-calcula base imponible ---
@@ -936,7 +936,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
     setProyeccionEspecial(null)
-    ultimaFuenteEspecialRef.current = 'precio'
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
     setPrecioEspecialUsd(baseUsd.toFixed(2))
@@ -944,6 +943,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
       setMargenEspecial(((baseUsd - costoN) / costoN * 100).toFixed(2))
+    recalcularCostoSiExplorando(baseUsd, parseFloat(margenEspecial) || 0)
   }
 
   function handlePrecioFinalEspecialBsChange(val: string) {
@@ -951,7 +951,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
     setProyeccionEspecial(null)
-    ultimaFuenteEspecialRef.current = 'precio'
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
@@ -960,6 +959,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0)
       setMargenEspecial(((baseUsd - costoN) / costoN * 100).toFixed(2))
+    recalcularCostoSiExplorando(baseUsd, parseFloat(margenEspecial) || 0)
   }
 
   function handleSugerenciaSelect(s: {
@@ -1653,6 +1653,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     />
                   </div>
                 </div>
+                {!esComboLocal &&
+                  debeExplorarCosto({ costoUsd, costoBs, costoEsPreview: costoBackCalculado }) &&
+                  costoUsd.trim() !== '' && (
+                    <button
+                      type="button"
+                      onClick={handleFijarCosto}
+                      className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800 underline"
+                    >
+                      Fijar costo
+                    </button>
+                  )}
               </div>
 
               {/* Tabla de Precios por Nivel */}
@@ -1697,7 +1708,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               step="any"
                               value={margen}
                               onChange={(e) => handleMargenChange(e.target.value)}
-                              onBlur={() => ejecutarBackCalcSiAplica()}
                               onWheel={stopScroll}
                               placeholder="0"
                               className={`w-full rounded border border-gray-300 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 ${noSpinner}`}
@@ -1715,7 +1725,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               min="0"
                               value={precioVentaUsd}
                               onChange={(e) => handlePrecioVentaUsdChange(e.target.value)}
-                              onBlur={() => ejecutarBackCalcSiAplica()}
                               onWheel={stopScroll}
                               placeholder="0.00"
                               className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
@@ -1735,7 +1744,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               min="0"
                               value={precioVentaBs}
                               onChange={(e) => handlePrecioVentaBsChange(e.target.value)}
-                              onBlur={() => ejecutarBackCalcSiAplica()}
                               onWheel={stopScroll}
                               disabled={tasaValor <= 0}
                               placeholder="0,00"
