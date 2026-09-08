@@ -674,7 +674,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) setPrecioVentaBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const ventaN = isNaN(num) ? 0 : num
-    if (costoN > 0 && ventaN > 0) {
+    if (costoN > 0 && ventaN > 0 && !costoBackCalculado) {
       setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
     }
     recalcularCostoSiExplorando(ventaN, parseFloat(margen) || 0)
@@ -690,7 +690,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioVentaUsd(usdStr)
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
-      if (costoN > 0 && usdN > 0) {
+      if (costoN > 0 && usdN > 0 && !costoBackCalculado) {
         setMargen(((usdN - costoN) / costoN * 100).toFixed(2))
       }
       recalcularCostoSiExplorando(usdN, parseFloat(margen) || 0)
@@ -708,7 +708,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (esNegativo) setAvisoMargenNegativo('detal')
     else if (avisoMargenNegativo === 'detal') setAvisoMargenNegativo(null)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (!isNaN(margenEfectivoN) && costoN > 0) {
+    if (!isNaN(margenEfectivoN) && costoN > 0 && !costoBackCalculado) {
       const pvp = Math.max(0, costoN * (1 + margenEfectivoN / 100))
       setPrecioVentaUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
@@ -727,7 +727,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (esNegativo) setAvisoMargenNegativo('mayor')
     else if (avisoMargenNegativo === 'mayor') setAvisoMargenNegativo(null)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (!isNaN(margenEfectivoN) && costoN > 0) {
+    if (!isNaN(margenEfectivoN) && costoN > 0 && !costoBackCalculado) {
       const pvp = Math.max(0, costoN * (1 + margenEfectivoN / 100))
       setPrecioMayorUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
@@ -746,7 +746,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (esNegativo) setAvisoMargenNegativo('especial')
     else if (avisoMargenNegativo === 'especial') setAvisoMargenNegativo(null)
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (!isNaN(margenEfectivoN) && costoN > 0) {
+    if (!isNaN(margenEfectivoN) && costoN > 0 && !costoBackCalculado) {
       const pvp = Math.max(0, costoN * (1 + margenEfectivoN / 100))
       setPrecioEspecialUsd(pvp.toFixed(2))
       if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
@@ -817,7 +817,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) setPrecioMayorBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const mayorN = isNaN(num) ? 0 : num
-    if (costoN > 0 && mayorN > 0) {
+    if (costoN > 0 && mayorN > 0 && !costoBackCalculado) {
       setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
     }
     recalcularCostoSiExplorando(mayorN, parseFloat(margenMayor) || 0)
@@ -832,7 +832,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioMayorUsd(usd.toFixed(8))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
-      if (costoN > 0 && usdN > 0) {
+      if (costoN > 0 && usdN > 0 && !costoBackCalculado) {
         setMargenMayor(((usdN - costoN) / costoN * 100).toFixed(2))
       }
       recalcularCostoSiExplorando(usdN, parseFloat(margenMayor) || 0)
@@ -847,7 +847,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) setPrecioEspecialBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const especN = isNaN(num) ? 0 : num
-    if (costoN > 0 && especN > 0) {
+    if (costoN > 0 && especN > 0 && !costoBackCalculado) {
       setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
     }
     recalcularCostoSiExplorando(especN, parseFloat(margenEspecial) || 0)
@@ -862,7 +862,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setPrecioEspecialUsd(usd.toFixed(8))
       const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
-      if (costoN > 0 && usdN > 0) {
+      if (costoN > 0 && usdN > 0 && !costoBackCalculado) {
         setMargenEspecial(((usdN - costoN) / costoN * 100).toFixed(2))
       }
       recalcularCostoSiExplorando(usdN, parseFloat(margenEspecial) || 0)
@@ -879,7 +879,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioVentaUsd(baseUsd.toFixed(2))
     if (tasaValor > 0) setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (costoN > 0 && baseUsd > 0)
+    if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
       setMargen(((baseUsd - costoN) / costoN * 100).toFixed(2))
     recalcularCostoSiExplorando(baseUsd, parseFloat(margen) || 0)
   }
@@ -895,7 +895,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioVentaUsd(baseUsd.toFixed(8))
     setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (costoN > 0 && baseUsd > 0)
+    if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
       setMargen(((baseUsd - costoN) / costoN * 100).toFixed(2))
     recalcularCostoSiExplorando(baseUsd, parseFloat(margen) || 0)
   }
@@ -910,7 +910,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioMayorUsd(baseUsd.toFixed(2))
     if (tasaValor > 0) setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (costoN > 0 && baseUsd > 0)
+    if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
       setMargenMayor(((baseUsd - costoN) / costoN * 100).toFixed(2))
     recalcularCostoSiExplorando(baseUsd, parseFloat(margenMayor) || 0)
   }
@@ -926,7 +926,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioMayorUsd(baseUsd.toFixed(8))
     setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (costoN > 0 && baseUsd > 0)
+    if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
       setMargenMayor(((baseUsd - costoN) / costoN * 100).toFixed(2))
     recalcularCostoSiExplorando(baseUsd, parseFloat(margenMayor) || 0)
   }
@@ -941,7 +941,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioEspecialUsd(baseUsd.toFixed(2))
     if (tasaValor > 0) setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (costoN > 0 && baseUsd > 0)
+    if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
       setMargenEspecial(((baseUsd - costoN) / costoN * 100).toFixed(2))
     recalcularCostoSiExplorando(baseUsd, parseFloat(margenEspecial) || 0)
   }
@@ -957,7 +957,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setPrecioEspecialUsd(baseUsd.toFixed(8))
     setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
-    if (costoN > 0 && baseUsd > 0)
+    if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
       setMargenEspecial(((baseUsd - costoN) / costoN * 100).toFixed(2))
     recalcularCostoSiExplorando(baseUsd, parseFloat(margenEspecial) || 0)
   }
