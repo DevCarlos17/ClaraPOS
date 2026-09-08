@@ -1112,7 +1112,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       ref={dialogRef}
       onClose={onClose}
       onClick={handleBackdropClick}
-      className="backdrop:bg-black/50 rounded-xl p-0 w-[calc(100vw-2rem)] max-w-2xl shadow-2xl overflow-hidden"
+      className={`backdrop:bg-black/50 rounded-xl p-0 w-[calc(100vw-2rem)] shadow-2xl overflow-hidden transition-[max-width] duration-300 motion-reduce:transition-none ${
+        showIvaCols ? 'max-w-6xl' : 'max-w-2xl'
+      }`}
     >
       <form onSubmit={handleSubmit} className="flex flex-col max-h-[90vh]">
 
@@ -1595,7 +1597,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     <table className="w-full text-sm min-w-max">
                       <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 w-20">Precio</th>
+                          <th className="sticky left-0 top-0 z-20 w-20 bg-gray-50 px-3 py-2 text-left text-xs font-medium text-gray-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">Precio</th>
                           <th className="px-3 py-2 text-left text-xs font-medium text-gray-500">
                             Margen (%)
                           </th>
@@ -1614,7 +1616,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       <tbody className="divide-y divide-gray-100">
                         {/* Detal */}
                         <tr>
-                          <td className="px-3 py-2 text-xs font-medium text-gray-700">
+                          <td className="sticky left-0 z-10 bg-white px-3 py-2 text-xs font-medium text-gray-700 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
                             {nivel1?.nombre ?? 'Detal'}<span className="text-red-500">*</span>
                           </td>
                           <td className="px-2 py-1.5">
@@ -1708,7 +1710,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                         {/* Mayor */}
                         {nivel2 && (
                         <tr>
-                          <td className="px-3 py-2 text-xs text-gray-500">
+                          <td className="sticky left-0 z-10 bg-white px-3 py-2 text-xs text-gray-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
                             {nivel2?.nombre ?? 'Mayor'}
                           </td>
                           <td className="px-2 py-1.5">
@@ -1803,7 +1805,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                         {/* Especial */}
                         {nivel3 && (
                         <tr>
-                          <td className="px-3 py-2 text-xs text-gray-500">
+                          <td className="sticky left-0 z-10 bg-white px-3 py-2 text-xs text-gray-500 shadow-[2px_0_4px_-2px_rgba(0,0,0,0.15)]">
                             {nivel3?.nombre ?? 'Especial'}
                           </td>
                           <td className="px-2 py-1.5">
