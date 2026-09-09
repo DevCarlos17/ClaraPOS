@@ -154,11 +154,31 @@ Estas reglas son **inviolables** y deben respetarse en todo el codigo:
 
 9. **Operaciones atomicas**: Las operaciones financieras (ventas, pagos) deben ser transaccionales. Si falla un paso, todo se revierte.
 
-10. **Precision decimal**: Campos financieros usan `NUMERIC` (nunca `float`). Precios: 2 decimales. Tasas: 4 decimales. Stock: 3 decimales.
+10. **Precision decimal**: Campos financieros usan `NUMERIC` (nunca `float`). **Precios USD: almacenamiento interno hasta 8 decimales para preservar exactitud al reconvertir a Bs; visualizacion 2 decimales como mascara.** Tasas: 4 decimales. Stock: 3 decimales. Columnas financieras son `NUMERIC(20,8)` (migracion 0058); `system_settings` define `precision_calc=8` (calculo/almacenamiento) y `precision_view=2` (display). Redondear solo al final de la cadena.
 
 11. **Aislamiento multi-tenant**: **Todas** las queries de negocio deben filtrar por `empresa_id` del usuario actual. Nunca mostrar datos de otra empresa. El patron es: `const { user } = useCurrentUser()` y luego `WHERE empresa_id = ?` con `user.empresa_id`.
 
 12. **Numeracion por empresa**: Los consecutivos (nro_factura, nro_ncr, nro_ndb) son **por empresa**, no globales. El COUNT para generar el siguiente numero filtra por `empresa_id`.
+
+### Mascara Visual de Precios en Formularios
+
+Aplica a todo input de costo/margen/precio (USD y Bs) en formularios de producto. Implementa la regla #10 (`precision_view=2` vs `precision_calc=8`) a nivel de UI.
+
+**Contrato**:
+- Sin foco: el input muestra **2 decimales** (`precision_view`).
+- Al enfocar (`onFocus`): revela la precision completa (hasta 8 decimales, `precision_calc`) via `toFullDisplay`.
+- Al perder foco (`onBlur`, o Enter): vuelve a mostrar 2 decimales via `toMaskedDisplay`.
+- El valor REAL (precision completa) es el que siempre llega a la base de datos — **nunca** el string mascarado que ve el usuario.
+
+```text
+usuario ve "12.35"  →  foco  →  ve "12.3456789"  →  blur  →  ve "12.35"
+                                      ↑
+                        el DB siempre recibe 12.3456789, nunca 12.35
+```
+
+**Mecanismo**: cada campo tiene un `useRef<number>` de precision completa (`costoUsdFullRef`, `margenFullRef`/`margenMayorFullRef`/`margenEspecialFullRef`, `precioVenta{Usd,Mayor,Especial}UsdFullRef`) escrito por su setter `*Completo()` correspondiente (`setCostoCompleto`, `setMargenCompleto`, etc.), nunca por un `set*` directo. El JSX de cada input cablea `onFocus`/`onBlur`/`onKeyDown` (Enter) contra ese ref usando el helper `src/lib/decimal-display-mask.ts` (`toMaskedDisplay`/`toFullDisplay`, basado en `decimal.js`, recorta ceros de relleno en la revelacion completa sin perder digitos con precision real).
+
+**Regla dura para quien toque este codigo**: cualquier COMPUTO interno (back-calculo de costo, cascada de margen/precio, conversion USD↔Bs) debe leer el ref de precision completa (`xFullRef.current`), **nunca** `parseFloat`/`parseNumOrZero` sobre el estado de display mascarado. Este error exacto (leer el string mascarado en un computo interno) causo una fuga de precision real detectada en revision de codigo de este mismo cambio — ver `sdd/producto-form-mascara-decimales`. Leer el estado de display solo es valido para mostrar el valor en pantalla o para checks de "vacio"/"lleno", nunca para calcular.
 
 ---
 
