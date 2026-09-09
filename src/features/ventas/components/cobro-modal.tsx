@@ -19,6 +19,7 @@ import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
 import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { clampearSafMonto } from '../lib/clamp-saf-monto'
+import { calcularPendienteVenta } from '../lib/pendiente-venta'
 import type { CargoEspecial } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -172,13 +173,19 @@ export function CobroModal({
   const totalPagadoBs = pagos.reduce((sum, p) => {
     return sum.plus(p.moneda === 'BS' ? p.monto : usdToBs(p.monto, tasaUsada))
   }, new Decimal(0)).plus(safMontoBsEquiv)
-  // El pendiente incluye el IGTF: el cliente debe cubrir factura + IGTF generado
-  const pendienteBs4 = totalEfectivoBs.plus(igtfBs).minus(totalPagadoBs)
+  // El pendiente incluye el IGTF: el cliente debe cubrir factura + IGTF generado.
+  // calcularPendienteVenta es la fuente unica (Decimal, sin redondeo intermedio) que
+  // tambien se envia a VentaExitosaData — ver design.md (fix pos-cobro-pendiente-exacto).
+  const { pendienteBs4, pendienteBs, pendienteUsd } = calcularPendienteVenta(
+    totalEfectivoBs,
+    igtfBs,
+    totalPagadoBs,
+    tasaUsada,
+  )
   const umbralBs = new Decimal(tasaUsada).times('0.01')
   const esPagado = pendienteBs4.lte(umbralBs)
   const esDiferencialRedondeo = pendienteBs4.gt('0.001') && pendienteBs4.lte(umbralBs)
   const tipoDetectado: 'CONTADO' | 'CREDITO' = esPagado ? 'CONTADO' : 'CREDITO'
-  const pendienteUsd = bsToUsd(Decimal.max(new Decimal(0), pendienteBs4), tasaUsada)
 
   // ── Vuelto (cliente pago de mas) ──────────────────────────────────────────
   const estaOverpago = pendienteBs4.lt('-0.01')
@@ -537,6 +544,8 @@ export function CobroModal({
         igtfUsd: igtfUsd.toNumber(),
         igtfBs: igtfBs.toNumber(),
         tasaIgtfPct: tasaIgtf,
+        pendienteBs: pendienteBs.toNumber(),
+        pendienteUsd: pendienteUsd.toNumber(),
         discrepancy: discrepancy
           ? {
               mode: discrepancy.mode,
@@ -679,7 +688,7 @@ export function CobroModal({
                 <p className="font-semibold text-orange-600">{formatBs(pendienteBs4)}</p>
               ) : (
                 <p className={`font-semibold ${pendienteBs4.gt(umbralBs) ? 'text-orange-600' : 'text-green-600'}`}>
-                  {formatBs(Decimal.max(new Decimal(0), pendienteBs4))}
+                  {formatBs(pendienteBs)}
                 </p>
               )}
             </div>
