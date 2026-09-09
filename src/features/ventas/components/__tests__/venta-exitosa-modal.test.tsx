@@ -69,6 +69,8 @@ function baseData(overrides: Partial<VentaExitosaData> = {}): VentaExitosaData {
     tipo: 'CONTADO',
     pagos: [],
     tasa: 500,
+    pendienteBs: 0,
+    pendienteUsd: 0,
     discrepancy: null,
     ...overrides,
   }

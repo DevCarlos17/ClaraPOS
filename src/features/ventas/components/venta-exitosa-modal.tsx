@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { SealCheck, DownloadSimple, ShareNetwork } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
+import { formatUsd, formatBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { useDetalleFactura, useVentaFecha } from '@/features/cxc/hooks/use-cxc'
 import { useCompany, parseEmpresaConfig } from '@/features/configuracion/hooks/use-company'
@@ -32,6 +32,10 @@ export interface VentaExitosaData {
   igtfUsd?: number
   igtfBs?: number
   tasaIgtfPct?: number
+  /** Pendiente exacto (Decimal, fuente unica), calculado en `cobro-modal.tsx` via
+   *  `calcularPendienteVenta` — ver fix pos-cobro-pendiente-exacto. */
+  pendienteBs: number
+  pendienteUsd: number
   discrepancy: ReciboDiscrepancyInput | null
 }
 
@@ -68,12 +72,6 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
 
   if (!isOpen || !data) return null
 
-  const totalAbonadoUsd = data.pagos.reduce((sum, p) => {
-    const montoUsd = p.moneda === 'BS' ? Number((p.monto / data.tasa).toFixed(2)) : p.monto
-    return sum + montoUsd
-  }, 0)
-  const saldoPendUsd = Math.max(0, Number((data.totalUsd - totalAbonadoUsd).toFixed(2)))
-
   function construirRecibo(ventaData: VentaExitosaData): ReciboData {
     return buildReciboData({
       nroFactura: ventaData.nroFactura,
@@ -108,7 +106,7 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
         monto: p.monto,
       })),
       discrepancy: ventaData.discrepancy,
-      saldoPendUsd,
+      saldoPendUsd: ventaData.pendienteUsd,
       monedaPresentacion: parseEmpresaConfig(company?.config).moneda_presentacion_documentos ?? 'USD',
     })
   }
@@ -213,14 +211,14 @@ export function VentaExitosaModal({ isOpen, data, onClose }: VentaExitosaModalPr
                 </span>
               }
             />
-            {data.tipo === 'CREDITO' && saldoPendUsd > 0.01 && (
+            {data.tipo === 'CREDITO' && data.pendienteUsd > 0.01 && (
               <Row
                 label="Pendiente"
                 value={
                   <span className="font-semibold text-orange-600">
-                    {formatUsd(saldoPendUsd)}
+                    {formatUsd(data.pendienteUsd)}
                     <span className="ml-1.5 text-xs font-normal text-muted-foreground">
-                      {formatBs(usdToBs(saldoPendUsd, data.tasa))}
+                      {formatBs(data.pendienteBs)}
                     </span>
                   </span>
                 }

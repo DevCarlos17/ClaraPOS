@@ -19,6 +19,8 @@ import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
 import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { clampearSafMonto } from '../lib/clamp-saf-monto'
+import { calcularPendienteVenta } from '../lib/pendiente-venta'
+import { evaluarPagoPendiente } from '../lib/pago-guard'
 import type { CargoEspecial } from '../hooks/use-ventas'
 import type { LineaVentaForm, PagoEntryForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
@@ -117,6 +119,11 @@ export function CobroModal({
   const [supervisorId, setSupervisorId] = useState<string | null>(null)
   const [showAbsorberPinDialog, setShowAbsorberPinDialog] = useState(false)
 
+  // ── Guard R5/R6: pago a medio ingresar sin commitear (fix pos-cobro-checkout-guards) ──
+  const [glowAddButton, setGlowAddButton] = useState(false)
+  const glowTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (glowTimeoutRef.current) clearTimeout(glowTimeoutRef.current) }, [])
+
   // Congelar tasa al abrir el modal; resetear formulario de cobro
   useEffect(() => {
     if (!isOpen) return
@@ -172,13 +179,19 @@ export function CobroModal({
   const totalPagadoBs = pagos.reduce((sum, p) => {
     return sum.plus(p.moneda === 'BS' ? p.monto : usdToBs(p.monto, tasaUsada))
   }, new Decimal(0)).plus(safMontoBsEquiv)
-  // El pendiente incluye el IGTF: el cliente debe cubrir factura + IGTF generado
-  const pendienteBs4 = totalEfectivoBs.plus(igtfBs).minus(totalPagadoBs)
+  // El pendiente incluye el IGTF: el cliente debe cubrir factura + IGTF generado.
+  // calcularPendienteVenta es la fuente unica (Decimal, sin redondeo intermedio) que
+  // tambien se envia a VentaExitosaData — ver design.md (fix pos-cobro-pendiente-exacto).
+  const { pendienteBs4, pendienteBs, pendienteUsd } = calcularPendienteVenta(
+    totalEfectivoBs,
+    igtfBs,
+    totalPagadoBs,
+    tasaUsada,
+  )
   const umbralBs = new Decimal(tasaUsada).times('0.01')
   const esPagado = pendienteBs4.lte(umbralBs)
   const esDiferencialRedondeo = pendienteBs4.gt('0.001') && pendienteBs4.lte(umbralBs)
   const tipoDetectado: 'CONTADO' | 'CREDITO' = esPagado ? 'CONTADO' : 'CREDITO'
-  const pendienteUsd = bsToUsd(Decimal.max(new Decimal(0), pendienteBs4), tasaUsada)
 
   // ── Vuelto (cliente pago de mas) ──────────────────────────────────────────
   const estaOverpago = pendienteBs4.lt('-0.01')
@@ -227,12 +240,13 @@ export function CobroModal({
         discrepancyMode === 'PROPINA' ||
         discrepancyMode === 'DIFERENCIAL_SOBRANTE'
       ) {
-        // Sub-centavo USD → diferencial cambiario como opción sugerida
+        // Sub-centavo USD → diferencial cambiario como opción sugerida.
+        // Fix pos-cobro-checkout-guards (R4): NO se auto-selecciona CREDITO en
+        // ningun otro caso — el cajero debe elegir explicitamente un modo
+        // (boton o F5/F6/F7) para evitar facturas a credito por default.
         const faltanteUsd = bsToUsd(pendienteBs4, tasaUsada)
         if (faltanteUsd.gt(0) && faltanteUsd.lt('0.01')) {
           setDiscrepancyMode('DIFERENCIAL_FALTANTE')
-        } else {
-          setDiscrepancyMode('CREDITO')
         }
       }
     } else {
@@ -355,7 +369,24 @@ export function CobroModal({
     setMontoStr(montoPend)
   }
 
+  // Bloquea Procesar/cambio de modo cuando hay un pago a medio ingresar (R5)
+  // o un metodo seleccionado sin monto (R6). Retorna true si puede continuar.
+  const guardOrWarn = (): boolean => {
+    const resultado = evaluarPagoPendiente({ metodoId, montoStr, referencia })
+    if (!resultado.blocked) return true
+    if (resultado.reason === 'ABONO_SIN_AGREGAR') {
+      toast.warning('Tenés un abono pendiente por ingresar: agregalo con + o borralo')
+    } else {
+      toast.error('Seleccionaste un método de pago pero no ingresaste ningún monto')
+    }
+    setGlowAddButton(true)
+    if (glowTimeoutRef.current) clearTimeout(glowTimeoutRef.current)
+    glowTimeoutRef.current = setTimeout(() => setGlowAddButton(false), 1500)
+    return false
+  }
+
   const handleProcesar = async () => {
+    if (!guardOrWarn()) return
     // Validar limite de credito — solo aplica cuando el cajero eligió factura a crédito,
     // NO cuando el modo es faltante de caja (DIFERENCIAL_FALTANTE) o absorción (ABSORBER)
     if (discrepancyMode === 'CREDITO' && clienteData) {
@@ -537,6 +568,8 @@ export function CobroModal({
         igtfUsd: igtfUsd.toNumber(),
         igtfBs: igtfBs.toNumber(),
         tasaIgtfPct: tasaIgtf,
+        pendienteBs: pendienteBs.toNumber(),
+        pendienteUsd: pendienteUsd.toNumber(),
         discrepancy: discrepancy
           ? {
               mode: discrepancy.mode,
@@ -569,6 +602,7 @@ export function CobroModal({
   const selectModeRef = useRef<(key: string) => void>(() => {})
   useEffect(() => {
     selectModeRef.current = (key: string) => {
+      if (!guardOrWarn()) return
       if (!estaOverpago && pendienteBs4.gt('0.01')) {
         // Faltante: F5=Crédito  F6=Faltante caja  F7=Negocio asume
         if (key === 'F5') { setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }
@@ -679,7 +713,7 @@ export function CobroModal({
                 <p className="font-semibold text-orange-600">{formatBs(pendienteBs4)}</p>
               ) : (
                 <p className={`font-semibold ${pendienteBs4.gt(umbralBs) ? 'text-orange-600' : 'text-green-600'}`}>
-                  {formatBs(Decimal.max(new Decimal(0), pendienteBs4))}
+                  {formatBs(pendienteBs)}
                 </p>
               )}
             </div>
@@ -831,7 +865,7 @@ export function CobroModal({
               type="button"
               variant="outline"
               size="sm"
-              className="h-8 shrink-0"
+              className={`h-8 shrink-0 ${glowAddButton ? 'ring-2 ring-primary animate-pulse' : ''}`}
               onClick={handleAddPago}
               disabled={!metodoId || !montoStr || parseFloat(montoStr) <= 0}
             >
@@ -863,7 +897,7 @@ export function CobroModal({
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
-                    onClick={() => setDiscrepancyMode('VUELTO')}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('VUELTO') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'VUELTO'
                         ? 'bg-blue-600 text-white border-blue-600'
@@ -876,7 +910,7 @@ export function CobroModal({
                   <button
                     type="button"
                     disabled={!clienteId}
-                    onClick={() => setDiscrepancyMode('SAF')}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('SAF') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'SAF'
                         ? 'bg-green-600 text-white border-green-600'
@@ -888,7 +922,7 @@ export function CobroModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDiscrepancyMode('PROPINA')}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('PROPINA') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'PROPINA'
                         ? 'bg-purple-600 text-white border-purple-600'
@@ -1043,7 +1077,7 @@ export function CobroModal({
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
-                    onClick={() => { setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'CREDITO'
                         ? 'bg-orange-600 text-white border-orange-600'
@@ -1055,7 +1089,7 @@ export function CobroModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null) }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null) }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'DIFERENCIAL_FALTANTE'
                         ? 'bg-amber-600 text-white border-amber-600'
@@ -1067,7 +1101,7 @@ export function CobroModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => setDiscrepancyMode('ABSORBER')}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('ABSORBER') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'ABSORBER'
                         ? 'bg-red-600 text-white border-red-600'
