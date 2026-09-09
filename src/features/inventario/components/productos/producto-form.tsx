@@ -540,6 +540,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           setDepositoId(draft.depositoId)
           setStockInicial(draft.stockInicial)
           setActiveTab(draft.activeTab as TabId)
+          // Aviso discreto: el usuario debe saber que estos datos son los que
+          // quedaron sin guardar antes de cerrar, no un producto nuevo en blanco.
+          toast.info('Recuperamos los datos que tenias sin guardar', {
+            description: 'Podes seguir editando o usar "Limpiar" para empezar de cero.',
+          })
         } else {
           setCodigo('')
           setTipo('P')
