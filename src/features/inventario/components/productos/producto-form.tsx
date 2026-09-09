@@ -304,6 +304,12 @@ interface ProductoFormProps {
 
 export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  // Trackea que input de Precio Final esta enfocado (siendo tipeado) para que
+  // el useEffect de sincronizacion bidireccional (ver mas abajo, cerca de
+  // pfDetalUsd/pfMayorUsd/pfEspecialUsd) no le pise el valor en pleno tipeo —
+  // evita el jump/flicker por redondeo de 2 decimales en el round-trip
+  // final -> base -> final.
+  const precioFinalFocusRef = useRef<Set<string>>(new Set())
   const isEditing = !!producto
 
   const { departamentos } = useDepartamentosActivos()
@@ -356,6 +362,19 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [precioMayorBs, setPrecioMayorBs] = useState('')
   const [precioEspecialUsd, setPrecioEspecialUsd] = useState('')
   const [precioEspecialBs, setPrecioEspecialBs] = useState('')
+  // Precio Final (USD/Bs, con IVA) por nivel — CONTROLADO con estado propio
+  // (antes era un input no-controlado con defaultValue+key derivado de
+  // pfDetalUsd/pfMayorUsd/pfEspecialUsd, recalculado solo al blur). Se
+  // sincroniza con la derivacion via useEffect (ver pfDetalUsd/etc mas abajo)
+  // salvo mientras el usuario esta tipeando ese campo especifico
+  // (precioFinalFocusRef) — asi el recalculo es LIVE en cada tecla sin que el
+  // input "salte" por el redondeo del round-trip final -> base -> final.
+  const [precioFinalDetalUsd, setPrecioFinalDetalUsd] = useState('')
+  const [precioFinalDetalBs, setPrecioFinalDetalBs] = useState('')
+  const [precioFinalMayorUsd, setPrecioFinalMayorUsd] = useState('')
+  const [precioFinalMayorBs, setPrecioFinalMayorBs] = useState('')
+  const [precioFinalEspecialUsd, setPrecioFinalEspecialUsd] = useState('')
+  const [precioFinalEspecialBs, setPrecioFinalEspecialBs] = useState('')
   const [tipoImpuesto, setTipoImpuesto] = useState<'Gravable' | 'Exento' | 'Exonerado'>('Exento')
   const [impuestoIvaId, setImpuestoIvaId] = useState<string>('')
 
@@ -799,6 +818,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Precio Final Detal → back-calcula base imponible ---
   function handlePrecioFinalDetalUsdChange(val: string) {
+    setPrecioFinalDetalUsd(val)
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
@@ -812,6 +832,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioFinalDetalBsChange(val: string) {
+    setPrecioFinalDetalBs(val)
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
@@ -828,6 +849,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Precio Final Mayor → back-calcula base imponible ---
   function handlePrecioFinalMayorUsdChange(val: string) {
+    setPrecioFinalMayorUsd(val)
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
@@ -841,6 +863,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioFinalMayorBsChange(val: string) {
+    setPrecioFinalMayorBs(val)
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
@@ -857,6 +880,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Precio Final Especial → back-calcula base imponible ---
   function handlePrecioFinalEspecialUsdChange(val: string) {
+    setPrecioFinalEspecialUsd(val)
     const pfN = parseFloat(val)
     if (isNaN(pfN) || pfN <= 0) return
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
@@ -870,6 +894,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   }
 
   function handlePrecioFinalEspecialBsChange(val: string) {
+    setPrecioFinalEspecialBs(val)
     if (tasaValor <= 0) return
     const pfBsN = parseFloat(val)
     if (isNaN(pfBsN) || pfBsN <= 0) return
@@ -1072,6 +1097,24 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const ivaEspecialUsd = (parseFloat(precioEspecialUsd) || 0) * alicuota / 100
   const pfEspecialUsd = (parseFloat(precioEspecialUsd) || 0) + ivaEspecialUsd
   const pfEspecialBs = tasaValor > 0 ? usdToBs(pfEspecialUsd, tasaValor).toNumber() : 0
+
+  // Sincroniza el estado controlado de Precio Final con su derivacion
+  // (precioVenta*/Mayor/Especial + IVA) cada vez que cambian sus insumos.
+  // Se salta el campo que el usuario esta tipeando ahora mismo
+  // (precioFinalFocusRef) para no pisarle el valor en pleno tipeo — el
+  // round-trip final -> base -> final puede diferir en 1 centavo por
+  // redondeo a 2 decimales, y sin este guard el input "saltaria" mientras se
+  // escribe. Mismo patron ya usado en este archivo para sincronizar Bs
+  // cuando cambia la tasa (ver el useEffect de `tasaValor` mas arriba).
+  useEffect(() => {
+    const focused = precioFinalFocusRef.current
+    if (!focused.has('detalUsd')) setPrecioFinalDetalUsd(pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : '')
+    if (!focused.has('detalBs')) setPrecioFinalDetalBs(pfDetalBs > 0 ? pfDetalBs.toFixed(2) : '')
+    if (!focused.has('mayorUsd')) setPrecioFinalMayorUsd(pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : '')
+    if (!focused.has('mayorBs')) setPrecioFinalMayorBs(pfMayorBs > 0 ? pfMayorBs.toFixed(2) : '')
+    if (!focused.has('especialUsd')) setPrecioFinalEspecialUsd(pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : '')
+    if (!focused.has('especialBs')) setPrecioFinalEspecialBs(pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : '')
+  }, [pfDetalUsd, pfDetalBs, pfMayorUsd, pfMayorBs, pfEspecialUsd, pfEspecialBs])
 
   const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
@@ -1676,11 +1719,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               </td>
                               <td className="px-2 py-1.5">
                                 <input
-                                  key={`pf-detal-usd-${pfDetalUsd.toFixed(4)}`}
                                   type="text"
                                   inputMode="decimal"
-                                  defaultValue={pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalDetalUsdChange(soloNumeroPositivo(e.target.value))}
+                                  value={precioFinalDetalUsd}
+                                  onChange={(e) => handlePrecioFinalDetalUsdChange(soloNumeroPositivo(e.target.value))}
+                                  onFocus={() => precioFinalFocusRef.current.add('detalUsd')}
+                                  onBlur={() => {
+                                    precioFinalFocusRef.current.delete('detalUsd')
+                                    setPrecioFinalDetalUsd(pfDetalUsd > 0 ? pfDetalUsd.toFixed(2) : '')
+                                  }}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   placeholder="0.00"
@@ -1689,11 +1736,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               </td>
                               <td className="px-2 py-1.5">
                                 <input
-                                  key={`pf-detal-bs-${pfDetalBs.toFixed(4)}`}
                                   type="text"
                                   inputMode="decimal"
-                                  defaultValue={pfDetalBs > 0 ? pfDetalBs.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalDetalBsChange(soloNumeroPositivo(e.target.value))}
+                                  value={precioFinalDetalBs}
+                                  onChange={(e) => handlePrecioFinalDetalBsChange(soloNumeroPositivo(e.target.value))}
+                                  onFocus={() => precioFinalFocusRef.current.add('detalBs')}
+                                  onBlur={() => {
+                                    precioFinalFocusRef.current.delete('detalBs')
+                                    setPrecioFinalDetalBs(pfDetalBs > 0 ? pfDetalBs.toFixed(2) : '')
+                                  }}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   disabled={tasaValor <= 0}
@@ -1770,11 +1821,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               </td>
                               <td className="px-2 py-1.5">
                                 <input
-                                  key={`pf-mayor-usd-${pfMayorUsd.toFixed(4)}`}
                                   type="text"
                                   inputMode="decimal"
-                                  defaultValue={pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalMayorUsdChange(soloNumeroPositivo(e.target.value))}
+                                  value={precioFinalMayorUsd}
+                                  onChange={(e) => handlePrecioFinalMayorUsdChange(soloNumeroPositivo(e.target.value))}
+                                  onFocus={() => precioFinalFocusRef.current.add('mayorUsd')}
+                                  onBlur={() => {
+                                    precioFinalFocusRef.current.delete('mayorUsd')
+                                    setPrecioFinalMayorUsd(pfMayorUsd > 0 ? pfMayorUsd.toFixed(2) : '')
+                                  }}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   placeholder="0.00"
@@ -1783,11 +1838,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               </td>
                               <td className="px-2 py-1.5">
                                 <input
-                                  key={`pf-mayor-bs-${pfMayorBs.toFixed(4)}`}
                                   type="text"
                                   inputMode="decimal"
-                                  defaultValue={pfMayorBs > 0 ? pfMayorBs.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalMayorBsChange(soloNumeroPositivo(e.target.value))}
+                                  value={precioFinalMayorBs}
+                                  onChange={(e) => handlePrecioFinalMayorBsChange(soloNumeroPositivo(e.target.value))}
+                                  onFocus={() => precioFinalFocusRef.current.add('mayorBs')}
+                                  onBlur={() => {
+                                    precioFinalFocusRef.current.delete('mayorBs')
+                                    setPrecioFinalMayorBs(pfMayorBs > 0 ? pfMayorBs.toFixed(2) : '')
+                                  }}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   disabled={tasaValor <= 0}
@@ -1865,11 +1924,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               </td>
                               <td className="px-2 py-1.5">
                                 <input
-                                  key={`pf-especial-usd-${pfEspecialUsd.toFixed(4)}`}
                                   type="text"
                                   inputMode="decimal"
-                                  defaultValue={pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalEspecialUsdChange(soloNumeroPositivo(e.target.value))}
+                                  value={precioFinalEspecialUsd}
+                                  onChange={(e) => handlePrecioFinalEspecialUsdChange(soloNumeroPositivo(e.target.value))}
+                                  onFocus={() => precioFinalFocusRef.current.add('especialUsd')}
+                                  onBlur={() => {
+                                    precioFinalFocusRef.current.delete('especialUsd')
+                                    setPrecioFinalEspecialUsd(pfEspecialUsd > 0 ? pfEspecialUsd.toFixed(2) : '')
+                                  }}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   placeholder="0.00"
@@ -1878,11 +1941,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               </td>
                               <td className="px-2 py-1.5">
                                 <input
-                                  key={`pf-especial-bs-${pfEspecialBs.toFixed(4)}`}
                                   type="text"
                                   inputMode="decimal"
-                                  defaultValue={pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : ''}
-                                  onBlur={(e) => handlePrecioFinalEspecialBsChange(soloNumeroPositivo(e.target.value))}
+                                  value={precioFinalEspecialBs}
+                                  onChange={(e) => handlePrecioFinalEspecialBsChange(soloNumeroPositivo(e.target.value))}
+                                  onFocus={() => precioFinalFocusRef.current.add('especialBs')}
+                                  onBlur={() => {
+                                    precioFinalFocusRef.current.delete('especialBs')
+                                    setPrecioFinalEspecialBs(pfEspecialBs > 0 ? pfEspecialBs.toFixed(2) : '')
+                                  }}
                                   onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                                   onWheel={stopScroll}
                                   disabled={tasaValor <= 0}
