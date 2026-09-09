@@ -47,7 +47,6 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="text-left px-2 py-1.5 font-medium w-6">#</th>
               <th className="text-left px-2 py-1.5 font-medium w-20">Codigo</th>
               <th className="text-left px-2 py-1.5 font-medium">Producto</th>
               <th className="text-center px-2 py-1.5 font-medium w-28">Cant.</th>
@@ -73,7 +72,6 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                   key={index}
                   className={`border-b last:border-b-0 hover:bg-muted/30 ${stockExcedido ? 'bg-destructive/5' : ''}`}
                 >
-                  <td className="px-2 py-1.5 text-muted-foreground">{index + 1}</td>
                   <td className="px-2 py-1.5 text-muted-foreground font-mono">{linea.codigo}</td>
                   <td className="px-2 py-1.5 max-w-0">
                     <p className="font-medium truncate">{linea.nombre}</p>
@@ -147,7 +145,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                             ? 'text-destructive'
                             : stockDisponible !== null && stockDisponible <= 3
                             ? 'text-orange-500'
-                            : 'text-muted-foreground'
+                            : 'text-gray-900'
                         }`}
                       >
                         {stockDisponible !== null
@@ -156,16 +154,16 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       </span>
                     )}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  <td className="px-2 py-1.5 text-right font-medium text-gray-900">
                     {formatUsd(linea.precio_unitario_usd)}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  <td className="px-2 py-1.5 text-right font-medium text-gray-900">
                     {tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-medium">
+                  <td className="px-2 py-1.5 text-right font-semibold text-gray-900">
                     {formatUsd(subtotalUsd)}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  <td className="px-2 py-1.5 text-right font-medium text-gray-900">
                     {formatBs(subtotalBs)}
                   </td>
                   <td className="px-1 py-1.5">
@@ -193,7 +191,6 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left px-3 py-2 font-medium w-8">#</th>
                 <th className="text-left px-3 py-2 font-medium">Codigo</th>
                 <th className="text-left px-3 py-2 font-medium">Producto</th>
                 <th className="text-center px-3 py-2 font-medium w-24">Cant.</th>
@@ -216,7 +213,6 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
 
                 return (
                   <tr key={index} className="border-b last:border-b-0 hover:bg-muted/30">
-                    <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
                     <td className="px-3 py-2 text-muted-foreground text-xs">{linea.codigo}</td>
                     <td className="px-3 py-2">
                       <span className="font-medium">{linea.nombre}</span>
@@ -290,7 +286,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                               ? 'text-destructive'
                               : stockDisponible !== null && stockDisponible <= 3
                               ? 'text-orange-500'
-                              : 'text-muted-foreground'
+                              : 'text-gray-900'
                           }`}
                         >
                           {stockDisponible !== null
@@ -299,14 +295,14 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">
                       {formatUsd(linea.precio_unitario_usd)}
                     </td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">
                       {tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
                     </td>
-                    <td className="px-3 py-2 text-right font-medium">{formatUsd(subtotalUsd)}</td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">{formatBs(subtotalBs)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatUsd(subtotalUsd)}</td>
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">{formatBs(subtotalBs)}</td>
                     <td className="px-3 py-2">
                       <button
                         type="button"
