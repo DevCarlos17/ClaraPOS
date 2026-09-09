@@ -143,13 +143,21 @@ describe('ProductoForm — Precio Final (IVA) recalcula LIVE en cada tecla', () 
     expect(precioFinalUsdInput.value).toBe('100.01')
 
     // El campo hermano (Bs), que NO esta siendo tipeado, SI se sincroniza live
-    // reflejando el nuevo Precio Final derivado ((86.22 * 1.16 = 100.0152) * 40 = 4000.608 -> 4000.61).
-    expect(precioFinalBsInput.value).toBe('4000.61')
+    // reflejando el nuevo Precio Final derivado. Se deriva del PVP de
+    // PRECISION COMPLETA (86.21551724137932, el ref sin redondear que guarda
+    // `precioVentaUsdFullRef`), NO del string ya redondeado a 2 decimales
+    // ("86.22") — ese era el bug de float espurio (Float Audit item #2,
+    // fix de Phase 4). (86.21551724137932 * 1.16 = 100.0100000000000112) *
+    // 40 = 4000.400000000000448 -> 4000.40.
+    expect(precioFinalBsInput.value).toBe('4000.40')
 
-    // Al salir del campo (blur), el sync effect retoma el control y muestra el
-    // valor redondeado real del round-trip (bidireccional: precioVenta -> precioFinal).
+    // Al salir del campo (blur), el sync effect retoma el control y muestra
+    // el valor real derivado del ref de precision completa. Con el fix, el
+    // round-trip Precio Final -> base -> Precio Final YA NO deriva un
+    // centavo por redondeo (antes del fix daba "100.02" porque la formula
+    // partia del string truncado a 2 decimales, amplificando el error).
     fireEvent.blur(precioFinalUsdInput)
-    expect(precioFinalUsdInput.value).toBe('100.02')
+    expect(precioFinalUsdInput.value).toBe('100.01')
   })
 
   it('editar el Margen (bidireccional) actualiza el Precio Final mostrado sin que el usuario toque ese input', async () => {
@@ -171,5 +179,120 @@ describe('ProductoForm — Precio Final (IVA) recalcula LIVE en cada tecla', () 
     const filaDetal = precioVentaUsd.closest('tr')!
     const precioFinalUsdInput = filaDetal.querySelectorAll('input')[3] as HTMLInputElement
     expect(precioFinalUsdInput.value).toBe('17.40')
+  })
+})
+
+describe('ProductoForm — mascara visual Precio Final (foco revela precision completa, fix IVA stray-float)', () => {
+  async function activarGravableConTasa(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(document.getElementById('prod-tipo-impuesto')!)
+    await user.click(screen.getByText('Gravable (IVA General)'))
+    await user.click(document.getElementById('prod-impuesto-iva')!)
+    await user.click(screen.getByText('IVA General (16.00%)'))
+  }
+
+  it('Precio Final Detal $/Bs: masca 2 decimales, revela precision completa al enfocar, remasca al perder foco — y prueba el fix del stray-float de IVA', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ProductoForm isOpen onClose={() => {}} />)
+    await abrirTabPrecios(user)
+    await activarGravableConTasa(user)
+
+    const precioVentaUsd = container.querySelector('#prod-venta') as HTMLInputElement
+    // 8 decimales reales — el ref de precision completa preserva el valor
+    // tipeado exacto (precioVentaUsdFullRef = 33.33333333).
+    fireEvent.change(precioVentaUsd, { target: { value: '33.33333333' } })
+    // Blur: el display de Precio Venta $ se masca a 2 decimales, pero el ref
+    // de precision completa (usado por la derivacion de Precio Final) NO se
+    // trunca — este es exactamente el escenario que expone el bug: leer
+    // `parseFloat(precioVentaUsd)` (el string ya mascado "33.33") en vez del
+    // ref (33.33333333) le hace perder precision al Precio Final.
+    fireEvent.blur(precioVentaUsd)
+    expect(precioVentaUsd.value).toBe('33.33')
+
+    const filaDetal = precioVentaUsd.closest('tr')!
+    const inputsDetal = filaDetal.querySelectorAll('input')
+    const precioFinalUsdInput = inputsDetal[3] as HTMLInputElement
+    const precioFinalBsInput = inputsDetal[4] as HTMLInputElement
+
+    // FIX DEL STRAY-FLOAT: sin que el usuario toque Precio Final, el sync
+    // effect ya deriva su valor mascado del REF de precision completa
+    // (33.33333333 * 1.16 = 38.6666666628 -> "38.67"), no del string
+    // truncado (que hubiera dado el valor INCORRECTO "38.66": 33.33 * 1.16 =
+    // 38.6628 -> "38.66"). Esta asercion por si sola ya prueba el fix.
+    expect(precioFinalUsdInput.value).toBe('38.67')
+
+    // FOCUS: revela la precision completa real (38.66666666), no la mascara
+    // de 2 decimales ni la version truncada-via-parseFloat.
+    fireEvent.focus(precioFinalUsdInput)
+    expect(precioFinalUsdInput.value).toBe('38.66666666')
+
+    // BLUR: vuelve a mascarar a 2 decimales.
+    fireEvent.blur(precioFinalUsdInput)
+    expect(precioFinalUsdInput.value).toBe('38.67')
+
+    // Bs: mismo ciclo mascara/revela, derivado de pfUsd (precision completa) * tasa.
+    expect(precioFinalBsInput.value).toBe('1546.67')
+    fireEvent.focus(precioFinalBsInput)
+    expect(precioFinalBsInput.value).toBe('1546.66666651')
+    fireEvent.blur(precioFinalBsInput)
+    expect(precioFinalBsInput.value).toBe('1546.67')
+  })
+
+  it('triangulacion (Mayor, valores distintos): mascara/revela Precio Final Mayor $/Bs con la formula real, no hardcodeada a Detal', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ProductoForm isOpen onClose={() => {}} />)
+    await abrirTabPrecios(user)
+    await activarGravableConTasa(user)
+
+    const precioMayorUsd = container.querySelector('#prod-mayor') as HTMLInputElement
+    fireEvent.change(precioMayorUsd, { target: { value: '20.00000005' } })
+    fireEvent.blur(precioMayorUsd)
+    expect(precioMayorUsd.value).toBe('20.00')
+
+    const filaMayor = precioMayorUsd.closest('tr')!
+    const inputsMayor = filaMayor.querySelectorAll('input')
+    const precioFinalMayorUsdInput = inputsMayor[3] as HTMLInputElement
+    const precioFinalMayorBsInput = inputsMayor[4] as HTMLInputElement
+
+    // 20.00000005 * 1.16 = 23.200000058 -> masked "23.20", full "23.20000006".
+    expect(precioFinalMayorUsdInput.value).toBe('23.20')
+    fireEvent.focus(precioFinalMayorUsdInput)
+    expect(precioFinalMayorUsdInput.value).toBe('23.20000006')
+    fireEvent.blur(precioFinalMayorUsdInput)
+    expect(precioFinalMayorUsdInput.value).toBe('23.20')
+
+    // Bs: 23.200000058 * 40 = 928.00000232 (masked "928.00", full "928.00000232").
+    expect(precioFinalMayorBsInput.value).toBe('928.00')
+    fireEvent.focus(precioFinalMayorBsInput)
+    expect(precioFinalMayorBsInput.value).toBe('928.00000232')
+    fireEvent.blur(precioFinalMayorBsInput)
+    expect(precioFinalMayorBsInput.value).toBe('928.00')
+  })
+
+  it('aislamiento cruzado: enfocar Precio Final Detal $ no desenmascara Precio Venta $, y viceversa', async () => {
+    const user = userEvent.setup()
+    const { container } = render(<ProductoForm isOpen onClose={() => {}} />)
+    await abrirTabPrecios(user)
+    await activarGravableConTasa(user)
+
+    const precioVentaUsd = container.querySelector('#prod-venta') as HTMLInputElement
+    fireEvent.change(precioVentaUsd, { target: { value: '33.33333333' } })
+    fireEvent.blur(precioVentaUsd)
+    expect(precioVentaUsd.value).toBe('33.33')
+
+    const filaDetal = precioVentaUsd.closest('tr')!
+    const precioFinalUsdInput = filaDetal.querySelectorAll('input')[3] as HTMLInputElement
+    expect(precioFinalUsdInput.value).toBe('38.67')
+
+    // Enfocar Precio Final Detal $ NO debe revelar Precio Venta $.
+    fireEvent.focus(precioFinalUsdInput)
+    expect(precioFinalUsdInput.value).toBe('38.66666666')
+    expect(precioVentaUsd.value).toBe('33.33')
+    fireEvent.blur(precioFinalUsdInput)
+
+    // Enfocar Precio Venta $ NO debe revelar Precio Final Detal $.
+    fireEvent.focus(precioVentaUsd)
+    expect(precioVentaUsd.value).toBe('33.33333333')
+    expect(precioFinalUsdInput.value).toBe('38.67')
+    fireEvent.blur(precioVentaUsd)
   })
 })
