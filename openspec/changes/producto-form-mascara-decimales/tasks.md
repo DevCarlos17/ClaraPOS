@@ -96,11 +96,23 @@ Fresh adversarial re-verify (engram `sdd/producto-form-mascara-decimales/verify-
 - [x] 7.1.2 GREEN: swapped all 3 occurrences of `parseNumOrZero(costoUsd) === 0` (the `isSubmitDisabled` gate, the footer hint text, and the submit button's `title` tooltip — all 3 use the identical predicate) to `costoUsdFullRef.current === 0`, so the button, hint, and tooltip stay consistent with each other and with the real value.
 - [x] 7.1.3 Verify: `yarn test:run producto-form-costo-precision` — 12/12 passed (was 10/10 pre-fix). Full suite: 1244/1244 passed, 103 files (was 1242/1242 pre-fix) — zero regressions.
 
+## Phase 8: CORRECTION — Post-QA fixes (edit-mode open mask + non-blocking draft banner)
+
+Tester-confirmed bug + a UX follow-up requested after Phase 7 closed: (1) editing an existing product opened the Costo/Precio Venta/Precio Mayor/Precio Especial/Margen inputs showing the RAW 8-decimal DB string until the first focus/blur, instead of the masked 2-decimal display used everywhere else; (2) the "datos recuperados" draft-restore notice used a blocking native `<dialog>` requiring an explicit "Entendido" click, interrupting the user instead of informing them.
+
+- [x] 8.1 RED: new `producto-form-edit-open-mask.test.tsx` — editing a product with `costo_usd="1.00000000"`/`precio_venta_usd="2.69004000"` (raw 8-decimal DB strings) must render `"1.00"`/`"2.69"` on initial open, with no focus/blur; confirmed RED (raw strings rendered) against pre-fix code.
+- [x] 8.2 GREEN: routed the edit-populate branch's Costo/Precio Venta/Precio Mayor/Precio Especial `displayVal` argument through `toMaskedDisplay(numericValue)` instead of the raw DB string; the numeric full-value argument to each `*Completo()` setter is untouched (still the unrounded `parseFloat` of the raw string), so focus-reveal and submit still carry full precision. Also switched the 3 edit-populate Margen calls from `.toFixed(1)` to `toMaskedDisplay(margenCalc)` for consistency with the Margen input's own blur mask (2 decimals) — a pre-existing 1-vs-2-decimal inconsistency, fixed per instructions.
+- [x] 8.3 Verify: `producto-form-edit-open-mask.test.tsx` — 3/3 passed (initial mask, focus-reveal/blur-remask triangulation, submit precision).
+- [x] 8.4 RED: rewrote `producto-form-aviso-borrador.test.tsx` for the new non-blocking-banner contract (no "Entendido" button, dismiss on "Limpiar", dismiss on first field edit); confirmed RED against the pre-fix blocking `<dialog>` (4/6 failing).
+- [x] 8.5 GREEN: replaced the nested `<dialog>` + `avisoBorradorRef` + its `showModal()` effect with an inline `<div role="status">` banner rendered inside the modal's sticky header (right below the title/close row). Added `draftSnapshotRef` (captured at the moment the draft is restored) + a single `useEffect` (after `buildDraft`) comparing the live `buildDraft()` against the snapshot to auto-dismiss the banner on the first real field change — no per-field `onChange` wiring. `handleLimpiar` also dismisses the banner explicitly. The draft-restore population logic itself (field values) is unchanged.
+- [x] 8.6 Verify: `producto-form-aviso-borrador.test.tsx` — 6/6 passed.
+- [x] 8.7 Full-suite verify: `yarn test:run` → **1249/1249 passed, 104 files** (was 1244/1244, 103 files — net +5, zero regressions). Targeted `yarn type-check` grep on `producto-form.tsx` (excluding `__tests__`): 0 errors (the project-wide vitest-globals type-check gap affects all `__tests__` files identically, pre-existing, unrelated to this change).
+
 ## Spec Requirement Coverage
 
 | Requirement | Tasks |
 |---|---|
-| Masked Default Display | 1, 3.3, 4.3, 5.2, 6.5 |
+| Masked Default Display | 1, 3.3, 4.3, 5.2, 6.5, 8.2 |
 | Full Precision Reveal On Focus | 1, 3.3, 4.3, 5.2, 6.5 |
 | Re-mask On Blur | 3.3, 4.3, 5.2, 6.5 |
 | Full-Precision Value Reaches Persistence | 3.3, 4.1, 5.2-5.3, 6.4-6.5 |

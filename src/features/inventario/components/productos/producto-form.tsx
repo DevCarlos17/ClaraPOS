@@ -312,11 +312,12 @@ interface ProductoFormProps {
 
 export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
-  // Dialog anidado (top-layer via showModal, se apila arriba del dialog de
-  // producto sin necesidad de z-index) que avisa cuando se restauro un
-  // borrador. Reemplaza al toast.info anterior, que quedaba lejos del foco
-  // visual del usuario (arriba a la derecha) mientras el modal esta abierto.
-  const avisoBorradorRef = useRef<HTMLDialogElement>(null)
+  // Snapshot (JSON) del borrador en el momento exacto en que se restaura,
+  // usado por el banner inline de "datos recuperados" (ver mas abajo, cerca
+  // de `mostrarAvisoBorrador`) para detectar la PRIMERA edicion real del
+  // usuario tras la restauracion y auto-descartarse solo, sin cablear cada
+  // campo individualmente ni bloquear con un dialog modal.
+  const draftSnapshotRef = useRef<string | null>(null)
   // Trackea que input de Precio Final esta enfocado (siendo tipeado) para que
   // el useEffect de sincronizacion bidireccional (ver mas abajo, cerca de
   // pfDetalUsd/pfMayorUsd/pfEspecialUsd) no le pise el valor en pleno tipeo —
@@ -498,16 +499,22 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setCodigoBarras(producto.codigo_barras ?? '')
         setIsActive(producto.is_active === 1)
         setDuracionMin(producto.duracion_min ?? null)
-        setCostoCompleto(parseFloat(producto.costo_usd) || 0, producto.costo_usd)
-        // El string del producto ya viene con precision completa desde la DB
-        // (NUMERIC(20,8), ver migracion 0058) — el display muestra ese mismo
-        // string tal cual (comportamiento preexistente, sin cambios), y el
-        // companion de precision completa se sincroniza con el mismo valor
-        // para que un submit sin tocar los precios no envie 0 (ver refs mas
-        // arriba).
-        setPrecioVentaCompleto(parseFloat(producto.precio_venta_usd) || 0, producto.precio_venta_usd)
-        setPrecioMayorCompleto(parseFloat(producto.precio_mayor_usd ?? '') || 0, producto.precio_mayor_usd ?? '')
-        setPrecioEspecialCompleto(parseFloat(producto.precio_especial_usd ?? '') || 0, producto.precio_especial_usd ?? '')
+        // El string del producto viene con precision completa desde la DB
+        // (NUMERIC(20,8), ver migracion 0058), pero el DISPLAY inicial debe
+        // respetar la mascara de 2 decimales (igual que onBlur) — mostrar el
+        // string crudo ("1.00000000") hasta el primer focus/blur es el bug
+        // reportado por el tester. El companion de precision completa
+        // (`costoUsdFullRef`/etc) SI recibe el numero completo sin redondear,
+        // para que revelar-en-foco y el submit sigan enviando precision
+        // completa (regla de negocio #10).
+        const costoN0 = parseFloat(producto.costo_usd) || 0
+        setCostoCompleto(costoN0, toMaskedDisplay(costoN0))
+        const ventaN0 = parseFloat(producto.precio_venta_usd) || 0
+        setPrecioVentaCompleto(ventaN0, toMaskedDisplay(ventaN0))
+        const mayorN0 = parseFloat(producto.precio_mayor_usd ?? '') || 0
+        setPrecioMayorCompleto(mayorN0, producto.precio_mayor_usd ? toMaskedDisplay(mayorN0) : '')
+        const especN0 = parseFloat(producto.precio_especial_usd ?? '') || 0
+        setPrecioEspecialCompleto(especN0, producto.precio_especial_usd ? toMaskedDisplay(especN0) : '')
         setTipoImpuesto((producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento')
         setImpuestoIvaId(producto.impuesto_iva_id ?? '')
         setUbicacion(producto.ubicacion ?? '')
@@ -526,9 +533,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           const margenCalc = (ventaN - costoN) / costoN * 100
           const margenMayorCalc = (mayorN - costoN) / costoN * 100
           const margenEspecialCalc = (especN - costoN) / costoN * 100
-          setMargenCompleto(costoN > 0 && ventaN > 0 ? margenCalc : 0, costoN > 0 && ventaN > 0 ? margenCalc.toFixed(1) : '')
-          setMargenMayorCompleto(costoN > 0 && mayorN > 0 ? margenMayorCalc : 0, costoN > 0 && mayorN > 0 ? margenMayorCalc.toFixed(1) : '')
-          setMargenEspecialCompleto(costoN > 0 && especN > 0 ? margenEspecialCalc : 0, costoN > 0 && especN > 0 ? margenEspecialCalc.toFixed(1) : '')
+          setMargenCompleto(costoN > 0 && ventaN > 0 ? margenCalc : 0, costoN > 0 && ventaN > 0 ? toMaskedDisplay(margenCalc) : '')
+          setMargenMayorCompleto(costoN > 0 && mayorN > 0 ? margenMayorCalc : 0, costoN > 0 && mayorN > 0 ? toMaskedDisplay(margenMayorCalc) : '')
+          setMargenEspecialCompleto(costoN > 0 && especN > 0 ? margenEspecialCalc : 0, costoN > 0 && especN > 0 ? toMaskedDisplay(margenEspecialCalc) : '')
         } else {
           setCostoBs('')
           setPrecioVentaBs('')
@@ -576,9 +583,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           setActiveTab(draft.activeTab as TabId)
           // El usuario debe saber que estos datos son los que quedaron sin
           // guardar antes de cerrar, no un producto nuevo en blanco. Se avisa
-          // con el dialog anidado (montado condicionalmente, ver useEffect
-          // separado mas abajo) en vez de un toast que queda lejos del foco
-          // visual.
+          // con un banner inline no bloqueante (ver JSX cerca del header del
+          // modal) en vez de un toast que queda lejos del foco visual o un
+          // dialog modal que interrumpe. El snapshot se toma ANTES de
+          // marcar el banner visible, para que el effect de auto-descarte
+          // (ver mas abajo, cerca de `buildDraft`) tenga con que comparar
+          // desde el primer render.
+          draftSnapshotRef.current = JSON.stringify(draft)
           setMostrarAvisoBorrador(true)
         } else {
           setCodigo('')
@@ -624,20 +635,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, producto])
-
-  // Abre el dialog anidado de aviso DESPUES de que el dialog de producto ya
-  // esta abierto (montado y con showModal() ya invocado en el effect
-  // anterior). Al llamar showModal() sobre este segundo <dialog>, el
-  // top-layer del navegador lo apila automaticamente arriba del primero, sin
-  // necesidad de z-index. Se dispara en un effect separado, en el siguiente
-  // commit, para no depender de sincronizar dos showModal() manualmente
-  // dentro del mismo render (evita la carrera con el montaje condicional del
-  // propio <dialog> del aviso).
-  useEffect(() => {
-    if (mostrarAvisoBorrador) {
-      avisoBorradorRef.current?.showModal()
-    }
-  }, [mostrarAvisoBorrador])
 
   // Sync Bs values when tasa changes while form is open
   //
@@ -1359,6 +1356,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   // que descartar, para no mostrar una accion destructiva sobre un form vacio.
   const mostrarLimpiar = !isEditing && isDraftMeaningful(buildDraft())
 
+  // Auto-descarta el banner de "datos recuperados" en la PRIMERA edicion real
+  // del usuario tras restaurar el borrador. Un solo snapshot (tomado al
+  // restaurar, ver `draftSnapshotRef` mas arriba) + esta comparacion alcanzan
+  // para cubrir cualquier campo, sin cablear un dismiss por cada onChange.
+  useEffect(() => {
+    if (!mostrarAvisoBorrador || draftSnapshotRef.current === null) return
+    if (JSON.stringify(buildDraft()) !== draftSnapshotRef.current) {
+      setMostrarAvisoBorrador(false)
+    }
+  }, [mostrarAvisoBorrador, buildDraft])
+
   // Cierre unificado (X / Cancelar / Escape). En modo alta persiste el borrador
   // para poder retomar la carga; en modo edicion no guarda nada.
   const handleClose = useCallback(() => {
@@ -1371,6 +1379,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   // Boton "Limpiar" (solo modo alta): vacia el formulario y descarta el borrador.
   const handleLimpiar = useCallback(() => {
     clearDraft(localStorage, empresaId)
+    setMostrarAvisoBorrador(false)
     setCodigo('')
     setTipo('P')
     setNombre('')
@@ -1535,6 +1544,20 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
               </svg>
             </button>
           </div>
+
+          {/* Banner inline (no bloqueante) de "datos recuperados". Reemplaza
+              el dialog anidado con boton "Entendido" anterior — se
+              auto-descarta solo (ver useEffect cerca de `buildDraft`) al
+              primer cambio real, o al clickear "Limpiar" (ver
+              `handleLimpiar`), sin requerir una accion explicita de cierre. */}
+          {mostrarAvisoBorrador && (
+            <div
+              role="status"
+              className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+            >
+              Se recuperaron los datos que no habian sido guardados. Puede continuar editando o usar &quot;Limpiar&quot; para empezar de nuevo.
+            </div>
+          )}
 
           {/* Codigo + Nombre */}
           <div className="grid grid-cols-2 gap-3 mb-3">
@@ -2661,34 +2684,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         </div>
       </form>
     </dialog>
-
-    {/* Dialog anidado (top-layer via showModal, sin z-index) que avisa que se
-        restauro un borrador. Montado condicionalmente: solo existe en el DOM
-        mientras hay algo que avisar, en modo alta con un borrador con
-        contenido util (ver useEffect de apertura). */}
-    {mostrarAvisoBorrador && (
-      <dialog
-        ref={avisoBorradorRef}
-        onClose={() => setMostrarAvisoBorrador(false)}
-        className="backdrop:bg-black/40 rounded-xl p-0 w-[calc(100vw-2rem)] max-w-sm shadow-2xl"
-      >
-        <div className="p-5">
-          <h3 className="text-base font-semibold text-gray-900 mb-2">Datos recuperados</h3>
-          <p className="text-sm text-gray-600 mb-4">
-            Se recuperaron los datos que no habian sido guardados. Puede continuar editando o usar &quot;Limpiar&quot; para empezar de nuevo.
-          </p>
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={() => avisoBorradorRef.current?.close()}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
-            >
-              Entendido
-            </button>
-          </div>
-        </div>
-      </dialog>
-    )}
     </>
   )
 }

@@ -1,8 +1,8 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProductoForm } from '../producto-form'
-import { saveDraft, type ProductoFormDraft } from '@/features/inventario/lib/producto-form-draft'
 import type { Producto } from '@/features/inventario/hooks/use-productos'
+import { actualizarProducto } from '@/features/inventario/hooks/use-productos'
 import { useDepartamentosActivos } from '@/features/inventario/hooks/use-departamentos'
 import { useUnidadesActivas } from '@/features/inventario/hooks/use-unidades'
 import { useDepositosActivos } from '@/features/inventario/hooks/use-depositos'
@@ -12,9 +12,8 @@ import { useNivelesPrecioActivos } from '@/features/configuracion/hooks/use-nive
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 
-// Mismo patron que producto-form-costo-direct-write.test.tsx: cortamos la
-// PowerSyncDatabase real (efecto top-level via `useCurrentUser` ->
-// `auth-provider`) antes de que reviente con "Worker is not defined".
+// Mismo patron que producto-form-costo-precision.test.tsx: cortamos la
+// PowerSyncDatabase real antes de que reviente con "Worker is not defined".
 vi.mock('@/core/db/powersync/db', () => ({ db: { execute: vi.fn(), writeTransaction: vi.fn() } }))
 vi.mock('@/core/db/powersync', () => ({ db: { execute: vi.fn(), writeTransaction: vi.fn() } }))
 vi.mock('@/core/db/powersync/connector', () => ({ connector: {} }))
@@ -45,7 +44,7 @@ vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
 vi.mock('@/features/inventario/hooks/use-catalogo-global', () => ({ useCatalogoGlobal: vi.fn() }))
 vi.mock('@/features/inventario/hooks/use-productos', () => ({
   crearProducto: vi.fn(),
-  actualizarProducto: vi.fn(),
+  actualizarProducto: vi.fn().mockResolvedValue(undefined),
 }))
 
 const mockedUseDepartamentosActivos = vi.mocked(useDepartamentosActivos)
@@ -56,6 +55,7 @@ const mockedUseImpuestosActivos = vi.mocked(useImpuestosActivos)
 const mockedUseNivelesPrecioActivos = vi.mocked(useNivelesPrecioActivos)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 const mockedUseCatalogoGlobal = vi.mocked(useCatalogoGlobal)
+const mockedActualizarProducto = vi.mocked(actualizarProducto)
 
 function setupMocks(tasaValor = 40) {
   mockedUseDepartamentosActivos.mockReturnValue({ departamentos: [{ id: 'depto-1', nombre: 'DEPTO UNO' }] as never, isLoading: false })
@@ -69,36 +69,6 @@ function setupMocks(tasaValor = 40) {
     loading: false,
   })
   mockedUseCatalogoGlobal.mockReturnValue({ sugerencias: [] as never, isLoading: false })
-}
-
-function makeDraft(overrides: Partial<ProductoFormDraft> = {}): ProductoFormDraft {
-  return {
-    codigo: 'DRAFT-1',
-    tipo: 'P',
-    nombre: 'Producto Borrador',
-    departamentoId: '',
-    unidadBaseId: '',
-    presentacion: '',
-    stockMinimo: '',
-    codigoBarras: '',
-    isActive: true,
-    duracionMin: null,
-    costoUsd: '',
-    precioVentaUsd: '',
-    precioMayorUsd: '',
-    precioEspecialUsd: '',
-    margen: '',
-    margenMayor: '',
-    margenEspecial: '',
-    tipoImpuesto: 'Exento',
-    impuestoIvaId: '',
-    ubicacion: '',
-    manejaLotes: false,
-    depositoId: '',
-    stockInicial: '',
-    activeTab: 'general',
-    ...overrides,
-  }
 }
 
 function makeProducto(overrides: Partial<Producto> = {}): Producto {
@@ -128,7 +98,7 @@ function makeProducto(overrides: Partial<Producto> = {}): Producto {
     presentacion: null,
     codigo_barras: null,
     duracion_min: null,
-    deposito_id: null,
+    deposito_id: 'dep-1',
     ...overrides,
   }
 }
@@ -136,69 +106,55 @@ function makeProducto(overrides: Partial<Producto> = {}): Producto {
 beforeEach(() => {
   vi.clearAllMocks()
   setupMocks()
-  localStorage.clear()
 })
 
-describe('ProductoForm — aviso de borrador recuperado (banner inline, no bloqueante)', () => {
-  it('al reabrir en modo alta con un borrador guardado, muestra un banner inline (sin dialog nativo ni boton "Entendido") y el form restaurado debajo', () => {
-    saveDraft(localStorage, 'emp-1', makeDraft({ codigo: 'DRAFT-1', nombre: 'Producto Borrador' }))
+async function abrirTabPrecios(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /precios y fiscalidad/i }))
+}
 
-    render(<ProductoForm isOpen onClose={() => {}} />)
-
-    expect(screen.getByText(/se recuperaron los datos/i)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /entendido/i })).not.toBeInTheDocument()
-    // El form subyacente ya muestra el valor restaurado del borrador.
-    expect(screen.getByDisplayValue('DRAFT-1')).toBeInTheDocument()
-  })
-
-  it('clickear "Limpiar" oculta el banner (ademas de vaciar el formulario y el borrador)', async () => {
+describe('ProductoForm — modo edicion abre con la mascara aplicada (caso confirmado por tester)', () => {
+  it('costo_usd="1.00000000" y precio_venta_usd="2.69004000" (strings crudos de 8 decimales de la DB) se muestran mascarados a 2 decimales al abrir, SIN necesidad de foco/blur', async () => {
     const user = userEvent.setup()
-    saveDraft(localStorage, 'emp-1', makeDraft({ codigo: 'DRAFT-1', nombre: 'Producto Borrador' }))
+    const producto = makeProducto({ costo_usd: '1.00000000', precio_venta_usd: '2.69004000' })
+    const { container } = render(<ProductoForm isOpen onClose={() => {}} producto={producto} />)
+    await abrirTabPrecios(user)
 
-    render(<ProductoForm isOpen onClose={() => {}} />)
-    expect(screen.getByText(/se recuperaron los datos/i)).toBeInTheDocument()
+    const costoInput = screen.getByLabelText(/costo \(usd\)/i) as HTMLInputElement
+    const ventaInput = container.querySelector('#prod-venta') as HTMLInputElement
 
-    await user.click(screen.getByRole('button', { name: /limpiar/i }))
-
-    expect(screen.queryByText(/se recuperaron los datos/i)).not.toBeInTheDocument()
+    // Bug reportado por el tester: sin este fix, el display muestra el string
+    // crudo de la DB ("1.00000000"/"2.69004000") hasta el primer focus/blur.
+    expect(costoInput.value).toBe('1.00')
+    expect(ventaInput.value).toBe('2.69')
   })
 
-  it('editar el nombre (primer cambio real tras restaurar) oculta el banner automaticamente, sin requerir ninguna accion explicita', () => {
-    saveDraft(localStorage, 'emp-1', makeDraft({ codigo: 'DRAFT-1', nombre: 'Producto Borrador' }))
+  it('triangulacion: el foco revela la precision completa y el blur vuelve a mascarar (el companion de precision completa no se pierde)', async () => {
+    const user = userEvent.setup()
+    const producto = makeProducto({ costo_usd: '1.00000000', precio_venta_usd: '2.69004000' })
+    const { container } = render(<ProductoForm isOpen onClose={() => {}} producto={producto} />)
+    await abrirTabPrecios(user)
 
-    const { container } = render(<ProductoForm isOpen onClose={() => {}} />)
-    expect(screen.getByText(/se recuperaron los datos/i)).toBeInTheDocument()
+    const ventaInput = container.querySelector('#prod-venta') as HTMLInputElement
+    expect(ventaInput.value).toBe('2.69')
 
-    fireEvent.change(container.querySelector('#prod-nombre') as HTMLInputElement, {
-      target: { value: 'NOMBRE EDITADO' },
-    })
+    fireEvent.focus(ventaInput)
+    expect(ventaInput.value).toBe('2.69004')
 
-    expect(screen.queryByText(/se recuperaron los datos/i)).not.toBeInTheDocument()
+    fireEvent.blur(ventaInput)
+    expect(ventaInput.value).toBe('2.69')
   })
 
-  it('triangulacion: editar el codigo (otro campo, no el nombre) tambien oculta el banner', () => {
-    saveDraft(localStorage, 'emp-1', makeDraft({ codigo: 'DRAFT-1', nombre: 'Producto Borrador' }))
+  it('el submit conserva la precision completa (2.69004) aunque el campo nunca haya sido enfocado', async () => {
+    const user = userEvent.setup()
+    const producto = makeProducto({ costo_usd: '1.00000000', precio_venta_usd: '2.69004000' })
+    render(<ProductoForm isOpen onClose={() => {}} producto={producto} />)
+    await abrirTabPrecios(user)
 
-    const { container } = render(<ProductoForm isOpen onClose={() => {}} />)
-    expect(screen.getByText(/se recuperaron los datos/i)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /actualizar/i }))
 
-    fireEvent.change(container.querySelector('#prod-codigo') as HTMLInputElement, {
-      target: { value: 'DRAFT-2' },
-    })
-
-    expect(screen.queryByText(/se recuperaron los datos/i)).not.toBeInTheDocument()
-  })
-
-  it('NO muestra el aviso al abrir un formulario nuevo sin borrador guardado', () => {
-    render(<ProductoForm isOpen onClose={() => {}} />)
-    expect(screen.queryByText(/se recuperaron los datos/i)).not.toBeInTheDocument()
-  })
-
-  it('NO muestra el aviso en modo edicion aunque exista un borrador de otra sesion en storage', () => {
-    saveDraft(localStorage, 'emp-1', makeDraft({ codigo: 'DRAFT-1' }))
-
-    render(<ProductoForm isOpen onClose={() => {}} producto={makeProducto()} />)
-
-    expect(screen.queryByText(/se recuperaron los datos/i)).not.toBeInTheDocument()
+    await waitFor(() => expect(mockedActualizarProducto).toHaveBeenCalledTimes(1))
+    const enviado = mockedActualizarProducto.mock.calls[0]![1]
+    expect(enviado.precio_venta_usd).toBeCloseTo(2.69004, 6)
+    expect(enviado.costo_usd).toBeCloseTo(1, 6)
   })
 })
