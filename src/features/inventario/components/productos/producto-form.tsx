@@ -362,6 +362,26 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [precioMayorBs, setPrecioMayorBs] = useState('')
   const [precioEspecialUsd, setPrecioEspecialUsd] = useState('')
   const [precioEspecialBs, setPrecioEspecialBs] = useState('')
+  // Companion de precision completa (hasta 8 decimales) para cada PVP.
+  //
+  // LEAK que esto arregla: `precioVentaUsd`/`precioMayorUsd`/`precioEspecialUsd`
+  // (arriba) son la representacion DISPLAY del PVP: se muestran redondeadas a 2
+  // decimales (`.toFixed(2)`) porque un input de precio con 8 decimales visibles
+  // ("0.26000000") es mala UX. El problema es que `handleSubmit` (mas abajo)
+  // antes leia ESE MISMO string de 2 decimales para construir el payload — el
+  // envio ya llegaba truncado, y el `.toFixed(8)` posterior en `use-productos.ts`
+  // solo rellena con ceros, no recupera la precision perdida (regla de negocio
+  // #10: USD usa hasta 8 decimales internamente; el redondeo a 2 es SOLO una
+  // mascara de visualizacion, nunca debe filtrarse al storage).
+  //
+  // Cada handler que escribe un PVP calculado (margen, "Fijar costo", precio
+  // final con IVA) ahora escribe TAMBIEN aqui el valor SIN redondear (via los
+  // helpers `setPrecio*Completo` mas abajo), y `handleSubmit` lee de aqui en
+  // vez de re-parsear el string de 2 decimales. Un `ref` (no `useState`) es
+  // suficiente porque nada renderiza este valor — solo lo lee `handleSubmit`.
+  const precioVentaUsdFullRef = useRef(0)
+  const precioMayorUsdFullRef = useRef(0)
+  const precioEspecialUsdFullRef = useRef(0)
   // Precio Final (USD/Bs, con IVA) por nivel — CONTROLADO con estado propio
   // (antes era un input no-controlado con defaultValue+key derivado de
   // pfDetalUsd/pfMayorUsd/pfEspecialUsd, recalculado solo al blur). Se
@@ -441,9 +461,15 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setIsActive(producto.is_active === 1)
         setDuracionMin(producto.duracion_min ?? null)
         setCostoUsd(producto.costo_usd)
-        setPrecioVentaUsd(producto.precio_venta_usd)
-        setPrecioMayorUsd(producto.precio_mayor_usd ?? '')
-        setPrecioEspecialUsd(producto.precio_especial_usd ?? '')
+        // El string del producto ya viene con precision completa desde la DB
+        // (NUMERIC(20,8), ver migracion 0058) — el display muestra ese mismo
+        // string tal cual (comportamiento preexistente, sin cambios), y el
+        // companion de precision completa se sincroniza con el mismo valor
+        // para que un submit sin tocar los precios no envie 0 (ver refs mas
+        // arriba).
+        setPrecioVentaCompleto(parseFloat(producto.precio_venta_usd) || 0, producto.precio_venta_usd)
+        setPrecioMayorCompleto(parseFloat(producto.precio_mayor_usd ?? '') || 0, producto.precio_mayor_usd ?? '')
+        setPrecioEspecialCompleto(parseFloat(producto.precio_especial_usd ?? '') || 0, producto.precio_especial_usd ?? '')
         setTipoImpuesto((producto.tipo_impuesto as 'Gravable' | 'Exento' | 'Exonerado') ?? 'Exento')
         setImpuestoIvaId(producto.impuesto_iva_id ?? '')
         setUbicacion(producto.ubicacion ?? '')
@@ -484,11 +510,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setDuracionMin(null)
         setCostoUsd('')
         setCostoBs('')
-        setPrecioVentaUsd('')
+        setPrecioVentaCompleto(0, '')
         setPrecioVentaBs('')
-        setPrecioMayorUsd('')
+        setPrecioMayorCompleto(0, '')
         setPrecioMayorBs('')
-        setPrecioEspecialUsd('')
+        setPrecioEspecialCompleto(0, '')
         setPrecioEspecialBs('')
         const pct1 = nivel1 ? parseFloat(nivel1.porcentaje_defecto) : 0
         const pct2 = nivel2 ? parseFloat(nivel2.porcentaje_defecto) : 0
@@ -560,6 +586,27 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (valor !== 'Gravable') setImpuestoIvaId('')
   }
 
+  /**
+   * Escriben el PVP de un nivel en sus DOS representaciones a la vez: el
+   * display redondeado a 2 decimales (`precioVentaUsd`/etc, lo que ve el
+   * usuario) y el companion de precision completa (`precioVentaUsdFullRef`/
+   * etc, lo que se envia en `handleSubmit`). Reduce el riesgo de que un sitio
+   * nuevo actualice uno y se olvide del otro (ver comentario en la
+   * declaracion de los refs, mas arriba).
+   */
+  function setPrecioVentaCompleto(fullValue: number, displayVal: string) {
+    precioVentaUsdFullRef.current = fullValue
+    setPrecioVentaUsd(displayVal)
+  }
+  function setPrecioMayorCompleto(fullValue: number, displayVal: string) {
+    precioMayorUsdFullRef.current = fullValue
+    setPrecioMayorUsd(displayVal)
+  }
+  function setPrecioEspecialCompleto(fullValue: number, displayVal: string) {
+    precioEspecialUsdFullRef.current = fullValue
+    setPrecioEspecialUsd(displayVal)
+  }
+
   // --- Bidireccionales: Costo ---
   // Escribe el PVP directamente cuando cambia el costo (mismo criterio que
   // handleMargenChange/Mayor/Especial: si hay un margen % configurado para
@@ -574,7 +621,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const ventaN = parseFloat(precioVentaUsd) || 0
     if (!isNaN(margenN) && margenN !== 0) {
       const pvp = calcularPrecioPreservandoMargen(costoN, margenN)
-      setPrecioVentaUsd(pvp.toFixed(2))
+      setPrecioVentaCompleto(pvp, pvp.toFixed(2))
       if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
     } else if (ventaN > 0) {
       setMargen(((ventaN - costoN) / costoN * 100).toFixed(2))
@@ -584,7 +631,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const mayorN = parseFloat(precioMayorUsd) || 0
     if (!isNaN(margenMayorN) && margenMayorN !== 0) {
       const pvp = calcularPrecioPreservandoMargen(costoN, margenMayorN)
-      setPrecioMayorUsd(pvp.toFixed(2))
+      setPrecioMayorCompleto(pvp, pvp.toFixed(2))
       if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
     } else if (mayorN > 0) {
       setMargenMayor(((mayorN - costoN) / costoN * 100).toFixed(2))
@@ -594,7 +641,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const especN = parseFloat(precioEspecialUsd) || 0
     if (!isNaN(margenEspecialN) && margenEspecialN !== 0) {
       const pvp = calcularPrecioPreservandoMargen(costoN, margenEspecialN)
-      setPrecioEspecialUsd(pvp.toFixed(2))
+      setPrecioEspecialCompleto(pvp, pvp.toFixed(2))
       if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
     } else if (especN > 0) {
       setMargenEspecial(((especN - costoN) / costoN * 100).toFixed(2))
@@ -624,8 +671,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Bidireccionales: PVP Detal ---
   function handlePrecioVentaUsdChange(val: string) {
-    setPrecioVentaUsd(val)
     const num = parseFloat(val)
+    // Tipeo directo: el usuario escribio este valor, no hay redondeo que
+    // preservar — el companion de precision completa ES lo tipeado.
+    setPrecioVentaCompleto(isNaN(num) ? 0 : num, val)
     if (!isNaN(num) && tasaValor > 0) setPrecioVentaBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const ventaN = isNaN(num) ? 0 : num
@@ -641,9 +690,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
       const usdStr = usd.toFixed(8)
-      setPrecioVentaUsd(usdStr)
-      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
+      setPrecioVentaCompleto(usdN, usdStr)
+      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       if (costoN > 0 && usdN > 0 && !costoBackCalculado) {
         setMargen(((usdN - costoN) / costoN * 100).toFixed(2))
       }
@@ -663,7 +712,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (!isNaN(margenEfectivoN) && costoN > 0 && !costoBackCalculado) {
       const pvp = Math.max(0, costoN * (1 + margenEfectivoN / 100))
-      setPrecioVentaUsd(pvp.toFixed(2))
+      setPrecioVentaCompleto(pvp, pvp.toFixed(2))
       if (tasaValor > 0) setPrecioVentaBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
     recalcularCostoSiExplorando(parseFloat(precioVentaUsd) || 0, margenEfectivoN || 0)
@@ -681,7 +730,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (!isNaN(margenEfectivoN) && costoN > 0 && !costoBackCalculado) {
       const pvp = Math.max(0, costoN * (1 + margenEfectivoN / 100))
-      setPrecioMayorUsd(pvp.toFixed(2))
+      setPrecioMayorCompleto(pvp, pvp.toFixed(2))
       if (tasaValor > 0) setPrecioMayorBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
     recalcularCostoSiExplorando(parseFloat(precioMayorUsd) || 0, margenEfectivoN || 0)
@@ -699,7 +748,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (!isNaN(margenEfectivoN) && costoN > 0 && !costoBackCalculado) {
       const pvp = Math.max(0, costoN * (1 + margenEfectivoN / 100))
-      setPrecioEspecialUsd(pvp.toFixed(2))
+      setPrecioEspecialCompleto(pvp, pvp.toFixed(2))
       if (tasaValor > 0) setPrecioEspecialBs(usdToBs(pvp, tasaValor).toFixed(2))
     }
     recalcularCostoSiExplorando(parseFloat(precioEspecialUsd) || 0, margenEfectivoN || 0)
@@ -745,16 +794,19 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       margenEspecialPct: new Decimal(margenEspecial.trim() === '' ? '0' : margenEspecial),
     })
 
+    // El companion de precision completa toma el Decimal SIN redondear
+    // (`resultado.*Usd`), no `detal.usdStr`/etc (que ya viene a 2 decimales
+    // desde `resolverPvpCascadaStrings`, pensado solo para el display).
     const detal = resolverPvpCascadaStrings(resultado.detalUsd, tasaValor)
-    setPrecioVentaUsd(detal.usdStr)
+    setPrecioVentaCompleto(resultado.detalUsd.toNumber(), detal.usdStr)
     if (detal.bsStr) setPrecioVentaBs(detal.bsStr)
 
     const mayor = resolverPvpCascadaStrings(resultado.mayorUsd, tasaValor)
-    setPrecioMayorUsd(mayor.usdStr)
+    setPrecioMayorCompleto(resultado.mayorUsd.toNumber(), mayor.usdStr)
     if (mayor.bsStr) setPrecioMayorBs(mayor.bsStr)
 
     const especial = resolverPvpCascadaStrings(resultado.especialUsd, tasaValor)
-    setPrecioEspecialUsd(especial.usdStr)
+    setPrecioEspecialCompleto(resultado.especialUsd.toNumber(), especial.usdStr)
     if (especial.bsStr) setPrecioEspecialBs(especial.bsStr)
 
     setCostoBackCalculado(false)
@@ -762,8 +814,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Bidireccionales: PVP Mayor ---
   function handlePrecioMayorUsdChange(val: string) {
-    setPrecioMayorUsd(val)
     const num = parseFloat(val)
+    setPrecioMayorCompleto(isNaN(num) ? 0 : num, val)
     if (!isNaN(num) && tasaValor > 0) setPrecioMayorBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const mayorN = isNaN(num) ? 0 : num
@@ -778,9 +830,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioMayorUsd(usd.toFixed(8))
-      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
+      setPrecioMayorCompleto(usdN, usd.toFixed(8))
+      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       if (costoN > 0 && usdN > 0 && !costoBackCalculado) {
         setMargenMayor(((usdN - costoN) / costoN * 100).toFixed(2))
       }
@@ -790,8 +842,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   // --- Bidireccionales: PVP Especial ---
   function handlePrecioEspecialUsdChange(val: string) {
-    setPrecioEspecialUsd(val)
     const num = parseFloat(val)
+    setPrecioEspecialCompleto(isNaN(num) ? 0 : num, val)
     if (!isNaN(num) && tasaValor > 0) setPrecioEspecialBs(usdToBs(num, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     const especN = isNaN(num) ? 0 : num
@@ -806,9 +858,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const num = parseFloat(val)
     if (!isNaN(num) && tasaValor > 0) {
       const usd = bsToUsd(num, tasaValor)
-      setPrecioEspecialUsd(usd.toFixed(8))
-      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       const usdN = usd.toNumber()
+      setPrecioEspecialCompleto(usdN, usd.toFixed(8))
+      const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
       if (costoN > 0 && usdN > 0 && !costoBackCalculado) {
         setMargenEspecial(((usdN - costoN) / costoN * 100).toFixed(2))
       }
@@ -823,7 +875,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (isNaN(pfN) || pfN <= 0) return
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
-    setPrecioVentaUsd(baseUsd.toFixed(2))
+    setPrecioVentaCompleto(baseUsd, baseUsd.toFixed(2))
     if (tasaValor > 0) setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
@@ -839,7 +891,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioVentaUsd(baseUsd.toFixed(8))
+    setPrecioVentaCompleto(baseUsd, baseUsd.toFixed(8))
     setPrecioVentaBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
@@ -854,7 +906,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (isNaN(pfN) || pfN <= 0) return
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
-    setPrecioMayorUsd(baseUsd.toFixed(2))
+    setPrecioMayorCompleto(baseUsd, baseUsd.toFixed(2))
     if (tasaValor > 0) setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
@@ -870,7 +922,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioMayorUsd(baseUsd.toFixed(8))
+    setPrecioMayorCompleto(baseUsd, baseUsd.toFixed(8))
     setPrecioMayorBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
@@ -885,7 +937,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (isNaN(pfN) || pfN <= 0) return
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfN / factor
-    setPrecioEspecialUsd(baseUsd.toFixed(2))
+    setPrecioEspecialCompleto(baseUsd, baseUsd.toFixed(2))
     if (tasaValor > 0) setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
@@ -901,7 +953,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     const pfUsd = bsToUsd(pfBsN, tasaValor).toNumber()
     const factor = alicuota > 0 ? (1 + alicuota / 100) : 1
     const baseUsd = pfUsd / factor
-    setPrecioEspecialUsd(baseUsd.toFixed(8))
+    setPrecioEspecialCompleto(baseUsd, baseUsd.toFixed(8))
     setPrecioEspecialBs(usdToBs(baseUsd, tasaValor).toFixed(2))
     const costoN = esComboLocal ? 0 : (parseFloat(costoUsd) || 0)
     if (costoN > 0 && baseUsd > 0 && !costoBackCalculado)
@@ -952,9 +1004,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       nombre,
       departamento_id: departamentoId,
       costo_usd: esCombo ? 0 : parseNumOrZero(costoUsd),
-      precio_venta_usd: parseNumOrZero(precioVentaUsd),
-      precio_mayor_usd: nivel2 ? (precioMayorUsd.trim() === '' ? null : parseNumOrZero(precioMayorUsd)) : null,
-      precio_especial_usd: nivel3 ? (precioEspecialUsd.trim() === '' ? null : parseNumOrZero(precioEspecialUsd)) : null,
+      // Se envia el companion de precision completa (ver refs cerca de la
+      // declaracion de `precioVentaUsd`/etc), NO el string display de 2
+      // decimales — evita el leak de precision descrito ahi (regla de
+      // negocio #10).
+      precio_venta_usd: precioVentaUsdFullRef.current,
+      precio_mayor_usd: nivel2 ? (precioMayorUsd.trim() === '' ? null : precioMayorUsdFullRef.current) : null,
+      precio_especial_usd: nivel3 ? (precioEspecialUsd.trim() === '' ? null : precioEspecialUsdFullRef.current) : null,
       stock_minimo: esServicioOCombo ? 0 : parseNumOrZero(stockMinimo),
       tipo_impuesto: tipoImpuesto,
       impuesto_iva_id: tipoImpuesto === 'Gravable' && impuestoIvaId ? impuestoIvaId : null,

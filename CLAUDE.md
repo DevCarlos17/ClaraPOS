@@ -154,7 +154,7 @@ Estas reglas son **inviolables** y deben respetarse en todo el codigo:
 
 9. **Operaciones atomicas**: Las operaciones financieras (ventas, pagos) deben ser transaccionales. Si falla un paso, todo se revierte.
 
-10. **Precision decimal**: Campos financieros usan `NUMERIC` (nunca `float`). Precios: 2 decimales. Tasas: 4 decimales. Stock: 3 decimales.
+10. **Precision decimal**: Campos financieros usan `NUMERIC` (nunca `float`). **Precios USD: almacenamiento interno hasta 8 decimales para preservar exactitud al reconvertir a Bs; visualizacion 2 decimales como mascara.** Tasas: 4 decimales. Stock: 3 decimales. Columnas financieras son `NUMERIC(20,8)` (migracion 0058); `system_settings` define `precision_calc=8` (calculo/almacenamiento) y `precision_view=2` (display). Redondear solo al final de la cadena.
 
 11. **Aislamiento multi-tenant**: **Todas** las queries de negocio deben filtrar por `empresa_id` del usuario actual. Nunca mostrar datos de otra empresa. El patron es: `const { user } = useCurrentUser()` y luego `WHERE empresa_id = ?` con `user.empresa_id`.
 
