@@ -311,6 +311,11 @@ interface ProductoFormProps {
 
 export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  // Dialog anidado (top-layer via showModal, se apila arriba del dialog de
+  // producto sin necesidad de z-index) que avisa cuando se restauro un
+  // borrador. Reemplaza al toast.info anterior, que quedaba lejos del foco
+  // visual del usuario (arriba a la derecha) mientras el modal esta abierto.
+  const avisoBorradorRef = useRef<HTMLDialogElement>(null)
   // Trackea que input de Precio Final esta enfocado (siendo tipeado) para que
   // el useEffect de sincronizacion bidireccional (ver mas abajo, cerca de
   // pfDetalUsd/pfMayorUsd/pfEspecialUsd) no le pise el valor en pleno tipeo —
@@ -424,6 +429,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
   const [popoverOpen, setPopoverOpen] = useState(false)
+  // Controla el dialog anidado que avisa cuando se restauro un borrador
+  // (modo alta). Solo pasa a true dentro del useEffect de apertura, cuando
+  // habia un borrador con contenido util.
+  const [mostrarAvisoBorrador, setMostrarAvisoBorrador] = useState(false)
 
   const debouncedNombre = useDebounce(nombre, 300)
   const { sugerencias } = useCatalogoGlobal(isEditing ? '' : debouncedNombre)
@@ -456,6 +465,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   useEffect(() => {
     if (isOpen) {
       setActiveTab('general')
+      setMostrarAvisoBorrador(false)
       if (producto) {
         setCodigo(producto.codigo)
         setTipo(producto.tipo as 'P' | 'S' | 'C')
@@ -540,11 +550,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           setDepositoId(draft.depositoId)
           setStockInicial(draft.stockInicial)
           setActiveTab(draft.activeTab as TabId)
-          // Aviso discreto: el usuario debe saber que estos datos son los que
-          // quedaron sin guardar antes de cerrar, no un producto nuevo en blanco.
-          toast.info('Recuperamos los datos que tenias sin guardar', {
-            description: 'Podes seguir editando o usar "Limpiar" para empezar de cero.',
-          })
+          // El usuario debe saber que estos datos son los que quedaron sin
+          // guardar antes de cerrar, no un producto nuevo en blanco. Se avisa
+          // con el dialog anidado (montado condicionalmente, ver useEffect
+          // separado mas abajo) en vez de un toast que queda lejos del foco
+          // visual.
+          setMostrarAvisoBorrador(true)
         } else {
           setCodigo('')
           setTipo('P')
@@ -585,9 +596,24 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       dialogRef.current?.showModal()
     } else {
       dialogRef.current?.close()
+      setMostrarAvisoBorrador(false)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, producto])
+
+  // Abre el dialog anidado de aviso DESPUES de que el dialog de producto ya
+  // esta abierto (montado y con showModal() ya invocado en el effect
+  // anterior). Al llamar showModal() sobre este segundo <dialog>, el
+  // top-layer del navegador lo apila automaticamente arriba del primero, sin
+  // necesidad de z-index. Se dispara en un effect separado, en el siguiente
+  // commit, para no depender de sincronizar dos showModal() manualmente
+  // dentro del mismo render (evita la carrera con el montaje condicional del
+  // propio <dialog> del aviso).
+  useEffect(() => {
+    if (mostrarAvisoBorrador) {
+      avisoBorradorRef.current?.showModal()
+    }
+  }, [mostrarAvisoBorrador])
 
   // Sync Bs values when tasa changes while form is open
   useEffect(() => {
@@ -1340,6 +1366,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const depositoOptions: SelectOption[] = depositos.map((d) => ({ value: d.id, label: d.nombre }))
 
   return (
+    <>
     <dialog
       ref={dialogRef}
       onClose={onClose}
@@ -2387,5 +2414,34 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         </div>
       </form>
     </dialog>
+
+    {/* Dialog anidado (top-layer via showModal, sin z-index) que avisa que se
+        restauro un borrador. Montado condicionalmente: solo existe en el DOM
+        mientras hay algo que avisar, en modo alta con un borrador con
+        contenido util (ver useEffect de apertura). */}
+    {mostrarAvisoBorrador && (
+      <dialog
+        ref={avisoBorradorRef}
+        onClose={() => setMostrarAvisoBorrador(false)}
+        className="backdrop:bg-black/40 rounded-xl p-0 w-[calc(100vw-2rem)] max-w-sm shadow-2xl"
+      >
+        <div className="p-5">
+          <h3 className="text-base font-semibold text-gray-900 mb-2">Datos recuperados</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Recuperamos los datos que tenias sin guardar. Podes seguir editando o usar &quot;Limpiar&quot; para empezar de cero.
+          </p>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => avisoBorradorRef.current?.close()}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+            >
+              Entendido
+            </button>
+          </div>
+        </div>
+      </dialog>
+    )}
+    </>
   )
 }
