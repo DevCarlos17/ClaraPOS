@@ -102,17 +102,27 @@ function ProductoBuscador({ onSelect, tasa, nivelActivo = null, depositoId }, re
   }, [])
   useLayoutEffect(() => {
     if (!dropdownVisible || !inputRef.current) return
+    // Fix pos-cobro-presentacion (R2): en mobile (<768px, breakpoint `md` sin
+    // modificar de Tailwind) el dropdown se ensancha a todo el viewport en
+    // vez de quedar atado al ancho (a veces angosto) del input.
+    const mq = window.matchMedia('(max-width: 767px)')
     const updatePos = () => {
       if (!inputRef.current) return
       const rect = inputRef.current.getBoundingClientRect()
-      setDropdownStyle({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+      if (mq.matches) {
+        setDropdownStyle({ top: rect.bottom + 4, left: 8, width: 'calc(100vw - 16px)' })
+      } else {
+        setDropdownStyle({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+      }
     }
     updatePos()
     window.addEventListener('scroll', updatePos, true)
     window.addEventListener('resize', updatePos)
+    mq.addEventListener('change', updatePos)
     return () => {
       window.removeEventListener('scroll', updatePos, true)
       window.removeEventListener('resize', updatePos)
+      mq.removeEventListener('change', updatePos)
     }
   }, [dropdownVisible])
 
