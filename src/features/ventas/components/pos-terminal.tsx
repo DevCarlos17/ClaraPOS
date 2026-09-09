@@ -931,7 +931,7 @@ export function PosTerminal() {
                 </div>
               )}
               <p className="text-3xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
-              <p className="text-sm text-muted-foreground mt-0.5">{formatUsd(totalUsd)}</p>
+              <p className="text-lg text-muted-foreground mt-0.5">{formatUsd(totalUsd)}</p>
             </div>
 
             {/* Descuento Comercial / Cortesia — pausado, ver DESCUENTOS_HABILITADOS */}
