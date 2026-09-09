@@ -930,8 +930,8 @@ export function PosTerminal() {
                   )}
                 </div>
               )}
-              <p className="text-3xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
-              <p className="text-lg text-muted-foreground mt-0.5">{formatUsd(totalUsd)}</p>
+              <p className="text-4xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+              <p className="text-2xl font-semibold text-gray-700 mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
             </div>
 
             {/* Descuento Comercial / Cortesia — pausado, ver DESCUENTOS_HABILITADOS */}
@@ -1033,9 +1033,10 @@ export function PosTerminal() {
             {tieneContenido ? (
               <>
                 <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Total</p>
-                <p className="text-2xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+                <p className="text-3xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+                <p className="text-xl font-semibold text-gray-700 mt-0.5 tabular-nums">{formatUsd(totalUsd)}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {formatUsd(totalUsd)} · {totalItems} item{totalItems !== 1 ? 's' : ''}
+                  {totalItems} item{totalItems !== 1 ? 's' : ''}
                   {descuentoBs > 0 && (
                     <span className="text-orange-600 ml-2">· Desc. −{formatBs(descuentoBs)}</span>
                   )}
