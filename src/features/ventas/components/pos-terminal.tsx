@@ -24,7 +24,7 @@ import type { LineaVentaForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import { ClienteSelector, type ClienteSelectorHandle } from './cliente-selector'
 import { ProductoBuscador, type ProductoBuscadorHandle } from './producto-buscador'
-import { LineaItems, type LineaItemsHandle } from './linea-items'
+import { LineaItems, type LineaItemsHandle, type ModoColumnaPrecio } from './linea-items'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
@@ -209,6 +209,8 @@ export function PosTerminal() {
   const [descuentoBs, setDescuentoBs] = useState(0)
   const [descuentoMotivo, setDescuentoMotivo] = useState('')
   const [showDescuento, setShowDescuento] = useState(false)
+  // Toggle visual de columnas de precio en la tabla (unitario vs total). Solo UI.
+  const [modoColumnaPrecio, setModoColumnaPrecio] = useState<ModoColumnaPrecio>('unitario')
 
   // --- Auto-focus en buscador cuando carga el POS ---
   useEffect(() => {
@@ -857,6 +859,7 @@ export function PosTerminal() {
                 onRemove={handleRemoveLinea}
                 onCantidadEnter={() => productoBuscadorRef.current?.focus()}
                 compact
+                modoColumnaPrecio={modoColumnaPrecio}
               />
 
               {/* Cargos especiales */}
@@ -901,7 +904,10 @@ export function PosTerminal() {
 
             {/* Total */}
             <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
-              <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Total</p>
+                <TogglePrecioColumna modo={modoColumnaPrecio} onChange={setModoColumnaPrecio} />
+              </div>
               {mostrarDesgloseFiscal && (
                 <div className="space-y-0.5 mb-2">
                   {baseGravableUsd.gt('0.001') && (
@@ -931,7 +937,7 @@ export function PosTerminal() {
                 </div>
               )}
               <p className="text-4xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
-              <p className="text-2xl font-semibold text-gray-700 mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
+              <p className="text-3xl font-semibold text-gray-700 mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
             </div>
 
             {/* Descuento Comercial / Cortesia — pausado, ver DESCUENTOS_HABILITADOS */}
@@ -1034,7 +1040,7 @@ export function PosTerminal() {
               <>
                 <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Total</p>
                 <p className="text-3xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
-                <p className="text-xl font-semibold text-gray-700 mt-0.5 tabular-nums">{formatUsd(totalUsd)}</p>
+                <p className="text-2xl font-semibold text-gray-700 mt-0.5 tabular-nums">{formatUsd(totalUsd)}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {totalItems} item{totalItems !== 1 ? 's' : ''}
                   {descuentoBs > 0 && (
@@ -1051,7 +1057,10 @@ export function PosTerminal() {
             )}
           </div>
           {tieneContenido && (
-            <ListBullets size={16} className="shrink-0 text-primary/50 mt-0.5" />
+            <div className="shrink-0 flex flex-col items-end gap-1.5 mt-0.5">
+              <TogglePrecioColumna modo={modoColumnaPrecio} onChange={setModoColumnaPrecio} />
+              <ListBullets size={16} className="text-primary/50" />
+            </div>
           )}
         </button>
 
@@ -1426,5 +1435,43 @@ export function PosTerminal() {
         sesion={sesion}
       />
     </>
+  )
+}
+
+/** Switch visual de 2 segmentos para alternar las columnas de precio de la tabla
+ *  entre unitario y total. Solo cambia qué se muestra; no toca la lógica. */
+function TogglePrecioColumna({
+  modo,
+  onChange,
+}: {
+  modo: ModoColumnaPrecio
+  onChange: (m: ModoColumnaPrecio) => void
+}) {
+  return (
+    <div
+      className="inline-flex rounded-lg border border-border bg-muted/50 p-0.5 text-[10px] font-semibold"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onChange('unitario') }}
+        className={`rounded-md px-2 py-1 transition-colors ${
+          modo === 'unitario' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
+        }`}
+        aria-pressed={modo === 'unitario'}
+      >
+        Unit.
+      </button>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onChange('total') }}
+        className={`rounded-md px-2 py-1 transition-colors ${
+          modo === 'total' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
+        }`}
+        aria-pressed={modo === 'total'}
+      >
+        Total
+      </button>
+    </div>
   )
 }
