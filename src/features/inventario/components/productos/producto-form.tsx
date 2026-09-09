@@ -2428,7 +2428,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         <div className="p-5">
           <h3 className="text-base font-semibold text-gray-900 mb-2">Datos recuperados</h3>
           <p className="text-sm text-gray-600 mb-4">
-            Recuperamos los datos que tenias sin guardar. Podes seguir editando o usar &quot;Limpiar&quot; para empezar de cero.
+            Se recuperaron los datos que no habian sido guardados. Puede continuar editando o usar &quot;Limpiar&quot; para empezar de nuevo.
           </p>
           <div className="flex justify-end">
             <button
