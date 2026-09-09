@@ -234,12 +234,13 @@ export function CobroModal({
         discrepancyMode === 'PROPINA' ||
         discrepancyMode === 'DIFERENCIAL_SOBRANTE'
       ) {
-        // Sub-centavo USD → diferencial cambiario como opción sugerida
+        // Sub-centavo USD → diferencial cambiario como opción sugerida.
+        // Fix pos-cobro-checkout-guards (R4): NO se auto-selecciona CREDITO en
+        // ningun otro caso — el cajero debe elegir explicitamente un modo
+        // (boton o F5/F6/F7) para evitar facturas a credito por default.
         const faltanteUsd = bsToUsd(pendienteBs4, tasaUsada)
         if (faltanteUsd.gt(0) && faltanteUsd.lt('0.01')) {
           setDiscrepancyMode('DIFERENCIAL_FALTANTE')
-        } else {
-          setDiscrepancyMode('CREDITO')
         }
       }
     } else {
