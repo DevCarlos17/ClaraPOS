@@ -990,11 +990,18 @@ export function PosTerminal() {
         </div>
 
         {/* ── MOBILE: Barra de totales (sustituye al panel derecho en pantallas pequeñas) ── */}
-        <button
-          type="button"
-          disabled={!tieneContenido}
+        <div
+          role="button"
+          tabIndex={tieneContenido ? 0 : -1}
+          aria-disabled={!tieneContenido}
           onClick={() => tieneContenido && setShowCarritoSheet(true)}
-          className="md:hidden shrink-0 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 shadow-lg px-4 py-3 flex items-start gap-3 w-full text-left transition-colors disabled:cursor-default active:from-primary/20 active:to-primary/10"
+          onKeyDown={(e) => {
+            if (tieneContenido && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault()
+              setShowCarritoSheet(true)
+            }
+          }}
+          className="md:hidden shrink-0 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 shadow-lg px-4 py-3 flex items-start gap-3 w-full text-left transition-colors aria-disabled:cursor-default active:from-primary/20 active:to-primary/10"
         >
           <div className="flex-1 min-w-0">
             {tieneContenido ? (
@@ -1023,7 +1030,7 @@ export function PosTerminal() {
               <ListBullets size={16} className="text-primary/50" />
             </div>
           )}
-        </button>
+        </div>
 
         {/* ── FOOTER MOBILE (sm:hidden) — 2 filas ── */}
         <div className="sm:hidden shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex flex-col gap-2">
