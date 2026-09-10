@@ -1,7 +1,12 @@
-import { useRef, forwardRef, useImperativeHandle } from 'react'
+import { useRef, useState, forwardRef, useImperativeHandle } from 'react'
+import { toast } from 'sonner'
 import { Trash, Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { LineaVentaForm } from '../schemas/venta-schema'
+
+/** Toggle visual (solo mobile): en qué moneda se muestran las 2 columnas comodín
+ *  (precio unitario y total). Solo afecta el render — la lógica no cambia. */
+export type ModoMonedaPrecio = 'bs' | 'usd'
 
 interface LineaItemsProps {
   lineas: LineaVentaForm[]
@@ -11,6 +16,8 @@ interface LineaItemsProps {
   onCantidadEnter?: () => void
   /** When true, shows only 5 columns: #, Producto, Cant., Precio USD, delete */
   compact?: boolean
+  /** Solo mobile/compact: moneda activa de las 2 columnas comodín. Default 'bs'. */
+  modoMonedaPrecio?: ModoMonedaPrecio
 }
 
 export interface LineaItemsHandle {
@@ -18,8 +25,12 @@ export interface LineaItemsHandle {
 }
 
 export const LineaItems = forwardRef<LineaItemsHandle, LineaItemsProps>(
-function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter, compact = false }, ref) {
+function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter, compact = false, modoMonedaPrecio = 'bs' }, ref) {
+  const monedaUsd = modoMonedaPrecio === 'usd'
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+  // Borrador de texto del input de cantidad por índice: preserva estados
+  // intermedios como "0," o "1." que el número controlado colapsaría.
+  const [cantDraft, setCantDraft] = useState<Record<number, string>>({})
 
   useImperativeHandle(ref, () => ({
     focusCantidad: (index: number) => {
@@ -44,19 +55,21 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
   if (compact) {
     return (
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-xs md:text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="text-left px-2 py-1.5 font-medium w-6">#</th>
-              <th className="text-left px-2 py-1.5 font-medium w-20">Codigo</th>
+              <th className="text-center px-1 py-1.5 font-medium w-8">Cod</th>
               <th className="text-left px-2 py-1.5 font-medium">Producto</th>
-              <th className="text-center px-2 py-1.5 font-medium w-28">Cant.</th>
-              <th className="text-center px-2 py-1.5 font-medium w-16">Stock</th>
-              <th className="text-right px-2 py-1.5 font-medium w-22">P.Unit $</th>
-              <th className="text-right px-2 py-1.5 font-medium w-24">P.Unit Bs</th>
-              <th className="text-right px-2 py-1.5 font-medium w-22">Total $</th>
-              <th className="text-right px-2 py-1.5 font-medium w-24">Total Bs</th>
-              <th className="w-7"></th>
+              <th className="text-center px-1 py-1.5 font-medium w-14 md:w-20 md:px-2">Cant.</th>
+              {/* Desktop only: columnas expandidas */}
+              <th className="hidden md:table-cell text-center px-2 py-1.5 font-medium w-14">Stock</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">P.Unit $</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">P.Unit Bs</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">Total $</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">Total Bs</th>
+              {/* Mobile only: columna comodín Total (segun toggle) */}
+              <th className="md:hidden text-right px-2 py-1.5 font-medium w-20">{monedaUsd ? 'Total $' : 'Total Bs'}</th>
+              <th className="w-6"></th>
             </tr>
           </thead>
           <tbody>
@@ -73,48 +86,98 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                   key={index}
                   className={`border-b last:border-b-0 hover:bg-muted/30 ${stockExcedido ? 'bg-destructive/5' : ''}`}
                 >
-                  <td className="px-2 py-1.5 text-muted-foreground">{index + 1}</td>
-                  <td className="px-2 py-1.5 text-muted-foreground font-mono">{linea.codigo}</td>
-                  <td className="px-2 py-1.5 max-w-0">
-                    <p className="font-medium truncate">{linea.nombre}</p>
-                    {esServicio && (
-                      <p className="text-[10px] text-blue-600">Servicio</p>
+                  <td className="px-1 py-1.5 text-center text-muted-foreground font-mono">{linea.codigo}</td>
+                  <td className="px-2 py-1.5 max-w-0 md:max-w-none">
+                    <p className="font-medium truncate">
+                      {linea.nombre}
+                      {esServicio && (
+                        <span className="hidden md:inline ml-1 text-xs text-blue-600">(Servicio)</span>
+                      )}
+                    </p>
+                    {/* Mobile only: stock + precio unitario embebidos bajo el nombre */}
+                    {esServicio ? (
+                      <p className="md:hidden text-[10px] text-blue-600">Servicio</p>
+                    ) : (
+                      <p className="md:hidden text-[10px]">
+                        <span className="text-muted-foreground">Stock: </span>
+                        <span
+                          className={`font-medium ${
+                            stockDisponible !== null && stockDisponible < 0
+                              ? 'text-destructive'
+                              : stockDisponible !== null && stockDisponible <= 3
+                              ? 'text-orange-500'
+                              : 'text-gray-900'
+                          }`}
+                        >
+                          {stockDisponible !== null
+                            ? stockDisponible.toFixed(linea.es_decimal ? 3 : 0)
+                            : '—'}
+                        </span>
+                      </p>
                     )}
+                    <p className="md:hidden text-[10px]">
+                      <span className="text-muted-foreground">{monedaUsd ? 'P.Unit $: ' : 'P.Unit Bs: '}</span>
+                      <span className="font-medium text-gray-900">
+                        {monedaUsd
+                          ? formatUsd(linea.precio_unitario_usd)
+                          : tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
+                      </span>
+                    </p>
                   </td>
-                  <td className="px-1.5 py-1.5">
+                  <td className="px-0.5 py-1.5 md:px-2">
                     <div className="flex items-center gap-0.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          const step = linea.es_decimal ? 0.001 : 1
-                          const minCantidad = linea.es_decimal ? 0.001 : 1
-                          onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step))
-                        }}
-                        disabled={linea.cantidad <= (linea.es_decimal ? 0.001 : 1)}
-                        className="shrink-0 hidden md:flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        onClick={() => onUpdateCantidad(index, Math.max(0, Math.ceil(linea.cantidad) - 1))}
+                        disabled={linea.cantidad <= 1}
+                        className="shrink-0 hidden items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <Minus size={10} />
                       </button>
                       <input
                         ref={(el) => { inputRefs.current[index] = el }}
-                        type="number"
-                        min="0"
-                        step={linea.es_decimal ? 'any' : '1'}
-                        value={linea.cantidad === 0 ? '' : linea.cantidad}
+                        type="text"
+                        inputMode="decimal"
+                        value={cantDraft[index] ?? (linea.cantidad === 0 ? '' : String(linea.cantidad))}
                         onChange={(e) => {
-                          const raw = e.target.value
+                          // Acepta punto o coma; preserva el texto crudo mientras se edita.
+                          const raw = e.target.value.replace(',', '.')
                           if (raw === '') {
+                            setCantDraft((d) => ({ ...d, [index]: '' }))
                             onUpdateCantidad(index, 0)
                             return
                           }
+                          // Enteros si la unidad no permite fracciones; hasta 3 decimales si sí.
+                          const patron = linea.es_decimal ? /^\d*\.?\d{0,3}$/ : /^\d*$/
+                          if (!patron.test(raw)) return
                           const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
-                          if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
+                          if (isNaN(val) || val < 0) return
+                          // No permitir superar el stock disponible (solo productos fisicos).
+                          // No se setea al maximo silenciosamente: se rechaza el cambio y se avisa.
+                          if (linea.tipo === 'P' && val > linea.stock_actual) {
+                            toast.error(`Sin stock suficiente de ${linea.nombre}. Disponible: ${linea.stock_actual.toFixed(linea.es_decimal ? 3 : 0)}`, {
+                              id: `stock-${index}`,
+                            })
+                            return
+                          }
+                          setCantDraft((d) => ({ ...d, [index]: raw }))
+                          onUpdateCantidad(index, val)
                         }}
+                        onBlur={() => setCantDraft((d) => { const n = { ...d }; delete n[index]; return n })}
                         onKeyDown={(e) => {
-                          const step = linea.es_decimal ? 0.001 : 1
-                          const minCantidad = linea.es_decimal ? 0.001 : 1
-                          if (e.key === '+') { e.preventDefault(); onUpdateCantidad(index, linea.cantidad + step); return }
-                          if (e.key === '-') { e.preventDefault(); onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step)); return }
+                          // Las teclas +/- suman/restan de 1 en 1 (tambien para productos por peso).
+                          if (e.key === '+') {
+                            e.preventDefault()
+                            const nuevo = Math.floor(linea.cantidad) + 1
+                            if (linea.tipo === 'P' && nuevo > linea.stock_actual) {
+                              toast.error(`Sin stock suficiente de ${linea.nombre}. Disponible: ${linea.stock_actual.toFixed(linea.es_decimal ? 3 : 0)}`, { id: `stock-${index}` })
+                              return
+                            }
+                            setCantDraft((d) => { const n = { ...d }; delete n[index]; return n })
+                            onUpdateCantidad(index, nuevo)
+                            return
+                          }
+                          if (e.key === '-') { e.preventDefault(); setCantDraft((d) => { const n = { ...d }; delete n[index]; return n }); onUpdateCantidad(index, Math.max(0, Math.ceil(linea.cantidad) - 1)); return }
                           if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
                           if (e.key === 'Enter') {
                             e.preventDefault()
@@ -127,17 +190,15 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       />
                       <button
                         type="button"
-                        onClick={() => {
-                          const step = linea.es_decimal ? 0.001 : 1
-                          onUpdateCantidad(index, linea.cantidad + step)
-                        }}
-                        className="shrink-0 hidden md:flex items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted transition-colors"
+                        onClick={() => onUpdateCantidad(index, Math.floor(linea.cantidad) + 1)}
+                        className="shrink-0 hidden items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted transition-colors"
                       >
                         <Plus size={10} />
                       </button>
                     </div>
                   </td>
-                  <td className="px-2 py-1.5 text-center">
+                  {/* Desktop only: Stock, P.Unit $, P.Unit Bs, Total $, Total Bs */}
+                  <td className="hidden md:table-cell px-3 py-1.5 text-center">
                     {esServicio ? (
                       <span className="text-muted-foreground">—</span>
                     ) : (
@@ -147,7 +208,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                             ? 'text-destructive'
                             : stockDisponible !== null && stockDisponible <= 3
                             ? 'text-orange-500'
-                            : 'text-muted-foreground'
+                            : 'text-gray-900'
                         }`}
                       >
                         {stockDisponible !== null
@@ -156,17 +217,23 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       </span>
                     )}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-medium text-gray-900">
                     {formatUsd(linea.precio_unitario_usd)}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-medium text-gray-900">
                     {tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-medium">
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-semibold text-gray-900">
                     {formatUsd(subtotalUsd)}
                   </td>
-                  <td className="px-2 py-1.5 text-right text-muted-foreground">
-                    {formatBs(subtotalBs)}
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-medium text-gray-900">
+                    {tasa > 0 ? formatBs(subtotalBs) : '—'}
+                  </td>
+                  {/* Mobile only: columna comodín Total (segun toggle) */}
+                  <td className="md:hidden px-2 py-1.5 text-right font-semibold text-gray-900">
+                    {monedaUsd
+                      ? formatUsd(subtotalUsd)
+                      : tasa > 0 ? formatBs(subtotalBs) : '—'}
                   </td>
                   <td className="px-1 py-1.5">
                     <button
@@ -193,15 +260,14 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b bg-muted/50">
-                <th className="text-left px-3 py-2 font-medium w-8">#</th>
                 <th className="text-left px-3 py-2 font-medium">Codigo</th>
                 <th className="text-left px-3 py-2 font-medium">Producto</th>
                 <th className="text-center px-3 py-2 font-medium w-24">Cant.</th>
                 <th className="text-center px-3 py-2 font-medium w-24">Stock Disp.</th>
-                <th className="text-right px-3 py-2 font-medium w-28">Precio USD</th>
                 <th className="text-right px-3 py-2 font-medium w-28">Precio Bs</th>
-                <th className="text-right px-3 py-2 font-medium w-28">Subtotal USD</th>
-                <th className="text-right px-3 py-2 font-medium w-28">Subtotal Bs</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Precio USD</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Total Bs</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Total USD</th>
                 <th className="w-10"></th>
               </tr>
             </thead>
@@ -216,7 +282,6 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
 
                 return (
                   <tr key={index} className="border-b last:border-b-0 hover:bg-muted/30">
-                    <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
                     <td className="px-3 py-2 text-muted-foreground text-xs">{linea.codigo}</td>
                     <td className="px-3 py-2">
                       <span className="font-medium">{linea.nombre}</span>
@@ -290,7 +355,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                               ? 'text-destructive'
                               : stockDisponible !== null && stockDisponible <= 3
                               ? 'text-orange-500'
-                              : 'text-muted-foreground'
+                              : 'text-gray-900'
                           }`}
                         >
                           {stockDisponible !== null
@@ -299,14 +364,14 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">
-                      {formatUsd(linea.precio_unitario_usd)}
-                    </td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">
                       {tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
                     </td>
-                    <td className="px-3 py-2 text-right font-medium">{formatUsd(subtotalUsd)}</td>
-                    <td className="px-3 py-2 text-right text-muted-foreground">{formatBs(subtotalBs)}</td>
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">
+                      {formatUsd(linea.precio_unitario_usd)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">{formatBs(subtotalBs)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatUsd(subtotalUsd)}</td>
                     <td className="px-3 py-2">
                       <button
                         type="button"
