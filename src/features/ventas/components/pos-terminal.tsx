@@ -24,7 +24,7 @@ import type { LineaVentaForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import { ClienteSelector, type ClienteSelectorHandle } from './cliente-selector'
 import { ProductoBuscador, type ProductoBuscadorHandle } from './producto-buscador'
-import { LineaItems, type LineaItemsHandle, type ModoColumnaPrecio } from './linea-items'
+import { LineaItems, type LineaItemsHandle, type ModoMonedaPrecio } from './linea-items'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
@@ -209,8 +209,8 @@ export function PosTerminal() {
   const [descuentoBs, setDescuentoBs] = useState(0)
   const [descuentoMotivo, setDescuentoMotivo] = useState('')
   const [showDescuento, setShowDescuento] = useState(false)
-  // Toggle visual de columnas de precio en la tabla (unitario vs total). Solo UI.
-  const [modoColumnaPrecio, setModoColumnaPrecio] = useState<ModoColumnaPrecio>('unitario')
+  // Toggle visual (solo mobile): moneda de las columnas comodín de la tabla. Solo UI.
+  const [modoMonedaPrecio, setModoMonedaPrecio] = useState<ModoMonedaPrecio>('bs')
 
   // --- Auto-focus en buscador cuando carga el POS ---
   useEffect(() => {
@@ -859,7 +859,7 @@ export function PosTerminal() {
                 onRemove={handleRemoveLinea}
                 onCantidadEnter={() => productoBuscadorRef.current?.focus()}
                 compact
-                modoColumnaPrecio={modoColumnaPrecio}
+                modoMonedaPrecio={modoMonedaPrecio}
               />
 
               {/* Cargos especiales */}
@@ -904,10 +904,7 @@ export function PosTerminal() {
 
             {/* Total */}
             <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
-              <div className="flex items-center justify-between mb-1">
-                <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Total</p>
-                <TogglePrecioColumna modo={modoColumnaPrecio} onChange={setModoColumnaPrecio} />
-              </div>
+              <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
               {mostrarDesgloseFiscal && (
                 <div className="space-y-0.5 mb-2">
                   {baseGravableUsd.gt('0.001') && (
@@ -1058,7 +1055,7 @@ export function PosTerminal() {
           </div>
           {tieneContenido && (
             <div className="shrink-0 flex flex-col items-end gap-1.5 mt-0.5">
-              <TogglePrecioColumna modo={modoColumnaPrecio} onChange={setModoColumnaPrecio} />
+              <ToggleMonedaPrecio modo={modoMonedaPrecio} onChange={setModoMonedaPrecio} />
               <ListBullets size={16} className="text-primary/50" />
             </div>
           )}
@@ -1438,14 +1435,14 @@ export function PosTerminal() {
   )
 }
 
-/** Switch visual de 2 segmentos para alternar las columnas de precio de la tabla
- *  entre unitario y total. Solo cambia qué se muestra; no toca la lógica. */
-function TogglePrecioColumna({
+/** Switch visual de 2 segmentos (solo mobile) para alternar la moneda de las
+ *  columnas comodín de la tabla entre Bs y USD. Solo cambia qué se muestra. */
+function ToggleMonedaPrecio({
   modo,
   onChange,
 }: {
-  modo: ModoColumnaPrecio
-  onChange: (m: ModoColumnaPrecio) => void
+  modo: ModoMonedaPrecio
+  onChange: (m: ModoMonedaPrecio) => void
 }) {
   return (
     <div
@@ -1454,23 +1451,23 @@ function TogglePrecioColumna({
     >
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); onChange('unitario') }}
+        onClick={(e) => { e.stopPropagation(); onChange('bs') }}
         className={`rounded-md px-2 py-1 transition-colors ${
-          modo === 'unitario' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
+          modo === 'bs' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
         }`}
-        aria-pressed={modo === 'unitario'}
+        aria-pressed={modo === 'bs'}
       >
-        Unit.
+        Bs
       </button>
       <button
         type="button"
-        onClick={(e) => { e.stopPropagation(); onChange('total') }}
+        onClick={(e) => { e.stopPropagation(); onChange('usd') }}
         className={`rounded-md px-2 py-1 transition-colors ${
-          modo === 'total' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
+          modo === 'usd' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
         }`}
-        aria-pressed={modo === 'total'}
+        aria-pressed={modo === 'usd'}
       >
-        Total
+        Usd
       </button>
     </div>
   )

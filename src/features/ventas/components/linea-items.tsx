@@ -3,9 +3,9 @@ import { Trash, Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { LineaVentaForm } from '../schemas/venta-schema'
 
-/** Toggle visual: qué par de columnas de precio se muestra (unitario vs total).
- *  Solo afecta el render — la lógica de subtotales no cambia. */
-export type ModoColumnaPrecio = 'unitario' | 'total'
+/** Toggle visual (solo mobile): en qué moneda se muestran las 2 columnas comodín
+ *  (precio unitario y total). Solo afecta el render — la lógica no cambia. */
+export type ModoMonedaPrecio = 'bs' | 'usd'
 
 interface LineaItemsProps {
   lineas: LineaVentaForm[]
@@ -15,8 +15,8 @@ interface LineaItemsProps {
   onCantidadEnter?: () => void
   /** When true, shows only 5 columns: #, Producto, Cant., Precio USD, delete */
   compact?: boolean
-  /** Qué par de columnas mostrar: unitario ($/Bs) o total ($/Bs). Default 'unitario'. */
-  modoColumnaPrecio?: ModoColumnaPrecio
+  /** Solo mobile/compact: moneda activa de las 2 columnas comodín. Default 'bs'. */
+  modoMonedaPrecio?: ModoMonedaPrecio
 }
 
 export interface LineaItemsHandle {
@@ -24,8 +24,8 @@ export interface LineaItemsHandle {
 }
 
 export const LineaItems = forwardRef<LineaItemsHandle, LineaItemsProps>(
-function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter, compact = false, modoColumnaPrecio = 'unitario' }, ref) {
-  const mostrarTotal = modoColumnaPrecio === 'total'
+function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter, compact = false, modoMonedaPrecio = 'bs' }, ref) {
+  const monedaUsd = modoMonedaPrecio === 'usd'
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
 
   useImperativeHandle(ref, () => ({
@@ -57,8 +57,8 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
               <th className="text-left px-2 py-1.5 font-medium w-20">Codigo</th>
               <th className="text-left px-2 py-1.5 font-medium">Producto</th>
               <th className="text-center px-2 py-1.5 font-medium w-28">Cant.</th>
-              <th className="text-right px-2 py-1.5 font-medium w-22">{mostrarTotal ? 'Total $' : 'P.Unit $'}</th>
-              <th className="text-right px-2 py-1.5 font-medium w-24">{mostrarTotal ? 'Total Bs' : 'P.Unit Bs'}</th>
+              <th className="text-right px-2 py-1.5 font-medium w-24">{monedaUsd ? 'P.Unit $' : 'P.Unit Bs'}</th>
+              <th className="text-right px-2 py-1.5 font-medium w-24">{monedaUsd ? 'Total $' : 'Total Bs'}</th>
               <th className="w-7"></th>
             </tr>
           </thead>
@@ -156,13 +156,15 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       </button>
                     </div>
                   </td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-900">
-                    {formatUsd(mostrarTotal ? subtotalUsd : linea.precio_unitario_usd)}
-                  </td>
                   <td className="px-2 py-1.5 text-right font-medium text-gray-900">
-                    {tasa > 0
-                      ? formatBs(mostrarTotal ? subtotalBs : usdToBs(linea.precio_unitario_usd, tasa))
-                      : '—'}
+                    {monedaUsd
+                      ? formatUsd(linea.precio_unitario_usd)
+                      : tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-semibold text-gray-900">
+                    {monedaUsd
+                      ? formatUsd(subtotalUsd)
+                      : tasa > 0 ? formatBs(subtotalBs) : '—'}
                   </td>
                   <td className="px-1 py-1.5">
                     <button
@@ -192,8 +194,11 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                 <th className="text-left px-3 py-2 font-medium">Codigo</th>
                 <th className="text-left px-3 py-2 font-medium">Producto</th>
                 <th className="text-center px-3 py-2 font-medium w-24">Cant.</th>
-                <th className="text-right px-3 py-2 font-medium w-28">{mostrarTotal ? 'Subtotal USD' : 'Precio USD'}</th>
-                <th className="text-right px-3 py-2 font-medium w-28">{mostrarTotal ? 'Subtotal Bs' : 'Precio Bs'}</th>
+                <th className="text-center px-3 py-2 font-medium w-24">Stock Disp.</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Precio Bs</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Precio USD</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Total Bs</th>
+                <th className="text-right px-3 py-2 font-medium w-28">Total USD</th>
                 <th className="w-10"></th>
               </tr>
             </thead>
@@ -211,25 +216,8 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                     <td className="px-3 py-2 text-muted-foreground text-xs">{linea.codigo}</td>
                     <td className="px-3 py-2">
                       <span className="font-medium">{linea.nombre}</span>
-                      {esServicio ? (
+                      {esServicio && (
                         <span className="ml-1 text-xs text-blue-600">(Servicio)</span>
-                      ) : (
-                        <p className="text-xs">
-                          <span className="text-muted-foreground">Stock disp.: </span>
-                          <span
-                            className={`font-medium ${
-                              stockDisponible !== null && stockDisponible < 0
-                                ? 'text-destructive'
-                                : stockDisponible !== null && stockDisponible <= 3
-                                ? 'text-orange-500'
-                                : 'text-gray-900'
-                            }`}
-                          >
-                            {stockDisponible !== null
-                              ? stockDisponible.toFixed(linea.es_decimal ? 3 : 0)
-                              : '—'}
-                          </span>
-                        </p>
                       )}
                     </td>
                     <td className="px-3 py-2">
@@ -288,14 +276,33 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                         </button>
                       </div>
                     </td>
-                    <td className="px-3 py-2 text-right font-semibold text-gray-900">
-                      {formatUsd(mostrarTotal ? subtotalUsd : linea.precio_unitario_usd)}
+                    <td className="px-3 py-2 text-center">
+                      {esServicio ? (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      ) : (
+                        <span
+                          className={`text-xs font-medium ${
+                            stockDisponible !== null && stockDisponible < 0
+                              ? 'text-destructive'
+                              : stockDisponible !== null && stockDisponible <= 3
+                              ? 'text-orange-500'
+                              : 'text-gray-900'
+                          }`}
+                        >
+                          {stockDisponible !== null
+                            ? stockDisponible.toFixed(linea.es_decimal ? 3 : 0)
+                            : '—'}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-medium text-gray-900">
-                      {tasa > 0
-                        ? formatBs(mostrarTotal ? subtotalBs : usdToBs(linea.precio_unitario_usd, tasa))
-                        : '—'}
+                      {tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
                     </td>
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">
+                      {formatUsd(linea.precio_unitario_usd)}
+                    </td>
+                    <td className="px-3 py-2 text-right font-medium text-gray-900">{formatBs(subtotalBs)}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-gray-900">{formatUsd(subtotalUsd)}</td>
                     <td className="px-3 py-2">
                       <button
                         type="button"
