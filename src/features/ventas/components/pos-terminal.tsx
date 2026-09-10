@@ -16,8 +16,6 @@ import { localNow } from '@/lib/dates'
 import { type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
 import { useDepositoActivoVenta } from '../hooks/use-deposito-activo'
-import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
-import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useInventarioStockBackfillListo } from '@/features/inventario/stores/inventario-stock-backfill-gate-store'
 import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import type { LineaVentaForm } from '../schemas/venta-schema'
@@ -95,9 +93,6 @@ export function PosTerminal() {
   const [clienteId, setClienteId] = useState<string | null>(null)
   const [clienteNombre, setClienteNombre] = useState('')
   const [clienteData, setClienteData] = useState<Cliente | null>(null)
-  // Deuda real de facturas — fuente del badge de credito (nunca saldo_actual
-  // neteado, nunca suma saldo a favor). Ver design.md Decision 3.
-  const { deudaFacturasUsd } = useDeudaFacturasCliente(clienteId)
   const [lineas, setLineas] = useState<LineaVentaForm[]>([])
   const [cargosEspeciales, setCargosEspeciales] = useState<CargoEspecial[]>([])
 
@@ -751,16 +746,6 @@ export function PosTerminal() {
                   <Plus size={12} />Nuevo
                 </button>
               )}
-              {/* Credit info — desktop only */}
-              {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
-                <div className="hidden sm:flex shrink-0 items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
-                  <span>Credito:</span>
-                  <span className="font-semibold text-green-600">
-                    {formatUsd(calcularDisponibleCredito(clienteData.limite_credito_usd, deudaFacturasUsd).toNumber())}
-                  </span>
-                  <span>/ {formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
-                </div>
-              )}
             </div>
           </div>
 
@@ -907,6 +892,12 @@ export function PosTerminal() {
               <p className="text-[11px] font-semibold text-primary/60 uppercase tracking-widest mb-2">Total</p>
               {mostrarDesgloseFiscal && (
                 <div className="space-y-1 mb-2.5">
+                  {baseExentoUsd.gt('0.001') && (
+                    <div className="flex justify-between text-sm text-blue-600">
+                      <span>Exento</span>
+                      <span className="tabular-nums">{formatBs(usdToBs(baseExentoUsd, tasaValor))}</span>
+                    </div>
+                  )}
                   {baseGravableUsd.gt('0.001') && (
                     <div className="flex justify-between text-sm text-muted-foreground">
                       <span>Base Gravable</span>
@@ -919,12 +910,6 @@ export function PosTerminal() {
                       <span className="tabular-nums">+{formatBs(usdToBs(iva, tasaValor))}</span>
                     </div>
                   ))}
-                  {baseExentoUsd.gt('0.001') && (
-                    <div className="flex justify-between text-sm text-blue-600">
-                      <span>Exento</span>
-                      <span className="tabular-nums">{formatBs(usdToBs(baseExentoUsd, tasaValor))}</span>
-                    </div>
-                  )}
                   {baseExoneradoUsd.gt('0.001') && (
                     <div className="flex justify-between text-sm text-green-700">
                       <span>Exonerado</span>
