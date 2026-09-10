@@ -4,10 +4,10 @@ import { X, Phone, MapPin, CreditCard, ArrowCounterClockwise, Printer, Calendar 
 import { toast } from 'sonner'
 import {
   useMovimientosClienteFiltrados,
-  useCountMovimientosCliente,
   type Cliente,
   type MovimientoCuenta,
 } from '@/features/clientes/hooks/use-clientes'
+import { saldoEstado, SALDO_TEXT_CLASS, type SaldoEstado } from '@/features/clientes/lib/saldo-estado'
 import { usePagosCliente, registrarReversoAbono, type PagoClienteCxc } from '@/features/cxc/hooks/use-cxc'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
@@ -15,7 +15,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate, formatDateTime } from '@/lib/format'
-import { localNow } from '@/lib/dates'
+import { localNow, startOfMonth, todayStr } from '@/lib/dates'
 
 interface ClienteDetalleProps {
   onClose: () => void
@@ -29,6 +29,13 @@ const TIPO_LABELS: Record<string, { label: string; color: string }> = {
   NDB: { label: 'Nota Debito',    color: 'bg-red-50 text-red-700 ring-red-600/20' },
   REV: { label: 'Reverso',        color: 'bg-rose-50 text-rose-700 ring-rose-600/20' },
   SAF: { label: 'Saldo a Favor',  color: 'bg-green-50 text-green-700 ring-green-600/20' },
+  SAL: { label: 'Saldo Anterior', color: 'bg-slate-50 text-slate-700 ring-slate-600/20' },
+}
+
+const REPORT_SALDO_CLASS: Record<SaldoEstado, string> = {
+  deuda: 'deuda',
+  favor: 'ok',
+  neutral: 'neutral',
 }
 
 function formatFecha(fecha: string): string {
@@ -46,12 +53,10 @@ function formatFechaCorta(fecha: string): string {
 function generarReporteEstadoCuenta(
   cliente: Cliente,
   movimientos: MovimientoCuenta[],
-  opts: { fechaDesde?: string; fechaHasta?: string; tasaValor: number; saldoActual: number }
+  opts: { fechaDesde: string; fechaHasta: string; tasaValor: number; saldoActual: string }
 ) {
   const { fechaDesde, fechaHasta, tasaValor, saldoActual } = opts
-  const periodoLabel = fechaDesde || fechaHasta
-    ? `${fechaDesde ? formatFechaCorta(fechaDesde) : 'Inicio'} — ${fechaHasta ? formatFechaCorta(fechaHasta) : 'Hoy'}`
-    : 'Todos los registros'
+  const periodoLabel = `${formatFechaCorta(fechaDesde)} — ${formatFechaCorta(fechaHasta)}`
 
   const filas = movimientos.map((mov) => {
     const tipo = TIPO_LABELS[mov.tipo] ?? { label: mov.tipo, color: '' }
@@ -92,6 +97,7 @@ function generarReporteEstadoCuenta(
   .info-box .value { font-size: 14px; font-weight: bold; margin-top: 2px; }
   .info-box .value.deuda { color: #dc2626; }
   .info-box .value.ok { color: #16a34a; }
+  .info-box .value.neutral { color: #6b7280; }
   h2 { font-size: 13px; font-weight: bold; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .5px; }
   table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
   thead tr { background: #f3f4f6; }
@@ -124,7 +130,7 @@ function generarReporteEstadoCuenta(
   <div class="info-grid">
     <div class="info-box">
       <div class="label">Saldo actual</div>
-      <div class="value ${saldoActual > 0 ? 'deuda' : 'ok'}">${formatUsd(saldoActual)}</div>
+      <div class="value ${REPORT_SALDO_CLASS[saldoEstado(saldoActual)]}">${formatUsd(saldoActual)}</div>
       ${tasaValor > 0 ? `<div style="color:#999;font-size:10px;margin-top:2px">${formatBs(usdToBs(saldoActual, tasaValor))}</div>` : ''}
     </div>
     <div class="info-box">
@@ -272,30 +278,28 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
 
-  const [fechaDesde, setFechaDesde] = useState('')
-  const [fechaHasta, setFechaHasta] = useState('')
+  const [fechaDesde, setFechaDesde] = useState(startOfMonth)
+  const [fechaHasta, setFechaHasta] = useState(todayStr)
 
   useEffect(() => {
-    setFechaDesde('')
-    setFechaHasta('')
+    setFechaDesde(startOfMonth())
+    setFechaHasta(todayStr())
   }, [cliente.id])
 
   const { movimientos, isLoading } = useMovimientosClienteFiltrados(
     cliente.id,
-    { fechaDesde: fechaDesde || undefined, fechaHasta: fechaHasta || undefined }
+    { fechaDesde, fechaHasta }
   )
-  const { total: totalMovimientos } = useCountMovimientosCliente(cliente.id)
   const { pagos } = usePagosCliente(cliente.id)
 
   const { data: saldoData } = useQuery(
-    'SELECT saldo_actual FROM clientes WHERE id = ?',
-    [cliente.id]
+    'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
+    [cliente.id, user?.empresa_id ?? '']
   )
-  const saldo = parseFloat(
+  const saldo =
     (saldoData?.[0] as { saldo_actual: string } | undefined)?.saldo_actual ??
     cliente.saldo_actual ??
     '0'
-  )
 
   const pagoMap = useMemo(() => {
     const map = new Map<string, PagoClienteCxc>()
@@ -366,14 +370,19 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
 
   function handleGenerarReporte() {
     generarReporteEstadoCuenta(cliente, movimientos, {
-      fechaDesde: fechaDesde || undefined,
-      fechaHasta: fechaHasta || undefined,
+      fechaDesde,
+      fechaHasta,
       tasaValor,
       saldoActual: saldo,
     })
   }
 
-  const hasFilter = !!fechaDesde || !!fechaHasta
+  function handleLimpiarFiltro() {
+    setFechaDesde(startOfMonth())
+    setFechaHasta(todayStr())
+  }
+
+  const esRangoPorDefecto = fechaDesde === startOfMonth() && fechaHasta === todayStr()
 
   return (
     <>
@@ -423,7 +432,7 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
             </div>
             <div className="rounded-lg border bg-muted/30 p-4">
               <p className="text-xs text-muted-foreground mb-1">Saldo Actual</p>
-              <p className={`text-2xl font-bold ${saldo > 0 ? 'text-red-600' : 'text-green-600'}`}>
+              <p className={`text-2xl font-bold ${SALDO_TEXT_CLASS[saldoEstado(saldo)]}`}>
                 {formatUsd(saldo)}
               </p>
               {tasaValor > 0 && (
@@ -457,10 +466,10 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
                 className="rounded-md border border-input bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
-            {hasFilter && (
+            {!esRangoPorDefecto && (
               <button
                 type="button"
-                onClick={() => { setFechaDesde(''); setFechaHasta('') }}
+                onClick={handleLimpiarFiltro}
                 className="text-xs text-muted-foreground hover:text-foreground underline mb-1.5"
               >
                 Limpiar filtro
@@ -483,9 +492,7 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-sm font-semibold">Estado de Cuenta</h3>
               <span className="text-xs text-muted-foreground">
-                {hasFilter
-                  ? `${movimientos.length} movimiento(s) en el periodo`
-                  : `Ultimos 5 de ${totalMovimientos} movimientos`}
+                {`${movimientos.length} movimiento(s) en el periodo`}
               </span>
             </div>
 
@@ -499,9 +506,7 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
               <div className="text-center py-8 text-muted-foreground border border-dashed rounded-lg">
                 <p className="text-sm font-medium">Sin movimientos</p>
                 <p className="text-xs mt-1">
-                  {hasFilter
-                    ? 'No hay movimientos en el rango de fechas seleccionado'
-                    : 'Los movimientos se crearan automaticamente al registrar ventas y pagos'}
+                  No hay movimientos en el rango de fechas seleccionado
                 </p>
               </div>
             ) : (

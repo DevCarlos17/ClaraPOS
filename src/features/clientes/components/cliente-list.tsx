@@ -8,6 +8,7 @@ import {
   type Cliente,
 } from '@/features/clientes/hooks/use-clientes'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { saldoEstado, SALDO_TEXT_CLASS } from '@/features/clientes/lib/saldo-estado'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 import { ClienteForm } from './cliente-form'
@@ -204,7 +205,7 @@ export function ClienteList() {
                 </thead>
                 <tbody>
                   {clientesFiltrados.map((cli) => {
-                    const saldo = parseFloat(cli.saldo_actual || '0')
+                    const saldo = cli.saldo_actual || '0'
                     const isSelected = detalleCliente?.id === cli.id
                     const menuItems: ContextMenuAction[] = [
                       {
@@ -241,7 +242,7 @@ export function ClienteList() {
                         <td className={`px-4 py-3 text-right text-muted-foreground ${detalleCliente ? 'hidden' : ''}`}>
                           {formatUsd(cli.limite_credito_usd)}
                         </td>
-                        <td className={`px-4 py-3 text-right font-bold ${saldo > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        <td className={`px-4 py-3 text-right font-bold ${SALDO_TEXT_CLASS[saldoEstado(saldo)]}`}>
                           {formatUsd(saldo)}
                         </td>
                         <td className={`px-4 py-3 ${detalleCliente ? 'hidden' : ''}`}>
