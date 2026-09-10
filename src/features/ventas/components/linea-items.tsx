@@ -1,4 +1,4 @@
-import { useRef, forwardRef, useImperativeHandle } from 'react'
+import { useRef, useState, forwardRef, useImperativeHandle } from 'react'
 import { Trash, Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { LineaVentaForm } from '../schemas/venta-schema'
@@ -27,6 +27,9 @@ export const LineaItems = forwardRef<LineaItemsHandle, LineaItemsProps>(
 function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter, compact = false, modoMonedaPrecio = 'bs' }, ref) {
   const monedaUsd = modoMonedaPrecio === 'usd'
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
+  // Borrador de texto del input de cantidad por índice: preserva estados
+  // intermedios como "0," o "1." que el número controlado colapsaría.
+  const [cantDraft, setCantDraft] = useState<Record<number, string>>({})
 
   useImperativeHandle(ref, () => ({
     focusCantidad: (index: number) => {
@@ -134,22 +137,27 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                         ref={(el) => { inputRefs.current[index] = el }}
                         type="text"
                         inputMode="decimal"
-                        value={linea.cantidad === 0 ? '' : linea.cantidad}
+                        value={cantDraft[index] ?? (linea.cantidad === 0 ? '' : String(linea.cantidad))}
                         onChange={(e) => {
-                          // Acepta punto o coma como separador decimal; sin decimales si la unidad no lo permite.
+                          // Acepta punto o coma; preserva el texto crudo mientras se edita.
                           const raw = e.target.value.replace(',', '.')
                           if (raw === '') {
+                            setCantDraft((d) => ({ ...d, [index]: '' }))
                             onUpdateCantidad(index, 0)
                             return
                           }
-                          if (!/^\d*\.?\d*$/.test(raw)) return
+                          // Enteros si la unidad no permite fracciones; decimales si sí.
+                          const patron = linea.es_decimal ? /^\d*\.?\d*$/ : /^\d*$/
+                          if (!patron.test(raw)) return
+                          setCantDraft((d) => ({ ...d, [index]: raw }))
                           const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
                           if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
                         }}
+                        onBlur={() => setCantDraft((d) => { const n = { ...d }; delete n[index]; return n })}
                         onKeyDown={(e) => {
                           // Las teclas +/- suman/restan de 1 en 1 (tambien para productos por peso).
-                          if (e.key === '+') { e.preventDefault(); onUpdateCantidad(index, Math.floor(linea.cantidad) + 1); return }
-                          if (e.key === '-') { e.preventDefault(); onUpdateCantidad(index, Math.max(0, Math.ceil(linea.cantidad) - 1)); return }
+                          if (e.key === '+') { e.preventDefault(); setCantDraft((d) => { const n = { ...d }; delete n[index]; return n }); onUpdateCantidad(index, Math.floor(linea.cantidad) + 1); return }
+                          if (e.key === '-') { e.preventDefault(); setCantDraft((d) => { const n = { ...d }; delete n[index]; return n }); onUpdateCantidad(index, Math.max(0, Math.ceil(linea.cantidad) - 1)); return }
                           if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
                           if (e.key === 'Enter') {
                             e.preventDefault()
