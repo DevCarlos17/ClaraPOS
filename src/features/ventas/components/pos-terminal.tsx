@@ -900,10 +900,10 @@ export function PosTerminal() {
           </div>
 
           {/* COL RIGHT: Total + payments (sticky panel) — hidden on mobile, replaced by cart bar */}
-          <div className="hidden md:flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-hidden">
+          <div className="hidden md:flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-y-auto">
 
             {/* Total */}
-            <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
+            <div className="px-4 py-3 lg:py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
               <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
               {mostrarDesgloseFiscal && (
                 <div className="space-y-0.5 mb-2">
@@ -933,8 +933,8 @@ export function PosTerminal() {
                   )}
                 </div>
               )}
-              <p className="text-4xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
-              <p className="text-3xl font-semibold text-gray-700 mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
+              <p className="text-3xl xl:text-4xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+              <p className="text-2xl xl:text-3xl font-semibold text-gray-700 mt-0.5 xl:mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
             </div>
 
             {/* Descuento Comercial / Cortesia — pausado, ver DESCUENTOS_HABILITADOS */}
@@ -1002,7 +1002,7 @@ export function PosTerminal() {
             ))}
 
             {/* Indicador de accion pendiente */}
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 p-4 text-center">
+            <div className="flex-1 flex flex-col items-center justify-center gap-2 xl:gap-3 p-3 xl:p-4 text-center">
               {tieneContenido && clienteId ? (
                 <>
                   <div className="rounded-full bg-primary/10 p-3">
