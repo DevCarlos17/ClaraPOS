@@ -1,4 +1,5 @@
 import { useRef, useState, forwardRef, useImperativeHandle } from 'react'
+import { toast } from 'sonner'
 import { Trash, Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { LineaVentaForm } from '../schemas/venta-schema'
@@ -149,14 +150,33 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                           // Enteros si la unidad no permite fracciones; hasta 3 decimales si sí.
                           const patron = linea.es_decimal ? /^\d*\.?\d{0,3}$/ : /^\d*$/
                           if (!patron.test(raw)) return
-                          setCantDraft((d) => ({ ...d, [index]: raw }))
                           const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
-                          if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
+                          if (isNaN(val) || val < 0) return
+                          // No permitir superar el stock disponible (solo productos fisicos).
+                          // No se setea al maximo silenciosamente: se rechaza el cambio y se avisa.
+                          if (linea.tipo === 'P' && val > linea.stock_actual) {
+                            toast.error(`Sin stock suficiente de ${linea.nombre}. Disponible: ${linea.stock_actual.toFixed(linea.es_decimal ? 3 : 0)}`, {
+                              id: `stock-${index}`,
+                            })
+                            return
+                          }
+                          setCantDraft((d) => ({ ...d, [index]: raw }))
+                          onUpdateCantidad(index, val)
                         }}
                         onBlur={() => setCantDraft((d) => { const n = { ...d }; delete n[index]; return n })}
                         onKeyDown={(e) => {
                           // Las teclas +/- suman/restan de 1 en 1 (tambien para productos por peso).
-                          if (e.key === '+') { e.preventDefault(); setCantDraft((d) => { const n = { ...d }; delete n[index]; return n }); onUpdateCantidad(index, Math.floor(linea.cantidad) + 1); return }
+                          if (e.key === '+') {
+                            e.preventDefault()
+                            const nuevo = Math.floor(linea.cantidad) + 1
+                            if (linea.tipo === 'P' && nuevo > linea.stock_actual) {
+                              toast.error(`Sin stock suficiente de ${linea.nombre}. Disponible: ${linea.stock_actual.toFixed(linea.es_decimal ? 3 : 0)}`, { id: `stock-${index}` })
+                              return
+                            }
+                            setCantDraft((d) => { const n = { ...d }; delete n[index]; return n })
+                            onUpdateCantidad(index, nuevo)
+                            return
+                          }
                           if (e.key === '-') { e.preventDefault(); setCantDraft((d) => { const n = { ...d }; delete n[index]; return n }); onUpdateCantidad(index, Math.max(0, Math.ceil(linea.cantidad) - 1)); return }
                           if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
                           if (e.key === 'Enter') {
