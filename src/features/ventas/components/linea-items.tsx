@@ -51,13 +51,20 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
   if (compact) {
     return (
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-xs md:text-sm">
           <thead>
             <tr className="border-b bg-muted/50">
               <th className="text-center px-1 py-1.5 font-medium w-8">Cod</th>
               <th className="text-left px-2 py-1.5 font-medium">Producto</th>
-              <th className="text-center px-1 py-1.5 font-medium w-14">Cant.</th>
-              <th className="text-right px-2 py-1.5 font-medium w-20">{monedaUsd ? 'Total $' : 'Total Bs'}</th>
+              <th className="text-center px-1 py-1.5 font-medium w-14 md:w-24 md:px-3">Cant.</th>
+              {/* Desktop only: columnas expandidas */}
+              <th className="hidden md:table-cell text-center px-3 py-1.5 font-medium w-24">Stock</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">P.Unit $</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">P.Unit Bs</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">Total $</th>
+              <th className="hidden md:table-cell text-right px-3 py-1.5 font-medium w-28">Total Bs</th>
+              {/* Mobile only: columna comodín Total (segun toggle) */}
+              <th className="md:hidden text-right px-2 py-1.5 font-medium w-20">{monedaUsd ? 'Total $' : 'Total Bs'}</th>
               <th className="w-6"></th>
             </tr>
           </thead>
@@ -76,12 +83,18 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                   className={`border-b last:border-b-0 hover:bg-muted/30 ${stockExcedido ? 'bg-destructive/5' : ''}`}
                 >
                   <td className="px-1 py-1.5 text-center text-muted-foreground font-mono">{linea.codigo}</td>
-                  <td className="px-2 py-1.5 max-w-0">
-                    <p className="font-medium truncate">{linea.nombre}</p>
+                  <td className="px-2 py-1.5 max-w-0 md:max-w-none">
+                    <p className="font-medium truncate">
+                      {linea.nombre}
+                      {esServicio && (
+                        <span className="hidden md:inline ml-1 text-xs text-blue-600">(Servicio)</span>
+                      )}
+                    </p>
+                    {/* Mobile only: stock + precio unitario embebidos bajo el nombre */}
                     {esServicio ? (
-                      <p className="text-[10px] text-blue-600">Servicio</p>
+                      <p className="md:hidden text-[10px] text-blue-600">Servicio</p>
                     ) : (
-                      <p className="text-[10px]">
+                      <p className="md:hidden text-[10px]">
                         <span className="text-muted-foreground">Stock: </span>
                         <span
                           className={`font-medium ${
@@ -98,7 +111,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                         </span>
                       </p>
                     )}
-                    <p className="text-[10px]">
+                    <p className="md:hidden text-[10px]">
                       <span className="text-muted-foreground">{monedaUsd ? 'P.Unit $: ' : 'P.Unit Bs: '}</span>
                       <span className="font-medium text-gray-900">
                         {monedaUsd
@@ -107,8 +120,8 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       </span>
                     </p>
                   </td>
-                  <td className="px-0.5 py-1.5">
-                    <div className="flex items-center gap-0.5">
+                  <td className="px-0.5 py-1.5 md:px-3">
+                    <div className="flex items-center gap-0.5 md:gap-1">
                       <button
                         type="button"
                         onClick={() => {
@@ -163,7 +176,40 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       </button>
                     </div>
                   </td>
-                  <td className="px-2 py-1.5 text-right font-semibold text-gray-900">
+                  {/* Desktop only: Stock, P.Unit $, P.Unit Bs, Total $, Total Bs */}
+                  <td className="hidden md:table-cell px-3 py-1.5 text-center">
+                    {esServicio ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      <span
+                        className={`font-medium ${
+                          stockDisponible !== null && stockDisponible < 0
+                            ? 'text-destructive'
+                            : stockDisponible !== null && stockDisponible <= 3
+                            ? 'text-orange-500'
+                            : 'text-gray-900'
+                        }`}
+                      >
+                        {stockDisponible !== null
+                          ? stockDisponible.toFixed(linea.es_decimal ? 3 : 0)
+                          : '—'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-medium text-gray-900">
+                    {formatUsd(linea.precio_unitario_usd)}
+                  </td>
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-medium text-gray-900">
+                    {tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
+                  </td>
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-semibold text-gray-900">
+                    {formatUsd(subtotalUsd)}
+                  </td>
+                  <td className="hidden md:table-cell px-3 py-1.5 text-right font-medium text-gray-900">
+                    {tasa > 0 ? formatBs(subtotalBs) : '—'}
+                  </td>
+                  {/* Mobile only: columna comodín Total (segun toggle) */}
+                  <td className="md:hidden px-2 py-1.5 text-right font-semibold text-gray-900">
                     {monedaUsd
                       ? formatUsd(subtotalUsd)
                       : tasa > 0 ? formatBs(subtotalBs) : '—'}
