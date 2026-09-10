@@ -54,10 +54,9 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="text-left px-2 py-1.5 font-medium w-20">Codigo</th>
+              <th className="text-center px-1 py-1.5 font-medium w-10">Cod</th>
               <th className="text-left px-2 py-1.5 font-medium">Producto</th>
               <th className="text-center px-2 py-1.5 font-medium w-28">Cant.</th>
-              <th className="text-right px-2 py-1.5 font-medium w-24">{monedaUsd ? 'P.Unit $' : 'P.Unit Bs'}</th>
               <th className="text-right px-2 py-1.5 font-medium w-24">{monedaUsd ? 'Total $' : 'Total Bs'}</th>
               <th className="w-7"></th>
             </tr>
@@ -76,7 +75,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                   key={index}
                   className={`border-b last:border-b-0 hover:bg-muted/30 ${stockExcedido ? 'bg-destructive/5' : ''}`}
                 >
-                  <td className="px-2 py-1.5 text-muted-foreground font-mono">{linea.codigo}</td>
+                  <td className="px-1 py-1.5 text-center text-muted-foreground font-mono">{linea.codigo}</td>
                   <td className="px-2 py-1.5 max-w-0">
                     <p className="font-medium truncate">{linea.nombre}</p>
                     {esServicio ? (
@@ -99,6 +98,14 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                         </span>
                       </p>
                     )}
+                    <p className="text-[10px]">
+                      <span className="text-muted-foreground">{monedaUsd ? 'P.Unit $: ' : 'P.Unit Bs: '}</span>
+                      <span className="font-medium text-gray-900">
+                        {monedaUsd
+                          ? formatUsd(linea.precio_unitario_usd)
+                          : tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
+                      </span>
+                    </p>
                   </td>
                   <td className="px-1.5 py-1.5">
                     <div className="flex items-center gap-0.5">
@@ -155,11 +162,6 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                         <Plus size={10} />
                       </button>
                     </div>
-                  </td>
-                  <td className="px-2 py-1.5 text-right font-medium text-gray-900">
-                    {monedaUsd
-                      ? formatUsd(linea.precio_unitario_usd)
-                      : tasa > 0 ? formatBs(usdToBs(linea.precio_unitario_usd, tasa)) : '—'}
                   </td>
                   <td className="px-2 py-1.5 text-right font-semibold text-gray-900">
                     {monedaUsd
