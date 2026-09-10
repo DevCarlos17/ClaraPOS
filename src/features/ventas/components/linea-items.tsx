@@ -146,8 +146,8 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                             onUpdateCantidad(index, 0)
                             return
                           }
-                          // Enteros si la unidad no permite fracciones; decimales si sí.
-                          const patron = linea.es_decimal ? /^\d*\.?\d*$/ : /^\d*$/
+                          // Enteros si la unidad no permite fracciones; hasta 3 decimales si sí.
+                          const patron = linea.es_decimal ? /^\d*\.?\d{0,3}$/ : /^\d*$/
                           if (!patron.test(raw)) return
                           setCantDraft((d) => ({ ...d, [index]: raw }))
                           const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
