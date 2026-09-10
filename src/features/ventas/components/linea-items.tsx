@@ -54,11 +54,11 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
         <table className="w-full text-xs">
           <thead>
             <tr className="border-b bg-muted/50">
-              <th className="text-center px-1 py-1.5 font-medium w-10">Cod</th>
+              <th className="text-center px-1 py-1.5 font-medium w-8">Cod</th>
               <th className="text-left px-2 py-1.5 font-medium">Producto</th>
-              <th className="text-center px-2 py-1.5 font-medium w-28">Cant.</th>
-              <th className="text-right px-2 py-1.5 font-medium w-24">{monedaUsd ? 'Total $' : 'Total Bs'}</th>
-              <th className="w-7"></th>
+              <th className="text-center px-1 py-1.5 font-medium w-14">Cant.</th>
+              <th className="text-right px-2 py-1.5 font-medium w-20">{monedaUsd ? 'Total $' : 'Total Bs'}</th>
+              <th className="w-6"></th>
             </tr>
           </thead>
           <tbody>
@@ -107,7 +107,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       </span>
                     </p>
                   </td>
-                  <td className="px-1.5 py-1.5">
+                  <td className="px-0.5 py-1.5">
                     <div className="flex items-center gap-0.5">
                       <button
                         type="button"
