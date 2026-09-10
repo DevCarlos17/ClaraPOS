@@ -16,15 +16,13 @@ import { localNow } from '@/lib/dates'
 import { type ProductoVenta, type CargoEspecial } from '../hooks/use-ventas'
 import { useSesionActiva } from '@/features/caja/hooks/use-sesiones-caja'
 import { useDepositoActivoVenta } from '../hooks/use-deposito-activo'
-import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
-import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useInventarioStockBackfillListo } from '@/features/inventario/stores/inventario-stock-backfill-gate-store'
 import { useNivelesPrecioActivos, type NivelPrecio } from '@/features/configuracion/hooks/use-niveles-precio'
 import type { LineaVentaForm } from '../schemas/venta-schema'
 import type { Cliente } from '@/features/clientes/hooks/use-clientes'
 import { ClienteSelector, type ClienteSelectorHandle } from './cliente-selector'
 import { ProductoBuscador, type ProductoBuscadorHandle } from './producto-buscador'
-import { LineaItems, type LineaItemsHandle } from './linea-items'
+import { LineaItems, type LineaItemsHandle, type ModoMonedaPrecio } from './linea-items'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { FacturasEsperaModal } from './facturas-espera-modal'
@@ -95,9 +93,6 @@ export function PosTerminal() {
   const [clienteId, setClienteId] = useState<string | null>(null)
   const [clienteNombre, setClienteNombre] = useState('')
   const [clienteData, setClienteData] = useState<Cliente | null>(null)
-  // Deuda real de facturas — fuente del badge de credito (nunca saldo_actual
-  // neteado, nunca suma saldo a favor). Ver design.md Decision 3.
-  const { deudaFacturasUsd } = useDeudaFacturasCliente(clienteId)
   const [lineas, setLineas] = useState<LineaVentaForm[]>([])
   const [cargosEspeciales, setCargosEspeciales] = useState<CargoEspecial[]>([])
 
@@ -209,6 +204,8 @@ export function PosTerminal() {
   const [descuentoBs, setDescuentoBs] = useState(0)
   const [descuentoMotivo, setDescuentoMotivo] = useState('')
   const [showDescuento, setShowDescuento] = useState(false)
+  // Toggle visual (solo mobile): moneda de las columnas comodín de la tabla. Solo UI.
+  const [modoMonedaPrecio, setModoMonedaPrecio] = useState<ModoMonedaPrecio>('bs')
 
   // --- Auto-focus en buscador cuando carga el POS ---
   useEffect(() => {
@@ -749,16 +746,6 @@ export function PosTerminal() {
                   <Plus size={12} />Nuevo
                 </button>
               )}
-              {/* Credit info — desktop only */}
-              {clienteData && parseFloat(clienteData.limite_credito_usd) > 0 && (
-                <div className="hidden sm:flex shrink-0 items-center gap-1.5 rounded bg-muted/40 px-2 py-1 text-xs text-muted-foreground">
-                  <span>Credito:</span>
-                  <span className="font-semibold text-green-600">
-                    {formatUsd(calcularDisponibleCredito(clienteData.limite_credito_usd, deudaFacturasUsd).toNumber())}
-                  </span>
-                  <span>/ {formatUsd(parseFloat(clienteData.limite_credito_usd))}</span>
-                </div>
-              )}
             </div>
           </div>
 
@@ -857,6 +844,7 @@ export function PosTerminal() {
                 onRemove={handleRemoveLinea}
                 onCantidadEnter={() => productoBuscadorRef.current?.focus()}
                 compact
+                modoMonedaPrecio={modoMonedaPrecio}
               />
 
               {/* Cargos especiales */}
@@ -897,41 +885,41 @@ export function PosTerminal() {
           </div>
 
           {/* COL RIGHT: Total + payments (sticky panel) — hidden on mobile, replaced by cart bar */}
-          <div className="hidden md:flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-hidden">
+          <div className="hidden md:flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-y-auto">
 
-            {/* Total */}
-            <div className="px-4 py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
-              <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
+            {/* Total — ocupa todo el alto del panel, contenido arriba */}
+            <div className="px-5 py-4 flex-1 bg-gradient-to-br from-primary/10 to-primary/5">
+              <p className="text-[11px] font-semibold text-primary/60 uppercase tracking-widest mb-2">Total</p>
               {mostrarDesgloseFiscal && (
-                <div className="space-y-0.5 mb-2">
+                <div className="space-y-1 mb-2.5">
+                  {baseExentoUsd.gt('0.001') && (
+                    <div className="flex justify-between text-sm text-blue-600">
+                      <span>Exento</span>
+                      <span className="tabular-nums">{formatBs(usdToBs(baseExentoUsd, tasaValor))}</span>
+                    </div>
+                  )}
                   {baseGravableUsd.gt('0.001') && (
-                    <div className="flex justify-between text-xs text-muted-foreground">
+                    <div className="flex justify-between text-sm text-muted-foreground">
                       <span>Base Gravable</span>
-                      <span>{formatBs(usdToBs(baseGravableUsd, tasaValor))}</span>
+                      <span className="tabular-nums">{formatBs(usdToBs(baseGravableUsd, tasaValor))}</span>
                     </div>
                   )}
                   {ivaEntries.map(([pct, iva]) => (
-                    <div key={pct} className="flex justify-between text-xs text-amber-700 font-medium">
+                    <div key={pct} className="flex justify-between text-sm text-amber-700 font-medium">
                       <span>IVA {pct}%</span>
-                      <span>+{formatBs(usdToBs(iva, tasaValor))}</span>
+                      <span className="tabular-nums">+{formatBs(usdToBs(iva, tasaValor))}</span>
                     </div>
                   ))}
-                  {baseExentoUsd.gt('0.001') && (
-                    <div className="flex justify-between text-xs text-blue-600">
-                      <span>Exento</span>
-                      <span>{formatBs(usdToBs(baseExentoUsd, tasaValor))}</span>
-                    </div>
-                  )}
                   {baseExoneradoUsd.gt('0.001') && (
-                    <div className="flex justify-between text-xs text-green-700">
+                    <div className="flex justify-between text-sm text-green-700">
                       <span>Exonerado</span>
-                      <span>{formatBs(usdToBs(baseExoneradoUsd, tasaValor))}</span>
+                      <span className="tabular-nums">{formatBs(usdToBs(baseExoneradoUsd, tasaValor))}</span>
                     </div>
                   )}
                 </div>
               )}
-              <p className="text-3xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
-              <p className="text-lg text-muted-foreground mt-0.5">{formatUsd(totalUsd)}</p>
+              <p className="text-3xl xl:text-4xl font-bold leading-tight tabular-nums text-foreground">{formatBs(totalBs)}</p>
+              <p className="text-2xl xl:text-3xl font-semibold text-gray-700 mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
             </div>
 
             {/* Descuento Comercial / Cortesia — pausado, ver DESCUENTOS_HABILITADOS */}
@@ -998,44 +986,31 @@ export function PosTerminal() {
               </div>
             ))}
 
-            {/* Indicador de accion pendiente */}
-            <div className="flex-1 flex flex-col items-center justify-center gap-3 p-4 text-center">
-              {tieneContenido && clienteId ? (
-                <>
-                  <div className="rounded-full bg-primary/10 p-3">
-                    <ShoppingCart size={20} className="text-primary" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{formatBs(totalBs)}</p>
-                    <p className="text-xs text-muted-foreground">{formatUsd(totalUsd)} · {totalItems} item{totalItems !== 1 ? 's' : ''}</p>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Presiona <strong>Cobrar</strong> o <kbd className="rounded border bg-muted px-1 py-px font-mono leading-none">F12</kbd> para registrar el pago
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  Agrega productos y selecciona un cliente para cobrar
-                </p>
-              )}
-            </div>
           </div>
         </div>
 
         {/* ── MOBILE: Barra de totales (sustituye al panel derecho en pantallas pequeñas) ── */}
-        <button
-          type="button"
-          disabled={!tieneContenido}
+        <div
+          role="button"
+          tabIndex={tieneContenido ? 0 : -1}
+          aria-disabled={!tieneContenido}
           onClick={() => tieneContenido && setShowCarritoSheet(true)}
-          className="md:hidden shrink-0 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 shadow-lg px-4 py-3 flex items-start gap-3 w-full text-left transition-colors disabled:cursor-default active:from-primary/20 active:to-primary/10"
+          onKeyDown={(e) => {
+            if (tieneContenido && (e.key === 'Enter' || e.key === ' ')) {
+              e.preventDefault()
+              setShowCarritoSheet(true)
+            }
+          }}
+          className="md:hidden shrink-0 rounded-2xl bg-gradient-to-r from-primary/10 to-primary/5 shadow-lg px-4 py-3 flex items-start gap-3 w-full text-left transition-colors aria-disabled:cursor-default active:from-primary/20 active:to-primary/10"
         >
           <div className="flex-1 min-w-0">
             {tieneContenido ? (
               <>
                 <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Total</p>
-                <p className="text-2xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+                <p className="text-3xl font-bold leading-tight tabular-nums">{formatBs(totalBs)}</p>
+                <p className="text-2xl font-semibold text-gray-700 mt-0.5 tabular-nums">{formatUsd(totalUsd)}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  {formatUsd(totalUsd)} · {totalItems} item{totalItems !== 1 ? 's' : ''}
+                  {totalItems} item{totalItems !== 1 ? 's' : ''}
                   {descuentoBs > 0 && (
                     <span className="text-orange-600 ml-2">· Desc. −{formatBs(descuentoBs)}</span>
                   )}
@@ -1050,9 +1025,12 @@ export function PosTerminal() {
             )}
           </div>
           {tieneContenido && (
-            <ListBullets size={16} className="shrink-0 text-primary/50 mt-0.5" />
+            <div className="shrink-0 flex flex-col items-end gap-1.5 mt-0.5">
+              <ToggleMonedaPrecio modo={modoMonedaPrecio} onChange={setModoMonedaPrecio} />
+              <ListBullets size={16} className="text-primary/50" />
+            </div>
           )}
-        </button>
+        </div>
 
         {/* ── FOOTER MOBILE (sm:hidden) — 2 filas ── */}
         <div className="sm:hidden shrink-0 rounded-2xl bg-card shadow-lg px-4 py-2.5 flex flex-col gap-2">
@@ -1425,5 +1403,43 @@ export function PosTerminal() {
         sesion={sesion}
       />
     </>
+  )
+}
+
+/** Switch visual de 2 segmentos (solo mobile) para alternar la moneda de las
+ *  columnas comodín de la tabla entre Bs y USD. Solo cambia qué se muestra. */
+function ToggleMonedaPrecio({
+  modo,
+  onChange,
+}: {
+  modo: ModoMonedaPrecio
+  onChange: (m: ModoMonedaPrecio) => void
+}) {
+  return (
+    <div
+      className="inline-flex rounded-lg border border-border bg-muted/50 p-0.5 text-[10px] font-semibold"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onChange('bs') }}
+        className={`rounded-md px-2 py-1 transition-colors ${
+          modo === 'bs' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
+        }`}
+        aria-pressed={modo === 'bs'}
+      >
+        Bs
+      </button>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onChange('usd') }}
+        className={`rounded-md px-2 py-1 transition-colors ${
+          modo === 'usd' ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground'
+        }`}
+        aria-pressed={modo === 'usd'}
+      >
+        Usd
+      </button>
+    </div>
   )
 }

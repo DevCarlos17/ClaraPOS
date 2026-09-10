@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { TraspasosPage } from '../traspasos'
+import { TraspasosPage } from '../traspasos-page'
 import { usePermissions } from '@/core/hooks/use-permissions'
 
 // Mismo patron que traspaso-form.test.tsx: `usePermissions` importa
@@ -11,10 +11,9 @@ vi.mock('@/core/db/powersync/db', () => ({ db: { execute: vi.fn(), writeTransact
 vi.mock('@/core/db/powersync', () => ({ db: { execute: vi.fn(), writeTransaction: vi.fn() } }))
 vi.mock('@/core/db/powersync/connector', () => ({ connector: {} }))
 
-// La ruta importa `createFileRoute` de TanStack Router — no lo ejecutamos
-// (no hay harness de router en este codebase, ver design.md "Testing
-// Strategy > Manual"), pero renderizamos `TraspasosPage` (named export,
-// tarea 4.1) directamente via React Testing Library.
+// `TraspasosPage` es un componente de feature (named export) que renderizamos
+// directamente via React Testing Library, sin harness de router (ver design.md
+// "Testing Strategy > Manual").
 vi.mock('@/core/hooks/use-permissions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/core/hooks/use-permissions')>()
   return { ...actual, usePermissions: vi.fn() }
