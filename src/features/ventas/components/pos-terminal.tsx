@@ -1001,22 +1001,9 @@ export function PosTerminal() {
               </div>
             ))}
 
-            {/* Indicador de accion pendiente */}
+            {/* Espaciador / hint de estado vacio (el resumen de total ya se muestra arriba) */}
             <div className="flex-1 flex flex-col items-center justify-center gap-2 xl:gap-3 p-3 xl:p-4 text-center">
-              {tieneContenido && clienteId ? (
-                <>
-                  <div className="rounded-full bg-primary/10 p-3">
-                    <ShoppingCart size={20} className="text-primary" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{formatBs(totalBs)}</p>
-                    <p className="text-xs text-muted-foreground">{formatUsd(totalUsd)} · {totalItems} item{totalItems !== 1 ? 's' : ''}</p>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Presiona <strong>Cobrar</strong> o <kbd className="rounded border bg-muted px-1 py-px font-mono leading-none">F12</kbd> para registrar el pago
-                  </p>
-                </>
-              ) : (
+              {!(tieneContenido && clienteId) && (
                 <p className="text-xs text-muted-foreground">
                   Agrega productos y selecciona un cliente para cobrar
                 </p>
