@@ -902,39 +902,39 @@ export function PosTerminal() {
           {/* COL RIGHT: Total + payments (sticky panel) — hidden on mobile, replaced by cart bar */}
           <div className="hidden md:flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-y-auto">
 
-            {/* Total — ocupa todo el alto del panel, centrado verticalmente */}
-            <div className="px-5 py-4 flex-1 flex flex-col justify-center">
+            {/* Total — ocupa todo el alto del panel, contenido arriba */}
+            <div className="px-5 py-4 flex-1 bg-gradient-to-br from-primary/10 to-primary/5">
               <p className="text-[11px] font-semibold text-primary/60 uppercase tracking-widest mb-2">Total</p>
               {mostrarDesgloseFiscal && (
-                <div className="space-y-0.5 mb-2">
+                <div className="space-y-1 mb-2.5">
                   {baseGravableUsd.gt('0.001') && (
-                    <div className="flex justify-between text-xs text-muted-foreground">
+                    <div className="flex justify-between text-sm text-muted-foreground">
                       <span>Base Gravable</span>
-                      <span>{formatBs(usdToBs(baseGravableUsd, tasaValor))}</span>
+                      <span className="tabular-nums">{formatBs(usdToBs(baseGravableUsd, tasaValor))}</span>
                     </div>
                   )}
                   {ivaEntries.map(([pct, iva]) => (
-                    <div key={pct} className="flex justify-between text-xs text-amber-700 font-medium">
+                    <div key={pct} className="flex justify-between text-sm text-amber-700 font-medium">
                       <span>IVA {pct}%</span>
-                      <span>+{formatBs(usdToBs(iva, tasaValor))}</span>
+                      <span className="tabular-nums">+{formatBs(usdToBs(iva, tasaValor))}</span>
                     </div>
                   ))}
                   {baseExentoUsd.gt('0.001') && (
-                    <div className="flex justify-between text-xs text-blue-600">
+                    <div className="flex justify-between text-sm text-blue-600">
                       <span>Exento</span>
-                      <span>{formatBs(usdToBs(baseExentoUsd, tasaValor))}</span>
+                      <span className="tabular-nums">{formatBs(usdToBs(baseExentoUsd, tasaValor))}</span>
                     </div>
                   )}
                   {baseExoneradoUsd.gt('0.001') && (
-                    <div className="flex justify-between text-xs text-green-700">
+                    <div className="flex justify-between text-sm text-green-700">
                       <span>Exonerado</span>
-                      <span>{formatBs(usdToBs(baseExoneradoUsd, tasaValor))}</span>
+                      <span className="tabular-nums">{formatBs(usdToBs(baseExoneradoUsd, tasaValor))}</span>
                     </div>
                   )}
                 </div>
               )}
               <p className="text-3xl xl:text-4xl font-bold leading-tight tabular-nums text-foreground">{formatBs(totalBs)}</p>
-              <p className="text-2xl xl:text-3xl font-semibold text-primary/80 mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
+              <p className="text-2xl xl:text-3xl font-semibold text-gray-700 mt-1 tabular-nums">{formatUsd(totalUsd)}</p>
             </div>
 
             {/* Descuento Comercial / Cortesia — pausado, ver DESCUENTOS_HABILITADOS */}
