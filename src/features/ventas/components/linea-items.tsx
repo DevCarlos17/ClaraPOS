@@ -124,36 +124,32 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                     <div className="flex items-center gap-0.5">
                       <button
                         type="button"
-                        onClick={() => {
-                          const step = linea.es_decimal ? 0.001 : 1
-                          const minCantidad = linea.es_decimal ? 0.001 : 1
-                          onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step))
-                        }}
-                        disabled={linea.cantidad <= (linea.es_decimal ? 0.001 : 1)}
+                        onClick={() => onUpdateCantidad(index, Math.max(0, Math.ceil(linea.cantidad) - 1))}
+                        disabled={linea.cantidad <= 1}
                         className="shrink-0 hidden items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         <Minus size={10} />
                       </button>
                       <input
                         ref={(el) => { inputRefs.current[index] = el }}
-                        type="number"
-                        min="0"
-                        step={linea.es_decimal ? 'any' : '1'}
+                        type="text"
+                        inputMode="decimal"
                         value={linea.cantidad === 0 ? '' : linea.cantidad}
                         onChange={(e) => {
-                          const raw = e.target.value
+                          // Acepta punto o coma como separador decimal; sin decimales si la unidad no lo permite.
+                          const raw = e.target.value.replace(',', '.')
                           if (raw === '') {
                             onUpdateCantidad(index, 0)
                             return
                           }
+                          if (!/^\d*\.?\d*$/.test(raw)) return
                           const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
                           if (!isNaN(val) && val >= 0) onUpdateCantidad(index, val)
                         }}
                         onKeyDown={(e) => {
-                          const step = linea.es_decimal ? 0.001 : 1
-                          const minCantidad = linea.es_decimal ? 0.001 : 1
-                          if (e.key === '+') { e.preventDefault(); onUpdateCantidad(index, linea.cantidad + step); return }
-                          if (e.key === '-') { e.preventDefault(); onUpdateCantidad(index, Math.max(minCantidad, linea.cantidad - step)); return }
+                          // Las teclas +/- suman/restan de 1 en 1 (tambien para productos por peso).
+                          if (e.key === '+') { e.preventDefault(); onUpdateCantidad(index, Math.floor(linea.cantidad) + 1); return }
+                          if (e.key === '-') { e.preventDefault(); onUpdateCantidad(index, Math.max(0, Math.ceil(linea.cantidad) - 1)); return }
                           if (!linea.es_decimal && (e.key === '.' || e.key === ',')) e.preventDefault()
                           if (e.key === 'Enter') {
                             e.preventDefault()
@@ -166,10 +162,7 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                       />
                       <button
                         type="button"
-                        onClick={() => {
-                          const step = linea.es_decimal ? 0.001 : 1
-                          onUpdateCantidad(index, linea.cantidad + step)
-                        }}
+                        onClick={() => onUpdateCantidad(index, Math.floor(linea.cantidad) + 1)}
                         className="shrink-0 hidden items-center justify-center h-5 w-5 rounded border text-muted-foreground hover:bg-muted transition-colors"
                       >
                         <Plus size={10} />
