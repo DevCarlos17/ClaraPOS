@@ -902,8 +902,8 @@ export function PosTerminal() {
           {/* COL RIGHT: Total + payments (sticky panel) — hidden on mobile, replaced by cart bar */}
           <div className="hidden md:flex flex-col min-h-0 rounded-2xl bg-card shadow-lg overflow-y-auto">
 
-            {/* Total */}
-            <div className="px-4 py-3 lg:py-4 shrink-0 bg-gradient-to-br from-primary/10 to-primary/5 border-b">
+            {/* Total — ocupa todo el alto del panel */}
+            <div className="px-4 py-3 lg:py-4 flex-1 bg-gradient-to-br from-primary/10 to-primary/5">
               <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest mb-1">Total</p>
               {mostrarDesgloseFiscal && (
                 <div className="space-y-0.5 mb-2">
@@ -1001,14 +1001,6 @@ export function PosTerminal() {
               </div>
             ))}
 
-            {/* Espaciador / hint de estado vacio (el resumen de total ya se muestra arriba) */}
-            <div className="flex-1 flex flex-col items-center justify-center gap-2 xl:gap-3 p-3 xl:p-4 text-center">
-              {!(tieneContenido && clienteId) && (
-                <p className="text-xs text-muted-foreground">
-                  Agrega productos y selecciona un cliente para cobrar
-                </p>
-              )}
-            </div>
           </div>
         </div>
 
