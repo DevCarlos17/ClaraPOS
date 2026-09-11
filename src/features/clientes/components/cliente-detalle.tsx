@@ -11,6 +11,8 @@ import {
 import { usePagosCliente, registrarReversoAbono, type PagoClienteCxc } from '@/features/cxc/hooks/use-cxc'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
+import { FacturasEmpresaTable } from '@/features/ventas/components/facturas-empresa-tab'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -286,6 +288,7 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
   )
   const { total: totalMovimientos } = useCountMovimientosCliente(cliente.id)
   const { pagos } = usePagosCliente(cliente.id)
+  const { facturas, isLoading: isLoadingFacturas } = useFacturasEmpresa({ clienteId: cliente.id })
 
   const { data: saldoData } = useQuery(
     'SELECT saldo_actual FROM clientes WHERE id = ?',
@@ -608,6 +611,24 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+
+          {/* Facturas */}
+          <div>
+            <h3 className="text-sm font-semibold mb-2">Facturas</h3>
+            {isLoadingFacturas ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                ))}
+              </div>
+            ) : facturas.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground border border-dashed rounded-lg">
+                <p className="text-sm font-medium">Sin facturas</p>
+              </div>
+            ) : (
+              <FacturasEmpresaTable facturas={facturas} isLoading={isLoadingFacturas} mostrarAcciones={false} />
             )}
           </div>
         </div>
