@@ -99,6 +99,16 @@ function llamadasPorFactura() {
   return mockedUseFacturasEmpresa.mock.calls.filter(([f]) => f?.busqueda !== undefined)
 }
 
+/**
+ * Llamadas de useFacturasEmpresa desde la pestaña Por Cliente. A diferencia
+ * de `busqueda` (siempre string en BuscarPorFactura), `clienteId` puede ser
+ * `undefined` cuando aun no hay cliente seleccionado — por eso se detecta
+ * por la PRESENCIA de la key (`in`), no por su valor.
+ */
+function llamadasPorCliente() {
+  return mockedUseFacturasEmpresa.mock.calls.filter(([f]) => !!f && 'clienteId' in f)
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockedUseFacturasEmpresa.mockReturnValue({ facturas: [], isLoading: false })
@@ -175,24 +185,86 @@ describe('VentasConsultasModal — Por Factura', () => {
   })
 })
 
-describe('VentasConsultasModal — Por Cliente (smoke test, cobertura completa en Slice B)', () => {
-  it('seleccionar un cliente muestra FacturasEmpresaTable y el click de fila abre ConsultaFacturaModal con esa factura', async () => {
+describe('VentasConsultasModal — Por Cliente', () => {
+  it('sin cliente seleccionado, pasa enabled:false a useFacturasEmpresa (no ejecuta query hasta seleccionar) y no renderiza la tabla', async () => {
+    const user = userEvent.setup()
+    render(<VentasConsultasModal open onOpenChange={vi.fn()} />)
+
+    await user.click(screen.getByRole('tab', { name: /por cliente/i }))
+
+    const llamadas = llamadasPorCliente()
+    expect(llamadas.length).toBeGreaterThan(0)
+    expect(llamadas.at(-1)?.[0]).toMatchObject({ enabled: false })
+    expect(screen.queryByTestId('facturas-empresa-table')).not.toBeInTheDocument()
+  })
+
+  it('al seleccionar un cliente: enabled:true, clienteId correcto (filtro por empresa_id delegado a useFacturasEmpresa) y fechaDesde muy anterior al mes actual (busqueda historica completa, no acotada al mes actual)', async () => {
+    const user = userEvent.setup()
+    const c = cliente()
+    mockedUseBuscarClientes.mockReturnValue({ clientes: [c], isLoading: false })
+
+    render(<VentasConsultasModal open onOpenChange={vi.fn()} />)
+    await user.click(screen.getByRole('tab', { name: /por cliente/i }))
+    await user.type(screen.getByPlaceholderText(/buscar cliente/i), 'Maria')
+    await user.click(screen.getByText(c.nombre))
+
+    await waitFor(() => {
+      const ultima = llamadasPorCliente().at(-1)
+      expect(ultima?.[0]).toMatchObject({ clienteId: c.id, enabled: true })
+    })
+    const ultima = llamadasPorCliente().at(-1) as [FiltroFacturasEmpresaHook]
+    expect(ultima[0].fechaDesde).toBe('2000-01-01')
+  })
+
+  it('la tabla solo muestra las facturas devueltas para el clienteId seleccionado, con mostrarAcciones=false', async () => {
     const user = userEvent.setup()
     const c = cliente()
     const f = factura({ cliente_id: c.id })
     mockedUseBuscarClientes.mockReturnValue({ clientes: [c], isLoading: false })
     mockedUseFacturasEmpresa.mockImplementation((filtros?: FiltroFacturasEmpresaHook) =>
-      filtros?.clienteId ? { facturas: [f], isLoading: false } : { facturas: [], isLoading: false }
+      filtros?.clienteId === c.id ? { facturas: [f], isLoading: false } : { facturas: [], isLoading: false }
     )
 
     render(<VentasConsultasModal open onOpenChange={vi.fn()} />)
-
     await user.click(screen.getByRole('tab', { name: /por cliente/i }))
     await user.type(screen.getByPlaceholderText(/buscar cliente/i), 'Maria')
     await user.click(screen.getByText(c.nombre))
 
     const tabla = await screen.findByTestId('facturas-empresa-table')
     expect(tabla).toHaveAttribute('data-mostrar-acciones', 'false')
+    expect(screen.getByText(`Fila ${f.nro_factura}`)).toBeInTheDocument()
+  })
+
+  it('cliente sin facturas muestra el contador en 0 (estado vacio, sin filas en la tabla)', async () => {
+    const user = userEvent.setup()
+    const c = cliente()
+    mockedUseBuscarClientes.mockReturnValue({ clientes: [c], isLoading: false })
+    mockedUseFacturasEmpresa.mockReturnValue({ facturas: [], isLoading: false })
+
+    render(<VentasConsultasModal open onOpenChange={vi.fn()} />)
+    await user.click(screen.getByRole('tab', { name: /por cliente/i }))
+    await user.type(screen.getByPlaceholderText(/buscar cliente/i), 'Maria')
+    await user.click(screen.getByText(c.nombre))
+
+    expect(await screen.findByText('0 factura(s)')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Fila /i })).not.toBeInTheDocument()
+  })
+
+  it('click en una fila abre ConsultaFacturaModal con esa factura; cerrarlo lo desmonta', async () => {
+    const user = userEvent.setup()
+    const c = cliente()
+    const f = factura({ cliente_id: c.id, nro_factura: 'C01-000099' })
+    mockedUseBuscarClientes.mockReturnValue({ clientes: [c], isLoading: false })
+    mockedUseFacturasEmpresa.mockImplementation((filtros?: FiltroFacturasEmpresaHook) =>
+      filtros?.clienteId ? { facturas: [f], isLoading: false } : { facturas: [], isLoading: false }
+    )
+
+    render(<VentasConsultasModal open onOpenChange={vi.fn()} />)
+    await user.click(screen.getByRole('tab', { name: /por cliente/i }))
+    await user.type(screen.getByPlaceholderText(/buscar cliente/i), 'Maria')
+    await user.click(screen.getByText(c.nombre))
+    await screen.findByText(`Fila ${f.nro_factura}`)
+    expect(screen.queryByTestId('consulta-factura-modal')).not.toBeInTheDocument()
 
     await user.click(screen.getByText(`Fila ${f.nro_factura}`))
 
@@ -200,5 +272,11 @@ describe('VentasConsultasModal — Por Cliente (smoke test, cobertura completa e
       'data-nro-factura',
       f.nro_factura
     )
+
+    // `fireEvent` (no `user.click`): mismo workaround documentado arriba para
+    // el Dialog externo real de Radix con `pointer-events: none` en `body`.
+    fireEvent.click(screen.getByText('Cerrar consulta'))
+
+    expect(screen.queryByTestId('consulta-factura-modal')).not.toBeInTheDocument()
   })
 })
