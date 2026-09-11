@@ -3,6 +3,7 @@ import { ArrowLeft, Phone, MapPin, Calendar } from '@phosphor-icons/react'
 import { type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
 import { FacturasEmpresaTable } from '@/features/ventas/components/facturas-empresa-tab'
+import { ReimprimirFacturaModal } from '@/features/ventas/components/reimprimir-factura-modal'
 import type { FacturaParaAnular } from '@/features/ventas/hooks/use-notas-credito'
 import { startOfMonth, todayStr } from '@/lib/dates'
 
@@ -18,10 +19,8 @@ interface ClienteDetalleProps {
 export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
   const [fechaDesde, setFechaDesde] = useState(startOfMonth)
   const [fechaHasta, setFechaHasta] = useState(todayStr)
-  // PR3a (reimpresion-factura-fiscal): sostiene la factura elegida por
-  // click de fila. PR3b monta `ReimprimirFacturaModal` consumiendola; hasta
-  // entonces no hay modal — el placeholder de abajo solo la mantiene
-  // type-safe/observable en tests.
+  // PR3a/PR3b (reimpresion-factura-fiscal): sostiene la factura elegida por
+  // click de fila; `ReimprimirFacturaModal` (PR3b) la consume abajo.
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
 
   useEffect(() => {
@@ -151,14 +150,11 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
           </div>
         </div>
       </div>
-      {/* PR3b: <ReimprimirFacturaModal venta={facturaSeleccionada} isOpen={!!facturaSeleccionada} onClose={() => setFacturaSeleccionada(null)} /> */}
-      {facturaSeleccionada && (
-        <div
-          data-testid="factura-seleccionada-placeholder"
-          data-nro-factura={facturaSeleccionada.nro_factura}
-          className="hidden"
-        />
-      )}
+      <ReimprimirFacturaModal
+        venta={facturaSeleccionada}
+        isOpen={!!facturaSeleccionada}
+        onClose={() => setFacturaSeleccionada(null)}
+      />
     </>
   )
 }
