@@ -9,6 +9,7 @@ import {
   nombreArchivoRecibo,
   RECIBO_ANCHO_CHARS,
   generarSeparador,
+  centrarTexto,
   medirAnchoPngDesdeSeparador,
   esperarFuentesRecibo,
   construirFilasTotales,
@@ -30,6 +31,30 @@ import type { ReciboPagoInput, ReciboPagoLinea } from '../recibo-pagos'
 vi.mock('jspdf-autotable', async (importOriginal) => {
   const actual = await importOriginal<{ default: (doc: unknown, opts: unknown) => void }>()
   return { ...actual, default: vi.fn(actual.default) }
+})
+
+// jsPDF asigna `text` como propiedad propia de la instancia dentro de su propio
+// constructor (no vive en el prototype), asi que `vi.spyOn(jsPDF.prototype, 'text')`
+// no lo intercepta. Se envuelve la clase real extendiendola y re-asignando `text`
+// DESPUES de `super()` (para pisar la asignacion propia del padre) — preserva el
+// renderizado real mientras permite inspeccionar cada llamada (usado por el test
+// del marcador REIMPRESION en el PDF).
+type TextMethod = InstanceType<typeof import('jspdf').jsPDF>['text']
+const pdfTextCalls: Parameters<TextMethod>[] = []
+
+vi.mock('jspdf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('jspdf')>()
+  class SpyableJsPDF extends actual.jsPDF {
+    constructor(...args: ConstructorParameters<typeof actual.jsPDF>) {
+      super(...args)
+      const originalText = this.text.bind(this) as TextMethod
+      this.text = ((...callArgs: Parameters<TextMethod>) => {
+        pdfTextCalls.push(callArgs)
+        return originalText(...callArgs)
+      }) as TextMethod
+    }
+  }
+  return { ...actual, default: SpyableJsPDF, jsPDF: SpyableJsPDF }
 })
 
 function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDataInput {
@@ -1077,6 +1102,136 @@ describe('buildReciboTextoPlano', () => {
     expect(lineas[lineas.length - 1]).toContain('Quedo a credito')
     expect(lineas[lineas.length - 1]).toContain('Bs. 1.000,00')
     expect(lineas[lineas.length - 1]).toContain('$10.00')
+  })
+})
+
+describe('centrarTexto (PR1 — reimpresion-factura-fiscal)', () => {
+  it("centra 'REIMPRESION' (11 chars) en un ancho de 32: padding izquierdo floor, derecho el resto", () => {
+    const resultado = centrarTexto('REIMPRESION', 32)
+
+    expect(resultado).toHaveLength(32)
+    expect(resultado).toBe(`${' '.repeat(10)}REIMPRESION${' '.repeat(11)}`)
+  })
+
+  it('con padding par (texto de 2 chars en ancho 6), reparte el padding equitativamente', () => {
+    expect(centrarTexto('AB', 6)).toBe('  AB  ')
+  })
+
+  it('con ancho por defecto (RECIBO_ANCHO_CHARS), centra igual que pasando 32 explicito', () => {
+    expect(centrarTexto('REIMPRESION')).toBe(centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS))
+  })
+
+  it('si el texto es mas largo o igual que el ancho, lo retorna sin cambios (sin truncar ni fallar)', () => {
+    const textoLargo = 'ESTE-TEXTO-ES-MAS-LARGO-QUE-CINCO'
+    expect(centrarTexto(textoLargo, 5)).toBe(textoLargo)
+  })
+})
+
+describe('esReimpresion — marcador additive en ReciboData (PR1)', () => {
+  it('buildReciboData sin esReimpresion en el input produce ReciboData.esReimpresion === false', () => {
+    const recibo = buildReciboData(baseInput())
+    expect(recibo.esReimpresion).toBe(false)
+  })
+
+  it('buildReciboData con esReimpresion:true lo propaga sin alterar ningun otro campo del objeto', () => {
+    const sinFlag = buildReciboData(baseInput())
+    const conFlag = buildReciboData(baseInput({ esReimpresion: true }))
+
+    expect(conFlag.esReimpresion).toBe(true)
+    const { esReimpresion: _flagSin, ...restoSinFlag } = sinFlag
+    const { esReimpresion: _flagCon, ...restoConFlag } = conFlag
+    expect(restoConFlag).toEqual(restoSinFlag)
+  })
+})
+
+describe('marcador REIMPRESION en construirLineasRecibo (texto/PNG, via buildReciboTextoPlano)', () => {
+  function reciboConUnaLinea(overrides: Partial<BuildReciboDataInput> = {}): ReciboData {
+    return buildReciboData(
+      baseInput({
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        ...overrides,
+      })
+    )
+  }
+
+  it('con esReimpresion false y omitido, el texto es identico entre ambos y NO contiene REIMPRESION (regresion: cero impacto en venta POS)', () => {
+    const textoOmitido = buildReciboTextoPlano(reciboConUnaLinea())
+    const textoFalse = buildReciboTextoPlano(reciboConUnaLinea({ esReimpresion: false }))
+
+    expect(textoOmitido).toBe(textoFalse)
+    expect(textoOmitido).not.toContain('REIMPRESION')
+  })
+
+  it('con esReimpresion true, incluye la linea REIMPRESION centrada exactamente una vez, entre los datos del cliente y Articulos', () => {
+    const recibo = reciboConUnaLinea({ esReimpresion: true })
+    const texto = buildReciboTextoPlano(recibo)
+    const lineas = texto.split('\n')
+
+    const ocurrencias = lineas.filter((linea) => linea.includes('REIMPRESION'))
+    expect(ocurrencias).toHaveLength(1)
+    expect(ocurrencias[0]).toBe(centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS))
+
+    const idxIdentificacion = lineas.findIndex((linea) => linea.startsWith('Identificacion:'))
+    const idxArticulos = lineas.indexOf('Articulos')
+    const idxReimpresion = lineas.findIndex((linea) => linea.includes('REIMPRESION'))
+
+    expect(idxIdentificacion).toBeGreaterThanOrEqual(0)
+    expect(idxArticulos).toBeGreaterThan(idxIdentificacion)
+    expect(idxReimpresion).toBeGreaterThan(idxIdentificacion)
+    expect(idxReimpresion).toBeLessThan(idxArticulos)
+  })
+})
+
+describe('marcador REIMPRESION en buildReciboPdfBlob (PDF)', () => {
+  function reciboConUnaLinea(overrides: Partial<BuildReciboDataInput> = {}): ReciboData {
+    return buildReciboData(
+      baseInput({
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        ...overrides,
+      })
+    )
+  }
+
+  beforeEach(() => {
+    pdfTextCalls.length = 0
+  })
+
+  it('con esReimpresion false/omitido, no dibuja ninguna linea REIMPRESION en el PDF', () => {
+    buildReciboPdfBlob(reciboConUnaLinea())
+
+    const llamadasReimpresion = pdfTextCalls.filter((call) => call[0] === 'REIMPRESION')
+    expect(llamadasReimpresion).toHaveLength(0)
+  })
+
+  it("con esReimpresion true, dibuja 'REIMPRESION' centrado (align: center) entre el bloque de info y el label Articulos", () => {
+    buildReciboPdfBlob(reciboConUnaLinea({ esReimpresion: true }))
+
+    const llamadasReimpresion = pdfTextCalls.filter((call) => call[0] === 'REIMPRESION')
+    expect(llamadasReimpresion).toHaveLength(1)
+    expect(llamadasReimpresion[0][3]).toMatchObject({ align: 'center' })
+
+    const idxReimpresion = pdfTextCalls.findIndex((call) => call[0] === 'REIMPRESION')
+    const idxArticulos = pdfTextCalls.findIndex((call) => call[0] === 'Articulos')
+    expect(idxReimpresion).toBeGreaterThanOrEqual(0)
+    expect(idxArticulos).toBeGreaterThan(idxReimpresion)
   })
 })
 

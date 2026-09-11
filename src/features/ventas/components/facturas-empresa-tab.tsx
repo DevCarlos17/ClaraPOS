@@ -137,10 +137,16 @@ export interface FacturasEmpresaTableProps {
    * esa accion no aplica.
    */
   mostrarAcciones?: boolean
+  /**
+   * Reimpresion de factura fiscal (PR3a, aditivo): click de fila, pasado
+   * directo al `onRowClick` ya existente de `DataTable` (sin cambios en
+   * `DataTable`). Omitido = sin handler, comportamiento identico a hoy.
+   */
+  onRowClick?: (f: FacturaParaAnular) => void
 }
 
 /** Presentacional: recibe data via props, sin conocer el hook ni el estado de filtros. */
-export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrarAcciones }: FacturasEmpresaTableProps) {
+export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrarAcciones, onRowClick }: FacturasEmpresaTableProps) {
   const columns: ColumnDef<FacturaParaAnular>[] = [
     {
       accessorKey: 'nro_factura',
@@ -245,6 +251,7 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrar
       columns={columns}
       data={facturas}
       isLoading={isLoading}
+      onRowClick={onRowClick}
       emptyMessage="No hay facturas para el periodo o filtros seleccionados."
       showToolbar={false}
       showPagination={false}

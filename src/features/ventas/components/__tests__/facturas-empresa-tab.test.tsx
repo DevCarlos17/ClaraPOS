@@ -243,4 +243,36 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
       expect(screen.getByRole('button', { name: /aplicar nota de credito/i })).toBeInTheDocument()
     })
   })
+
+  describe('FacturasEmpresaTable — prop onRowClick (PR3a, reimpresion-factura-fiscal)', () => {
+    it('con onRowClick, click en la fila lo invoca con la FacturaParaAnular de esa fila', async () => {
+      const user = userEvent.setup()
+      const f = factura()
+      const onRowClick = vi.fn()
+
+      render(
+        <FacturasEmpresaTable
+          facturas={[f]}
+          isLoading={false}
+          mostrarAcciones={false}
+          onRowClick={onRowClick}
+        />
+      )
+      const row = screen.getByText('#C01-000001').closest('tr') as HTMLElement
+      await user.click(row)
+
+      expect(onRowClick).toHaveBeenCalledWith(f)
+      expect(screen.queryByRole('button', { name: /aplicar nota de credito/i })).not.toBeInTheDocument()
+    })
+
+    it('sin onRowClick, la tabla renderiza sin error y las filas no disparan nada', async () => {
+      const user = userEvent.setup()
+      render(<FacturasEmpresaTable facturas={[factura()]} isLoading={false} mostrarAcciones={false} />)
+
+      const row = screen.getByText('#C01-000001').closest('tr') as HTMLElement
+      await user.click(row)
+
+      expect(screen.getByText('#C01-000001')).toBeInTheDocument()
+    })
+  })
 })

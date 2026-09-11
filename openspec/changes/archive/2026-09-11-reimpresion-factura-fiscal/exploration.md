@@ -1,0 +1,137 @@
+# Exploration: reimpresion-factura-fiscal
+
+## Current State
+
+### Q1 — `buildReciboData` reconstruction: saved invoice vs. live cart
+
+`buildReciboData(input: BuildReciboDataInput)` in `src/features/ventas/utils/factura-export.ts:184` is a **pure function** (Decimal in, number out). It does NOT know about the live POS cart, PowerSync, or any store — it only consumes the shape:
+
+```ts
+interface BuildReciboDataInput {
+  nroFactura: string
+  fecha: string
+  emisor: { nombre, rif, direccion }
+  cliente: { nombre, identificacion, direccion }
+  lineas: ReciboLineaInput[]   // { codigo, nombre, cantidad, precioUnitarioUsd, tipoImpuesto, impuestoPct }
+  tasa: DecimalInput
+  igtfUsd: number | null
+  pagos: ReciboPagoInput[]     // { metodo_cobro_id, metodo_nombre, moneda:'USD'|'BS', monto }
+  discrepancy: ReciboDiscrepancyInput | null   // VUELTO/SAF/PROPINA/DIFERENCIAL_SOBRANTE/ABSORBER/... — EPHEMERAL, not persisted anywhere
+  saldoPendUsd: number
+  monedaPresentacion?: 'USD' | 'BS'
+}
+```
+
+**Finding: reconstruction from a SAVED invoice already exists — three times, duplicated.** There is no live-cart dependency in `buildReciboData` itself; the question is what feeds it. Grep of all call sites shows FOUR call sites, and THREE of them already build `ReciboData` for a persisted `ventas` row (not the live cart):
+
+| Call site | Data source | Purpose |
+|---|---|---|
+| `venta-exitosa-modal.tsx:76` | `useDetalleFactura(ventaId)` (cxc) + `useVentaFecha(ventaId)` + `useCompany()` + in-memory `VentaExitosaData` (pagos/discrepancy/igtf passed live from `cobro-modal.tsx`, NOT re-read from DB) | Post-sale success modal |
+| `nota-credito-pos-modal.tsx:265` | `useDetalleFactura(facturaId)` (cxc) + `usePagosFactura(facturaId)` (cxc, reads `pagos` table) + `useCompany()` + `factura: FacturaParaAnular` row (from `useFacturasSesionActiva`) + `discrepancy: null` | NC detail panel (POS scope, ANY saved invoice of the active session) |
+| `crear-ncr-modal.tsx:123` | Identical pattern to the above, `factura: FacturaParaAnular` from `useFacturasEmpresa` (empresa-wide, ANY historical invoice, no session restriction) + `discrepancy: null` | NC detail panel (Tradicional/admin scope) |
+| `notas-credito-ui.ts:121` (`previewMontoBsNc`) | Subset of `detalle` lines, `discrepancy: null` | PARCIAL NC Bs preview |
+
+**Conclusion for Q1**: A working reconstruction-from-saved-invoice pattern **already exists and is proven in production code** (`crear-ncr-modal.tsx` reprints/displays ANY historical invoice of the empresa, no time limit, no session restriction). It is duplicated verbatim in two components (`nota-credito-pos-modal.tsx` L263-291 and `crear-ncr-modal.tsx` L121-149 — byte-for-byte identical mapping, differing only in the `useDetalleFactura`/`usePagosFactura` call site wiring). **No new reconstruction algorithm needs inventing** — the correct move is to **extract** this duplicated block into one function, e.g. `buildReciboDataDesdeFacturaGuardada(factura: FacturaParaAnular, detalle: DetalleFacturaCxc[], pagos: PagoFacturaCxc[], company: Company | null)`, or a hook `useReciboDesdeFactura(ventaId: string | null)` that composes `useDetalleFactura` + `usePagosFactura` + `useCompany` + a `useVentaPorId`-style single-row query internally (today `FacturaParaAnular` rows only exist attached to a list query — the Ventas "consulta de facturas" row shape, `FacturaBusqueda`, does NOT carry `total_igtf_usd`, see Affected Areas).
+
+**Exact field mapping (`ventas`+`ventas_det`+`pagos`+`clientes`+`empresas` → `BuildReciboDataInput`)**, confirmed by the existing code (not invented):
+
+| `BuildReciboDataInput` field | Source | Notes |
+|---|---|---|
+| `nroFactura` | `ventas.nro_factura` | |
+| `fecha` | `ventas.fecha` | persisted, NEVER `localNow()` (see `useVentaFecha` comment) |
+| `emisor.nombre/rif/direccion` | `empresas.nombre/rif/direccion` via `useCompany()` | `empresa_id`-scoped already (`useCurrentUser`) |
+| `cliente.nombre/identificacion/direccion` | `ventas.cliente_id` → `clientes.nombre/identificacion` (direccion: `null` in the NC modals today — `clientes.direccion` exists but isn't joined; additive fix if needed) | |
+| `lineas[].codigo/nombre` | `ventas_det.producto_id` → `productos.codigo/nombre` | via `useDetalleFactura` (cxc) JOIN |
+| `lineas[].cantidad` | `ventas_det.cantidad` | |
+| `lineas[].precioUnitarioUsd` | `ventas_det.precio_unitario_usd` | |
+| `lineas[].tipoImpuesto` | `ventas_det.tipo_impuesto` → `toTipoImpuestoLinea()` | same helper duplicated 3x |
+| `lineas[].impuestoPct` | `ventas_det.impuesto_pct` | |
+| `tasa` | `ventas.tasa` | **HISTORICAL rate, never vigente** — critical bimonetary invariant, already enforced everywhere |
+| `igtfUsd` | `ventas.total_igtf_usd` (>0 ? Number(...) : null) | column already exists and is queried (`FacturaParaAnular.total_igtf_usd`) |
+| `pagos[]` | `pagos` table via `usePagosFactura(ventaId)` — `metodo_cobro_id, metodo_nombre (JOIN metodos_cobro), moneda (derived from `monedas.codigo_iso`), monto` | reversed/anulado pagos are NOT filtered out today in `usePagosFactura` (no `WHERE is_reversed = 0`) — worth flagging in design |
+| `discrepancy` | **Cannot be reconstructed — always `null` for saved invoices.** VUELTO/SAF/PROPINA/DIFERENCIAL_SOBRANTE was ephemeral React state computed once at `cobro-modal.tsx` time and never persisted to any table. Confirmed explicitly in `use-cxc.ts:254-262` comment on `useAfectacionCxc`. This is accepted, proven behavior (both NC modals already pass `discrepancy: null` for saved invoices) — reprint will show no "Vuelto/SAF/Propina" closing line, only "TOTAL + IGTF" and, if applicable, "Quedo a credito" (derived from `saldoPendUsd`, which IS persisted). |
+| `saldoPendUsd` | `ventas.saldo_pend_usd` | persisted, safe |
+| `monedaPresentacion` | `empresas.config` → `parseEmpresaConfig(company.config).moneda_presentacion_documentos` | same helper already used in `venta-exitosa-modal.tsx` |
+| retenciones (`retenciones_iva_ventas`/`retenciones_islr_ventas`) | **NOT part of `ReciboData` at all today.** No field in `ReciboTotales`/`ReciboData` renders retenciones. Confirmed by reading the full type and both render paths — the printed receipt has never shown retenciones. Out of scope for reprint (byte-identical parity means NOT inventing a new section). |
+
+**`ReciboData` output shape** (`factura-export.ts:71-81`): `{ nroFactura, fecha, emisor, cliente, lineas: ReciboLinea[], totales: ReciboTotales, pagos: ReciboPagoLinea[], cierre: ReciboCierre | null, monedaPresentacion }`. Three consumers render it identically from this ONE object:
+- `descargarReciboPdf(recibo)` → `buildReciboPdfBlob(recibo)` (jsPDF+autoTable) → blob download.
+- `compartirReciboImagen(recibo)` → `buildReciboImagenBlob(recibo)` (Canvas 2D, 32-char thermal width) → PNG via `navigator.share({ files })`, falls back to `buildReciboTextoPlano(recibo)` text share.
+- `buildReciboTextoPlano(recibo)` → monospace string, also used as the Level-1 Share fallback.
+
+All three share the exact same `construirLineasRecibo(recibo)` line-model (function at `factura-export.ts:426`) for the PNG/text paths, and `construirFilasTotales`/`formatMontoPrimario` for the PDF path — this is WHY consistency across the 3 output formats is structurally guaranteed today, and why the REIMPRESION marker (Q2) must be injected at the `ReciboData`/line-model level, not per-renderer.
+
+### Q2 — Where to inject the centered "REIMPRESION" marker
+
+Two independent rendering paths consume `ReciboData`, and BOTH need the marker between the header block and the articles table:
+
+**1. PNG/Text path — `construirLineasRecibo(recibo)` (`factura-export.ts:426-484`)**. The header block ends at line 439 (`if (recibo.cliente.direccion) lines.push(...)`) followed by a blank spacer at line 440, then the articles section begins at line 441 (`lines.push({ text: 'Articulos', bold: true })`). **Exact injection point: between line 440 (`lines.push({ text: '' })`, the spacer after client data) and line 441 (`'Articulos'` header).** Add, only when `recibo.esReimpresion` is true:
+```ts
+if (recibo.esReimpresion) {
+  lines.push({ text: 'REIMPRESION', bold: true })   // centering handled by consumer: PNG draws left-aligned monospace, so centering needs a dedicated render path (see below) OR a manual pad-to-center of the RECIBO_ANCHO_CHARS=32 string for the text/PNG output.
+  lines.push({ text: '' })
+}
+```
+Because `construirLineasRecibo` output is rendered LEFT-aligned monospace text in both the PNG canvas (`ctx.fillText(linea.text, PNG_PADDING, y)`, `factura-export.ts:744`) and the plain-text join, true centering for these two paths requires either (a) a small pure helper `centrarTexto(texto: string, ancho: number = RECIBO_ANCHO_CHARS): string` that pads with spaces on both sides before pushing the line (works for text join; for canvas it's an approximation since font isn't truly monospaced-fixed-width in canvas, but `13px monospace` is set explicitly so it's acceptably close — same font already used for the whole receipt), or (b) render this one line with `ctx.textAlign = 'center'` inside `buildReciboImagenBlob`'s draw loop when the line has a dedicated flag (e.g. `{ text, bold, centered: true }` extending `LineaRecibo`). Option (b) is cleaner (no hacky space-padding) but touches the render loop directly; Option (a) is fully additive (zero changes to `buildReciboImagenBlob`'s draw loop, since `ctx.fillText` already draws at a fixed x — pre-padding the string with spaces visually centers it in a monospace font). **Recommendation: Option (a)**, using the already-existing `RECIBO_ANCHO_CHARS = 32` constant (`factura-export.ts:276`) as the canonical width, consistent with `generarSeparador()`.
+
+**2. PDF path — `buildReciboPdfBlob(recibo)` (`factura-export.ts:509-645`)**. The header block ends after the `infoLeft`/`infoRight` block, with `y = yInfoTop + Math.max(...) * 5 + 5` (line 561), and the articles section begins at line 563 (`doc.setFontSize(10); doc.setFont(...); doc.text('Articulos', 15, y)`). **Exact injection point: between line 561 (end of client/date info block) and line 563 (`'Articulos'` label).** jsPDF already supports true centered text via `{ align: 'center' }` (used elsewhere in the same function, e.g. line 518, 524, 531, 544) — so the PDF path is trivial:
+```ts
+if (recibo.esReimpresion) {
+  doc.setFontSize(10)
+  doc.setFont('helvetica', 'bold')
+  doc.text('REIMPRESION', pageWidth / 2, y, { align: 'center' })
+  y += 6
+}
+```
+
+**Additive contract**: add `esReimpresion?: boolean` to BOTH `BuildReciboDataInput` and `ReciboData` (propagated verbatim by `buildReciboData`, default `false`/`undefined`). Every one of the 3 render functions checks `if (recibo.esReimpresion)` and is a no-op change when absent — **the original live-sale print path (`venta-exitosa-modal.tsx`) is untouched**, since it never sets the flag (defaults to falsy). This is confirmed safe because `buildReciboData` already spreads `input` fields straight into typed output fields (see `monedaPresentacion: input.monedaPresentacion ?? 'USD'` pattern at line 261) — the same one-line pattern applies to `esReimpresion: input.esReimpresion ?? false`.
+
+## Affected Areas
+
+- `src/features/ventas/utils/factura-export.ts` — add `esReimpresion?: boolean` to `BuildReciboDataInput`/`ReciboData`; inject marker in `construirLineasRecibo` (text/PNG path, between header and `'Articulos'`) and `buildReciboPdfBlob` (PDF path, between info block and `'Articulos'` label). Needs a small `centrarTexto` pure helper for the text/PNG path (or a `centered` flag on `LineaRecibo`, see Q2 recommendation).
+- `src/features/ventas/components/crear-ncr-modal.tsx` (L121-149) and `src/features/ventas/components/nota-credito-pos-modal.tsx` (L263-291) — byte-identical `buildReciboData` mapping blocks; candidates for extraction into a shared function/hook (`buildReciboDataDesdeFacturaGuardada` or `useReciboDesdeFactura`). **Do not modify their behavior** — only extract, reuse.
+- `src/features/cxc/hooks/use-cxc.ts` — `useDetalleFactura(ventaId)` (canonical, L231) and `usePagosFactura(ventaId)` (L346) are the two hooks that already do the persisted-table reconstruction reads; both are `empresa_id`-agnostic (scoped only by `venta_id`, itself already scoped upstream — see Risks). Both are pure read (`useQuery` from PowerSync), zero writes.
+- `src/features/ventas/hooks/use-notas-credito.ts` — `FacturaParaAnular` interface (L42-62) is the canonical row shape carrying `tasa`, `total_usd`, `total_bs`, `saldo_pend_usd`, `total_igtf_usd?` — the shape needed to feed the reconstruction, ALREADY used by both "facturas de caja del dia" (POS) and "Facturas emitidas" (Ventas admin) hooks. Also contains a THIRD, older `useDetalleFactura` (L316, different shape: `{ detalles, pagos, isLoading }`) used only by `ventas-consultas-modal.tsx` — do not confuse with the canonical `use-cxc.ts` one.
+- `src/features/ventas/components/venta-exitosa-modal.tsx` (L114-136) — the ONLY existing consumer of `descargarReciboPdf`/`compartirReciboImagen` today; the two-button JSX (`handleDescargar`/`handleCompartir`, `puedeCompartir` feature-detection) is inline, NOT extracted into a reusable component. A new shared `<ReimprimirFacturaAcciones recibo={...} />` (or similar) should mirror this JSX exactly (same disabled/loading states, same icons) rather than reinventing UI.
+- `src/features/ventas/components/facturas-empresa-tab.tsx` — `FacturasEmpresaTable` (exported, L143) already has a conditional "acciones" column (`mostrarAcciones` prop, L219-240) with an existing pattern for adding a per-row button (`Button` + `onClick={() => onAplicarNc?.(f)}`). A reprint action fits as a SECOND button in the same `acciones` cell (or a new always-visible column, since reprint should probably be visible even when `mostrarAcciones={false}`, i.e. from `cliente-detalle.tsx`, unlike "Aplicar NC" — needs an explicit decision in the proposal). Row type is `FacturaParaAnular`, which carries `.id` (= `venta_id`) — **sufficient to reprint by id, no extra fetch needed to identify the invoice** (the detail must still be fetched via `useDetalleFactura`/`usePagosFactura`/`useCompany`, same as today's NC modals).
+- `src/features/ventas/hooks/use-facturas-sesion-activa.ts` (`useFacturasSesionActiva`, L26) — POS "facturas de caja del dia" hook. Returns `FacturaParaAnular[]` (L50), scoped by `empresa_id` + `sesion_caja_id`. Row carries `.id`, sufficient for reprint. Consumed today by `nota-credito-pos-modal.tsx`; the POS-side UI surface where the day's invoices are LISTED as a standalone screen/table (not inside the NC modal) was NOT found via grep in this exploration — **needs clarification**: confirm the exact component that renders the POS "facturas de caja del dia" table the user refers to (it may be `nota-credito-pos-modal.tsx`'s own list, reused as the surface, or a not-yet-found separate screen).
+- `src/features/reportes/components/ventas-consultas-modal.tsx` — Ventas → "consulta de facturas" (`FacturasList`/`FacturaDetalle`, L339-545). **Critical finding**: `handleImprimirPdf` (L398-545) has its OWN independent, ad-hoc jsPDF layout — it does NOT call `buildReciboData`/`buildReciboPdfBlob`. Its output does NOT match the POS thermal receipt format (no alicuota breakdown, no exento/exonerado marking, no IGTF line, no cierre/vuelto line, different totals block). It already prints a footer "Reimpresion generada el {fecha}" (L534-538) — an existing, DIFFERENT, unrelated "reimpresion" label with no relation to the new `esReimpresion` receipt marker requested. This module reads `FacturaBusqueda` rows (`use-ventas-reportes.ts`, L449-461: `id, nroFactura, clienteNombre, clienteIdentificacion, fecha, totalUsd, totalBs, tasa, tipo, status, saldoPendUsd`) via `useBuscarFacturas`/`useFacturasPorCliente` — **this row shape does NOT carry `total_igtf_usd`**, unlike `FacturaParaAnular`. To reprint the EXACT thermal format here, either (a) extend `FacturaBusqueda`/its two query hooks additively with `total_igtf_usd`, or (b) fetch it by id from a small new query when the reprint action is triggered (avoids widening two existing hooks/tests). This module also uses the OLDER, non-canonical `useDetalleFactura` from `use-notas-credito.ts` (L316) which returns `{ detalles, pagos }` (different field names: `detalles` not `detalle`, `moneda`/`monto`/`monto_usd` not `moneda_label`/`monto`) — reprint here should switch to the SAME canonical hooks (`useDetalleFactura`/`usePagosFactura` from `use-cxc.ts`) used by the other two entry points, for consistency, not reuse the legacy one.
+- `src/features/clientes/components/cliente-detalle.tsx` (L138) — renders `<FacturasEmpresaTable facturas={facturas} isLoading={isLoadingFacturas} mostrarAcciones={false} />`. Since `mostrarAcciones={false}` hides the WHOLE acciones column today (including "Aplicar NC"), adding reprint here requires either a THIRD prop (e.g. `mostrarReimpresion` independent from `mostrarAcciones`) or redefining `mostrarAcciones` semantics — a design decision, not a code fact.
+- Multi-tenant (`empresa_id`): `useFacturasSesionActiva`/`useFacturasEmpresa` (list queries) already filter by `empresa_id`. The DETAIL queries reused for reconstruction (`useDetalleFactura`, `usePagosFactura` in `use-cxc.ts`) filter ONLY by `venta_id`/`WHERE vd.venta_id = ?` — **no `empresa_id` clause** (pre-existing, documented gap, see `openspec/changes/archive/2026-09-04-notas-credito-ui-pos/tasks.md` L143: "DEUDA: agregar el filtro como defensa en profundidad... fuera del scope de este change"). Practical risk is low today because `venta_id` always comes from an already-`empresa_id`-scoped list — this holds for all 3 planned entry points (all three list hooks already filter `empresa_id`). Still worth flagging as a residual, pre-existing gap, not introduced by this change.
+- Immutability: every hook involved (`useDetalleFactura`, `usePagosFactura`, `useFacturasSesionActiva`, `useFacturasEmpresa`, `useCompany`) is a `useQuery` read (`@powersync/react`), zero writes. `buildReciboData`/renderers are pure functions with no side effects beyond client-local PDF/PNG generation and `navigator.share`/anchor-download (no DB writes, no new tables, no status change). Reprint is naturally pure-read by construction — no new invariant needed, just confirmed.
+
+## Approaches
+
+1. **Extract `buildReciboDataDesdeFacturaGuardada` (or `useReciboDesdeFactura(ventaId)`) + additive `esReimpresion` flag + one shared reprint action component**
+   - Extract the byte-identical mapping block (duplicated in `nota-credito-pos-modal.tsx` and `crear-ncr-modal.tsx`) into ONE function taking `(factura: FacturaParaAnular, detalle: DetalleFacturaCxc[], pagos: PagoFacturaCxc[], company: Company | null, opts?: { esReimpresion?: boolean })`, or wrap it in a hook `useReciboDesdeFactura(ventaId)` that also calls `useDetalleFactura`/`usePagosFactura`/`useCompany` internally (bigger win: callers only need a `ventaId`, no manual wiring).
+   - Add `esReimpresion?: boolean` to `BuildReciboDataInput`/`ReciboData`; inject the centered marker in both render paths per Q2.
+   - Build ONE shared UI piece (e.g. `<ReimprimirFacturaButton ventaId={f.id} />` or `<ReimprimirFacturaAcciones recibo={recibo} />`) mirroring the existing `venta-exitosa-modal.tsx` Descargar/Compartir button JSX, reused as a row action in all 3 tables (`FacturasEmpresaTable` acciones column, the POS session-invoices surface, and `ventas-consultas-modal.tsx`'s `FacturasList`/`FacturaDetalle`).
+   - For the Ventas consulta module, also switch its detail-fetching from the legacy `useDetalleFactura` (`use-notas-credito.ts:316`) to the canonical one (`use-cxc.ts`), and additively surface `total_igtf_usd` (either widen `FacturaBusqueda` or fetch by id in the reprint action).
+   - Pros: zero duplication of a pattern already duplicated 2x today (fixing existing debt, not just adding new debt); byte-identical thermal format guaranteed for all 3 surfaces because they'd share the exact same function/component; matches the project's established convention of extracting pure functions/hooks (`notas-credito-fiscal.ts`, `deposito-inactivo.ts`, `recibo-pagos.ts`) instead of duplicating.
+   - Cons: touches 2 existing files (`nota-credito-pos-modal.tsx`, `crear-ncr-modal.tsx`) to point at the new shared function — low risk (pure refactor, same output, both already covered by tests using real `buildReciboData` fixtures) but is still a "FROZEN-adjacent" touch the project has been historically careful about (`nota-credito-pos-modal.tsx` is explicitly called out as FROZEN in prior archived changes). A proposal should scope this refactor as strictly extraction-only, with an explicit before/after test parity check.
+   - Effort: Medium (3 read-only hooks reused as-is, 1 new pure function/hook, 1 new small UI component reused 3x, 2 additive fields on existing types, 2 small injection points in existing render functions).
+
+2. **Ad-hoc per-module reconstruction (no shared extraction)** — each of the 3 tables builds its own inline `buildReciboData(...)` call (copy the pattern a THIRD and FOURTH time) and its own reprint button JSX.
+   - Pros: zero changes to existing files (`nota-credito-pos-modal.tsx`/`crear-ncr-modal.tsx` untouched); fastest to ship in isolation.
+   - Cons: grows the ALREADY-duplicated mapping block to 4-5 copies instead of consolidating; any future fix to the mapping (e.g. a missing field, a bug in `toTipoImpuestoLinea`) must be repeated N times; directly contradicts the project's own established pattern of extracting shared pure logic once duplication appears twice (documented convention, see `Approach 2` reasoning in `notas-credito-ui-pos` exploration, obs #2870, which explicitly favors "funciones puras extraídas" over new god-hooks AND over duplication).
+   - Effort: Low short-term, but compounds technical debt already flagged in a prior exploration for this exact codebase.
+
+3. **Persist a receipt snapshot at sale time (denormalized `ReciboData` JSON column) and just re-render it on reprint** — considered and rejected: contradicts the immutability model only loosely (would require a NEW column/table, more schema surface for a feature that's provably reconstructable from already-immutable data: `ventas`/`ventas_det`/`pagos` are either immutable or append-only already). No evidence in the codebase of any existing "snapshot" pattern for receipts; `discrepancy`/`cierre` was deliberately treated as ephemeral+irrecoverable in the NC flow's design (`use-cxc.ts` comment) rather than persisted — going against that established decision would be a bigger, riskier change than Approach 1 for zero real benefit, since the 2 existing reconstruction call sites prove correctness is already achievable from persisted tables alone (minus `discrepancy`, which reprint doesn't need to show anyway — a reprint of an old invoice legitimately should NOT re-show "vuelto entregado" as if it just happened).
+
+## Recommendation
+
+**Approach 1** (extract `buildReciboDataDesdeFacturaGuardada`/`useReciboDesdeFactura` + additive `esReimpresion` flag + one shared reprint UI component), reusing `venta-exitosa-modal.tsx`'s existing button JSX as the template. This is not a novel architecture — it is the SAME extraction the project has already applied successfully elsewhere (`notas-credito-fiscal.ts`, `deposito-inactivo.ts`, `recibo-pagos.ts` are all prior instances of "duplication observed twice → extract pure function once"), applied to a duplication (`nota-credito-pos-modal.tsx` L263-291 vs `crear-ncr-modal.tsx` L121-149) that already exists in the codebase TODAY, independent of this feature. Building the reprint feature is also the natural moment to pay down that pre-existing duplication, since reprint needs a THIRD/FOURTH copy of the exact same mapping otherwise.
+
+## Risks
+
+- **`ventas-consultas-modal.tsx` currently has a DIFFERENT, non-thermal PDF format** ("Factura Nro" layout, no alicuotas/IGTF/exento/cierre breakdown) with its own OLD "Reimpresion generada el {fecha}" footer label — unrelated to the new `esReimpresion` receipt marker. The proposal must explicitly decide whether `handleImprimirPdf` is REPLACED by the new shared reprint action (recommended, since the user wants byte-identical parity with the POS receipt) or coexists as a separate "detailed admin PDF" — leaving both would create two different-looking "PDFs of the same invoice" in the same modal, likely confusing.
+- **`FacturaBusqueda` (Ventas consulta) lacks `total_igtf_usd`** — needs an additive column on 2 existing hooks (`useBuscarFacturas`, `useFacturasPorCliente`) or a fetch-by-id at reprint time; either is low-risk but must be an explicit design decision (which query gets touched).
+- **Pre-existing `empresa_id` gap in detail queries** (`useDetalleFactura`/`usePagosFactura` filter only by `venta_id`) is NOT introduced by this change but is exercised more broadly once reprint is wired into 3 entry points — worth a one-line design note, not necessarily a fix in this change (matches how the same gap was handled/deferred in `notas-credito-ui-pos`).
+- **`usePagosFactura` does not filter `is_reversed`** — a reversed/anulled payment would still appear as a payment line on reprint. This is PRE-EXISTING behavior (the same hook is already used unfiltered by both NC modals today) — not a new risk introduced by this change, but worth flagging since reprint may be used long after a payment reversal, making the discrepancy more visible than in the NC flow (which is usually used shortly after the sale).
+- **POS "facturas de caja del dia" as a STANDALONE listing surface was not located** in this exploration — only its consumption inside `nota-credito-pos-modal.tsx` (via `useFacturasSesionActiva`) was found. The proposal phase should confirm with the user (or a follow-up grep pass) the exact component/route where this table is meant to gain the reprint action, since it may not exist as an independent screen yet.
+- **Centering approach for PNG/text (Option a, space-padding vs. Option b, `ctx.textAlign='center'`)** is a small but real design decision — space-padding is simpler/fully additive but only visually centers correctly if the monospace font metrics hold (already true for the rest of the receipt); a native center-alignment flag on `LineaRecibo` is more robust but touches the canvas draw loop. Either is low-risk; the proposal should pick one explicitly.
+- **`nota-credito-pos-modal.tsx` is documented FROZEN** in prior archived change reports — extracting its `buildReciboData` block into a shared function is a real but narrow touch (import change + delete duplicated block); must be called out explicitly in the proposal/design so it isn't mistaken for a behavior change.
+
+## Ready for Proposal
+
+Yes, with 2 explicit open questions to resolve in the proposal/design (not blockers, but decisions the user/proposal author should make consciously): (1) whether `ventas-consultas-modal.tsx`'s existing ad-hoc `handleImprimirPdf` is replaced or kept alongside the new thermal-format reprint action, and (2) confirm the exact component/route for the POS "facturas de caja del dia" standalone listing (not conclusively located in this exploration — only its use inside the NC modal was found). Everything else (Q1 reconstruction mapping, Q2 injection points, the 3rd consumption point's row shapes, empresa_id pattern, immutability) is grounded in real code read in full.

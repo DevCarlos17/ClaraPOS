@@ -78,6 +78,8 @@ export interface ReciboData {
   pagos: ReciboPagoLinea[]
   cierre: ReciboCierre | null
   monedaPresentacion: MonedaPresentacion
+  /** Marca la reimpresion de una factura ya emitida (default false). Additive — no afecta el flujo de venta POS. */
+  esReimpresion?: boolean
 }
 
 export interface ReciboLineaInput {
@@ -101,6 +103,8 @@ export interface BuildReciboDataInput {
   discrepancy: ReciboDiscrepancyInput | null
   saldoPendUsd: number
   monedaPresentacion?: MonedaPresentacion
+  /** Cuando true, el recibo generado incluye el marcador visual "REIMPRESION". Default false. */
+  esReimpresion?: boolean
 }
 
 // =============================================
@@ -259,6 +263,7 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
     pagos,
     cierre,
     monedaPresentacion: input.monedaPresentacion ?? 'USD',
+    esReimpresion: input.esReimpresion ?? false,
   }
 }
 
@@ -278,6 +283,21 @@ export const RECIBO_ANCHO_CHARS = 32
 /** Genera un separador de `chars` guiones (default: RECIBO_ANCHO_CHARS). Funcion pura. */
 export function generarSeparador(chars: number = RECIBO_ANCHO_CHARS): string {
   return '-'.repeat(chars)
+}
+
+/**
+ * Centra `texto` dentro de `ancho` caracteres rellenando con espacios a ambos lados
+ * (convencion monoespaciada, sin alineacion nativa disponible en texto plano/PNG).
+ * Si el padding total es impar, el caracter sobrante va al lado derecho. Si `texto`
+ * es igual o mas largo que `ancho`, se retorna sin cambios (no trunca, no lanza).
+ * Funcion pura.
+ */
+export function centrarTexto(texto: string, ancho: number = RECIBO_ANCHO_CHARS): string {
+  if (texto.length >= ancho) return texto
+  const totalPadding = ancho - texto.length
+  const padIzquierda = Math.floor(totalPadding / 2)
+  const padDerecha = totalPadding - padIzquierda
+  return `${' '.repeat(padIzquierda)}${texto}${' '.repeat(padDerecha)}`
 }
 
 const SEPARADOR = generarSeparador()
@@ -438,6 +458,9 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
   lines.push({ text: `Identificacion: ${recibo.cliente.identificacion}` })
   if (recibo.cliente.direccion) lines.push({ text: `Direccion: ${recibo.cliente.direccion}` })
   lines.push({ text: '' })
+  if (recibo.esReimpresion) {
+    lines.push({ text: centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS), bold: true })
+  }
   lines.push({ text: 'Articulos', bold: true })
   lines.push({ text: SEPARADOR })
   for (const linea of recibo.lineas) {
@@ -559,6 +582,13 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
   infoLeft.forEach((txt, i) => doc.text(txt, 15, yInfoTop + i * 5))
   infoRight.forEach((txt, i) => doc.text(txt, pageWidth / 2 + 10, yInfoTop + i * 5))
   y = yInfoTop + Math.max(infoLeft.length, infoRight.length) * 5 + 5
+
+  if (recibo.esReimpresion) {
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text('REIMPRESION', pageWidth / 2, y, { align: 'center' })
+    y += 5
+  }
 
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
