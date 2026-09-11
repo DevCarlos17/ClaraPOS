@@ -82,27 +82,38 @@ describe('FacturaDetallePanel (Spec notas-credito-pos: Panel de detalle fiscal d
   })
 })
 
-// ─── Slice 5d (QA 2.5/2.6, obs #2896/#2897): el desglose de metodos de pago
-// y la seccion de afectacion CxC se OCULTAN — dan datos incorrectos cuando
-// el excedente de un pago se abono por FIFO a OTRA factura (flujo SAF),
-// porque `crearVenta` no persiste back-reference hacia la venta origen. ────
+// ─── PR1 (consulta-factura-evolucion): el desglose de metodos de pago se
+// UN-HIDE (mirror de `construirLineasRecibo`'s payment section). La seccion
+// de afectacion CxC sigue sin implementarse — pendiente change de CxC. ────
 
-describe('FacturaDetallePanel — Slice 5d (ocultar seccion CxC no confiable, pendiente change CxC)', () => {
-  it('NUNCA muestra el desglose de metodos de pago, incluso con pagos presentes en el recibo', () => {
+describe('FacturaDetallePanel — PR1 (metodos de pago visibles, afectacion CxC pendiente)', () => {
+  it('con pagos: muestra "Metodos de pago", cada metodo con su monto y el "Total abonos"', () => {
     render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
+    expect(screen.getByText('Metodos de pago')).toBeInTheDocument()
+    const metodoRow = screen.getByText('Efectivo USD').closest('div') as HTMLElement
+    // pago unico: monto=23.2 USD, monedaPresentacion default USD -> misma moneda, sin contraparte.
+    expect(within(metodoRow).getByText('$23.20')).toBeInTheDocument()
+    // total abonos = suma de pagos, formato bimonetario (USD + Bs entre parentesis): tasa=40 -> Bs. 928,00
+    const totalRow = screen.getByText('Total abonos').closest('div') as HTMLElement
+    expect(within(totalRow).getByText('$23.20 (Bs. 928,00)')).toBeInTheDocument()
+  })
+
+  it('sin pagos: NO muestra la seccion "Metodos de pago"', () => {
+    const recibo = baseRecibo({ pagos: [] })
+    render(<FacturaDetallePanel recibo={recibo} />)
+
     expect(screen.queryByText('Metodos de pago')).not.toBeInTheDocument()
-    expect(screen.queryByText('Efectivo USD')).not.toBeInTheDocument()
     expect(screen.queryByText('Total abonos')).not.toBeInTheDocument()
   })
 
-  it('NUNCA muestra la seccion de afectacion a cuentas por cobrar', () => {
+  it('NUNCA muestra la seccion de afectacion a cuentas por cobrar (pendiente change CxC)', () => {
     render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
     expect(screen.queryByText(/afect(o|ó) cuentas por cobrar/i)).not.toBeInTheDocument()
   })
 
-  it('el resto del panel (lineas, totales fiscales) sigue visible sin las secciones ocultas', () => {
+  it('el resto del panel (lineas, totales fiscales) sigue visible junto a metodos de pago', () => {
     render(<FacturaDetallePanel recibo={baseRecibo()} />)
 
     expect(screen.getByText('Botox 50U')).toBeInTheDocument()
