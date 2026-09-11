@@ -38,11 +38,11 @@ Chain strategy: feature-branch-chain
 
 ## PR2 — Extend `useReversosFactura` with amount (~120-180 ln)
 
-- [ ] 2.1 `use-notas-credito.ts`: add `nc.total_usd, nc.total_bs` to `useReversosFactura`'s SELECT; extend `ReversoFacturaRow` with `total_usd`/`total_bs` (additive).
-- [ ] 2.2 TDD: RED — extend `use-notas-credito.test.ts` describe block (L1172) additively: assert SELECT includes `total_usd`/`total_bs` columns and returned rows carry them (fails, columns absent). GREEN — task 2.1 makes it pass.
-- [ ] 2.3 `notas-credito-ui.ts`: extend `ReversoFacturaRowInput` + `ReversoAplicado` with `montoUsd`/`montoBs` (additive); fix `agruparReversosPorNc` to read `total_usd`/`total_bs` ONLY in the `if (!grupo)` new-group branch, never in the per-line `grupo.lineas.push(...)` loop.
-- [ ] 2.4 TDD: RED — new test in `notas-credito-ui.test.ts`: 2+ line NC fixture asserts `montoUsd`/`montoBs` on the group equals the NC's own total ONCE (not summed per line) (fails, field absent / would double-count without the `if (!grupo)` fix). GREEN — task 2.3 makes it pass.
-- [ ] 2.5 FROZEN regression check: run `nota-credito-pos-modal.test.tsx` and `crear-ncr-modal.test.tsx` UNMODIFIED — confirm both suites stay green after 2.1-2.3. No file edits to these two test files or their subject components.
+- [x] 2.1 `use-notas-credito.ts`: add `nc.total_usd, nc.total_bs` to `useReversosFactura`'s SELECT; extend `ReversoFacturaRow` with `total_usd`/`total_bs` (additive).
+- [x] 2.2 TDD: RED — extend `use-notas-credito.test.ts` describe block (L1172) additively: assert SELECT includes `total_usd`/`total_bs` columns and returned rows carry them (fails, columns absent). GREEN — task 2.1 makes it pass.
+- [x] 2.3 `notas-credito-ui.ts`: extend `ReversoFacturaRowInput` + `ReversoAplicado` with `montoUsd`/`montoBs` (additive); fix `agruparReversosPorNc` to read `total_usd`/`total_bs` ONLY in the `if (!grupo)` new-group branch, never in the per-line `grupo.lineas.push(...)` loop.
+- [x] 2.4 TDD: RED — new test in `notas-credito-ui.test.ts`: 2+ line NC fixture asserts `montoUsd`/`montoBs` on the group equals the NC's own total ONCE (not summed per line) (fails, field absent / would double-count without the `if (!grupo)` fix). GREEN — task 2.3 makes it pass.
+- [x] 2.5 FROZEN regression check: run `nota-credito-pos-modal.test.tsx` and `crear-ncr-modal.test.tsx` UNMODIFIED — confirm both suites stay green after 2.1-2.3. No file edits to these two test files or their subject components.
 
 ## PR3 — New `useEvolucionFactura` hook (~120-160 ln)
 
