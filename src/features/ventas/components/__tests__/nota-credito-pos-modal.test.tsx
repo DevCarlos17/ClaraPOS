@@ -167,6 +167,122 @@ async function seleccionarPrimeraFactura() {
   return user
 }
 
+/**
+ * Reveal-gate (Slice C, Spec notas-credito-pos: "Reveal-gate de la seccion
+ * de emision de NC"): la seccion NC (Tipo, modalidad, deposito, motivo,
+ * alerta irreversible) y el pie de flujo de anulacion (Confirmar
+ * Anulacion/Editar metodos de pago) ya NO se muestran automaticamente al
+ * seleccionar una factura — hay que presionar "Emitir nota de credito"
+ * primero. Helper mecanico para retrofitar los tests preexistentes de la
+ * seccion NC sin alterar ninguna de sus aserciones originales.
+ */
+async function revelarSeccionNc(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: /Emitir nota de credito/i }))
+}
+
+describe('NotaCreditoPosModal — Slice C (reveal-gate de la seccion NC, Spec notas-credito-pos)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('C.1 al seleccionar una factura, la seccion NC permanece oculta y el pie muestra solo Volver/Reimprimir/Emitir nota de credito', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.queryByText('Tipo de nota de credito')).not.toBeInTheDocument()
+    expect(screen.queryByText('Modalidad de liquidacion')).not.toBeInTheDocument()
+    expect(screen.queryByText('Deposito de reingreso de stock')).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText(/Motivo de la anulacion/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Esta accion es irreversible/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Editar metodos de pago/i })).not.toBeInTheDocument()
+
+    expect(screen.getByRole('button', { name: /^Volver$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Reimprimir$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Emitir nota de credito/i })).toBeInTheDocument()
+  })
+
+  it('C.1b no auto-selecciona Total al elegir la factura (Total/Parcial ya no se ofrecen fuera de la seccion revelada)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Parcial' })).not.toBeInTheDocument()
+  })
+
+  it('C.2 "Emitir nota de credito" revela la seccion NC completa y el pie pasa al flujo de anulacion existente', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+
+    expect(screen.getByText('Tipo de nota de credito')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Total' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Parcial' })).toBeInTheDocument()
+    expect(screen.getByText(/Esta accion es irreversible/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Editar metodos de pago/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Reimprimir$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Emitir nota de credito/i })).not.toBeInTheDocument()
+  })
+
+  it('C.3 seleccionar otra factura reoculta la seccion NC (gate revelado para A no persiste al elegir B)', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [
+        facturaSesion({ id: 'venta-1', nro_factura: 'C01-000001' }),
+        facturaSesion({ id: 'venta-2', nro_factura: 'C01-000002' }),
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByText(/C01-000001/i))
+    await revelarSeccionNc(user)
+    expect(screen.getByText('Tipo de nota de credito')).toBeInTheDocument()
+
+    await user.click(screen.getByText(/C01-000002/i))
+
+    expect(screen.queryByText('Tipo de nota de credito')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Emitir nota de credito/i })).toBeInTheDocument()
+  })
+
+  it('C.4 "Volver" con la seccion revelada regresa directo al estado vacio de seleccion (una sola etapa)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    expect(screen.getByText('Tipo de nota de credito')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^Volver$/i }))
+
+    expect(screen.getByText(/Selecciona una factura del listado/i)).toBeInTheDocument()
+    expect(screen.queryByText('Tipo de nota de credito')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Volver$/i })).not.toBeInTheDocument()
+  })
+
+  it('C.5 cerrar el modal (isOpen=false) reoculta la seccion NC al reabrirlo sobre la misma factura', async () => {
+    setup({ hasPermission: true })
+    const { rerender } = render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    expect(screen.getByText('Tipo de nota de credito')).toBeInTheDocument()
+
+    rerender(<NotaCreditoPosModal isOpen={false} onClose={() => {}} sesion={sesionActiva} />)
+    rerender(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText(/Selecciona una factura del listado/i)).toBeInTheDocument()
+  })
+})
+
 describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, sin coupling con cobro)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -185,6 +301,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -203,6 +320,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
@@ -218,6 +336,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -233,6 +352,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.selectOptions(screen.getByRole('combobox'), 'SALDO_FAVOR')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -248,6 +368,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -264,7 +385,8 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
-    await seleccionarPrimeraFactura()
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
 
     expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
     expect(screen.queryByRole('combobox', { name: '' })).toBeInTheDocument() // solo el combobox de modalidad
@@ -276,6 +398,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
 
     expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
@@ -288,6 +411,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -305,6 +429,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -317,12 +442,14 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
     expect(screen.queryByText(/Automatico/i)).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /Volver/i }))
     await user.click(screen.getByText(/C01-000001/i))
+    await revelarSeccionNc(user)
 
     expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
   })
@@ -340,11 +467,13 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
 
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
     expect(screen.queryByText(/Automatico/i)).not.toBeInTheDocument()
 
     await user.click(screen.getByText(/C01-000002/i))
+    await revelarSeccionNc(user)
 
     expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
   })
@@ -354,6 +483,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
 
     // Autoriza PIN B (deposito) primero.
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
@@ -380,6 +510,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
 
     // Sin autorizar PIN B todavia, el riel es automatico -> depositoInvalido
     // es false y "Confirmar Anulacion" esta habilitado. Sin permiso de
@@ -421,6 +552,7 @@ describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede 
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -434,6 +566,7 @@ describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede 
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -451,7 +584,8 @@ describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede 
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
-    await seleccionarPrimeraFactura()
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
 
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).not.toBeDisabled()
     expect(screen.queryByText(/Debes seleccionar el deposito de reingreso/i)).not.toBeInTheDocument()
@@ -473,6 +607,7 @@ describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede 
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
@@ -638,6 +773,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
+    await revelarSeccionNc(user)
 
     expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
@@ -720,6 +856,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
+    await revelarSeccionNc(user)
     await user.type(screen.getByRole('spinbutton'), '9')
 
     expect(screen.getByRole('spinbutton')).toHaveValue(null)
@@ -754,6 +891,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
+    await revelarSeccionNc(user)
 
     // F1 QA fix: TOTAL ya no es opcion valida sobre una factura con reverso
     // parcial previo — la seleccion cae por defecto en PARCIAL.
@@ -874,7 +1012,8 @@ describe('NotaCreditoPosModal — Slice 3a (panel de detalle montado, Design §D
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
-    await seleccionarPrimeraFactura()
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
 
     expect(screen.getAllByText(/C01-000001/i).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
@@ -901,7 +1040,8 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
-    await seleccionarPrimeraFactura()
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
 
     expect(screen.getByRole('button', { name: 'Total' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Parcial' })).toBeInTheDocument()
@@ -915,6 +1055,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
 
     expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
@@ -928,6 +1069,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '2')
     await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
@@ -947,6 +1089,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '1')
     await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
@@ -968,6 +1111,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -986,6 +1130,7 @@ describe('NotaCreditoPosModal — Slice 4 (placeholder "Editar metodos de pago" 
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Editar metodos de pago/i }))
 
     expect(mockedToastInfo).toHaveBeenCalledTimes(1)
@@ -998,6 +1143,7 @@ describe('NotaCreditoPosModal — Slice 4 (placeholder "Editar metodos de pago" 
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Editar metodos de pago/i }))
 
     expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
@@ -1016,6 +1162,7 @@ describe('NotaCreditoPosModal — Slice 4 (placeholder "Editar metodos de pago" 
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
 
     await user.click(screen.getByRole('button', { name: /Editar metodos de pago/i }))
     expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
@@ -1053,6 +1200,7 @@ describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abi
     render(<NotaCreditoPosModal isOpen onClose={onClose} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -1066,6 +1214,7 @@ describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abi
     const { rerender } = render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '2')
     expect(screen.getByRole('spinbutton')).toHaveValue(2)
@@ -1091,6 +1240,7 @@ describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abi
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
     const selects = screen.getAllByRole('combobox')

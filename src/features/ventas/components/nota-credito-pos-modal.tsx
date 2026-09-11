@@ -174,6 +174,16 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // re-enviar por accidente la MISMA cantidad ya acreditada (double-submit).
   // Cambiar el `key` fuerza un remount limpio tras cada emision exitosa.
   const [emisionGen, setEmisionGen] = useState(0)
+  // Reveal-gate de la seccion NC (Slice C, Spec notas-credito-pos:
+  // "Reveal-gate de la seccion de emision de NC"). Al seleccionar una
+  // factura solo se muestra el detalle + pie de 3 acciones (Volver,
+  // Reimprimir, Emitir nota de credito); la seccion NC (Tipo, modalidad,
+  // deposito, motivo, alerta irreversible) permanece oculta hasta
+  // presionar "Emitir nota de credito". Resetea en los mismos 3 puntos que
+  // `resetAutorizacionesPin` (cierre del modal, seleccion de factura,
+  // "Volver") pero es un estado INDEPENDIENTE: nunca se limpia tras una
+  // emision exitosa (la seccion permanece revelada sobre la misma factura).
+  const [ncSectionRevealed, setNcSectionRevealed] = useState(false)
 
   /**
    * UX B QA fix (Slice 5e): las autorizaciones de PIN son EFIMERAS —
@@ -205,6 +215,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setTipoNc('TOTAL')
       setEmisionGen(0)
       resetAutorizacionesPin()
+      setNcSectionRevealed(false)
     }
   }, [isOpen])
 
@@ -477,6 +488,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                             // autorizacion de PIN de la factura anterior nunca
                             // debe quedar vigente para esta.
                             resetAutorizacionesPin()
+                            // Reveal-gate (Slice C): cada seleccion arranca
+                            // con la seccion NC oculta (Spec: "Cambiar de
+                            // factura reoculta la seccion NC").
+                            setNcSectionRevealed(false)
                           }}
                           className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
                             seleccionada ? 'border-primary bg-muted' : 'hover:bg-muted'
@@ -531,7 +546,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   </div>
                 )}
 
-                {factura && puedeEmitirNc && (
+                {factura && puedeEmitirNc && ncSectionRevealed && (
                   <div className="space-y-4 px-4 pb-4">
                     <div className="rounded-lg border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-2">
@@ -682,28 +697,57 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   // de NC en curso — la autorizacion de PIN no debe persistir
                   // para la proxima factura que se seleccione.
                   resetAutorizacionesPin()
+                  // Reveal-gate (Slice C): "Volver" es de una sola etapa —
+                  // siempre regresa directo al estado vacio de seleccion,
+                  // reocultando la seccion NC como efecto colateral (Spec:
+                  // "Volver es de una sola etapa").
+                  setNcSectionRevealed(false)
                 }}
                 disabled={loading}
                 className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors"
               >
                 Volver
               </button>
-              <button
-                type="button"
-                onClick={handleEditarPagosClick}
-                disabled={loading}
-                className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors disabled:opacity-50"
-              >
-                Editar metodos de pago
-              </button>
-              {puedeEmitirNc && tipoNc === 'TOTAL' && (
-                <button
-                  onClick={handleConfirmarClick}
-                  disabled={loading || depositoInvalido}
-                  className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
-                >
-                  {loading ? 'Procesando...' : 'Confirmar Anulacion'}
-                </button>
+              {!ncSectionRevealed ? (
+                // Reveal-gate cerrado (Slice C, Spec "Reveal-gate de la
+                // seccion de emision de NC"): pie de tres acciones. El boton
+                // "Reimprimir" se renderiza inerte a proposito — su wiring a
+                // `ConsultaFacturaModal` es Slice D (obs #3358), fuera de
+                // alcance de esta slice.
+                <>
+                  <button type="button" className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors">
+                    Reimprimir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNcSectionRevealed(true)}
+                    className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    Emitir nota de credito
+                  </button>
+                </>
+              ) : (
+                // Reveal-gate abierto: flujo de anulacion pre-existente,
+                // byte-a-byte identico al comportamiento previo a esta slice.
+                <>
+                  <button
+                    type="button"
+                    onClick={handleEditarPagosClick}
+                    disabled={loading}
+                    className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors disabled:opacity-50"
+                  >
+                    Editar metodos de pago
+                  </button>
+                  {puedeEmitirNc && tipoNc === 'TOTAL' && (
+                    <button
+                      onClick={handleConfirmarClick}
+                      disabled={loading || depositoInvalido}
+                      className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      {loading ? 'Procesando...' : 'Confirmar Anulacion'}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           )}
