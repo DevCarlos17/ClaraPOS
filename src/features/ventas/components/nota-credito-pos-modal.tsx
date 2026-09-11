@@ -23,7 +23,8 @@ import {
   type EstadoPago,
   type BadgeReverso,
 } from '../utils/notas-credito-ui'
-import { buildReciboData, type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
+import { type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
+import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factura'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
@@ -262,32 +263,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
 
   const recibo: ReciboData | null = useMemo(() => {
     if (!factura) return null
-    return buildReciboData({
-      nroFactura: factura.nro_factura,
-      fecha: factura.fecha,
-      emisor: { nombre: company?.nombre ?? '', rif: company?.rif ?? null, direccion: company?.direccion ?? null },
-      cliente: { nombre: factura.cliente_nombre, identificacion: factura.cliente_identificacion, direccion: null },
-      lineas: detalle.map((d) => ({
-        codigo: d.producto_codigo,
-        nombre: d.producto_nombre,
-        cantidad: d.cantidad,
-        precioUnitarioUsd: d.precio_unitario_usd,
-        tipoImpuesto: toTipoImpuestoLinea(d.tipo_impuesto),
-        impuestoPct: d.impuesto_pct,
-      })),
-      // SIEMPRE la tasa historica de la factura — nunca la tasa vigente del sistema.
-      tasa: factura.tasa,
-      igtfUsd:
-        factura.total_igtf_usd && Number(factura.total_igtf_usd) > 0 ? Number(factura.total_igtf_usd) : null,
-      pagos: pagosFactura.map((p) => ({
-        metodo_cobro_id: p.metodo_cobro_id,
-        metodo_nombre: p.metodo_nombre,
-        moneda: p.moneda_label as 'USD' | 'BS',
-        monto: Number(p.monto),
-      })),
-      discrepancy: null,
-      saldoPendUsd: Number(factura.saldo_pend_usd),
-    })
+    return buildReciboDataDesdeFacturaGuardada(factura, detalle, pagosFactura, company)
   }, [factura, detalle, pagosFactura, company])
 
   // Lineas candidatas a NC PARCIAL (Slice 3b, Design §Decision 7) — mismo
