@@ -31,7 +31,7 @@ vi.mock('../crear-ncr-modal', () => ({
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useFacturasEmpresa } from '../../hooks/use-facturas-empresa'
-import { FacturasEmpresaTab } from '../facturas-empresa-tab'
+import { FacturasEmpresaTab, FacturasEmpresaTable } from '../facturas-empresa-tab'
 import type { FacturaParaAnular } from '../../hooks/use-notas-credito'
 
 const mockedUseFacturasEmpresa = vi.mocked(useFacturasEmpresa)
@@ -224,6 +224,23 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
 
       const row = screen.getByText('#C01-000001').closest('tr')
       expect(row).not.toHaveAttribute('data-atenuada')
+    })
+  })
+
+  describe('FacturasEmpresaTable — prop mostrarAcciones (cliente-detalle-pantalla, PR3)', () => {
+    it('mostrarAcciones={false}: NO renderiza la columna/boton "Aplicar nota de credito"', () => {
+      render(<FacturasEmpresaTable facturas={[factura()]} isLoading={false} mostrarAcciones={false} />)
+      expect(screen.queryByRole('button', { name: /aplicar nota de credito/i })).not.toBeInTheDocument()
+    })
+
+    it('mostrarAcciones omitido (default true): SI renderiza el boton "Aplicar nota de credito"', () => {
+      render(<FacturasEmpresaTable facturas={[factura()]} isLoading={false} />)
+      expect(screen.getByRole('button', { name: /aplicar nota de credito/i })).toBeInTheDocument()
+    })
+
+    it('mostrarAcciones={true} explicito: SI renderiza el boton "Aplicar nota de credito"', () => {
+      render(<FacturasEmpresaTable facturas={[factura()]} isLoading={false} mostrarAcciones={true} />)
+      expect(screen.getByRole('button', { name: /aplicar nota de credito/i })).toBeInTheDocument()
     })
   })
 })

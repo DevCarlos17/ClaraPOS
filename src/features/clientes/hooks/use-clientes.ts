@@ -2,7 +2,7 @@ import { useQuery } from '@powersync/react'
 import { kysely } from '@/core/db/kysely/kysely'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
-import { localNow } from '@/lib/dates'
+import { localNow, VE_OFFSET } from '@/lib/dates'
 
 export interface Cliente {
   id: string
@@ -87,56 +87,68 @@ export function useMovimientosCliente(clienteId: string | undefined) {
   return { movimientos: (data ?? []) as MovimientoCuenta[], isLoading }
 }
 
+export interface RangoFechaMovimientos {
+  fechaDesde: string
+  fechaHasta: string
+}
+
 /**
- * Movimientos con filtro de fechas opcional.
- * Sin filtros: devuelve los ultimos 5.
- * Con al menos un filtro de fecha: devuelve todos en el rango (sin limite).
+ * Normaliza `movimientos_cuenta.fecha` para que SQLite `datetime()` pueda
+ * parsearla. Postgres/PowerSync guardan el timestamptz con offset UTC de 2
+ * digitos SIN dos puntos (ej: `2026-09-10 15:06:42.788+00`). SQLite NO sabe
+ * parsear el offset `+00` (espera `+00:00` o `Z`) y `datetime()` retorna
+ * NULL — y toda comparacion contra NULL es `false`, devolviendo 0 filas
+ * aunque el movimiento exista (bug real de QA: cliente con saldo pero "Sin
+ * movimientos"). Reemplazar `+00` por `Z` lo vuelve parseable. Read-side
+ * only: NO altera como se escribe `fecha` (localNow / write-sites intactos).
+ */
+const FECHA_NORMALIZADA = "replace(fecha, '+00', 'Z')"
+
+/**
+ * Constructor PURO del SQL de `useMovimientosClienteFiltrados` (Design
+ * §Root Cause). Rango de fecha SIEMPRE requerido, comparado via
+ * `datetime(replace(fecha,'+00','Z')) >= datetime(? || 'T00:00:00' || VE_OFFSET)`
+ * — mismo patron que `kardex-sql.ts`/`notas-credito-admin-filters.ts` pero
+ * normalizando el offset (ver `FECHA_NORMALIZADA`) — en vez de comparacion de
+ * string directa, para que el bound sea correcto sin importar el offset
+ * literal guardado en cada fila. NUNCA lleva `LIMIT`: el estado de cuenta
+ * renderiza TODAS las filas del rango activo (Spec: "Renders all fetched
+ * movements" — el conteo del header MUST igualar las filas renderizadas).
+ */
+export function buildMovimientosClienteFiltro(
+  empresaId: string,
+  clienteId: string,
+  rango: RangoFechaMovimientos
+): { sql: string; params: unknown[] } {
+  const sql = `SELECT * FROM movimientos_cuenta
+     WHERE empresa_id = ? AND cliente_id = ?
+       AND datetime(${FECHA_NORMALIZADA}) >= datetime(? || 'T00:00:00${VE_OFFSET}')
+       AND datetime(${FECHA_NORMALIZADA}) <= datetime(? || 'T23:59:59${VE_OFFSET}')
+     ORDER BY fecha DESC, created_at DESC, rowid DESC`
+
+  return { sql, params: [empresaId, clienteId, rango.fechaDesde, rango.fechaHasta] }
+}
+
+/**
+ * Movimientos de un cliente en un rango de fecha (siempre requerido — el
+ * llamador aplica el default de mes-actual, `startOfMonth()`/`todayStr()`).
+ * Unica fuente de verdad para el estado de cuenta: el header del conteo debe
+ * derivar de `movimientos.length` sobre este mismo array, nunca de una
+ * segunda query independiente (Design §Root Cause).
  */
 export function useMovimientosClienteFiltrados(
   clienteId: string | undefined,
-  opts: { fechaDesde?: string; fechaHasta?: string }
+  rango: RangoFechaMovimientos
 ) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
-  const { fechaDesde, fechaHasta } = opts
-  const hasFilter = !!fechaDesde || !!fechaHasta
 
-  // Build SQL and params
-  const base = 'SELECT * FROM movimientos_cuenta WHERE empresa_id = ? AND cliente_id = ?'
-  let sql = ''
-  let params: unknown[] = []
-
-  if (clienteId) {
-    sql = base
-    params = [empresaId, clienteId]
-    if (fechaDesde) {
-      sql += ' AND fecha >= ?'
-      params.push(fechaDesde)
-    }
-    if (fechaHasta) {
-      sql += ' AND fecha <= ?'
-      params.push(`${fechaHasta}T23:59:59`)
-    }
-    sql += ' ORDER BY fecha DESC, created_at DESC, rowid DESC'
-    if (!hasFilter) sql += ' LIMIT 5'
-  }
+  const { sql, params } = clienteId
+    ? buildMovimientosClienteFiltro(empresaId, clienteId, rango)
+    : { sql: '', params: [] }
 
   const { data, isLoading } = useQuery(sql, params)
   return { movimientos: (data ?? []) as MovimientoCuenta[], isLoading }
-}
-
-export function useCountMovimientosCliente(clienteId: string | undefined) {
-  const { user } = useCurrentUser()
-  const empresaId = user?.empresa_id ?? ''
-
-  const { data } = useQuery(
-    clienteId
-      ? 'SELECT COUNT(*) as total FROM movimientos_cuenta WHERE empresa_id = ? AND cliente_id = ?'
-      : '',
-    clienteId ? [empresaId, clienteId] : []
-  )
-  const total = (data?.[0] as { total: number } | undefined)?.total ?? 0
-  return { total }
 }
 
 export async function crearCliente(data: {

@@ -116,4 +116,28 @@ describe('useFacturasEmpresa (Slice B, Design §Decision 3) — hook empresa-wid
     const [sql] = mockedUseQuery.mock.calls[0]!
     expect(sql).not.toContain('saldo_pend_usd AS REAL')
   })
+
+  // ─── clienteId (cliente-detalle-pantalla, PR1 — aditivo) ────────
+
+  it('clienteId presente: se reenvia al builder, llega a la clausula/param del SQL ejecutado', () => {
+    setup()
+
+    renderHook(() =>
+      useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', clienteId: 'cli-1' })
+    )
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]!
+    expect(sql).toContain('AND v.cliente_id = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'cli-1'])
+  })
+
+  it('clienteId ausente: no agrega la clausula, comportamiento identico al actual', () => {
+    setup()
+
+    renderHook(() => useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21' }))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]!
+    expect(sql).not.toContain('AND v.cliente_id = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
 })
