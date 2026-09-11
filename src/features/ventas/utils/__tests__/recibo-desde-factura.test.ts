@@ -455,4 +455,25 @@ describe('useReciboDesdeFactura', () => {
       saldoAFavorGeneradoBs: 80,
     })
   })
+
+  it('con multiples filas SAFC, suma los montos USD y usa la tasa de la fila mas reciente para Bs (edge case multi-SAFC)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        saldoAFavor: [
+          baseEvolucionRow({ tipo: 'SAFC', monto: '2.00', tasa_pago: '40.0000', fecha: '2026-08-17' }),
+          baseEvolucionRow({ tipo: 'SAFC', monto: '3.00', tasa_pago: '50.0000', fecha: '2026-08-18' }),
+        ],
+      })
+    )
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    // Suma USD: 2 + 3 = 5. Bs con la tasa mas reciente (50): 5 * 50 = 250.
+    expect(result.current.recibo?.evolucion?.saldoAFavorGeneradoUsd).toBe(5)
+    expect(result.current.recibo?.evolucion?.saldoAFavorGeneradoBs).toBe(250)
+  })
 })
