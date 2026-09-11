@@ -2,9 +2,20 @@
 
 ## Purpose
 
-Reimprimir, desde Gestión de Clientes → detalle de cliente
-(`FacturasEmpresaTable`), cualquier factura histórica en formato térmico
-58mm, marcada "REIMPRESION". Superficie única v1, solo lectura.
+Consultar y reimprimir, desde Gestión de Clientes → detalle de cliente
+(`FacturasEmpresaTable`), el estado completo de cualquier factura histórica:
+detalle fiscal, métodos de pago, y evolución post-emisión (reversos, abonos,
+reversos de abono, saldo a favor generado). El modal (`ConsultaFacturaModal`,
+antes `ReimprimirFacturaModal`) conserva la reimpresión en formato térmico
+58mm marcada "REIMPRESION" como una de sus acciones. Superficie única, solo
+lectura.
+
+> **Nota de historial**: superficie renombrada de "Reimprimir Factura" a
+> "Consulta de Factura" en `consulta-factura-evolucion` (2026-09-11), que
+> también un-hide "Métodos de pago" y agrega la sección de evolución
+> post-emisión descrita abajo (reemplaza el bloque anterior de notas de
+> crédito solo-cantidad). El propósito de reimpresión original se mantiene
+> intacto.
 
 ## Requirements
 
@@ -110,8 +121,45 @@ alterar el comportamiento observable de `nota-credito-pos-modal.tsx` ni
 - WHEN corren contra el código post-extracción
 - THEN pasan sin haber sido modificadas
 
+### Requirement: Métodos de pago visibles en el detalle
+
+El sistema MUST mostrar el desglose de "Métodos de pago" en el panel de
+detalle (`FacturaDetallePanel`), con los mismos montos USD/Bs que ya se
+muestran en PDF y texto/PNG. Este bloque estaba oculto en el panel aunque ya
+se calculaba (`recibo.pagos` siempre poblado).
+
+#### Scenario: Panel muestra métodos de pago con los mismos montos que el PDF
+
+- GIVEN una factura con pagos por más de un método de cobro
+- WHEN se abre el modal de consulta
+- THEN el panel muestra "Métodos de pago" con los mismos montos USD/Bs que
+  el PDF y el texto/PNG
+
+### Requirement: Evolución post-emisión en el detalle
+
+El sistema MUST mostrar, cuando exista, la evolución post-emisión de la
+factura (reversos con monto real, abonos posteriores, reversos de abono,
+saldo a favor generado), reemplazando el bloque anterior de notas de crédito
+solo-cantidad. Evolución vacía MUST NOT renderizar ninguna sección nueva.
+
+#### Scenario: Evolución poblada muestra las 4 variantes
+
+- GIVEN una factura con un reverso, un abono posterior, un reverso de abono
+  y saldo a favor generado
+- WHEN se abre el modal de consulta
+- THEN el panel muestra las 4 líneas correspondientes con sus montos USD/Bs
+
+#### Scenario: Evolución vacía no agrega ninguna sección
+
+- GIVEN una factura sin reversos/abonos/reversos-de-pago/SAF posteriores
+- WHEN se abre el modal de consulta
+- THEN no se renderiza ninguna sección de evolución (salida idéntica a antes
+  del cambio)
+
 ## Out of Scope (v1)
 
 - Reimpresión en `nota-credito-pos-modal.tsx` (FROZEN).
 - `ventas-consultas-modal.tsx`: su PDF ad-hoc no térmico.
 - Cualquier botón de acción por fila.
+- Corregir la causa raíz del "capped pagos" SAF-FIFO en `use-ventas.ts`
+  (caveat aceptado, documentado en `factura-detalle-panel.tsx`).
