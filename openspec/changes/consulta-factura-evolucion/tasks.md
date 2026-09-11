@@ -46,8 +46,8 @@ Chain strategy: feature-branch-chain
 
 ## PR3 — New `useEvolucionFactura` hook (~120-160 ln)
 
-- [ ] 3.1 `use-cxc.ts`: add `EvolucionFacturaRow` interface (`tipo: 'PAG'|'REV'|'SAFC'`, `monto`, `tasa_pago`, `fecha`, `referencia`, `observacion`) and `useEvolucionFactura(ventaId, empresaId)` — single `useQuery` on `movimientos_cuenta WHERE venta_id=? AND empresa_id=? AND tipo IN ('PAG','REV','SAFC') ORDER BY fecha ASC`, returns pre-grouped `{ abonos, reversosPago, saldoAFavor, isLoading }` via 3 in-memory `.filter()` by `tipo`. PURE READ, empresa_id-scoped (rule #11) — do not reuse `useAfectacionCxc`.
-- [ ] 3.2 TDD: RED — new describe block in `use-cxc.test.ts` mirroring `useAfectacionCxc` tests: asserts WHERE includes `empresa_id`, `tipo IN (...)` filter, and rows group correctly into `abonos`/`reversosPago`/`saldoAFavor` by `tipo` (fails, hook doesn't exist). GREEN — task 3.1 makes it pass.
+- [x] 3.1 `use-cxc.ts`: add `EvolucionFacturaRow` interface (`tipo: 'PAG'|'REV'|'SAFC'`, `monto`, `tasa_pago`, `fecha`, `referencia`, `observacion`) and `useEvolucionFactura(ventaId, empresaId)` — single `useQuery` on `movimientos_cuenta WHERE venta_id=? AND empresa_id=? AND tipo IN ('PAG','REV','SAFC') ORDER BY fecha ASC`, returns pre-grouped `{ abonos, reversosPago, saldoAFavor, isLoading }` via 3 in-memory `.filter()` by `tipo`. PURE READ, empresa_id-scoped (rule #11) — do not reuse `useAfectacionCxc`.
+- [x] 3.2 TDD: RED — new describe block in `use-cxc.test.ts` mirroring `useAfectacionCxc` tests: asserts WHERE includes `empresa_id`, `tipo IN (...)` filter, and rows group correctly into `abonos`/`reversosPago`/`saldoAFavor` by `tipo` (fails, hook doesn't exist). GREEN — task 3.1 makes it pass.
 
 ## PR4 — `ReciboData.evolucion` type + composition (~150-200 ln)
 

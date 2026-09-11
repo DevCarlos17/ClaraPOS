@@ -271,6 +271,44 @@ export function useAfectacionCxc(ventaId: string | null, empresaId: string) {
   return { cantidadMovimientos: row?.n ?? 0, isLoading }
 }
 
+export interface EvolucionFacturaRow {
+  tipo: 'PAG' | 'REV' | 'SAFC'
+  monto: string            // USD (movimientos_cuenta.monto es siempre USD)
+  tasa_pago: string | null
+  fecha: string
+  referencia: string
+  observacion: string
+}
+
+/**
+ * Evolucion de flujo de dinero post-emision de una factura (Design
+ * §Decision "useEvolucionFactura return shape",
+ * openspec/changes/consulta-factura-evolucion): una sola query sobre
+ * `movimientos_cuenta` filtrada por tipo IN ('PAG','REV','SAFC'), pre-agrupada
+ * en memoria por `tipo`. `empresa_id` es OBLIGATORIO en el WHERE (rule #11) —
+ * a diferencia del gap preexistente en useDetalleFactura/usePagosFactura,
+ * este es codigo NUEVO y no debe repetirlo. PURE READ, no reusa
+ * useAfectacionCxc (que solo cuenta filas, no las tipa/agrupa).
+ */
+export function useEvolucionFactura(ventaId: string | null, empresaId: string) {
+  const { data, isLoading } = useQuery(
+    ventaId && empresaId
+      ? `SELECT tipo, monto, tasa_pago, fecha, referencia, observacion
+         FROM movimientos_cuenta
+         WHERE venta_id = ? AND empresa_id = ? AND tipo IN ('PAG','REV','SAFC')
+         ORDER BY fecha ASC`
+      : '',
+    ventaId && empresaId ? [ventaId, empresaId] : []
+  )
+  const rows = (data ?? []) as EvolucionFacturaRow[]
+  return {
+    abonos: rows.filter((r) => r.tipo === 'PAG'),
+    reversosPago: rows.filter((r) => r.tipo === 'REV'),
+    saldoAFavor: rows.filter((r) => r.tipo === 'SAFC'),
+    isLoading,
+  }
+}
+
 interface VentaFechaRow {
   fecha: string
 }
