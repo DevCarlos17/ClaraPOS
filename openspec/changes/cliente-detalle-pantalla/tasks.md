@@ -42,7 +42,7 @@ Chain strategy: feature-branch-chain
 
 ## PR3 — Tabla rica de facturas
 
-- [ ] T3-1 RED: `facturas-empresa-tab.test.tsx` — `<FacturasEmpresaTable mostrarAcciones={false} .../>` NO renderiza columna/botón "Aplicar nota de credito"; omitido/`true` sí. Falla (prop no existe).
-- [ ] T3-2 GREEN: `facturas-empresa-tab.tsx` — `mostrarAcciones?: boolean` (default `true`) en `FacturasEmpresaTableProps`; columna `acciones` condicional a `!== false`. T3-1 pasa; tests existentes intactos.
-- [ ] T3-3 RED: `cliente-detalle.test.tsx` — mockea `useFacturasEmpresa` con `FacturaParaAnular[]` fijas; sección "Facturas" con badges CONTADO/CREDITO/ABONADA+reverso, vacío sin facturas, sin botón NC (`mostrarAcciones={false}`). Falla (sección no existe).
-- [ ] T3-4 GREEN: `cliente-detalle.tsx` — sección "Facturas" con `useFacturasEmpresa({ clienteId: cliente.id })` → `<FacturasEmpresaTable ... mostrarAcciones={false} />`. T3-3 pasa; `empresa_id` sigue forzado vía el hook.
+- [x] T3-1 RED: `facturas-empresa-tab.test.tsx` — `<FacturasEmpresaTable mostrarAcciones={false} .../>` NO renderiza columna/botón "Aplicar nota de credito"; omitido/`true` sí. Falla (prop no existe).
+- [x] T3-2 GREEN: `facturas-empresa-tab.tsx` — `mostrarAcciones?: boolean` (default `true`) en `FacturasEmpresaTableProps`; columna `acciones` condicional a `!== false`. T3-1 pasa; tests existentes intactos.
+- [x] T3-3 RED: `cliente-detalle.test.tsx` — mockea `useFacturasEmpresa` con `FacturaParaAnular[]` fijas; sección "Facturas" con badges CONTADO/CREDITO/ABONADA+reverso, vacío sin facturas, sin botón NC (`mostrarAcciones={false}`). Falla (sección no existe).
+- [x] T3-4 GREEN: `cliente-detalle.tsx` — sección "Facturas" con `useFacturasEmpresa({ clienteId: cliente.id })` → `<FacturasEmpresaTable ... mostrarAcciones={false} />`. T3-3 pasa; `empresa_id` sigue forzado vía el hook.
