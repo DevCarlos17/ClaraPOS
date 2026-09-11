@@ -31,16 +31,16 @@ Chain strategy: feature-branch-chain
 
 **File**: `src/features/ventas/utils/factura-export.ts`, tests in `src/features/ventas/utils/__tests__/factura-export.test.ts`
 
-- [ ] T1-01 (RED) Add test: `buildReciboData` without `esReimpresion` produces `ReciboData.esReimpresion === false` and output byte-identical to pre-change fixture.
-- [ ] T1-02 (GREEN) Add `esReimpresion?: boolean` to `BuildReciboDataInput` and `ReciboData`; `buildReciboData` sets `esReimpresion: input.esReimpresion ?? false`. Acceptance: T1-01 passes.
-- [ ] T1-03 (RED) Add test: `centrarTexto('REIMPRESION', 32)` returns a string of length 32 with the text space-padded and centered (both-side padding, monospace convention).
-- [ ] T1-04 (GREEN) Implement pure `centrarTexto(texto: string, ancho: number): string` helper. Acceptance: T1-03 passes.
-- [ ] T1-05 (RED) Add test: `construirLineasRecibo` with `esReimpresion: true` includes a centered "REIMPRESION" line between the client-data spacer and the `'Articulos'` line; with `esReimpresion: false`/omitted, no such line exists.
-- [ ] T1-06 (GREEN) Inject `centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS)` in `construirLineasRecibo` (text/PNG path) between the post-client-data spacer (L440) and `'Articulos'` (L441), gated by `esReimpresion`. Acceptance: T1-05 passes.
-- [ ] T1-07 (RED) Add test: `buildReciboPdfBlob` with `esReimpresion: true` renders "REIMPRESION" centered (`align: 'center'`) between the info block and the `'Articulos'` label; absent when false/omitted.
-- [ ] T1-08 (GREEN) Inject the centered marker in `buildReciboPdfBlob` between the info block (L561) and `'Articulos'` label (L563) using native `{ align: 'center' }`, gated by `esReimpresion`. Acceptance: T1-07 passes.
-- [ ] T1-09 (RED) Add test: `buildReciboTextoPlano` with `esReimpresion: true` reflects the marker if it composes from the same lines path; if `buildReciboTextoPlano` does not derive from `construirLineasRecibo`, assert current (unchanged) behavior explicitly instead.
-- [ ] T1-10 (GREEN) If `buildReciboTextoPlano` shares the lines pipeline, no extra code needed — confirm T1-09 passes as-is; otherwise wire the same `esReimpresion` gate into its own line construction. Acceptance: T1-09 passes; note in PR description which branch applied.
+- [x] T1-01 (RED) Add test: `buildReciboData` without `esReimpresion` produces `ReciboData.esReimpresion === false` and output byte-identical to pre-change fixture.
+- [x] T1-02 (GREEN) Add `esReimpresion?: boolean` to `BuildReciboDataInput` and `ReciboData`; `buildReciboData` sets `esReimpresion: input.esReimpresion ?? false`. Acceptance: T1-01 passes.
+- [x] T1-03 (RED) Add test: `centrarTexto('REIMPRESION', 32)` returns a string of length 32 with the text space-padded and centered (both-side padding, monospace convention).
+- [x] T1-04 (GREEN) Implement pure `centrarTexto(texto: string, ancho: number): string` helper. Acceptance: T1-03 passes.
+- [x] T1-05 (RED) Add test: `construirLineasRecibo` with `esReimpresion: true` includes a centered "REIMPRESION" line between the client-data spacer and the `'Articulos'` line; with `esReimpresion: false`/omitted, no such line exists.
+- [x] T1-06 (GREEN) Inject `centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS)` in `construirLineasRecibo` (text/PNG path) between the post-client-data spacer (L440) and `'Articulos'` (L441), gated by `esReimpresion`. Acceptance: T1-05 passes.
+- [x] T1-07 (RED) Add test: `buildReciboPdfBlob` with `esReimpresion: true` renders "REIMPRESION" centered (`align: 'center'`) between the info block and the `'Articulos'` label; absent when false/omitted.
+- [x] T1-08 (GREEN) Inject the centered marker in `buildReciboPdfBlob` between the info block (L561) and `'Articulos'` label (L563) using native `{ align: 'center' }`, gated by `esReimpresion`. Acceptance: T1-07 passes.
+- [x] T1-09 (RED) Add test: `buildReciboTextoPlano` with `esReimpresion: true` reflects the marker if it composes from the same lines path; if `buildReciboTextoPlano` does not derive from `construirLineasRecibo`, assert current (unchanged) behavior explicitly instead.
+- [x] T1-10 (GREEN) If `buildReciboTextoPlano` shares the lines pipeline, no extra code needed — confirm T1-09 passes as-is; otherwise wire the same `esReimpresion` gate into its own line construction. Acceptance: T1-09 passes; note in PR description which branch applied.
 
 ---
 
