@@ -151,6 +151,27 @@ describe('buildFacturasEmpresaFiltro (empresa_id + rango de fecha siempre presen
     expect(params[0]).toBe('emp-1')
   })
 
+  // ─── clienteId (cliente-detalle-pantalla, PR1 — aditivo) ────────
+
+  it('clienteId presente: agrega AND v.cliente_id = ? tras el rango de fecha, param en esa posicion', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, clienteId: 'cli-1' })
+    expect(sql).toContain('AND v.cliente_id = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'cli-1'])
+  })
+
+  it('clienteId ausente: SQL y params identicos al comportamiento actual (sin AND v.cliente_id = ?)', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro(base)
+    expect(sql).not.toContain('AND v.cliente_id = ?')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+  })
+
+  it('clienteId combinado con busqueda: ambas clausulas presentes, params en orden [empresaId, fechaDesde, fechaHasta, clienteId, ...busquedaParams]', () => {
+    const { sql, params } = buildFacturasEmpresaFiltro({ ...base, clienteId: 'cli-1', busqueda: 'Maria' })
+    expect(sql).toContain('AND v.cliente_id = ?')
+    expect(sql).toContain('AND (v.nro_factura LIKE ? OR c.nombre LIKE ? OR c.identificacion LIKE ?)')
+    expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'cli-1', '%Maria%', '%Maria%', '%Maria%'])
+  })
+
   it('el campo `estado` YA NO existe en FiltroFacturasEmpresa (folded en busqueda, tester QA feedback Slice E.b)', () => {
     // @ts-expect-error — `estado` fue retirado del contrato publico del builder
     const built = buildFacturasEmpresaFiltro({ ...base, estado: 'CONTADO' })

@@ -129,6 +129,14 @@ export interface FiltroFacturasEmpresa {
    * `<select>` de Estado de E.3 se retiro por completo de esta pestaña.
    */
   busqueda?: string
+  /**
+   * Filtro por cliente (cliente-detalle-pantalla, PR1 — puramente aditivo).
+   * Cuando esta presente, agrega `AND v.cliente_id = ?` al `WHERE`, despues
+   * del rango de fecha y antes de la clausula de `busqueda`. Cuando es
+   * `undefined` (todos los llamadores actuales de `FacturasEmpresaTab`), el
+   * SQL y los `params` son identicos byte-a-byte al comportamiento previo.
+   */
+  clienteId?: string
 }
 
 /**
@@ -154,6 +162,11 @@ export function buildFacturasEmpresaFiltro(f: FiltroFacturasEmpresa): SqlFiltroR
      WHERE v.empresa_id = ?
        AND datetime(v.fecha) >= datetime(? || 'T00:00:00${VE_OFFSET}')
        AND datetime(v.fecha) <= datetime(? || 'T23:59:59${VE_OFFSET}')`
+
+  if (f.clienteId) {
+    sql += `\n       AND v.cliente_id = ?`
+    params.push(f.clienteId)
+  }
 
   const busqueda = f.busqueda?.trim()
   if (busqueda) {
