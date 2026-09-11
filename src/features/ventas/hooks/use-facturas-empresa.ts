@@ -24,6 +24,12 @@ export interface FiltroFacturasEmpresaHook {
   fechaDesde?: string
   fechaHasta?: string
   busqueda?: string
+  /**
+   * Filtro por cliente (cliente-detalle-pantalla, PR1 — aditivo). Pasado tal
+   * cual a `buildFacturasEmpresaFiltro`; cuando es `undefined` el
+   * comportamiento no cambia.
+   */
+  clienteId?: string
 }
 
 /**
@@ -47,6 +53,7 @@ export function useFacturasEmpresa(filtros?: FiltroFacturasEmpresaHook) {
     fechaDesde,
     fechaHasta,
     busqueda: filtros?.busqueda,
+    clienteId: filtros?.clienteId,
   })
 
   const { data, isLoading } = useQuery(sql, params)

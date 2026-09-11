@@ -1,16 +1,23 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { ClienteDetalle } from '../cliente-detalle'
-import { useMovimientosClienteFiltrados } from '@/features/clientes/hooks/use-clientes'
+import {
+  useMovimientosClienteFiltrados,
+  type Cliente,
+  type MovimientoCuenta,
+} from '@/features/clientes/hooks/use-clientes'
 import { usePagosCliente } from '@/features/cxc/hooks/use-cxc'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { usePermissions } from '@/core/hooks/use-permissions'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
 import { useQuery } from '@powersync/react'
 import * as currency from '@/lib/currency'
-import type { Cliente, MovimientoCuenta } from '@/features/clientes/hooks/use-clientes'
 
 // `ClienteDetalle` es el componente bajo prueba (Design §Root Cause): header
-// y tabla deben derivar del MISMO array `movimientos` — se mockean sus 5
+// y tabla deben derivar del MISMO array `movimientos`; ademas renderiza la
+// seccion Facturas (PR3) via useFacturasEmpresa. Se mockean todas las
 // dependencias de datos directamente, mismo patron que `kardex-list.test.tsx`.
+vi.mock('@powersync/react', () => ({ useQuery: vi.fn(), usePowerSync: vi.fn(() => ({})) }))
 vi.mock('@/features/clientes/hooks/use-clientes', () => ({
   useMovimientosClienteFiltrados: vi.fn(),
 }))
@@ -19,13 +26,29 @@ vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   registrarReversoAbono: vi.fn(),
 }))
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
+vi.mock('@/core/hooks/use-permissions', () => ({
+  usePermissions: vi.fn(),
+  PERMISSIONS: { CXC_REVERSE: 'cxc.reversar_abono' },
+}))
 vi.mock('@/features/configuracion/hooks/use-tasas', () => ({ useTasaActual: vi.fn() }))
-vi.mock('@powersync/react', () => ({ useQuery: vi.fn(), usePowerSync: vi.fn(() => ({})) }))
+vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
+  SupervisorPinDialog: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="mock-pin-dialog" /> : null,
+}))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('@/features/ventas/hooks/use-facturas-empresa', () => ({ useFacturasEmpresa: vi.fn() }))
+vi.mock('@/features/ventas/components/facturas-empresa-tab', () => ({
+  FacturasEmpresaTable: ({ mostrarAcciones }: { mostrarAcciones?: boolean }) => (
+    <div data-testid="facturas-table" data-mostrar-acciones={String(mostrarAcciones)} />
+  ),
+}))
 
 const mockedUseMovimientosClienteFiltrados = vi.mocked(useMovimientosClienteFiltrados)
 const mockedUsePagosCliente = vi.mocked(usePagosCliente)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
+const mockedUsePermissions = vi.mocked(usePermissions)
 const mockedUseTasaActual = vi.mocked(useTasaActual)
+const mockedUseFacturasEmpresa = vi.mocked(useFacturasEmpresa)
 const mockedUseQuery = vi.mocked(useQuery)
 
 function cliente(overrides: Partial<Cliente> = {}): Cliente {
@@ -65,10 +88,25 @@ function movimiento(overrides: Partial<MovimientoCuenta> = {}): MovimientoCuenta
   }
 }
 
+const CLIENTE: Cliente = {
+  id: 'cli-1',
+  identificacion: 'V-12345678',
+  nombre: 'MARIA PEREZ',
+  direccion: null,
+  telefono: null,
+  limite_credito_usd: '500.00',
+  saldo_actual: '120.50',
+  is_active: 1,
+  created_at: '2026-01-01',
+  updated_at: '2026-01-01',
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   vi.setSystemTime(new Date('2026-05-21T12:00:00-04:00'))
 
+  mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos: [], isLoading: false } as never)
+  mockedUsePagosCliente.mockReturnValue({ pagos: [], isLoading: false } as never)
   mockedUseCurrentUser.mockReturnValue({
     user: {
       id: 'user-1',
@@ -81,14 +119,23 @@ beforeEach(() => {
     },
     loading: false,
   })
+  mockedUsePermissions.mockReturnValue({
+    hasPermission: () => false,
+    hasAnyPermission: () => false,
+    hasAllPermissions: () => false,
+    isOwner: false,
+    rolId: '',
+    rolNombre: '',
+    loading: false,
+  } as never)
   mockedUseTasaActual.mockReturnValue({
     tasa: undefined,
     tasaValor: 40,
     isLoading: false,
     isFromCache: false,
   } as never)
-  mockedUsePagosCliente.mockReturnValue({ pagos: [], isLoading: false } as never)
   mockedUseQuery.mockReturnValue({ data: [{ saldo_actual: '150.00000000' }], isLoading: false } as never)
+  mockedUseFacturasEmpresa.mockReturnValue({ facturas: [], isLoading: false })
 })
 
 afterEach(() => {
@@ -99,7 +146,7 @@ describe('ClienteDetalle — paridad header/body (Design §Root Cause: una sola 
   it('con 0 movimientos: header y body concuerdan en 0 (Spec: "Header count matches rendered rows") y aparece "Sin movimientos"', () => {
     mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos: [], isLoading: false } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente()} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente()} />)
 
     expect(screen.getByText('Sin movimientos')).toBeInTheDocument()
     expect(screen.getByText('0 movimiento(s) en el periodo')).toBeInTheDocument()
@@ -111,7 +158,7 @@ describe('ClienteDetalle — paridad header/body (Design §Root Cause: una sola 
       isLoading: false,
     } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente()} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente()} />)
 
     expect(screen.getByText('1 movimiento(s) en el periodo')).toBeInTheDocument()
     expect(screen.getByText('FAC-000001')).toBeInTheDocument()
@@ -124,7 +171,7 @@ describe('ClienteDetalle — paridad header/body (Design §Root Cause: una sola 
     )
     mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos, isLoading: false } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente()} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente()} />)
 
     expect(screen.getByText('5 movimiento(s) en el periodo')).toBeInTheDocument()
     movimientos.forEach((m) => {
@@ -135,7 +182,7 @@ describe('ClienteDetalle — paridad header/body (Design §Root Cause: una sola 
   it('al montar, pasa el rango del mes actual {fechaDesde: startOfMonth(), fechaHasta: todayStr()} al hook (Spec: "Default and custom date ranges")', () => {
     mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos: [], isLoading: false } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente()} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente()} />)
 
     expect(mockedUseMovimientosClienteFiltrados).toHaveBeenCalledWith(
       'cli-1',
@@ -149,7 +196,7 @@ describe('ClienteDetalle — paridad header/body (Design §Root Cause: una sola 
       isLoading: false,
     } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente()} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente()} />)
 
     expect(screen.getByText('Saldo Anterior')).toBeInTheDocument()
   })
@@ -159,7 +206,7 @@ describe('ClienteDetalle — saldo query tenant-scoped (Spec: "Saldo query is te
   it('la query de saldo_actual filtra WHERE id = ? AND empresa_id = ?, con user.empresa_id como param', () => {
     mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos: [], isLoading: false } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente({ id: 'cli-1' })} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente({ id: 'cli-1' })} />)
 
     const saldoCall = mockedUseQuery.mock.calls.find(
       (call) => typeof call[0] === 'string' && call[0].includes('saldo_actual')
@@ -177,7 +224,7 @@ describe('ClienteDetalle — precision de saldo, sin parseFloat (Spec: "Balance 
     mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos: [], isLoading: false } as never)
     mockedUseQuery.mockReturnValue({ data: [{ saldo_actual: '150.00000000' }], isLoading: false } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente({ saldo_actual: '150.00000000' })} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente({ saldo_actual: '150.00000000' })} />)
 
     const saldoUsdCalls = formatUsdSpy.mock.calls.filter((call) => call[0] === '150.00000000')
     expect(saldoUsdCalls.length).toBeGreaterThan(0)
@@ -192,7 +239,7 @@ describe('ClienteDetalle — precision de saldo, sin parseFloat (Spec: "Balance 
     mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos: [], isLoading: false } as never)
     mockedUseQuery.mockReturnValue({ data: [{ saldo_actual: '-30.00000000' }], isLoading: false } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente({ saldo_actual: '-30.00000000' })} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente({ saldo_actual: '-30.00000000' })} />)
 
     const saldoEl = screen.getByText('-$30.00')
     expect(saldoEl).toHaveClass('text-green-600')
@@ -202,11 +249,108 @@ describe('ClienteDetalle — precision de saldo, sin parseFloat (Spec: "Balance 
     mockedUseMovimientosClienteFiltrados.mockReturnValue({ movimientos: [], isLoading: false } as never)
     mockedUseQuery.mockReturnValue({ data: [{ saldo_actual: '0.00000000' }], isLoading: false } as never)
 
-    render(<ClienteDetalle onClose={vi.fn()} cliente={cliente({ saldo_actual: '0.00000000' })} />)
+    render(<ClienteDetalle onVolver={vi.fn()} cliente={cliente({ saldo_actual: '0.00000000' })} />)
 
     const saldoEl = screen.getByText('$0.00')
     expect(saldoEl).toHaveClass('text-muted-foreground')
     expect(saldoEl).not.toHaveClass('text-red-600')
     expect(saldoEl).not.toHaveClass('text-green-600')
+  })
+})
+
+describe('ClienteDetalle — pantalla dedicada (onClose renombrado a onVolver)', () => {
+  it('Scenario: boton "Volver" invoca onVolver', () => {
+    const onVolver = vi.fn()
+    render(<ClienteDetalle cliente={CLIENTE} onVolver={onVolver} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /volver/i }))
+
+    expect(onVolver).toHaveBeenCalledTimes(1)
+  })
+
+  it('Scenario: saldo con estilo segun estado real — el nombre y el saldo del cliente se muestran', () => {
+    mockedUseQuery.mockReturnValue({ data: [{ saldo_actual: CLIENTE.saldo_actual }], isLoading: false } as never)
+
+    render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
+
+    expect(screen.getByText('MARIA PEREZ')).toBeInTheDocument()
+    expect(screen.getByText('$120.50')).toBeInTheDocument()
+  })
+})
+
+describe('ClienteDetalle — seccion Facturas (cliente-detalle-pantalla, PR3)', () => {
+  it('Scenario: con facturas devueltas por useFacturasEmpresa, renderiza la tabla con mostrarAcciones=false', () => {
+    mockedUseFacturasEmpresa.mockReturnValue({
+      facturas: [
+        {
+          id: 'venta-1',
+          nro_factura: 'C01-000001',
+          cliente_id: 'cli-1',
+          cliente_nombre: 'MARIA PEREZ',
+          cliente_identificacion: 'V-12345678',
+          tasa: '36.50',
+          total_usd: '100.00',
+          total_bs: '3650.00',
+          saldo_pend_usd: '0.00',
+          tipo: 'CONTADO',
+          fecha: '2026-05-10T10:00:00-04:00',
+          tiene_reverso_total: 0,
+          tiene_reverso_parcial: 0,
+        },
+      ],
+      isLoading: false,
+    } as never)
+
+    render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
+
+    expect(screen.getByText(/facturas/i)).toBeInTheDocument()
+    const tabla = screen.getByTestId('facturas-table')
+    expect(tabla).toBeInTheDocument()
+    expect(tabla).toHaveAttribute('data-mostrar-acciones', 'false')
+  })
+
+  it('Scenario: sin facturas, muestra estado vacio ("Sin facturas")', () => {
+    mockedUseFacturasEmpresa.mockReturnValue({ facturas: [], isLoading: false })
+
+    render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
+
+    expect(screen.getByText(/sin facturas/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('facturas-table')).not.toBeInTheDocument()
+  })
+
+  it('Scenario: mientras isLoading, muestra estado de carga en vez de la tabla', () => {
+    mockedUseFacturasEmpresa.mockReturnValue({ facturas: [], isLoading: true })
+
+    render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
+
+    expect(screen.queryByTestId('facturas-table')).not.toBeInTheDocument()
+    expect(screen.queryByText(/sin facturas/i)).not.toBeInTheDocument()
+  })
+
+  it('Scenario: la seccion nunca expone la accion "Aplicar nota de credito" (mostrarAcciones=false)', () => {
+    mockedUseFacturasEmpresa.mockReturnValue({
+      facturas: [
+        {
+          id: 'venta-1',
+          nro_factura: 'C01-000001',
+          cliente_id: 'cli-1',
+          cliente_nombre: 'MARIA PEREZ',
+          cliente_identificacion: 'V-12345678',
+          tasa: '36.50',
+          total_usd: '100.00',
+          total_bs: '3650.00',
+          saldo_pend_usd: '0.00',
+          tipo: 'CONTADO',
+          fecha: '2026-05-10T10:00:00-04:00',
+          tiene_reverso_total: 0,
+          tiene_reverso_parcial: 0,
+        },
+      ],
+      isLoading: false,
+    } as never)
+
+    render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: /aplicar nota de credito/i })).not.toBeInTheDocument()
   })
 })

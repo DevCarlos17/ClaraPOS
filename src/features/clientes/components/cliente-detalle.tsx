@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useQuery } from '@powersync/react'
-import { X, Phone, MapPin, CreditCard, ArrowCounterClockwise, Printer, Calendar } from '@phosphor-icons/react'
+import { ArrowLeft, Phone, MapPin, CreditCard, ArrowCounterClockwise, Printer, Calendar } from '@phosphor-icons/react'
 import { toast } from 'sonner'
 import {
   useMovimientosClienteFiltrados,
@@ -11,6 +11,8 @@ import { saldoEstado, SALDO_TEXT_CLASS, type SaldoEstado } from '@/features/clie
 import { usePagosCliente, registrarReversoAbono, type PagoClienteCxc } from '@/features/cxc/hooks/use-cxc'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
+import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
+import { FacturasEmpresaTable } from '@/features/ventas/components/facturas-empresa-tab'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { usePermissions, PERMISSIONS } from '@/core/hooks/use-permissions'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -18,7 +20,7 @@ import { formatDate, formatDateTime } from '@/lib/format'
 import { localNow, startOfMonth, todayStr } from '@/lib/dates'
 
 interface ClienteDetalleProps {
-  onClose: () => void
+  onVolver: () => void
   cliente: Cliente
 }
 
@@ -273,7 +275,7 @@ function ReversarAbonoDialog({ isOpen, pago, onClose, onConfirm, loading }: Reve
 // ClienteDetalle
 // =============================================
 
-export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
+export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
   const { tasaValor } = useTasaActual()
   const { user } = useCurrentUser()
   const { hasPermission } = usePermissions()
@@ -291,6 +293,7 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
     { fechaDesde, fechaHasta }
   )
   const { pagos } = usePagosCliente(cliente.id)
+  const { facturas, isLoading: isLoadingFacturas } = useFacturasEmpresa({ clienteId: cliente.id })
 
   const { data: saldoData } = useQuery(
     'SELECT saldo_actual FROM clientes WHERE id = ? AND empresa_id = ?',
@@ -386,11 +389,19 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
 
   return (
     <>
-      <div className="rounded-2xl bg-card shadow-lg overflow-hidden lg:sticky lg:top-6">
+      <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
         <div className="p-5 overflow-y-auto max-h-[calc(100vh-8rem)]">
           {/* Header */}
           <div className="flex items-start justify-between mb-5">
             <div>
+              <button
+                type="button"
+                onClick={onVolver}
+                className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-2 cursor-pointer"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Volver
+              </button>
               <div className="flex items-center gap-2">
                 <span className="font-mono text-sm text-muted-foreground">{cliente.identificacion}</span>
                 {cliente.is_active === 1 ? (
@@ -405,9 +416,6 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
               </div>
               <h2 className="text-xl font-semibold mt-1">{cliente.nombre}</h2>
             </div>
-            <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
-              <X className="h-5 w-5 text-muted-foreground" />
-            </button>
           </div>
 
           {/* Info + Saldo */}
@@ -608,6 +616,24 @@ export function ClienteDetalle({ onClose, cliente }: ClienteDetalleProps) {
                   </tbody>
                 </table>
               </div>
+            )}
+          </div>
+
+          {/* Facturas */}
+          <div>
+            <h3 className="text-sm font-semibold mb-2">Facturas</h3>
+            {isLoadingFacturas ? (
+              <div className="space-y-2">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                ))}
+              </div>
+            ) : facturas.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground border border-dashed rounded-lg">
+                <p className="text-sm font-medium">Sin facturas</p>
+              </div>
+            ) : (
+              <FacturasEmpresaTable facturas={facturas} isLoading={isLoadingFacturas} mostrarAcciones={false} />
             )}
           </div>
         </div>
