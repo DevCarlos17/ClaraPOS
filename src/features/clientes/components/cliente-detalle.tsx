@@ -3,6 +3,7 @@ import { ArrowLeft, Phone, MapPin, Calendar } from '@phosphor-icons/react'
 import { type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
 import { FacturasEmpresaTable } from '@/features/ventas/components/facturas-empresa-tab'
+import type { FacturaParaAnular } from '@/features/ventas/hooks/use-notas-credito'
 import { startOfMonth, todayStr } from '@/lib/dates'
 
 interface ClienteDetalleProps {
@@ -17,6 +18,11 @@ interface ClienteDetalleProps {
 export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
   const [fechaDesde, setFechaDesde] = useState(startOfMonth)
   const [fechaHasta, setFechaHasta] = useState(todayStr)
+  // PR3a (reimpresion-factura-fiscal): sostiene la factura elegida por
+  // click de fila. PR3b monta `ReimprimirFacturaModal` consumiendola; hasta
+  // entonces no hay modal — el placeholder de abajo solo la mantiene
+  // type-safe/observable en tests.
+  const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
 
   useEffect(() => {
     setFechaDesde(startOfMonth())
@@ -135,11 +141,24 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
                 <p className="text-sm font-medium">Sin facturas</p>
               </div>
             ) : (
-              <FacturasEmpresaTable facturas={facturas} isLoading={isLoadingFacturas} mostrarAcciones={false} />
+              <FacturasEmpresaTable
+                facturas={facturas}
+                isLoading={isLoadingFacturas}
+                mostrarAcciones={false}
+                onRowClick={setFacturaSeleccionada}
+              />
             )}
           </div>
         </div>
       </div>
+      {/* PR3b: <ReimprimirFacturaModal venta={facturaSeleccionada} isOpen={!!facturaSeleccionada} onClose={() => setFacturaSeleccionada(null)} /> */}
+      {facturaSeleccionada && (
+        <div
+          data-testid="factura-seleccionada-placeholder"
+          data-nro-factura={facturaSeleccionada.nro_factura}
+          className="hidden"
+        />
+      )}
     </>
   )
 }

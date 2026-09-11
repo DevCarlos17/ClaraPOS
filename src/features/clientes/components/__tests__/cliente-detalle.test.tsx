@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { ClienteDetalle } from '../cliente-detalle'
 import { type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
@@ -9,9 +10,23 @@ import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa
 // maneja desde CxC — factura-detalle-cxc.tsx). Se mockea la unica dependencia
 // de datos: useFacturasEmpresa. FacturasEmpresaTable se mockea con un sentinel.
 vi.mock('@/features/ventas/hooks/use-facturas-empresa', () => ({ useFacturasEmpresa: vi.fn() }))
+// PR3a (reimpresion-factura-fiscal): el mock expone `onRowClick` con un
+// boton sentinel que simula el click de fila de `DataTable`, para probar
+// el wiring de `facturaSeleccionada` en `ClienteDetalle` sin depender del
+// `DataTable` real (ya cubierto por `facturas-empresa-tab.test.tsx`).
 vi.mock('@/features/ventas/components/facturas-empresa-tab', () => ({
-  FacturasEmpresaTable: ({ mostrarAcciones }: { mostrarAcciones?: boolean }) => (
-    <div data-testid="facturas-table" data-mostrar-acciones={String(mostrarAcciones)} />
+  FacturasEmpresaTable: ({
+    mostrarAcciones,
+    onRowClick,
+  }: {
+    mostrarAcciones?: boolean
+    onRowClick?: (f: { id: string; nro_factura: string }) => void
+  }) => (
+    <div data-testid="facturas-table" data-mostrar-acciones={String(mostrarAcciones)}>
+      <button onClick={() => onRowClick?.({ id: 'venta-1', nro_factura: 'C01-000001' } as never)}>
+        Simular click de fila
+      </button>
+    </div>
   ),
 }))
 
@@ -145,5 +160,20 @@ describe('ClienteDetalle — seccion Facturas', () => {
     render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
 
     expect(screen.queryByRole('button', { name: /aplicar nota de credito/i })).not.toBeInTheDocument()
+  })
+
+  it('PR3a: click de fila (onRowClick) actualiza facturaSeleccionada — observable via placeholder', async () => {
+    const user = userEvent.setup()
+    mockedUseFacturasEmpresa.mockReturnValue({ facturas: [FACTURA], isLoading: false } as never)
+
+    render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
+    expect(screen.queryByTestId('factura-seleccionada-placeholder')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /simular click de fila/i }))
+
+    expect(screen.getByTestId('factura-seleccionada-placeholder')).toHaveAttribute(
+      'data-nro-factura',
+      'C01-000001'
+    )
   })
 })
