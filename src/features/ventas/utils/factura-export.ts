@@ -522,6 +522,62 @@ export function construirFilasTotales(totales: ReciboTotales, monedaPresentacion
   return filas
 }
 
+/** Fila de la seccion de evolucion, ya formateada (bimonetaria via formatMontoBimonetario). */
+interface FilaEvolucion {
+  label: string
+  monto: string
+  bold: boolean
+}
+
+const REVERSO_TIPO_LABEL: Record<'TOTAL' | 'PARCIAL', string> = {
+  TOTAL: 'Reverso Total',
+  PARCIAL: 'Reverso Parcial',
+}
+
+/**
+ * Filas de la seccion "Evolucion" (reversos NC, abonos, reversos de pago, saldo a favor
+ * generado), en orden fijo. Funcion pura, compartida por construirLineasRecibo (texto/PNG)
+ * y buildReciboPdfBlob (PDF) para que ambas rutas de render sean estructuralmente
+ * imposibles de divergir (mismo patron que construirFilasTotales/sumarAbonos).
+ */
+export function construirLineasEvolucion(
+  evolucion: ReciboEvolucion,
+  monedaPresentacion: MonedaPresentacion
+): FilaEvolucion[] {
+  const filas: FilaEvolucion[] = []
+
+  for (const reverso of evolucion.reversos) {
+    filas.push({
+      label: `${reverso.nroNcr} (${REVERSO_TIPO_LABEL[reverso.tipo]})`,
+      monto: formatMontoBimonetario(reverso.montoUsd, reverso.montoBs, monedaPresentacion),
+      bold: false,
+    })
+  }
+  for (const abono of evolucion.abonos) {
+    filas.push({
+      label: `Abono ${formatDateTime(abono.fecha)}`,
+      monto: formatMontoBimonetario(abono.montoUsd, abono.montoBs, monedaPresentacion),
+      bold: false,
+    })
+  }
+  for (const reversoPago of evolucion.reversosPago) {
+    filas.push({
+      label: `Reverso de pago ${formatDateTime(reversoPago.fecha)}`,
+      monto: formatMontoBimonetario(reversoPago.montoUsd, reversoPago.montoBs, monedaPresentacion),
+      bold: false,
+    })
+  }
+  if (evolucion.saldoAFavorGeneradoUsd != null) {
+    filas.push({
+      label: 'Genero saldo a favor',
+      monto: formatMontoBimonetario(evolucion.saldoAFavorGeneradoUsd, evolucion.saldoAFavorGeneradoBs ?? 0, monedaPresentacion),
+      bold: true,
+    })
+  }
+
+  return filas
+}
+
 /** Texto de cierre del recibo (excedente o saldo a credito). Sin acentos, consistente con el resto del archivo. */
 function formatearCierre(cierre: ReciboCierre): string {
   const monto = `${formatBs(cierre.montoBs)} (${formatUsd(cierre.montoUsd)})`
@@ -594,6 +650,16 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
       text: `Total abonos: ${formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}`,
       bold: true,
     })
+    lines.push({ text: SEPARADOR })
+  }
+
+  if (recibo.evolucion) {
+    lines.push({ text: '' })
+    lines.push({ text: 'Evolucion', bold: true })
+    lines.push({ text: SEPARADOR })
+    for (const linea of construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion)) {
+      lines.push({ text: `${linea.label}: ${linea.monto}`, bold: linea.bold })
+    }
     lines.push({ text: SEPARADOR })
   }
 
@@ -751,6 +817,31 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
       startY: y,
       head: [['Metodo', 'Monto']],
       body: pagosBody,
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 1: { halign: 'right' } },
+      margin: { left: 15, right: 15 },
+    })
+
+    y = (doc as AutoTableDoc).lastAutoTable.finalY + 6
+  }
+
+  if (recibo.evolucion) {
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text('Evolucion', 15, y)
+    y += 4
+
+    const evolucionBody = construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion).map((fila) => [
+      fila.label,
+      fila.monto,
+    ])
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Concepto', 'Monto']],
+      body: evolucionBody,
       theme: 'grid',
       headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold', fontSize: 8 },
       bodyStyles: { fontSize: 8 },

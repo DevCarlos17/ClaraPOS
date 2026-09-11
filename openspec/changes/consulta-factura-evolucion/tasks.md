@@ -62,12 +62,12 @@ Chain strategy: feature-branch-chain
 
 ## PR5 — Inject into both render paths + regression (~200-280 ln)
 
-- [ ] 5.1 `factura-export.ts` — `construirLineasRecibo`: insert "Evolucion" section after pagos block (~L499, before `if (recibo.cierre)` ~L501), guarded by `recibo.evolucion` non-undefined. Render per-case lines: reverso (`nroNcr` + tipo label + `formatMontoBimonetario`), abono (`formatDateTime` + monto), reversoPago (same shape), saldo a favor (`Genero saldo a favor: ...` when `saldoAFavorGeneradoUsd != null`).
-- [ ] 5.2 TDD: RED — extend `factura-export.test.ts` `construirLineasRecibo` tests: populated `recibo.evolucion` produces the 4 expected line shapes in order; omitted `evolucion` produces no "Evolucion" section (fails until 5.1). GREEN — task 5.1 makes it pass.
-- [ ] 5.3 `factura-export.ts` — `buildReciboPdfBlob`: insert third `autoTable` (same `theme: 'grid'`/header styling as pagos table L651-660) after pagos autoTable's `finalY` (~L663, before `if (recibo.cierre)` ~L665), same guard and 4-case body rows as 5.1.
-- [ ] 5.4 TDD: RED — extend `factura-export.test.ts` `buildReciboPdfBlob` tests: populated `evolucion` triggers a third `autoTable` call with expected body rows; omitted `evolucion` triggers only the existing 2 tables (fails until 5.3). GREEN — task 5.3 makes it pass.
-- [ ] 5.5 REGRESSION GUARD: new test mirroring the existing `esReimpresion` byte-identical test — invoice with empty/undefined `evolucion` produces byte-identical text/PNG output AND byte-identical PDF output vs pre-change baseline.
-- [ ] 5.6 TDD: RED — write the regression test from 5.5 first against current (pre-injection) fixtures/snapshots; confirm it passes on the PR4 state, then re-run after 5.1/5.3 land to prove no diff. GREEN — confirm identical output after 5.1+5.3.
+- [x] 5.1 `factura-export.ts` — `construirLineasRecibo`: insert "Evolucion" section after pagos block (~L499, before `if (recibo.cierre)` ~L501), guarded by `recibo.evolucion` non-undefined. Render per-case lines: reverso (`nroNcr` + tipo label + `formatMontoBimonetario`), abono (`formatDateTime` + monto), reversoPago (same shape), saldo a favor (`Genero saldo a favor: ...` when `saldoAFavorGeneradoUsd != null`).
+- [x] 5.2 TDD: RED — extend `factura-export.test.ts` `construirLineasRecibo` tests: populated `recibo.evolucion` produces the 4 expected line shapes in order; omitted `evolucion` produces no "Evolucion" section (fails until 5.1). GREEN — task 5.1 makes it pass.
+- [x] 5.3 `factura-export.ts` — `buildReciboPdfBlob`: insert third `autoTable` (same `theme: 'grid'`/header styling as pagos table L651-660) after pagos autoTable's `finalY` (~L663, before `if (recibo.cierre)` ~L665), same guard and 4-case body rows as 5.1.
+- [x] 5.4 TDD: RED — extend `factura-export.test.ts` `buildReciboPdfBlob` tests: populated `evolucion` triggers a third `autoTable` call with expected body rows; omitted `evolucion` triggers only the existing 2 tables (fails until 5.3). GREEN — task 5.3 makes it pass.
+- [x] 5.5 REGRESSION GUARD: new test mirroring the existing `esReimpresion` byte-identical test — invoice with empty/undefined `evolucion` produces byte-identical text/PNG output AND byte-identical PDF output vs pre-change baseline.
+- [x] 5.6 TDD: RED — write the regression test from 5.5 first against current (pre-injection) fixtures/snapshots; confirm it passes on the PR4 state, then re-run after 5.1/5.3 land to prove no diff. GREEN — confirm identical output after 5.1+5.3.
 
 ## PR6 — Modal evolution render (~150-200 ln)
 
