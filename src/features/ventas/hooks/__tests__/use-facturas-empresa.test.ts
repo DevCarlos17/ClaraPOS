@@ -140,4 +140,47 @@ describe('useFacturasEmpresa (Slice B, Design §Decision 3) — hook empresa-wid
     expect(sql).not.toContain('AND v.cliente_id = ?')
     expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
   })
+
+  // ─── enabled (replicar-consulta-factura-ventas-caja, Slice A — aditivo) ──
+
+  describe('enabled — escape hatch "empty-SQL skip" (Slice A)', () => {
+    it('enabled:false salta la query por completo: useQuery recibe sql vacio y params vacios', () => {
+      setup()
+
+      renderHook(() =>
+        useFacturasEmpresa({
+          fechaDesde: '2026-05-01',
+          fechaHasta: '2026-05-21',
+          busqueda: 'C01-0042',
+          enabled: false,
+        })
+      )
+
+      const [sql, params] = mockedUseQuery.mock.calls[0]!
+      expect(sql).toBe('')
+      expect(params).toEqual([])
+    })
+
+    it('enabled:true explicito: comportamiento identico a omitirlo (SQL real con empresa_id)', () => {
+      setup()
+
+      renderHook(() =>
+        useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', enabled: true })
+      )
+
+      const [sql, params] = mockedUseQuery.mock.calls[0]!
+      expect(sql).toContain('v.empresa_id = ?')
+      expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21'])
+    })
+
+    it('enabled omitido (los 3 llamadores existentes nunca lo pasan): default true, SQL real ejecutado — comportamiento byte-a-byte preservado', () => {
+      setup()
+
+      renderHook(() => useFacturasEmpresa({ fechaDesde: '2026-05-01', fechaHasta: '2026-05-21', clienteId: 'cli-1' }))
+
+      const [sql, params] = mockedUseQuery.mock.calls[0]!
+      expect(sql).toContain('AND v.cliente_id = ?')
+      expect(params).toEqual(['emp-1', '2026-05-01', '2026-05-21', 'cli-1'])
+    })
+  })
 })
