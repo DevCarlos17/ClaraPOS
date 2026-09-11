@@ -204,6 +204,62 @@ async function revelarSeccionNc(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: /Emitir nota de credito/i }))
 }
 
+/**
+ * Ajustes QA (ajustes-qa-nota-credito-pos-modal, Item 5): tras revelar la
+ * seccion NC, `tipoNc` arranca en `null` — ningun tipo esta preseleccionado
+ * (ni siquiera TOTAL, ni PARCIAL para facturas con reverso parcial previo).
+ * Helper mecanico para retrofitar los tests preexistentes que dependian de
+ * TOTAL como default: ahora deben elegirlo explicitamente antes de esperar
+ * la UI de confirmacion de TOTAL (que Item 6 ademas reubico DENTRO de la
+ * seccion, ya no en el pie del modal).
+ */
+async function elegirTotal(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Total' }))
+}
+
+describe('NotaCreditoPosModal — Ajustes QA (ajustes-qa-nota-credito-pos-modal, Items 1/2/3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('Item 1: el titulo del modal es "Facturas Emitidas - Sesion Actual"', () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByRole('heading', { name: 'Facturas Emitidas - Sesion Actual' })).toBeInTheDocument()
+  })
+
+  it('Item 2: al seleccionar una factura, el panel derecho NO muestra el header local Cliente/Tasa (arranca directo en Articulos)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    // El header local (Cliente: <nombre> / Tasa: <valor>) se elimino — la
+    // etiqueta "Cliente:" solo existia ahi (la tarjeta del listado nunca la
+    // usa, muestra el nombre sin prefijo). "Tasa:" YA NO es una aserción
+    // valida de ausencia aqui porque el Item 3 (tasa en cada tarjeta del
+    // listado) reutiliza ese mismo prefijo en la columna izquierda.
+    expect(screen.queryByText(/^Cliente:/)).not.toBeInTheDocument()
+    expect(screen.getByText('Articulo')).toBeInTheDocument()
+  })
+
+  it('Item 3: cada tarjeta del listado (seleccionada o no) muestra su propia tasa historica (4 decimales) debajo del monto en Bs', () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      facturas: [
+        facturaSesion({ id: 'venta-1', nro_factura: 'C01-000001', tasa: '40' }),
+        facturaSesion({ id: 'venta-2', nro_factura: 'C01-000002', tasa: '52.5' }),
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    expect(screen.getByText('Tasa: 40,0000')).toBeInTheDocument()
+    expect(screen.getByText('Tasa: 52,5000')).toBeInTheDocument()
+  })
+})
+
 describe('NotaCreditoPosModal — Slice C (reveal-gate de la seccion NC, Spec notas-credito-pos)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -245,14 +301,23 @@ describe('NotaCreditoPosModal — Slice C (reveal-gate de la seccion NC, Spec no
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
 
+    // Item 5 (ajustes-qa-nota-credito-pos-modal): al revelar, ningun tipo
+    // esta preseleccionado -> estado neutro, sin alerta ni boton de
+    // confirmacion todavia.
     expect(screen.getByText('Tipo de nota de credito')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Total' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Parcial' })).toBeInTheDocument()
-    expect(screen.getByText(/Esta accion es irreversible/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Esta accion es irreversible/i)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Editar metodos de pago/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Reimprimir$/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Emitir nota de credito/i })).not.toBeInTheDocument()
+
+    // Item 6: elegir Total revela la confirmacion DENTRO de la seccion.
+    await elegirTotal(user)
+
+    expect(screen.getByText(/Esta accion es irreversible/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
   })
 
   it('C.3 seleccionar otra factura reoculta la seccion NC (gate revelado para A no persiste al elegir B)', async () => {
@@ -388,6 +453,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -407,6 +473,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
@@ -423,6 +490,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -439,6 +507,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.selectOptions(screen.getByRole('combobox'), 'SALDO_FAVOR')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -455,6 +524,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -498,6 +568,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -516,6 +587,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -570,6 +642,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
 
     // Autoriza PIN B (deposito) primero.
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
@@ -597,6 +670,7 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
 
     // Sin autorizar PIN B todavia, el riel es automatico -> depositoInvalido
     // es false y "Confirmar Anulacion" esta habilitado. Sin permiso de
@@ -639,6 +713,7 @@ describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede 
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -653,6 +728,7 @@ describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede 
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
 
@@ -672,6 +748,7 @@ describe('NotaCreditoPosModal — Slice 5e UX C (deposito de reingreso no puede 
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
 
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).not.toBeDisabled()
     expect(screen.queryByText(/Debes seleccionar el deposito de reingreso/i)).not.toBeInTheDocument()
@@ -863,6 +940,12 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
 
     expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    // Item 5 (ajustes-qa-nota-credito-pos-modal): PARCIAL tampoco se
+    // preselecciona, ni siquiera cuando es la unica opcion disponible.
+    expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+
     expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
   })
 
@@ -943,6 +1026,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     const user = userEvent.setup()
     await user.click(screen.getByText(/C01-000001/i))
     await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '9')
 
     expect(screen.getByRole('spinbutton')).toHaveValue(null)
@@ -967,7 +1051,7 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     expect(screen.getByText('NCR-000005')).toBeInTheDocument()
   })
 
-  it('factura con tiene_reverso_parcial=1 pero status activo sigue siendo clickable (puede recibir otra NC parcial, F1: por defecto en PARCIAL, no TOTAL)', async () => {
+  it('factura con tiene_reverso_parcial=1 pero status activo sigue siendo clickable (puede recibir otra NC parcial); tampoco preselecciona PARCIAL automaticamente (Item 5, ajustes-qa-nota-credito-pos-modal: ningun tipo se preselecciona, ni siquiera con reverso parcial previo)', async () => {
     setup({ hasPermission: true })
     mockedUseFacturasSesionActiva.mockReturnValue({
       facturas: [facturaSesion({ tiene_reverso_parcial: 1 })],
@@ -979,8 +1063,13 @@ describe('NotaCreditoPosModal — Slice 2 (lista rediseñada: badges de estado/r
     await user.click(screen.getByText(/C01-000001/i))
     await revelarSeccionNc(user)
 
-    // F1 QA fix: TOTAL ya no es opcion valida sobre una factura con reverso
-    // parcial previo — la seleccion cae por defecto en PARCIAL.
+    // TOTAL ya no es opcion valida sobre una factura con reverso parcial
+    // previo (puedeTotal=false) y PARCIAL ya no se preselecciona: hay que
+    // elegirlo explicitamente.
+    expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+
     expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
   })
 
@@ -1100,6 +1189,7 @@ describe('NotaCreditoPosModal — Slice 3a (panel de detalle montado, Design §D
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
 
     expect(screen.getAllByText(/C01-000001/i).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
@@ -1122,7 +1212,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     ]
   }
 
-  it('tras seleccionar una factura, se ofrece explicitamente elegir entre Total y Parcial', async () => {
+  it('tras seleccionar una factura, se ofrece explicitamente elegir entre Total y Parcial, sin preseleccion (Item 5, ajustes-qa-nota-credito-pos-modal)', async () => {
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
@@ -1131,8 +1221,12 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
 
     expect(screen.getByRole('button', { name: 'Total' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Parcial' })).toBeInTheDocument()
-    // TOTAL es la eleccion por defecto (preserva el flujo pre-existente byte-a-byte).
-    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+    // Ningun tipo esta preseleccionado al revelar: ni el aria-pressed de
+    // ambos botones esta activo, ni ninguna UI de confirmacion se muestra.
+    expect(screen.getByRole('button', { name: 'Total' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Parcial' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
   })
 
   it('elegir Parcial reemplaza el footer "Confirmar Anulacion" por la seleccion de lineas (SeleccionLineasNc) y NO llama crearNotaCredito todavia', async () => {
@@ -1198,6 +1292,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -1249,6 +1344,7 @@ describe('NotaCreditoPosModal — Slice 4 (placeholder "Editar metodos de pago" 
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
 
     await user.click(screen.getByRole('button', { name: /Editar metodos de pago/i }))
     expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
@@ -1287,6 +1383,7 @@ describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abi
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -1327,6 +1424,7 @@ describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abi
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
+    await elegirTotal(user)
     await user.click(screen.getByRole('button', { name: /Cambiar deposito/i }))
     await user.click(screen.getByText('Autorizar'))
     const selects = screen.getAllByRole('combobox')

@@ -41,9 +41,23 @@ export interface FacturaDetallePanelProps {
    * ninguna sea individualmente 'TOTAL'.
    */
   badgeReverso?: BadgeReverso
+  /**
+   * Ajustes QA (ajustes-qa-nota-credito-pos-modal, Item 2): oculta el
+   * bloque local "Factura" + numero (encabezado propio de este panel) para
+   * el consumidor POS-express, que ya elimino su header duplicado
+   * Cliente/Tasa y muestra el numero de factura en el listado izquierdo.
+   * Default `false` preserva el comportamiento existente para Tradicional
+   * NC y Consulta/Reimprimir — ningun otro consumidor pasa esta prop.
+   */
+  hideFacturaTitle?: boolean
 }
 
-export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null }: FacturaDetallePanelProps) {
+export function FacturaDetallePanel({
+  recibo,
+  reversos = [],
+  badgeReverso = null,
+  hideFacturaTitle = false,
+}: FacturaDetallePanelProps) {
   if (!recibo) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
@@ -70,12 +84,14 @@ export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null
           </span>
         </div>
       )}
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Factura</p>
-        <p className="text-lg font-bold">{recibo.nroFactura}</p>
-      </div>
+      {!hideFacturaTitle && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Factura</p>
+          <p className="text-lg font-bold">{recibo.nroFactura}</p>
+        </div>
+      )}
 
-      <div className="overflow-hidden rounded-lg border border-slate-200">
+      <div className="overflow-hidden rounded-lg border border-slate-300">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs uppercase text-muted-foreground">
             <tr>
@@ -107,7 +123,7 @@ export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null
         </table>
       </div>
 
-      <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+      <div className="space-y-1 rounded-lg border border-slate-300 p-3 text-sm">
         {construirFilasTotales(recibo.totales, recibo.monedaPresentacion).map((fila) => (
           <div
             key={fila.label}
@@ -141,7 +157,7 @@ export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null
       */}
 
       {recibo.pagos.length > 0 && (
-        <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+        <div className="space-y-1 rounded-lg border border-slate-300 p-3 text-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Metodos de pago
           </p>
