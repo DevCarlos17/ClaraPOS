@@ -1,6 +1,7 @@
 import autoTable from 'jspdf-autotable'
 import {
   buildReciboData,
+  buildReciboEvolucion,
   buildReciboTextoPlano,
   buildReciboImagenBlob,
   buildReciboPdfBlob,
@@ -9,6 +10,7 @@ import {
   nombreArchivoRecibo,
   RECIBO_ANCHO_CHARS,
   generarSeparador,
+  centrarTexto,
   medirAnchoPngDesdeSeparador,
   esperarFuentesRecibo,
   construirFilasTotales,
@@ -20,8 +22,10 @@ import {
   type BuildReciboDataInput,
   type ReciboData,
   type ReciboTotales,
+  type ReciboEvolucionInput,
 } from '../factura-export'
 import type { ReciboPagoInput, ReciboPagoLinea } from '../recibo-pagos'
+import { formatDateTime } from '@/lib/format'
 
 // Envuelve la implementacion REAL de jspdf-autotable con un spy: preserva el
 // renderizado real (los tests de PDF existentes siguen generando un Blob valido)
@@ -30,6 +34,30 @@ import type { ReciboPagoInput, ReciboPagoLinea } from '../recibo-pagos'
 vi.mock('jspdf-autotable', async (importOriginal) => {
   const actual = await importOriginal<{ default: (doc: unknown, opts: unknown) => void }>()
   return { ...actual, default: vi.fn(actual.default) }
+})
+
+// jsPDF asigna `text` como propiedad propia de la instancia dentro de su propio
+// constructor (no vive en el prototype), asi que `vi.spyOn(jsPDF.prototype, 'text')`
+// no lo intercepta. Se envuelve la clase real extendiendola y re-asignando `text`
+// DESPUES de `super()` (para pisar la asignacion propia del padre) — preserva el
+// renderizado real mientras permite inspeccionar cada llamada (usado por el test
+// del marcador REIMPRESION en el PDF).
+type TextMethod = InstanceType<typeof import('jspdf').jsPDF>['text']
+const pdfTextCalls: Parameters<TextMethod>[] = []
+
+vi.mock('jspdf', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('jspdf')>()
+  class SpyableJsPDF extends actual.jsPDF {
+    constructor(...args: ConstructorParameters<typeof actual.jsPDF>) {
+      super(...args)
+      const originalText = this.text.bind(this) as TextMethod
+      this.text = ((...callArgs: Parameters<TextMethod>) => {
+        pdfTextCalls.push(callArgs)
+        return originalText(...callArgs)
+      }) as TextMethod
+    }
+  }
+  return { ...actual, default: SpyableJsPDF, jsPDF: SpyableJsPDF }
 })
 
 function baseInput(overrides: Partial<BuildReciboDataInput> = {}): BuildReciboDataInput {
@@ -1077,6 +1105,421 @@ describe('buildReciboTextoPlano', () => {
     expect(lineas[lineas.length - 1]).toContain('Quedo a credito')
     expect(lineas[lineas.length - 1]).toContain('Bs. 1.000,00')
     expect(lineas[lineas.length - 1]).toContain('$10.00')
+  })
+})
+
+describe('centrarTexto (PR1 — reimpresion-factura-fiscal)', () => {
+  it("centra 'REIMPRESION' (11 chars) en un ancho de 32: padding izquierdo floor, derecho el resto", () => {
+    const resultado = centrarTexto('REIMPRESION', 32)
+
+    expect(resultado).toHaveLength(32)
+    expect(resultado).toBe(`${' '.repeat(10)}REIMPRESION${' '.repeat(11)}`)
+  })
+
+  it('con padding par (texto de 2 chars en ancho 6), reparte el padding equitativamente', () => {
+    expect(centrarTexto('AB', 6)).toBe('  AB  ')
+  })
+
+  it('con ancho por defecto (RECIBO_ANCHO_CHARS), centra igual que pasando 32 explicito', () => {
+    expect(centrarTexto('REIMPRESION')).toBe(centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS))
+  })
+
+  it('si el texto es mas largo o igual que el ancho, lo retorna sin cambios (sin truncar ni fallar)', () => {
+    const textoLargo = 'ESTE-TEXTO-ES-MAS-LARGO-QUE-CINCO'
+    expect(centrarTexto(textoLargo, 5)).toBe(textoLargo)
+  })
+})
+
+describe('esReimpresion — marcador additive en ReciboData (PR1)', () => {
+  it('buildReciboData sin esReimpresion en el input produce ReciboData.esReimpresion === false', () => {
+    const recibo = buildReciboData(baseInput())
+    expect(recibo.esReimpresion).toBe(false)
+  })
+
+  it('buildReciboData con esReimpresion:true lo propaga sin alterar ningun otro campo del objeto', () => {
+    const sinFlag = buildReciboData(baseInput())
+    const conFlag = buildReciboData(baseInput({ esReimpresion: true }))
+
+    expect(conFlag.esReimpresion).toBe(true)
+    const { esReimpresion: _flagSin, ...restoSinFlag } = sinFlag
+    const { esReimpresion: _flagCon, ...restoConFlag } = conFlag
+    expect(restoConFlag).toEqual(restoSinFlag)
+  })
+})
+
+describe('buildReciboEvolucion (PR4)', () => {
+  it('sin input (undefined) retorna undefined', () => {
+    expect(buildReciboEvolucion(undefined)).toBeUndefined()
+  })
+
+  it('con todos los arreglos vacios y sin saldoAFavorGenerado retorna undefined', () => {
+    const input: ReciboEvolucionInput = {
+      reversos: [],
+      abonos: [],
+      reversosPago: [],
+      saldoAFavorGenerado: null,
+    }
+    expect(buildReciboEvolucion(input)).toBeUndefined()
+  })
+
+  it('reversos presentes se mapean con montoUsd/montoBs desde totalUsd/totalBs (ya pre-calculados por ReversoAplicado)', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [{ nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', totalUsd: 10, totalBs: 405 }],
+    })
+
+    expect(resultado).toBeDefined()
+    expect(resultado?.reversos).toEqual([
+      { nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', montoUsd: 10, montoBs: 405 },
+    ])
+    expect(resultado?.abonos).toEqual([])
+    expect(resultado?.reversosPago).toEqual([])
+    expect(resultado?.saldoAFavorGeneradoUsd).toBeNull()
+    expect(resultado?.saldoAFavorGeneradoBs).toBeNull()
+  })
+
+  it('un tipo distinto de TOTAL/PARCIAL cae a PARCIAL (normalizacion defensiva)', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [{ nroNcr: 'NCR-000002', tipo: 'ALGO_RARO', fecha: '2026-08-14', totalUsd: 5, totalBs: 200 }],
+    })
+    expect(resultado?.reversos[0].tipo).toBe('PARCIAL')
+  })
+
+  it('abonos (PAG) se mapean fecha+montoUsd+montoBs, Bs via usdToBs(monto, tasaPago)', () => {
+    const resultado = buildReciboEvolucion({
+      abonos: [{ fecha: '2026-08-15T12:00:00.000-04:00', monto: 20, tasaPago: 40 }],
+    })
+
+    expect(resultado?.abonos).toEqual([
+      { fecha: '2026-08-15T12:00:00.000-04:00', montoUsd: 20, montoBs: 800 },
+    ])
+  })
+
+  it('reversosPago (REV) se mapean con la misma formula que abonos', () => {
+    const resultado = buildReciboEvolucion({
+      reversosPago: [{ fecha: '2026-08-16', monto: 5, tasaPago: 50 }],
+    })
+
+    expect(resultado?.reversosPago).toEqual([{ fecha: '2026-08-16', montoUsd: 5, montoBs: 250 }])
+  })
+
+  it('tasaPago null en un movimiento produce montoBs 0 (sin tasa historica disponible, no lanza)', () => {
+    const resultado = buildReciboEvolucion({
+      abonos: [{ fecha: '2026-08-15', monto: 20, tasaPago: null }],
+    })
+
+    expect(resultado?.abonos).toEqual([{ fecha: '2026-08-15', montoUsd: 20, montoBs: 0 }])
+  })
+
+  it('saldoAFavorGenerado presente produce saldoAFavorGeneradoUsd/Bs via la misma formula usdToBs', () => {
+    const resultado = buildReciboEvolucion({
+      saldoAFavorGenerado: { fecha: '2026-08-17', monto: 7.5, tasaPago: 40 },
+    })
+
+    expect(resultado?.saldoAFavorGeneradoUsd).toBe(7.5)
+    expect(resultado?.saldoAFavorGeneradoBs).toBe(300)
+  })
+
+  it('multi-caso: reversos+abonos+reversosPago+saldoAFavorGenerado combinados en un solo resultado', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [{ nroNcr: 'NCR-000003', tipo: 'TOTAL', fecha: '2026-08-18', totalUsd: 30, totalBs: 1200 }],
+      abonos: [{ fecha: '2026-08-19', monto: 10, tasaPago: 40 }],
+      reversosPago: [{ fecha: '2026-08-20', monto: 3, tasaPago: 40 }],
+      saldoAFavorGenerado: { fecha: '2026-08-21', monto: 2, tasaPago: 40 },
+    })
+
+    expect(resultado).toEqual({
+      reversos: [{ nroNcr: 'NCR-000003', tipo: 'TOTAL', fecha: '2026-08-18', montoUsd: 30, montoBs: 1200 }],
+      abonos: [{ fecha: '2026-08-19', montoUsd: 10, montoBs: 400 }],
+      reversosPago: [{ fecha: '2026-08-20', montoUsd: 3, montoBs: 120 }],
+      saldoAFavorGeneradoUsd: 2,
+      saldoAFavorGeneradoBs: 80,
+    })
+  })
+})
+
+describe('ReciboData.evolucion — additive via buildReciboData (PR4)', () => {
+  it('buildReciboData sin evolucion en el input produce ReciboData.evolucion === undefined', () => {
+    const recibo = buildReciboData(baseInput())
+    expect(recibo.evolucion).toBeUndefined()
+  })
+
+  it('buildReciboData con evolucion vacia (input presente pero sin movimientos) tambien produce evolucion === undefined', () => {
+    const recibo = buildReciboData(baseInput({ evolucion: { reversos: [], abonos: [], reversosPago: [] } }))
+    expect(recibo.evolucion).toBeUndefined()
+  })
+
+  it('buildReciboData con evolucion poblada produce ReciboData.evolucion === buildReciboEvolucion(input.evolucion), sin alterar ningun otro campo', () => {
+    const evolucionInput: ReciboEvolucionInput = {
+      abonos: [{ fecha: '2026-08-19', monto: 10, tasaPago: 40 }],
+    }
+    const sinEvolucion = buildReciboData(baseInput())
+    const conEvolucion = buildReciboData(baseInput({ evolucion: evolucionInput }))
+
+    expect(conEvolucion.evolucion).toEqual(buildReciboEvolucion(evolucionInput))
+    const { evolucion: _evoSin, ...restoSinEvolucion } = sinEvolucion
+    const { evolucion: _evoCon, ...restoConEvolucion } = conEvolucion
+    expect(restoConEvolucion).toEqual(restoSinEvolucion)
+  })
+})
+
+describe('marcador REIMPRESION en construirLineasRecibo (texto/PNG, via buildReciboTextoPlano)', () => {
+  function reciboConUnaLinea(overrides: Partial<BuildReciboDataInput> = {}): ReciboData {
+    return buildReciboData(
+      baseInput({
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        ...overrides,
+      })
+    )
+  }
+
+  it('con esReimpresion false y omitido, el texto es identico entre ambos y NO contiene REIMPRESION (regresion: cero impacto en venta POS)', () => {
+    const textoOmitido = buildReciboTextoPlano(reciboConUnaLinea())
+    const textoFalse = buildReciboTextoPlano(reciboConUnaLinea({ esReimpresion: false }))
+
+    expect(textoOmitido).toBe(textoFalse)
+    expect(textoOmitido).not.toContain('REIMPRESION')
+  })
+
+  it('con esReimpresion true, incluye la linea REIMPRESION centrada exactamente una vez, entre los datos del cliente y Articulos', () => {
+    const recibo = reciboConUnaLinea({ esReimpresion: true })
+    const texto = buildReciboTextoPlano(recibo)
+    const lineas = texto.split('\n')
+
+    const ocurrencias = lineas.filter((linea) => linea.includes('REIMPRESION'))
+    expect(ocurrencias).toHaveLength(1)
+    expect(ocurrencias[0]).toBe(centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS))
+
+    const idxIdentificacion = lineas.findIndex((linea) => linea.startsWith('Identificacion:'))
+    const idxArticulos = lineas.indexOf('Articulos')
+    const idxReimpresion = lineas.findIndex((linea) => linea.includes('REIMPRESION'))
+
+    expect(idxIdentificacion).toBeGreaterThanOrEqual(0)
+    expect(idxArticulos).toBeGreaterThan(idxIdentificacion)
+    expect(idxReimpresion).toBeGreaterThan(idxIdentificacion)
+    expect(idxReimpresion).toBeLessThan(idxArticulos)
+  })
+})
+
+describe('marcador REIMPRESION en buildReciboPdfBlob (PDF)', () => {
+  function reciboConUnaLinea(overrides: Partial<BuildReciboDataInput> = {}): ReciboData {
+    return buildReciboData(
+      baseInput({
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        ...overrides,
+      })
+    )
+  }
+
+  beforeEach(() => {
+    pdfTextCalls.length = 0
+  })
+
+  it('con esReimpresion false/omitido, no dibuja ninguna linea REIMPRESION en el PDF', () => {
+    buildReciboPdfBlob(reciboConUnaLinea())
+
+    const llamadasReimpresion = pdfTextCalls.filter((call) => call[0] === 'REIMPRESION')
+    expect(llamadasReimpresion).toHaveLength(0)
+  })
+
+  it("con esReimpresion true, dibuja 'REIMPRESION' centrado (align: center) entre el bloque de info y el label Articulos", () => {
+    buildReciboPdfBlob(reciboConUnaLinea({ esReimpresion: true }))
+
+    const llamadasReimpresion = pdfTextCalls.filter((call) => call[0] === 'REIMPRESION')
+    expect(llamadasReimpresion).toHaveLength(1)
+    expect(llamadasReimpresion[0][3]).toMatchObject({ align: 'center' })
+
+    const idxReimpresion = pdfTextCalls.findIndex((call) => call[0] === 'REIMPRESION')
+    const idxArticulos = pdfTextCalls.findIndex((call) => call[0] === 'Articulos')
+    expect(idxReimpresion).toBeGreaterThanOrEqual(0)
+    expect(idxArticulos).toBeGreaterThan(idxReimpresion)
+  })
+})
+
+// =============================================
+// PR5 — Evolucion en construirLineasRecibo (texto/PNG) y buildReciboPdfBlob (PDF)
+// (openspec/changes/consulta-factura-evolucion)
+// =============================================
+
+describe('Evolucion en construirLineasRecibo (texto/PNG, via buildReciboTextoPlano) (PR5)', () => {
+  function reciboConPagosYCierre(overrides: Partial<BuildReciboDataInput> = {}): ReciboData {
+    return buildReciboData(
+      baseInput({
+        tasa: '40',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        pagos: [{ metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 11.6 }],
+        ...overrides,
+      })
+    )
+  }
+
+  const evolucionCompleta: ReciboEvolucionInput = {
+    reversos: [{ nroNcr: 'NCR-000010', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', totalUsd: 5, totalBs: 200 }],
+    abonos: [{ fecha: '2026-08-15T12:00:00.000-04:00', monto: 3, tasaPago: 40 }],
+    reversosPago: [{ fecha: '2026-08-16T09:00:00.000-04:00', monto: 1, tasaPago: 40 }],
+    saldoAFavorGenerado: { fecha: '2026-08-17T08:00:00.000-04:00', monto: 2, tasaPago: 40 },
+  }
+
+  it('REGRESION: con evolucion omitida, el texto NO contiene la seccion "Evolucion" y es identico al texto sin el campo (byte-identical, mismo criterio que esReimpresion)', () => {
+    const textoOmitido = buildReciboTextoPlano(reciboConPagosYCierre())
+    const textoExplicitoUndefined = buildReciboTextoPlano(reciboConPagosYCierre({ evolucion: undefined }))
+
+    expect(textoOmitido).toBe(textoExplicitoUndefined)
+    expect(textoOmitido).not.toContain('Evolucion')
+  })
+
+  it('REGRESION: con evolucion vacia (arreglos vacios, sin saldoAFavorGenerado) tambien produce texto byte-identico al omitido', () => {
+    const textoOmitido = buildReciboTextoPlano(reciboConPagosYCierre())
+    const textoVacio = buildReciboTextoPlano(
+      reciboConPagosYCierre({ evolucion: { reversos: [], abonos: [], reversosPago: [], saldoAFavorGenerado: null } })
+    )
+
+    expect(textoVacio).toBe(textoOmitido)
+  })
+
+  it('con evolucion poblada, renderiza los 4 casos en orden (reverso, abono, reverso de pago, saldo a favor) entre Metodos de pago y el fin del recibo', () => {
+    const recibo = reciboConPagosYCierre({ evolucion: evolucionCompleta })
+    const texto = buildReciboTextoPlano(recibo)
+    const lineas = texto.split('\n')
+
+    expect(texto).toContain('Evolucion')
+    expect(texto).toContain(`NCR-000010 (Reverso Parcial): ${formatMontoBimonetario(5, 200, 'USD')}`)
+    expect(texto).toContain(`Abono ${formatDateTime('2026-08-15T12:00:00.000-04:00')}: ${formatMontoBimonetario(3, 120, 'USD')}`)
+    expect(texto).toContain(
+      `Reverso de pago ${formatDateTime('2026-08-16T09:00:00.000-04:00')}: ${formatMontoBimonetario(1, 40, 'USD')}`
+    )
+    expect(texto).toContain(`Genero saldo a favor: ${formatMontoBimonetario(2, 80, 'USD')}`)
+
+    const idxMetodosPago = lineas.indexOf('Metodos de pago')
+    const idxEvolucion = lineas.indexOf('Evolucion')
+    const idxReverso = lineas.findIndex((l) => l.includes('NCR-000010'))
+    const idxAbono = lineas.findIndex((l) => l.startsWith('Abono'))
+    const idxReversoPago = lineas.findIndex((l) => l.startsWith('Reverso de pago'))
+    const idxSaldoAFavor = lineas.findIndex((l) => l.startsWith('Genero saldo a favor'))
+
+    expect(idxMetodosPago).toBeGreaterThanOrEqual(0)
+    expect(idxEvolucion).toBeGreaterThan(idxMetodosPago)
+    expect(idxReverso).toBeGreaterThan(idxEvolucion)
+    expect(idxAbono).toBeGreaterThan(idxReverso)
+    expect(idxReversoPago).toBeGreaterThan(idxAbono)
+    expect(idxSaldoAFavor).toBeGreaterThan(idxReversoPago)
+  })
+
+  it('un reverso TOTAL se etiqueta "Reverso Total" (no "Reverso Parcial")', () => {
+    const recibo = reciboConPagosYCierre({
+      evolucion: {
+        reversos: [{ nroNcr: 'NCR-000011', tipo: 'TOTAL', fecha: '2026-08-14', totalUsd: 11.6, totalBs: 464 }],
+      },
+    })
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain(`NCR-000011 (Reverso Total): ${formatMontoBimonetario(11.6, 464, 'USD')}`)
+    expect(texto).not.toContain('Reverso Parcial')
+  })
+
+  it("con monedaPresentacion 'BS', los montos de evolucion muestran Bs como primario y USD como contraparte (bimonetario, toggle-aware)", () => {
+    const recibo = reciboConPagosYCierre({
+      monedaPresentacion: 'BS',
+      evolucion: { abonos: [{ fecha: '2026-08-15', monto: 3, tasaPago: 40 }] },
+    })
+    const texto = buildReciboTextoPlano(recibo)
+
+    expect(texto).toContain(`Abono ${formatDateTime('2026-08-15')}: ${formatMontoBimonetario(3, 120, 'BS')}`)
+    expect(texto).toContain('Bs. 120,00 ($3.00)')
+  })
+})
+
+describe('Evolucion en buildReciboPdfBlob (PDF) (PR5)', () => {
+  function reciboConPagosYCierre(overrides: Partial<BuildReciboDataInput> = {}): ReciboData {
+    return buildReciboData(
+      baseInput({
+        tasa: '40',
+        lineas: [
+          {
+            codigo: 'PROD-001',
+            nombre: 'Crema Facial',
+            cantidad: '1',
+            precioUnitarioUsd: '10.00',
+            tipoImpuesto: 'Gravable',
+            impuestoPct: '16',
+          },
+        ],
+        pagos: [{ metodo_cobro_id: 'ef-usd', metodo_nombre: 'Efectivo Dolares', moneda: 'USD', monto: 11.6 }],
+        ...overrides,
+      })
+    )
+  }
+
+  beforeEach(() => {
+    pdfTextCalls.length = 0
+  })
+
+  it('REGRESION: con evolucion omitida/vacia, solo se dibujan las 3 tablas existentes (articulos + totales + pagos), sin tabla ni texto "Evolucion"', () => {
+    const mockedAutoTable = vi.mocked(autoTable)
+    mockedAutoTable.mockClear()
+
+    buildReciboPdfBlob(reciboConPagosYCierre())
+
+    expect(mockedAutoTable.mock.calls).toHaveLength(3)
+    expect(pdfTextCalls.filter((call) => call[0] === 'Evolucion')).toHaveLength(0)
+  })
+
+  it('con evolucion poblada, dibuja una tercera tabla "Evolucion" con las filas de los 4 casos, despues de la tabla de pagos', () => {
+    const mockedAutoTable = vi.mocked(autoTable)
+    mockedAutoTable.mockClear()
+
+    const recibo = reciboConPagosYCierre({
+      evolucion: {
+        reversos: [{ nroNcr: 'NCR-000010', tipo: 'PARCIAL', fecha: '2026-08-14', totalUsd: 5, totalBs: 200 }],
+        abonos: [{ fecha: '2026-08-15', monto: 3, tasaPago: 40 }],
+        reversosPago: [{ fecha: '2026-08-16', monto: 1, tasaPago: 40 }],
+        saldoAFavorGenerado: { fecha: '2026-08-17', monto: 2, tasaPago: 40 },
+      },
+    })
+
+    buildReciboPdfBlob(recibo)
+
+    expect(mockedAutoTable.mock.calls).toHaveLength(4)
+    const evolucionCall = mockedAutoTable.mock.calls[3]
+    const evolucionBody = (evolucionCall[1] as { body: string[][] }).body
+
+    expect(evolucionBody).toEqual([
+      [`NCR-000010 (Reverso Parcial)`, formatMontoBimonetario(5, 200, 'USD')],
+      [`Abono ${formatDateTime('2026-08-15')}`, formatMontoBimonetario(3, 120, 'USD')],
+      [`Reverso de pago ${formatDateTime('2026-08-16')}`, formatMontoBimonetario(1, 40, 'USD')],
+      ['Genero saldo a favor', formatMontoBimonetario(2, 80, 'USD')],
+    ])
+
+    expect(pdfTextCalls.filter((call) => call[0] === 'Evolucion')).toHaveLength(1)
+    const idxEvolucion = pdfTextCalls.findIndex((call) => call[0] === 'Evolucion')
+    const idxMetodosPago = pdfTextCalls.findIndex((call) => call[0] === 'Metodos de pago')
+    expect(idxEvolucion).toBeGreaterThan(idxMetodosPago)
   })
 })
 

@@ -78,6 +78,60 @@ export interface ReciboData {
   pagos: ReciboPagoLinea[]
   cierre: ReciboCierre | null
   monedaPresentacion: MonedaPresentacion
+  /** Marca la reimpresion de una factura ya emitida (default false). Additive — no afecta el flujo de venta POS. */
+  esReimpresion?: boolean
+  /** Evolucion de flujo de dinero post-emision (reversos NC, abonos, reversos de pago, saldo a favor generado). Additive — `undefined` cuando no hay movimientos posteriores a la emision (byte-identical, mismo criterio que `esReimpresion`). */
+  evolucion?: ReciboEvolucion
+}
+
+// =============================================
+// ReciboEvolucion — evolucion de flujo de dinero post-emision
+// (openspec/changes/consulta-factura-evolucion)
+// =============================================
+
+export interface ReciboEvolucionReverso {
+  nroNcr: string
+  tipo: 'TOTAL' | 'PARCIAL'
+  fecha: string
+  montoUsd: number
+  montoBs: number
+}
+
+export interface ReciboEvolucionMovimiento {
+  fecha: string
+  montoUsd: number
+  montoBs: number
+}
+
+export interface ReciboEvolucion {
+  reversos: ReciboEvolucionReverso[]
+  abonos: ReciboEvolucionMovimiento[]
+  reversosPago: ReciboEvolucionMovimiento[]
+  saldoAFavorGeneradoUsd: number | null
+  saldoAFavorGeneradoBs: number | null
+}
+
+export interface ReciboEvolucionReversoInput {
+  nroNcr: string
+  tipo: string
+  fecha: string
+  totalUsd: DecimalInput
+  totalBs: DecimalInput
+}
+
+export interface ReciboEvolucionMovimientoInput {
+  fecha: string
+  /** movimientos_cuenta.monto — siempre USD. */
+  monto: DecimalInput
+  /** movimientos_cuenta.tasa_pago — tasa historica fotografiada en el momento del movimiento. */
+  tasaPago: DecimalInput | null
+}
+
+export interface ReciboEvolucionInput {
+  reversos?: ReciboEvolucionReversoInput[]
+  abonos?: ReciboEvolucionMovimientoInput[]
+  reversosPago?: ReciboEvolucionMovimientoInput[]
+  saldoAFavorGenerado?: ReciboEvolucionMovimientoInput | null
 }
 
 export interface ReciboLineaInput {
@@ -101,6 +155,10 @@ export interface BuildReciboDataInput {
   discrepancy: ReciboDiscrepancyInput | null
   saldoPendUsd: number
   monedaPresentacion?: MonedaPresentacion
+  /** Cuando true, el recibo generado incluye el marcador visual "REIMPRESION". Default false. */
+  esReimpresion?: boolean
+  /** Evolucion de flujo de dinero post-emision. Omitido/vacio => `ReciboData.evolucion` queda `undefined` (byte-identical). */
+  evolucion?: ReciboEvolucionInput
 }
 
 // =============================================
@@ -175,6 +233,50 @@ export function nombreArchivoRecibo(recibo: ReciboData, ext: 'pdf' | 'png'): str
     ? `RECIBO_${recibo.nroFactura}_${clienteSanitizado}`
     : `RECIBO_${recibo.nroFactura}`
   return `${base}.${ext}`
+}
+
+// =============================================
+// buildReciboEvolucion — mapea las fuentes crudas (reversos NC +
+// PAG/REV/SAFC de movimientos_cuenta) a ReciboEvolucion. Bs SIEMPRE via
+// usdToBs(monto, tasaPago) — monto es siempre USD (Design §Decision "Bs
+// derivation for evolution amounts"). Pura, sin I/O.
+// =============================================
+
+function mapReciboEvolucionMovimiento(m: ReciboEvolucionMovimientoInput): ReciboEvolucionMovimiento {
+  const montoUsd = toD(m.monto)
+  const montoBs = m.tasaPago != null ? usdToBs(montoUsd, m.tasaPago) : new Decimal(0)
+  return { fecha: m.fecha, montoUsd: montoUsd.toNumber(), montoBs: montoBs.toNumber() }
+}
+
+/** Pura. Retorna `undefined` cuando todo esta vacio (guard byte-identical, mismo criterio que `esReimpresion`). */
+export function buildReciboEvolucion(input?: ReciboEvolucionInput): ReciboEvolucion | undefined {
+  const reversos = input?.reversos ?? []
+  const abonos = input?.abonos ?? []
+  const reversosPago = input?.reversosPago ?? []
+  const saldoAFavorGenerado = input?.saldoAFavorGenerado ?? null
+
+  if (reversos.length === 0 && abonos.length === 0 && reversosPago.length === 0 && !saldoAFavorGenerado) {
+    return undefined
+  }
+
+  const saldoAFavorGeneradoUsd = saldoAFavorGenerado ? toD(saldoAFavorGenerado.monto).toNumber() : null
+  const saldoAFavorGeneradoBs = saldoAFavorGenerado
+    ? mapReciboEvolucionMovimiento(saldoAFavorGenerado).montoBs
+    : null
+
+  return {
+    reversos: reversos.map((r) => ({
+      nroNcr: r.nroNcr,
+      tipo: r.tipo === 'TOTAL' ? 'TOTAL' : 'PARCIAL',
+      fecha: r.fecha,
+      montoUsd: toD(r.totalUsd).toNumber(),
+      montoBs: toD(r.totalBs).toNumber(),
+    })),
+    abonos: abonos.map(mapReciboEvolucionMovimiento),
+    reversosPago: reversosPago.map(mapReciboEvolucionMovimiento),
+    saldoAFavorGeneradoUsd,
+    saldoAFavorGeneradoBs,
+  }
 }
 
 // =============================================
@@ -259,6 +361,8 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
     pagos,
     cierre,
     monedaPresentacion: input.monedaPresentacion ?? 'USD',
+    esReimpresion: input.esReimpresion ?? false,
+    evolucion: buildReciboEvolucion(input.evolucion),
   }
 }
 
@@ -278,6 +382,21 @@ export const RECIBO_ANCHO_CHARS = 32
 /** Genera un separador de `chars` guiones (default: RECIBO_ANCHO_CHARS). Funcion pura. */
 export function generarSeparador(chars: number = RECIBO_ANCHO_CHARS): string {
   return '-'.repeat(chars)
+}
+
+/**
+ * Centra `texto` dentro de `ancho` caracteres rellenando con espacios a ambos lados
+ * (convencion monoespaciada, sin alineacion nativa disponible en texto plano/PNG).
+ * Si el padding total es impar, el caracter sobrante va al lado derecho. Si `texto`
+ * es igual o mas largo que `ancho`, se retorna sin cambios (no trunca, no lanza).
+ * Funcion pura.
+ */
+export function centrarTexto(texto: string, ancho: number = RECIBO_ANCHO_CHARS): string {
+  if (texto.length >= ancho) return texto
+  const totalPadding = ancho - texto.length
+  const padIzquierda = Math.floor(totalPadding / 2)
+  const padDerecha = totalPadding - padIzquierda
+  return `${' '.repeat(padIzquierda)}${texto}${' '.repeat(padDerecha)}`
 }
 
 const SEPARADOR = generarSeparador()
@@ -403,6 +522,62 @@ export function construirFilasTotales(totales: ReciboTotales, monedaPresentacion
   return filas
 }
 
+/** Fila de la seccion de evolucion, ya formateada (bimonetaria via formatMontoBimonetario). */
+interface FilaEvolucion {
+  label: string
+  monto: string
+  bold: boolean
+}
+
+const REVERSO_TIPO_LABEL: Record<'TOTAL' | 'PARCIAL', string> = {
+  TOTAL: 'Reverso Total',
+  PARCIAL: 'Reverso Parcial',
+}
+
+/**
+ * Filas de la seccion "Evolucion" (reversos NC, abonos, reversos de pago, saldo a favor
+ * generado), en orden fijo. Funcion pura, compartida por construirLineasRecibo (texto/PNG)
+ * y buildReciboPdfBlob (PDF) para que ambas rutas de render sean estructuralmente
+ * imposibles de divergir (mismo patron que construirFilasTotales/sumarAbonos).
+ */
+export function construirLineasEvolucion(
+  evolucion: ReciboEvolucion,
+  monedaPresentacion: MonedaPresentacion
+): FilaEvolucion[] {
+  const filas: FilaEvolucion[] = []
+
+  for (const reverso of evolucion.reversos) {
+    filas.push({
+      label: `${reverso.nroNcr} (${REVERSO_TIPO_LABEL[reverso.tipo]})`,
+      monto: formatMontoBimonetario(reverso.montoUsd, reverso.montoBs, monedaPresentacion),
+      bold: false,
+    })
+  }
+  for (const abono of evolucion.abonos) {
+    filas.push({
+      label: `Abono ${formatDateTime(abono.fecha)}`,
+      monto: formatMontoBimonetario(abono.montoUsd, abono.montoBs, monedaPresentacion),
+      bold: false,
+    })
+  }
+  for (const reversoPago of evolucion.reversosPago) {
+    filas.push({
+      label: `Reverso de pago ${formatDateTime(reversoPago.fecha)}`,
+      monto: formatMontoBimonetario(reversoPago.montoUsd, reversoPago.montoBs, monedaPresentacion),
+      bold: false,
+    })
+  }
+  if (evolucion.saldoAFavorGeneradoUsd != null) {
+    filas.push({
+      label: 'Genero saldo a favor',
+      monto: formatMontoBimonetario(evolucion.saldoAFavorGeneradoUsd, evolucion.saldoAFavorGeneradoBs ?? 0, monedaPresentacion),
+      bold: true,
+    })
+  }
+
+  return filas
+}
+
 /** Texto de cierre del recibo (excedente o saldo a credito). Sin acentos, consistente con el resto del archivo. */
 function formatearCierre(cierre: ReciboCierre): string {
   const monto = `${formatBs(cierre.montoBs)} (${formatUsd(cierre.montoUsd)})`
@@ -438,6 +613,9 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
   lines.push({ text: `Identificacion: ${recibo.cliente.identificacion}` })
   if (recibo.cliente.direccion) lines.push({ text: `Direccion: ${recibo.cliente.direccion}` })
   lines.push({ text: '' })
+  if (recibo.esReimpresion) {
+    lines.push({ text: centrarTexto('REIMPRESION', RECIBO_ANCHO_CHARS), bold: true })
+  }
   lines.push({ text: 'Articulos', bold: true })
   lines.push({ text: SEPARADOR })
   for (const linea of recibo.lineas) {
@@ -472,6 +650,16 @@ function construirLineasRecibo(recibo: ReciboData): LineaRecibo[] {
       text: `Total abonos: ${formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}`,
       bold: true,
     })
+    lines.push({ text: SEPARADOR })
+  }
+
+  if (recibo.evolucion) {
+    lines.push({ text: '' })
+    lines.push({ text: 'Evolucion', bold: true })
+    lines.push({ text: SEPARADOR })
+    for (const linea of construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion)) {
+      lines.push({ text: `${linea.label}: ${linea.monto}`, bold: linea.bold })
+    }
     lines.push({ text: SEPARADOR })
   }
 
@@ -560,6 +748,13 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
   infoRight.forEach((txt, i) => doc.text(txt, pageWidth / 2 + 10, yInfoTop + i * 5))
   y = yInfoTop + Math.max(infoLeft.length, infoRight.length) * 5 + 5
 
+  if (recibo.esReimpresion) {
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text('REIMPRESION', pageWidth / 2, y, { align: 'center' })
+    y += 5
+  }
+
   doc.setFontSize(10)
   doc.setFont('helvetica', 'bold')
   doc.text('Articulos', 15, y)
@@ -622,6 +817,31 @@ export function buildReciboPdfBlob(recibo: ReciboData): Blob {
       startY: y,
       head: [['Metodo', 'Monto']],
       body: pagosBody,
+      theme: 'grid',
+      headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+      bodyStyles: { fontSize: 8 },
+      columnStyles: { 1: { halign: 'right' } },
+      margin: { left: 15, right: 15 },
+    })
+
+    y = (doc as AutoTableDoc).lastAutoTable.finalY + 6
+  }
+
+  if (recibo.evolucion) {
+    doc.setFontSize(10)
+    doc.setFont('helvetica', 'bold')
+    doc.text('Evolucion', 15, y)
+    y += 4
+
+    const evolucionBody = construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion).map((fila) => [
+      fila.label,
+      fila.monto,
+    ])
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Concepto', 'Monto']],
+      body: evolucionBody,
       theme: 'grid',
       headStyles: { fillColor: [59, 130, 246], textColor: 255, fontStyle: 'bold', fontSize: 8 },
       bodyStyles: { fontSize: 8 },

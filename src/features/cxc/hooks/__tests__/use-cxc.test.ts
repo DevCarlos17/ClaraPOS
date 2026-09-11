@@ -41,6 +41,7 @@ import {
   registrarPagoFactura,
   useDetalleFactura,
   useAfectacionCxc,
+  useEvolucionFactura,
   type RegistrarSafExcedenteParams,
   type AplicarSaldoFavorParams,
   type PagoFacturaParams,
@@ -395,5 +396,83 @@ describe('useAfectacionCxc (Design §Decision 6: COUNT movimientos_cuenta WHERE 
     const { result } = renderHook(() => useAfectacionCxc('venta-2', 'emp-1'))
 
     expect(result.current.cantidadMovimientos).toBe(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────
+// useEvolucionFactura — Design §Decision "useEvolucionFactura return shape"
+// (consulta-factura-evolucion PR3). Pre-agrupado por tipo (PAG/REV/SAFC),
+// escopeado a venta_id + empresa_id (rule #11 — codigo NUEVO, no repetir el
+// gap pre-existente de useDetalleFactura/usePagosFactura).
+// ─────────────────────────────────────────────────────────────────────────
+
+describe('useEvolucionFactura (movimientos_cuenta PAG/REV/SAFC, pre-agrupado por tipo)', () => {
+  it('sin ventaId: no ejecuta la query (sql vacio) y retorna grupos vacios', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    const { result } = renderHook(() => useEvolucionFactura(null, 'emp-1'))
+
+    expect(mockedUseQuery).toHaveBeenCalledWith('', [])
+    expect(result.current.abonos).toEqual([])
+    expect(result.current.reversosPago).toEqual([])
+    expect(result.current.saldoAFavor).toEqual([])
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it('sin empresaId: no ejecuta la query (sql vacio) y retorna grupos vacios', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    const { result } = renderHook(() => useEvolucionFactura('venta-1', ''))
+
+    expect(mockedUseQuery).toHaveBeenCalledWith('', [])
+    expect(result.current.abonos).toEqual([])
+  })
+
+  it('con ventaId+empresaId: ejecuta SELECT escopeado a venta_id + empresa_id + tipo IN (...)', () => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+
+    renderHook(() => useEvolucionFactura('venta-1', 'emp-1'))
+
+    const [sql, params] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('FROM movimientos_cuenta')
+    expect(sql).toContain('WHERE venta_id = ? AND empresa_id = ?')
+    expect(sql).toContain("tipo IN ('PAG','REV','SAFC')")
+    expect(sql).toContain('ORDER BY fecha ASC')
+    expect(params).toEqual(['venta-1', 'emp-1'])
+  })
+
+  it('filas mixtas (PAG/REV/SAFC): agrupa correctamente por tipo', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        { tipo: 'PAG', monto: '100', tasa_pago: '40', fecha: '2026-01-01', referencia: 'PAG-1', observacion: 'x' },
+        { tipo: 'REV', monto: '50', tasa_pago: '40', fecha: '2026-01-02', referencia: 'REV-1', observacion: 'y' },
+        { tipo: 'SAFC', monto: '10', tasa_pago: '40', fecha: '2026-01-03', referencia: 'SAFC-1', observacion: 'z' },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useEvolucionFactura('venta-1', 'emp-1'))
+
+    expect(result.current.abonos).toHaveLength(1)
+    expect(result.current.abonos[0]).toMatchObject({ tipo: 'PAG', monto: '100' })
+    expect(result.current.reversosPago).toHaveLength(1)
+    expect(result.current.reversosPago[0]).toMatchObject({ tipo: 'REV', monto: '50' })
+    expect(result.current.saldoAFavor).toHaveLength(1)
+    expect(result.current.saldoAFavor[0]).toMatchObject({ tipo: 'SAFC', monto: '10' })
+    expect(result.current.isLoading).toBe(false)
+  })
+
+  it('sin filas SAFC: saldoAFavor es un array vacio', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        { tipo: 'PAG', monto: '100', tasa_pago: '40', fecha: '2026-01-01', referencia: 'PAG-1', observacion: 'x' },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useEvolucionFactura('venta-1', 'emp-1'))
+
+    expect(result.current.saldoAFavor).toEqual([])
+    expect(result.current.abonos).toHaveLength(1)
   })
 })
