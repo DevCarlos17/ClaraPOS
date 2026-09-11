@@ -80,6 +80,58 @@ export interface ReciboData {
   monedaPresentacion: MonedaPresentacion
   /** Marca la reimpresion de una factura ya emitida (default false). Additive — no afecta el flujo de venta POS. */
   esReimpresion?: boolean
+  /** Evolucion de flujo de dinero post-emision (reversos NC, abonos, reversos de pago, saldo a favor generado). Additive — `undefined` cuando no hay movimientos posteriores a la emision (byte-identical, mismo criterio que `esReimpresion`). */
+  evolucion?: ReciboEvolucion
+}
+
+// =============================================
+// ReciboEvolucion — evolucion de flujo de dinero post-emision
+// (openspec/changes/consulta-factura-evolucion)
+// =============================================
+
+export interface ReciboEvolucionReverso {
+  nroNcr: string
+  tipo: 'TOTAL' | 'PARCIAL'
+  fecha: string
+  montoUsd: number
+  montoBs: number
+}
+
+export interface ReciboEvolucionMovimiento {
+  fecha: string
+  montoUsd: number
+  montoBs: number
+}
+
+export interface ReciboEvolucion {
+  reversos: ReciboEvolucionReverso[]
+  abonos: ReciboEvolucionMovimiento[]
+  reversosPago: ReciboEvolucionMovimiento[]
+  saldoAFavorGeneradoUsd: number | null
+  saldoAFavorGeneradoBs: number | null
+}
+
+export interface ReciboEvolucionReversoInput {
+  nroNcr: string
+  tipo: string
+  fecha: string
+  totalUsd: DecimalInput
+  totalBs: DecimalInput
+}
+
+export interface ReciboEvolucionMovimientoInput {
+  fecha: string
+  /** movimientos_cuenta.monto — siempre USD. */
+  monto: DecimalInput
+  /** movimientos_cuenta.tasa_pago — tasa historica fotografiada en el momento del movimiento. */
+  tasaPago: DecimalInput | null
+}
+
+export interface ReciboEvolucionInput {
+  reversos?: ReciboEvolucionReversoInput[]
+  abonos?: ReciboEvolucionMovimientoInput[]
+  reversosPago?: ReciboEvolucionMovimientoInput[]
+  saldoAFavorGenerado?: ReciboEvolucionMovimientoInput | null
 }
 
 export interface ReciboLineaInput {
@@ -105,6 +157,8 @@ export interface BuildReciboDataInput {
   monedaPresentacion?: MonedaPresentacion
   /** Cuando true, el recibo generado incluye el marcador visual "REIMPRESION". Default false. */
   esReimpresion?: boolean
+  /** Evolucion de flujo de dinero post-emision. Omitido/vacio => `ReciboData.evolucion` queda `undefined` (byte-identical). */
+  evolucion?: ReciboEvolucionInput
 }
 
 // =============================================
@@ -179,6 +233,50 @@ export function nombreArchivoRecibo(recibo: ReciboData, ext: 'pdf' | 'png'): str
     ? `RECIBO_${recibo.nroFactura}_${clienteSanitizado}`
     : `RECIBO_${recibo.nroFactura}`
   return `${base}.${ext}`
+}
+
+// =============================================
+// buildReciboEvolucion — mapea las fuentes crudas (reversos NC +
+// PAG/REV/SAFC de movimientos_cuenta) a ReciboEvolucion. Bs SIEMPRE via
+// usdToBs(monto, tasaPago) — monto es siempre USD (Design §Decision "Bs
+// derivation for evolution amounts"). Pura, sin I/O.
+// =============================================
+
+function mapReciboEvolucionMovimiento(m: ReciboEvolucionMovimientoInput): ReciboEvolucionMovimiento {
+  const montoUsd = toD(m.monto)
+  const montoBs = m.tasaPago != null ? usdToBs(montoUsd, m.tasaPago) : new Decimal(0)
+  return { fecha: m.fecha, montoUsd: montoUsd.toNumber(), montoBs: montoBs.toNumber() }
+}
+
+/** Pura. Retorna `undefined` cuando todo esta vacio (guard byte-identical, mismo criterio que `esReimpresion`). */
+export function buildReciboEvolucion(input?: ReciboEvolucionInput): ReciboEvolucion | undefined {
+  const reversos = input?.reversos ?? []
+  const abonos = input?.abonos ?? []
+  const reversosPago = input?.reversosPago ?? []
+  const saldoAFavorGenerado = input?.saldoAFavorGenerado ?? null
+
+  if (reversos.length === 0 && abonos.length === 0 && reversosPago.length === 0 && !saldoAFavorGenerado) {
+    return undefined
+  }
+
+  const saldoAFavorGeneradoUsd = saldoAFavorGenerado ? toD(saldoAFavorGenerado.monto).toNumber() : null
+  const saldoAFavorGeneradoBs = saldoAFavorGenerado
+    ? mapReciboEvolucionMovimiento(saldoAFavorGenerado).montoBs
+    : null
+
+  return {
+    reversos: reversos.map((r) => ({
+      nroNcr: r.nroNcr,
+      tipo: r.tipo === 'TOTAL' ? 'TOTAL' : 'PARCIAL',
+      fecha: r.fecha,
+      montoUsd: toD(r.totalUsd).toNumber(),
+      montoBs: toD(r.totalBs).toNumber(),
+    })),
+    abonos: abonos.map(mapReciboEvolucionMovimiento),
+    reversosPago: reversosPago.map(mapReciboEvolucionMovimiento),
+    saldoAFavorGeneradoUsd,
+    saldoAFavorGeneradoBs,
+  }
 }
 
 // =============================================
@@ -264,6 +362,7 @@ export function buildReciboData(input: BuildReciboDataInput): ReciboData {
     cierre,
     monedaPresentacion: input.monedaPresentacion ?? 'USD',
     esReimpresion: input.esReimpresion ?? false,
+    evolucion: buildReciboEvolucion(input.evolucion),
   }
 }
 

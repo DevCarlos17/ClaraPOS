@@ -3,11 +3,15 @@ import {
   buildReciboDataDesdeFacturaGuardada,
   useReciboDesdeFactura,
 } from '../recibo-desde-factura'
-import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
+import { useDetalleFactura, usePagosFactura, type EvolucionFacturaRow } from '@/features/cxc/hooks/use-cxc'
+import { useEvolucionFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
+import { useReversosFactura, type ReversoFacturaRow } from '../../hooks/use-notas-credito'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import type { FacturaParaAnular } from '../../hooks/use-notas-credito'
 import type { DetalleFacturaCxc, PagoFacturaCxc } from '@/features/cxc/hooks/use-cxc'
 import type { Company } from '@/features/configuracion/hooks/use-company'
+import type { ReciboEvolucionInput } from '../factura-export'
 
 // `use-company.ts` importa `@/core/db/kysely/kysely`, que instancia `PowerSyncDatabase`
 // al cargar el modulo (efecto lateral top-level). Mockeamos el constructor para poder
@@ -21,6 +25,7 @@ vi.mock('@powersync/web', async (importOriginal) => {
 vi.mock('@/features/cxc/hooks/use-cxc', () => ({
   useDetalleFactura: vi.fn(),
   usePagosFactura: vi.fn(),
+  useEvolucionFactura: vi.fn(),
 }))
 
 vi.mock('@/features/configuracion/hooks/use-company', async (importOriginal) => {
@@ -28,9 +33,56 @@ vi.mock('@/features/configuracion/hooks/use-company', async (importOriginal) => 
   return { ...actual, useCompany: vi.fn() }
 })
 
+vi.mock('../../hooks/use-notas-credito', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../hooks/use-notas-credito')>()
+  return { ...actual, useReversosFactura: vi.fn() }
+})
+
+vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
+
 const mockedUseDetalleFactura = vi.mocked(useDetalleFactura)
 const mockedUsePagosFactura = vi.mocked(usePagosFactura)
 const mockedUseCompany = vi.mocked(useCompany)
+const mockedUseEvolucionFactura = vi.mocked(useEvolucionFactura)
+const mockedUseReversosFactura = vi.mocked(useReversosFactura)
+const mockedUseCurrentUser = vi.mocked(useCurrentUser)
+
+function baseEvolucion(overrides: Partial<ReturnType<typeof useEvolucionFactura>> = {}): ReturnType<typeof useEvolucionFactura> {
+  return {
+    abonos: [],
+    reversosPago: [],
+    saldoAFavor: [],
+    isLoading: false,
+    ...overrides,
+  }
+}
+
+function baseReversoRow(overrides: Partial<ReversoFacturaRow> = {}): ReversoFacturaRow {
+  return {
+    nota_credito_id: 'nc-1',
+    nro_ncr: 'NCR-000001',
+    tipo: 'PARCIAL',
+    fecha: '2026-08-14T10:00:00.000-04:00',
+    venta_det_id: 'det-1',
+    producto_descripcion: 'Botox 50U',
+    cantidad: '1',
+    total_usd: '10.00',
+    total_bs: '400.00',
+    ...overrides,
+  }
+}
+
+function baseEvolucionRow(overrides: Partial<EvolucionFacturaRow> = {}): EvolucionFacturaRow {
+  return {
+    tipo: 'PAG',
+    monto: '10.00',
+    tasa_pago: '40.0000',
+    fecha: '2026-08-15T10:00:00.000-04:00',
+    referencia: 'PAG-C01-000001',
+    observacion: 'Pago factura C01-000001',
+    ...overrides,
+  }
+}
 
 function baseFactura(overrides: Partial<FacturaParaAnular> = {}): FacturaParaAnular {
   return {
@@ -203,11 +255,45 @@ describe('buildReciboDataDesdeFacturaGuardada', () => {
 
     expect(recibo.esReimpresion).toBe(false)
   })
+
+  it('sin el parametro evolucion (omitido), recibo.evolucion es undefined (PR4, additive default)', () => {
+    const recibo = buildReciboDataDesdeFacturaGuardada(baseFactura(), [], [], baseCompany())
+    expect(recibo.evolucion).toBeUndefined()
+  })
+
+  it('con evolucion poblada, recibo.evolucion refleja los movimientos pasados (PR4)', () => {
+    const evolucion: ReciboEvolucionInput = {
+      abonos: [{ fecha: '2026-08-15', monto: 10, tasaPago: 40 }],
+    }
+    const recibo = buildReciboDataDesdeFacturaGuardada(baseFactura(), [], [], baseCompany(), undefined, evolucion)
+
+    expect(recibo.evolucion).toEqual({
+      reversos: [],
+      abonos: [{ fecha: '2026-08-15', montoUsd: 10, montoBs: 400 }],
+      reversosPago: [],
+      saldoAFavorGeneradoUsd: null,
+      saldoAFavorGeneradoBs: null,
+    })
+  })
 })
 
 describe('useReciboDesdeFactura', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockedUseCurrentUser.mockReturnValue({
+      user: {
+        id: 'user-1',
+        email: 'cajero@email.com',
+        nombre: 'Cajero',
+        level: 3,
+        rol_id: null,
+        rol_nombre: null,
+        empresa_id: 'emp-1',
+      },
+      loading: false,
+    })
+    mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(baseEvolucion())
   })
 
   it('venta === null retorna { recibo: null, isLoading: false } sin consultar company/detalle en estado loading', () => {
@@ -289,5 +375,84 @@ describe('useReciboDesdeFactura', () => {
     const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
 
     expect(result.current.recibo?.monedaPresentacion).toBe('USD')
+  })
+
+  it('empresaId de useCurrentUser se pasa a useReversosFactura y useEvolucionFactura (PR4)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseCurrentUser.mockReturnValue({
+      user: {
+        id: 'user-1',
+        email: 'cajero@email.com',
+        nombre: 'Cajero',
+        level: 3,
+        rol_id: null,
+        rol_nombre: null,
+        empresa_id: 'emp-42',
+      },
+      loading: false,
+    })
+
+    renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(mockedUseReversosFactura).toHaveBeenCalledWith('venta-1', 'emp-42')
+    expect(mockedUseEvolucionFactura).toHaveBeenCalledWith('venta-1', 'emp-42')
+  })
+
+  it('useReversosFactura cargando produce isLoading:true (PR4, agregacion extendida)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: true })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current).toEqual({ recibo: null, isLoading: true })
+  })
+
+  it('useEvolucionFactura cargando produce isLoading:true (PR4, agregacion extendida)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(baseEvolucion({ isLoading: true }))
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current).toEqual({ recibo: null, isLoading: true })
+  })
+
+  it('sin reversos ni movimientos de evolucion, recibo.evolucion queda undefined (byte-identical guard, PR4)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion).toBeUndefined()
+  })
+
+  it('con reversos + abonos + reversoPago + saldoAFavor poblados, recibo.evolucion se compone correctamente (PR4)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReversosFactura.mockReturnValue({ reversos: [baseReversoRow()], isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        abonos: [baseEvolucionRow({ tipo: 'PAG', monto: '10.00', tasa_pago: '40.0000', fecha: '2026-08-15' })],
+        reversosPago: [baseEvolucionRow({ tipo: 'REV', monto: '3.00', tasa_pago: '40.0000', fecha: '2026-08-16' })],
+        saldoAFavor: [baseEvolucionRow({ tipo: 'SAFC', monto: '2.00', tasa_pago: '40.0000', fecha: '2026-08-17' })],
+      })
+    )
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion).toEqual({
+      reversos: [{ nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', montoUsd: 10, montoBs: 400 }],
+      abonos: [{ fecha: '2026-08-15', montoUsd: 10, montoBs: 400 }],
+      reversosPago: [{ fecha: '2026-08-16', montoUsd: 3, montoBs: 120 }],
+      saldoAFavorGeneradoUsd: 2,
+      saldoAFavorGeneradoBs: 80,
+    })
   })
 })

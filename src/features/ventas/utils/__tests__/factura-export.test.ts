@@ -1,6 +1,7 @@
 import autoTable from 'jspdf-autotable'
 import {
   buildReciboData,
+  buildReciboEvolucion,
   buildReciboTextoPlano,
   buildReciboImagenBlob,
   buildReciboPdfBlob,
@@ -21,6 +22,7 @@ import {
   type BuildReciboDataInput,
   type ReciboData,
   type ReciboTotales,
+  type ReciboEvolucionInput,
 } from '../factura-export'
 import type { ReciboPagoInput, ReciboPagoLinea } from '../recibo-pagos'
 
@@ -1141,6 +1143,121 @@ describe('esReimpresion — marcador additive en ReciboData (PR1)', () => {
     const { esReimpresion: _flagSin, ...restoSinFlag } = sinFlag
     const { esReimpresion: _flagCon, ...restoConFlag } = conFlag
     expect(restoConFlag).toEqual(restoSinFlag)
+  })
+})
+
+describe('buildReciboEvolucion (PR4)', () => {
+  it('sin input (undefined) retorna undefined', () => {
+    expect(buildReciboEvolucion(undefined)).toBeUndefined()
+  })
+
+  it('con todos los arreglos vacios y sin saldoAFavorGenerado retorna undefined', () => {
+    const input: ReciboEvolucionInput = {
+      reversos: [],
+      abonos: [],
+      reversosPago: [],
+      saldoAFavorGenerado: null,
+    }
+    expect(buildReciboEvolucion(input)).toBeUndefined()
+  })
+
+  it('reversos presentes se mapean con montoUsd/montoBs desde totalUsd/totalBs (ya pre-calculados por ReversoAplicado)', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [{ nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', totalUsd: 10, totalBs: 405 }],
+    })
+
+    expect(resultado).toBeDefined()
+    expect(resultado?.reversos).toEqual([
+      { nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', montoUsd: 10, montoBs: 405 },
+    ])
+    expect(resultado?.abonos).toEqual([])
+    expect(resultado?.reversosPago).toEqual([])
+    expect(resultado?.saldoAFavorGeneradoUsd).toBeNull()
+    expect(resultado?.saldoAFavorGeneradoBs).toBeNull()
+  })
+
+  it('un tipo distinto de TOTAL/PARCIAL cae a PARCIAL (normalizacion defensiva)', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [{ nroNcr: 'NCR-000002', tipo: 'ALGO_RARO', fecha: '2026-08-14', totalUsd: 5, totalBs: 200 }],
+    })
+    expect(resultado?.reversos[0].tipo).toBe('PARCIAL')
+  })
+
+  it('abonos (PAG) se mapean fecha+montoUsd+montoBs, Bs via usdToBs(monto, tasaPago)', () => {
+    const resultado = buildReciboEvolucion({
+      abonos: [{ fecha: '2026-08-15T12:00:00.000-04:00', monto: 20, tasaPago: 40 }],
+    })
+
+    expect(resultado?.abonos).toEqual([
+      { fecha: '2026-08-15T12:00:00.000-04:00', montoUsd: 20, montoBs: 800 },
+    ])
+  })
+
+  it('reversosPago (REV) se mapean con la misma formula que abonos', () => {
+    const resultado = buildReciboEvolucion({
+      reversosPago: [{ fecha: '2026-08-16', monto: 5, tasaPago: 50 }],
+    })
+
+    expect(resultado?.reversosPago).toEqual([{ fecha: '2026-08-16', montoUsd: 5, montoBs: 250 }])
+  })
+
+  it('tasaPago null en un movimiento produce montoBs 0 (sin tasa historica disponible, no lanza)', () => {
+    const resultado = buildReciboEvolucion({
+      abonos: [{ fecha: '2026-08-15', monto: 20, tasaPago: null }],
+    })
+
+    expect(resultado?.abonos).toEqual([{ fecha: '2026-08-15', montoUsd: 20, montoBs: 0 }])
+  })
+
+  it('saldoAFavorGenerado presente produce saldoAFavorGeneradoUsd/Bs via la misma formula usdToBs', () => {
+    const resultado = buildReciboEvolucion({
+      saldoAFavorGenerado: { fecha: '2026-08-17', monto: 7.5, tasaPago: 40 },
+    })
+
+    expect(resultado?.saldoAFavorGeneradoUsd).toBe(7.5)
+    expect(resultado?.saldoAFavorGeneradoBs).toBe(300)
+  })
+
+  it('multi-caso: reversos+abonos+reversosPago+saldoAFavorGenerado combinados en un solo resultado', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [{ nroNcr: 'NCR-000003', tipo: 'TOTAL', fecha: '2026-08-18', totalUsd: 30, totalBs: 1200 }],
+      abonos: [{ fecha: '2026-08-19', monto: 10, tasaPago: 40 }],
+      reversosPago: [{ fecha: '2026-08-20', monto: 3, tasaPago: 40 }],
+      saldoAFavorGenerado: { fecha: '2026-08-21', monto: 2, tasaPago: 40 },
+    })
+
+    expect(resultado).toEqual({
+      reversos: [{ nroNcr: 'NCR-000003', tipo: 'TOTAL', fecha: '2026-08-18', montoUsd: 30, montoBs: 1200 }],
+      abonos: [{ fecha: '2026-08-19', montoUsd: 10, montoBs: 400 }],
+      reversosPago: [{ fecha: '2026-08-20', montoUsd: 3, montoBs: 120 }],
+      saldoAFavorGeneradoUsd: 2,
+      saldoAFavorGeneradoBs: 80,
+    })
+  })
+})
+
+describe('ReciboData.evolucion — additive via buildReciboData (PR4)', () => {
+  it('buildReciboData sin evolucion en el input produce ReciboData.evolucion === undefined', () => {
+    const recibo = buildReciboData(baseInput())
+    expect(recibo.evolucion).toBeUndefined()
+  })
+
+  it('buildReciboData con evolucion vacia (input presente pero sin movimientos) tambien produce evolucion === undefined', () => {
+    const recibo = buildReciboData(baseInput({ evolucion: { reversos: [], abonos: [], reversosPago: [] } }))
+    expect(recibo.evolucion).toBeUndefined()
+  })
+
+  it('buildReciboData con evolucion poblada produce ReciboData.evolucion === buildReciboEvolucion(input.evolucion), sin alterar ningun otro campo', () => {
+    const evolucionInput: ReciboEvolucionInput = {
+      abonos: [{ fecha: '2026-08-19', monto: 10, tasaPago: 40 }],
+    }
+    const sinEvolucion = buildReciboData(baseInput())
+    const conEvolucion = buildReciboData(baseInput({ evolucion: evolucionInput }))
+
+    expect(conEvolucion.evolucion).toEqual(buildReciboEvolucion(evolucionInput))
+    const { evolucion: _evoSin, ...restoSinEvolucion } = sinEvolucion
+    const { evolucion: _evoCon, ...restoConEvolucion } = conEvolucion
+    expect(restoConEvolucion).toEqual(restoSinEvolucion)
   })
 })
 
