@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { ReimprimirFacturaModal } from '../reimprimir-factura-modal'
+import { ConsultaFacturaModal } from '../consulta-factura-modal'
 import { useReciboDesdeFactura } from '../../utils/recibo-desde-factura'
 import {
   buildReciboData,
@@ -89,11 +89,11 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('ReimprimirFacturaModal — apertura y estado de carga', () => {
+describe('ConsultaFacturaModal — apertura y estado de carga', () => {
   it('isOpen=false no renderiza el panel de detalle ni los botones de accion', () => {
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo: null, isLoading: false })
 
-    render(<ReimprimirFacturaModal venta={null} isOpen={false} onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={null} isOpen={false} onClose={vi.fn()} />)
 
     expect(screen.queryByTestId('factura-detalle-panel')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /descargar pdf/i })).not.toBeInTheDocument()
@@ -102,7 +102,7 @@ describe('ReimprimirFacturaModal — apertura y estado de carga', () => {
   it('isOpen=true mientras isLoading, muestra estado de carga sin panel ni botones', () => {
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo: null, isLoading: true })
 
-    render(<ReimprimirFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
 
     expect(screen.getByText(/cargando/i)).toBeInTheDocument()
     expect(screen.queryByTestId('factura-detalle-panel')).not.toBeInTheDocument()
@@ -112,7 +112,7 @@ describe('ReimprimirFacturaModal — apertura y estado de carga', () => {
   it('llama a useReciboDesdeFactura(venta, { esReimpresion: true, derivarMonedaPresentacion: true })', () => {
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo: null, isLoading: true })
 
-    render(<ReimprimirFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
 
     expect(mockedUseReciboDesdeFactura).toHaveBeenCalledWith(VENTA, {
       esReimpresion: true,
@@ -121,17 +121,18 @@ describe('ReimprimirFacturaModal — apertura y estado de carga', () => {
   })
 })
 
-describe('ReimprimirFacturaModal — recibo listo (navigator.share disponible)', () => {
+describe('ConsultaFacturaModal — recibo listo (navigator.share disponible)', () => {
   beforeEach(() => {
     vi.stubGlobal('navigator', { ...navigator, share: vi.fn() })
   })
 
-  it('renderiza FacturaDetallePanel con el recibo y ambos botones', () => {
+  it('renderiza el titulo "Consulta de Factura", FacturaDetallePanel con el recibo y ambos botones', () => {
     const recibo = reciboFixture()
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo, isLoading: false })
 
-    render(<ReimprimirFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
 
+    expect(screen.getByRole('heading', { name: 'Consulta de Factura' })).toBeInTheDocument()
     expect(screen.getByTestId('factura-detalle-panel')).toHaveAttribute('data-nro-factura', 'C01-000001')
     expect(screen.getByRole('button', { name: /descargar pdf/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /compartir/i })).toBeInTheDocument()
@@ -142,7 +143,7 @@ describe('ReimprimirFacturaModal — recibo listo (navigator.share disponible)',
     const recibo = reciboFixture()
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo, isLoading: false })
 
-    render(<ReimprimirFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
     await user.click(screen.getByRole('button', { name: /descargar pdf/i }))
 
     expect(mockedDescargarReciboPdf).toHaveBeenCalledTimes(1)
@@ -156,7 +157,7 @@ describe('ReimprimirFacturaModal — recibo listo (navigator.share disponible)',
     const recibo = reciboFixture()
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo, isLoading: false })
 
-    render(<ReimprimirFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
     await user.click(screen.getByRole('button', { name: /compartir/i }))
 
     expect(mockedCompartirReciboImagen).toHaveBeenCalledTimes(1)
@@ -169,7 +170,7 @@ describe('ReimprimirFacturaModal — recibo listo (navigator.share disponible)',
     const recibo = reciboFixture()
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo, isLoading: false })
 
-    render(<ReimprimirFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
     await user.click(screen.getByRole('button', { name: /compartir/i }))
 
     expect(mockedCompartirReciboImagen).toHaveBeenCalledTimes(1)
@@ -177,13 +178,13 @@ describe('ReimprimirFacturaModal — recibo listo (navigator.share disponible)',
   })
 })
 
-describe('ReimprimirFacturaModal — sin navigator.share', () => {
+describe('ConsultaFacturaModal — sin navigator.share', () => {
   it('el boton "Compartir" no se renderiza, "Descargar PDF" si', () => {
     vi.stubGlobal('navigator', { ...navigator, share: undefined })
     const recibo = reciboFixture()
     mockedUseReciboDesdeFactura.mockReturnValue({ recibo, isLoading: false })
 
-    render(<ReimprimirFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
+    render(<ConsultaFacturaModal venta={VENTA} isOpen onClose={vi.fn()} />)
 
     expect(screen.getByRole('button', { name: /descargar pdf/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /compartir/i })).not.toBeInTheDocument()

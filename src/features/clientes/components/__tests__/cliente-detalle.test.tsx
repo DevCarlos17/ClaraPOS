@@ -30,10 +30,10 @@ vi.mock('@/features/ventas/components/facturas-empresa-tab', () => ({
   ),
 }))
 // PR3b (reimpresion-factura-fiscal): mock shallow — su propia suite vive en
-// reimprimir-factura-modal.test.tsx. Aqui solo se prueba el wiring de
+// consulta-factura-modal.test.tsx. Aqui solo se prueba el wiring de
 // `facturaSeleccionada` (venta/isOpen/onClose) desde `ClienteDetalle`.
-vi.mock('@/features/ventas/components/reimprimir-factura-modal', () => ({
-  ReimprimirFacturaModal: ({
+vi.mock('@/features/ventas/components/consulta-factura-modal', () => ({
+  ConsultaFacturaModal: ({
     venta,
     isOpen,
     onClose,
@@ -43,7 +43,7 @@ vi.mock('@/features/ventas/components/reimprimir-factura-modal', () => ({
     onClose: () => void
   }) =>
     isOpen ? (
-      <div data-testid="reimprimir-factura-modal" data-nro-factura={venta?.nro_factura}>
+      <div data-testid="consulta-factura-modal" data-nro-factura={venta?.nro_factura}>
         <button onClick={onClose}>Cerrar reimprimir</button>
       </div>
     ) : null,
@@ -181,16 +181,16 @@ describe('ClienteDetalle — seccion Facturas', () => {
     expect(screen.queryByRole('button', { name: /aplicar nota de credito/i })).not.toBeInTheDocument()
   })
 
-  it('PR3b: click de fila (onRowClick) monta ReimprimirFacturaModal con esa factura', async () => {
+  it('PR3b: click de fila (onRowClick) monta ConsultaFacturaModal con esa factura', async () => {
     const user = userEvent.setup()
     mockedUseFacturasEmpresa.mockReturnValue({ facturas: [FACTURA], isLoading: false } as never)
 
     render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
-    expect(screen.queryByTestId('reimprimir-factura-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('consulta-factura-modal')).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /simular click de fila/i }))
 
-    expect(screen.getByTestId('reimprimir-factura-modal')).toHaveAttribute(
+    expect(screen.getByTestId('consulta-factura-modal')).toHaveAttribute(
       'data-nro-factura',
       'C01-000001'
     )
@@ -202,10 +202,10 @@ describe('ClienteDetalle — seccion Facturas', () => {
 
     render(<ClienteDetalle cliente={CLIENTE} onVolver={vi.fn()} />)
     await user.click(screen.getByRole('button', { name: /simular click de fila/i }))
-    expect(screen.getByTestId('reimprimir-factura-modal')).toBeInTheDocument()
+    expect(screen.getByTestId('consulta-factura-modal')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /cerrar reimprimir/i }))
 
-    expect(screen.queryByTestId('reimprimir-factura-modal')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('consulta-factura-modal')).not.toBeInTheDocument()
   })
 })

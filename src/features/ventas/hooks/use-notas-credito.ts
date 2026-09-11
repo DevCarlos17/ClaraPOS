@@ -283,6 +283,9 @@ export interface ReversoFacturaRow {
   venta_det_id: string | null
   producto_descripcion: string
   cantidad: string
+  /** Monto total de la NC (no de la linea) — leido UNA vez por grupo en `agruparReversosPorNc`. Opcional para no romper mocks existentes (2 modales NC FROZEN) que no lo incluyen. */
+  total_usd?: string
+  total_bs?: string
 }
 
 /**
@@ -297,6 +300,7 @@ export function useReversosFactura(ventaId: string | null, empresaId: string) {
   const { data, isLoading } = useQuery(
     ventaId && empresaId
       ? `SELECT nc.id as nota_credito_id, nc.nro_ncr, nc.tipo, nc.fecha,
+           nc.total_usd, nc.total_bs,
            ncd.venta_det_id, ncd.descripcion as producto_descripcion, ncd.cantidad
          FROM notas_credito nc
          JOIN notas_credito_det ncd ON ncd.nota_credito_id = nc.id

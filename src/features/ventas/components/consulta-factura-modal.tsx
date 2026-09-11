@@ -8,19 +8,19 @@ import { descargarReciboPdf, compartirReciboImagen } from '../utils/factura-expo
 import type { FacturaParaAnular } from '../hooks/use-notas-credito'
 
 /**
- * Reimpresion de una factura guardada (Design §Decision 5, §Data Flow).
+ * Consulta de una factura guardada (Design §Decision 5, §Data Flow).
  * Superficie de SOLO LECTURA: `useReciboDesdeFactura` reconstruye el mismo
  * `ReciboData` del recibo original (esReimpresion: true -> marca visible en
  * PDF/texto/PNG, ver factura-export.ts) y reusa `FacturaDetallePanel`
  * AS-IS. Los botones Descargar/Compartir mirror `venta-exitosa-modal.tsx`.
  */
-interface ReimprimirFacturaModalProps {
+interface ConsultaFacturaModalProps {
   venta: FacturaParaAnular | null
   isOpen: boolean
   onClose: () => void
 }
 
-export function ReimprimirFacturaModal({ venta, isOpen, onClose }: ReimprimirFacturaModalProps) {
+export function ConsultaFacturaModal({ venta, isOpen, onClose }: ConsultaFacturaModalProps) {
   const { recibo, isLoading } = useReciboDesdeFactura(venta, {
     esReimpresion: true,
     derivarMonedaPresentacion: true,
@@ -60,7 +60,7 @@ export function ReimprimirFacturaModal({ venta, isOpen, onClose }: ReimprimirFac
     >
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Reimprimir Factura</DialogTitle>
+          <DialogTitle>Consulta de Factura</DialogTitle>
         </DialogHeader>
 
         {isLoading ? (

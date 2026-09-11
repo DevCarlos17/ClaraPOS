@@ -1,5 +1,12 @@
 import { formatUsd, formatBs } from '@/lib/currency'
-import { construirFilasTotales, type ReciboData } from '../utils/factura-export'
+import {
+  construirFilasTotales,
+  construirLineasEvolucion,
+  formatMontoPago,
+  sumarAbonos,
+  formatMontoBimonetario,
+  type ReciboData,
+} from '../utils/factura-export'
 import type { BadgeReverso, ReversoAplicado } from '../utils/notas-credito-ui'
 
 /**
@@ -49,6 +56,7 @@ export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null
   // acumulado), nunca el tipo crudo de `reversos` — una factura llega a
   // 'TOTAL' tanto por una unica NC TOTAL como por PARCIALes acumuladas.
   const estadoReverso = badgeReverso
+  const totalAbonos = sumarAbonos(recibo.pagos)
 
   return (
     <div className="relative space-y-4 p-4">
@@ -115,23 +123,70 @@ export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null
       </div>
 
       {/*
-        Slice 5d (QA 2.5/2.6, obs #2896/#2897): el desglose de metodos de
-        pago y la seccion de "afectacion a cuentas por cobrar" se OCULTAN
-        deliberadamente. Cuando el excedente de un pago se abona por FIFO a
+        PR1 (consulta-factura-evolucion): el desglose de "Metodos de pago" se
+        UN-HIDE aqui (mirror de la seccion de pagos de `construirLineasRecibo`,
+        factura-export.ts). Caveat aceptado (SAF-FIFO, ex Slice 5d QA
+        obs #2896/#2897): cuando el excedente de un pago se abona por FIFO a
         OTRA factura del cliente (flujo SAF desde POS), `crearVenta` reparte
         el pago tendido entre dos `venta_id` distintos sin back-reference
-        persistido hacia la venta origen: `usePagosFactura` solo trae el
-        monto capeado a esta factura (no el tendido real) y
-        `useAfectacionCxc` da 0 aunque el excedente si afecto CxC en la
-        factura destino. Mostrar cualquiera de las dos secciones aqui seria
-        mostrar datos incorrectos. El fix real requiere persistir ese
-        back-reference en `crearVenta`/`aplicarPagoFacturaEnTx` (flujo
-        financiero, fuera de alcance de este change) — se retoma en un
-        change de CxC futuro que reactivara estas secciones con datos
-        confiables.
+        persistido hacia la venta origen — `usePagosFactura` solo trae el
+        monto YA CAPEADO a esta factura (no el tendido real completo). Para
+        ese caso puntual el monto mostrado aqui es el aplicado a ESTA
+        factura, no el efectivo total recibido; la evolucion post-emision
+        (linea "Genero saldo a favor", futuras PR5/PR6 de este mismo change)
+        compensa esa diferencia mostrando el saldo a favor generado por el
+        excedente. La seccion de "afectacion a cuentas por cobrar" sigue sin
+        implementarse (mismo gap de back-reference) y queda pendiente para un
+        change de CxC futuro.
       */}
 
-      {reversos.length > 0 && (
+      {recibo.pagos.length > 0 && (
+        <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            Metodos de pago
+          </p>
+          {recibo.pagos.map((pago) => (
+            <div key={pago.metodoCobroId} className="flex items-center justify-between text-muted-foreground">
+              <span>{pago.metodoNombre}</span>
+              <span className="tabular-nums">{formatMontoPago(pago, recibo.monedaPresentacion)}</span>
+            </div>
+          ))}
+          <div className="flex items-center justify-between font-bold">
+            <span>Total abonos</span>
+            <span className="tabular-nums">
+              {formatMontoBimonetario(totalAbonos.usd, totalAbonos.bs, recibo.monedaPresentacion)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/*
+        PR6 (consulta-factura-evolucion): seccion "Evolucion" leyendo
+        `recibo.evolucion` (via `construirLineasEvolucion`, MISMA fuente pura
+        que el texto/PNG y el PDF — nunca se recalculan montos aqui). Para
+        la superficie de Consulta (evolucion poblada) esta seccion REEMPLAZA
+        el bloque de abajo (solo-cantidad, "Notas de credito aplicadas"); los
+        2 modales de NC FROZEN (`nota-credito-pos-modal.tsx`,
+        `crear-ncr-modal.tsx`) nunca pasan `evolucion`, solo `reversos`, asi
+        que siguen viendo el bloque de abajo sin cambios.
+      */}
+
+      {recibo.evolucion && (
+        <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evolucion</p>
+          {construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion).map((fila) => (
+            <div
+              key={fila.label}
+              className={`flex items-center justify-between ${fila.bold ? 'font-bold' : 'text-muted-foreground'}`}
+            >
+              <span>{fila.label}</span>
+              <span className="tabular-nums">{fila.monto}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!recibo.evolucion && reversos.length > 0 && (
         <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50/50 p-3 text-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">
             Notas de credito aplicadas
