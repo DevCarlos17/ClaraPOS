@@ -71,7 +71,7 @@ Chain strategy: feature-branch-chain
 
 ## PR6 — Modal evolution render (~150-200 ln)
 
-- [ ] 6.1 `factura-detalle-panel.tsx`: render evolution block after totals/pagos blocks (~L115), replacing the quantity-only "Notas de credito aplicadas" block (L134-156) for the Consulta surface — 4-case JSX cards mirroring PDF/text rendering (reverso/abono/reversoPago/saldo-a-favor), reading `recibo.evolucion`.
-- [ ] 6.2 TDD: RED — extend `factura-detalle-panel.test.tsx`: populated `recibo.evolucion` renders the 4 expected card shapes; omitted `evolucion` renders nothing new (fails until 6.1). GREEN — task 6.1 makes it pass.
-- [ ] 6.3 Verify `reversos` prop on `FacturaDetallePanelProps` stays untouched/functional — the 2 FROZEN NC modals (`nota-credito-pos-modal.tsx`, `crear-ncr-modal.tsx`) keep passing `reversos` for their max-double-credit quantity gating, never `evolucion`; confirm nothing new renders for them (no code change, verification-only task).
-- [ ] 6.4 TDD: RE-RUN — `nota-credito-pos-modal.test.tsx` and `crear-ncr-modal.test.tsx` UNMODIFIED, both suites green after 6.1.
+- [x] 6.1 `factura-detalle-panel.tsx`: render evolution block after totals/pagos blocks (~L115), replacing the quantity-only "Notas de credito aplicadas" block (L134-156) for the Consulta surface — 4-case JSX cards mirroring PDF/text rendering (reverso/abono/reversoPago/saldo-a-favor), reading `recibo.evolucion`.
+- [x] 6.2 TDD: RED — extend `factura-detalle-panel.test.tsx`: populated `recibo.evolucion` renders the 4 expected card shapes; omitted `evolucion` renders nothing new (fails until 6.1). GREEN — task 6.1 makes it pass.
+- [x] 6.3 Verify `reversos` prop on `FacturaDetallePanelProps` stays untouched/functional — the 2 FROZEN NC modals (`nota-credito-pos-modal.tsx`, `crear-ncr-modal.tsx`) keep passing `reversos` for their max-double-credit quantity gating, never `evolucion`; confirm nothing new renders for them (no code change, verification-only task).
+- [x] 6.4 TDD: RE-RUN — `nota-credito-pos-modal.test.tsx` and `crear-ncr-modal.test.tsx` UNMODIFIED, both suites green after 6.1.

@@ -1,6 +1,7 @@
 import { formatUsd, formatBs } from '@/lib/currency'
 import {
   construirFilasTotales,
+  construirLineasEvolucion,
   formatMontoPago,
   sumarAbonos,
   formatMontoBimonetario,
@@ -159,7 +160,33 @@ export function FacturaDetallePanel({ recibo, reversos = [], badgeReverso = null
         </div>
       )}
 
-      {reversos.length > 0 && (
+      {/*
+        PR6 (consulta-factura-evolucion): seccion "Evolucion" leyendo
+        `recibo.evolucion` (via `construirLineasEvolucion`, MISMA fuente pura
+        que el texto/PNG y el PDF — nunca se recalculan montos aqui). Para
+        la superficie de Consulta (evolucion poblada) esta seccion REEMPLAZA
+        el bloque de abajo (solo-cantidad, "Notas de credito aplicadas"); los
+        2 modales de NC FROZEN (`nota-credito-pos-modal.tsx`,
+        `crear-ncr-modal.tsx`) nunca pasan `evolucion`, solo `reversos`, asi
+        que siguen viendo el bloque de abajo sin cambios.
+      */}
+
+      {recibo.evolucion && (
+        <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evolucion</p>
+          {construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion).map((fila) => (
+            <div
+              key={fila.label}
+              className={`flex items-center justify-between ${fila.bold ? 'font-bold' : 'text-muted-foreground'}`}
+            >
+              <span>{fila.label}</span>
+              <span className="tabular-nums">{fila.monto}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!recibo.evolucion && reversos.length > 0 && (
         <div className="space-y-2 rounded-lg border border-orange-200 bg-orange-50/50 p-3 text-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-orange-700">
             Notas de credito aplicadas

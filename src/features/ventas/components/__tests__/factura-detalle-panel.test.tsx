@@ -1,6 +1,12 @@
 import { render, screen, within } from '@testing-library/react'
 import { FacturaDetallePanel } from '../factura-detalle-panel'
-import { buildReciboData, type ReciboData } from '../../utils/factura-export'
+import {
+  buildReciboData,
+  formatMontoBimonetario,
+  type ReciboData,
+  type ReciboEvolucionInput,
+} from '../../utils/factura-export'
+import { formatDateTime } from '@/lib/format'
 
 function baseRecibo(overrides: Partial<Parameters<typeof buildReciboData>[0]> = {}): ReciboData {
   return buildReciboData({
@@ -303,5 +309,89 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
 
     expect(screen.getByText('REVERSADA')).toBeInTheDocument()
     expect(screen.queryByText('REVERSO PARCIAL')).not.toBeInTheDocument()
+  })
+})
+
+// ─── PR6 (consulta-factura-evolucion): seccion "Evolucion" en el panel,
+// leyendo `recibo.evolucion` (misma fuente que el texto/PDF via
+// `construirLineasEvolucion` — single source of truth, sin recalcular
+// montos localmente). Para la superficie de Consulta (evolucion poblada)
+// esta seccion REEMPLAZA el bloque viejo solo-cantidad de "Notas de credito
+// aplicadas"; los 2 modales de NC FROZEN (sin `evolucion`, solo `reversos`)
+// siguen viendo el bloque viejo sin cambios. ────
+
+const evolucionCompleta: ReciboEvolucionInput = {
+  reversos: [{ nroNcr: 'NCR-000020', tipo: 'PARCIAL', fecha: '2026-01-05T00:00:00.000-04:00', totalUsd: 5, totalBs: 200 }],
+  abonos: [{ fecha: '2026-01-06T00:00:00.000-04:00', monto: 3, tasaPago: 40 }],
+  reversosPago: [],
+  saldoAFavorGenerado: { fecha: '2026-01-07T00:00:00.000-04:00', monto: 2, tasaPago: 40 },
+}
+
+describe('FacturaDetallePanel — PR6 (seccion Evolucion, consistente con texto/PDF)', () => {
+  it('recibo con evolucion poblada: muestra "Evolucion" con reverso NC, abono y saldo a favor generado', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo({ evolucion: evolucionCompleta })} />)
+
+    expect(screen.getByText('Evolucion')).toBeInTheDocument()
+
+    const reversoRow = screen.getByText('NCR-000020 (Reverso Parcial)').closest('div') as HTMLElement
+    expect(within(reversoRow).getByText(formatMontoBimonetario(5, 200, 'USD'))).toBeInTheDocument()
+
+    const abonoRow = screen.getByText(`Abono ${formatDateTime('2026-01-06T00:00:00.000-04:00')}`).closest('div') as HTMLElement
+    expect(within(abonoRow).getByText(formatMontoBimonetario(3, 120, 'USD'))).toBeInTheDocument()
+
+    const saldoRow = screen.getByText('Genero saldo a favor').closest('div') as HTMLElement
+    expect(within(saldoRow).getByText(formatMontoBimonetario(2, 80, 'USD'))).toBeInTheDocument()
+  })
+
+  it('recibo sin evolucion + reversos prop poblada (escenario modal NC): sigue mostrando el bloque viejo "Notas de credito aplicadas" sin cambios', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo()}
+        reversos={[
+          {
+            notaCreditoId: 'nc-1',
+            nroNcr: 'NCR-000001',
+            tipo: 'PARCIAL',
+            fecha: '2026-01-02T00:00:00Z',
+            lineas: [{ descripcion: 'Botox 50U', cantidad: '1.000' }],
+            montoUsd: 10,
+            montoBs: 400,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText(/Notas de credito aplicadas/i)).toBeInTheDocument()
+    expect(screen.getByText('NCR-000001')).toBeInTheDocument()
+    expect(screen.queryByText('Evolucion')).not.toBeInTheDocument()
+  })
+
+  it('recibo sin evolucion y sin reversos: no muestra ninguna de las dos secciones', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
+
+    expect(screen.queryByText('Evolucion')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Notas de credito aplicadas/i)).not.toBeInTheDocument()
+  })
+
+  it('recibo con evolucion poblada Y reversos prop pasada: NUNCA muestra el bloque viejo (sin doble despliegue)', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo({ evolucion: evolucionCompleta })}
+        reversos={[
+          {
+            notaCreditoId: 'nc-1',
+            nroNcr: 'NCR-000001',
+            tipo: 'PARCIAL',
+            fecha: '2026-01-02T00:00:00Z',
+            lineas: [{ descripcion: 'Botox 50U', cantidad: '1.000' }],
+            montoUsd: 10,
+            montoBs: 400,
+          },
+        ]}
+      />
+    )
+
+    expect(screen.getByText('Evolucion')).toBeInTheDocument()
+    expect(screen.queryByText(/Notas de credito aplicadas/i)).not.toBeInTheDocument()
   })
 })
