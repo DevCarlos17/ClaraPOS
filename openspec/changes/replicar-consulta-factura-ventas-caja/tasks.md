@@ -111,12 +111,12 @@ Satisfies: `notas-credito-pos` — "Reimpresión desde la entrada POS de NC".
 Files: `src/features/ventas/components/nota-credito-pos-modal.tsx`, `src/features/ventas/components/__tests__/nota-credito-pos-modal.test.tsx`.
 
 **RED**
-- [ ] D.1 Add `describe("Reimprimir en NC-POS")` test: factura selected → click "Reimprimir" → `ConsultaFacturaModal` opens with that factura's detail + evolución (same test-double pattern as `cliente-detalle.tsx`'s existing tests for `useReciboDesdeFactura`/`useEvolucionFactura`).
-- [ ] D.2 Add test: closing the Reimprimir modal does not affect `ncSectionRevealed` — gate state is independent.
+- [x] D.1 Add `describe("Reimprimir en NC-POS")` test: factura selected → click "Reimprimir" → `ConsultaFacturaModal` opens with that factura's detail + evolución (same test-double pattern as `cliente-detalle.tsx`'s existing tests for `useReciboDesdeFactura`/`useEvolucionFactura`).
+- [x] D.2 Add test: closing the Reimprimir modal does not affect `ncSectionRevealed` — gate state is independent.
 
 **GREEN**
-- [ ] D.3 Add `const [reimprimirOpen, setReimprimirOpen] = useState(false)`; wire the footer's "Reimprimir" button (rendered in C.7) `onClick → setReimprimirOpen(true)`; mount `<ConsultaFacturaModal venta={factura} isOpen={reimprimirOpen} onClose={() => setReimprimirOpen(false)} />` as a sibling `Dialog`.
-- [ ] D.4 Run `yarn test:run` — D tests + all of C's 47+gate tests + Slice A/B tests all green.
+- [x] D.3 Add `const [reimprimirOpen, setReimprimirOpen] = useState(false)`; wire the footer's "Reimprimir" button (rendered in C.7) `onClick → setReimprimirOpen(true)`; mount `<ConsultaFacturaModal venta={factura} isOpen={reimprimirOpen} onClose={() => setReimprimirOpen(false)} />` as a sibling `Dialog`.
+- [x] D.4 Run `yarn test:run` — D tests + all of C's 47+gate tests + Slice A/B tests all green.
 
 Verification: `yarn test:run src/features/ventas/components/__tests__/nota-credito-pos-modal.test.tsx` full green; confirms `ConsultaFacturaModal` is the same component instance used in `cliente-detalle.tsx` and Slice A (zero new modal component).
 

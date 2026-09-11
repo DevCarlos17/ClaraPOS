@@ -27,6 +27,7 @@ import { type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export
 import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factura'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
+import { ConsultaFacturaModal } from './consulta-factura-modal'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -184,6 +185,12 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // "Volver") pero es un estado INDEPENDIENTE: nunca se limpia tras una
   // emision exitosa (la seccion permanece revelada sobre la misma factura).
   const [ncSectionRevealed, setNcSectionRevealed] = useState(false)
+  // Reimprimir (Slice D, Spec notas-credito-pos: "Reimpresion desde la
+  // entrada POS de NC") — estado INDEPENDIENTE del reveal-gate de arriba:
+  // abrir/cerrar `ConsultaFacturaModal` nunca revela ni reoculta la seccion
+  // NC, y viceversa. Por eso NO se resetea en los mismos 3 puntos que
+  // `ncSectionRevealed`/`resetAutorizacionesPin` — el spec no lo exige.
+  const [reimprimirOpen, setReimprimirOpen] = useState(false)
 
   /**
    * UX B QA fix (Slice 5e): las autorizaciones de PIN son EFIMERAS —
@@ -710,12 +717,15 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
               </button>
               {!ncSectionRevealed ? (
                 // Reveal-gate cerrado (Slice C, Spec "Reveal-gate de la
-                // seccion de emision de NC"): pie de tres acciones. El boton
-                // "Reimprimir" se renderiza inerte a proposito — su wiring a
-                // `ConsultaFacturaModal` es Slice D (obs #3358), fuera de
-                // alcance de esta slice.
+                // seccion de emision de NC"): pie de tres acciones.
+                // "Reimprimir" (Slice D) abre `ConsultaFacturaModal` sobre la
+                // factura seleccionada, independiente del gate.
                 <>
-                  <button type="button" className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors">
+                  <button
+                    type="button"
+                    onClick={() => setReimprimirOpen(true)}
+                    className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors"
+                  >
                     Reimprimir
                   </button>
                   <button
@@ -788,6 +798,15 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         titulo="Cambiar deposito de reingreso"
         mensaje="Cambiar el deposito de reingreso requiere autorizacion de un supervisor."
         requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
+      />
+
+      {/* Reimprimir (Slice D) — mismo componente que Gestion de Clientes y
+          Ventas -> Consultas, reusa useReciboDesdeFactura/useEvolucionFactura
+          internamente. Independiente del reveal-gate de NC de arriba. */}
+      <ConsultaFacturaModal
+        venta={factura}
+        isOpen={reimprimirOpen}
+        onClose={() => setReimprimirOpen(false)}
       />
     </>
   )

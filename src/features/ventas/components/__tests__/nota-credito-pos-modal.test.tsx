@@ -47,6 +47,30 @@ vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
     ) : null,
 }))
 
+// Slice D (replicar-consulta-factura-ventas-caja): "Reimprimir" abre
+// `ConsultaFacturaModal` — mockeado en el boundary, mismo patron de sentinel
+// que `ventas-consultas-modal.test.tsx`/`cliente-detalle.test.tsx`. Su propia
+// suite (`consulta-factura-modal.test.tsx`) ya cubre el wiring interno con
+// `useReciboDesdeFactura`/`useEvolucionFactura` (esReimpresion+evolucion) —
+// aqui solo probamos que ESTE modal lo abre/cierra con la factura correcta,
+// de forma independiente al reveal-gate de NC (Slice C).
+vi.mock('@/features/ventas/components/consulta-factura-modal', () => ({
+  ConsultaFacturaModal: ({
+    venta,
+    isOpen,
+    onClose,
+  }: {
+    venta: FacturaParaAnular | null
+    isOpen: boolean
+    onClose: () => void
+  }) =>
+    isOpen ? (
+      <div data-testid="consulta-factura-modal" data-nro-factura={venta?.nro_factura}>
+        <button onClick={onClose}>Cerrar consulta</button>
+      </div>
+    ) : null,
+}))
+
 vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({ crearNotaCredito: vi.fn(), useReversosFactura: vi.fn() }))
 vi.mock('@/features/ventas/hooks/use-facturas-sesion-activa', () => ({
   useFacturasSesionActiva: vi.fn(),
@@ -280,6 +304,68 @@ describe('NotaCreditoPosModal — Slice C (reveal-gate de la seccion NC, Spec no
     rerender(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     expect(screen.getByText(/Selecciona una factura del listado/i)).toBeInTheDocument()
+  })
+})
+
+/**
+ * Slice D (replicar-consulta-factura-ventas-caja, Spec notas-credito-pos:
+ * "Reimpresion desde la entrada POS de NC"): el boton "Reimprimir" del pie
+ * (renderizado inerte por Slice C) se conecta a `ConsultaFacturaModal`. Su
+ * estado (`reimprimirOpen`) es INDEPENDIENTE del reveal-gate de NC
+ * (`ncSectionRevealed`, Slice C) en ambas direcciones — abrir/cerrar uno
+ * nunca afecta al otro.
+ */
+describe('NotaCreditoPosModal — Slice D (Reimprimir, Spec notas-credito-pos)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('D.1 con una factura seleccionada, "Reimprimir" abre ConsultaFacturaModal con esa factura', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    expect(screen.queryByTestId('consulta-factura-modal')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^Reimprimir$/i }))
+
+    expect(screen.getByTestId('consulta-factura-modal')).toHaveAttribute(
+      'data-nro-factura',
+      'C01-000001'
+    )
+  })
+
+  it('D.2 cerrar el modal de Reimprimir NO revela ni altera la seccion NC (independencia del gate)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /^Reimprimir$/i }))
+    expect(screen.getByTestId('consulta-factura-modal')).toBeInTheDocument()
+
+    // `fireEvent` no se usa aqui porque el mock no monta un Dialog real de
+    // Radix (sin `pointer-events:none`) — `user.click` es seguro.
+    await user.click(screen.getByText('Cerrar consulta'))
+
+    expect(screen.queryByTestId('consulta-factura-modal')).not.toBeInTheDocument()
+    expect(screen.queryByText('Tipo de nota de credito')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Volver$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Reimprimir$/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Emitir nota de credito/i })).toBeInTheDocument()
+  })
+
+  it('D.3 revelar la seccion NC mientras Reimprimir esta abierto no lo cierra (independencia en sentido inverso)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /^Reimprimir$/i }))
+    expect(screen.getByTestId('consulta-factura-modal')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Emitir nota de credito/i }))
+
+    expect(screen.getByText('Tipo de nota de credito')).toBeInTheDocument()
+    expect(screen.getByTestId('consulta-factura-modal')).toBeInTheDocument()
   })
 })
 
