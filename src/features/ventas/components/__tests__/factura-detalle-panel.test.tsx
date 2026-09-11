@@ -143,6 +143,8 @@ describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, jun
             tipo: 'PARCIAL',
             fecha: '2026-01-02T00:00:00Z',
             lineas: [{ descripcion: 'Botox 50U', cantidad: '1.000' }],
+            montoUsd: 10,
+            montoBs: 400,
           },
         ]}
       />
@@ -167,6 +169,8 @@ describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, jun
             tipo: 'PARCIAL',
             fecha: '2026-01-02T00:00:00Z',
             lineas: [{ descripcion: 'Botox 50U', cantidad: '1.000' }],
+            montoUsd: 10,
+            montoBs: 400,
           },
           {
             notaCreditoId: 'nc-2',
@@ -174,6 +178,8 @@ describe('FacturaDetallePanel — F1 QA fix (historial de reversos additivo, jun
             tipo: 'TOTAL',
             fecha: '2026-01-03T00:00:00Z',
             lineas: [{ descripcion: 'Consulta', cantidad: '1.000' }],
+            montoUsd: 15,
+            montoBs: 600,
           },
         ]}
       />
@@ -253,7 +259,7 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
         recibo={baseRecibo()}
         badgeReverso="TOTAL"
         reversos={[
-          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'TOTAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
+          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'TOTAL', fecha: '2026-01-02T00:00:00Z', lineas: [], montoUsd: 0, montoBs: 0 },
         ]}
       />
     )
@@ -269,7 +275,7 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
         recibo={baseRecibo()}
         badgeReverso="PARCIAL"
         reversos={[
-          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
+          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [], montoUsd: 0, montoBs: 0 },
         ]}
       />
     )
@@ -289,8 +295,8 @@ describe('FacturaDetallePanel — F7 QA fix (overlay diagonal REVERSADA)', () =>
         recibo={baseRecibo()}
         badgeReverso="TOTAL"
         reversos={[
-          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [] },
-          { notaCreditoId: 'nc-2', nroNcr: 'NCR-000002', tipo: 'PARCIAL', fecha: '2026-01-03T00:00:00Z', lineas: [] },
+          { notaCreditoId: 'nc-1', nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z', lineas: [], montoUsd: 0, montoBs: 0 },
+          { notaCreditoId: 'nc-2', nroNcr: 'NCR-000002', tipo: 'PARCIAL', fecha: '2026-01-03T00:00:00Z', lineas: [], montoUsd: 0, montoBs: 0 },
         ]}
       />
     )

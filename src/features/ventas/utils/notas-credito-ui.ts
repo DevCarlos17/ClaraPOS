@@ -435,6 +435,9 @@ export interface ReversoFacturaRowInput {
   fecha: string
   producto_descripcion: string
   cantidad: string
+  /** Monto total de la NC (no de la linea) — PR2. Opcional: fixtures/mocks existentes (2 modales NC FROZEN) no lo incluyen; ausencia se trata como 0. */
+  total_usd?: string
+  total_bs?: string
 }
 
 export interface ReversoLineaDetalle {
@@ -448,6 +451,9 @@ export interface ReversoAplicado {
   tipo: string
   fecha: string
   lineas: ReversoLineaDetalle[]
+  /** Monto total de la NC (PR2) — leido UNA vez por grupo, jamas sumado por linea. */
+  montoUsd: number
+  montoBs: number
 }
 
 /**
@@ -482,7 +488,15 @@ export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoApl
   for (const row of rows) {
     let grupo = porId.get(row.nota_credito_id)
     if (!grupo) {
-      grupo = { notaCreditoId: row.nota_credito_id, nroNcr: row.nro_ncr, tipo: row.tipo, fecha: row.fecha, lineas: [] }
+      grupo = {
+        notaCreditoId: row.nota_credito_id,
+        nroNcr: row.nro_ncr,
+        tipo: row.tipo,
+        fecha: row.fecha,
+        lineas: [],
+        montoUsd: new Decimal(row.total_usd ?? 0).toNumber(),
+        montoBs: new Decimal(row.total_bs ?? 0).toNumber(),
+      }
       porId.set(row.nota_credito_id, grupo)
     }
     grupo.lineas.push({ descripcion: row.producto_descripcion, cantidad: row.cantidad })
