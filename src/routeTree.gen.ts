@@ -75,6 +75,7 @@ import { Route as AppCajaMovimientosRouteImport } from './routes/_app/caja/movim
 import { Route as AppBancosDiferencialCambiarioRouteImport } from './routes/_app/bancos/diferencial-cambiario'
 import { Route as AppBancosConciliacionRouteImport } from './routes/_app/bancos/conciliacion'
 import { Route as AppConfiguracionUsuariosIndexRouteImport } from './routes/_app/configuracion/usuarios/index'
+import { Route as AppClientesGestionIndexRouteImport } from './routes/_app/clientes/gestion.index'
 import { Route as AppConfiguracionUsuariosNuevoRouteImport } from './routes/_app/configuracion/usuarios/nuevo'
 import { Route as AppClientesGestionClienteIdRouteImport } from './routes/_app/clientes/gestion.$clienteId'
 import { Route as AppConfiguracionUsuariosUsuarioIdEditarRouteImport } from './routes/_app/configuracion/usuarios/$usuarioId.editar'
@@ -424,6 +425,11 @@ const AppConfiguracionUsuariosIndexRoute =
     path: '/',
     getParentRoute: () => AppConfiguracionUsuariosRoute,
   } as any)
+const AppClientesGestionIndexRoute = AppClientesGestionIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppClientesGestionRoute,
+} as any)
 const AppConfiguracionUsuariosNuevoRoute =
   AppConfiguracionUsuariosNuevoRouteImport.update({
     id: '/nuevo',
@@ -509,6 +515,7 @@ export interface FileRoutesByFullPath {
   '/tesoreria/': typeof AppTesoreriaIndexRoute
   '/clientes/gestion/$clienteId': typeof AppClientesGestionClienteIdRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
+  '/clientes/gestion/': typeof AppClientesGestionIndexRoute
   '/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
   '/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
 }
@@ -531,7 +538,6 @@ export interface FileRoutesByTo {
   '/citas/nueva': typeof AppCitasNuevaRoute
   '/citas/panel': typeof AppCitasPanelRoute
   '/clientes/cuentas-por-cobrar': typeof AppClientesCuentasPorCobrarRoute
-  '/clientes/gestion': typeof AppClientesGestionRouteWithChildren
   '/clientes/reportes': typeof AppClientesReportesRoute
   '/compras/cxp': typeof AppComprasCxpRoute
   '/compras/facturas': typeof AppComprasFacturasRoute
@@ -575,6 +581,7 @@ export interface FileRoutesByTo {
   '/tesoreria': typeof AppTesoreriaIndexRoute
   '/clientes/gestion/$clienteId': typeof AppClientesGestionClienteIdRoute
   '/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
+  '/clientes/gestion': typeof AppClientesGestionIndexRoute
   '/configuracion/usuarios': typeof AppConfiguracionUsuariosIndexRoute
   '/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
 }
@@ -647,6 +654,7 @@ export interface FileRoutesById {
   '/_app/tesoreria/': typeof AppTesoreriaIndexRoute
   '/_app/clientes/gestion/$clienteId': typeof AppClientesGestionClienteIdRoute
   '/_app/configuracion/usuarios/nuevo': typeof AppConfiguracionUsuariosNuevoRoute
+  '/_app/clientes/gestion/': typeof AppClientesGestionIndexRoute
   '/_app/configuracion/usuarios/': typeof AppConfiguracionUsuariosIndexRoute
   '/_app/configuracion/usuarios/$usuarioId/editar': typeof AppConfiguracionUsuariosUsuarioIdEditarRoute
 }
@@ -718,6 +726,7 @@ export interface FileRouteTypes {
     | '/tesoreria/'
     | '/clientes/gestion/$clienteId'
     | '/configuracion/usuarios/nuevo'
+    | '/clientes/gestion/'
     | '/configuracion/usuarios/'
     | '/configuracion/usuarios/$usuarioId/editar'
   fileRoutesByTo: FileRoutesByTo
@@ -740,7 +749,6 @@ export interface FileRouteTypes {
     | '/citas/nueva'
     | '/citas/panel'
     | '/clientes/cuentas-por-cobrar'
-    | '/clientes/gestion'
     | '/clientes/reportes'
     | '/compras/cxp'
     | '/compras/facturas'
@@ -784,6 +792,7 @@ export interface FileRouteTypes {
     | '/tesoreria'
     | '/clientes/gestion/$clienteId'
     | '/configuracion/usuarios/nuevo'
+    | '/clientes/gestion'
     | '/configuracion/usuarios'
     | '/configuracion/usuarios/$usuarioId/editar'
   id:
@@ -855,6 +864,7 @@ export interface FileRouteTypes {
     | '/_app/tesoreria/'
     | '/_app/clientes/gestion/$clienteId'
     | '/_app/configuracion/usuarios/nuevo'
+    | '/_app/clientes/gestion/'
     | '/_app/configuracion/usuarios/'
     | '/_app/configuracion/usuarios/$usuarioId/editar'
   fileRoutesById: FileRoutesById
@@ -1329,6 +1339,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConfiguracionUsuariosIndexRouteImport
       parentRoute: typeof AppConfiguracionUsuariosRoute
     }
+    '/_app/clientes/gestion/': {
+      id: '/_app/clientes/gestion/'
+      path: '/'
+      fullPath: '/clientes/gestion/'
+      preLoaderRoute: typeof AppClientesGestionIndexRouteImport
+      parentRoute: typeof AppClientesGestionRoute
+    }
     '/_app/configuracion/usuarios/nuevo': {
       id: '/_app/configuracion/usuarios/nuevo'
       path: '/nuevo'
@@ -1389,10 +1406,12 @@ const AppCitasRouteRouteWithChildren = AppCitasRouteRoute._addFileChildren(
 
 interface AppClientesGestionRouteChildren {
   AppClientesGestionClienteIdRoute: typeof AppClientesGestionClienteIdRoute
+  AppClientesGestionIndexRoute: typeof AppClientesGestionIndexRoute
 }
 
 const AppClientesGestionRouteChildren: AppClientesGestionRouteChildren = {
   AppClientesGestionClienteIdRoute: AppClientesGestionClienteIdRoute,
+  AppClientesGestionIndexRoute: AppClientesGestionIndexRoute,
 }
 
 const AppClientesGestionRouteWithChildren =
