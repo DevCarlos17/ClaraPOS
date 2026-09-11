@@ -38,18 +38,18 @@ Satisfies: `reimpresion-factura` — "Búsqueda histórica completa preservada",
 Files: `src/features/reportes/components/ventas-consultas-modal.tsx`, `src/features/reportes/hooks/use-ventas-reportes.ts`, `src/features/ventas/hooks/use-facturas-empresa.ts`. New test: `src/features/reportes/components/__tests__/ventas-consultas-modal.test.tsx`.
 
 **RED**
-- [ ] A.1 In new `ventas-consultas-modal.test.tsx`, write "Por Factura" tests: old-month invoice found (wide `fechaDesde`, no current-month restriction), row-click opens `ConsultaFacturaModal`, close unmounts + list shows no per-row reprint button, no jsPDF/autoTable call.
-- [ ] A.2 Add one "Por Cliente" smoke test: select cliente → table renders → row-click opens `ConsultaFacturaModal` with that factura.
-- [ ] A.3 Add regression test asserting `enabled: false` on `useFacturasEmpresa` skips the query (empty-SQL pattern) without changing the 3 existing callers.
+- [x] A.1 In new `ventas-consultas-modal.test.tsx`, write "Por Factura" tests: old-month invoice found (wide `fechaDesde`, no current-month restriction), row-click opens `ConsultaFacturaModal`, close unmounts + list shows no per-row reprint button, no jsPDF/autoTable call.
+- [x] A.2 Add one "Por Cliente" smoke test: select cliente → table renders → row-click opens `ConsultaFacturaModal` with that factura.
+- [x] A.3 Add regression test asserting `enabled: false` on `useFacturasEmpresa` skips the query (empty-SQL pattern) without changing the 3 existing callers.
 
 **GREEN**
-- [ ] A.4 Add optional `enabled?: boolean` (default `true`) to `FiltroFacturasEmpresaHook` in `use-facturas-empresa.ts`; `false` → empty-SQL skip, mirroring `useFacturasPorCliente`'s existing pattern.
-- [ ] A.5 Swap `BuscarPorFactura` internals to `useFacturasEmpresa({ busqueda, fechaDesde: FECHA_INICIO_HISTORICO, fechaHasta: todayStr(), enabled: busqueda.length > 0 })` + `FacturasEmpresaTable(mostrarAcciones=false)` with `onRowClick`.
-- [ ] A.6 Swap `BuscarPorCliente` internals the same way, filtering by `clienteId`.
-- [ ] A.7 Add top-level `facturaSeleccionada: FacturaParaAnular | null` state; mount `<ConsultaFacturaModal venta={facturaSeleccionada} isOpen={!!facturaSeleccionada} onClose={...} />`. "Por Producto" tab untouched.
-- [ ] A.8 Delete `FacturaDetalle` (L385-693, jsPDF/autoTable), `FacturasList` (L339-381), `StatusBadge` (L707-721), and now-unused imports from `ventas-consultas-modal.tsx`.
-- [ ] A.9 Delete `useBuscarFacturas`, `useFacturasPorCliente`, `FacturaBusqueda` from `use-ventas-reportes.ts` (zero other consumers, confirmed by design grep).
-- [ ] A.10 Run `yarn test:run` and `yarn type-check` — new suite green, no orphan-import errors.
+- [x] A.4 Add optional `enabled?: boolean` (default `true`) to `FiltroFacturasEmpresaHook` in `use-facturas-empresa.ts`; `false` → empty-SQL skip, mirroring `useFacturasPorCliente`'s existing pattern.
+- [x] A.5 Swap `BuscarPorFactura` internals to `useFacturasEmpresa({ busqueda, fechaDesde: FECHA_INICIO_HISTORICO, fechaHasta: todayStr(), enabled: busqueda.length > 0 })` + `FacturasEmpresaTable(mostrarAcciones=false)` with `onRowClick`.
+- [x] A.6 Swap `BuscarPorCliente` internals the same way, filtering by `clienteId`.
+- [x] A.7 Add top-level `facturaSeleccionada: FacturaParaAnular | null` state; mount `<ConsultaFacturaModal venta={facturaSeleccionada} isOpen={!!facturaSeleccionada} onClose={...} />`. "Por Producto" tab untouched.
+- [x] A.8 Delete `FacturaDetalle` (L385-693, jsPDF/autoTable), `FacturasList` (L339-381), `StatusBadge` (L707-721), and now-unused imports from `ventas-consultas-modal.tsx`.
+- [x] A.9 Delete `useBuscarFacturas`, `useFacturasPorCliente`, `FacturaBusqueda` from `use-ventas-reportes.ts` (zero other consumers, confirmed by design grep).
+- [x] A.10 Run `yarn test:run` and `yarn type-check` — new suite green, no orphan-import errors.
 
 Verification: `yarn test:run src/features/reportes/components/__tests__/ventas-consultas-modal.test.tsx` green; `yarn test:run src/features/ventas/components/__tests__/nota-credito-pos-modal.test.tsx` still 47/47 green (file untouched by this slice); `yarn type-check` clean.
 
