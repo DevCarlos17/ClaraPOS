@@ -6,8 +6,9 @@ import {
   useBuscarProveedoresDeuda,
   useFacturasCompraPendientes,
   type ProveedorConDeuda,
+  type FacturaCompraPendiente,
 } from '../../hooks/use-cxp'
-import { useGastosPendientesProveedor } from '@/features/contabilidad/hooks/use-gastos'
+import { useGastosPendientesProveedor, type GastoPendiente } from '@/features/contabilidad/hooks/use-gastos'
 
 vi.mock('../../hooks/use-cxp', () => ({
   useProveedoresConDeuda: vi.fn(),
@@ -18,8 +19,14 @@ vi.mock('@/features/contabilidad/hooks/use-gastos', () => ({
   useGastosPendientesProveedor: vi.fn(),
 }))
 
-vi.mock('../pago-cxp-modal', () => ({ PagoCxPModal: () => null }))
-vi.mock('../pago-gasto-cxp-modal', () => ({ PagoGastoCxpModal: () => null }))
+vi.mock('../pago-cxp-modal', () => ({
+  PagoCxPModal: ({ open, factura }: { open: boolean; factura: FacturaCompraPendiente | null }) =>
+    open ? <div data-testid="pago-cxp-modal-abierto">{factura?.nro_factura}</div> : null,
+}))
+vi.mock('../pago-gasto-cxp-modal', () => ({
+  PagoGastoCxpModal: ({ open, gasto }: { open: boolean; gasto: GastoPendiente | null }) =>
+    open ? <div data-testid="pago-gasto-cxp-modal-abierto">{gasto?.nro_gasto}</div> : null,
+}))
 vi.mock('../factura-proveedor-modal', () => ({ FacturaProveedorModal: () => null }))
 
 const mockedUseProveedoresConDeuda = vi.mocked(useProveedoresConDeuda)
@@ -62,6 +69,39 @@ function nProveedores(n: number): ProveedorConDeuda[] {
       facturas_pendientes: 1,
     })
   )
+}
+
+function factura(overrides: Partial<FacturaCompraPendiente> = {}): FacturaCompraPendiente {
+  return {
+    id: 'fc-1',
+    nro_factura: '2001',
+    fecha_factura: '2026-09-01',
+    total_usd: '100.00000000',
+    saldo_pend_usd: '80.00000000',
+    tipo: 'CREDITO',
+    tasa: '100',
+    tasa_costo: null,
+    ...overrides,
+  }
+}
+
+function gasto(overrides: Partial<GastoPendiente> = {}): GastoPendiente {
+  return {
+    id: 'g-1',
+    nro_gasto: 'G-001',
+    nro_factura: null,
+    fecha: '2026-09-02',
+    monto_usd: '40.00000000',
+    monto_factura: '40.00000000',
+    moneda_factura: 'USD',
+    saldo_pendiente_usd: '40.00000000',
+    descripcion: 'Alquiler local',
+    cuenta_nombre: 'Gastos Operativos',
+    tasa: '100',
+    tasa_proveedor: null,
+    usa_tasa_paralela: 0,
+    ...overrides,
+  }
 }
 
 beforeEach(() => {
@@ -222,5 +262,98 @@ describe('CxpPage - modal de detalle en mobile', () => {
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(screen.getByTestId('cxp-page-panel-izquierdo').classList.contains('hidden')).toBe(false)
+  })
+})
+
+describe('CxpPage - row a card en mobile (facturas y gastos)', () => {
+  it('la tabla de facturas desktop queda envuelta en hidden md:block', async () => {
+    mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: ochoProveedores(), isLoading: false })
+    mockedUseFacturasCompraPendientes.mockReturnValue({ facturas: [factura()], isLoading: false })
+
+    render(<CxpPage />)
+    await userEvent.click(screen.getByText('Proveedor 3'))
+
+    const tablas = screen.getAllByRole('table')
+    const facturasTabla = tablas.find((t) => within(t).queryByText('Factura'))
+    expect(facturasTabla?.parentElement?.className).toContain('hidden')
+    expect(facturasTabla?.parentElement?.className).toContain('md:block')
+  })
+
+  it('renderiza una DeudaCard por factura en la lista mobile con los mismos datos que la tabla', async () => {
+    mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: ochoProveedores(), isLoading: false })
+    mockedUseFacturasCompraPendientes.mockReturnValue({
+      facturas: [factura({ id: 'fc-1', nro_factura: '2001', saldo_pend_usd: '75.00000000' })],
+      isLoading: false,
+    })
+
+    render(<CxpPage />)
+    await userEvent.click(screen.getByText('Proveedor 3'))
+
+    // La lista mobile se monta dos veces en el DOM (panel derecho desktop +
+    // modal mobile, ambos simultaneos en jsdom, CSS decide cual se ve
+    // segun breakpoint) — se valida la primera instancia.
+    const mobileList = screen.getAllByTestId('cxp-mobile-card-list-facturas')[0]
+    expect(mobileList.className).toContain('md:hidden')
+    expect(mobileList).toHaveTextContent('2001')
+    expect(mobileList).toHaveTextContent('$75.00')
+    expect(mobileList).toHaveTextContent('CREDITO')
+  })
+
+  it('boton Pagar de la card mobile de factura llama al mismo handler de pago que la tabla', async () => {
+    mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: ochoProveedores(), isLoading: false })
+    mockedUseFacturasCompraPendientes.mockReturnValue({
+      facturas: [factura({ id: 'fc-1', nro_factura: '2001' })],
+      isLoading: false,
+    })
+
+    render(<CxpPage />)
+    await userEvent.click(screen.getByText('Proveedor 3'))
+
+    // Se interactua dentro del dialog (la instancia inline queda aria-hidden
+    // mientras el modal esta abierto, por el inert que aplica Radix al resto
+    // de la pagina — mismo comportamiento documentado para CxC).
+    const dialog = screen.getByRole('dialog')
+    const mobileList = within(dialog).getByTestId('cxp-mobile-card-list-facturas')
+    await userEvent.click(within(mobileList).getByRole('button', { name: 'Pagar' }))
+
+    expect(screen.getByTestId('pago-cxp-modal-abierto')).toHaveTextContent('2001')
+  })
+
+  it('la tabla de gastos desktop queda envuelta en hidden md:block y renderiza cards en mobile', async () => {
+    mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: ochoProveedores(), isLoading: false })
+    mockedUseGastosPendientesProveedor.mockReturnValue({
+      gastosPendientes: [gasto({ id: 'g-1', nro_gasto: 'G-001', saldo_pendiente_usd: '40.00000000' })],
+      isLoading: false,
+    })
+
+    render(<CxpPage />)
+    await userEvent.click(screen.getByText('Proveedor 3'))
+
+    const tablas = screen.getAllByRole('table')
+    const gastosTabla = tablas.find((t) => within(t).queryByText('Gasto'))
+    expect(gastosTabla?.parentElement?.className).toContain('hidden')
+    expect(gastosTabla?.parentElement?.className).toContain('md:block')
+
+    const mobileList = screen.getAllByTestId('cxp-mobile-card-list-gastos')[0]
+    expect(mobileList.className).toContain('md:hidden')
+    expect(mobileList).toHaveTextContent('G-001')
+    expect(mobileList).toHaveTextContent('$40.00')
+  })
+
+  it('boton Pagar de la card mobile de gasto llama al mismo handler de pago que la tabla', async () => {
+    mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: ochoProveedores(), isLoading: false })
+    mockedUseGastosPendientesProveedor.mockReturnValue({
+      gastosPendientes: [gasto({ id: 'g-1', nro_gasto: 'G-001' })],
+      isLoading: false,
+    })
+
+    render(<CxpPage />)
+    await userEvent.click(screen.getByText('Proveedor 3'))
+
+    const dialog = screen.getByRole('dialog')
+    const mobileList = within(dialog).getByTestId('cxp-mobile-card-list-gastos')
+    await userEvent.click(within(mobileList).getByRole('button', { name: 'Pagar' }))
+
+    expect(screen.getByTestId('pago-gasto-cxp-modal-abierto')).toHaveTextContent('G-001')
   })
 })

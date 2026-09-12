@@ -12,6 +12,7 @@ import {
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { DeudaCard } from '@/components/shared/deuda-card'
 import {
   useProveedoresConDeuda,
   useBuscarProveedoresDeuda,
@@ -230,7 +231,8 @@ function DetallePanel({
             <p className="text-sm">No hay facturas de compra pendientes</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
@@ -322,6 +324,26 @@ function DetallePanel({
               </tfoot>
             </table>
           </div>
+
+          {/* Lista mobile: fila -> card, mismos datos y handler que la tabla */}
+          <div data-testid="cxp-mobile-card-list-facturas" className="md:hidden divide-y divide-border">
+            {facturasSorted.map((f) => (
+              <div key={f.id} className="p-3">
+                <DeudaCard
+                  id={f.id}
+                  numero={f.nro_factura}
+                  fecha={f.fecha_factura?.slice(0, 10) ?? ''}
+                  tipo={f.tipo}
+                  tipoTono={f.tipo === 'CREDITO' ? 'credito' : 'contado'}
+                  totalUsd={formatUsd(parseFloat(f.total_usd))}
+                  pendienteUsd={formatUsd(parseFloat(f.saldo_pend_usd))}
+                  accionLabel="Pagar"
+                  onAccion={() => onPagar(f)}
+                />
+              </div>
+            ))}
+          </div>
+          </>
         )}
 
         {/* Sub-header: Gastos */}
@@ -341,7 +363,8 @@ function DetallePanel({
                 ))}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50">
                     <tr>
@@ -406,6 +429,25 @@ function DetallePanel({
                   </tfoot>
                 </table>
               </div>
+
+              {/* Lista mobile: fila -> card, mismos datos y handler que la tabla */}
+              <div data-testid="cxp-mobile-card-list-gastos" className="md:hidden divide-y divide-border">
+                {gastosPendientes.map((g) => (
+                  <div key={g.id} className="p-3">
+                    <DeudaCard
+                      id={g.id}
+                      numero={g.nro_gasto}
+                      detalle={g.descripcion}
+                      fecha={g.fecha?.slice(0, 10) ?? ''}
+                      totalUsd={formatUsd(parseFloat(g.monto_usd))}
+                      pendienteUsd={formatUsd(parseFloat(g.saldo_pendiente_usd))}
+                      accionLabel="Pagar"
+                      onAccion={() => onPagarGasto(g)}
+                    />
+                  </div>
+                ))}
+              </div>
+              </>
             )}
           </>
         )}
