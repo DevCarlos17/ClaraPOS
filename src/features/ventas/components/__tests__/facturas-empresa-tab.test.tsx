@@ -28,6 +28,26 @@ vi.mock('../crear-ncr-modal', () => ({
     ) : null,
 }))
 
+// facturas-emitidas-consulta-rowclick: click de fila abre ConsultaFacturaModal
+// (mismo patron de mock module-boundary que cliente-detalle.test.tsx — su
+// propio contrato ya esta cubierto por consulta-factura-modal.test.tsx).
+vi.mock('../consulta-factura-modal', () => ({
+  ConsultaFacturaModal: ({
+    venta,
+    isOpen,
+    onClose,
+  }: {
+    venta: FacturaParaAnular | null
+    isOpen: boolean
+    onClose: () => void
+  }) =>
+    isOpen ? (
+      <div data-testid="mock-consulta-factura-modal" data-nro-factura={venta?.nro_factura}>
+        <button onClick={onClose}>Cerrar consulta</button>
+      </div>
+    ) : null,
+}))
+
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useFacturasEmpresa } from '../../hooks/use-facturas-empresa'
@@ -273,6 +293,79 @@ describe('FacturasEmpresaTab (Slice C3b) — listado empresa-wide con filtros', 
       await user.click(row)
 
       expect(screen.getByText('#C01-000001')).toBeInTheDocument()
+    })
+  })
+
+  describe('FacturasEmpresaTab — consulta por click de fila', () => {
+    it('click en la fila (fuera del boton) abre ConsultaFacturaModal con la factura de esa fila', async () => {
+      const user = userEvent.setup()
+      const f = factura()
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [f], isLoading: false })
+
+      render(<FacturasEmpresaTab />)
+      expect(screen.queryByTestId('mock-consulta-factura-modal')).not.toBeInTheDocument()
+
+      const row = screen.getByText('#C01-000001').closest('tr') as HTMLElement
+      await user.click(row)
+
+      expect(screen.getByTestId('mock-consulta-factura-modal')).toHaveAttribute(
+        'data-nro-factura',
+        'C01-000001'
+      )
+    })
+
+    it('cerrar ConsultaFacturaModal (onClose) lo desmonta', async () => {
+      const user = userEvent.setup()
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [factura()], isLoading: false })
+
+      render(<FacturasEmpresaTab />)
+      const row = screen.getByText('#C01-000001').closest('tr') as HTMLElement
+      await user.click(row)
+      expect(screen.getByTestId('mock-consulta-factura-modal')).toBeInTheDocument()
+
+      await user.click(screen.getByText('Cerrar consulta'))
+
+      expect(screen.queryByTestId('mock-consulta-factura-modal')).not.toBeInTheDocument()
+    })
+
+    it('click en "Aplicar nota de credito" NO abre ConsultaFacturaModal, pero SI abre CrearNcrModal', async () => {
+      const user = userEvent.setup()
+      const f = factura()
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [f], isLoading: false })
+
+      render(<FacturasEmpresaTab />)
+      await user.click(screen.getByRole('button', { name: /aplicar nota de credito/i }))
+
+      expect(screen.queryByTestId('mock-consulta-factura-modal')).not.toBeInTheDocument()
+      expect(screen.getByTestId('mock-crear-ncr-modal')).toBeInTheDocument()
+      expect(screen.getByText('C01-000001')).toBeInTheDocument()
+    })
+
+    it('estados de ConsultaFacturaModal y CrearNcrModal son independientes (sin residuo cruzado entre filas)', async () => {
+      const user = userEvent.setup()
+      const facturaA = factura({ id: 'venta-a', nro_factura: 'C01-000001' })
+      const facturaB = factura({ id: 'venta-b', nro_factura: 'C01-000002' })
+      mockedUseFacturasEmpresa.mockReturnValue({ facturas: [facturaA, facturaB], isLoading: false })
+
+      render(<FacturasEmpresaTab />)
+
+      const rowA = screen.getByText('#C01-000001').closest('tr') as HTMLElement
+      await user.click(rowA)
+      expect(screen.getByTestId('mock-consulta-factura-modal')).toHaveAttribute(
+        'data-nro-factura',
+        'C01-000001'
+      )
+
+      await user.click(screen.getByText('Cerrar consulta'))
+      expect(screen.queryByTestId('mock-consulta-factura-modal')).not.toBeInTheDocument()
+
+      const rowB = screen.getByText('#C01-000002').closest('tr') as HTMLElement
+      const botonNcB = within(rowB).getByRole('button', { name: /aplicar nota de credito/i })
+      await user.click(botonNcB)
+
+      expect(screen.getByTestId('mock-crear-ncr-modal')).toBeInTheDocument()
+      expect(screen.getByText('C01-000002')).toBeInTheDocument()
+      expect(screen.queryByTestId('mock-consulta-factura-modal')).not.toBeInTheDocument()
     })
   })
 })
