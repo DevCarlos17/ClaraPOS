@@ -151,7 +151,18 @@ function LineaItems({ lineas, tasa, onUpdateCantidad, onRemove, onCantidadEnter,
                           const patron = linea.es_decimal ? /^\d*\.?\d{0,3}$/ : /^\d*$/
                           if (!patron.test(raw)) return
                           const val = linea.es_decimal ? parseFloat(raw) : parseInt(raw, 10)
-                          if (isNaN(val) || val < 0) return
+                          // Un "." pelado (sin digitos a ningun lado) es un estado intermedio valido
+                          // al empezar a tipear ".5": el patron lo acepta pero parseFloat(".") da NaN.
+                          // Preservamos el draft crudo (para que el punto no desaparezca) y tratamos el
+                          // valor como 0 hasta que el usuario complete el decimal. Sin esto, tipear ".5"
+                          // era imposible: el "." daba NaN -> return -> el draft nunca se guardaba.
+                          // ("0." y "5." NO caen aca: parseFloat los resuelve a 0 y 5 respectivamente.)
+                          if (isNaN(val)) {
+                            setCantDraft((d) => ({ ...d, [index]: raw }))
+                            onUpdateCantidad(index, 0)
+                            return
+                          }
+                          if (val < 0) return
                           // No permitir superar el stock disponible (solo productos fisicos).
                           // No se setea al maximo silenciosamente: se rechaza el cambio y se avisa.
                           if (linea.tipo === 'P' && val > linea.stock_actual) {
