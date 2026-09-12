@@ -16,7 +16,7 @@ export const Route = createFileRoute('/_app/compras/cxp')({
   }),
 })
 
-function CxpRoutePage() {
+export function CxpRoutePage() {
   const { isOwner } = usePermissions()
   const [modalImportarAbierto, setModalImportarAbierto] = useState(false)
   const { proveedorId } = Route.useSearch()
@@ -29,7 +29,7 @@ function CxpRoutePage() {
           descripcion="Registro y pago de deudas a proveedores"
         >
           {isOwner && (
-            <Button variant="outline" size="sm" onClick={() => setModalImportarAbierto(true)}>
+            <Button size="sm" onClick={() => setModalImportarAbierto(true)}>
               <UploadSimple className="h-4 w-4 mr-2" />
               Importar Saldos
             </Button>
