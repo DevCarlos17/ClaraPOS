@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import {
   Buildings,
   CaretRight,
+  CaretLeft,
   CurrencyDollar,
   CaretUp,
   CaretDown,
@@ -9,6 +10,8 @@ import {
   Printer,
   Receipt,
 } from '@phosphor-icons/react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import {
   useProveedoresConDeuda,
   useBuscarProveedoresDeuda,
@@ -29,12 +32,13 @@ import { formatDateTime } from '@/lib/format'
 import { localNow } from '@/lib/dates'
 
 /**
- * Tope de filas visibles en el panel izquierdo cuando la busqueda esta
- * vacia. Recorte SOLO de renderizado (nunca del arreglo fuente
- * `useProveedoresConDeuda` ni de los KPIs) — ver spec
- * cxp-lista-deudores-corta, mismo patron que TOP_N_DEUDORES en cxc-list.tsx.
+ * Cantidad de proveedores visibles por pagina en el panel izquierdo.
+ * Recorte SOLO de renderizado (nunca del arreglo fuente ni del hook SQL)
+ * — los KPIs y el pie siguen calculados sobre `proveedores` completo — ver
+ * spec cxc-cxp-mobile-responsive (paginado reemplaza el tope top-5 anterior,
+ * mismo patron que PAGE_SIZE en cxc-list.tsx).
  */
-const TOP_N_DEUDORES = 5
+const PAGE_SIZE = 12
 
 // ─── Sort ─────────────────────────────────────────────────────
 
@@ -421,12 +425,27 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const { proveedores: searchResults, isLoading: loadingSearch } = useBuscarProveedoresDeuda(searchQuery)
   const isSearching = searchQuery.trim().length >= 2
-  // Recorte top-N SOLO cuando no hay busqueda activa: la fuente
-  // (`proveedores`, usada por los KPIs mas abajo) sigue siendo el arreglo
-  // completo sin recortar (spec cxp-lista-deudores-corta).
-  const proveedoresVisibles = isSearching ? searchResults : proveedores.slice(0, TOP_N_DEUDORES)
+  // La busqueda opera sobre el arreglo completo; el paginado (mas abajo)
+  // recorta SOLO el renderizado del resultado ya filtrado — los KPIs siguen
+  // calculados sobre `proveedores` completo, sin SQL LIMIT (spec
+  // cxc-cxp-mobile-responsive).
+  const proveedoresFiltrados = isSearching ? searchResults : proveedores
   const proveedoresListLoading = isSearching ? loadingSearch : isLoading
   const [proveedorSeleccionado, setProveedorSeleccionado] = useState<ProveedorConDeuda | null>(null)
+  const [pagina, setPagina] = useState(0)
+
+  // Reiniciar a la primera pagina cuando cambia la busqueda, para no dejar
+  // al usuario "varado" en una pagina fuera de rango del nuevo resultado.
+  useEffect(() => {
+    setPagina(0)
+  }, [searchQuery])
+
+  const totalPaginas = Math.max(1, Math.ceil(proveedoresFiltrados.length / PAGE_SIZE))
+  const paginaActual = Math.min(pagina, totalPaginas - 1)
+  const proveedoresVisibles = proveedoresFiltrados.slice(
+    paginaActual * PAGE_SIZE,
+    paginaActual * PAGE_SIZE + PAGE_SIZE
+  )
 
   // Pre-select proveedor from URL param once the list is loaded
   useEffect(() => {
@@ -526,7 +545,10 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
 
         {/* Panel izquierdo: proveedores */}
-        <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
+        <div
+          data-testid="cxp-page-panel-izquierdo"
+          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden"
+        >
           <div className="px-4 py-3 bg-muted/40 border-b border-border">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Proveedores con Deuda
@@ -561,6 +583,7 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               <p className="text-sm">{isSearching ? 'Sin resultados' : 'Sin proveedores con deuda'}</p>
             </div>
           ) : (
+          <>
           <div className="divide-y divide-border">
             {proveedoresVisibles.map((proveedor) => {
               const isSelected = proveedorSeleccionado?.id === proveedor.id
@@ -594,6 +617,38 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               )
             })}
           </div>
+
+          {totalPaginas > 1 && (
+            <div
+              data-testid="cxp-page-paginacion"
+              className="flex items-center justify-between gap-2 px-4 py-2 border-t border-border/50"
+            >
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPagina((p) => Math.max(0, p - 1))}
+                disabled={paginaActual === 0}
+              >
+                <CaretLeft size={14} className="mr-1" />
+                Anterior
+              </Button>
+              <span className="text-[11px] text-muted-foreground">
+                Página {paginaActual + 1} de {totalPaginas}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
+                disabled={paginaActual >= totalPaginas - 1}
+              >
+                Siguiente
+                <CaretRight size={14} className="ml-1" />
+              </Button>
+            </div>
+          )}
+          </>
           )}
           {/* Total global al pie */}
           <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between">
@@ -602,8 +657,14 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
           </div>
         </div>
 
-        {/* Panel derecho: detalle */}
-        <div className="md:col-span-2">
+        {/* Panel derecho: detalle inline del proveedor (SOLO desktop, md:+).
+            Siempre hidden md:block, sin depender de la seleccion — en mobile
+            el detalle se muestra en un modal (ver Dialog mas abajo), nunca
+            inline (mismo patron que cxc-list.tsx). */}
+        <div
+          data-testid="cxp-page-panel-derecho"
+          className="hidden md:block md:col-span-2"
+        >
           {!proveedorSeleccionado ? (
             <div className="rounded-2xl bg-card shadow-lg flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
               <CurrencyDollar size={40} className="opacity-20" />
@@ -628,6 +689,42 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
           )}
         </div>
       </div>
+
+      {/* Modal de detalle: SOLO mobile (md:hidden). En desktop el detalle se
+          muestra inline en el panel derecho de arriba, nunca en este modal
+          (overlay y contenido ocultos via md:hidden en ambos). */}
+      <Dialog
+        open={!!proveedorSeleccionado}
+        onOpenChange={(open) => { if (!open) setProveedorSeleccionado(null) }}
+      >
+        <DialogContent
+          overlayClassName="md:hidden"
+          className="md:hidden p-0 gap-0 bg-transparent border-0 shadow-none ring-0 max-h-[85vh] overflow-y-auto sm:max-w-lg"
+        >
+          <DialogTitle className="sr-only">
+            Detalle de cuenta por pagar{proveedorSeleccionado ? ` de ${proveedorSeleccionado.razon_social}` : ''}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Facturas y gastos pendientes del proveedor seleccionado
+          </DialogDescription>
+          {proveedorSeleccionado && (
+            <DetallePanel
+              proveedor={proveedorSeleccionado}
+              facturas={facturas}
+              facturasSorted={facturasSorted}
+              gastosPendientes={gastosPendientes}
+              loadingFacturas={loadingFacturas}
+              loadingGastos={loadingGastos}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onToggleSort={toggleSort}
+              onPagar={(f) => { setFacturaSeleccionada(f); setModalOpen(true) }}
+              onPagarGasto={(g) => { setGastoSeleccionado(g); setPagoGastoOpen(true) }}
+              onVerDetalle={(tipo, id) => setDetalleFactura({ tipo, id })}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modales */}
       <PagoCxPModal
