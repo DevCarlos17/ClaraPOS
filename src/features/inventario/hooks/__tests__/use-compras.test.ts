@@ -193,6 +193,103 @@ describe('crearCompra — wiring de inventario_stock (Slice 1b, sin cambio de re
   })
 })
 
+describe('crearCompra — costo segun factura + indicador de tasa paralela en la ficha (Bug #3)', () => {
+  // Helper: localiza el UPDATE dedicado que sincroniza los dos campos nuevos.
+  const findCostoFacturaUpdate = (calls: Call[]) =>
+    calls.find((c) => c.sql.startsWith('UPDATE productos SET costo_factura_usd'))
+
+  it('compra CON tasa paralela (tasa_costo != tasa) y costo cambiado: guarda costo_factura_usd = costo del documento y tasa_paralela_ref = tasa proveedor', async () => {
+    const calls = mockCrearCompraTx({ stockPorProducto: { 'prod-1': '0.000' } })
+
+    // tasa proveedor 1000, tasa interna (BCV) 500 -> paralela activa.
+    // costo documento $2 -> contable $2*1000/500 = $4 (lo calcula el form; aca
+    // el hook recibe ambos ya resueltos). costo_cambio=true dispara actualizarCosto.
+    await crearCompra(
+      baseParams({
+        tasa: 1000,
+        tasa_costo: 500,
+        lineas: [
+          linea({
+            producto_id: 'prod-1',
+            cantidad: 1,
+            costo_unitario_usd: 2,
+            costo_usd_sistema: 4,
+            costo_cambio: true,
+          }),
+        ],
+      })
+    )
+
+    const upd = findCostoFacturaUpdate(calls)
+    expect(upd).toBeDefined()
+    // costo_factura_usd = costo del documento a tasa proveedor ($2), NO el contable ($4).
+    expect(upd!.params[0]).toBe('2.00000000')
+    // tasa_paralela_ref = tasa del proveedor (1000), no null.
+    expect(upd!.params[1]).toBe('1000.0000')
+    expect(upd!.params).toContain('prod-1')
+  })
+
+  it('compra SIN tasa paralela (tasa_costo ausente) y costo cambiado: costo_factura_usd = contable y tasa_paralela_ref = null (limpia marca previa, "ultimo movimiento manda")', async () => {
+    const calls = mockCrearCompraTx({ stockPorProducto: { 'prod-1': '0.000' } })
+
+    // Sin tasa_costo: costo == contable. costo_usd_sistema se omite -> el hook
+    // usa costo_unitario_usd como costoSistema. costo_cambio=true.
+    await crearCompra(
+      baseParams({
+        tasa: 500,
+        lineas: [
+          linea({
+            producto_id: 'prod-1',
+            cantidad: 1,
+            costo_unitario_usd: 7,
+            costo_cambio: true,
+          }),
+        ],
+      })
+    )
+
+    const upd = findCostoFacturaUpdate(calls)
+    expect(upd).toBeDefined()
+    // costo_factura_usd = costoParaEscribir (== contable, $7) cuando no hay paralela.
+    expect(upd!.params[0]).toBe('7.00000000')
+    // tasa_paralela_ref = null: el producto vuelve a tasa interna/oficial.
+    expect(upd!.params[1]).toBeNull()
+  })
+
+  it('tasa_costo presente pero IGUAL a tasa (no hay paralela real): tasa_paralela_ref = null', async () => {
+    const calls = mockCrearCompraTx({ stockPorProducto: { 'prod-1': '0.000' } })
+
+    await crearCompra(
+      baseParams({
+        tasa: 500,
+        tasa_costo: 500, // igual -> NO es paralela
+        lineas: [
+          linea({ producto_id: 'prod-1', cantidad: 1, costo_unitario_usd: 3, costo_cambio: true }),
+        ],
+      })
+    )
+
+    const upd = findCostoFacturaUpdate(calls)
+    expect(upd).toBeDefined()
+    expect(upd!.params[1]).toBeNull()
+  })
+
+  it('costo NO cambiado (costo_cambio ausente/false): NO se toca costo_factura_usd ni tasa_paralela_ref (se preserva el ultimo movimiento)', async () => {
+    const calls = mockCrearCompraTx({ stockPorProducto: { 'prod-1': '0.000' } })
+
+    await crearCompra(
+      baseParams({
+        tasa: 1000,
+        tasa_costo: 500,
+        lineas: [linea({ producto_id: 'prod-1', cantidad: 1, costo_unitario_usd: 2, costo_usd_sistema: 4 })],
+      })
+    )
+
+    // Sin costo_cambio, actualizarCosto=false -> el UPDATE dedicado no corre.
+    expect(findCostoFacturaUpdate(calls)).toBeUndefined()
+  })
+})
+
 describe('crearCompra — enrutamiento de ingreso por linea (Slice 1c, CPD/Enrutamiento de Ingreso por Linea)', () => {
   it('compra con 2 productos en 2 depositos distintos: cada linea enruta kardex + inventario_stock a SU PROPIO deposito, no al deposito unico prefetched', async () => {
     const calls = mockCrearCompraTx({

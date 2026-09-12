@@ -550,7 +550,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
   function handleAddProducto(producto: Producto) {
     const options = getUnidadOptions(producto)
-    const costoBase = parseFloat(producto.costo_usd) || 0
+    // Precargar el COSTO SEGUN FACTURA (tasa proveedor), no el costo contable.
+    // Si se precargara costo_usd (contable) y el usuario vuelve a marcar tasa
+    // paralela, el contable se recalcularia sobre un valor ya convertido ->
+    // recursividad ($2 -> $4 -> $8). costo_factura_usd es el costo del ultimo
+    // documento a tasa proveedor; al reconvertirlo se obtiene el contable correcto.
+    // Fallback a costo_usd para productos sin historial (campo NULL/legacy): sin
+    // tasa paralela costo y contable coinciden, asi que precargar costo_usd es exacto.
+    const costoBase = parseFloat(producto.costo_factura_usd ?? producto.costo_usd) || 0
     const costoDisplay = moneda === 'USD'
       ? costoBase
       : new Decimal(costoBase).times(tasaFacturaNum).toNumber()
@@ -1195,9 +1202,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
         return null
       }
 
-      // Determinar si el costo realmente cambió respecto al sistema
+      // Determinar si el costo realmente cambió respecto al sistema.
+      // Comparar en la MISMA base de tasa: costo_usd_actual es el costo CONTABLE
+      // (BCV) guardado en la ficha, asi que se compara contra costoUsdSistema (el
+      // contable NUEVO, tambien base BCV), NUNCA contra costoUnitarioUsd (que bajo
+      // tasa paralela esta a tasa proveedor). Comparar bases distintas marcaba
+      // costoCambio=true de forma espuria en cada compra con tasa paralela.
       const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
-      const costoCambio = l.nuevo_costo_raw !== '' && Math.abs(costoUnitarioUsd - costoUsdActual) > 0.0001
+      const costoCambio = l.nuevo_costo_raw !== '' && Math.abs(costoUsdSistema - costoUsdActual) > 0.0001
 
       // no_actualizar_pvp / nuevo_precio_*_usd: derivados de la decisión explícita
       // por nivel (Decisión 1 del design: reducción de señales, use-compras.ts sin
