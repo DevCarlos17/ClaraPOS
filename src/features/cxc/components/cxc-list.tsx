@@ -173,7 +173,10 @@ export function CxcList() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
 
         {/* Panel izquierdo: clientes */}
-        <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
+        <div
+          data-testid="cxc-list-panel-izquierdo"
+          className={`${clienteActual ? 'hidden' : ''} md:block md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden`}
+        >
           <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
             <span className={`text-xs font-semibold uppercase tracking-wide ${filtroSAF ? 'text-green-700' : 'text-muted-foreground'}`}>
               {filtroSAF ? 'Saldo a Favor' : 'Cuentas por Cobrar'}
@@ -299,7 +302,10 @@ export function CxcList() {
         </div>
 
         {/* Panel derecho: detalle del cliente */}
-        <div className="md:col-span-2">
+        <div
+          data-testid="cxc-list-panel-derecho"
+          className={`${clienteActual ? '' : 'hidden'} md:block md:col-span-2`}
+        >
           {clienteActual ? (
             <CxcClienteDetalle
               key={clienteActual.id}

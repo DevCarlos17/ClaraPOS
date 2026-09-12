@@ -17,8 +17,13 @@ vi.mock('@/features/configuracion/hooks/use-tasas', () => ({ useTasaActual: vi.f
 // Aislamos el test del detalle real del cliente — irrelevante para el
 // recorte top-N del panel izquierdo (Requirement: cxc-lista-deudores-corta).
 vi.mock('../cxc-cliente-detalle', () => ({
-  CxcClienteDetalle: ({ cliente }: { cliente: ClienteConDeuda }) => (
-    <div data-testid="cxc-cliente-detalle">Detalle: {cliente.nombre}</div>
+  CxcClienteDetalle: ({ cliente, onClose }: { cliente: ClienteConDeuda; onClose: () => void }) => (
+    <div data-testid="cxc-cliente-detalle">
+      Detalle: {cliente.nombre}
+      <button type="button" onClick={onClose}>
+        cerrar-mock
+      </button>
+    </div>
   ),
 }))
 vi.mock('../cxc-reportes-general', () => ({ CxcReportesGeneral: () => null }))
@@ -120,5 +125,47 @@ describe('CxcList - lista corta de deudores (top-5 client-side)', () => {
     for (let i = 1; i <= 3; i++) {
       expect(screen.getByText(`Cliente ${i}`)).toBeInTheDocument()
     }
+  })
+})
+
+describe('CxcList - master-detail mobile (S2)', () => {
+  it('sin cliente seleccionado: panel izquierdo visible y panel derecho oculto en mobile', () => {
+    mockedUseClientesConDeuda.mockReturnValue({ clientes: ochoClientes(), isLoading: false })
+
+    render(<CxcList />)
+
+    const izquierdo = screen.getByTestId('cxc-list-panel-izquierdo')
+    const derecho = screen.getByTestId('cxc-list-panel-derecho')
+    expect(izquierdo.classList.contains('hidden')).toBe(false)
+    expect(izquierdo.className).toContain('md:block')
+    expect(derecho.classList.contains('hidden')).toBe(true)
+    expect(derecho.className).toContain('md:block')
+  })
+
+  it('con cliente seleccionado: panel izquierdo oculto y panel derecho visible en mobile', async () => {
+    mockedUseClientesConDeuda.mockReturnValue({ clientes: ochoClientes(), isLoading: false })
+
+    render(<CxcList />)
+    await userEvent.click(screen.getByText('Cliente 3'))
+
+    const izquierdo = screen.getByTestId('cxc-list-panel-izquierdo')
+    const derecho = screen.getByTestId('cxc-list-panel-derecho')
+    expect(izquierdo.classList.contains('hidden')).toBe(true)
+    expect(izquierdo.className).toContain('md:block')
+    expect(derecho.classList.contains('hidden')).toBe(false)
+    expect(derecho.className).toContain('md:block')
+  })
+
+  it('el cierre del detalle (onClose) vuelve a mostrar el panel izquierdo en mobile', async () => {
+    mockedUseClientesConDeuda.mockReturnValue({ clientes: ochoClientes(), isLoading: false })
+
+    render(<CxcList />)
+    await userEvent.click(screen.getByText('Cliente 3'))
+    expect(screen.getByTestId('cxc-list-panel-izquierdo').classList.contains('hidden')).toBe(true)
+
+    await userEvent.click(screen.getByText('cerrar-mock'))
+
+    expect(screen.getByTestId('cxc-list-panel-izquierdo').classList.contains('hidden')).toBe(false)
+    expect(screen.getByTestId('cxc-list-panel-derecho').classList.contains('hidden')).toBe(true)
   })
 })
