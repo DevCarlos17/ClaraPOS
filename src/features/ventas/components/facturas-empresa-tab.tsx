@@ -19,6 +19,7 @@ import {
 import { useFacturasEmpresa } from '../hooks/use-facturas-empresa'
 import type { FacturaParaAnular } from '../hooks/use-notas-credito'
 import { CrearNcrModal } from './crear-ncr-modal'
+import { ConsultaFacturaModal } from './consulta-factura-modal'
 
 /**
  * Slice C3b (notas-credito-ruta-administrativa, Design §Decision 3/File
@@ -235,7 +236,17 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrar
                   size="sm"
                   variant="outline"
                   disabled={f.tiene_reverso_total === 1}
-                  onClick={() => onAplicarNc?.(f)}
+                  onClick={(e) => {
+                    // facturas-emitidas-consulta-rowclick: esta fila puede
+                    // tener `onRowClick` (Facturas emitidas admin), a
+                    // diferencia de los otros 3 llamadores que ocultan este
+                    // boton con `mostrarAcciones={false}` — sin esta guarda
+                    // el click en el boton dispararia TAMBIEN el row-click
+                    // y abriria `ConsultaFacturaModal` por encima de
+                    // `CrearNcrModal`.
+                    e.stopPropagation()
+                    onAplicarNc?.(f)
+                  }}
                 >
                   Aplicar nota de credito
                 </Button>
@@ -281,6 +292,10 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
   })
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
+  // facturas-emitidas-consulta-rowclick: estado INDEPENDIENTE del de
+  // `CrearNcrModal` de arriba — el click de fila abre este modal de solo
+  // lectura (detalle fiscal + evolucion), nunca reemplaza al de NC.
+  const [facturaConsulta, setFacturaConsulta] = useState<FacturaParaAnular | null>(null)
 
   function handleAplicarNc(f: FacturaParaAnular) {
     onAplicarNc?.(f)
@@ -291,11 +306,21 @@ export function FacturasEmpresaTab({ onAplicarNc }: FacturasEmpresaTabProps = {}
   return (
     <div className="space-y-4">
       <FacturasEmpresaFiltros filtros={filtros} onChange={setFiltros} />
-      <FacturasEmpresaTable facturas={facturas} isLoading={isLoading} onAplicarNc={handleAplicarNc} />
+      <FacturasEmpresaTable
+        facturas={facturas}
+        isLoading={isLoading}
+        onAplicarNc={handleAplicarNc}
+        onRowClick={setFacturaConsulta}
+      />
       <CrearNcrModal
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         factura={facturaSeleccionada}
+      />
+      <ConsultaFacturaModal
+        venta={facturaConsulta}
+        isOpen={!!facturaConsulta}
+        onClose={() => setFacturaConsulta(null)}
       />
     </div>
   )
