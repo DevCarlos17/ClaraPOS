@@ -13,7 +13,7 @@ export const Route = createFileRoute('/_app/clientes/cuentas-por-cobrar')({
   component: CuentasPorCobrarPage,
 })
 
-function CuentasPorCobrarPage() {
+export function CuentasPorCobrarPage() {
   const { isOwner } = usePermissions()
   const [modalImportarAbierto, setModalImportarAbierto] = useState(false)
 
@@ -22,7 +22,7 @@ function CuentasPorCobrarPage() {
       <div className="space-y-6">
         <PageHeader titulo="Cuentas por Cobrar" descripcion="Gestion de deudas y pagos de clientes">
           {isOwner && (
-            <Button variant="outline" size="sm" onClick={() => setModalImportarAbierto(true)}>
+            <Button size="sm" onClick={() => setModalImportarAbierto(true)}>
               <UploadSimple className="h-4 w-4 mr-2" />
               Importar Saldos
             </Button>

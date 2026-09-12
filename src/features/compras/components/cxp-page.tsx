@@ -5,11 +5,13 @@ import {
   CurrencyDollar,
   CaretUp,
   CaretDown,
+  MagnifyingGlass,
   Printer,
   Receipt,
 } from '@phosphor-icons/react'
 import {
   useProveedoresConDeuda,
+  useBuscarProveedoresDeuda,
   useFacturasCompraPendientes,
   type ProveedorConDeuda,
   type FacturaCompraPendiente,
@@ -25,6 +27,14 @@ import Decimal from 'decimal.js'
 import { formatUsd } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { localNow } from '@/lib/dates'
+
+/**
+ * Tope de filas visibles en el panel izquierdo cuando la busqueda esta
+ * vacia. Recorte SOLO de renderizado (nunca del arreglo fuente
+ * `useProveedoresConDeuda` ni de los KPIs) — ver spec
+ * cxp-lista-deudores-corta, mismo patron que TOP_N_DEUDORES en cxc-list.tsx.
+ */
+const TOP_N_DEUDORES = 5
 
 // ─── Sort ─────────────────────────────────────────────────────
 
@@ -408,6 +418,14 @@ interface CxpPageProps {
 
 export function CxpPage({ initialProveedorId }: CxpPageProps) {
   const { proveedores, isLoading } = useProveedoresConDeuda()
+  const [searchQuery, setSearchQuery] = useState('')
+  const { proveedores: searchResults, isLoading: loadingSearch } = useBuscarProveedoresDeuda(searchQuery)
+  const isSearching = searchQuery.trim().length >= 2
+  // Recorte top-N SOLO cuando no hay busqueda activa: la fuente
+  // (`proveedores`, usada por los KPIs mas abajo) sigue siendo el arreglo
+  // completo sin recortar (spec cxp-lista-deudores-corta).
+  const proveedoresVisibles = isSearching ? searchResults : proveedores.slice(0, TOP_N_DEUDORES)
+  const proveedoresListLoading = isSearching ? loadingSearch : isLoading
   const [proveedorSeleccionado, setProveedorSeleccionado] = useState<ProveedorConDeuda | null>(null)
 
   // Pre-select proveedor from URL param once the list is loaded
@@ -514,8 +532,37 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               Proveedores con Deuda
             </span>
           </div>
+
+          {/* Buscador */}
+          <div className="px-3 py-2 border-b border-border/50">
+            <div className="relative">
+              <MagnifyingGlass
+                size={14}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar por nombre o rif/cedula..."
+                className="w-full rounded-md border border-input bg-transparent pl-8 pr-3 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+          </div>
+
+          {proveedoresListLoading ? (
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : proveedoresVisibles.length === 0 ? (
+            <div className="py-8 text-center text-muted-foreground">
+              <p className="text-sm">{isSearching ? 'Sin resultados' : 'Sin proveedores con deuda'}</p>
+            </div>
+          ) : (
           <div className="divide-y divide-border">
-            {proveedores.map((proveedor) => {
+            {proveedoresVisibles.map((proveedor) => {
               const isSelected = proveedorSeleccionado?.id === proveedor.id
               const deuda = parseFloat(proveedor.saldo_actual)
               return (
@@ -547,6 +594,7 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               )
             })}
           </div>
+          )}
           {/* Total global al pie */}
           <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total</span>
