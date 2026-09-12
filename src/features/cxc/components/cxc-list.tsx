@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   MagnifyingGlass,
   Users,
   CurrencyDollar,
   CaretRight,
+  CaretLeft,
 } from '@phosphor-icons/react'
+import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import {
@@ -16,11 +19,12 @@ import { CxcClienteDetalle } from './cxc-cliente-detalle'
 import { CxcReportesGeneral } from './cxc-reportes-general'
 
 /**
- * Tope de filas visibles en el panel izquierdo cuando la busqueda esta
- * vacia. Recorte SOLO de renderizado (nunca del arreglo fuente ni del
- * hook SQL) — ver spec cxc-lista-deudores-corta.
+ * Cantidad de deudores visibles por pagina en el panel izquierdo. Recorte
+ * SOLO de renderizado (nunca del arreglo fuente ni del hook SQL) — los
+ * KPIs y el pie siguen calculados sobre `allClientes` completo — ver spec
+ * cxc-mobile-responsive (paginado reemplaza el tope top-5 anterior).
  */
-const TOP_N_DEUDORES = 5
+const PAGE_SIZE = 12
 
 // ─── KPI Card ─────────────────────────────────────────────────
 
@@ -78,16 +82,26 @@ export function CxcList() {
   const { tasaValor } = useTasaActual()
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteConDeuda | null>(null)
   const [filtroSAF, setFiltroSAF] = useState(false)
+  const [pagina, setPagina] = useState(0)
 
   const isSearching = searchQuery.trim().length >= 2
   const clientesBase = isSearching ? searchResults : allClientes
+  // La busqueda y el filtro SAF operan sobre el arreglo completo; el
+  // paginado (mas abajo) recorta SOLO el renderizado del resultado ya
+  // filtrado — ver spec cxc-mobile-responsive.
   const clientesFiltrados = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
-  // Recorte top-N SOLO cuando no hay busqueda activa ni filtro SAF: la fuente
-  // (allClientes) y el filtro SAF siguen operando sobre el arreglo completo
-  // (ver spec cxc-lista-deudores-corta — el tope aplica a la vista de
-  // deudores por defecto, no reemplaza el filtro SAF preexistente).
-  const clientes = !isSearching && !filtroSAF ? clientesFiltrados.slice(0, TOP_N_DEUDORES) : clientesFiltrados
   const clientesLoading = isSearching ? loadingSearch : isLoading
+
+  // Reiniciar a la primera pagina cuando cambia la busqueda o el filtro SAF,
+  // para no dejar al usuario "varado" en una pagina fuera de rango del
+  // nuevo resultado filtrado.
+  useEffect(() => {
+    setPagina(0)
+  }, [searchQuery, filtroSAF])
+
+  const totalPaginas = Math.max(1, Math.ceil(clientesFiltrados.length / PAGE_SIZE))
+  const paginaActual = Math.min(pagina, totalPaginas - 1)
+  const clientesPagina = clientesFiltrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE)
 
   function toggleFiltroSAF() {
     setFiltroSAF((prev) => {
@@ -173,7 +187,10 @@ export function CxcList() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
 
         {/* Panel izquierdo: clientes */}
-        <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
+        <div
+          data-testid="cxc-list-panel-izquierdo"
+          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden"
+        >
           <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
             <span className={`text-xs font-semibold uppercase tracking-wide ${filtroSAF ? 'text-green-700' : 'text-muted-foreground'}`}>
               {filtroSAF ? 'Saldo a Favor' : 'Cuentas por Cobrar'}
@@ -188,7 +205,7 @@ export function CxcList() {
                   Ver todos
                 </button>
               )}
-              <CxcReportesGeneral clientes={clientes} />
+              <CxcReportesGeneral clientes={clientesFiltrados} />
             </div>
           </div>
 
@@ -216,15 +233,16 @@ export function CxcList() {
                 <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />
               ))}
             </div>
-          ) : clientes.length === 0 ? (
+          ) : clientesFiltrados.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               <p className="text-sm">
                 {isSearching ? 'Sin resultados' : filtroSAF ? 'Sin clientes con saldo a favor' : 'Sin clientes con deuda'}
               </p>
             </div>
           ) : (
+            <>
             <div className="divide-y divide-border">
-              {clientes.map((cliente) => {
+              {clientesPagina.map((cliente) => {
                 const isSelected = clienteSeleccionado?.id === cliente.id
                 const tieneDeuda = cliente.deuda_usd > 0.001
                 const isSAF = cliente.credito_disponible_usd > 0.001
@@ -279,6 +297,38 @@ export function CxcList() {
                 )
               })}
             </div>
+
+            {totalPaginas > 1 && (
+              <div
+                data-testid="cxc-list-paginacion"
+                className="flex items-center justify-between gap-2 px-4 py-2 border-t border-border/50"
+              >
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPagina((p) => Math.max(0, p - 1))}
+                  disabled={paginaActual === 0}
+                >
+                  <CaretLeft size={14} className="mr-1" />
+                  Anterior
+                </Button>
+                <span className="text-[11px] text-muted-foreground">
+                  Página {paginaActual + 1} de {totalPaginas}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
+                  disabled={paginaActual >= totalPaginas - 1}
+                >
+                  Siguiente
+                  <CaretRight size={14} className="ml-1" />
+                </Button>
+              </div>
+            )}
+            </>
           )}
 
           {/* Total al pie */}
@@ -298,8 +348,14 @@ export function CxcList() {
           </div>
         </div>
 
-        {/* Panel derecho: detalle del cliente */}
-        <div className="md:col-span-2">
+        {/* Panel derecho: detalle inline del cliente (SOLO desktop, md:+).
+            Siempre hidden md:block, sin depender de la seleccion — en mobile
+            el detalle se muestra en un modal (ver Dialog mas abajo), nunca
+            inline (reemplaza el master-detail hidden/md:block anterior). */}
+        <div
+          data-testid="cxc-list-panel-derecho"
+          className="hidden md:block md:col-span-2"
+        >
           {clienteActual ? (
             <CxcClienteDetalle
               key={clienteActual.id}
@@ -319,6 +375,33 @@ export function CxcList() {
           )}
         </div>
       </div>
+
+      {/* Modal de detalle: SOLO mobile (md:hidden). En desktop el detalle se
+          muestra inline en el panel derecho de arriba, nunca en este modal
+          (overlay y contenido ocultos via md:hidden en ambos). */}
+      <Dialog
+        open={!!clienteActual}
+        onOpenChange={(open) => { if (!open) setClienteSeleccionado(null) }}
+      >
+        <DialogContent
+          overlayClassName="md:hidden"
+          className="md:hidden p-0 gap-0 bg-transparent border-0 shadow-none ring-0 max-h-[85vh] overflow-y-auto sm:max-w-lg"
+          showCloseButton={false}
+        >
+          <DialogTitle className="sr-only">
+            Detalle de cuenta por cobrar{clienteActual ? ` de ${clienteActual.nombre}` : ''}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Facturas pendientes y acciones de cobro del cliente seleccionado
+          </DialogDescription>
+          {clienteActual && (
+            <CxcClienteDetalle
+              cliente={clienteActual}
+              onClose={() => setClienteSeleccionado(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
