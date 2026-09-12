@@ -91,7 +91,7 @@ export function FacturaDetallePanel({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-slate-300">
+      <div className="overflow-hidden rounded-lg border border-slate-300 bg-card">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs uppercase text-muted-foreground">
             <tr>
@@ -123,7 +123,7 @@ export function FacturaDetallePanel({
         </table>
       </div>
 
-      <div className="space-y-1 rounded-lg border border-slate-300 p-3 text-sm">
+      <div className="space-y-1 rounded-lg border border-slate-300 bg-card p-3 text-sm">
         {construirFilasTotales(recibo.totales, recibo.monedaPresentacion).map((fila) => (
           <div
             key={fila.label}
@@ -157,7 +157,7 @@ export function FacturaDetallePanel({
       */}
 
       {recibo.pagos.length > 0 && (
-        <div className="space-y-1 rounded-lg border border-slate-300 p-3 text-sm">
+        <div className="space-y-1 rounded-lg border border-slate-300 bg-card p-3 text-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Metodos de pago
           </p>
@@ -188,7 +188,7 @@ export function FacturaDetallePanel({
       */}
 
       {recibo.evolucion && (
-        <div className="space-y-1 rounded-lg border border-slate-200 p-3 text-sm">
+        <div className="space-y-1 rounded-lg border border-slate-200 bg-card p-3 text-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evolucion</p>
           {construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion).map((fila) => (
             <div
