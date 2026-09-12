@@ -737,15 +737,16 @@ export function PosTerminal() {
                   onClear={handleClearCliente}
                 />
               </div>
-              {!clienteId && (
-                <button
-                  type="button"
-                  onClick={() => setShowNuevoClienteModal(true)}
-                  className="shrink-0 flex items-center gap-1 rounded border border-primary/40 bg-primary/5 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/15 transition-colors"
-                >
-                  <Plus size={12} />Nuevo
-                </button>
-              )}
+              {/* Siempre visible: crear un cliente nuevo lo auto-selecciona para la venta
+                  (handleNuevoClienteCreado), sustituyendo al que estuviera elegido. El boton
+                  debe seguir disponible aunque ya haya cliente, para poder reemplazarlo. */}
+              <button
+                type="button"
+                onClick={() => setShowNuevoClienteModal(true)}
+                className="shrink-0 flex items-center gap-1 rounded border border-primary/40 bg-primary/5 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/15 transition-colors"
+              >
+                <Plus size={12} />Nuevo
+              </button>
             </div>
           </div>
 

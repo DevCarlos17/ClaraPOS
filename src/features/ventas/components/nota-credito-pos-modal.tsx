@@ -829,6 +829,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         venta={factura}
         isOpen={reimprimirOpen}
         onClose={() => setReimprimirOpen(false)}
+        // Este modal padre es un <dialog> nativo abierto con showModal() -> vive
+        // en la top layer del navegador. Sin pasar el propio <dialog> como
+        // contenedor del portal, ConsultaFacturaModal se portaliza al body y su
+        // contenido queda POR DEBAJO de la top layer (solo se veia el overlay).
+        portalContainer={dialogRef.current}
       />
     </>
   )

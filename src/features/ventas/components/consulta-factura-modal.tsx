@@ -18,9 +18,18 @@ interface ConsultaFacturaModalProps {
   venta: FacturaParaAnular | null
   isOpen: boolean
   onClose: () => void
+  /**
+   * Contenedor del portal. Necesario cuando este modal se abre desde otro modal
+   * montado como `<dialog>` nativo con `showModal()` (top layer del navegador):
+   * sin esto el contenido se portaliza al body y queda TAPADO por la top layer
+   * (se ve solo el overlay). Ver `nota-credito-pos-modal.tsx`. Los demas
+   * consumidores (Gestion de Clientes, Ventas -> Consultas) lo omiten y usan el
+   * default de Radix (`document.body`).
+   */
+  portalContainer?: HTMLElement | null
 }
 
-export function ConsultaFacturaModal({ venta, isOpen, onClose }: ConsultaFacturaModalProps) {
+export function ConsultaFacturaModal({ venta, isOpen, onClose, portalContainer }: ConsultaFacturaModalProps) {
   const { recibo, isLoading } = useReciboDesdeFactura(venta, {
     esReimpresion: true,
     derivarMonedaPresentacion: true,
@@ -58,7 +67,7 @@ export function ConsultaFacturaModal({ venta, isOpen, onClose }: ConsultaFactura
         if (!v) onClose()
       }}
     >
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto" container={portalContainer ?? undefined}>
         <DialogHeader>
           <DialogTitle>Consulta de Factura</DialogTitle>
         </DialogHeader>
