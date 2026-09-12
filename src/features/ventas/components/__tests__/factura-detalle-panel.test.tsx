@@ -86,6 +86,22 @@ describe('FacturaDetallePanel (Spec notas-credito-pos: Panel de detalle fiscal d
 
     expect(screen.queryByText('IGTF')).not.toBeInTheDocument()
   })
+
+  it('por defecto (hideFacturaTitle omitido): muestra el titulo "Factura" y su numero', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} />)
+
+    expect(screen.getByText('Factura')).toBeInTheDocument()
+    expect(screen.getByText('C01-000001')).toBeInTheDocument()
+  })
+
+  it('Ajustes QA (ajustes-qa-nota-credito-pos-modal, Item 2): hideFacturaTitle=true oculta el titulo "Factura" y su numero, el resto del panel sigue visible', () => {
+    render(<FacturaDetallePanel recibo={baseRecibo()} hideFacturaTitle />)
+
+    expect(screen.queryByText('Factura')).not.toBeInTheDocument()
+    expect(screen.queryByText('C01-000001')).not.toBeInTheDocument()
+    expect(screen.getByText('Botox 50U')).toBeInTheDocument()
+    expect(screen.getByText('TOTAL FACTURA')).toBeInTheDocument()
+  })
 })
 
 // ─── PR1 (consulta-factura-evolucion): el desglose de metodos de pago se

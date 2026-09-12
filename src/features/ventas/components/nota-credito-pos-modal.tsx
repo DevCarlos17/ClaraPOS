@@ -27,6 +27,7 @@ import { type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export
 import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factura'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
+import { ConsultaFacturaModal } from './consulta-factura-modal'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -153,9 +154,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const [pinDepositoAutorizado, setPinDepositoAutorizado] = useState(false)
   const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
   // Eleccion TOTAL/PARCIAL (Slice 3b, Spec notas-credito-pos: "Seleccion de
-  // tipo de nota de credito"). TOTAL es el default — preserva el flujo
-  // pre-existente byte-a-byte (mismo `crearNotaCredito` sin `tipo`/`lineas`).
-  const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL'>('TOTAL')
+  // tipo de nota de credito"). Ajustes QA (ajustes-qa-nota-credito-pos-modal,
+  // Item 5): NINGUN tipo se preselecciona (ni siquiera para facturas con
+  // reverso parcial previo) — el usuario debe elegir Total o Parcial de
+  // forma explicita antes de ver cualquier UI de confirmacion.
+  const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL' | null>(null)
   // Lineas PARCIAL pendientes de PIN A — solo se usan si el usuario confirmo
   // sin permiso y debe autorizar antes de que `emitirNc` se dispare de nuevo.
   const [lineasParcialPendientes, setLineasParcialPendientes] = useState<LineaNcSeleccionada[] | null>(null)
@@ -174,6 +177,22 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // re-enviar por accidente la MISMA cantidad ya acreditada (double-submit).
   // Cambiar el `key` fuerza un remount limpio tras cada emision exitosa.
   const [emisionGen, setEmisionGen] = useState(0)
+  // Reveal-gate de la seccion NC (Slice C, Spec notas-credito-pos:
+  // "Reveal-gate de la seccion de emision de NC"). Al seleccionar una
+  // factura solo se muestra el detalle + pie de 3 acciones (Volver,
+  // Reimprimir, Emitir nota de credito); la seccion NC (Tipo, modalidad,
+  // deposito, motivo, alerta irreversible) permanece oculta hasta
+  // presionar "Emitir nota de credito". Resetea en los mismos 3 puntos que
+  // `resetAutorizacionesPin` (cierre del modal, seleccion de factura,
+  // "Volver") pero es un estado INDEPENDIENTE: nunca se limpia tras una
+  // emision exitosa (la seccion permanece revelada sobre la misma factura).
+  const [ncSectionRevealed, setNcSectionRevealed] = useState(false)
+  // Reimprimir (Slice D, Spec notas-credito-pos: "Reimpresion desde la
+  // entrada POS de NC") — estado INDEPENDIENTE del reveal-gate de arriba:
+  // abrir/cerrar `ConsultaFacturaModal` nunca revela ni reoculta la seccion
+  // NC, y viceversa. Por eso NO se resetea en los mismos 3 puntos que
+  // `ncSectionRevealed`/`resetAutorizacionesPin` — el spec no lo exige.
+  const [reimprimirOpen, setReimprimirOpen] = useState(false)
 
   /**
    * UX B QA fix (Slice 5e): las autorizaciones de PIN son EFIMERAS —
@@ -202,9 +221,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setSearchQuery('')
       setModalidad('EFECTIVO_REAL')
       setMotivo('')
-      setTipoNc('TOTAL')
+      setTipoNc(null)
       setEmisionGen(0)
       resetAutorizacionesPin()
+      setNcSectionRevealed(false)
     }
   }, [isOpen])
 
@@ -406,11 +426,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         ref={dialogRef}
         onClose={onClose}
         onClick={handleBackdropClick}
-        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-4xl shadow-xl max-h-[85vh]"
+        className="backdrop:bg-black/50 shadow-xl p-0 w-screen h-dvh max-w-none rounded-none md:w-full md:max-w-4xl md:max-h-[85vh] md:rounded-lg"
       >
-        <div className="p-6 flex flex-col max-h-[85vh]">
+        <div className="p-6 flex flex-col h-full md:h-auto md:max-h-[85vh]">
           <div className="flex items-start justify-between mb-4 shrink-0">
-            <h2 className="text-lg font-semibold">Nota de Credito — Sesion Actual</h2>
+            <h2 className="text-lg font-semibold">Facturas Emitidas - Sesion Actual</h2>
             <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
               <X className="h-5 w-5 text-muted-foreground" />
             </button>
@@ -423,7 +443,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
             // single-view anterior): lista+buscador a la izquierda (Slice 2),
             // panel de detalle fiscal montado a la derecha (Design §Decision 5).
             <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 min-h-0">
-              <div className="flex flex-col min-h-0">
+              <div
+                data-testid="nc-pos-columna-lista"
+                className={`${factura ? 'hidden' : 'flex'} md:flex flex-col min-h-0`}
+              >
                 {facturas.length > 0 && (
                   <div className="relative mb-2 shrink-0">
                     <MagnifyingGlass className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -463,20 +486,21 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           type="button"
                           onClick={() => {
                             setFacturaId(f.id)
-                            // Guess INICIAL del tab (TOTAL/PARCIAL) a partir
-                            // de los flags crudos ya disponibles en el
-                            // listado (sin gap async, a diferencia de
-                            // `detalle`/`reversos` que aun no cargaron para
-                            // ESTA factura) — es solo el tab por defecto, NO
-                            // el gating real: `puedeTotal`/`puedeEmitirNc`
-                            // (fuente acumulada) son los que deciden que
-                            // botones se muestran una vez cargados los datos.
-                            setTipoNc(f.tiene_reverso_total !== 1 && f.tiene_reverso_parcial !== 1 ? 'TOTAL' : 'PARCIAL')
+                            // Ajustes QA (Item 5): ya NO se adivina un tab
+                            // por defecto a partir de los flags crudos —
+                            // ningun tipo queda preseleccionado, ni siquiera
+                            // para facturas con reverso parcial previo. El
+                            // usuario elige explicitamente Total o Parcial.
+                            setTipoNc(null)
                             // UX B QA fix: seleccionar (incluso re-seleccionar)
                             // una factura arranca un proceso de NC nuevo — la
                             // autorizacion de PIN de la factura anterior nunca
                             // debe quedar vigente para esta.
                             resetAutorizacionesPin()
+                            // Reveal-gate (Slice C): cada seleccion arranca
+                            // con la seccion NC oculta (Spec: "Cambiar de
+                            // factura reoculta la seccion NC").
+                            setNcSectionRevealed(false)
                           }}
                           className={`w-full flex items-center justify-between rounded-lg border p-3 text-left transition-colors ${
                             seleccionada ? 'border-primary bg-muted' : 'hover:bg-muted'
@@ -493,6 +517,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           <div className="text-right shrink-0 pl-2">
                             <p className="text-sm font-semibold">{formatUsd(f.total_usd)}</p>
                             <p className="text-xs text-muted-foreground">{formatBs(f.total_bs)}</p>
+                            {/* Item 3 (ajustes-qa-nota-credito-pos-modal): tasa
+                                historica de ESTA factura, en TODAS las
+                                tarjetas de la sesion (no solo la seleccionada). */}
+                            <p className="text-xs text-muted-foreground">Tasa: {formatTasa(f.tasa)}</p>
                           </div>
                         </button>
                       )
@@ -501,22 +529,21 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                 </div>
               </div>
 
-              <div className="flex flex-col min-h-0 md:border-l md:pl-4 overflow-y-auto">
-                {factura && (
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 px-4 pt-1 pb-2 text-sm">
-                    <div>
-                      <span className="text-muted-foreground">Cliente:</span> {factura.cliente_nombre}
-                    </div>
-                    <div>
-                      <span className="text-muted-foreground">Tasa:</span> {formatTasa(factura.tasa)}
-                    </div>
-                  </div>
-                )}
-
+              <div
+                data-testid="nc-pos-columna-detalle"
+                className={`${factura ? 'flex' : 'hidden'} md:flex flex-col min-h-0 md:border-l md:pl-4 overflow-y-auto md:min-h-[420px]`}
+              >
+                {/* Item 2 (ajustes-qa-nota-credito-pos-modal): el header local
+                    Cliente/Tasa/Factura# se elimino — el panel derecho arranca
+                    directo en la tabla de Articulos. `hideFacturaTitle`
+                    suprime tambien el titulo "Factura" propio del panel SOLO
+                    para este consumidor (Tradicional NC y Consulta/Reimprimir
+                    siguen viendolo, default `false`). */}
                 <FacturaDetallePanel
                   recibo={recibo}
                   reversos={historialReversos}
                   badgeReverso={badgesPorVenta[facturaId ?? ''] ?? null}
+                  hideFacturaTitle
                 />
 
                 {factura && !puedeEmitirNc && (
@@ -531,7 +558,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   </div>
                 )}
 
-                {factura && puedeEmitirNc && (
+                {factura && puedeEmitirNc && ncSectionRevealed && (
                   <div className="space-y-4 px-4 pb-4">
                     <div className="rounded-lg border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-2">
@@ -656,16 +683,41 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         loading={loading}
                         depositoInvalido={depositoInvalido}
                       />
-                    ) : (
-                      <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
-                        <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
-                        <div className="text-sm text-red-700">
-                          <p className="font-medium">Esta accion es irreversible</p>
-                          <p className="text-xs mt-1">
-                            Se reintegrara el stock de todos los productos y la factura quedara anulada.
-                          </p>
+                    ) : tipoNc === 'TOTAL' ? (
+                      // Item 6 (ajustes-qa-nota-credito-pos-modal): la
+                      // confirmacion de TOTAL ya NO vive en el pie del modal
+                      // (mismo slot fisico que el boton de revelar, hazard de
+                      // doble-click) — ahora es un boton DEDICADO dentro de
+                      // la seccion, mismo lugar que el boton propio de
+                      // `SeleccionLineasNc` para PARCIAL. Reusa
+                      // `handleConfirmarClick` sin alterar su logica.
+                      <div className="space-y-3">
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
+                          <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                          <div className="text-sm text-red-700">
+                            <p className="font-medium">Esta accion es irreversible</p>
+                            <p className="text-xs mt-1">
+                              Se reintegrara el stock de todos los productos y la factura quedara anulada.
+                            </p>
+                          </div>
                         </div>
+                        <button
+                          type="button"
+                          onClick={handleConfirmarClick}
+                          disabled={loading || depositoInvalido}
+                          className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                        >
+                          {loading ? 'Procesando...' : 'Confirmar Anulacion'}
+                        </button>
                       </div>
+                    ) : (
+                      // Item 5: sin tipo elegido todavia -> estado neutro,
+                      // sin alerta ni boton de confirmacion de ningun tipo
+                      // (Spec: "Sin seleccion, MUST mostrarse un estado
+                      // neutro").
+                      <p className="text-sm text-muted-foreground text-center py-2">
+                        Selecciona Total o Parcial para continuar.
+                      </p>
                     )}
                   </div>
                 )}
@@ -682,27 +734,51 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   // de NC en curso — la autorizacion de PIN no debe persistir
                   // para la proxima factura que se seleccione.
                   resetAutorizacionesPin()
+                  // Reveal-gate (Slice C): "Volver" es de una sola etapa —
+                  // siempre regresa directo al estado vacio de seleccion,
+                  // reocultando la seccion NC como efecto colateral (Spec:
+                  // "Volver es de una sola etapa").
+                  setNcSectionRevealed(false)
                 }}
                 disabled={loading}
                 className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors"
               >
                 Volver
               </button>
-              <button
-                type="button"
-                onClick={handleEditarPagosClick}
-                disabled={loading}
-                className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors disabled:opacity-50"
-              >
-                Editar metodos de pago
-              </button>
-              {puedeEmitirNc && tipoNc === 'TOTAL' && (
+              {!ncSectionRevealed ? (
+                // Reveal-gate cerrado (Slice C, Spec "Reveal-gate de la
+                // seccion de emision de NC"): pie de tres acciones.
+                // "Reimprimir" (Slice D) abre `ConsultaFacturaModal` sobre la
+                // factura seleccionada, independiente del gate.
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setReimprimirOpen(true)}
+                    className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors"
+                  >
+                    Reimprimir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNcSectionRevealed(true)}
+                    className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    Emitir nota de credito
+                  </button>
+                </>
+              ) : (
+                // Reveal-gate abierto (Item 6, ajustes-qa-nota-credito-pos-modal):
+                // el pie se reduce a Volver + Editar metodos de pago — la
+                // confirmacion de TOTAL ya NO vive aqui (ver el boton
+                // dedicado dentro de la seccion, mas arriba), evitando que
+                // ocupe el mismo slot fisico que el boton de revelar.
                 <button
-                  onClick={handleConfirmarClick}
-                  disabled={loading || depositoInvalido}
-                  className="px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                  type="button"
+                  onClick={handleEditarPagosClick}
+                  disabled={loading}
+                  className="px-4 py-2 text-sm rounded-md border border-input hover:bg-muted transition-colors disabled:opacity-50"
                 >
-                  {loading ? 'Procesando...' : 'Confirmar Anulacion'}
+                  Editar metodos de pago
                 </button>
               )}
             </div>
@@ -744,6 +820,15 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         titulo="Cambiar deposito de reingreso"
         mensaje="Cambiar el deposito de reingreso requiere autorizacion de un supervisor."
         requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
+      />
+
+      {/* Reimprimir (Slice D) — mismo componente que Gestion de Clientes y
+          Ventas -> Consultas, reusa useReciboDesdeFactura/useEvolucionFactura
+          internamente. Independiente del reveal-gate de NC de arriba. */}
+      <ConsultaFacturaModal
+        venta={factura}
+        isOpen={reimprimirOpen}
+        onClose={() => setReimprimirOpen(false)}
       />
     </>
   )
