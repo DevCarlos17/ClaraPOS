@@ -426,9 +426,9 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         ref={dialogRef}
         onClose={onClose}
         onClick={handleBackdropClick}
-        className="backdrop:bg-black/50 rounded-lg p-0 w-full max-w-4xl shadow-xl max-h-[85vh]"
+        className="backdrop:bg-black/50 shadow-xl p-0 w-screen h-dvh max-w-none rounded-none md:w-full md:max-w-4xl md:max-h-[85vh] md:rounded-lg"
       >
-        <div className="p-6 flex flex-col max-h-[85vh]">
+        <div className="p-6 flex flex-col h-full md:h-auto md:max-h-[85vh]">
           <div className="flex items-start justify-between mb-4 shrink-0">
             <h2 className="text-lg font-semibold">Facturas Emitidas - Sesion Actual</h2>
             <button onClick={onClose} className="p-1 rounded-md hover:bg-muted transition-colors">
@@ -443,7 +443,10 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
             // single-view anterior): lista+buscador a la izquierda (Slice 2),
             // panel de detalle fiscal montado a la derecha (Design §Decision 5).
             <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4 min-h-0">
-              <div className="flex flex-col min-h-0">
+              <div
+                data-testid="nc-pos-columna-lista"
+                className={`${factura ? 'hidden' : 'flex'} md:flex flex-col min-h-0`}
+              >
                 {facturas.length > 0 && (
                   <div className="relative mb-2 shrink-0">
                     <MagnifyingGlass className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -527,8 +530,8 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
               </div>
 
               <div
-                className="flex flex-col min-h-0 md:border-l md:pl-4 overflow-y-auto"
-                style={{ minHeight: '420px' }}
+                data-testid="nc-pos-columna-detalle"
+                className={`${factura ? 'flex' : 'hidden'} md:flex flex-col min-h-0 md:border-l md:pl-4 overflow-y-auto md:min-h-[420px]`}
               >
                 {/* Item 2 (ajustes-qa-nota-credito-pos-modal): el header local
                     Cliente/Tasa/Factura# se elimino — el panel derecho arranca

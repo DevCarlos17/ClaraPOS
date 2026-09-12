@@ -1437,3 +1437,80 @@ describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abi
     expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
   })
 })
+
+/**
+ * Responsive master-detail (nota-credito-pos-modal-responsive, Spec
+ * notas-credito-pos: "Diseño responsivo del modal"). jsdom NO calcula
+ * visibilidad CSS real (no interpreta `@media (min-width: 768px)`), por lo
+ * que estas pruebas verifican el CONTRATO comprobable en este entorno: la
+ * presencia/ausencia de la clase `hidden` segun el estado `factura`
+ * (null/no-null), que es exactamente lo que decide si mobile (`<md`) oculta
+ * o muestra cada columna. La confirmacion visual real en viewport movil
+ * (columna oculta de verdad, sin scroll forzado) es un gate MANUAL — no
+ * automatizable en jsdom (ver tasks.md 3.3).
+ */
+describe('NotaCreditoPosModal — responsive master-detail (nota-credito-pos-modal-responsive)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('sin factura seleccionada: la columna de listado no lleva la clase mobile "hidden" y la columna de detalle si la lleva', () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const columnaLista = screen.getByTestId('nc-pos-columna-lista')
+    const columnaDetalle = screen.getByTestId('nc-pos-columna-detalle')
+
+    expect(columnaLista.className.split(/\s+/)).not.toContain('hidden')
+    expect(columnaDetalle.className.split(/\s+/)).toContain('hidden')
+  })
+
+  it('al seleccionar una factura: la columna de listado pasa a "hidden" y la columna de detalle deja de tenerla', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    await seleccionarPrimeraFactura()
+
+    const columnaLista = screen.getByTestId('nc-pos-columna-lista')
+    const columnaDetalle = screen.getByTestId('nc-pos-columna-detalle')
+
+    expect(columnaLista.className.split(/\s+/)).toContain('hidden')
+    expect(columnaDetalle.className.split(/\s+/)).not.toContain('hidden')
+  })
+
+  it('"Volver" regresa la columna de listado a visible ("hidden" removido) y vuelve a ocultar la columna de detalle', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await user.click(screen.getByRole('button', { name: /^Volver$/i }))
+
+    const columnaLista = screen.getByTestId('nc-pos-columna-lista')
+    const columnaDetalle = screen.getByTestId('nc-pos-columna-detalle')
+
+    expect(columnaLista.className.split(/\s+/)).not.toContain('hidden')
+    expect(columnaDetalle.className.split(/\s+/)).toContain('hidden')
+  })
+
+  it('el <dialog> combina los tokens full-screen mobile-first con el override md: simultaneamente (desktop sin cambios)', () => {
+    setup({ hasPermission: true })
+    const { container } = render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const dialogEl = container.querySelector('dialog') as HTMLDialogElement
+    const clases = dialogEl.className.split(/\s+/)
+
+    expect(clases).toEqual(
+      expect.arrayContaining(['w-screen', 'h-dvh', 'rounded-none', 'md:max-w-4xl', 'md:rounded-lg'])
+    )
+  })
+
+  it('la columna de detalle ya no fuerza minHeight de 420px via inline style — el minimo queda escopeado a md: como clase', () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const columnaDetalle = screen.getByTestId('nc-pos-columna-detalle')
+
+    expect(columnaDetalle.style.minHeight).not.toBe('420px')
+    expect(columnaDetalle.className.split(/\s+/)).toContain('md:min-h-[420px]')
+  })
+})
