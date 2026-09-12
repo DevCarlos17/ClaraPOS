@@ -53,7 +53,7 @@ export function NotasCreditoTab() {
   return (
     <div className="space-y-6">
       {/* Filtros */}
-      <div className="rounded-t-none rounded-b-2xl bg-card shadow-lg p-4">
+      <div className="rounded-2xl bg-card shadow-lg p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1">
             <label htmlFor="nc-fecha-desde" className="text-xs text-muted-foreground">

@@ -24,6 +24,7 @@ export function SegmentedTabs<T extends string>({
 }: SegmentedTabsProps<T>) {
   return (
     <div
+      role="tablist"
       className={cn(
         'inline-flex items-stretch rounded-t-lg border border-b-0 bg-white dark:bg-card shadow-sm overflow-hidden divide-x divide-border',
         className,
@@ -35,6 +36,9 @@ export function SegmentedTabs<T extends string>({
           <button
             key={tab.key}
             type="button"
+            role="tab"
+            aria-selected={isActive}
+            data-state={isActive ? 'active' : 'inactive'}
             onClick={() => onChange(tab.key)}
             className={cn(
               'relative flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors duration-150 select-none',
