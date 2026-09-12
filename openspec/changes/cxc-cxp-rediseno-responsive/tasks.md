@@ -56,27 +56,27 @@ migraciones ni datos persistidos nuevos).
 
 ## Phase 1.2 — Slice 2: CxC lista corta (top-5 client-side)
 
-- [ ] 1.2.1 RED: `src/features/cxc/components/__tests__/cxc-list.test.tsx`
+- [x] 1.2.1 RED: `src/features/cxc/components/__tests__/cxc-list.test.tsx`
       (nuevo) — mock `useClientesConDeuda` (8 clientes), `useBuscarClientesDeuda`,
       `useTasaActual`, `CxcClienteDetalle`, `CxcReportesGeneral`. Test que
       falla: con busqueda vacia, el panel renderiza mas de 5 filas (hoy
       renderiza las 8).
-- [ ] 1.2.2 GREEN: `src/features/cxc/components/cxc-list.tsx` — agregar
+- [x] 1.2.2 GREEN: `src/features/cxc/components/cxc-list.tsx` — agregar
       constante `TOP_N_DEUDORES = 5`; computar el arreglo a RENDERIZAR
       (`clientesVisibles = isSearching ? clientes : clientes.slice(0, TOP_N_DEUDORES)`)
       SIN tocar `allClientes` (usado por KPIs/totales) ni el hook
       `useClientesConDeuda` (permanece SIN `LIMIT`). Solo el `.map()` de
       filas usa `clientesVisibles`.
-- [ ] 1.2.3 RED→GREEN en el mismo archivo: test que con busqueda de 2+
+- [x] 1.2.3 RED→GREEN en el mismo archivo: test que con busqueda de 2+
       caracteres (mock `useBuscarClientesDeuda` retornando 12 resultados),
       el panel muestra los 12 (no recortado a 5).
-- [ ] 1.2.4 RED→GREEN: test que los KPIs superiores (`Deuda Total`, etc.) y
+- [x] 1.2.4 RED→GREEN: test que los KPIs superiores (`Deuda Total`, etc.) y
       el resumen del pie siguen calculados sobre las 8 filas completas de
       `allClientes`, no sobre las 5 visibles.
-- [ ] 1.2.5 RED→GREEN: test que seleccionar un cliente de la lista corta
+- [x] 1.2.5 RED→GREEN: test que seleccionar un cliente de la lista corta
       (posicion 3 de 5) sigue mostrando `CxcClienteDetalle` para ese
       cliente.
-- [ ] 1.2.6 Confirmar `empresa_id` intacto: no se toca `useClientesConDeuda`
+- [x] 1.2.6 Confirmar `empresa_id` intacto: no se toca `useClientesConDeuda`
       ni `useBuscarClientesDeuda` mas alla de lo ya cubierto — solo lectura
       del arreglo ya devuelto.
 

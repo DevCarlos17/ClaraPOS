@@ -15,6 +15,13 @@ import {
 import { CxcClienteDetalle } from './cxc-cliente-detalle'
 import { CxcReportesGeneral } from './cxc-reportes-general'
 
+/**
+ * Tope de filas visibles en el panel izquierdo cuando la busqueda esta
+ * vacia. Recorte SOLO de renderizado (nunca del arreglo fuente ni del
+ * hook SQL) — ver spec cxc-lista-deudores-corta.
+ */
+const TOP_N_DEUDORES = 5
+
 // ─── KPI Card ─────────────────────────────────────────────────
 
 function KpiCard({
@@ -74,7 +81,12 @@ export function CxcList() {
 
   const isSearching = searchQuery.trim().length >= 2
   const clientesBase = isSearching ? searchResults : allClientes
-  const clientes = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
+  const clientesFiltrados = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
+  // Recorte top-N SOLO cuando no hay busqueda activa ni filtro SAF: la fuente
+  // (allClientes) y el filtro SAF siguen operando sobre el arreglo completo
+  // (ver spec cxc-lista-deudores-corta — el tope aplica a la vista de
+  // deudores por defecto, no reemplaza el filtro SAF preexistente).
+  const clientes = !isSearching && !filtroSAF ? clientesFiltrados.slice(0, TOP_N_DEUDORES) : clientesFiltrados
   const clientesLoading = isSearching ? loadingSearch : isLoading
 
   function toggleFiltroSAF() {
