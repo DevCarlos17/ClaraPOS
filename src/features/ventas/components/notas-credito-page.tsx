@@ -18,7 +18,7 @@ export function NotasCreditoPage() {
 
       <Tabs defaultValue="facturas" className="gap-0">
         <div className="w-full rounded-t-2xl bg-card">
-          <TabsList variant="line" className="w-full justify-start rounded-none h-auto p-0">
+          <TabsList variant="line" className="justify-start rounded-none h-auto p-0">
             <TabsTrigger value="facturas" className="rounded-none px-4 py-2 h-auto after:bg-primary">
               Facturas
             </TabsTrigger>
