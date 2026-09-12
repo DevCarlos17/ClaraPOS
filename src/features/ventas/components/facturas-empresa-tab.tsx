@@ -129,10 +129,24 @@ export interface FacturasEmpresaTableProps {
   facturas: FacturaParaAnular[]
   isLoading: boolean
   onAplicarNc?: (factura: FacturaParaAnular) => void
+  /**
+   * Controla si se muestra la columna/boton "Aplicar nota de credito"
+   * (cliente-detalle-pantalla, PR3 — aditivo). Default `true`: sin cambios
+   * de comportamiento para los llamadores existentes (`FacturasEmpresaTab`).
+   * `false` la oculta — usado por la pantalla de detalle de cliente, donde
+   * esa accion no aplica.
+   */
+  mostrarAcciones?: boolean
+  /**
+   * Reimpresion de factura fiscal (PR3a, aditivo): click de fila, pasado
+   * directo al `onRowClick` ya existente de `DataTable` (sin cambios en
+   * `DataTable`). Omitido = sin handler, comportamiento identico a hoy.
+   */
+  onRowClick?: (f: FacturaParaAnular) => void
 }
 
 /** Presentacional: recibe data via props, sin conocer el hook ni el estado de filtros. */
-export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc }: FacturasEmpresaTableProps) {
+export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrarAcciones, onRowClick }: FacturasEmpresaTableProps) {
   const columns: ColumnDef<FacturaParaAnular>[] = [
     {
       accessorKey: 'nro_factura',
@@ -208,24 +222,28 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc }: Factu
         )
       },
     },
-    {
-      id: 'acciones',
-      header: '',
-      cell: ({ row }) => {
-        const f = row.original
-        return (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            disabled={f.tiene_reverso_total === 1}
-            onClick={() => onAplicarNc?.(f)}
-          >
-            Aplicar nota de credito
-          </Button>
-        )
-      },
-    },
+    ...(mostrarAcciones !== false
+      ? [
+          {
+            id: 'acciones',
+            header: '',
+            cell: ({ row }: { row: { original: FacturaParaAnular } }) => {
+              const f = row.original
+              return (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={f.tiene_reverso_total === 1}
+                  onClick={() => onAplicarNc?.(f)}
+                >
+                  Aplicar nota de credito
+                </Button>
+              )
+            },
+          } satisfies ColumnDef<FacturaParaAnular>,
+        ]
+      : []),
   ]
 
   return (
@@ -233,6 +251,7 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc }: Factu
       columns={columns}
       data={facturas}
       isLoading={isLoading}
+      onRowClick={onRowClick}
       emptyMessage="No hay facturas para el periodo o filtros seleccionados."
       showToolbar={false}
       showPagination={false}

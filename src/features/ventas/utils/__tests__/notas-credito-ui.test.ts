@@ -452,6 +452,50 @@ describe('agruparReversosPorNc (F1: historial additivo — original + reverso, R
   it('lista vacia produce arreglo vacio (sin reversos aplicados aun)', () => {
     expect(agruparReversosPorNc([])).toEqual([])
   })
+
+  it('PR2: toma total_usd/total_bs de la NC UNA sola vez por grupo, sin sumar por cada linea del JOIN (2 lineas, mismo total)', () => {
+    const result = agruparReversosPorNc([
+      {
+        nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z',
+        producto_descripcion: 'Botox 50U', cantidad: '2.000', total_usd: '150.00000000', total_bs: '5460.00000000',
+      },
+      {
+        nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z',
+        producto_descripcion: 'Consulta', cantidad: '1.000', total_usd: '150.00000000', total_bs: '5460.00000000',
+      },
+    ])
+
+    expect(result).toHaveLength(1)
+    expect(result[0].montoUsd).toBe(150)
+    expect(result[0].montoBs).toBe(5460)
+  })
+
+  it('PR2: NCs distintas conservan su propio monto por separado (no se mezclan entre grupos)', () => {
+    const result = agruparReversosPorNc([
+      {
+        nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-01-02T00:00:00Z',
+        producto_descripcion: 'Botox 50U', cantidad: '2.000', total_usd: '150.00000000', total_bs: '5460.00000000',
+      },
+      {
+        nota_credito_id: 'nc-2', nro_ncr: 'NCR-000002', tipo: 'TOTAL', fecha: '2026-01-03T00:00:00Z',
+        producto_descripcion: 'Botox 50U', cantidad: '3.000', total_usd: '300.50000000', total_bs: '10958.20000000',
+      },
+    ])
+
+    expect(result[0].montoUsd).toBe(150)
+    expect(result[0].montoBs).toBe(5460)
+    expect(result[1].montoUsd).toBe(300.5)
+    expect(result[1].montoBs).toBe(10958.2)
+  })
+
+  it('PR2: fila sin total_usd/total_bs (compat con fixtures viejas, p.ej. mocks de los modales NC FROZEN) produce monto 0, no revienta', () => {
+    const result = agruparReversosPorNc([
+      { nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001', tipo: 'TOTAL', fecha: '2026-01-01T00:00:00Z', producto_descripcion: 'Botox 50U', cantidad: '5.000' },
+    ])
+
+    expect(result[0].montoUsd).toBe(0)
+    expect(result[0].montoBs).toBe(0)
+  })
 })
 
 // ─── filaFacturaAtenuada (Slice E.5, notas-credito-ruta-administrativa — QA feedback) ────────

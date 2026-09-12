@@ -1211,6 +1211,32 @@ describe('useReversosFactura (F1 QA fix: historial de NC aplicadas a una factura
     expect(result.current.reversos).toHaveLength(1)
     expect(result.current.reversos[0]).toMatchObject({ nro_ncr: 'NCR-000001', venta_det_id: 'vd-1', cantidad: '2.000' })
   })
+
+  it('el SELECT incluye nc.total_usd/nc.total_bs (PR2: monto real reversado, no solo cantidad); las filas retornadas los conservan', () => {
+    mockedUseQuery.mockReturnValue({
+      data: [
+        {
+          nota_credito_id: 'nc-1',
+          nro_ncr: 'NCR-000001',
+          tipo: 'PARCIAL',
+          fecha: '2026-01-02T00:00:00Z',
+          venta_det_id: 'vd-1',
+          producto_descripcion: 'Botox 50U',
+          cantidad: '2.000',
+          total_usd: '150.00000000',
+          total_bs: '5460.00000000',
+        },
+      ],
+      isLoading: false,
+    } as never)
+
+    const { result } = renderHook(() => useReversosFactura('venta-1', 'emp-1'))
+
+    const [sql] = mockedUseQuery.mock.calls[0]
+    expect(sql).toContain('nc.total_usd')
+    expect(sql).toContain('nc.total_bs')
+    expect(result.current.reversos[0]).toMatchObject({ total_usd: '150.00000000', total_bs: '5460.00000000' })
+  })
 })
 
 describe('useNotasCredito — Slice B (notas-credito-ruta-administrativa, Design §Decision 4): filtros opcionales con default mes actual', () => {

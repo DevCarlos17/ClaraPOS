@@ -98,4 +98,33 @@ total de factura en Bs.
   Banesco Bs 300
 - WHEN se suman las líneas en Bs
 - THEN el total (Bs 1000) reconcilia con el total de factura
+
+### Requirement: Sección de evolución post-emisión en el recibo
+
+El sistema MUST incluir, en PDF y texto/PNG, una sección "Evolución" después
+del bloque de métodos de pago cuando la factura tiene reversos (con monto
+vía `notas_credito.total_usd/total_bs`), abonos posteriores, reversos de
+abono, o saldo a favor generado. Evolución vacía MUST NOT alterar la salida
+(byte-idéntica).
+
+#### Scenario: Evolución poblada agrega la sección en ambas rutas
+
+- GIVEN una factura con al menos un reverso, un abono, un reverso de abono
+  y saldo a favor generado
+- WHEN se genera el recibo (PDF y texto/PNG)
+- THEN ambas rutas incluyen la sección "Evolución" con las 4 líneas
+  correspondientes, en el mismo orden y con los mismos montos
+
+#### Scenario: Evolución vacía no altera la salida
+
+- GIVEN una factura sin evolución post-emisión (reversos/abonos/reversos-de-pago/SAF)
+- WHEN se genera el recibo (PDF y texto/PNG)
+- THEN la salida es byte-idéntica a la generada antes de este cambio
+
+#### Scenario: Un reverso de múltiples líneas cuenta el monto una sola vez
+
+- GIVEN una nota de crédito con 2+ líneas contra la misma factura
+- WHEN se calcula el monto del reverso en la evolución
+- THEN el monto usado es el total de la nota de crédito (`total_usd`/`total_bs`)
+  tomado una única vez, no sumado por línea
 </content>

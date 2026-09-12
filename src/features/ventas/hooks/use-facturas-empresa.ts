@@ -24,6 +24,21 @@ export interface FiltroFacturasEmpresaHook {
   fechaDesde?: string
   fechaHasta?: string
   busqueda?: string
+  /**
+   * Filtro por cliente (cliente-detalle-pantalla, PR1 — aditivo). Pasado tal
+   * cual a `buildFacturasEmpresaFiltro`; cuando es `undefined` el
+   * comportamiento no cambia.
+   */
+  clienteId?: string
+  /**
+   * Escape hatch aditivo (replicar-consulta-factura-ventas-caja, Slice A):
+   * cuando es `false`, salta la query (`useQuery('', [])`) sin ejecutar
+   * ningun SQL — mismo patron "empty-SQL skip" ya usado por
+   * `useFacturasPorCliente`/`useFacturasSesionActiva`. Default `true`
+   * preserva el comportamiento byte-a-byte de los 3 llamadores existentes
+   * (`FacturasEmpresaTab`, `ClienteDetalle`), que nunca lo pasan.
+   */
+  enabled?: boolean
 }
 
 /**
@@ -38,6 +53,7 @@ export interface FiltroFacturasEmpresaHook {
 export function useFacturasEmpresa(filtros?: FiltroFacturasEmpresaHook) {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
+  const enabled = filtros?.enabled ?? true
 
   const fechaDesde = filtros?.fechaDesde ?? rangoMesActual().fechaDesde
   const fechaHasta = filtros?.fechaHasta ?? rangoMesActual().fechaHasta
@@ -47,9 +63,10 @@ export function useFacturasEmpresa(filtros?: FiltroFacturasEmpresaHook) {
     fechaDesde,
     fechaHasta,
     busqueda: filtros?.busqueda,
+    clienteId: filtros?.clienteId,
   })
 
-  const { data, isLoading } = useQuery(sql, params)
+  const { data, isLoading } = useQuery(enabled ? sql : '', enabled ? params : [])
 
   return {
     facturas: (data ?? []) as FacturaParaAnular[],
