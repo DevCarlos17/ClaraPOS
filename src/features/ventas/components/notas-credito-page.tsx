@@ -17,9 +17,13 @@ export function NotasCreditoPage() {
       <PageHeader titulo="Facturas emitidas" descripcion="Consulta de facturas y notas de credito" />
 
       <Tabs defaultValue="facturas" className="gap-0">
-        <TabsList className="w-full justify-start rounded-b-none bg-card">
-          <TabsTrigger value="facturas">Facturas</TabsTrigger>
-          <TabsTrigger value="notas-credito">Notas de credito</TabsTrigger>
+        <TabsList variant="line" className="justify-start rounded-none h-auto p-0">
+          <TabsTrigger value="facturas" className="rounded-none px-4 py-2 h-auto">
+            Facturas
+          </TabsTrigger>
+          <TabsTrigger value="notas-credito" className="rounded-none px-4 py-2 h-auto">
+            Notas de credito
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="facturas">
