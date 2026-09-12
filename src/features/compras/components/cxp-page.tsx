@@ -5,11 +5,15 @@ import {
   CurrencyDollar,
   CaretUp,
   CaretDown,
+  MagnifyingGlass,
   Printer,
   Receipt,
 } from '@phosphor-icons/react'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
+import { DeudaCard } from '@/components/shared/deuda-card'
 import {
   useProveedoresConDeuda,
+  useBuscarProveedoresDeuda,
   useFacturasCompraPendientes,
   type ProveedorConDeuda,
   type FacturaCompraPendiente,
@@ -169,11 +173,11 @@ function DetallePanel({
   onVerDetalle,
 }: DetallePanelProps) {
   return (
-    <div className="space-y-4">
-      {/* Card: Facturas Pendientes */}
-      <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+    <div className="h-full flex flex-col min-h-0">
+      {/* Card: Facturas Pendientes + Gastos Pendientes */}
+      <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-card shadow-lg overflow-hidden">
         {/* Toolbar */}
-        <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-3">
+        <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-3 shrink-0">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground truncate">{proveedor.razon_social}</p>
             <p className="text-xs text-muted-foreground">{proveedor.rif}</p>
@@ -198,6 +202,10 @@ function DetallePanel({
           </div>
         </div>
 
+        {/* Contenido: scroll interno unico para facturas + gastos
+            (fix cxc-cxp-scroll-altura) */}
+        <div data-testid="cxp-detalle-scroll" className="flex-1 min-h-0 overflow-y-auto">
+
         {/* Sub-header: Facturas */}
         <div className="px-4 py-2 border-b border-border/50 bg-muted/20">
           <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
@@ -216,7 +224,8 @@ function DetallePanel({
             <p className="text-sm">No hay facturas de compra pendientes</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
@@ -308,6 +317,26 @@ function DetallePanel({
               </tfoot>
             </table>
           </div>
+
+          {/* Lista mobile: fila -> card, mismos datos y handler que la tabla */}
+          <div data-testid="cxp-mobile-card-list-facturas" className="md:hidden divide-y divide-border">
+            {facturasSorted.map((f) => (
+              <div key={f.id} className="p-3">
+                <DeudaCard
+                  id={f.id}
+                  numero={f.nro_factura}
+                  fecha={f.fecha_factura?.slice(0, 10) ?? ''}
+                  tipo={f.tipo}
+                  tipoTono={f.tipo === 'CREDITO' ? 'credito' : 'contado'}
+                  totalUsd={formatUsd(parseFloat(f.total_usd))}
+                  pendienteUsd={formatUsd(parseFloat(f.saldo_pend_usd))}
+                  accionLabel="Pagar"
+                  onAccion={() => onPagar(f)}
+                />
+              </div>
+            ))}
+          </div>
+          </>
         )}
 
         {/* Sub-header: Gastos */}
@@ -327,7 +356,8 @@ function DetallePanel({
                 ))}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              <div className="hidden md:block overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50">
                     <tr>
@@ -392,9 +422,29 @@ function DetallePanel({
                   </tfoot>
                 </table>
               </div>
+
+              {/* Lista mobile: fila -> card, mismos datos y handler que la tabla */}
+              <div data-testid="cxp-mobile-card-list-gastos" className="md:hidden divide-y divide-border">
+                {gastosPendientes.map((g) => (
+                  <div key={g.id} className="p-3">
+                    <DeudaCard
+                      id={g.id}
+                      numero={g.nro_gasto}
+                      detalle={g.descripcion}
+                      fecha={g.fecha?.slice(0, 10) ?? ''}
+                      totalUsd={formatUsd(parseFloat(g.monto_usd))}
+                      pendienteUsd={formatUsd(parseFloat(g.saldo_pendiente_usd))}
+                      accionLabel="Pagar"
+                      onAccion={() => onPagarGasto(g)}
+                    />
+                  </div>
+                ))}
+              </div>
+              </>
             )}
           </>
         )}
+        </div>
       </div>
     </div>
   )
@@ -408,6 +458,15 @@ interface CxpPageProps {
 
 export function CxpPage({ initialProveedorId }: CxpPageProps) {
   const { proveedores, isLoading } = useProveedoresConDeuda()
+  const [searchQuery, setSearchQuery] = useState('')
+  const { proveedores: searchResults, isLoading: loadingSearch } = useBuscarProveedoresDeuda(searchQuery)
+  const isSearching = searchQuery.trim().length >= 2
+  // La busqueda opera sobre el arreglo completo. La lista completa filtrada
+  // se renderiza entera dentro de un contenedor con scroll interno (altura
+  // acotada al viewport) — sin recorte de paginado ni SQL LIMIT (reemplaza
+  // el paginado client-side anterior, ver fix cxc-cxp-scroll-altura).
+  const proveedoresFiltrados = isSearching ? searchResults : proveedores
+  const proveedoresListLoading = isSearching ? loadingSearch : isLoading
   const [proveedorSeleccionado, setProveedorSeleccionado] = useState<ProveedorConDeuda | null>(null)
 
   // Pre-select proveedor from URL param once the list is loaded
@@ -459,8 +518,8 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="flex flex-1 min-h-0 flex-col gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 shrink-0">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-20 rounded-2xl bg-muted/50 animate-pulse" />
           ))}
@@ -481,7 +540,7 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-1 min-h-0 flex-col gap-4">
 
       {/* KPIs globales */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -505,17 +564,52 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
       </div>
 
       {/* Layout principal */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-fr gap-4 flex-1 min-h-0">
 
         {/* Panel izquierdo: proveedores */}
-        <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
-          <div className="px-4 py-3 bg-muted/40 border-b border-border">
+        <div
+          data-testid="cxp-page-panel-izquierdo"
+          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col min-h-0"
+        >
+          <div className="px-4 py-3 bg-muted/40 border-b border-border shrink-0">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Proveedores con Deuda
             </span>
           </div>
+
+          {/* Buscador */}
+          <div className="px-3 py-2 border-b border-border/50 shrink-0">
+            <div className="relative">
+              <MagnifyingGlass
+                size={14}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Buscar por nombre o rif/cedula..."
+                className="w-full rounded-md border border-input bg-transparent pl-8 pr-3 py-1.5 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              />
+            </div>
+          </div>
+
+          {/* Lista de proveedores: contenedor con scroll interno, altura
+              acotada al espacio restante del panel (fix cxc-cxp-scroll-altura) */}
+          <div data-testid="cxp-page-scroll-izquierdo" className="flex-1 min-h-0 overflow-y-auto">
+          {proveedoresListLoading ? (
+            <div className="p-3 space-y-2">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : proveedoresFiltrados.length === 0 ? (
+            <div className="py-8 text-center text-muted-foreground">
+              <p className="text-sm">{isSearching ? 'Sin resultados' : 'Sin proveedores con deuda'}</p>
+            </div>
+          ) : (
           <div className="divide-y divide-border">
-            {proveedores.map((proveedor) => {
+            {proveedoresFiltrados.map((proveedor) => {
               const isSelected = proveedorSeleccionado?.id === proveedor.id
               const deuda = parseFloat(proveedor.saldo_actual)
               return (
@@ -547,15 +641,24 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               )
             })}
           </div>
+          )}
+          </div>
           {/* Total global al pie */}
-          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between">
+          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between shrink-0">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total</span>
             <span className="text-sm font-bold text-destructive tabular-nums">{formatUsd(deudaTotal)}</span>
           </div>
         </div>
 
-        {/* Panel derecho: detalle */}
-        <div className="md:col-span-2">
+        {/* Panel derecho: detalle inline del proveedor (SOLO desktop, md:+).
+            Siempre hidden md:block, sin depender de la seleccion — en mobile
+            el detalle se muestra en un modal (ver Dialog mas abajo), nunca
+            inline (mismo patron que cxc-list.tsx). */}
+        <div
+          data-testid="cxp-page-panel-derecho"
+          className="hidden md:block md:col-span-2 min-h-0"
+        >
+          <div className="h-full flex flex-col min-h-0">
           {!proveedorSeleccionado ? (
             <div className="rounded-2xl bg-card shadow-lg flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
               <CurrencyDollar size={40} className="opacity-20" />
@@ -578,8 +681,45 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               onVerDetalle={(tipo, id) => setDetalleFactura({ tipo, id })}
             />
           )}
+          </div>
         </div>
       </div>
+
+      {/* Modal de detalle: SOLO mobile (md:hidden). En desktop el detalle se
+          muestra inline en el panel derecho de arriba, nunca en este modal
+          (overlay y contenido ocultos via md:hidden en ambos). */}
+      <Dialog
+        open={!!proveedorSeleccionado}
+        onOpenChange={(open) => { if (!open) setProveedorSeleccionado(null) }}
+      >
+        <DialogContent
+          overlayClassName="md:hidden"
+          className="md:hidden p-0 gap-0 bg-transparent border-0 shadow-none ring-0 max-h-[85vh] overflow-y-auto sm:max-w-lg"
+        >
+          <DialogTitle className="sr-only">
+            Detalle de cuenta por pagar{proveedorSeleccionado ? ` de ${proveedorSeleccionado.razon_social}` : ''}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Facturas y gastos pendientes del proveedor seleccionado
+          </DialogDescription>
+          {proveedorSeleccionado && (
+            <DetallePanel
+              proveedor={proveedorSeleccionado}
+              facturas={facturas}
+              facturasSorted={facturasSorted}
+              gastosPendientes={gastosPendientes}
+              loadingFacturas={loadingFacturas}
+              loadingGastos={loadingGastos}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onToggleSort={toggleSort}
+              onPagar={(f) => { setFacturaSeleccionada(f); setModalOpen(true) }}
+              onPagarGasto={(g) => { setGastoSeleccionado(g); setPagoGastoOpen(true) }}
+              onVerDetalle={(tipo, id) => setDetalleFactura({ tipo, id })}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Modales */}
       <PagoCxPModal

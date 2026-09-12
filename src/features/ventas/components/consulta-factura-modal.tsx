@@ -71,12 +71,22 @@ export function ConsultaFacturaModal({ venta, isOpen, onClose }: ConsultaFactura
           <>
             <FacturaDetallePanel recibo={recibo} />
             <div className={puedeCompartir ? 'grid grid-cols-2 gap-2' : ''}>
-              <Button className="w-full" variant="outline" disabled={!recibo} onClick={handleDescargar}>
+              <Button
+                className="w-full border-slate-300"
+                variant="outline"
+                disabled={!recibo}
+                onClick={handleDescargar}
+              >
                 <DownloadSimple className="size-4" />
                 Descargar PDF
               </Button>
               {puedeCompartir && (
-                <Button className="w-full" variant="outline" disabled={!recibo} onClick={handleCompartir}>
+                <Button
+                  className="w-full border-slate-300"
+                  variant="outline"
+                  disabled={!recibo}
+                  onClick={handleCompartir}
+                >
                   <ShareNetwork className="size-4" />
                   Compartir
                 </Button>

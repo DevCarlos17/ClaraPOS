@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@powersync/react'
 import { X, CurrencyDollar, CaretUp, CaretDown, ArrowDown } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
+import { DeudaCard } from '@/components/shared/deuda-card'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -85,16 +86,16 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
 
   return (
     <>
-      <div className="space-y-4">
-        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+      <div className="h-full flex flex-col min-h-0">
+        <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-card shadow-lg overflow-hidden">
 
           {/* Toolbar */}
-          <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-3">
+          <div className="px-4 py-3 bg-muted/40 border-b border-border flex flex-wrap items-center justify-between gap-3 shrink-0">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{cliente.nombre}</p>
               <p className="text-xs text-muted-foreground">{cliente.identificacion}</p>
             </div>
-            <div className="flex items-center gap-3 shrink-0">
+            <div className="flex flex-wrap items-center gap-3 shrink-0">
               <div className="text-right">
                 {tieneDeudaCxc && tieneSafCxc ? (
                   // Cliente con facturas pendientes Y saldo a favor — mostrar ambos por separado
@@ -152,6 +153,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
               <CxcClienteReporte cliente={cliente} facturas={facturas} />
               <button
                 type="button"
+                data-testid="cxc-detalle-cerrar"
                 onClick={onClose}
                 className="p-1.5 rounded-md hover:bg-muted/60 transition-colors text-muted-foreground"
               >
@@ -161,7 +163,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
           </div>
 
           {/* Sub-header */}
-          <div className="px-4 py-2 border-b border-border/50 bg-muted/20 flex items-center justify-between">
+          <div className="px-4 py-2 border-b border-border/50 bg-muted/20 flex items-center justify-between shrink-0">
             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
               {mostrarPagadas ? 'Todas las Facturas' : 'Facturas Pendientes'}
             </span>
@@ -174,7 +176,8 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
             </button>
           </div>
 
-          {/* Tabla */}
+          {/* Tabla: contenedor con scroll interno (fix cxc-cxp-scroll-altura) */}
+          <div data-testid="cxc-detalle-scroll" className="flex-1 min-h-0 overflow-y-auto">
           {isLoading ? (
             <div className="p-4 space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -188,7 +191,8 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
                   <tr>
@@ -295,7 +299,34 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
                 </tfoot>
               </table>
             </div>
+
+            {/* Lista mobile: fila -> card, mismos datos y handler que la tabla */}
+            <div data-testid="cxc-mobile-card-list" className="md:hidden divide-y divide-border">
+              {facturasSorted.map((f) => {
+                const saldoPend = parseFloat(f.saldo_pend_usd)
+                const esPagada = saldoPend <= 0.01
+                return (
+                  <div key={f.id} className="p-3">
+                    <DeudaCard
+                      id={f.id}
+                      numero={`#${f.nro_factura}`}
+                      fecha={formatDate(f.fecha)}
+                      tipo={f.tipo}
+                      tipoTono={f.tipo === 'CREDITO' ? 'credito' : 'contado'}
+                      totalUsd={formatUsd(parseFloat(f.total_usd))}
+                      pendienteUsd={esPagada ? '—' : formatUsd(saldoPend)}
+                      pendienteBs={tasaValor > 0 ? formatBs(usdToBs(saldoPend, tasaValor)) : undefined}
+                      pendienteDestacado={!esPagada}
+                      accionLabel={esPagada ? 'Ver' : 'Pagar'}
+                      onAccion={() => { setFacturaSeleccionada(f); setDetalleOpen(true) }}
+                    />
+                  </div>
+                )
+              })}
+            </div>
+            </>
           )}
+          </div>
         </div>
       </div>
 

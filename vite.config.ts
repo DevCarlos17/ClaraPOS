@@ -20,6 +20,12 @@ export default defineConfig({
     tanstackRouter({
       target: 'react',
       autoCodeSplitting: true,
+      // Excluye archivos de test (__tests__/*, *.test.tsx) del escaneo de
+      // rutas: TanStack Router no distingue tests de rutas reales y emite
+      // warnings "does not export a Route" para cualquier .tsx bajo
+      // src/routes/ que no exporte un Route (p.ej. tests co-ubicados en
+      // src/routes/**/__tests__/*.test.tsx).
+      routeFileIgnorePattern: '__tests__|\\.(test|spec)\\.tsx?$',
     }),
     viteReact(),
     tailwindcss(),

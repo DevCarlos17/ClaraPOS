@@ -28,10 +28,14 @@ describe('NotasCreditoPage — pestanas Facturas emitidas (Slice C3a)', () => {
 
     await user.click(screen.getByRole('tab', { name: /notas de credito/i }))
 
-    expect(screen.getByTestId('notas-credito-tab-content')).toBeInTheDocument()
+    // AnimatePresence mode="wait" (mismo patron que kardex.tsx) monta el
+    // contenido entrante recien despues de que el saliente termina su
+    // animacion de salida — findBy* espera ese ciclo en vez de asumir
+    // render sincronico.
+    expect(await screen.findByTestId('notas-credito-tab-content')).toBeInTheDocument()
 
     await user.click(screen.getByRole('tab', { name: /^facturas$/i }))
 
-    expect(screen.getByTestId('facturas-tab-content')).toBeInTheDocument()
+    expect(await screen.findByTestId('facturas-tab-content')).toBeInTheDocument()
   })
 })

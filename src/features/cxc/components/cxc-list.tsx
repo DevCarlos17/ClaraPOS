@@ -5,6 +5,7 @@ import {
   CurrencyDollar,
   CaretRight,
 } from '@phosphor-icons/react'
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import {
@@ -74,7 +75,12 @@ export function CxcList() {
 
   const isSearching = searchQuery.trim().length >= 2
   const clientesBase = isSearching ? searchResults : allClientes
-  const clientes = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
+  // La busqueda y el filtro SAF operan sobre el arreglo completo. La lista
+  // completa filtrada se renderiza entera dentro de un contenedor con scroll
+  // interno (altura acotada al viewport) — sin recorte de paginado ni SQL
+  // LIMIT (reemplaza el paginado client-side anterior, ver fix
+  // cxc-cxp-scroll-altura).
+  const clientesFiltrados = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
   const clientesLoading = isSearching ? loadingSearch : isLoading
 
   function toggleFiltroSAF() {
@@ -106,8 +112,8 @@ export function CxcList() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="flex flex-1 min-h-0 flex-col gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 shrink-0">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-20 rounded-2xl bg-muted/50 animate-pulse" />
           ))}
@@ -128,10 +134,10 @@ export function CxcList() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-1 min-h-0 flex-col gap-4">
 
       {/* KPIs globales */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
         <KpiCard
           label="Deuda Total"
           value={formatUsd(totalDeuda)}
@@ -158,11 +164,14 @@ export function CxcList() {
       </div>
 
       {/* Layout principal */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-fr gap-4 flex-1 min-h-0">
 
         {/* Panel izquierdo: clientes */}
-        <div className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden">
-          <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
+        <div
+          data-testid="cxc-list-panel-izquierdo"
+          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col min-h-0"
+        >
+          <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2 shrink-0">
             <span className={`text-xs font-semibold uppercase tracking-wide ${filtroSAF ? 'text-green-700' : 'text-muted-foreground'}`}>
               {filtroSAF ? 'Saldo a Favor' : 'Cuentas por Cobrar'}
             </span>
@@ -176,12 +185,12 @@ export function CxcList() {
                   Ver todos
                 </button>
               )}
-              <CxcReportesGeneral clientes={clientes} />
+              <CxcReportesGeneral clientes={clientesFiltrados} />
             </div>
           </div>
 
           {/* Buscador */}
-          <div className="px-3 py-2 border-b border-border/50">
+          <div className="px-3 py-2 border-b border-border/50 shrink-0">
             <div className="relative">
               <MagnifyingGlass
                 size={14}
@@ -197,14 +206,16 @@ export function CxcList() {
             </div>
           </div>
 
-          {/* Lista de clientes */}
+          {/* Lista de clientes: contenedor con scroll interno, altura
+              acotada al espacio restante del panel (fix cxc-cxp-scroll-altura) */}
+          <div data-testid="cxc-list-scroll-izquierdo" className="flex-1 min-h-0 overflow-y-auto">
           {clientesLoading ? (
             <div className="p-3 space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />
               ))}
             </div>
-          ) : clientes.length === 0 ? (
+          ) : clientesFiltrados.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               <p className="text-sm">
                 {isSearching ? 'Sin resultados' : filtroSAF ? 'Sin clientes con saldo a favor' : 'Sin clientes con deuda'}
@@ -212,7 +223,7 @@ export function CxcList() {
             </div>
           ) : (
             <div className="divide-y divide-border">
-              {clientes.map((cliente) => {
+              {clientesFiltrados.map((cliente) => {
                 const isSelected = clienteSeleccionado?.id === cliente.id
                 const tieneDeuda = cliente.deuda_usd > 0.001
                 const isSAF = cliente.credito_disponible_usd > 0.001
@@ -268,9 +279,10 @@ export function CxcList() {
               })}
             </div>
           )}
+          </div>
 
           {/* Total al pie */}
-          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between gap-4">
+          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between gap-4 shrink-0">
             <div className="flex items-center gap-3">
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase">Deuda</p>
@@ -286,8 +298,15 @@ export function CxcList() {
           </div>
         </div>
 
-        {/* Panel derecho: detalle del cliente */}
-        <div className="md:col-span-2">
+        {/* Panel derecho: detalle inline del cliente (SOLO desktop, md:+).
+            Siempre hidden md:block, sin depender de la seleccion — en mobile
+            el detalle se muestra en un modal (ver Dialog mas abajo), nunca
+            inline (reemplaza el master-detail hidden/md:block anterior). */}
+        <div
+          data-testid="cxc-list-panel-derecho"
+          className="hidden md:block md:col-span-2 min-h-0"
+        >
+          <div className="h-full flex flex-col min-h-0">
           {clienteActual ? (
             <CxcClienteDetalle
               key={clienteActual.id}
@@ -305,8 +324,36 @@ export function CxcList() {
               </p>
             </div>
           )}
+          </div>
         </div>
       </div>
+
+      {/* Modal de detalle: SOLO mobile (md:hidden). En desktop el detalle se
+          muestra inline en el panel derecho de arriba, nunca en este modal
+          (overlay y contenido ocultos via md:hidden en ambos). */}
+      <Dialog
+        open={!!clienteActual}
+        onOpenChange={(open) => { if (!open) setClienteSeleccionado(null) }}
+      >
+        <DialogContent
+          overlayClassName="md:hidden"
+          className="md:hidden p-0 gap-0 bg-transparent border-0 shadow-none ring-0 max-h-[85vh] overflow-y-auto sm:max-w-lg"
+          showCloseButton={false}
+        >
+          <DialogTitle className="sr-only">
+            Detalle de cuenta por cobrar{clienteActual ? ` de ${clienteActual.nombre}` : ''}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Facturas pendientes y acciones de cobro del cliente seleccionado
+          </DialogDescription>
+          {clienteActual && (
+            <CxcClienteDetalle
+              cliente={clienteActual}
+              onClose={() => setClienteSeleccionado(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
