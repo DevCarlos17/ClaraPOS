@@ -8,7 +8,7 @@ Define el punto de entrada rápido de NC dentro de una sesión de caja activa: a
 
 ### Requirement: Alcance limitado a la sesión activa
 
-La entrada POS de NC MUST listar TODAS las facturas (`ventas`) creadas dentro de la `sesion_caja_id` actualmente activa del cajero — reversadas o no — consultadas localmente vía `useFacturasSesionActiva` (offline-first, PowerSync). MUST proveer un buscador que filtre el listado por número de factura, nombre de cliente o estado (badge). Cada fila MUST mostrar fecha y hora, número de factura, cliente, monto en USD y en Bs, y sus badges correspondientes.
+La entrada POS de NC MUST listar TODAS las facturas (`ventas`) creadas dentro de la `sesion_caja_id` actualmente activa del cajero — reversadas o no — consultadas localmente vía `useFacturasSesionActiva` (offline-first, PowerSync). MUST proveer un buscador que filtre el listado por número de factura, nombre de cliente o estado (badge). Cada fila MUST mostrar fecha y hora, número de factura, cliente, monto en USD y en Bs, la tasa de cambio histórica de esa factura (formateada a 4 decimales), y sus badges correspondientes.
 
 #### Scenario: Factura de la sesión actual visible
 
@@ -51,6 +51,12 @@ La entrada POS de NC MUST listar TODAS las facturas (`ventas`) creadas dentro de
 - GIVEN una factura con una NC (total o parcial) ya emitida
 - WHEN el cajero abre el listado
 - THEN esa factura sigue apareciendo, con su badge de reverso correspondiente
+
+#### Scenario: Cada tarjeta muestra su tasa histórica
+
+- GIVEN un listado con varias facturas de la sesión activa, cada una con su propia tasa
+- WHEN el cajero observa el listado
+- THEN cada tarjeta muestra su tasa de cambio (4 decimales) debajo del monto en Bs, sin excepción — incluida la no seleccionada
 
 ### Requirement: Resolución de depósito por rieles
 
@@ -168,11 +174,62 @@ Cada factura del listado MUST mostrar un badge de estado de pago derivado por un
 - WHEN se renderiza su fila en el listado
 - THEN se muestran ambos badges: Abonada y Reverso Parcial
 
+### Requirement: Reveal-gate de la sección de emisión de NC
+
+Al seleccionar una factura, el sistema MUST mostrar únicamente su detalle fiscal (artículos, base imponible, IVA, total, métodos de pago) y un pie con tres acciones: `Volver`, `Reimprimir`, `Emitir nota de crédito`. La sección NC (Tipo de nota de crédito, modalidad de liquidación, depósito de reingreso, motivo de anulación, alerta "irreversible") MUST permanecer oculta hasta presionar "Emitir nota de crédito"; al presionarlo se revela y el pie se reduce a `[Volver, Editar métodos de pago]` (ver requirement "Pie del modal tras revelar la sección de NC"), con la confirmación de la NC ubicada dentro de la propia sección revelada. El gate MUST resetear al cambiar de factura, cerrar el panel, o presionar `Volver`. `Volver` MUST ser de una sola etapa: siempre retorna al estado vacío de selección.
+
+#### Scenario: Selección inicial solo muestra detalle y pie de tres acciones
+
+- GIVEN una sesión de caja activa con facturas listadas
+- WHEN el cajero selecciona una factura
+- THEN el panel muestra solo el detalle fiscal
+- AND el pie muestra Volver, Reimprimir y Emitir nota de crédito
+- AND la sección NC no está visible
+
+#### Scenario: Emitir nota de crédito revela la sección
+
+- GIVEN una factura seleccionada, sección NC oculta
+- WHEN el cajero presiona "Emitir nota de crédito"
+- THEN se revela la sección NC completa
+- AND el pie pasa a mostrar solo Volver y Editar métodos de pago
+
+#### Scenario: Cambiar de factura reoculta la sección NC
+
+- GIVEN la sección NC revelada para la factura A
+- WHEN el cajero selecciona la factura B
+- THEN el panel de B inicia oculto (solo detalle + pie de tres acciones)
+
+#### Scenario: Volver es de una sola etapa
+
+- GIVEN la sección NC revelada para una factura
+- WHEN el cajero presiona "Volver"
+- THEN el panel regresa directo al estado vacío de selección, sin estado intermedio
+
+### Requirement: Reimpresión desde la entrada POS de NC
+
+Con factura seleccionada, `Reimprimir` MUST abrir `ConsultaFacturaModal` (detalle fiscal + evolución), reusando `useReciboDesdeFactura`/`useEvolucionFactura` — mismo patrón que Gestión de Clientes y Ventas → Consultas. MUST estar disponible solo con factura seleccionada.
+
+#### Scenario: Reimprimir abre el modal de consulta completo
+
+- GIVEN una factura seleccionada en la entrada POS de NC
+- WHEN el cajero presiona "Reimprimir"
+- THEN se abre `ConsultaFacturaModal` con detalle y evolución de esa factura
+
+### Requirement: Pie del modal tras revelar la sección de NC
+
+Una vez revelada la sección de emisión (botón "Emitir nota de crédito" presionado), el pie del modal MUST reducirse a `[Volver, Editar métodos de pago]` — el botón azul de revelar MUST desaparecer y NINGÚN botón de confirmación de NC (TOTAL ni PARCIAL) MUST aparecer en el pie; la confirmación vive exclusivamente dentro de la sección.
+
+#### Scenario: Pie reducido tras revelar
+
+- GIVEN una factura seleccionada, sección de NC aún no revelada
+- WHEN el cajero presiona "Emitir nota de crédito"
+- THEN el pie pasa a mostrar solo "Volver" y "Editar métodos de pago" — sin botón de confirmación ni el botón azul original
+
 ### Requirement: Panel de detalle fiscal de la factura seleccionada
 
-El panel derecho MUST permanecer vacío hasta que el cajero seleccione una factura del listado. Al seleccionar, MUST mostrar: tabla de artículos (cantidad, precio unitario en Bs y USD), subtotal, desglose de exento, base imponible, IVA por cada alícuota, total de la factura, IGTF si aplica, desglose de métodos de pago utilizados, y una sección que indica si esos pagos afectaron cuentas por cobrar. El desglose fiscal MUST reutilizar `buildReciboData`/`construirFilasTotales` — MUST NOT recalcular montos de forma independiente; el resultado MUST coincidir con el recibo oficial de esa venta.
+El panel derecho MUST permanecer vacío hasta que el cajero seleccione una factura del listado. Al seleccionar, MUST mostrar DIRECTAMENTE la tabla de artículos (cantidad, precio unitario en Bs y USD) — sin ningún encabezado previo de Cliente, Tasa o número de factura — seguida de subtotal, desglose de exento, base imponible, IVA por cada alícuota, total de la factura, IGTF si aplica, y desglose de métodos de pago utilizados, y una sección que indica si esos pagos afectaron cuentas por cobrar. El desglose fiscal MUST reutilizar `buildReciboData`/`construirFilasTotales` — MUST NOT recalcular montos de forma independiente; el resultado MUST coincidir con el recibo oficial de esa venta.
 
-> **Nota de deuda (archive `notas-credito-ui-pos`, 2026-09-04)**: la sección de "afectación a CxC" y el desglose de métodos de pago descritos en este requirement fueron OCULTADOS en Slice 5d (obs #2896/#2897) por una fuente de datos no confiable en el caso SAF-cruzado (pago repartido por FIFO entre dos facturas sin back-reference persistido). El fix real queda diferido a un change futuro de CxC. Ver `tasks.md` Slice 5d en el archivo de este change para el detalle — este texto de spec no fue actualizado retroactivamente para reflejar la ocultación (ver deuda registrada en el archive-report).
+> **Nota de deuda (archive `notas-credito-ui-pos`, 2026-09-04)**: la sección de "afectación a CxC" y el desglose de métodos de pago descritos en este requirement fueron OCULTADOS en Slice 5d (obs #2896/#2897) por una fuente de datos no confiable en el caso SAF-cruzado (pago repartido por FIFO entre dos facturas sin back-reference persistido). El fix real queda diferido a un change futuro de CxC.
 
 #### Scenario: Panel vacío sin selección
 
@@ -180,11 +237,12 @@ El panel derecho MUST permanecer vacío hasta que el cajero seleccione una factu
 - WHEN el cajero observa el panel derecho
 - THEN el panel no muestra datos de factura alguna
 
-#### Scenario: Selección muestra el desglose fiscal completo
+#### Scenario: Selección muestra el desglose fiscal completo, sin encabezado duplicado
 
 - GIVEN una factura seleccionada del listado
 - WHEN el panel se renderiza
-- THEN muestra artículos, subtotal, base imponible, IVA por alícuota, total y desglose de pagos, coincidiendo con `buildReciboData` de esa venta
+- THEN el primer elemento visible es la tabla de artículos — ni "Cliente:", ni "Tasa:", ni el número de factura aparecen antes de ella
+- AND el resto del desglose (subtotal, base imponible, IVA por alícuota, total, desglose de pagos) coincide con `buildReciboData` de esa venta
 
 #### Scenario: Factura con IGTF aplicado
 
@@ -198,23 +256,23 @@ El panel derecho MUST permanecer vacío hasta que el cajero seleccione una factu
 - WHEN se selecciona en el listado
 - THEN el panel muestra el desglose de exento separado de la base imponible gravada
 
-#### Scenario: Indicación de afectación a CxC
-
-- GIVEN una factura cuyos pagos afectaron el saldo de cuentas por cobrar del cliente, y otra cuyos pagos no lo afectaron
-- WHEN cada una se selecciona en el listado
-- THEN el panel indica explícitamente si hubo o no afectación a CxC para esa factura
-
 ### Requirement: Selección de tipo de nota de crédito (TOTAL o PARCIAL)
 
-Al presionar "Nota de crédito" sobre una factura seleccionada, el sistema MUST solicitar al cajero elegir entre TOTAL o PARCIAL antes de continuar. TOTAL MUST invocar `crearNotaCredito()` con `tipo=TOTAL` sin alterar su contrato ni lógica interna. PARCIAL MUST habilitar una columna de cantidad a devolver por línea de la factura, con paso entero o decimal (0.001) según `unidades.es_decimal` del producto de cada línea. El sistema solo debe crear registros nuevos (`notas_credito`, `notas_credito_det`) — nunca editar ni borrar la venta original ni movimientos existentes.
+Al revelar la sección de emisión sobre una factura seleccionada, el sistema MUST NOT preseleccionar TOTAL ni PARCIAL — ninguna opción MUST quedar activa hasta que el cajero haga clic explícito en una de las dos. Esto aplica también a facturas con una NC parcial previa (ya no se infiere PARCIAL automáticamente). Una vez elegido TOTAL, MUST invocar `crearNotaCredito()` con `tipo=TOTAL` mediante un botón de confirmación dedicado DENTRO de la sección (no en el pie del modal), reutilizando el mismo handler existente sin alterar su lógica. PARCIAL MUST habilitar la columna de cantidad a devolver por línea de la factura, con paso entero o decimal (0.001) según `unidades.es_decimal` del producto de cada línea. Con ninguna opción elegida, el sistema MUST mostrar un estado neutro (sin alerta de TOTAL ni selector de líneas de PARCIAL). El sistema solo debe crear registros nuevos (`notas_credito`, `notas_credito_det`) — nunca editar ni borrar la venta original ni movimientos existentes.
 
-> **Nota de deuda (archive `notas-credito-ui-pos`, 2026-09-04)**: QA posterior (Slices 5a–5g) refinó este requirement con lógica de gating por reverso acumulado (`puedeEmitirNcAdicional`/`puedeElegirTipoTotal`, tope por línea vía `calcularReversoPorLinea`), badges de reverso acumulado, y watermark consistente. Ver `tasks.md` (archivo de este change) para el detalle completo — este texto de spec MODIFIED original no fue reescrito retroactivamente para incorporar los fixes de QA.
+> **Nota de deuda (archive `notas-credito-ui-pos`, 2026-09-04)**: QA posterior (Slices 5a–5g) refinó este requirement con lógica de gating por reverso acumulado (`puedeEmitirNcAdicional`/`puedeElegirTipoTotal`, tope por línea vía `calcularReversoPorLinea`) y badges de reverso acumulado.
+
+#### Scenario: Ningún tipo preseleccionado al revelar
+
+- GIVEN una factura seleccionada, con la sección de NC recién revelada
+- WHEN el cajero observa la sección
+- THEN ni "Total" ni "Parcial" aparecen activos, y no se muestra ningún botón de confirmación
 
 #### Scenario: NC TOTAL reversa la factura completa
 
 - GIVEN una factura seleccionada en el listado
-- WHEN el cajero elige TOTAL
-- THEN se invoca `crearNotaCredito` con `tipo=TOTAL` sobre la factura, sin modificar su implementación
+- WHEN el cajero elige TOTAL y confirma con el botón dentro de la sección
+- THEN se invoca `crearNotaCredito` con `tipo=TOTAL`, sin modificar su implementación
 
 #### Scenario: NC PARCIAL habilita selección de líneas
 
@@ -239,6 +297,12 @@ Al presionar "Nota de crédito" sobre una factura seleccionada, el sistema MUST 
 - GIVEN el modo PARCIAL activo con todas las cantidades en 0
 - WHEN el cajero intenta confirmar la NC
 - THEN el sistema bloquea la confirmación hasta que al menos una línea tenga cantidad mayor a 0
+
+#### Scenario: Factura con reverso parcial previo tampoco preselecciona
+
+- GIVEN una factura que ya tiene una NC parcial aplicada
+- WHEN el cajero revela la sección de NC
+- THEN ninguna opción queda preseleccionada — debe elegir Parcial explícitamente
 
 ### Requirement: Invariante de tasa histórica en montos de NC
 
@@ -282,3 +346,47 @@ El botón del POS que abre el flujo de notas de crédito MUST renombrarse a un t
 - GIVEN el POS con una sesión de caja activa
 - WHEN el cajero observa la barra de acciones
 - THEN el botón muestra el nuevo rótulo corto y, al presionarlo, abre el mismo listado de facturas de la sesión activa
+
+### Requirement: Diseño responsivo del modal (mobile master-detail)
+
+Por debajo del breakpoint Tailwind `md` (<768px), el modal de entrada POS de NC MUST comportarse como un master-detail de una sola columna: MUST mostrar únicamente el listado de facturas (columna izquierda) mientras ninguna factura esté seleccionada, ocupando el ancho completo. Al seleccionar una factura, el listado MUST ocultarse y MUST mostrarse únicamente la columna de detalle (desglose fiscal + sección NC con reveal-gate + footer de acciones), ocupando el ancho completo. Presionar "Volver" MUST ocultar el detalle y MUST volver a mostrar el listado. En `md:` y superior, el layout de dos columnas lado a lado MUST permanecer sin cambios visuales ni de comportamiento respecto al estado actual. El diálogo (elemento `<dialog>` nativo) en mobile MUST ocupar la pantalla completa (ancho de viewport y alto de viewport dinámico); en `md:` y superior MUST conservar su tamaño y bordes redondeados actuales. El estilo `minHeight: 420px` de la columna de detalle MUST aplicarse únicamente en `md:` y superior — no debe forzar scroll adicional en viewports móviles cortos.
+
+Este requirement se implementa exclusivamente con clases condicionales de Tailwind derivadas del estado existente de selección de factura — MUST NOT introducir nuevo estado ni el hook `useMobile` (no usado en ningún otro punto del código, patrón rechazado en una decisión previa).
+
+> **Nota**: este master-detail es del modal de entrada POS de NC (`NotaCreditoPosModal`), NO de las pantallas de Cuentas por Cobrar/Pagar — ese es un componente distinto. Este mismo patrón `md:` fue tomado como referencia para el trabajo posterior de CxC/CxP (ver `cxc-mobile-responsive`/`cxp-mobile-responsive`), aunque ese trabajo terminó divergiendo hacia un modal en vez de master-detail.
+
+#### Scenario: Mobile muestra solo el listado sin selección
+
+- GIVEN el modal abierto en un viewport menor a `md` (<768px), sin ninguna factura seleccionada
+- WHEN el cajero observa el modal
+- THEN solo la columna de listado es visible, ocupando el ancho completo; la columna de detalle no se muestra
+
+#### Scenario: Mobile muestra solo el detalle al seleccionar
+
+- GIVEN el modal abierto en un viewport menor a `md`, con el listado visible
+- WHEN el cajero selecciona una factura del listado
+- THEN el listado se oculta y solo la columna de detalle es visible, ocupando el ancho completo, incluyendo el footer de acciones
+
+#### Scenario: Volver regresa al listado en mobile
+
+- GIVEN el modal en viewport menor a `md`, mostrando el detalle de una factura seleccionada
+- WHEN el cajero presiona "Volver"
+- THEN el detalle se oculta y el listado vuelve a mostrarse, ocupando el ancho completo
+
+#### Scenario: Desktop conserva el layout de dos columnas sin cambios
+
+- GIVEN el modal abierto en un viewport `md` o superior (≥768px)
+- WHEN el cajero selecciona o deselecciona una factura
+- THEN ambas columnas permanecen visibles simultáneamente, lado a lado, igual que antes de este cambio
+
+#### Scenario: Diálogo full-screen en mobile
+
+- GIVEN el modal abierto en un viewport menor a `md`
+- WHEN se renderiza el `<dialog>`
+- THEN ocupa el ancho y alto completos del viewport, sin bordes redondeados
+
+#### Scenario: minHeight de la columna de detalle no aplica en mobile
+
+- GIVEN el modal abierto en un viewport menor a `md`, con el detalle visible
+- WHEN se mide el layout de la columna de detalle
+- THEN no se le fuerza una altura mínima de 420px que provoque scroll adicional en pantallas cortas
