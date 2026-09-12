@@ -32,7 +32,7 @@ El ítem del sidebar antes rotulado "Nota de Crédito" MUST estar rotulado "Fact
 
 ### Requirement: Pestaña Facturas — listado empresa-wide con búsqueda unificada y estado foldeado
 
-La pestaña Facturas MUST listar ventas de **toda la empresa** (filtro `empresa_id`), sin restricción por `sesion_caja_id`. MUST proveer rango de fechas (default mes en curso) y UN ÚNICO campo de búsqueda de texto libre — no campos separados por `nro_factura`/cliente/RIF. Ese campo MUST filtrar por coincidencia (OR) contra `nro_factura`, nombre de cliente y RIF de cliente, y ADEMÁS MUST detectar, como coincidencia EXACTA de palabra clave (no substring, insensible a mayúsculas y a tildes), los términos `contado`, `credito`/`crédito`, `abonada`, `reverso parcial` y `reverso total`; al detectar una de esas palabras clave MUST agregar la cláusula de estado correspondiente como una rama MÁS del mismo OR (nunca en reemplazo del match por texto). `abonada` MUST usar el mismo criterio que `derivarEstadoPago` (`saldo_pend_usd > 0.005 AND saldo_pend_usd < total_usd - 0.005`). No existe un `<select>` de Estado separado. Cada fila MUST exponer la acción "Aplicar nota de crédito" que abre el modal compartido, deshabilitada cuando la factura ya tiene reverso total.
+La pestaña Facturas MUST listar ventas de **toda la empresa** (filtro `empresa_id`), sin restricción por `sesion_caja_id`. MUST proveer rango de fechas (default mes en curso) y UN ÚNICO campo de búsqueda de texto libre — no campos separados por `nro_factura`/cliente/RIF. Ese campo MUST filtrar por coincidencia (OR) contra `nro_factura`, nombre de cliente y RIF de cliente, y ADEMÁS MUST detectar, como coincidencia EXACTA de palabra clave (no substring, insensible a mayúsculas y a tildes), los términos `contado`, `credito`/`crédito`, `abonada`, `reverso parcial` y `reverso total`; al detectar una de esas palabras clave MUST agregar la cláusula de estado correspondiente como una rama MÁS del mismo OR (nunca en reemplazo del match por texto). `abonada` MUST usar el mismo criterio que `derivarEstadoPago` (`saldo_pend_usd > 0.005 AND saldo_pend_usd < total_usd - 0.005`). No existe un `<select>` de Estado separado. Cada fila MUST exponer la acción "Aplicar nota de crédito" que abre el modal compartido, deshabilitada cuando la factura ya tiene reverso total. ADEMÁS, cada fila MUST abrir `ConsultaFacturaModal` (detalle fiscal + evolución) al hacer click en cualquier punto de la fila que no sea el botón "Aplicar nota de crédito"; ambas interacciones (row-click y botón) MUST ser mutuamente excluyentes en el mismo click (el botón llama `e.stopPropagation()`).
 
 #### Scenario: Carga por defecto limitada al mes en curso
 
@@ -81,6 +81,30 @@ La pestaña Facturas MUST listar ventas de **toda la empresa** (filtro `empresa_
 - GIVEN una factura con `tiene_reverso_total = 1`
 - WHEN el usuario observa la fila
 - THEN la acción "Aplicar nota de crédito" aparece deshabilitada
+
+#### Scenario: Click en fila abre el detalle de consulta
+
+- GIVEN una fila visible en el listado
+- WHEN el usuario hace click en la fila fuera del botón "Aplicar nota de
+  crédito"
+- THEN se abre `ConsultaFacturaModal` con el detalle fiscal completo y la
+  evolución (reversos/abonos/saldo a favor) de esa factura
+
+#### Scenario: Click en el botón de acción no abre el detalle de consulta
+
+- GIVEN una fila visible en el listado con el botón "Aplicar nota de
+  crédito" habilitado
+- WHEN el usuario hace click en ese botón
+- THEN se abre `CrearNcrModal` (comportamiento existente sin cambios) y
+  `ConsultaFacturaModal` permanece cerrado
+
+#### Scenario: Los dos modales de la fila son independientes
+
+- GIVEN `ConsultaFacturaModal` abierto para la factura A
+- WHEN el usuario lo cierra y luego hace click en "Aplicar nota de
+  crédito" de la factura B
+- THEN `CrearNcrModal` abre con B sin que quede ningún estado residual de
+  la apertura anterior de `ConsultaFacturaModal`
 
 ### Requirement: Fila atenuada para facturas con reverso total
 
