@@ -23,7 +23,10 @@ export function CxpRoutePage() {
 
   return (
     <RequirePermission permission={PERMISSIONS.PURCHASES_VIEW} fallback={<AccessDeniedPage />}>
-      <div className="space-y-6">
+      {/* Altura acotada al viewport restante (TopBar h-16 + padding vertical
+          de <main>) para que CxpPage controle su propio scroll interno en
+          vez de hacer crecer la pagina completa (fix cxc-cxp-scroll-altura). */}
+      <div className="flex h-[calc(100vh-6.5rem)] min-h-0 flex-col gap-6">
         <PageHeader
           titulo="Cuentas por Pagar"
           descripcion="Registro y pago de deudas a proveedores"

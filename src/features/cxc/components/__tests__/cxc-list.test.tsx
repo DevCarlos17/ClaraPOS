@@ -78,48 +78,37 @@ beforeEach(() => {
   mockedUseBuscarClientesDeuda.mockReturnValue({ clientes: [], isLoading: false })
 })
 
-describe('CxcList - paginado client-side (reemplaza top-5)', () => {
-  it('muestra los primeros 12 clientes por defecto (pagina 1 de 2, con 20 clientes)', () => {
+describe('CxcList - lista completa con scroll interno (reemplaza paginado)', () => {
+  it('renderiza todos los clientes filtrados sin recortar (20 clientes)', () => {
     mockedUseClientesConDeuda.mockReturnValue({ clientes: nClientes(20), isLoading: false })
 
     render(<CxcList />)
 
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= 20; i++) {
       expect(screen.getByText(`Cliente ${i}`)).toBeInTheDocument()
     }
-    for (let i = 13; i <= 20; i++) {
-      expect(screen.queryByText(`Cliente ${i}`)).not.toBeInTheDocument()
-    }
-    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
   })
 
-  it('el boton Siguiente avanza a la pagina 2 y muestra los clientes 13-20', async () => {
+  it('no muestra controles de paginacion (Anterior/Siguiente) sin importar la cantidad de clientes', () => {
     mockedUseClientesConDeuda.mockReturnValue({ clientes: nClientes(20), isLoading: false })
 
     render(<CxcList />)
-    await userEvent.click(screen.getByRole('button', { name: /siguiente/i }))
 
-    for (let i = 13; i <= 20; i++) {
-      expect(screen.getByText(`Cliente ${i}`)).toBeInTheDocument()
-    }
-    for (let i = 1; i <= 12; i++) {
-      expect(screen.queryByText(`Cliente ${i}`)).not.toBeInTheDocument()
-    }
-    expect(screen.getByText('Página 2 de 2')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /anterior/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /siguiente/i })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cxc-list-paginacion')).not.toBeInTheDocument()
+    expect(screen.queryByText(/página \d+ de \d+/i)).not.toBeInTheDocument()
   })
 
-  it('el boton Anterior retrocede de la pagina 2 a la pagina 1', async () => {
+  it('el panel izquierdo tiene un contenedor con scroll interno para la lista de clientes', () => {
     mockedUseClientesConDeuda.mockReturnValue({ clientes: nClientes(20), isLoading: false })
 
     render(<CxcList />)
-    await userEvent.click(screen.getByRole('button', { name: /siguiente/i }))
-    await userEvent.click(screen.getByRole('button', { name: /anterior/i }))
 
-    expect(screen.getByText('Cliente 1')).toBeInTheDocument()
-    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+    expect(screen.getByTestId('cxc-list-scroll-izquierdo').className).toContain('overflow-y-auto')
   })
 
-  it('la busqueda filtra el arreglo completo y pagina el resultado filtrado', async () => {
+  it('la busqueda filtra el arreglo completo y muestra TODOS los resultados filtrados', async () => {
     mockedUseClientesConDeuda.mockReturnValue({ clientes: nClientes(20), isLoading: false })
     const resultados = Array.from({ length: 15 }, (_, i) =>
       cliente({ id: `res-${i + 1}`, identificacion: `V-r${i + 1}`, nombre: `Resultado ${i + 1}`, deuda_usd: 50 })
@@ -129,37 +118,23 @@ describe('CxcList - paginado client-side (reemplaza top-5)', () => {
     render(<CxcList />)
     await userEvent.type(screen.getByPlaceholderText('Buscar por nombre o cedula...'), 'mar')
 
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= 15; i++) {
       expect(screen.getByText(`Resultado ${i}`)).toBeInTheDocument()
-    }
-    for (let i = 13; i <= 15; i++) {
-      expect(screen.queryByText(`Resultado ${i}`)).not.toBeInTheDocument()
     }
     expect(screen.queryByText('Cliente 1')).not.toBeInTheDocument()
   })
 
-  it('los KPIs siguen calculados sobre los 20 clientes completos, no sobre los 12 visibles en pagina', () => {
+  it('los KPIs siguen calculados sobre los 20 clientes completos', () => {
     mockedUseClientesConDeuda.mockReturnValue({ clientes: nClientes(20), isLoading: false })
 
     render(<CxcList />)
 
-    // Deuda total real = suma de 10+20+...+200 = 2100, no la suma de la pagina 1 (200+190+...+90 = 1740)
+    // Deuda total real = suma de 10+20+...+200 = 2100
     expect(screen.getAllByText('$2,100.00').length).toBeGreaterThan(0)
     expect(screen.getByText('20 pendientes')).toBeInTheDocument()
   })
 
-  it('sin controles de paginacion cuando hay menos clientes que el tamano de pagina', () => {
-    mockedUseClientesConDeuda.mockReturnValue({ clientes: ochoClientes(), isLoading: false })
-
-    render(<CxcList />)
-
-    for (let i = 1; i <= 8; i++) {
-      expect(screen.getByText(`Cliente ${i}`)).toBeInTheDocument()
-    }
-    expect(screen.queryByTestId('cxc-list-paginacion')).not.toBeInTheDocument()
-  })
-
-  it('seleccionar un cliente de la lista paginada sigue mostrando el detalle', async () => {
+  it('seleccionar un cliente de la lista completa sigue mostrando el detalle', async () => {
     mockedUseClientesConDeuda.mockReturnValue({ clientes: ochoClientes(), isLoading: false })
 
     render(<CxcList />)

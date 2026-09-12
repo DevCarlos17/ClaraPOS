@@ -110,51 +110,37 @@ beforeEach(() => {
   mockedUseGastosPendientesProveedor.mockReturnValue({ gastosPendientes: [], isLoading: false })
 })
 
-describe('CxpPage - paginado client-side (reemplaza top-5)', () => {
-  it('muestra los primeros 12 proveedores por defecto (pagina 1 de 2, con 20 proveedores)', () => {
+describe('CxpPage - lista completa con scroll interno (reemplaza paginado)', () => {
+  it('renderiza todos los proveedores filtrados sin recortar (20 proveedores)', () => {
     mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: nProveedores(20), isLoading: false })
 
     render(<CxpPage />)
 
-    // Proveedor 1 (mayor saldo) tambien aparece en el sub-label de la KPI
-    // "Mayor Deuda" — usar getAllByText para esa fila puntual.
-    expect(screen.getAllByText('Proveedor 1').length).toBeGreaterThan(0)
-    for (let i = 2; i <= 12; i++) {
-      expect(screen.getByText(`Proveedor ${i}`)).toBeInTheDocument()
+    for (let i = 1; i <= 20; i++) {
+      expect(screen.getAllByText(`Proveedor ${i}`).length).toBeGreaterThan(0)
     }
-    for (let i = 13; i <= 20; i++) {
-      expect(screen.queryByText(`Proveedor ${i}`)).not.toBeInTheDocument()
-    }
-    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
   })
 
-  it('el boton Siguiente avanza a la pagina 2 y muestra los proveedores 13-20', async () => {
+  it('no muestra controles de paginacion (Anterior/Siguiente) sin importar la cantidad de proveedores', () => {
     mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: nProveedores(20), isLoading: false })
 
     render(<CxpPage />)
-    await userEvent.click(screen.getByRole('button', { name: /siguiente/i }))
 
-    for (let i = 13; i <= 20; i++) {
-      expect(screen.getByText(`Proveedor ${i}`)).toBeInTheDocument()
-    }
-    for (let i = 2; i <= 12; i++) {
-      expect(screen.queryByText(`Proveedor ${i}`)).not.toBeInTheDocument()
-    }
-    expect(screen.getByText('Página 2 de 2')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /anterior/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /siguiente/i })).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cxp-page-paginacion')).not.toBeInTheDocument()
+    expect(screen.queryByText(/página \d+ de \d+/i)).not.toBeInTheDocument()
   })
 
-  it('el boton Anterior retrocede de la pagina 2 a la pagina 1', async () => {
+  it('el panel izquierdo tiene un contenedor con scroll interno para la lista de proveedores', () => {
     mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: nProveedores(20), isLoading: false })
 
     render(<CxpPage />)
-    await userEvent.click(screen.getByRole('button', { name: /siguiente/i }))
-    await userEvent.click(screen.getByRole('button', { name: /anterior/i }))
 
-    expect(screen.getAllByText('Proveedor 1').length).toBeGreaterThan(0)
-    expect(screen.getByText('Página 1 de 2')).toBeInTheDocument()
+    expect(screen.getByTestId('cxp-page-scroll-izquierdo').className).toContain('overflow-y-auto')
   })
 
-  it('la busqueda filtra el arreglo completo y pagina el resultado filtrado', async () => {
+  it('la busqueda filtra el arreglo completo y muestra TODOS los resultados filtrados', async () => {
     mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: nProveedores(20), isLoading: false })
     const resultados = Array.from({ length: 15 }, (_, i) =>
       proveedor({ id: `res-${i + 1}`, rif: `J-r${i + 1}`, razon_social: `Resultado ${i + 1}`, saldo_actual: '50' })
@@ -164,11 +150,8 @@ describe('CxpPage - paginado client-side (reemplaza top-5)', () => {
     render(<CxpPage />)
     await userEvent.type(screen.getByPlaceholderText('Buscar por nombre o rif/cedula...'), 'mar')
 
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= 15; i++) {
       expect(screen.getByText(`Resultado ${i}`)).toBeInTheDocument()
-    }
-    for (let i = 13; i <= 15; i++) {
-      expect(screen.queryByText(`Resultado ${i}`)).not.toBeInTheDocument()
     }
     // Proveedor 2..8 no deben aparecer en la lista (el buscador reemplazo el
     // arreglo base) — Proveedor 1 se omite porque la KPI "Mayor Deuda" sigue
@@ -178,31 +161,19 @@ describe('CxpPage - paginado client-side (reemplaza top-5)', () => {
     }
   })
 
-  it('los KPIs (Deuda Total, Proveedores con Deuda, Mayor Deuda) siguen calculados sobre los 20 proveedores completos, no sobre los 12 visibles en pagina', () => {
+  it('los KPIs (Deuda Total, Proveedores con Deuda, Mayor Deuda) siguen calculados sobre los 20 proveedores completos', () => {
     mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: nProveedores(20), isLoading: false })
 
     render(<CxpPage />)
 
-    // Deuda total real = suma de 10+20+...+200 = 2100, no la suma de la pagina 1 (200+190+...+90 = 1740)
+    // Deuda total real = suma de 10+20+...+200 = 2100
     expect(screen.getAllByText('$2,100.00').length).toBeGreaterThan(0)
     expect(screen.getByText('20 proveedores pendientes')).toBeInTheDocument()
-    // Mayor Deuda: proveedor con mayor saldo (Proveedor 1 = 200), no acotado a la pagina
+    // Mayor Deuda: proveedor con mayor saldo (Proveedor 1 = 200)
     expect(screen.getAllByText('Proveedor 1').length).toBeGreaterThan(0)
   })
 
-  it('sin controles de paginacion cuando hay menos proveedores que el tamano de pagina', () => {
-    mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: ochoProveedores(), isLoading: false })
-
-    render(<CxpPage />)
-
-    expect(screen.getAllByText('Proveedor 1').length).toBeGreaterThan(0)
-    for (let i = 2; i <= 8; i++) {
-      expect(screen.getByText(`Proveedor ${i}`)).toBeInTheDocument()
-    }
-    expect(screen.queryByTestId('cxp-page-paginacion')).not.toBeInTheDocument()
-  })
-
-  it('seleccionar un proveedor de la lista paginada sigue mostrando el panel de detalle', async () => {
+  it('seleccionar un proveedor de la lista completa sigue mostrando el panel de detalle', async () => {
     mockedUseProveedoresConDeuda.mockReturnValue({ proveedores: ochoProveedores(), isLoading: false })
 
     render(<CxpPage />)

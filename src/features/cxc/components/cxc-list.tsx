@@ -1,12 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   MagnifyingGlass,
   Users,
   CurrencyDollar,
   CaretRight,
-  CaretLeft,
 } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
@@ -17,14 +15,6 @@ import {
 } from '../hooks/use-cxc'
 import { CxcClienteDetalle } from './cxc-cliente-detalle'
 import { CxcReportesGeneral } from './cxc-reportes-general'
-
-/**
- * Cantidad de deudores visibles por pagina en el panel izquierdo. Recorte
- * SOLO de renderizado (nunca del arreglo fuente ni del hook SQL) — los
- * KPIs y el pie siguen calculados sobre `allClientes` completo — ver spec
- * cxc-mobile-responsive (paginado reemplaza el tope top-5 anterior).
- */
-const PAGE_SIZE = 12
 
 // ─── KPI Card ─────────────────────────────────────────────────
 
@@ -82,26 +72,16 @@ export function CxcList() {
   const { tasaValor } = useTasaActual()
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteConDeuda | null>(null)
   const [filtroSAF, setFiltroSAF] = useState(false)
-  const [pagina, setPagina] = useState(0)
 
   const isSearching = searchQuery.trim().length >= 2
   const clientesBase = isSearching ? searchResults : allClientes
-  // La busqueda y el filtro SAF operan sobre el arreglo completo; el
-  // paginado (mas abajo) recorta SOLO el renderizado del resultado ya
-  // filtrado — ver spec cxc-mobile-responsive.
+  // La busqueda y el filtro SAF operan sobre el arreglo completo. La lista
+  // completa filtrada se renderiza entera dentro de un contenedor con scroll
+  // interno (altura acotada al viewport) — sin recorte de paginado ni SQL
+  // LIMIT (reemplaza el paginado client-side anterior, ver fix
+  // cxc-cxp-scroll-altura).
   const clientesFiltrados = filtroSAF ? clientesBase.filter((c) => c.credito_disponible_usd > 0.001) : clientesBase
   const clientesLoading = isSearching ? loadingSearch : isLoading
-
-  // Reiniciar a la primera pagina cuando cambia la busqueda o el filtro SAF,
-  // para no dejar al usuario "varado" en una pagina fuera de rango del
-  // nuevo resultado filtrado.
-  useEffect(() => {
-    setPagina(0)
-  }, [searchQuery, filtroSAF])
-
-  const totalPaginas = Math.max(1, Math.ceil(clientesFiltrados.length / PAGE_SIZE))
-  const paginaActual = Math.min(pagina, totalPaginas - 1)
-  const clientesPagina = clientesFiltrados.slice(paginaActual * PAGE_SIZE, paginaActual * PAGE_SIZE + PAGE_SIZE)
 
   function toggleFiltroSAF() {
     setFiltroSAF((prev) => {
@@ -132,8 +112,8 @@ export function CxcList() {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="flex flex-1 min-h-0 flex-col gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 shrink-0">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-20 rounded-2xl bg-muted/50 animate-pulse" />
           ))}
@@ -154,10 +134,10 @@ export function CxcList() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-1 min-h-0 flex-col gap-4">
 
       {/* KPIs globales */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
         <KpiCard
           label="Deuda Total"
           value={formatUsd(totalDeuda)}
@@ -184,14 +164,14 @@ export function CxcList() {
       </div>
 
       {/* Layout principal */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-fr gap-4 flex-1 min-h-0">
 
         {/* Panel izquierdo: clientes */}
         <div
           data-testid="cxc-list-panel-izquierdo"
-          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden"
+          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col min-h-0"
         >
-          <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2">
+          <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-2 shrink-0">
             <span className={`text-xs font-semibold uppercase tracking-wide ${filtroSAF ? 'text-green-700' : 'text-muted-foreground'}`}>
               {filtroSAF ? 'Saldo a Favor' : 'Cuentas por Cobrar'}
             </span>
@@ -210,7 +190,7 @@ export function CxcList() {
           </div>
 
           {/* Buscador */}
-          <div className="px-3 py-2 border-b border-border/50">
+          <div className="px-3 py-2 border-b border-border/50 shrink-0">
             <div className="relative">
               <MagnifyingGlass
                 size={14}
@@ -226,7 +206,9 @@ export function CxcList() {
             </div>
           </div>
 
-          {/* Lista de clientes */}
+          {/* Lista de clientes: contenedor con scroll interno, altura
+              acotada al espacio restante del panel (fix cxc-cxp-scroll-altura) */}
+          <div data-testid="cxc-list-scroll-izquierdo" className="flex-1 min-h-0 overflow-y-auto">
           {clientesLoading ? (
             <div className="p-3 space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (
@@ -240,9 +222,8 @@ export function CxcList() {
               </p>
             </div>
           ) : (
-            <>
             <div className="divide-y divide-border">
-              {clientesPagina.map((cliente) => {
+              {clientesFiltrados.map((cliente) => {
                 const isSelected = clienteSeleccionado?.id === cliente.id
                 const tieneDeuda = cliente.deuda_usd > 0.001
                 const isSAF = cliente.credito_disponible_usd > 0.001
@@ -297,42 +278,11 @@ export function CxcList() {
                 )
               })}
             </div>
-
-            {totalPaginas > 1 && (
-              <div
-                data-testid="cxc-list-paginacion"
-                className="flex items-center justify-between gap-2 px-4 py-2 border-t border-border/50"
-              >
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPagina((p) => Math.max(0, p - 1))}
-                  disabled={paginaActual === 0}
-                >
-                  <CaretLeft size={14} className="mr-1" />
-                  Anterior
-                </Button>
-                <span className="text-[11px] text-muted-foreground">
-                  Página {paginaActual + 1} de {totalPaginas}
-                </span>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
-                  disabled={paginaActual >= totalPaginas - 1}
-                >
-                  Siguiente
-                  <CaretRight size={14} className="ml-1" />
-                </Button>
-              </div>
-            )}
-            </>
           )}
+          </div>
 
           {/* Total al pie */}
-          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between gap-4">
+          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between gap-4 shrink-0">
             <div className="flex items-center gap-3">
               <div>
                 <p className="text-[10px] text-muted-foreground uppercase">Deuda</p>
@@ -354,8 +304,9 @@ export function CxcList() {
             inline (reemplaza el master-detail hidden/md:block anterior). */}
         <div
           data-testid="cxc-list-panel-derecho"
-          className="hidden md:block md:col-span-2"
+          className="hidden md:block md:col-span-2 min-h-0"
         >
+          <div className="h-full flex flex-col min-h-0">
           {clienteActual ? (
             <CxcClienteDetalle
               key={clienteActual.id}
@@ -373,6 +324,7 @@ export function CxcList() {
               </p>
             </div>
           )}
+          </div>
         </div>
       </div>
 
