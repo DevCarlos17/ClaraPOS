@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react'
 import {
   Buildings,
   CaretRight,
-  CaretLeft,
   CurrencyDollar,
   CaretUp,
   CaretDown,
@@ -10,7 +9,6 @@ import {
   Printer,
   Receipt,
 } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { DeudaCard } from '@/components/shared/deuda-card'
 import {
@@ -31,15 +29,6 @@ import Decimal from 'decimal.js'
 import { formatUsd } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
 import { localNow } from '@/lib/dates'
-
-/**
- * Cantidad de proveedores visibles por pagina en el panel izquierdo.
- * Recorte SOLO de renderizado (nunca del arreglo fuente ni del hook SQL)
- * — los KPIs y el pie siguen calculados sobre `proveedores` completo — ver
- * spec cxc-cxp-mobile-responsive (paginado reemplaza el tope top-5 anterior,
- * mismo patron que PAGE_SIZE en cxc-list.tsx).
- */
-const PAGE_SIZE = 12
 
 // ─── Sort ─────────────────────────────────────────────────────
 
@@ -184,11 +173,11 @@ function DetallePanel({
   onVerDetalle,
 }: DetallePanelProps) {
   return (
-    <div className="space-y-4">
-      {/* Card: Facturas Pendientes */}
-      <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+    <div className="h-full flex flex-col min-h-0">
+      {/* Card: Facturas Pendientes + Gastos Pendientes */}
+      <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-card shadow-lg overflow-hidden">
         {/* Toolbar */}
-        <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-3">
+        <div className="px-4 py-3 bg-muted/40 border-b border-border flex items-center justify-between gap-3 shrink-0">
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground truncate">{proveedor.razon_social}</p>
             <p className="text-xs text-muted-foreground">{proveedor.rif}</p>
@@ -212,6 +201,10 @@ function DetallePanel({
             )}
           </div>
         </div>
+
+        {/* Contenido: scroll interno unico para facturas + gastos
+            (fix cxc-cxp-scroll-altura) */}
+        <div data-testid="cxp-detalle-scroll" className="flex-1 min-h-0 overflow-y-auto">
 
         {/* Sub-header: Facturas */}
         <div className="px-4 py-2 border-b border-border/50 bg-muted/20">
@@ -451,6 +444,7 @@ function DetallePanel({
             )}
           </>
         )}
+        </div>
       </div>
     </div>
   )
@@ -467,27 +461,13 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const { proveedores: searchResults, isLoading: loadingSearch } = useBuscarProveedoresDeuda(searchQuery)
   const isSearching = searchQuery.trim().length >= 2
-  // La busqueda opera sobre el arreglo completo; el paginado (mas abajo)
-  // recorta SOLO el renderizado del resultado ya filtrado — los KPIs siguen
-  // calculados sobre `proveedores` completo, sin SQL LIMIT (spec
-  // cxc-cxp-mobile-responsive).
+  // La busqueda opera sobre el arreglo completo. La lista completa filtrada
+  // se renderiza entera dentro de un contenedor con scroll interno (altura
+  // acotada al viewport) — sin recorte de paginado ni SQL LIMIT (reemplaza
+  // el paginado client-side anterior, ver fix cxc-cxp-scroll-altura).
   const proveedoresFiltrados = isSearching ? searchResults : proveedores
   const proveedoresListLoading = isSearching ? loadingSearch : isLoading
   const [proveedorSeleccionado, setProveedorSeleccionado] = useState<ProveedorConDeuda | null>(null)
-  const [pagina, setPagina] = useState(0)
-
-  // Reiniciar a la primera pagina cuando cambia la busqueda, para no dejar
-  // al usuario "varado" en una pagina fuera de rango del nuevo resultado.
-  useEffect(() => {
-    setPagina(0)
-  }, [searchQuery])
-
-  const totalPaginas = Math.max(1, Math.ceil(proveedoresFiltrados.length / PAGE_SIZE))
-  const paginaActual = Math.min(pagina, totalPaginas - 1)
-  const proveedoresVisibles = proveedoresFiltrados.slice(
-    paginaActual * PAGE_SIZE,
-    paginaActual * PAGE_SIZE + PAGE_SIZE
-  )
 
   // Pre-select proveedor from URL param once the list is loaded
   useEffect(() => {
@@ -538,8 +518,8 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
 
   if (isLoading) {
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="flex flex-1 min-h-0 flex-col gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 shrink-0">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-20 rounded-2xl bg-muted/50 animate-pulse" />
           ))}
@@ -560,7 +540,7 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-1 min-h-0 flex-col gap-4">
 
       {/* KPIs globales */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -584,21 +564,21 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
       </div>
 
       {/* Layout principal */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+      <div className="grid grid-cols-1 md:grid-cols-3 auto-rows-fr gap-4 flex-1 min-h-0">
 
         {/* Panel izquierdo: proveedores */}
         <div
           data-testid="cxp-page-panel-izquierdo"
-          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden"
+          className="md:col-span-1 rounded-2xl bg-card shadow-lg overflow-hidden flex flex-col min-h-0"
         >
-          <div className="px-4 py-3 bg-muted/40 border-b border-border">
+          <div className="px-4 py-3 bg-muted/40 border-b border-border shrink-0">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
               Proveedores con Deuda
             </span>
           </div>
 
           {/* Buscador */}
-          <div className="px-3 py-2 border-b border-border/50">
+          <div className="px-3 py-2 border-b border-border/50 shrink-0">
             <div className="relative">
               <MagnifyingGlass
                 size={14}
@@ -614,20 +594,22 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
             </div>
           </div>
 
+          {/* Lista de proveedores: contenedor con scroll interno, altura
+              acotada al espacio restante del panel (fix cxc-cxp-scroll-altura) */}
+          <div data-testid="cxp-page-scroll-izquierdo" className="flex-1 min-h-0 overflow-y-auto">
           {proveedoresListLoading ? (
             <div className="p-3 space-y-2">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="h-10 bg-muted/50 rounded-lg animate-pulse" />
               ))}
             </div>
-          ) : proveedoresVisibles.length === 0 ? (
+          ) : proveedoresFiltrados.length === 0 ? (
             <div className="py-8 text-center text-muted-foreground">
               <p className="text-sm">{isSearching ? 'Sin resultados' : 'Sin proveedores con deuda'}</p>
             </div>
           ) : (
-          <>
           <div className="divide-y divide-border">
-            {proveedoresVisibles.map((proveedor) => {
+            {proveedoresFiltrados.map((proveedor) => {
               const isSelected = proveedorSeleccionado?.id === proveedor.id
               const deuda = parseFloat(proveedor.saldo_actual)
               return (
@@ -659,41 +641,10 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               )
             })}
           </div>
-
-          {totalPaginas > 1 && (
-            <div
-              data-testid="cxp-page-paginacion"
-              className="flex items-center justify-between gap-2 px-4 py-2 border-t border-border/50"
-            >
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setPagina((p) => Math.max(0, p - 1))}
-                disabled={paginaActual === 0}
-              >
-                <CaretLeft size={14} className="mr-1" />
-                Anterior
-              </Button>
-              <span className="text-[11px] text-muted-foreground">
-                Página {paginaActual + 1} de {totalPaginas}
-              </span>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setPagina((p) => Math.min(totalPaginas - 1, p + 1))}
-                disabled={paginaActual >= totalPaginas - 1}
-              >
-                Siguiente
-                <CaretRight size={14} className="ml-1" />
-              </Button>
-            </div>
           )}
-          </>
-          )}
+          </div>
           {/* Total global al pie */}
-          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between">
+          <div className="px-4 py-2.5 bg-muted/30 border-t border-border flex items-center justify-between shrink-0">
             <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Total</span>
             <span className="text-sm font-bold text-destructive tabular-nums">{formatUsd(deudaTotal)}</span>
           </div>
@@ -705,8 +656,9 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
             inline (mismo patron que cxc-list.tsx). */}
         <div
           data-testid="cxp-page-panel-derecho"
-          className="hidden md:block md:col-span-2"
+          className="hidden md:block md:col-span-2 min-h-0"
         >
+          <div className="h-full flex flex-col min-h-0">
           {!proveedorSeleccionado ? (
             <div className="rounded-2xl bg-card shadow-lg flex flex-col items-center justify-center py-20 text-muted-foreground gap-3">
               <CurrencyDollar size={40} className="opacity-20" />
@@ -729,6 +681,7 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
               onVerDetalle={(tipo, id) => setDetalleFactura({ tipo, id })}
             />
           )}
+          </div>
         </div>
       </div>
 

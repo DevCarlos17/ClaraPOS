@@ -19,7 +19,10 @@ export function CuentasPorCobrarPage() {
 
   return (
     <RequirePermission permission={PERMISSIONS.CLIENTS_CREDIT} fallback={<AccessDeniedPage />}>
-      <div className="space-y-6">
+      {/* Altura acotada al viewport restante (TopBar h-16 + padding vertical
+          de <main>) para que CxcList controle su propio scroll interno en
+          vez de hacer crecer la pagina completa (fix cxc-cxp-scroll-altura). */}
+      <div className="flex h-[calc(100vh-6.5rem)] min-h-0 flex-col gap-6">
         <PageHeader titulo="Cuentas por Cobrar" descripcion="Gestion de deudas y pagos de clientes">
           {isOwner && (
             <Button size="sm" onClick={() => setModalImportarAbierto(true)}>

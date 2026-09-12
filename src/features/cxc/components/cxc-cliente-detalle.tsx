@@ -86,11 +86,11 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
 
   return (
     <>
-      <div className="space-y-4">
-        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+      <div className="h-full flex flex-col min-h-0">
+        <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-card shadow-lg overflow-hidden">
 
           {/* Toolbar */}
-          <div className="px-4 py-3 bg-muted/40 border-b border-border flex flex-wrap items-center justify-between gap-3">
+          <div className="px-4 py-3 bg-muted/40 border-b border-border flex flex-wrap items-center justify-between gap-3 shrink-0">
             <div className="min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{cliente.nombre}</p>
               <p className="text-xs text-muted-foreground">{cliente.identificacion}</p>
@@ -163,7 +163,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
           </div>
 
           {/* Sub-header */}
-          <div className="px-4 py-2 border-b border-border/50 bg-muted/20 flex items-center justify-between">
+          <div className="px-4 py-2 border-b border-border/50 bg-muted/20 flex items-center justify-between shrink-0">
             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
               {mostrarPagadas ? 'Todas las Facturas' : 'Facturas Pendientes'}
             </span>
@@ -176,7 +176,8 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
             </button>
           </div>
 
-          {/* Tabla */}
+          {/* Tabla: contenedor con scroll interno (fix cxc-cxp-scroll-altura) */}
+          <div data-testid="cxc-detalle-scroll" className="flex-1 min-h-0 overflow-y-auto">
           {isLoading ? (
             <div className="p-4 space-y-2">
               {Array.from({ length: 3 }).map((_, i) => (
@@ -325,6 +326,7 @@ export function CxcClienteDetalle({ onClose, cliente }: CxcClienteDetalleProps) 
             </div>
             </>
           )}
+          </div>
         </div>
       </div>
 
