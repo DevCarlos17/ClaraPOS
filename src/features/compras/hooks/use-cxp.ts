@@ -105,6 +105,47 @@ export function useProveedoresConDeuda() {
   return { proveedores: (data ?? []) as ProveedorConDeuda[], isLoading }
 }
 
+/**
+ * Buscar proveedores con deuda por razon_social/rif.
+ * Mirror exacto de useBuscarClientesDeuda (use-cxc.ts): mismo umbral de 2
+ * caracteres, mismo patron LIKE sin escapar (replica intencional del gap
+ * preexistente de CxC, no un bug nuevo a corregir), mismo LIMIT 20.
+ */
+export function useBuscarProveedoresDeuda(query: string) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const searchTerm = query.trim()
+  const shouldSearch = searchTerm.length >= 2
+  const pattern = `%${searchTerm}%`
+
+  const { data, isLoading } = useQuery(
+    shouldSearch
+      ? `SELECT p.id, p.rif, p.razon_social,
+           COALESCE(SUM(CAST(d.saldo AS REAL)), 0) as saldo_actual,
+           COUNT(d.doc_id) as facturas_pendientes
+         FROM proveedores p
+         INNER JOIN (
+           SELECT proveedor_id, id as doc_id, CAST(saldo_pend_usd AS REAL) as saldo
+           FROM facturas_compra
+           WHERE empresa_id = ? AND CAST(saldo_pend_usd AS REAL) > 0.001
+           UNION ALL
+           SELECT proveedor_id, id as doc_id, CAST(saldo_pendiente_usd AS REAL) as saldo
+           FROM gastos
+           WHERE empresa_id = ? AND proveedor_id IS NOT NULL
+             AND status = 'REGISTRADO'
+             AND CAST(saldo_pendiente_usd AS REAL) > 0.001
+         ) d ON d.proveedor_id = p.id
+         WHERE p.empresa_id = ? AND p.is_active = 1
+           AND (p.razon_social LIKE ? OR p.rif LIKE ?)
+         GROUP BY p.id, p.rif, p.razon_social
+         ORDER BY razon_social ASC LIMIT 20`
+      : '',
+    shouldSearch ? [empresaId, empresaId, empresaId, pattern, pattern] : []
+  )
+
+  return { proveedores: (data ?? []) as ProveedorConDeuda[], isLoading }
+}
+
 export function useFacturasCompraPendientes(proveedorId: string | null) {
   const { data, isLoading } = useQuery(
     proveedorId

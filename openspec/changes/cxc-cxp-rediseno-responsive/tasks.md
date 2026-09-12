@@ -82,37 +82,37 @@ migraciones ni datos persistidos nuevos).
 
 ## Phase 1.3 — Slice 3: CxP hook de busqueda + lista corta + UI
 
-- [ ] 1.3.1 RED: `src/features/compras/hooks/__tests__/use-cxp.test.ts`
+- [x] 1.3.1 RED: `src/features/compras/hooks/__tests__/use-cxp.test.ts`
       (nuevo, o extender si ya existe) — mock `@powersync/react` (`useQuery`),
       `@/core/hooks/use-current-user`, `@/core/db/powersync/db`,
       `cargarMapaCuentas`, `generarAsientosPagoCxP`, `leerMonedaContable`
       (mismo patron de aislamiento que `use-cxc.test.ts`). Test que falla:
       `useBuscarProveedoresDeuda` no existe / no filtra por `empresa_id` +
       `razon_social`/`rif` LIKE.
-- [ ] 1.3.2 GREEN: `src/features/compras/hooks/use-cxp.ts` — nuevo
+- [x] 1.3.2 GREEN: `src/features/compras/hooks/use-cxp.ts` — nuevo
       `useBuscarProveedoresDeuda(query)`: mismo umbral `query.trim().length >= 2`,
       mismo patron `%term%` sin escapar, `WHERE p.empresa_id = ?` obligatorio,
       misma subquery UNION facturas_compra+gastos que `useProveedoresConDeuda`,
       `ORDER BY razon_social ASC LIMIT 20`. Retorna `ProveedorConDeuda[]`.
-- [ ] 1.3.3 RED→GREEN (mismo test file): threshold de 1 caracter NO dispara
+- [x] 1.3.3 RED→GREEN (mismo test file): threshold de 1 caracter NO dispara
       query (`shouldSearch === false`, sin llamada SQL).
-- [ ] 1.3.4 RED: `src/features/compras/components/__tests__/cxp-page.test.tsx`
+- [x] 1.3.4 RED: `src/features/compras/components/__tests__/cxp-page.test.tsx`
       (nuevo) — mock `useProveedoresConDeuda` (10 proveedores),
       `useBuscarProveedoresDeuda` (nuevo mock), `useFacturasCompraPendientes`,
       `useGastosPendientesProveedor`. Test que falla: no existe input de
       busqueda en el panel izquierdo; con busqueda vacia se renderizan mas
       de 5 filas.
-- [ ] 1.3.5 GREEN: `src/features/compras/components/cxp-page.tsx` — agregar
+- [x] 1.3.5 GREEN: `src/features/compras/components/cxp-page.tsx` — agregar
       `searchQuery` state + input (mismo patron UX que `CxcList`: icono
       `MagnifyingGlass`, placeholder, estilos); `isSearching` deriva del
       mismo umbral; `proveedoresVisibles = isSearching ? searchResults : proveedores.slice(0, 5)`;
       KPIs y total del pie siguen usando `proveedores` completo
       (`useProveedoresConDeuda`, sin `LIMIT`).
-- [ ] 1.3.6 RED→GREEN: test que buscar con 2+ caracteres muestra los
+- [x] 1.3.6 RED→GREEN: test que buscar con 2+ caracteres muestra los
       resultados de `useBuscarProveedoresDeuda` sin recorte adicional a 5.
-- [ ] 1.3.7 RED→GREEN: test que seleccionar un proveedor de la lista corta
+- [x] 1.3.7 RED→GREEN: test que seleccionar un proveedor de la lista corta
       sigue mostrando `DetallePanel` (facturas + gastos) para ese proveedor.
-- [ ] 1.3.8 Confirmar `empresa_id` intacto en ambos hooks involucrados
+- [x] 1.3.8 Confirmar `empresa_id` intacto en ambos hooks involucrados
       (`useProveedoresConDeuda` sin cambios; `useBuscarProveedoresDeuda`
       nuevo, cubierto por 1.3.1-1.3.3).
 
@@ -120,11 +120,12 @@ migraciones ni datos persistidos nuevos).
 
 ## Regression Guard (todas las slices)
 
-- [ ] R.1 Suite completa (`yarn test:run`) permanece en verde: baseline
+- [x] R.1 Suite completa (`yarn test:run`) permanece en verde: baseline
       114 archivos / 1411 tests pasando (mas los nuevos de este cambio).
-- [ ] R.2 Ningun cambio a: Pagar factura, Abono Global, Imprimir (CxC/CxP),
+      Final tras Slice 3: 119 archivos / 1429 tests.
+- [x] R.2 Ningun cambio a: Pagar factura, Abono Global, Imprimir (CxC/CxP),
       bimonetario USD+Bs, precision decimal, filtrado `empresa_id` en
       hooks preexistentes.
-- [ ] R.3 Ningun hook de lectura (`useClientesConDeuda`,
+- [x] R.3 Ningun hook de lectura (`useClientesConDeuda`,
       `useProveedoresConDeuda`) recibe `LIMIT` en su SQL — el recorte a
       top-N es siempre client-side sobre el arreglo ya devuelto.
