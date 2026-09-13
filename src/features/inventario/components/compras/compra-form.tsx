@@ -1677,23 +1677,39 @@ export function CompraForm({ onClose }: CompraFormProps) {
 
               {dropdownOpen && busqueda && productosFiltrados.length > 0 && (
                 <ul className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-md border border-border bg-background shadow-lg">
-                  {productosFiltrados.slice(0, 10).map((p) => (
-                    <li key={p.id}>
-                      <button
-                        type="button"
-                        onClick={() => handleAddProducto(p)}
-                        className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex items-center gap-2"
-                      >
-                        <Plus className="h-3.5 w-3.5 text-green-600 shrink-0" />
-                        <span className="font-mono text-muted-foreground">{p.codigo}</span>
-                        <span className="text-muted-foreground/50">|</span>
-                        <span className="text-foreground">{p.nombre}</span>
-                        <span className="text-muted-foreground text-xs ml-auto">
-                          Costo: {formatUsd(p.costo_usd)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
+                  {productosFiltrados.slice(0, 10).map((p) => {
+                    // Costo contable (costo_usd) y costo segun factura (costo_factura_usd).
+                    // Cuando difieren (producto de tasa paralela) se muestran AMBOS con
+                    // etiquetas para no confundir: el dropdown deja claro que "Contable" es
+                    // lo que valdra en inventario y "Factura" lo que se precargara al agregar.
+                    const contable = parseFloat(p.costo_usd) || 0
+                    const factura = p.costo_factura_usd != null ? parseFloat(p.costo_factura_usd) : contable
+                    const esParalela = p.tasa_paralela_ref != null && Math.abs(contable - factura) > 0.0001
+                    return (
+                      <li key={p.id}>
+                        <button
+                          type="button"
+                          onClick={() => handleAddProducto(p)}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors flex items-center gap-2"
+                        >
+                          <Plus className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                          <span className="font-mono text-muted-foreground">{p.codigo}</span>
+                          <span className="text-muted-foreground/50">|</span>
+                          <span className="text-foreground">{p.nombre}</span>
+                          {esParalela ? (
+                            <span className="text-xs ml-auto text-right leading-tight">
+                              <span className="text-muted-foreground">Factura: {formatUsd(factura)}</span>
+                              <span className="block text-amber-600 dark:text-amber-500">Contable: {formatUsd(contable)}</span>
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-xs ml-auto">
+                              Costo: {formatUsd(contable)}
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
 
@@ -2596,14 +2612,29 @@ export function CompraForm({ onClose }: CompraFormProps) {
               <ul className="space-y-1">
                 {lineas.filter((l) => debeMostrarInfoPvpEnResumen(lineaTieneCostoCambiado(l), lineaTienePvpEditado(l))).map((l) => {
                   const algunNivelEditado = lineaTienePvpEditado(l)
+                  // El resumen muestra el cambio del COSTO CONTABLE (lo que va a la
+                  // ficha del producto), no el costo segun factura. Contable viejo =
+                  // costo_usd_actual (BCV, ya en USD por unidad base); contable nuevo =
+                  // getCostoNuevoUsdForLinea (misma formula que el submit). Con tasa
+                  // paralela ambos difieren del costo de factura, por eso se muestra
+                  // tambien el factura entre parentesis para que el usuario entienda.
+                  const contableAnteriorUsd = parseFloat(l.costo_usd_actual) || 0
+                  const contableNuevoUsd = getCostoNuevoUsdForLinea(l)
+                  const facturaNuevoUsd = moneda === 'USD'
+                    ? (l.factor > 0 ? l.costo_input / l.factor : l.costo_input)
+                    : (tasaFacturaNum > 0 ? l.costo_input / tasaFacturaNum / (l.factor > 0 ? l.factor : 1) : 0)
+                  const hayParalela = usaTasaParalela && Math.abs(contableNuevoUsd - facturaNuevoUsd) > 0.0001
                   return (
                     <li key={l.producto_id} className="space-y-0.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-[10px]">{l.codigo}</span>
                         <span className="font-medium">{l.nombre}</span>
                         <span className="text-muted-foreground">
-                          costo: {moneda === 'USD' ? formatUsd(l.costo_actual) : formatBs(l.costo_actual)} →{' '}
-                          <span className="font-medium">{moneda === 'USD' ? formatUsd(l.costo_input) : formatBs(l.costo_input)}</span>
+                          {hayParalela ? 'costo contable' : 'costo'}: {formatUsd(contableAnteriorUsd)} →{' '}
+                          <span className="font-medium">{formatUsd(contableNuevoUsd)}</span>
+                          {hayParalela && (
+                            <span className="text-[10px] text-muted-foreground/70"> (factura: {formatUsd(facturaNuevoUsd)}, tasa paralela)</span>
+                          )}
                         </span>
                         <span className={`px-1 py-0.5 rounded text-[9px] font-bold ${
                           algunNivelEditado
