@@ -519,6 +519,13 @@ export function ProductoList() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <PrecioDisplay usd={prod.costo_usd} tasa={tasaValor} />
+                      {prod.tasa_paralela_ref != null && prod.tasa_paralela_ref !== '' && (
+                        <div className="mt-1 flex justify-end">
+                          <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700 ring-1 ring-amber-600/20 ring-inset">
+                            Tasa paralela
+                          </span>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <PrecioDisplay usd={prod.precio_venta_usd} tasa={tasaValor} />
