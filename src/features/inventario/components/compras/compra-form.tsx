@@ -360,6 +360,37 @@ export function CompraForm({ onClose }: CompraFormProps) {
   const tasaProveedorNum = parseFloat(tasaProveedor) || 0
   const tasaFacturaNum = usaTasaParalela ? tasaProveedorNum : tasaInternaNum
 
+  // Recalcular la vista base de precios cuando cambia una tasa que afecta el COSTO
+  // CONTABLE (marcar/desmarcar paralela, o editar tasa proveedor/interna). Los
+  // niveles se validan contra el contable (getCostoNuevoUsdForLinea), asi que si el
+  // contable sube, un PVP que antes cubria el costo puede quedar VIOLADO y hay que
+  // exponerlo. Solo se regeneran lineas SIN decisiones activas del usuario (todos
+  // los niveles en 'pendiente' o sin niveles): nunca se pisan ediciones/decisiones
+  // ya tomadas. Reusa la logica existente (construirPvpNiveles), no la reescribe.
+  useEffect(() => {
+    setLineas((prev) => {
+      let cambio = false
+      const next = prev.map((l) => {
+        // Respetar lineas donde el usuario ya decidio algo (no 'pendiente').
+        const tieneDecisionActiva = l.pvp_niveles.some((n) => n.decision !== 'pendiente')
+        if (tieneDecisionActiva) return l
+
+        const nuevos = construirPvpNiveles(l)
+        const algunViolado = nuevos.some((n) => n.violado)
+        // Poblar solo si hay violacion que exponer; si ningun nivel queda por
+        // debajo del contable y la linea no tenia niveles, dejar vacio (sin ruido).
+        if (!algunViolado && l.pvp_niveles.length === 0) return l
+
+        cambio = true
+        return { ...l, pvp_niveles: algunViolado ? nuevos : [] }
+      })
+      return cambio ? next : prev
+    })
+  // Solo dispara ante cambios de tasa; construirPvpNiveles se recrea cada render
+  // pero su salida depende de estas tasas + moneda, cubiertas aqui.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usaTasaParalela, tasaProveedorNum, tasaInternaNum, moneda])
+
   // Validacion de fecha: advertencia si es futura
   const hoy = todayStr()
   const fechaEsFutura = fechaFactura > hoy
@@ -670,18 +701,31 @@ export function CompraForm({ onClose }: CompraFormProps) {
     )
   }
 
-  /** Costo nuevo de una línea en USD por unidad base — usado para clasificar Caso
-   * A/B, proyectar niveles de precio y resolver decisiones. Centraliza el cálculo
-   * antes duplicado en cada handler de PVP.
+  /** Costo CONTABLE de una línea en USD por unidad base — usado para clasificar
+   * Caso A/B, proyectar niveles de precio, calcular margenes y resolver decisiones.
+   * Centraliza el cálculo antes duplicado en cada handler de PVP.
+   *
+   * Los margenes/PVP SIEMPRE se calculan contra el costo CONTABLE (el costo real
+   * de reposicion a tasa interna/BCV), NO contra el costo segun factura (tasa
+   * proveedor). Con tasa paralela ambos difieren: factura $1 a paralela 1000 /
+   * interna 500 -> contable $2; un margen de 30% debe salir de $2, no de $1.
+   * Sin tasa paralela, contable == factura y el resultado es identico al previo.
+   * Misma formula que costo_usd_sistema en el submit (lineas ~1170 / ~1183).
    */
   function getCostoNuevoUsdForLinea(l: LineaUI): number {
+    const factor = l.factor > 0 ? l.factor : 1
     if (moneda === 'USD') {
-      return l.factor > 0
-        ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
-        : l.costo_input
+      const costoFacturaUsd = new Decimal(l.costo_input).dividedBy(factor)
+      if (usaTasaParalela && tasaInternaNum > 0 && tasaFacturaNum > 0) {
+        return costoFacturaUsd.times(tasaFacturaNum).dividedBy(tasaInternaNum).toNumber()
+      }
+      return costoFacturaUsd.toNumber()
     }
-    return tasaFacturaNum > 0
-      ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
+    // BS: contable = costo_bs / tasa_interna / factor. Sin paralela, la tasa
+    // interna coincide con la de factura, asi que el resultado no cambia.
+    const tasaContable = usaTasaParalela && tasaInternaNum > 0 ? tasaInternaNum : tasaFacturaNum
+    return tasaContable > 0
+      ? new Decimal(l.costo_input).dividedBy(tasaContable).dividedBy(factor).toNumber()
       : 0
   }
 
@@ -692,6 +736,37 @@ export function CompraForm({ onClose }: CompraFormProps) {
     return nivelesActivos.length > 0
       ? nivelesActivos
       : [{ id: 'virtual', empresa_id: '', nombre: 'PVP', orden: 1, porcentaje_defecto: '0.00', is_active: 1, created_at: '', updated_at: '', created_by: null, updated_by: null }]
+  }
+
+  /** Construye la vista base de pvp_niveles para una linea a partir de su costo
+   * CONTABLE actual (getCostoNuevoUsdForLinea). `violado`/`margen_si_mantiene_pvp`
+   * salen SIEMPRE del contable, no del costo de factura. Extraido de
+   * handleNuevoCostoChange para reusarse cuando cambia la tasa (el contable
+   * depende de la tasa, asi que los niveles deben regenerarse). Cada nivel arranca
+   * en decision='pendiente' — el usuario debe elegir explicitamente. */
+  function construirPvpNiveles(l: LineaUI): PvpNivelUI[] {
+    const costoNuevoUsd = getCostoNuevoUsdForLinea(l)
+    return getNivelesEfectivos().map((nivel) => {
+      const campo = getPvpCampoByOrden(nivel.orden)
+      const pvpActualUsd = parseFloat(getPvpValueFromLinea(l, campo)) || 0
+      const violado = costoNuevoUsd > pvpActualUsd + 0.0001
+      const margenSiMantienePvp = calcularMargenSiSeMantienePvp(new Decimal(costoNuevoUsd), new Decimal(pvpActualUsd))
+      const pvpDisplay = moneda === 'USD'
+        ? pvpActualUsd
+        : new Decimal(pvpActualUsd).times(tasaFacturaNum).toNumber()
+
+      return {
+        orden: nivel.orden,
+        nombre: nivel.nombre,
+        campo,
+        pvp_actual_usd: pvpActualUsd,
+        pvp_input: pvpDisplay.toFixed(2),
+        margen_input: margenSiMantienePvp.toFixed(1),
+        violado,
+        decision: 'pendiente' as DecisionPvp,
+        margen_si_mantiene_pvp: margenSiMantienePvp.toFixed(1),
+      }
+    })
   }
 
   /** Maneja cambios en el campo "Nuevo Costo" de una línea. */
@@ -715,7 +790,6 @@ export function CompraForm({ onClose }: CompraFormProps) {
         if (isNaN(numericalValue) || numericalValue < 0) return l
 
         const updated = { ...l, nuevo_costo_raw: clamped, costo_input: numericalValue }
-        const costoNuevoUsd = getCostoNuevoUsdForLinea(updated)
 
         // Sin cambio real → limpiar decisiones pendientes.
         // Normalizar a Bs para comparar con precisión en ambos modos:
@@ -727,32 +801,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
           return { ...updated, pvp_niveles: [] }
         }
 
-        // Vista base de comparación: PVP actual + margen resultante si se mantiene,
-        // por nivel. decision arranca en 'pendiente' — nunca se auto-selecciona ni
-        // auto-actualiza el PVP (el usuario debe elegir explícitamente).
-        const pvpNiveles: PvpNivelUI[] = getNivelesEfectivos().map((nivel) => {
-          const campo = getPvpCampoByOrden(nivel.orden)
-          const pvpActualUsd = parseFloat(getPvpValueFromLinea(l, campo)) || 0
-          const violado = costoNuevoUsd > pvpActualUsd + 0.0001
-          const margenSiMantienePvp = calcularMargenSiSeMantienePvp(new Decimal(costoNuevoUsd), new Decimal(pvpActualUsd))
-          const pvpDisplay = moneda === 'USD'
-            ? pvpActualUsd
-            : new Decimal(pvpActualUsd).times(tasaFacturaNum).toNumber()
-
-          return {
-            orden: nivel.orden,
-            nombre: nivel.nombre,
-            campo,
-            pvp_actual_usd: pvpActualUsd,
-            pvp_input: pvpDisplay.toFixed(2),
-            margen_input: margenSiMantienePvp.toFixed(1),
-            violado,
-            decision: 'pendiente',
-            margen_si_mantiene_pvp: margenSiMantienePvp.toFixed(1),
-          }
-        })
-
-        return { ...updated, pvp_niveles: pvpNiveles }
+        // Vista base de comparación contra el costo CONTABLE (ver construirPvpNiveles).
+        return { ...updated, pvp_niveles: construirPvpNiveles(updated) }
       })
     )
   }
@@ -853,13 +903,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
         if (i !== index) return l
         const clamped = clampNumeric(value, NUMERIC_LIMITS.pvp.max, NUMERIC_LIMITS.pvp.decimals)
         const pvpNum = parseFloat(clamped)
-        const costoNuevoUsd = moneda === 'USD'
-          ? (l.factor > 0
-              ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
-              : l.costo_input)
-          : (tasaFacturaNum > 0
-              ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
-              : 0)
+        // Margen contra el costo CONTABLE (no el de factura) — ver getCostoNuevoUsdForLinea.
+        const costoNuevoUsd = getCostoNuevoUsdForLinea(l)
 
         const pvpNiveles = l.pvp_niveles.map((n) => {
           if (n.orden !== orden) return n
@@ -884,13 +929,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
         if (i !== index) return l
         const clamped = clampNumeric(value, NUMERIC_LIMITS.margen.max, NUMERIC_LIMITS.margen.decimals)
         const margenNum = parseFloat(clamped)
-        const costoNuevoUsd = moneda === 'USD'
-          ? (l.factor > 0
-              ? new Decimal(l.costo_input).dividedBy(l.factor).toNumber()
-              : l.costo_input)
-          : (tasaFacturaNum > 0
-              ? new Decimal(l.costo_input).dividedBy(tasaFacturaNum).dividedBy(l.factor > 0 ? l.factor : 1).toNumber()
-              : 0)
+        // PVP proyectado desde el costo CONTABLE (no el de factura) — ver getCostoNuevoUsdForLinea.
+        const costoNuevoUsd = getCostoNuevoUsdForLinea(l)
 
         const pvpNiveles = l.pvp_niveles.map((n) => {
           if (n.orden !== orden) return n
