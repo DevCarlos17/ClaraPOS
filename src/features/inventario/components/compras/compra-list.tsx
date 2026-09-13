@@ -119,10 +119,11 @@ export function CompraList() {
               <CalendarDots className="h-4 w-4" />
               <span className="font-medium">Periodo:</span>
             </div>
-            {/* Fechas: siempre en una sola fila (Desde + Hasta lado a lado).
-                min-w-0 en el contenedor y el input permite que el date se
-                encoja de verdad y no desborde el viewport en mobile. */}
-            <div className="flex items-center gap-2 min-w-0 flex-1 lg:flex-none">
+            {/* Fechas lado a lado. En mobile el label va ARRIBA del input
+                (layout vertical) para liberar el ancho horizontal que el date
+                nativo necesita — no se puede achicar mas que su ancho minimo.
+                En desktop (lg) vuelve a label + input en linea. */}
+            <div className="flex flex-col lg:flex-row lg:items-center gap-1 lg:gap-2 min-w-0 flex-1 lg:flex-none">
               <label htmlFor="fecha-desde" className="text-xs text-muted-foreground shrink-0">
                 Desde
               </label>
@@ -135,7 +136,7 @@ export function CompraList() {
                 className="min-w-0 w-full lg:w-auto rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </div>
-            <div className="flex items-center gap-2 min-w-0 flex-1 lg:flex-none">
+            <div className="flex flex-col lg:flex-row lg:items-center gap-1 lg:gap-2 min-w-0 flex-1 lg:flex-none">
               <label htmlFor="fecha-hasta" className="text-xs text-muted-foreground shrink-0">
                 Hasta
               </label>
@@ -162,7 +163,7 @@ export function CompraList() {
               onClick={() => setShowForm(true)}
               className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer flex-1 lg:flex-none"
             >
-              Nueva Factura de Compra
+              Registrar compra
             </button>
           </div>
         </div>
