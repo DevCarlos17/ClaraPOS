@@ -421,6 +421,12 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     empresa_id,
   } = params
 
+  // [CHECKPOINT-COMPRA] TEMPORAL (QA) — logs de proceso. TODO: quitar antes de merge.
+  const CK = (paso: number, msg: string, extra?: unknown) =>
+    console.log(`[CHECKPOINT-COMPRA ${paso}/28] ${msg}`, extra ?? '')
+
+  CK(1, 'Inicio crearCompra', { proveedor_id, nro_factura, moneda, tasa, tasa_costo, lineas: lineas.length, pagos: pagos.length })
+
   if (lineas.length === 0) {
     throw new Error('Debe agregar al menos una linea a la compra')
   }
@@ -428,6 +434,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
   if (tasa <= 0) {
     throw new Error('La tasa de cambio debe ser mayor a 0')
   }
+  CK(2, 'Validaciones basicas OK (lineas>0, tasa>0)')
 
   // ─── Pre-check: número de factura único por proveedor ────────────────────────
   // Se consulta ANTES de abrir la transacción para fallar rápido y mantener
@@ -444,6 +451,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       `Cambiá el número antes de registrar.`
     )
   }
+  CK(3, 'Pre-check nro_factura unico OK')
 
   // ─── Pre-fetch: deposito, moneda y stocks ANTES de la transaccion ──────────
   // Hacemos los SELECTs fuera del writeTransaction para evitar mezclar
@@ -470,6 +478,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     }
     depositoPrincipalId = (depFallback.rows.item(0) as { id: string }).id
   }
+  CK(4, 'Deposito principal resuelto', depositoPrincipalId)
 
   // 0b. Moneda
   const monedaCode = moneda === 'BS' ? 'VES' : 'USD'
@@ -481,6 +490,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     throw new Error(`No se encontro la moneda ${monedaCode} en el catalogo`)
   }
   const monedaId = (monedaResult.rows.item(0) as { id: string }).id
+  CK(5, 'Moneda resuelta', { monedaCode, monedaId })
 
   // 0c. Stocks y precios actuales de todos los productos de las lineas
   const stocksMap = new Map<string, Decimal>()
@@ -520,9 +530,11 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     })
     productoDepositoMap.set(linea.producto_id, p.deposito_id ?? null)
   }
+  CK(6, 'Pre-fetch stocks/precios/depositos por linea OK', { productos: stocksMap.size })
 
   let compraId = ''
 
+  CK(7, 'Abriendo writeTransaction (todo lo siguiente es atomico)')
   await db.writeTransaction(async (tx) => {
     const now = localNow()
     compraId = uuidv4()
@@ -539,6 +551,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     // Tasas se almacenan con 4 decimales (regla #10; ver dTasa.toFixed(4) en el
     // asiento contable mas abajo), no con la precision de 8 de toStorageString.
     const tasaParalelaRef = usaTasaParalela ? dTasa.toFixed(4) : null
+    CK(8, 'Tasa paralela evaluada', { usaTasaParalela, tasaParalelaRef })
     let totalExentoUsd = new Decimal(0)
     let totalBaseUsd = new Decimal(0)
     let totalIvaUsd = new Decimal(0)
@@ -565,6 +578,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
     const totalUsd = totalExentoUsd.plus(totalBaseUsd).plus(totalIvaUsd)
     const totalBs = totalUsd.times(dTasa)
+    CK(9, 'Totales calculados', { exento: totalExentoUsd.toString(), base: totalBaseUsd.toString(), iva: totalIvaUsd.toString(), totalUsd: totalUsd.toString() })
 
     // 2. Calcular pagos inmediatos y saldo pendiente
     let totalAbonadoUsd = new Decimal(0)
@@ -577,6 +591,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     const pendienteUsd = Decimal.max(0, totalUsd.minus(totalAbonadoUsd))
     const tipo: 'CONTADO' | 'CREDITO' = pendienteUsd.lte(0.01) ? 'CONTADO' : 'CREDITO'
     const saldoPendUsd = pendienteUsd
+    CK(10, 'Pagos/saldo calculados', { totalAbonadoUsd: totalAbonadoUsd.toString(), pendienteUsd: pendienteUsd.toString(), tipo })
 
     // 3. INSERT facturas_compra (cabecera)
     // tasa       = proveedor/invoice rate (for CxP, original amounts)
@@ -611,9 +626,14 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         usuario_id,
       ]
     )
+    CK(11, 'INSERT facturas_compra (cabecera) OK', { compraId })
 
     // 4. Por cada linea: detalle + kardex + actualizar producto
+    CK(12, `Procesando ${lineas.length} linea(s)...`)
+    let _lineaNro = 0
     for (const linea of lineas) {
+      _lineaNro++
+      CK(13, `-- Linea ${_lineaNro}/${lineas.length}`, { producto_id: linea.producto_id, cantidad: linea.cantidad })
       const detalleId = uuidv4()
       const dCantidad = new Decimal(linea.cantidad)
       // Enrutamiento de ingreso por linea (Slice 1c): prioriza el deposito
@@ -633,9 +653,12 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // Equals costo_unitario_usd when not using tasa paralela.
       const costoSistema = new Decimal(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
 
+      CK(14, `   costos linea`, { costoFactura: dCostoUnit.toString(), costoContable: costoSistema.toString() })
+
       // 4a. Crear lote si aplica
       let loteId: string | null = null
       if (linea.lote_nro && linea.lote_nro.trim()) {
+        CK(15, `   creando lote`, linea.lote_nro)
         loteId = uuidv4()
         await tx.execute(
           `INSERT INTO lotes (id, empresa_id, producto_id, deposito_id, nro_lote, fecha_fabricacion, fecha_vencimiento, cantidad_inicial, cantidad_actual, costo_unitario, factura_compra_id, status, created_at, updated_at, created_by)
@@ -680,6 +703,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           now,
         ]
       )
+      CK(16, `   INSERT facturas_compra_det OK`)
 
       // 4c. Stock actual (pre-cargado; se actualiza localmente para acumular lineas del mismo producto)
       const stockActual = stocksMap.get(linea.producto_id) ?? new Decimal(0)
@@ -711,6 +735,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           now,
         ]
       )
+      CK(17, `   INSERT movimiento_inventario (kardex) OK`, { stockAnterior: stockActual.toString(), stockNuevo: stockNuevo.toString() })
 
       // 4f. UPDATE producto: stock + costo + precios (según decisión del usuario).
       //
@@ -740,6 +765,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // guardado o rompa el invariante costo_anterior === costo_nuevo en la auditoria.
       // Cuando el costo SI cambio, es exactamente costoSistema (sin cambios de comportamiento).
       const costoParaEscribir = resolverCostoAEscribir(actualizarCosto, costoSistema, costoActual)
+      CK(18, `   decision costo/pvp`, { actualizarCosto, actualizarPvp, registrarAuditoria, costoParaEscribir: costoParaEscribir.toString() })
 
       if (!actualizarCosto && !actualizarPvp) {
         // Costo no cambio y no se edito el pvp: nada que actualizar aqui ademas
@@ -835,6 +861,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
           'UPDATE productos SET costo_factura_usd = ?, tasa_paralela_ref = ?, updated_at = ? WHERE id = ?',
           [costoFacturaParaEscribir, tasaParalelaRef, now, linea.producto_id]
         )
+        CK(19, `   UPDATE producto costo_factura_usd + tasa_paralela_ref`, { costoFactura: costoFacturaParaEscribir, tasaParalelaRef })
+      } else {
+        CK(19, `   costo sin cambio -> no se toca ficha`)
       }
 
       // inventario_stock (por deposito) + productos.stock (total) — usa el deposito
@@ -851,6 +880,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         now,
         movimientoInventarioId: movId,
       })
+      CK(20, `   upsertStockDeposito OK`, { deposito: lineaDepositoId, delta: dCantidad.toString() })
 
       // 4g. Registrar historico de precios cuando cambio el costo o el pvp.
       // `pvpNuevoAudit !== null` ya es estructuralmente equivalente a `registrarAuditoria`
@@ -877,8 +907,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             now,
           ]
         )
+        CK(21, `   INSERT historico_precios (auditoria) OK`)
       }
     }
+    CK(22, 'Todas las lineas procesadas')
 
     // 4b. Gastos consolidados por concepto (Material de Empaque / Flete).
     // Se ejecuta DENTRO de la misma writeTransaction — PowerSync no permite tx
@@ -959,6 +991,8 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       }
     }
 
+    CK(23, 'Gastos consolidados (empaque/flete) procesados', { grupos: gruposCargo.length })
+
     // 5. Registrar movimientos de cuenta del proveedor
 
     // 5a. Calcular saldo proveedor desde facturas_compra (la nueva factura ya esta insertada)
@@ -994,6 +1028,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         ]
       )
       saldoProv = nuevoSaldo
+      CK(24, 'CxP: movimiento FAC (deuda) registrado', { pendienteUsd: pendienteUsd.toString() })
+    } else {
+      CK(24, 'CxP: sin deuda pendiente (contado)')
     }
 
     // 5c. Por cada pago inmediato: crear entrada PAG
@@ -1100,8 +1137,10 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         )
       }
     }
+    CK(25, 'Pagos inmediatos + movimientos banco/metodo registrados', { pagos: pagos.length })
 
     // 6. Generar asientos contables (siempre en Bs)
+    CK(26, 'Generando asientos contables...')
     try {
       const cuentas = await cargarMapaCuentas(tx, empresa_id)
       const pagosContabilidad = pagos.map((p) => ({
@@ -1129,7 +1168,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       })
 
       await tx.execute('UPDATE facturas_compra SET contabilidad_ok = 1 WHERE id = ?', [compraId])
+      CK(27, 'Asientos contables OK (contabilidad_ok = 1)')
     } catch (err: unknown) {
+      CK(27, 'Asientos contables FALLARON (se registra en errores_contabilidad, no bloquea)', err)
       console.warn('⚠️ contabilidad: fallo en asientos para compra', compraId, err)
       try {
         await tx.execute(
@@ -1150,5 +1191,6 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     }
   })
 
+  CK(28, 'writeTransaction COMPLETADA — compra registrada OK', { compraId, nroFactura: nro_factura })
   return { compraId, nroFactura: nro_factura }
 }
