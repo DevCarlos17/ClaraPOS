@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Eye, MagnifyingGlass, CalendarDots, ArrowCounterClockwise } from '@phosphor-icons/react'
+import { Plus, MagnifyingGlass, CalendarDots, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { useComprasPorFecha } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -166,18 +166,22 @@ export function CompraList() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Proveedor</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Tipo</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Exento USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Base USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">IVA USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Bs</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Tasa</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Registrado por</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {compras.map((compra) => (
-                    <tr key={compra.id} className="hover:bg-muted/30 transition-colors">
+                    <tr
+                      key={compra.id}
+                      onClick={() => setDetalleId(compra.id)}
+                      className="hover:bg-muted/30 cursor-pointer transition-colors"
+                    >
                       <td className="px-4 py-3 font-mono text-sm text-foreground">{compra.nro_factura}</td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">
                         {formatDate(compra.fecha_factura)}
@@ -215,6 +219,9 @@ export function CompraList() {
                         )}
                       </td>
                       <td className="px-4 py-3 text-sm text-right text-muted-foreground">
+                        {formatUsd(compra.total_exento_usd)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-muted-foreground">
                         {formatUsd(compra.total_base_usd)}
                       </td>
                       <td className="px-4 py-3 text-sm text-right text-muted-foreground">
@@ -231,15 +238,6 @@ export function CompraList() {
                       </td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">
                         {compra.creado_por_nombre ?? '-'}
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => setDetalleId(compra.id)}
-                          className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors cursor-pointer"
-                        >
-                          <Eye className="h-4 w-4" />
-                          Ver
-                        </button>
                       </td>
                     </tr>
                   ))}
