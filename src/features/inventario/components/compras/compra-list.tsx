@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, MagnifyingGlass, CalendarDots, ArrowCounterClockwise, CaretRight } from '@phosphor-icons/react'
+import { CalendarDots, ArrowCounterClockwise, CaretRight } from '@phosphor-icons/react'
 import { useComprasPorFecha } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -112,14 +112,15 @@ export function CompraList() {
     <div className="flex flex-1 min-h-0 flex-col gap-4">
       {/* Filtros + acciones */}
       <div className="rounded-2xl bg-card shadow-lg p-4 shrink-0">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 justify-between">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3 lg:justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full lg:w-auto">
             <div className="flex items-center gap-2 text-sm text-muted-foreground shrink-0">
               <CalendarDots className="h-4 w-4" />
               <span className="font-medium">Periodo:</span>
             </div>
-            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
-              <div className="flex items-center gap-2">
+            {/* Fechas: siempre en una sola fila (Desde + Hasta lado a lado) */}
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              <div className="flex items-center gap-2 flex-1 sm:flex-none">
                 <label htmlFor="fecha-desde" className="text-xs text-muted-foreground whitespace-nowrap">
                   Desde
                 </label>
@@ -129,10 +130,10 @@ export function CompraList() {
                   value={fechaDesde}
                   onChange={(e) => setFechaDesde(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full sm:w-auto rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-1 sm:flex-none">
                 <label htmlFor="fecha-hasta" className="text-xs text-muted-foreground whitespace-nowrap">
                   Hasta
                 </label>
@@ -142,26 +143,27 @@ export function CompraList() {
                   value={fechaHasta}
                   onChange={(e) => setFechaHasta(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full sm:w-auto rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
                 />
               </div>
-              <button
-                onClick={handleConsultar}
-                disabled={!!rangeError || !fechaDesde || !fechaHasta}
-                className="inline-flex items-center justify-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer w-full sm:w-auto"
-              >
-                <MagnifyingGlass className="h-4 w-4" />
-                Consultar
-              </button>
             </div>
           </div>
-          <button
-            onClick={() => setShowForm(true)}
-            className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer shrink-0 w-full sm:w-auto"
-          >
-            <Plus className="h-4 w-4" />
-            Nueva Factura de Compra
-          </button>
+          {/* Acciones: Consultar + Nueva Factura siempre en una sola fila */}
+          <div className="flex items-center gap-3 w-full lg:w-auto">
+            <button
+              onClick={handleConsultar}
+              disabled={!!rangeError || !fechaDesde || !fechaHasta}
+              className="inline-flex items-center justify-center px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex-1 lg:flex-none"
+            >
+              Consultar
+            </button>
+            <button
+              onClick={() => setShowForm(true)}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer flex-1 lg:flex-none"
+            >
+              Nueva Factura de Compra
+            </button>
+          </div>
         </div>
         {rangeError && (
           <p className="text-destructive text-xs mt-2">{rangeError}</p>
