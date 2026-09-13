@@ -1992,6 +1992,24 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
             </div>
           )}
 
+          {/* Banner pasivo y permanente (fuera del gate de tabs): indica que
+              este producto YA tiene tasa_paralela_ref persistida en la DB,
+              sin importar en que tab este el usuario. Criterio ESTRICTO
+              (igual que las demas superficies): solo `tasa_paralela_ref !=
+              null`, nunca comparacion de costos. Solo lectura — se lee
+              directo del prop `producto` (dato persistido), no del estado
+              reactivo del sandbox. */}
+          {isEditing && producto?.tasa_paralela_ref != null && producto.tasa_paralela_ref.trim() !== '' && (
+            <div
+              role="status"
+              className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+            >
+              Usa tasa paralela — costo contable ${toMaskedDisplay(producto.costo_usd)} (factura $
+              {toMaskedDisplay(producto.costo_factura_usd ?? producto.costo_usd)}, tasa{' '}
+              {toMaskedDisplay(producto.tasa_paralela_ref, 4)}).
+            </div>
+          )}
+
           {/* Codigo + Nombre */}
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
