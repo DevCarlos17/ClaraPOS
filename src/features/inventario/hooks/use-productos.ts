@@ -111,6 +111,10 @@ export async function crearProducto(data: {
   duracion_min?: number | null
   /** Deposito por defecto donde ingresa stock nuevo (compras, kardex). NULL = sin definir (cae al principal en tiempo de resolucion). */
   deposito_id?: string | null
+  /** Costo segun factura (tasa proveedor), declarado manualmente en la ficha via el sandbox de tasa paralela. undefined/null = sin declarar. */
+  costo_factura_usd?: number | null
+  /** Tasa paralela usada para derivar costo_usd. undefined/null = tasa interna/oficial. */
+  tasa_paralela_ref?: string | null
 }) {
   const id = uuidv4()
   const now = localNow()
@@ -145,6 +149,8 @@ export async function crearProducto(data: {
       codigo_barras: data.codigo_barras?.trim() || null,
       duracion_min: data.tipo === 'S' ? (data.duracion_min ?? null) : null,
       deposito_id: data.deposito_id ?? null,
+      costo_factura_usd: data.costo_factura_usd != null ? data.costo_factura_usd.toFixed(8) : null,
+      tasa_paralela_ref: data.tasa_paralela_ref ?? null,
     })
     .execute()
 
@@ -173,6 +179,10 @@ export async function actualizarProducto(
     duracion_min?: number | null
     /** Deposito por defecto (editable). Solo se toca si se provee explicitamente. */
     deposito_id?: string | null
+    /** Costo segun factura declarado via el sandbox de tasa paralela. Solo se toca si se provee explicitamente (undefined = no tocar lo existente). */
+    costo_factura_usd?: number | null
+    /** Tasa paralela declarada via el sandbox. Solo se toca si se provee explicitamente (undefined = no tocar; null = limpiar la marca, vuelve a tasa interna). */
+    tasa_paralela_ref?: string | null
   }
 ) {
   const now = localNow()
@@ -197,6 +207,10 @@ export async function actualizarProducto(
   if (data.codigo_barras !== undefined) updates.codigo_barras = data.codigo_barras?.trim() || null
   if (data.duracion_min !== undefined) updates.duracion_min = data.duracion_min ?? null
   if (data.deposito_id !== undefined) updates.deposito_id = data.deposito_id ?? null
+  if (data.costo_factura_usd !== undefined) {
+    updates.costo_factura_usd = data.costo_factura_usd != null ? data.costo_factura_usd.toFixed(8) : null
+  }
+  if (data.tasa_paralela_ref !== undefined) updates.tasa_paralela_ref = data.tasa_paralela_ref ?? null
 
   // Servicios y Combos no manejan stock ni presentacion fisica
   if (data.tipo === 'S' || data.tipo === 'C') {

@@ -23,10 +23,12 @@ import { toMaskedDisplay, toFullDisplay } from '@/lib/decimal-display-mask'
 import { soloNumeroPositivo } from '@/lib/numeric-input'
 import {
   calcularPrecioPreservandoMargen,
+  calcularPrecioPreservandoMargenD,
   calcularCostoBsBackCalculado,
   debeExplorarCosto,
   calcularCostoDesdeNivel,
   fijarCostoYCascada,
+  calcularMargenPreservandoPvp,
 } from '@/features/inventario/lib/producto-precio-gating'
 import { useCatalogoGlobal } from '@/features/inventario/hooks/use-catalogo-global'
 import { upsertStockDeposito } from '@/features/inventario/lib/stock-deposito'
@@ -439,6 +441,50 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   const [costoBackCalculado, setCostoBackCalculado] = useState(false)
   const [avisoMargenNegativo, setAvisoMargenNegativo] = useState<'detal' | 'mayor' | 'especial' | null>(null)
 
+  // === Sandbox de Tasa Paralela (Bug#3 Fase 2, Tarea #4) ===
+  //
+  // Permite declarar MANUALMENTE en la ficha (sin pasar por una compra) que
+  // un producto se cotiza a tasa paralela: el usuario conoce el costo segun
+  // factura/proveedor ($) y la tasa paralela (Bs) a la que le esta vendiendo
+  // el proveedor, y el sandbox deriva el costo CONTABLE resultante
+  // (costoFactura * tasaParalela / tasaInterna, misma formula que
+  // getCostoNuevoUsdForLinea en compra-form.tsx) SIN mutar el form real hasta
+  // que el usuario confirma. Ver decision #3469 y mapa #3484 en Engram.
+  const [usaTasaParalela, setUsaTasaParalela] = useState(false)
+  const [costoFacturaStr, setCostoFacturaStr] = useState('')
+  const costoFacturaFullRef = useRef(0)
+  const [tasaParalelaStr, setTasaParalelaStr] = useState('')
+  const tasaParalelaFullRef = useRef(0)
+  const [modoRecalculo, setModoRecalculo] = useState<'margen' | 'mantener_pvp' | 'manual'>('margen')
+  // true una vez que el usuario presiono "Confirmar cambios": el panel se
+  // colapsa a un resumen de solo lectura y los inputs de factura/tasa se
+  // bloquean (ver "Revertir"/"Deshacer" para volver a abrirlo).
+  const [sandboxAplicado, setSandboxAplicado] = useState(false)
+  // Margenes manuales del modo "Editar manual todo" — independientes de
+  // margenFullRef/etc (esos son del form real, estos son solo del preview).
+  const [sbManualMargenDetal, setSbManualMargenDetal] = useState('')
+  const [sbManualMargenMayor, setSbManualMargenMayor] = useState('')
+  const [sbManualMargenEspecial, setSbManualMargenEspecial] = useState('')
+  // Valores a persistir en handleSubmit. `undefined` = el usuario nunca tocó
+  // el sandbox en esta sesion del form -> NO se envia el campo (no se toca
+  // lo que ya hay en DB). Se llenan solo en `handleConfirmarSandbox` o al
+  // destildar el checkbox tras haber confirmado (regla "ultimo movimiento
+  // manda": limpia costo_factura_usd/tasa_paralela_ref a null).
+  const costoFacturaUsdToPersistRef = useRef<number | undefined>(undefined)
+  const tasaParalelaRefToPersistRef = useRef<string | null | undefined>(undefined)
+  // Snapshot (precision completa) tomado al tildar el checkbox, usado por
+  // "Revertir"/destildar para restaurar el form real exactamente como estaba
+  // antes de abrir el sandbox.
+  const sandboxSnapshotRef = useRef<{
+    costoUsd: number
+    precioVentaUsd: number
+    precioMayorUsd: number
+    precioEspecialUsd: number
+    margen: number
+    margenMayor: number
+    margenEspecial: number
+  } | null>(null)
+
   // === Duracion por defecto (solo Servicios) ===
   const [duracionMin, setDuracionMin] = useState<number | null>(null)
 
@@ -627,6 +673,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setErrors({})
       setCostoBackCalculado(false)
       setAvisoMargenNegativo(null)
+      resetSandboxTasaParalela()
       setPopoverOpen(false)
       dialogRef.current?.showModal()
     } else {
@@ -728,6 +775,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   function setPrecioEspecialCompleto(fullValue: number, displayVal: string) {
     precioEspecialUsdFullRef.current = fullValue
     setPrecioEspecialUsd(displayVal)
+  }
+  /** Igual que `setCostoCompleto`/etc, pero para el Costo segun Factura del sandbox de tasa paralela. */
+  function setCostoFacturaCompleto(fullValue: number, displayVal: string) {
+    costoFacturaFullRef.current = fullValue
+    setCostoFacturaStr(displayVal)
+  }
+  /** Igual que `setCostoFacturaCompleto`, pero para la Tasa Paralela (Bs) del sandbox. */
+  function setTasaParalelaCompleto(fullValue: number, displayVal: string) {
+    tasaParalelaFullRef.current = fullValue
+    setTasaParalelaStr(displayVal)
   }
 
   /**
@@ -979,6 +1036,229 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setCostoBackCalculado(false)
   }
 
+  // === Sandbox de Tasa Paralela (Bug#3 Fase 2, Tarea #4) ===
+
+  function handleCostoFacturaChange(val: string) {
+    const num = parseFloat(val)
+    setCostoFacturaCompleto(isNaN(num) ? 0 : num, val)
+  }
+
+  function handleTasaParalelaChange(val: string) {
+    const num = parseFloat(val)
+    setTasaParalelaCompleto(isNaN(num) ? 0 : num, val)
+  }
+
+  /**
+   * Costo CONTABLE derivado del sandbox: costoFactura * tasaParalela /
+   * tasaInterna — misma formula que `getCostoNuevoUsdForLinea` (USD) en
+   * compra-form.tsx. `null` mientras falte cualquier insumo (factura, tasa
+   * paralela o tasa interna vigente).
+   */
+  function calcularCostoContablePreview(): Decimal | null {
+    if (!usaTasaParalela) return null
+    const cf = costoFacturaFullRef.current
+    const tp = tasaParalelaFullRef.current
+    if (cf <= 0 || tp <= 0 || tasaValor <= 0) return null
+    return new Decimal(cf).times(tp).dividedBy(tasaValor)
+  }
+
+  /**
+   * Preview de margen%/PVP para UN nivel de precio bajo el modo de
+   * recalculo elegido, sin mutar el form real todavia (ver
+   * `handleConfirmarSandbox` para la aplicacion definitiva):
+   * - 'margen': preserva el margen % que el nivel tenia ANTES del cambio de
+   *   costo (mismo criterio que "Fijar costo"/`fijarCostoYCascada`).
+   * - 'mantener_pvp': preserva el PVP actual; el margen resultante es
+   *   solo informativo (`calcularMargenPreservandoPvp`).
+   * - 'manual': usa el margen tipeado a mano por el usuario en el sandbox
+   *   (`sbManualMargen*`), independiente del margen previo del nivel.
+   */
+  function calcularPreviewNivel(nivel: 'detal' | 'mayor' | 'especial'): { margenPct: number; pvpUsd: number } {
+    const costoContable = calcularCostoContablePreview()
+    if (!costoContable) return { margenPct: 0, pvpUsd: 0 }
+
+    const margenActual =
+      nivel === 'detal' ? margenFullRef.current : nivel === 'mayor' ? margenMayorFullRef.current : margenEspecialFullRef.current
+    const pvpActual =
+      nivel === 'detal' ? precioVentaUsdFullRef.current : nivel === 'mayor' ? precioMayorUsdFullRef.current : precioEspecialUsdFullRef.current
+
+    if (modoRecalculo === 'mantener_pvp') {
+      const margenPct = calcularMargenPreservandoPvp(costoContable, new Decimal(pvpActual)).toNumber()
+      return { margenPct, pvpUsd: pvpActual }
+    }
+    if (modoRecalculo === 'manual') {
+      const margenStr = nivel === 'detal' ? sbManualMargenDetal : nivel === 'mayor' ? sbManualMargenMayor : sbManualMargenEspecial
+      const margenPctD = new Decimal(parseFloat(margenStr) || 0)
+      // Decimal de punta a punta (costoContable ya es Decimal, ver
+      // `calcularCostoContablePreview`) — nunca se rompe la cadena con
+      // `.toNumber()` a mitad de camino (regla de negocio #10). El `number`
+      // solo aparece en el `return`, que es el limite de escritura hacia
+      // los refs de precision completa (`setPrecio*Completo`).
+      return { margenPct: margenPctD.toNumber(), pvpUsd: calcularPrecioPreservandoMargenD(costoContable, margenPctD).toNumber() }
+    }
+    // 'margen' (default): preserva el margen previo del nivel. Mismo
+    // criterio Decimal-de-punta-a-punta que el modo 'manual' de arriba.
+    const margenActualD = new Decimal(margenActual)
+    return { margenPct: margenActual, pvpUsd: calcularPrecioPreservandoMargenD(costoContable, margenActualD).toNumber() }
+  }
+
+  function handleToggleTasaParalela(checked: boolean) {
+    if (checked) {
+      // Snapshot ANTES de abrir el sandbox, para que "Revertir"/destildar
+      // pueda restaurar el form real exactamente como estaba.
+      sandboxSnapshotRef.current = {
+        costoUsd: costoUsdFullRef.current,
+        precioVentaUsd: precioVentaUsdFullRef.current,
+        precioMayorUsd: precioMayorUsdFullRef.current,
+        precioEspecialUsd: precioEspecialUsdFullRef.current,
+        margen: margenFullRef.current,
+        margenMayor: margenMayorFullRef.current,
+        margenEspecial: margenEspecialFullRef.current,
+      }
+      setUsaTasaParalela(true)
+      setSandboxAplicado(false)
+      setModoRecalculo('margen')
+      return
+    }
+    // Destildar: misma logica que "Revertir"/"Deshacer" (ver
+    // `handleRevertirSandbox`, que resuelve ahi la regla "ultimo movimiento
+    // manda"). Centralizado en un solo lugar para que TODOS los caminos que
+    // descartan el sandbox — destildar el checkbox, el boton "Revertir"
+    // (pre-confirmar) y el boton "Deshacer" (post-confirmar) — apliquen
+    // exactamente la misma semantica de persistencia.
+    handleRevertirSandbox()
+  }
+
+  function handleSetModoRecalculo(modo: 'margen' | 'mantener_pvp' | 'manual') {
+    if (modo === 'manual' && modoRecalculo !== 'manual') {
+      // Arranca desde el margen previo de cada nivel (punto de partida
+      // razonable), el usuario lo edita libremente desde ahi.
+      setSbManualMargenDetal(margenFullRef.current !== 0 ? toMaskedDisplay(margenFullRef.current) : '0')
+      setSbManualMargenMayor(margenMayorFullRef.current !== 0 ? toMaskedDisplay(margenMayorFullRef.current) : '0')
+      setSbManualMargenEspecial(margenEspecialFullRef.current !== 0 ? toMaskedDisplay(margenEspecialFullRef.current) : '0')
+    }
+    setModoRecalculo(modo)
+  }
+
+  /**
+   * Aplica el sandbox al form REAL: costo_usd (contable) via el setter
+   * existente `setCostoCompleto` (respeta el mismo gate que cualquier otra
+   * escritura de costo) y margen/PVP de los 3 niveles segun el modo
+   * elegido. Deja el panel bloqueado (`sandboxAplicado`) y guarda lo que
+   * `handleSubmit` debe persistir (costo_factura_usd + tasa_paralela_ref).
+   */
+  function handleConfirmarSandbox() {
+    const costoContable = calcularCostoContablePreview()
+    if (!costoContable) return
+    const costoContableN = costoContable.toNumber()
+
+    setCostoCompleto(costoContableN, toMaskedDisplay(costoContableN))
+    if (tasaValor > 0) setCostoBs(usdToBs(costoContableN, tasaValor).toFixed(2))
+    setCostoBackCalculado(false)
+
+    const detal = calcularPreviewNivel('detal')
+    setMargenCompleto(detal.margenPct, detal.margenPct !== 0 ? toMaskedDisplay(detal.margenPct) : '')
+    setPrecioVentaCompleto(detal.pvpUsd, detal.pvpUsd > 0 ? toMaskedDisplay(detal.pvpUsd) : '')
+    if (tasaValor > 0) setPrecioVentaBs(detal.pvpUsd > 0 ? usdToBs(detal.pvpUsd, tasaValor).toFixed(2) : '')
+
+    if (nivel2) {
+      const mayor = calcularPreviewNivel('mayor')
+      setMargenMayorCompleto(mayor.margenPct, mayor.margenPct !== 0 ? toMaskedDisplay(mayor.margenPct) : '')
+      setPrecioMayorCompleto(mayor.pvpUsd, mayor.pvpUsd > 0 ? toMaskedDisplay(mayor.pvpUsd) : '')
+      if (tasaValor > 0) setPrecioMayorBs(mayor.pvpUsd > 0 ? usdToBs(mayor.pvpUsd, tasaValor).toFixed(2) : '')
+    }
+    if (nivel3) {
+      const especial = calcularPreviewNivel('especial')
+      setMargenEspecialCompleto(especial.margenPct, especial.margenPct !== 0 ? toMaskedDisplay(especial.margenPct) : '')
+      setPrecioEspecialCompleto(especial.pvpUsd, especial.pvpUsd > 0 ? toMaskedDisplay(especial.pvpUsd) : '')
+      if (tasaValor > 0) setPrecioEspecialBs(especial.pvpUsd > 0 ? usdToBs(especial.pvpUsd, tasaValor).toFixed(2) : '')
+    }
+
+    costoFacturaUsdToPersistRef.current = costoFacturaFullRef.current
+    tasaParalelaRefToPersistRef.current = tasaParalelaFullRef.current.toFixed(4)
+    setSandboxAplicado(true)
+  }
+
+  /**
+   * Descarta el sandbox y restaura el form real al snapshot tomado al abrir
+   * el checkbox (si existe). Reutilizada por destildar el checkbox
+   * (`handleToggleTasaParalela`), el boton "Revertir" (pre-confirmar) y el
+   * boton "Deshacer" (post-confirmar).
+   *
+   * Tambien resuelve QUE se persiste en `handleSubmit` (regla "ultimo
+   * movimiento manda"), SIEMPRE — no solo cuando viene de destildar el
+   * checkbox:
+   * - Si el sandbox YA se habia CONFIRMADO (`sandboxAplicado`), revertir es
+   *   una decision explicita de volver a tasa interna -> limpia la marca
+   *   (tasa_paralela_ref = null, costo_factura_usd = costo contable
+   *   pre-sandbox) para que se persista.
+   * - Si nunca se confirmo, los refs de persistencia vuelven a `undefined`
+   *   (no tocar lo que ya hay en DB).
+   *
+   * BUG CRITICO corregido (ver verify de este cambio): antes, "Deshacer"
+   * llamaba esta funcion SIN pasar por la limpieza de arriba (esa logica
+   * vivia solo en la rama de destildar de `handleToggleTasaParalela`) — el
+   * sandbox descartado quedaba igual restaurando costo_usd/PVP correctos,
+   * pero costo_factura_usd/tasa_paralela_ref se escribian en la DB con los
+   * valores del sandbox DESCARTADO al hacer submit (corrupcion silenciosa:
+   * producto queda marcado "tasa paralela" con una factura/tasa que no
+   * corresponde a su costo_usd real). Centralizar la limpieza ACA, ejecutada
+   * SIEMPRE al revertir (no solo al destildar), cierra el hueco para los 3
+   * caminos (destildar, "Revertir", "Deshacer") y es idempotente: cada
+   * llamada deja los refs en un estado bien definido, nunca con residuos de
+   * un ciclo anterior.
+   */
+  function handleRevertirSandbox() {
+    const snap = sandboxSnapshotRef.current
+    if (sandboxAplicado) {
+      const costoPrevio = snap?.costoUsd ?? costoUsdFullRef.current
+      costoFacturaUsdToPersistRef.current = costoPrevio
+      tasaParalelaRefToPersistRef.current = null
+    } else {
+      costoFacturaUsdToPersistRef.current = undefined
+      tasaParalelaRefToPersistRef.current = undefined
+    }
+    if (snap) {
+      setCostoCompleto(snap.costoUsd, snap.costoUsd > 0 ? toMaskedDisplay(snap.costoUsd) : '')
+      setPrecioVentaCompleto(snap.precioVentaUsd, snap.precioVentaUsd > 0 ? toMaskedDisplay(snap.precioVentaUsd) : '')
+      setPrecioMayorCompleto(snap.precioMayorUsd, snap.precioMayorUsd > 0 ? toMaskedDisplay(snap.precioMayorUsd) : '')
+      setPrecioEspecialCompleto(snap.precioEspecialUsd, snap.precioEspecialUsd > 0 ? toMaskedDisplay(snap.precioEspecialUsd) : '')
+      setMargenCompleto(snap.margen, snap.margen !== 0 ? toMaskedDisplay(snap.margen) : '')
+      setMargenMayorCompleto(snap.margenMayor, snap.margenMayor !== 0 ? toMaskedDisplay(snap.margenMayor) : '')
+      setMargenEspecialCompleto(snap.margenEspecial, snap.margenEspecial !== 0 ? toMaskedDisplay(snap.margenEspecial) : '')
+      if (tasaValor > 0) {
+        setCostoBs(snap.costoUsd > 0 ? usdToBs(snap.costoUsd, tasaValor).toFixed(2) : '')
+        setPrecioVentaBs(snap.precioVentaUsd > 0 ? usdToBs(snap.precioVentaUsd, tasaValor).toFixed(2) : '')
+        setPrecioMayorBs(snap.precioMayorUsd > 0 ? usdToBs(snap.precioMayorUsd, tasaValor).toFixed(2) : '')
+        setPrecioEspecialBs(snap.precioEspecialUsd > 0 ? usdToBs(snap.precioEspecialUsd, tasaValor).toFixed(2) : '')
+      }
+    }
+    setUsaTasaParalela(false)
+    setCostoFacturaCompleto(0, '')
+    setTasaParalelaCompleto(0, '')
+    setModoRecalculo('margen')
+    setSbManualMargenDetal('')
+    setSbManualMargenMayor('')
+    setSbManualMargenEspecial('')
+    setSandboxAplicado(false)
+    sandboxSnapshotRef.current = null
+  }
+
+  /** Reset completo del sandbox — usado al abrir/cerrar el dialog y en "Limpiar". */
+  function resetSandboxTasaParalela() {
+    setUsaTasaParalela(false)
+    setCostoFacturaCompleto(0, '')
+    setTasaParalelaCompleto(0, '')
+    setModoRecalculo('margen')
+    setSbManualMargenDetal('')
+    setSbManualMargenMayor('')
+    setSbManualMargenEspecial('')
+    setSandboxAplicado(false)
+    sandboxSnapshotRef.current = null
+    costoFacturaUsdToPersistRef.current = undefined
+    tasaParalelaRefToPersistRef.current = undefined
+  }
+
   // --- Bidireccionales: PVP Mayor ---
   function handlePrecioMayorUsdChange(val: string) {
     const num = parseFloat(val)
@@ -1205,6 +1485,13 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       ubicacion: esServicioOCombo ? '' : ubicacion,
       presentacion: esServicioOCombo ? '' : presentacion,
       codigo_barras: codigoBarras.trim(),
+      // Sandbox de Tasa Paralela (Task #4): `undefined` cuando el usuario
+      // nunca confirmo el sandbox en esta sesion del form -> no se envia el
+      // campo a `actualizarProducto`/`crearProducto`, preservando lo que ya
+      // hay en DB (ver refs cerca de su declaracion, "=== Sandbox de Tasa
+      // Paralela ===").
+      costo_factura_usd: costoFacturaUsdToPersistRef.current,
+      tasa_paralela_ref: tasaParalelaRefToPersistRef.current,
     }
 
     const parsed = productoSchema.safeParse(data)
@@ -1215,7 +1502,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         if (field) fieldErrors[field] = issue.message
       }
       setErrors(fieldErrors)
-      const precioFields = ['costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'precio_especial_usd', 'tipo_impuesto', 'impuesto_iva_id']
+      const precioFields = ['costo_usd', 'precio_venta_usd', 'precio_mayor_usd', 'precio_especial_usd', 'tipo_impuesto', 'impuesto_iva_id', 'costo_factura_usd', 'tasa_paralela_ref']
       const generalFields = ['departamento_id', 'stock_minimo']
       const hasPrecios = precioFields.some((f) => fieldErrors[f])
       const hasGeneral = generalFields.some((f) => fieldErrors[f])
@@ -1246,6 +1533,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           codigo_barras: parsed.data.codigo_barras?.trim() || null,
           duracion_min: tipo === 'S' ? duracionMin : null,
           deposito_id: esServicioOCombo ? null : (depositoId || null),
+          costo_factura_usd: parsed.data.costo_factura_usd,
+          tasa_paralela_ref: parsed.data.tasa_paralela_ref,
         })
         toast.success('Producto actualizado correctamente')
       } else {
@@ -1269,6 +1558,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           codigo_barras: parsed.data.codigo_barras?.trim() || undefined,
           duracion_min: tipo === 'S' ? duracionMin : undefined,
           deposito_id: esServicioOCombo ? null : (depositoId || null),
+          costo_factura_usd: parsed.data.costo_factura_usd ?? null,
+          tasa_paralela_ref: parsed.data.tasa_paralela_ref ?? null,
         })
 
         const stockInicialNum = parseNumOrZero(stockInicial)
@@ -1412,6 +1703,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setStockInicial('')
     setCostoBackCalculado(false)
     setAvisoMargenNegativo(null)
+    resetSandboxTasaParalela()
     setErrors({})
     setActiveTab('general')
   }, [empresaId, nivel1, nivel2, nivel3])
@@ -1477,11 +1769,36 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
 
   const mostrarPopover = popoverOpen && sugerencias.length > 0 && !isEditing
 
+  // Preview del sandbox de tasa paralela (recalculado cada render mientras
+  // el panel esta abierto; ver "=== Sandbox de Tasa Paralela ===" mas arriba).
+  const costoContablePreview = calcularCostoContablePreview()
+  const previewDetal = calcularPreviewNivel('detal')
+  const previewMayor = nivel2 ? calcularPreviewNivel('mayor') : { margenPct: 0, pvpUsd: 0 }
+  const previewEspecial = nivel3 ? calcularPreviewNivel('especial') : { margenPct: 0, pvpUsd: 0 }
+
+  // Regla de negocio: ningun precio de venta (SIN IVA) puede quedar por
+  // debajo del costo CONTABLE vigente. Resaltado en vivo (rojo) ademas del
+  // bloqueo de submit via Zod (ver producto-schema.ts) — un producto que
+  // pasa a tasa paralela puede quedar con PVP viejo por debajo del nuevo
+  // costo contable si el usuario no ajusta los precios.
+  const ventaBelowCost =
+    !esComboLocal && costoUsdFullRef.current > 0 && precioVentaUsdFullRef.current > 0 &&
+    precioVentaUsdFullRef.current < costoUsdFullRef.current
+  const mayorBelowCost =
+    !esComboLocal && !!nivel2 && costoUsdFullRef.current > 0 && precioMayorUsdFullRef.current > 0 &&
+    precioMayorUsdFullRef.current < costoUsdFullRef.current
+  const especialBelowCost =
+    !esComboLocal && !!nivel3 && costoUsdFullRef.current > 0 && precioEspecialUsdFullRef.current > 0 &&
+    precioEspecialUsdFullRef.current < costoUsdFullRef.current
+
   const isSubmitDisabled =
     submitting ||
     !codigo.trim() ||
     !nombre.trim() ||
-    (!esComboLocal && costoUsdFullRef.current === 0)
+    (!esComboLocal && costoUsdFullRef.current === 0) ||
+    ventaBelowCost ||
+    mayorBelowCost ||
+    especialBelowCost
 
   const tabs: { id: TabId; label: string }[] = [
     { id: 'general', label: 'Informacion General' },
@@ -2023,6 +2340,249 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   )}
               </div>
 
+              {/* Sandbox de Tasa Paralela (Bug#3 Fase 2, Tarea #4) — declarar
+                  manualmente costo segun factura + tasa paralela cuando el
+                  producto aun no se ha comprado a esa tasa. */}
+              {!esComboLocal && (
+                <div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="prod-tasa-paralela-check"
+                      type="checkbox"
+                      checked={usaTasaParalela}
+                      onChange={(e) => handleToggleTasaParalela(e.target.checked)}
+                      disabled={sandboxAplicado}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                    />
+                    <label htmlFor="prod-tasa-paralela-check" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
+                      Usa tasa paralela (el proveedor cobra a una tasa distinta a la interna)
+                    </label>
+                  </div>
+
+                  {usaTasaParalela && !sandboxAplicado && (
+                    <div className="mt-3 p-3 rounded-lg bg-amber-50 border border-amber-200 space-y-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label htmlFor="prod-costo-factura" className="block text-xs font-medium text-amber-800 mb-1">
+                            Costo segun factura ($)
+                          </label>
+                          <input
+                            id="prod-costo-factura"
+                            type="text"
+                            inputMode="decimal"
+                            value={costoFacturaStr}
+                            onChange={(e) => handleCostoFacturaChange(soloNumeroPositivo(e.target.value))}
+                            onFocus={() =>
+                              costoFacturaFullRef.current > 0 &&
+                              setCostoFacturaStr(toFullDisplay(costoFacturaFullRef.current))
+                            }
+                            onBlur={() =>
+                              setCostoFacturaStr(
+                                costoFacturaStr.trim() === '' ? '' : toMaskedDisplay(costoFacturaFullRef.current)
+                              )
+                            }
+                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                            onWheel={stopScroll}
+                            placeholder="0.00"
+                            className={`w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 ${noSpinner}`}
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="prod-tasa-paralela" className="block text-xs font-medium text-amber-800 mb-1">
+                            Tasa paralela (Bs)
+                          </label>
+                          <input
+                            id="prod-tasa-paralela"
+                            type="text"
+                            inputMode="decimal"
+                            value={tasaParalelaStr}
+                            onChange={(e) => handleTasaParalelaChange(soloNumeroPositivo(e.target.value))}
+                            onFocus={() =>
+                              tasaParalelaFullRef.current > 0 &&
+                              setTasaParalelaStr(toFullDisplay(tasaParalelaFullRef.current, 4))
+                            }
+                            onBlur={() =>
+                              setTasaParalelaStr(
+                                tasaParalelaStr.trim() === '' ? '' : toMaskedDisplay(tasaParalelaFullRef.current, 4)
+                              )
+                            }
+                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                            onWheel={stopScroll}
+                            placeholder="0.0000"
+                            className={`w-full rounded-md border border-amber-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 ${noSpinner}`}
+                          />
+                        </div>
+                      </div>
+
+                      {!costoContablePreview && (
+                        <p className="text-xs text-amber-600">
+                          Completa el costo segun factura y la tasa paralela para ver el costo contable resultante.
+                        </p>
+                      )}
+
+                      {costoContablePreview && (
+                        <>
+                          <p className="text-xs text-amber-700">
+                            Costo contable resultante:{' '}
+                            <strong>${costoContablePreview.toFixed(2)}</strong>
+                            <span className="text-amber-600">
+                              {' '}(factura ${toMaskedDisplay(costoFacturaFullRef.current)} × tasa paralela{' '}
+                              {toMaskedDisplay(tasaParalelaFullRef.current, 4)} ÷ tasa interna {tasaValor.toFixed(4)})
+                            </span>
+                          </p>
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-amber-800">Como recalcular los precios de venta:</p>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleSetModoRecalculo('margen')}
+                                className={`px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                                  modoRecalculo === 'margen'
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                }`}
+                              >
+                                Recalcular por margen previo
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSetModoRecalculo('mantener_pvp')}
+                                className={`px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                                  modoRecalculo === 'mantener_pvp'
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                }`}
+                              >
+                                Mantener PVP
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleSetModoRecalculo('manual')}
+                                className={`px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                                  modoRecalculo === 'manual'
+                                    ? 'bg-blue-600 text-white border-blue-600'
+                                    : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                                }`}
+                              >
+                                Editar manual todo
+                              </button>
+                            </div>
+
+                            <div className="border border-amber-200 rounded-md overflow-hidden bg-white">
+                              <table className="w-full text-xs">
+                                <thead className="bg-amber-100/60">
+                                  <tr>
+                                    <th className="px-2 py-1.5 text-left font-medium text-amber-800">Nivel</th>
+                                    <th className="px-2 py-1.5 text-left font-medium text-amber-800">Margen (%)</th>
+                                    <th className="px-2 py-1.5 text-left font-medium text-amber-800">Precio Venta $</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-amber-100">
+                                  <tr>
+                                    <td className="px-2 py-1.5 text-gray-700">{nivel1?.nombre ?? 'Detal'}</td>
+                                    <td className="px-2 py-1.5">
+                                      {modoRecalculo === 'manual' ? (
+                                        <input
+                                          type="text"
+                                          inputMode="decimal"
+                                          value={sbManualMargenDetal}
+                                          onChange={(e) => setSbManualMargenDetal(soloNumeroPositivo(e.target.value))}
+                                          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                          onWheel={stopScroll}
+                                          className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
+                                        />
+                                      ) : (
+                                        <span className="tabular-nums">{previewDetal.margenPct.toFixed(2)}%</span>
+                                      )}
+                                    </td>
+                                    <td className="px-2 py-1.5 tabular-nums">${previewDetal.pvpUsd.toFixed(2)}</td>
+                                  </tr>
+                                  {nivel2 && (
+                                    <tr>
+                                      <td className="px-2 py-1.5 text-gray-700">{nivel2.nombre}</td>
+                                      <td className="px-2 py-1.5">
+                                        {modoRecalculo === 'manual' ? (
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={sbManualMargenMayor}
+                                            onChange={(e) => setSbManualMargenMayor(soloNumeroPositivo(e.target.value))}
+                                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                            onWheel={stopScroll}
+                                            className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
+                                          />
+                                        ) : (
+                                          <span className="tabular-nums">{previewMayor.margenPct.toFixed(2)}%</span>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1.5 tabular-nums">${previewMayor.pvpUsd.toFixed(2)}</td>
+                                    </tr>
+                                  )}
+                                  {nivel3 && (
+                                    <tr>
+                                      <td className="px-2 py-1.5 text-gray-700">{nivel3.nombre}</td>
+                                      <td className="px-2 py-1.5">
+                                        {modoRecalculo === 'manual' ? (
+                                          <input
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={sbManualMargenEspecial}
+                                            onChange={(e) => setSbManualMargenEspecial(soloNumeroPositivo(e.target.value))}
+                                            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                                            onWheel={stopScroll}
+                                            className={`w-20 rounded border border-gray-300 px-1.5 py-1 text-xs ${noSpinner}`}
+                                          />
+                                        ) : (
+                                          <span className="tabular-nums">{previewEspecial.margenPct.toFixed(2)}%</span>
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1.5 tabular-nums">${previewEspecial.pvpUsd.toFixed(2)}</td>
+                                    </tr>
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            <div className="flex gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={handleConfirmarSandbox}
+                                className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+                              >
+                                Confirmar cambios
+                              </button>
+                              <button
+                                type="button"
+                                onClick={handleRevertirSandbox}
+                                className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                              >
+                                Revertir
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  {sandboxAplicado && (
+                    <p className="mt-2 text-xs text-green-700">
+                      Cambios aplicados: costo contable {toMaskedDisplay(costoUsdFullRef.current)} USD (factura $
+                      {toMaskedDisplay(costoFacturaUsdToPersistRef.current ?? 0)}, tasa paralela{' '}
+                      {tasaParalelaRefToPersistRef.current ?? '—'}).{' '}
+                      <button
+                        type="button"
+                        onClick={handleRevertirSandbox}
+                        className="underline text-blue-600 hover:text-blue-800"
+                      >
+                        Deshacer
+                      </button>
+                    </p>
+                  )}
+                </div>
+              )}
+
               {/* Tabla de Precios por Nivel */}
               {!esComboLocal && (
                 <div>
@@ -2104,11 +2664,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               onWheel={stopScroll}
                               placeholder="0.00"
                               className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
-                                errors.precio_venta_usd ? 'border-red-500' : 'border-gray-300'
+                                errors.precio_venta_usd || ventaBelowCost ? 'border-red-500 bg-red-50' : 'border-gray-300'
                               }`}
                             />
                             {errors.precio_venta_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_venta_usd}</p>
+                            )}
+                            {!errors.precio_venta_usd && ventaBelowCost && (
+                              <p className="text-red-500 text-xs mt-0.5">
+                                No puede ser menor al costo (${toMaskedDisplay(costoUsdFullRef.current)})
+                              </p>
                             )}
                           </td>
                           <td className="px-2 py-1.5">
@@ -2237,11 +2802,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               onWheel={stopScroll}
                               placeholder="0.00"
                               className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
-                                errors.precio_mayor_usd ? 'border-red-500' : 'border-gray-300'
+                                errors.precio_mayor_usd || mayorBelowCost ? 'border-red-500 bg-red-50' : 'border-gray-300'
                               }`}
                             />
                             {errors.precio_mayor_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_mayor_usd}</p>
+                            )}
+                            {!errors.precio_mayor_usd && mayorBelowCost && (
+                              <p className="text-red-500 text-xs mt-0.5">
+                                No puede ser menor al costo (${toMaskedDisplay(costoUsdFullRef.current)})
+                              </p>
                             )}
                           </td>
                           <td className="px-2 py-1.5">
@@ -2373,11 +2943,16 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                               onWheel={stopScroll}
                               placeholder="0.00"
                               className={`w-full rounded border px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white ${noSpinner} ${
-                                errors.precio_especial_usd ? 'border-red-500' : 'border-gray-300'
+                                errors.precio_especial_usd || especialBelowCost ? 'border-red-500 bg-red-50' : 'border-gray-300'
                               }`}
                             />
                             {errors.precio_especial_usd && (
                               <p className="text-red-500 text-xs mt-0.5">{errors.precio_especial_usd}</p>
+                            )}
+                            {!errors.precio_especial_usd && especialBelowCost && (
+                              <p className="text-red-500 text-xs mt-0.5">
+                                No puede ser menor al costo (${toMaskedDisplay(costoUsdFullRef.current)})
+                              </p>
                             )}
                           </td>
                           <td className="px-2 py-1.5">
@@ -2674,6 +3249,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   ? 'Ingresa el nombre'
                   : !esComboLocal && costoUsdFullRef.current === 0
                   ? 'El costo no puede ser 0'
+                  : ventaBelowCost || mayorBelowCost || especialBelowCost
+                  ? 'Hay precios de venta por debajo del costo'
                   : undefined
               }
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
