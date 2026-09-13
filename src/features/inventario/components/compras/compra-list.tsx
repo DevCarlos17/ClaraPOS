@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Plus, Eye, MagnifyingGlass, CalendarDots, ArrowCounterClockwise } from '@phosphor-icons/react'
+import { Plus, MagnifyingGlass, CalendarDots, ArrowCounterClockwise, CaretRight } from '@phosphor-icons/react'
 import { useComprasPorFecha } from '@/features/inventario/hooks/use-compras'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDate } from '@/lib/format'
@@ -9,6 +9,52 @@ import { FacturaProveedorModal } from '@/features/compras/components/factura-pro
 import { CompraReportes } from './compra-reportes'
 
 const MAX_RANGE_DAYS = 62 // ~2 meses
+
+// ─── Badges compartidos (desktop + mobile) ─────────────────────
+
+function TipoBadge({ tipo }: { tipo: string }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+        tipo === 'CREDITO'
+          ? 'bg-orange-50 text-orange-700 ring-orange-600/20 dark:bg-orange-950 dark:text-orange-300'
+          : 'bg-green-50 text-green-700 ring-green-600/20 dark:bg-green-950 dark:text-green-300'
+      }`}
+    >
+      {tipo}
+    </span>
+  )
+}
+
+function StatusBadge({ status }: { status: string }) {
+  if (status === 'REVERSADA') {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-purple-50 text-purple-700 ring-purple-600/20 dark:bg-purple-950 dark:text-purple-300">
+        <ArrowCounterClockwise className="h-2.5 w-2.5" />
+        REVERSADA
+      </span>
+    )
+  }
+  if (status === 'ANULADA') {
+    return (
+      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-950 dark:text-red-300">
+        ANULADA
+      </span>
+    )
+  }
+  if (status === 'PROCESADA') {
+    return (
+      <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-950 dark:text-blue-300">
+        PROCESADA
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-muted text-muted-foreground ring-muted-foreground/20">
+      {status}
+    </span>
+  )
+}
 
 function getDaysDiff(from: string, to: string): number {
   const d1 = new Date(from)
@@ -63,53 +109,55 @@ export function CompraList() {
   }
 
   return (
-    <div>
+    <div className="flex flex-1 min-h-0 flex-col gap-4">
       {/* Filtros + acciones */}
-      <div className="rounded-2xl bg-card shadow-lg p-4 mb-4">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 justify-between">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      <div className="rounded-2xl bg-card shadow-lg p-4 shrink-0">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 justify-between">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground shrink-0">
               <CalendarDots className="h-4 w-4" />
               <span className="font-medium">Periodo:</span>
             </div>
-            <div className="flex items-center gap-2">
-              <label htmlFor="fecha-desde" className="text-xs text-muted-foreground whitespace-nowrap">
-                Desde
-              </label>
-              <input
-                id="fecha-desde"
-                type="date"
-                value={fechaDesde}
-                onChange={(e) => setFechaDesde(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-              />
+            <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+              <div className="flex items-center gap-2">
+                <label htmlFor="fecha-desde" className="text-xs text-muted-foreground whitespace-nowrap">
+                  Desde
+                </label>
+                <input
+                  id="fecha-desde"
+                  type="date"
+                  value={fechaDesde}
+                  onChange={(e) => setFechaDesde(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label htmlFor="fecha-hasta" className="text-xs text-muted-foreground whitespace-nowrap">
+                  Hasta
+                </label>
+                <input
+                  id="fecha-hasta"
+                  type="date"
+                  value={fechaHasta}
+                  onChange={(e) => setFechaHasta(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+              </div>
+              <button
+                onClick={handleConsultar}
+                disabled={!!rangeError || !fechaDesde || !fechaHasta}
+                className="inline-flex items-center justify-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer w-full sm:w-auto"
+              >
+                <MagnifyingGlass className="h-4 w-4" />
+                Consultar
+              </button>
             </div>
-            <div className="flex items-center gap-2">
-              <label htmlFor="fecha-hasta" className="text-xs text-muted-foreground whitespace-nowrap">
-                Hasta
-              </label>
-              <input
-                id="fecha-hasta"
-                type="date"
-                value={fechaHasta}
-                onChange={(e) => setFechaHasta(e.target.value)}
-                onKeyDown={handleKeyDown}
-                className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-              />
-            </div>
-            <button
-              onClick={handleConsultar}
-              disabled={!!rangeError || !fechaDesde || !fechaHasta}
-              className="inline-flex items-center gap-1.5 px-4 py-1.5 text-sm font-medium text-primary-foreground bg-primary rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              <MagnifyingGlass className="h-4 w-4" />
-              Consultar
-            </button>
           </div>
           <button
             onClick={() => setShowForm(true)}
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer shrink-0"
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors cursor-pointer shrink-0 w-full sm:w-auto"
           >
             <Plus className="h-4 w-4" />
             Nueva Factura de Compra
@@ -128,9 +176,9 @@ export function CompraList() {
           <p className="text-sm mt-1">Elija las fechas de inicio y fin, luego presione "Consultar"</p>
         </div>
       ) : (
-        <div className="rounded-2xl bg-card shadow-lg overflow-hidden">
+        <div className="flex-1 min-h-0 flex flex-col rounded-2xl bg-card shadow-lg overflow-hidden">
           {/* Toolbar */}
-          <div className="flex justify-between items-center px-4 py-3 bg-muted/40 border-b border-border">
+          <div className="flex justify-between items-center px-4 py-3 bg-muted/40 border-b border-border shrink-0">
             <p className="text-sm text-muted-foreground">
               {isLoading
                 ? 'Cargando...'
@@ -144,7 +192,9 @@ export function CompraList() {
             />
           </div>
 
-          {/* Contenido */}
+          {/* Contenido: contenedor con scroll interno unico (header/filtros
+              quedan fijos, solo esto scrollea) */}
+          <div className="flex-1 min-h-0 overflow-y-auto">
           {isLoading ? (
             <div className="p-4 space-y-2">
               {Array.from({ length: 6 }).map((_, i) => (
@@ -157,7 +207,9 @@ export function CompraList() {
               <p className="text-sm mt-1">No se encontraron facturas de compra entre las fechas seleccionadas</p>
             </div>
           ) : (
-            <div className="overflow-auto max-h-[60vh]">
+            <>
+            {/* Tabla: solo desktop (md:+) */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="min-w-full divide-y divide-border">
                 <thead className="bg-muted/50 sticky top-0 z-[1]">
                   <tr>
@@ -166,53 +218,35 @@ export function CompraList() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Proveedor</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Tipo</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Exento USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Base USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">IVA USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total USD</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Bs</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wider">Tasa</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wider">Registrado por</th>
-                    <th className="px-4 py-3 text-center text-xs font-medium text-muted-foreground uppercase tracking-wider">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {compras.map((compra) => (
-                    <tr key={compra.id} className="hover:bg-muted/30 transition-colors">
+                    <tr
+                      key={compra.id}
+                      onClick={() => setDetalleId(compra.id)}
+                      className="hover:bg-muted/30 cursor-pointer transition-colors"
+                    >
                       <td className="px-4 py-3 font-mono text-sm text-foreground">{compra.nro_factura}</td>
                       <td className="px-4 py-3 text-sm text-muted-foreground">
                         {formatDate(compra.fecha_factura)}
                       </td>
                       <td className="px-4 py-3 text-sm text-foreground">{compra.proveedor_nombre}</td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
-                            compra.tipo === 'CREDITO'
-                              ? 'bg-orange-50 text-orange-700 ring-orange-600/20 dark:bg-orange-950 dark:text-orange-300'
-                              : 'bg-green-50 text-green-700 ring-green-600/20 dark:bg-green-950 dark:text-green-300'
-                          }`}
-                        >
-                          {compra.tipo}
-                        </span>
+                        <TipoBadge tipo={compra.tipo} />
                       </td>
                       <td className="px-4 py-3">
-                        {compra.status === 'REVERSADA' ? (
-                          <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-purple-50 text-purple-700 ring-purple-600/20 dark:bg-purple-950 dark:text-purple-300">
-                            <ArrowCounterClockwise className="h-2.5 w-2.5" />
-                            REVERSADA
-                          </span>
-                        ) : compra.status === 'ANULADA' ? (
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-red-50 text-red-700 ring-red-600/20 dark:bg-red-950 dark:text-red-300">
-                            ANULADA
-                          </span>
-                        ) : compra.status === 'PROCESADA' ? (
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-blue-50 text-blue-700 ring-blue-600/20 dark:bg-blue-950 dark:text-blue-300">
-                            PROCESADA
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset bg-muted text-muted-foreground ring-muted-foreground/20">
-                            {compra.status}
-                          </span>
-                        )}
+                        <StatusBadge status={compra.status} />
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right text-muted-foreground">
+                        {formatUsd(compra.total_exento_usd)}
                       </td>
                       <td className="px-4 py-3 text-sm text-right text-muted-foreground">
                         {formatUsd(compra.total_base_usd)}
@@ -232,21 +266,49 @@ export function CompraList() {
                       <td className="px-4 py-3 text-sm text-muted-foreground">
                         {compra.creado_por_nombre ?? '-'}
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        <button
-                          onClick={() => setDetalleId(compra.id)}
-                          className="inline-flex items-center gap-1 text-sm text-primary hover:text-primary/80 transition-colors cursor-pointer"
-                        >
-                          <Eye className="h-4 w-4" />
-                          Ver
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+
+            {/* Lista mobile: fila compacta -> abre el mismo modal de detalle */}
+            <div data-testid="facturas-compra-mobile-card-list" className="md:hidden divide-y divide-border">
+              {compras.map((compra) => (
+                <div
+                  key={compra.id}
+                  onClick={() => setDetalleId(compra.id)}
+                  className="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono font-semibold text-sm text-foreground truncate">
+                        {compra.nro_factura}
+                      </span>
+                      <StatusBadge status={compra.status} />
+                      <TipoBadge tipo={compra.tipo} />
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">
+                      {compra.proveedor_nombre} · {formatDate(compra.fecha_factura)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <div className="text-right">
+                      <p className="text-sm font-bold tabular-nums text-foreground">
+                        {formatUsd(compra.total_usd)}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground tabular-nums">
+                        {formatBs(compra.total_bs)}
+                      </p>
+                    </div>
+                    <CaretRight className="h-4 w-4 text-muted-foreground/60" />
+                  </div>
+                </div>
+              ))}
+            </div>
+            </>
           )}
+          </div>
         </div>
       )}
 
