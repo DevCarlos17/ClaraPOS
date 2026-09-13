@@ -103,6 +103,7 @@ const IMMUTABLE_TABLES = new Set([
   'notas_fiscales_compra',        // trg_nf_compra_no_update
   'notas_fiscales_compra_det',    // trg_nf_compra_det_no_update
   'libro_contable',               // trg_libro_contable_protect
+  'historico_precios',            // tabla de auditoria inmutable (migracion 0054: solo INSERT, sin policy UPDATE)
 ])
 
 function convertBooleans(table: string, payload: Record<string, unknown>): Record<string, unknown> {
