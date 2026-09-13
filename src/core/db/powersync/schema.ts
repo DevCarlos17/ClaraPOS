@@ -376,6 +376,8 @@ const productos = new Table(
     codigo_barras: column.text,
     duracion_min: column.integer,
     deposito_id: column.text,
+    costo_factura_usd: column.text, // costo segun factura ultima compra (tasa proveedor); NULL/legacy -> usar costo_usd
+    tasa_paralela_ref: column.text, // tasa paralela de la ultima compra; NULL = tasa interna/oficial
   },
   { indexes: {} }
 )
