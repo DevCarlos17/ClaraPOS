@@ -1203,13 +1203,15 @@ export function CompraForm({ onClose }: CompraFormProps) {
       }
 
       // Determinar si el costo realmente cambió respecto al sistema.
-      // Comparar en la MISMA base de tasa: costo_usd_actual es el costo CONTABLE
-      // (BCV) guardado en la ficha, asi que se compara contra costoUsdSistema (el
-      // contable NUEVO, tambien base BCV), NUNCA contra costoUnitarioUsd (que bajo
-      // tasa paralela esta a tasa proveedor). Comparar bases distintas marcaba
-      // costoCambio=true de forma espuria en cada compra con tasa paralela.
+      // Se compara el COSTO CONTABLE nuevo (costoUsdSistema, base BCV) contra el
+      // costo contable guardado en la ficha (costo_usd_actual, tambien base BCV).
+      // NO se condiciona a que el usuario haya escrito en "Nuevo costo": marcar
+      // tasa paralela SIN cambiar el costo segun factura igual altera el contable
+      // ($1 factura a paralela 1000/interna 500 -> $2 contable), y ese cambio DEBE
+      // llevarse a la ficha. La comparacion en base BCV cubre los tres casos:
+      // costo editado, tasa paralela nueva, y "nada cambio" (da false -> no toca).
       const costoUsdActual = parseFloat(l.costo_usd_actual) || 0
-      const costoCambio = l.nuevo_costo_raw !== '' && Math.abs(costoUsdSistema - costoUsdActual) > 0.0001
+      const costoCambio = Math.abs(costoUsdSistema - costoUsdActual) > 0.0001
 
       // no_actualizar_pvp / nuevo_precio_*_usd: derivados de la decisión explícita
       // por nivel (Decisión 1 del design: reducción de señales, use-compras.ts sin
