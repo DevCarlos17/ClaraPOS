@@ -48,6 +48,7 @@ function DialogOverlay({
 function DialogContent({
   className,
   overlayClassName,
+  container,
   children,
   showCloseButton = true,
   ...props
@@ -55,9 +56,18 @@ function DialogContent({
   showCloseButton?: boolean
   /** Clases extra para el overlay (ej. `md:hidden` para dialogs que solo aplican en mobile). */
   overlayClassName?: string
+  /**
+   * Contenedor del portal (Radix `Dialog.Portal container`). Por defecto Radix
+   * portaliza al `document.body`. Cuando este dialog se abre ENCIMA de un
+   * `<dialog>` nativo abierto con `showModal()` (que vive en la top layer del
+   * navegador), el portal al body queda por DEBAJO de la top layer y el
+   * contenido no se ve. Pasar el elemento `<dialog>` nativo como container
+   * renderiza el contenido dentro de la top layer y el z-index vuelve a aplicar.
+   */
+  container?: React.ComponentProps<typeof DialogPortal>['container']
 }) {
   return (
-    <DialogPortal data-slot="dialog-portal">
+    <DialogPortal data-slot="dialog-portal" container={container}>
       <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"

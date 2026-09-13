@@ -54,13 +54,17 @@ function KpiCard({
   sub?: string
   accent?: boolean
 }) {
+  // Mobile: celda compacta de un strip horizontal (padding minimo, valor mas
+  // chico, subtitulo oculto) para NO robar altura a la tabla. Desktop (sm+):
+  // recupera el look de card completa con subtitulo. Un solo markup, responsive
+  // por clases — sin JS ni segundo componente.
   return (
-    <div className="rounded-2xl bg-card shadow-lg p-4 border border-border">
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={`text-xl font-bold mt-1 tabular-nums ${accent ? 'text-destructive' : 'text-foreground'}`}>
+    <div className="flex-1 min-w-0 px-2 py-2.5 text-center sm:text-left sm:rounded-2xl sm:bg-card sm:shadow-lg sm:px-4 sm:py-4 sm:border sm:border-border">
+      <p className="text-[10px] leading-tight font-semibold text-slate-600 dark:text-slate-400 truncate sm:text-xs">{label}</p>
+      <p className={`text-lg leading-tight font-bold tabular-nums truncate mt-0.5 sm:text-xl sm:mt-1 ${accent ? 'text-destructive' : 'text-foreground'}`}>
         {value}
       </p>
-      {sub && <p className="text-xs text-muted-foreground/70 mt-0.5">{sub}</p>}
+      {sub && <p className="hidden sm:block text-xs text-muted-foreground/70 mt-0.5">{sub}</p>}
     </div>
   )
 }
@@ -542,8 +546,11 @@ export function CxpPage({ initialProveedorId }: CxpPageProps) {
   return (
     <div className="flex flex-1 min-h-0 flex-col gap-4">
 
-      {/* KPIs globales */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      {/* KPIs globales — mobile: strip horizontal compacto (una fila delgada con
+          divisores) para maximizar la altura de la tabla; sm+: grid de 3 cards.
+          divide-x + rounded/bg solo aplican en mobile via el reset en sm:. */}
+      <div className="flex items-stretch rounded-2xl bg-card shadow-lg border border-border divide-x divide-border shrink-0
+                      sm:grid sm:grid-cols-3 sm:gap-3 sm:rounded-none sm:bg-transparent sm:shadow-none sm:border-0 sm:divide-x-0">
         <KpiCard
           label="Deuda Total"
           value={formatUsd(deudaTotal)}

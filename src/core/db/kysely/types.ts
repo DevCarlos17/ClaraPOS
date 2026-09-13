@@ -352,6 +352,8 @@ export interface Productos {
   codigo_barras: string | null
   duracion_min: number | null
   deposito_id: string | null
+  costo_factura_usd: string | null // costo segun factura ultima compra (tasa proveedor); NULL/legacy -> usar costo_usd
+  tasa_paralela_ref: string | null // tasa paralela de la ultima compra; NULL = tasa interna/oficial
 }
 
 export interface InventarioStock {

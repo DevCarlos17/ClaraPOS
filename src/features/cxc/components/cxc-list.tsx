@@ -34,30 +34,35 @@ function KpiCard({
   onClick?: () => void
 }) {
   const isClickable = !!onClick
+  // Mobile: celda compacta de strip (padding minimo, valor mas chico, subtitulo
+  // e hints de clic ocultos) para no robar altura a la tabla; el tap sigue
+  // funcionando. Desktop (sm+): card completa con subtitulo e hints. El estado
+  // active (filtro SAF) se marca con color de texto en mobile y con borde/fondo
+  // en desktop.
   return (
     <div
       role={isClickable ? 'button' : undefined}
       tabIndex={isClickable ? 0 : undefined}
       onClick={onClick}
       onKeyDown={isClickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') onClick?.() } : undefined}
-      className={`rounded-2xl bg-card shadow-lg p-4 border transition-colors ${
+      className={`flex-1 min-w-0 px-2 py-2.5 text-center transition-colors sm:text-left sm:rounded-2xl sm:bg-card sm:shadow-lg sm:px-4 sm:py-4 sm:border ${
         active
-          ? 'border-green-500 bg-green-50 ring-1 ring-green-500/30'
+          ? 'sm:border-green-500 sm:bg-green-50 sm:ring-1 sm:ring-green-500/30'
           : isClickable
-          ? 'border-border hover:border-green-400 hover:bg-green-50/50 cursor-pointer'
-          : 'border-border'
+          ? 'cursor-pointer sm:border-border sm:hover:border-green-400 sm:hover:bg-green-50/50'
+          : 'sm:border-border'
       }`}
     >
-      <p className="text-xs font-medium text-muted-foreground">{label}</p>
-      <p className={`text-xl font-bold mt-1 tabular-nums ${accent ? 'text-destructive' : active ? 'text-green-700' : 'text-foreground'}`}>
+      <p className="text-[10px] leading-tight font-semibold text-slate-600 dark:text-slate-400 truncate sm:text-xs">{label}</p>
+      <p className={`text-lg leading-tight font-bold tabular-nums truncate mt-0.5 sm:text-xl sm:mt-1 ${accent ? 'text-destructive' : active ? 'text-green-700' : 'text-foreground'}`}>
         {value}
       </p>
-      {sub && <p className={`text-xs mt-0.5 ${active ? 'text-green-600' : 'text-muted-foreground/70'}`}>{sub}</p>}
+      {sub && <p className={`hidden sm:block text-xs mt-0.5 ${active ? 'text-green-600' : 'text-muted-foreground/70'}`}>{sub}</p>}
       {isClickable && !active && (
-        <p className="text-[10px] text-green-600 mt-1 font-medium">Clic para ver →</p>
+        <p className="hidden sm:block text-[10px] text-green-600 mt-1 font-medium">Clic para ver →</p>
       )}
       {active && (
-        <p className="text-[10px] text-green-600 mt-1 font-medium">Filtrando SAF ✓</p>
+        <p className="hidden sm:block text-[10px] text-green-600 mt-1 font-medium">Filtrando SAF ✓</p>
       )}
     </div>
   )
@@ -136,8 +141,10 @@ export function CxcList() {
   return (
     <div className="flex flex-1 min-h-0 flex-col gap-4">
 
-      {/* KPIs globales */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
+      {/* KPIs globales — mobile: strip horizontal compacto (una fila delgada con
+          divisores) para maximizar la altura de la tabla; sm+: grid de 4 cards. */}
+      <div className="flex items-stretch rounded-2xl bg-card shadow-lg border border-border divide-x divide-border shrink-0
+                      sm:grid sm:grid-cols-4 sm:gap-3 sm:rounded-none sm:bg-transparent sm:shadow-none sm:border-0 sm:divide-x-0">
         <KpiCard
           label="Deuda Total"
           value={formatUsd(totalDeuda)}

@@ -529,6 +529,16 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
 
     // 1. Calcular totales con desglose fiscal (lineas ya vienen en USD)
     const dTasa = new Decimal(tasa)
+    // Tasa paralela EFECTIVA de esta compra: hay paralela solo si tasa_costo
+    // (tasa BCV/interna) esta presente Y difiere de la tasa del proveedor.
+    // Cuando difieren, la tasa paralela de referencia que se guarda en la ficha
+    // del producto es la del proveedor (`tasa`). Cuando coinciden -> null: el
+    // producto vuelve a tasa interna/oficial (regla "ultimo movimiento manda").
+    const usaTasaParalela =
+      tasa_costo != null && !new Decimal(tasa_costo).equals(dTasa)
+    // Tasas se almacenan con 4 decimales (regla #10; ver dTasa.toFixed(4) en el
+    // asiento contable mas abajo), no con la precision de 8 de toStorageString.
+    const tasaParalelaRef = usaTasaParalela ? dTasa.toFixed(4) : null
     let totalExentoUsd = new Decimal(0)
     let totalBaseUsd = new Decimal(0)
     let totalIvaUsd = new Decimal(0)
@@ -803,6 +813,28 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
             [toStorageString(costoParaEscribir), toStorageString(nuevoPvp), now, linea.producto_id]
           )
         }
+      }
+
+      // Sincronizar en la ficha el costo SEGUN FACTURA y el indicador de tasa
+      // paralela — SEPARADO del bloque de costo/precios de arriba porque su gate
+      // es distinto: se escribe solo cuando el costo cambio (actualizarCosto),
+      // pero SIEMPRE en ese caso, aunque no se toquen precios. Esto materializa
+      // la regla "ultimo movimiento manda":
+      //   - Compra con tasa paralela  -> costo_factura_usd = costo del documento
+      //     (tasa proveedor), tasa_paralela_ref = tasa proveedor.
+      //   - Compra sin tasa paralela  -> costo_factura_usd = costoParaEscribir
+      //     (== costo contable, porque coinciden) y tasa_paralela_ref = NULL,
+      //     limpiando cualquier marca previa (el producto vuelve a tasa interna).
+      // Cuando el costo NO cambia, no se toca la ficha (se preserva el estado del
+      // ultimo movimiento que si la modifico), coherente con costo_usd.
+      if (actualizarCosto) {
+        const costoFacturaParaEscribir = usaTasaParalela
+          ? toStorageString(dCostoUnit)
+          : toStorageString(costoParaEscribir)
+        await tx.execute(
+          'UPDATE productos SET costo_factura_usd = ?, tasa_paralela_ref = ?, updated_at = ? WHERE id = ?',
+          [costoFacturaParaEscribir, tasaParalelaRef, now, linea.producto_id]
+        )
       }
 
       // inventario_stock (por deposito) + productos.stock (total) — usa el deposito
