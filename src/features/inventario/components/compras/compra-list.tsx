@@ -113,39 +113,40 @@ export function CompraList() {
       {/* Filtros + acciones */}
       <div className="rounded-2xl bg-card shadow-lg p-4 shrink-0">
         <div className="flex flex-col lg:flex-row lg:items-center gap-3 lg:justify-between">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 w-full lg:w-auto">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground shrink-0">
+          <div className="flex items-center gap-3 w-full lg:w-auto">
+            {/* Label "Periodo:" solo en desktop; en mobile roba ancho a las fechas */}
+            <div className="hidden lg:flex items-center gap-2 text-sm text-muted-foreground shrink-0">
               <CalendarDots className="h-4 w-4" />
               <span className="font-medium">Periodo:</span>
             </div>
-            {/* Fechas: siempre en una sola fila (Desde + Hasta lado a lado) */}
-            <div className="flex items-center gap-3 w-full sm:w-auto">
-              <div className="flex items-center gap-2 flex-1 sm:flex-none">
-                <label htmlFor="fecha-desde" className="text-xs text-muted-foreground whitespace-nowrap">
-                  Desde
-                </label>
-                <input
-                  id="fecha-desde"
-                  type="date"
-                  value={fechaDesde}
-                  onChange={(e) => setFechaDesde(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="w-full sm:w-auto rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
-              <div className="flex items-center gap-2 flex-1 sm:flex-none">
-                <label htmlFor="fecha-hasta" className="text-xs text-muted-foreground whitespace-nowrap">
-                  Hasta
-                </label>
-                <input
-                  id="fecha-hasta"
-                  type="date"
-                  value={fechaHasta}
-                  onChange={(e) => setFechaHasta(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="w-full sm:w-auto rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
-                />
-              </div>
+            {/* Fechas: siempre en una sola fila (Desde + Hasta lado a lado).
+                min-w-0 en el contenedor y el input permite que el date se
+                encoja de verdad y no desborde el viewport en mobile. */}
+            <div className="flex items-center gap-2 min-w-0 flex-1 lg:flex-none">
+              <label htmlFor="fecha-desde" className="text-xs text-muted-foreground shrink-0">
+                Desde
+              </label>
+              <input
+                id="fecha-desde"
+                type="date"
+                value={fechaDesde}
+                onChange={(e) => setFechaDesde(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="min-w-0 w-full lg:w-auto rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+            </div>
+            <div className="flex items-center gap-2 min-w-0 flex-1 lg:flex-none">
+              <label htmlFor="fecha-hasta" className="text-xs text-muted-foreground shrink-0">
+                Hasta
+              </label>
+              <input
+                id="fecha-hasta"
+                type="date"
+                value={fechaHasta}
+                onChange={(e) => setFechaHasta(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="min-w-0 w-full lg:w-auto rounded-md border border-input px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+              />
             </div>
           </div>
           {/* Acciones: Consultar + Nueva Factura siempre en una sola fila */}
