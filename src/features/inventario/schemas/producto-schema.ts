@@ -17,6 +17,12 @@ export const productoSchema = z
     ubicacion: z.string().optional().default(''),
     presentacion: z.string().optional().default(''),
     codigo_barras: z.string().max(100).optional().default(''),
+    // Costo segun factura (tasa proveedor) de la ultima declaracion/compra a
+    // tasa paralela. NULL = sin declarar (usa costo_usd como fallback al leer).
+    costo_factura_usd: z.number().min(0).nullable().optional(),
+    // Tasa paralela usada para derivar costo_usd (contable). NULL = tasa
+    // interna/oficial (el producto no usa tasa paralela).
+    tasa_paralela_ref: z.string().nullable().optional(),
   })
   .refine(
     (data) => {
@@ -36,6 +42,28 @@ export const productoSchema = z
     {
       message: 'El precio mayor debe ser menor o igual al precio de venta',
       path: ['precio_mayor_usd'],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.tipo === 'C') return true
+      if (data.precio_mayor_usd == null) return true
+      return data.precio_mayor_usd >= data.costo_usd
+    },
+    {
+      message: 'El precio mayor no puede ser menor al costo',
+      path: ['precio_mayor_usd'],
+    }
+  )
+  .refine(
+    (data) => {
+      if (data.tipo === 'C') return true
+      if (data.precio_especial_usd == null) return true
+      return data.precio_especial_usd >= data.costo_usd
+    },
+    {
+      message: 'El precio especial no puede ser menor al costo',
+      path: ['precio_especial_usd'],
     }
   )
 

@@ -26,6 +26,24 @@ export function calcularPrecioPreservandoMargen(costo: number, margenPct: number
 }
 
 /**
+ * Variante Decimal-in/Decimal-out de `calcularPrecioPreservandoMargen`, para
+ * cadenas de calculo financiero que ya vienen en Decimal (ej. el sandbox de
+ * Tasa Paralela en ProductoForm, ver Bug#3 Fase 2 Tarea #4) y no deben
+ * romper la cadena de precision convirtiendo a `number` nativo a mitad de
+ * camino (regla de negocio #10: nunca float nativo sobre montos
+ * financieros). Misma formula, `costo * (1 + margenPct / 100)` con clamp a
+ * 0, pero enteramente en Decimal — el caller convierte a `number`/string
+ * SOLO en el limite final de escritura/display.
+ *
+ * NO reemplaza `calcularPrecioPreservandoMargen` (otros callers dependen de
+ * su firma number-in/number-out): se agrega como variante alternativa.
+ */
+export function calcularPrecioPreservandoMargenD(costo: Decimal, margenPct: Decimal): Decimal {
+  const resultado = costo.times(new Decimal(1).plus(margenPct.dividedBy(100)))
+  return Decimal.max(0, resultado)
+}
+
+/**
  * Determina si un nuevo costo viola la regla de negocio #7
  * (`precio_venta_usd >= costo_usd`): el costo nunca debe ser mayor o igual
  * al PVP actualmente vigente.
@@ -143,4 +161,18 @@ export function fijarCostoYCascada(p: {
     mayorUsd: calcularNivel(p.margenMayorPct),
     especialUsd: calcularNivel(p.margenEspecialPct),
   }
+}
+
+/**
+ * Deriva el margen % implicito que resulta de mantener un PVP fijo cuando el
+ * costo cambia (modo "Mantener PVP" del sandbox de tasa paralela en
+ * ProductoForm, ver Bug#3 Fase 2 Tarea #4). Puramente informativo (el PVP no
+ * se toca en este modo, solo se muestra como quedaria el margen resultante).
+ *
+ * `margen = (pvp - costo) / costo * 100`. Retorna `0` si costo o pvp son
+ * `<= 0` (nada que derivar todavia).
+ */
+export function calcularMargenPreservandoPvp(costo: Decimal, pvp: Decimal): Decimal {
+  if (costo.lte(0) || pvp.lte(0)) return new Decimal(0)
+  return pvp.minus(costo).dividedBy(costo).times(100)
 }

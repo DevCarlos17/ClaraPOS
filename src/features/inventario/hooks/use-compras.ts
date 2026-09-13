@@ -613,7 +613,9 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
     )
 
     // 4. Por cada linea: detalle + kardex + actualizar producto
+    let _lineaNro = 0
     for (const linea of lineas) {
+      _lineaNro++
       const detalleId = uuidv4()
       const dCantidad = new Decimal(linea.cantidad)
       // Enrutamiento de ingreso por linea (Slice 1c): prioriza el deposito
@@ -632,6 +634,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
       // costoSistema: BCV-adjusted cost for inventory valuation.
       // Equals costo_unitario_usd when not using tasa paralela.
       const costoSistema = new Decimal(linea.costo_usd_sistema ?? linea.costo_unitario_usd)
+
 
       // 4a. Crear lote si aplica
       let loteId: string | null = null
@@ -958,6 +961,7 @@ export async function crearCompra(params: CrearCompraParams): Promise<CrearCompr
         )
       }
     }
+
 
     // 5. Registrar movimientos de cuenta del proveedor
 
