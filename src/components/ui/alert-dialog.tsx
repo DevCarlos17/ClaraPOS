@@ -45,12 +45,23 @@ function AlertDialogOverlay({
 function AlertDialogContent({
   className,
   size = "default",
+  container,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Content> & {
   size?: "default" | "sm"
+  /**
+   * Contenedor del portal (Radix `AlertDialog.Portal container`). Por defecto
+   * Radix portaliza al `document.body`. Cuando este dialog se abre ENCIMA de
+   * un `<dialog>` nativo abierto con `showModal()` (que vive en la top layer
+   * del navegador), el portal al body queda por DEBAJO de la top layer y el
+   * contenido no se ve. Pasar el elemento `<dialog>` nativo como container
+   * renderiza el contenido dentro de la top layer y el z-index vuelve a
+   * aplicar. Mismo patron que `DialogContent` en `dialog.tsx`.
+   */
+  container?: React.ComponentProps<typeof AlertDialogPortal>['container']
 }) {
   return (
-    <AlertDialogPortal>
+    <AlertDialogPortal container={container}>
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"

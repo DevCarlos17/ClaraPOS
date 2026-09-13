@@ -42,6 +42,16 @@ import {
 import { useDebounce } from '@/hooks/use-debounce'
 import { Popover, PopoverAnchor, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Command, CommandGroup, CommandItem, CommandList } from '@/components/ui/command'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 // CSS para inputs numericos sin flechas y sin scroll
 const noSpinner =
@@ -472,9 +482,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
   // manda": limpia costo_factura_usd/tasa_paralela_ref a null).
   const costoFacturaUsdToPersistRef = useRef<number | undefined>(undefined)
   const tasaParalelaRefToPersistRef = useRef<string | null | undefined>(undefined)
-  // Snapshot (precision completa) tomado al tildar el checkbox, usado por
-  // "Revertir"/destildar para restaurar el form real exactamente como estaba
-  // antes de abrir el sandbox.
+  // Snapshot (precision completa) tomado al tildar el checkbox o al presionar
+  // "Editar" sobre un estado ya confirmado, usado por "Deshacer" para
+  // restaurar el form real exactamente como estaba antes de ese intento.
   const sandboxSnapshotRef = useRef<{
     costoUsd: number
     precioVentaUsd: number
@@ -484,6 +494,17 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     margenMayor: number
     margenEspecial: number
   } | null>(null)
+  // true cuando, al empezar a editar (checkbox o boton "Editar"), YA existia
+  // un estado de tasa paralela CONFIRMADO/persistido (hidratado desde la DB
+  // al abrir el form, o confirmado en esta misma sesion) al que "Deshacer"
+  // puede volver. false cuando el sandbox es genuinamente nuevo (nunca hubo
+  // tasa paralela antes) -> "Deshacer" en ese caso descarta todo y destilda
+  // el checkbox. Ver `handleRevertirSandbox`.
+  const sandboxConfirmadoPrevioRef = useRef(false)
+  // Dialog de confirmacion (FIX 4) antes de destildar el checkbox: quitar la
+  // tasa paralela es una accion destructiva (limpia tasa_paralela_ref), asi
+  // que se confirma explicitamente en vez de aplicarse directo al click.
+  const [mostrarConfirmQuitarTasaParalela, setMostrarConfirmQuitarTasaParalela] = useState(false)
 
   // === Duracion por defecto (solo Servicios) ===
   const [duracionMin, setDuracionMin] = useState<number | null>(null)
@@ -534,6 +555,11 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     if (isOpen) {
       setActiveTab('general')
       setMostrarAvisoBorrador(false)
+      // Arranca SIEMPRE desde un sandbox de tasa paralela limpio; la rama
+      // `if (producto)` de abajo lo re-hidrata desde la DB cuando
+      // corresponde (FIX 1). Debe ir ANTES de esa rama — si se llamara
+      // despues (como antes de este fix), pisaria la hidratacion.
+      resetSandboxTasaParalela()
       if (producto) {
         setCodigo(producto.codigo)
         setTipo(producto.tipo as 'P' | 'S' | 'C')
@@ -590,6 +616,29 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
           setMargenCompleto(0, '')
           setMargenMayorCompleto(0, '')
           setMargenEspecialCompleto(0, '')
+        }
+        // Hidratar el estado de Tasa Paralela (FIX 1): si el producto YA
+        // tiene tasa_paralela_ref (de una compra anterior o de un sandbox
+        // confirmado en una sesion previa), el checkbox debe arrancar
+        // TILDADO y en estado CONFIRMADO/persistido — NO como un sandbox
+        // nuevo sin confirmar. Precision completa desde los strings
+        // NUMERIC(20,8) de la DB (mismo criterio que costo_usd arriba):
+        // nunca leer el display mascarado en un computo.
+        if (producto.tasa_paralela_ref && producto.tasa_paralela_ref.trim() !== '') {
+          const costoFacturaN0 = parseFloat(producto.costo_factura_usd ?? producto.costo_usd) || 0
+          setCostoFacturaCompleto(costoFacturaN0, toMaskedDisplay(costoFacturaN0))
+          const tasaParalelaN0 = parseFloat(producto.tasa_paralela_ref) || 0
+          setTasaParalelaCompleto(tasaParalelaN0, toMaskedDisplay(tasaParalelaN0, 4))
+          setUsaTasaParalela(true)
+          setSandboxAplicado(true)
+          setModoRecalculo('margen')
+          sandboxConfirmadoPrevioRef.current = true
+          sandboxSnapshotRef.current = null
+          // Un "Actualizar" sin tocar el sandbox debe re-persistir los
+          // MISMOS valores (nunca perder el estado por no interactuar con
+          // el checkbox/inputs).
+          costoFacturaUsdToPersistRef.current = costoFacturaN0
+          tasaParalelaRefToPersistRef.current = producto.tasa_paralela_ref
         }
       } else {
         // Modo alta: intentar restaurar un borrador previo (solo si tiene
@@ -673,7 +722,6 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
       setErrors({})
       setCostoBackCalculado(false)
       setAvisoMargenNegativo(null)
-      resetSandboxTasaParalela()
       setPopoverOpen(false)
       dialogRef.current?.showModal()
     } else {
@@ -1102,10 +1150,18 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     return { margenPct: margenActual, pvpUsd: calcularPrecioPreservandoMargenD(costoContable, margenActualD).toNumber() }
   }
 
-  function handleToggleTasaParalela(checked: boolean) {
+  /**
+   * onChange del checkbox "usa tasa paralela". Tildar SIEMPRE abre un
+   * sandbox nuevo sin confirmar (`sandboxConfirmadoPrevioRef = false`).
+   * Destildar es DESTRUCTIVO (limpia `tasa_paralela_ref` de forma
+   * permanente) -> no se aplica directo al click, se pide confirmacion
+   * explicita primero (FIX 4, ver `handleConfirmarQuitarTasaParalela` y el
+   * AlertDialog en el JSX).
+   */
+  function handleCheckboxTasaParalelaChange(checked: boolean) {
     if (checked) {
-      // Snapshot ANTES de abrir el sandbox, para que "Revertir"/destildar
-      // pueda restaurar el form real exactamente como estaba.
+      // Snapshot ANTES de abrir el sandbox, para que "Deshacer" pueda
+      // restaurar el form real exactamente como estaba.
       sandboxSnapshotRef.current = {
         costoUsd: costoUsdFullRef.current,
         precioVentaUsd: precioVentaUsdFullRef.current,
@@ -1115,18 +1171,41 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         margenMayor: margenMayorFullRef.current,
         margenEspecial: margenEspecialFullRef.current,
       }
+      sandboxConfirmadoPrevioRef.current = false
       setUsaTasaParalela(true)
       setSandboxAplicado(false)
       setModoRecalculo('margen')
       return
     }
-    // Destildar: misma logica que "Revertir"/"Deshacer" (ver
-    // `handleRevertirSandbox`, que resuelve ahi la regla "ultimo movimiento
-    // manda"). Centralizado en un solo lugar para que TODOS los caminos que
-    // descartan el sandbox — destildar el checkbox, el boton "Revertir"
-    // (pre-confirmar) y el boton "Deshacer" (post-confirmar) — apliquen
-    // exactamente la misma semantica de persistencia.
-    handleRevertirSandbox()
+    setMostrarConfirmQuitarTasaParalela(true)
+  }
+
+  /**
+   * Reabre los inputs de factura/tasa paralela para editar un estado YA
+   * CONFIRMADO/persistido (hidratado desde la DB al abrir el form, o
+   * confirmado en esta misma sesion via `handleConfirmarSandbox`). A
+   * diferencia de tildar el checkbox desde cero, esto NO es un sandbox
+   * nuevo: `sandboxConfirmadoPrevioRef` se mantiene en `true` (ya estaba)
+   * para que, si el usuario cancela con "Deshacer", se vuelva al estado
+   * confirmado en vez de descartar la tasa paralela por completo.
+   *
+   * El snapshot se retoma SIEMPRE en este momento (no reutiliza uno viejo):
+   * representa el estado CONFIRMADO vigente ahora mismo (costo/PVP ya
+   * ajustados por la tasa paralela), que es exactamente a donde "Deshacer"
+   * debe volver si el usuario cancela esta edicion.
+   */
+  function handleEditarTasaParalela() {
+    sandboxSnapshotRef.current = {
+      costoUsd: costoUsdFullRef.current,
+      precioVentaUsd: precioVentaUsdFullRef.current,
+      precioMayorUsd: precioMayorUsdFullRef.current,
+      precioEspecialUsd: precioEspecialUsdFullRef.current,
+      margen: margenFullRef.current,
+      margenMayor: margenMayorFullRef.current,
+      margenEspecial: margenEspecialFullRef.current,
+    }
+    setSandboxAplicado(false)
+    setModoRecalculo('margen')
   }
 
   function handleSetModoRecalculo(modo: 'margen' | 'mantener_pvp' | 'manual') {
@@ -1177,47 +1256,39 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     costoFacturaUsdToPersistRef.current = costoFacturaFullRef.current
     tasaParalelaRefToPersistRef.current = tasaParalelaFullRef.current.toFixed(4)
     setSandboxAplicado(true)
+    // A partir de aca hay un estado CONFIRMADO al que volver si el usuario
+    // presiona "Editar" y despues "Deshacer" sin volver a confirmar.
+    sandboxConfirmadoPrevioRef.current = true
   }
 
   /**
-   * Descarta el sandbox y restaura el form real al snapshot tomado al abrir
-   * el checkbox (si existe). Reutilizada por destildar el checkbox
-   * (`handleToggleTasaParalela`), el boton "Revertir" (pre-confirmar) y el
-   * boton "Deshacer" (post-confirmar).
+   * Cancela un cambio de factura/tasa SIN CONFIRMAR (boton "Deshacer",
+   * visible SOLO mientras `usaTasaParalela && !sandboxAplicado` — ver JSX)
+   * y restaura el form real al snapshot tomado al empezar ese intento
+   * (tildar el checkbox desde cero, o presionar "Editar" sobre un estado ya
+   * confirmado — ver `handleCheckboxTasaParalelaChange`/
+   * `handleEditarTasaParalela`).
    *
-   * Tambien resuelve QUE se persiste en `handleSubmit` (regla "ultimo
-   * movimiento manda"), SIEMPRE — no solo cuando viene de destildar el
-   * checkbox:
-   * - Si el sandbox YA se habia CONFIRMADO (`sandboxAplicado`), revertir es
-   *   una decision explicita de volver a tasa interna -> limpia la marca
-   *   (tasa_paralela_ref = null, costo_factura_usd = costo contable
-   *   pre-sandbox) para que se persista.
-   * - Si nunca se confirmo, los refs de persistencia vuelven a `undefined`
-   *   (no tocar lo que ya hay en DB).
+   * Se ramifica segun `sandboxConfirmadoPrevioRef` porque "cancelar" significa
+   * cosas distintas en cada caso:
+   * - YA habia un estado CONFIRMADO antes de este intento (edicion via
+   *   "Editar"): cancelar vuelve a mostrar ese estado confirmado (checkbox
+   *   sigue tildado, reaparece "Editar") — los refs de persistencia NO se
+   *   tocan, siguen representando el ultimo valor CONFIRMADO (que no cambio
+   *   con este intento cancelado).
+   * - Sandbox genuinamente NUEVO (nunca hubo tasa paralela antes de tildar
+   *   el checkbox): cancelar descarta todo -> destilda el checkbox, limpia
+   *   los inputs, y los refs de persistencia vuelven a `undefined` (nunca
+   *   hubo nada que confirmar, no se toca la DB).
    *
-   * BUG CRITICO corregido (ver verify de este cambio): antes, "Deshacer"
-   * llamaba esta funcion SIN pasar por la limpieza de arriba (esa logica
-   * vivia solo en la rama de destildar de `handleToggleTasaParalela`) — el
-   * sandbox descartado quedaba igual restaurando costo_usd/PVP correctos,
-   * pero costo_factura_usd/tasa_paralela_ref se escribian en la DB con los
-   * valores del sandbox DESCARTADO al hacer submit (corrupcion silenciosa:
-   * producto queda marcado "tasa paralela" con una factura/tasa que no
-   * corresponde a su costo_usd real). Centralizar la limpieza ACA, ejecutada
-   * SIEMPRE al revertir (no solo al destildar), cierra el hueco para los 3
-   * caminos (destildar, "Revertir", "Deshacer") y es idempotente: cada
-   * llamada deja los refs en un estado bien definido, nunca con residuos de
-   * un ciclo anterior.
+   * BUG CRITICO ya corregido en una iteracion anterior (ver Engram): "Deshacer"
+   * nunca debe dejar en los refs de persistencia los valores de un sandbox
+   * DESCARTADO — ambas ramas de abajo lo garantizan explicitamente.
    */
   function handleRevertirSandbox() {
     const snap = sandboxSnapshotRef.current
-    if (sandboxAplicado) {
-      const costoPrevio = snap?.costoUsd ?? costoUsdFullRef.current
-      costoFacturaUsdToPersistRef.current = costoPrevio
-      tasaParalelaRefToPersistRef.current = null
-    } else {
-      costoFacturaUsdToPersistRef.current = undefined
-      tasaParalelaRefToPersistRef.current = undefined
-    }
+    const volverAConfirmado = sandboxConfirmadoPrevioRef.current
+
     if (snap) {
       setCostoCompleto(snap.costoUsd, snap.costoUsd > 0 ? toMaskedDisplay(snap.costoUsd) : '')
       setPrecioVentaCompleto(snap.precioVentaUsd, snap.precioVentaUsd > 0 ? toMaskedDisplay(snap.precioVentaUsd) : '')
@@ -1233,15 +1304,58 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
         setPrecioEspecialBs(snap.precioEspecialUsd > 0 ? usdToBs(snap.precioEspecialUsd, tasaValor).toFixed(2) : '')
       }
     }
+    setModoRecalculo('margen')
+    setSbManualMargenDetal('')
+    setSbManualMargenMayor('')
+    setSbManualMargenEspecial('')
+
+    if (volverAConfirmado) {
+      // Vuelve a mostrar el resumen confirmado con los MISMOS
+      // factura/tasa de antes de este intento (los persist refs no se
+      // tocaron) — re-popula los inputs por si el usuario presiona
+      // "Editar" de nuevo.
+      const facturaSettled = costoFacturaUsdToPersistRef.current ?? 0
+      setCostoFacturaCompleto(facturaSettled, facturaSettled > 0 ? toMaskedDisplay(facturaSettled) : '')
+      const tasaSettled = parseFloat(tasaParalelaRefToPersistRef.current ?? '') || 0
+      setTasaParalelaCompleto(tasaSettled, tasaSettled > 0 ? toMaskedDisplay(tasaSettled, 4) : '')
+      setSandboxAplicado(true)
+      // usaTasaParalela se queda tildado — no es un descarte total.
+    } else {
+      setUsaTasaParalela(false)
+      setCostoFacturaCompleto(0, '')
+      setTasaParalelaCompleto(0, '')
+      setSandboxAplicado(false)
+      costoFacturaUsdToPersistRef.current = undefined
+      tasaParalelaRefToPersistRef.current = undefined
+    }
+    sandboxSnapshotRef.current = null
+  }
+
+  /**
+   * Ejecuta la desactivacion CONFIRMADA de tasa paralela (FIX 4: el usuario
+   * ya confirmo el dialog de advertencia). A diferencia de "Deshacer" (que
+   * restaura el snapshot ANTERIOR, pudiendo mover costo/PVP hacia atras),
+   * quitar la tasa paralela NO debe mover el costo contable actual — solo
+   * limpia la marca (tasa_paralela_ref -> null, costo_factura_usd -> el
+   * mismo costo contable vigente, ya que sin tasa paralela ambos coinciden
+   * por definicion) y desbloquea el input normal de Costo (USD). costo_usd
+   * y los PVP quedan TAL CUAL estan — el usuario sigue editandolos a mano
+   * como cualquier producto sin tasa paralela.
+   */
+  function handleConfirmarQuitarTasaParalela() {
+    costoFacturaUsdToPersistRef.current = costoUsdFullRef.current
+    tasaParalelaRefToPersistRef.current = null
     setUsaTasaParalela(false)
+    setSandboxAplicado(false)
     setCostoFacturaCompleto(0, '')
     setTasaParalelaCompleto(0, '')
     setModoRecalculo('margen')
     setSbManualMargenDetal('')
     setSbManualMargenMayor('')
     setSbManualMargenEspecial('')
-    setSandboxAplicado(false)
     sandboxSnapshotRef.current = null
+    sandboxConfirmadoPrevioRef.current = false
+    setMostrarConfirmQuitarTasaParalela(false)
   }
 
   /** Reset completo del sandbox — usado al abrir/cerrar el dialog y en "Limpiar". */
@@ -1254,7 +1368,9 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
     setSbManualMargenMayor('')
     setSbManualMargenEspecial('')
     setSandboxAplicado(false)
+    setMostrarConfirmQuitarTasaParalela(false)
     sandboxSnapshotRef.current = null
+    sandboxConfirmadoPrevioRef.current = false
     costoFacturaUsdToPersistRef.current = undefined
     tasaParalelaRefToPersistRef.current = undefined
   }
@@ -2287,10 +2403,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       }
                       onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                       onWheel={stopScroll}
-                      disabled={esComboLocal}
+                      disabled={esComboLocal || usaTasaParalela}
                       placeholder="0.00"
                       className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${noSpinner} ${
-                        esComboLocal ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+                        esComboLocal || usaTasaParalela ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
                       } ${errors.costo_usd ? 'border-red-500' : 'border-gray-300'}`}
                     />
                     {errors.costo_usd && (
@@ -2299,7 +2415,12 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     {esComboLocal && (
                       <p className="text-green-600 text-xs mt-0.5">Se calcula desde ingredientes</p>
                     )}
-                    {costoBackCalculado && !esComboLocal && (
+                    {usaTasaParalela && !esComboLocal && (
+                      <p className="text-amber-600 text-xs mt-0.5">
+                        Costo gestionado por tasa paralela — usá &quot;Editar&quot; para cambiarlo
+                      </p>
+                    )}
+                    {costoBackCalculado && !esComboLocal && !usaTasaParalela && (
                       <p className="text-blue-600 text-xs mt-0.5">Costo recalculado por el sistema</p>
                     )}
                   </div>
@@ -2317,10 +2438,10 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       onBlur={() => setCostoBs(maskPrecioBsCompleto(costoUsdFullRef.current))}
                       onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
                       onWheel={stopScroll}
-                      disabled={esComboLocal || tasaValor <= 0}
+                      disabled={esComboLocal || tasaValor <= 0 || usaTasaParalela}
                       placeholder="0,00"
                       className={`w-full rounded-md border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${noSpinner} ${
-                        esComboLocal || tasaValor <= 0
+                        esComboLocal || tasaValor <= 0 || usaTasaParalela
                           ? 'bg-gray-100 text-gray-500 cursor-not-allowed'
                           : 'bg-white'
                       } border-gray-300`}
@@ -2328,6 +2449,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                   </div>
                 </div>
                 {!esComboLocal &&
+                  !usaTasaParalela &&
                   debeExplorarCosto({ costoUsd, costoBs, costoEsPreview: costoBackCalculado }) &&
                   costoUsd.trim() !== '' && (
                     <button
@@ -2350,9 +2472,8 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                       id="prod-tasa-paralela-check"
                       type="checkbox"
                       checked={usaTasaParalela}
-                      onChange={(e) => handleToggleTasaParalela(e.target.checked)}
-                      disabled={sandboxAplicado}
-                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                      onChange={(e) => handleCheckboxTasaParalelaChange(e.target.checked)}
+                      className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                     <label htmlFor="prod-tasa-paralela-check" className="text-sm font-medium text-gray-700 cursor-pointer select-none">
                       Usa tasa paralela (el proveedor cobra a una tasa distinta a la interna)
@@ -2557,7 +2678,7 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                                 onClick={handleRevertirSandbox}
                                 className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
                               >
-                                Revertir
+                                Deshacer
                               </button>
                             </div>
                           </div>
@@ -2566,22 +2687,53 @@ export function ProductoForm({ isOpen, onClose, producto }: ProductoFormProps) {
                     </div>
                   )}
 
-                  {sandboxAplicado && (
+                  {/* Estado CONFIRMADO/persistido (hidratado desde la DB al
+                      abrir el form, o confirmado en esta misma sesion) —
+                      resumen de solo lectura + boton "Editar". */}
+                  {usaTasaParalela && sandboxAplicado && (
                     <p className="mt-2 text-xs text-green-700">
-                      Cambios aplicados: costo contable {toMaskedDisplay(costoUsdFullRef.current)} USD (factura $
-                      {toMaskedDisplay(costoFacturaUsdToPersistRef.current ?? 0)}, tasa paralela{' '}
+                      Este producto usa tasa paralela: costo contable ${toMaskedDisplay(costoUsdFullRef.current)}{' '}
+                      (factura ${toMaskedDisplay(costoFacturaUsdToPersistRef.current ?? 0)}, tasa{' '}
                       {tasaParalelaRefToPersistRef.current ?? '—'}).{' '}
                       <button
                         type="button"
-                        onClick={handleRevertirSandbox}
+                        onClick={handleEditarTasaParalela}
                         className="underline text-blue-600 hover:text-blue-800"
                       >
-                        Deshacer
+                        Editar
                       </button>
                     </p>
                   )}
                 </div>
               )}
+
+              {/* Confirmacion de destildar "usa tasa paralela" (FIX 4) —
+                  accion destructiva: limpia tasa_paralela_ref. `container`
+                  apunta al <dialog> nativo de este form (dialogRef) para que
+                  el portal de Radix se renderice dentro de la top layer del
+                  navegador; si portalizara al body por default quedaria
+                  tapado por el <dialog> nativo (ver fix previo del mismo
+                  problema en NotaCreditoPosModal/ConsultaFacturaModal). */}
+              <AlertDialog open={mostrarConfirmQuitarTasaParalela}>
+                <AlertDialogContent container={dialogRef.current}>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Quitar tasa paralela</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      El costo va a volver a editarse manualmente y la referencia de tasa paralela de este
+                      producto se va a borrar. El costo contable actual (${toMaskedDisplay(costoUsdFullRef.current)}) NO
+                      cambia — solo se quita la marca de tasa paralela.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel onClick={() => setMostrarConfirmQuitarTasaParalela(false)}>
+                      Cancelar
+                    </AlertDialogCancel>
+                    <AlertDialogAction onClick={handleConfirmarQuitarTasaParalela}>
+                      Quitar tasa paralela
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
 
               {/* Tabla de Precios por Nivel */}
               {!esComboLocal && (
