@@ -18,7 +18,7 @@ import { useFacturasPendientes } from '@/features/cxc/hooks/use-cxc'
 import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
 import { calcularDisponibleCredito } from '@/features/cxc/lib/deuda-credito-cliente'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
-import { clampearSafMonto } from '../lib/clamp-saf-monto'
+import { capSafMontoUsd } from '../lib/cap-saf-monto'
 import { calcularPendienteVenta } from '../lib/pendiente-venta'
 import { evaluarPagoPendiente } from '../lib/pago-guard'
 import type { CargoEspecial } from '../hooks/use-ventas'
@@ -109,6 +109,10 @@ export function CobroModal({
   // saldo_actual neteado, nunca suma saldo a favor). Ver design.md Decision 3.
   const { deudaFacturasUsd } = useDeudaFacturasCliente(clienteId || null)
   const [safMonto, setSafMonto] = useState(0)
+  // Input Bs auxiliar del SAF (comodidad de tipeo, ver engram
+  // pos/saldo-favor-cobro-modelo): el USD (`safMonto`) sigue siendo la
+  // fuente de verdad; este string solo refleja lo que el cajero tipea en Bs.
+  const [safMontoBsStr, setSafMontoBsStr] = useState('')
   const [safSeleccionado, setSafSeleccionado] = useState(false)
 
   // ── Estado de resolución de discrepancias ─────────────────────────────────
@@ -140,6 +144,7 @@ export function CobroModal({
     setSupervisorAuthorized(false)
     setSupervisorId(null)
     setSafMonto(0)
+    setSafMontoBsStr('')
     setSafSeleccionado(false)
   // La tasa se congela solo al abrir (se excluye tasa de deps intencionalmente)
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -331,6 +336,39 @@ export function CobroModal({
   const monedaMetodo = selectedMetodo?.moneda as 'USD' | 'BS' | undefined
 
   // ── Handlers ─────────────────────────────────────────────────────────────
+
+  // SAF: par de handlers bidireccionales USD<->Bs (mismo patron que
+  // handleCostoUsdChange/handleCostoBsChange en producto-form.tsx). El USD
+  // (`safMonto`) es siempre la fuente de verdad capeada a precision completa
+  // via `capSafMontoUsd` (min(disponible, total)); el Bs es comodidad de
+  // tipeo. Nunca se reformatea el campo que el cajero esta tipeando — solo
+  // se actualiza el campo companero (mismo criterio que producto-form.tsx).
+  const handleSafMontoUsdChange = (val: string) => {
+    // Parseo defensivo: un input a mitad de edicion (ej. "1.") puede llegar
+    // como string no valida para Decimal.
+    let ingresado: string | number = val === '' ? 0 : val
+    try {
+      new Decimal(ingresado)
+    } catch {
+      ingresado = 0
+    }
+    const capped = capSafMontoUsd(ingresado, safDisponibleDecimal, totalEfectivoUsd)
+    setSafMonto(capped.toNumber())
+    setSafMontoBsStr(tasaUsada > 0 ? usdToBs(capped, tasaUsada).toFixed(2) : '')
+  }
+
+  const handleSafMontoBsChange = (val: string) => {
+    setSafMontoBsStr(val)
+    let ingresadoBs: string | number = val === '' ? 0 : val
+    try {
+      new Decimal(ingresadoBs)
+    } catch {
+      ingresadoBs = 0
+    }
+    const usdFull = tasaUsada > 0 ? bsToUsd(ingresadoBs, tasaUsada) : new Decimal(0)
+    const capped = capSafMontoUsd(usdFull, safDisponibleDecimal, totalEfectivoUsd)
+    setSafMonto(capped.toNumber())
+  }
 
   const handleAddPago = () => {
     const montoNum = parseFloat(montoStr)
@@ -776,11 +814,14 @@ export function CobroModal({
                     const checked = e.target.checked
                     setSafSeleccionado(checked)
                     if (checked) {
-                      // Pre-cargar monto: min(disponible, totalVenta), redondeado a 2
-                      // decimales — evita mostrar ruido de flotante (ej. 1.29999999).
-                      setSafMonto(clampearSafMonto(safDisponibleDecimal, totalEfectivoUsd))
+                      // Pre-cargar monto: min(disponible, totalVenta), a precision
+                      // completa (sin redondeo prematuro — fix pos-saf-input-bs).
+                      const capped = capSafMontoUsd(safDisponibleDecimal, safDisponibleDecimal, totalEfectivoUsd)
+                      setSafMonto(capped.toNumber())
+                      setSafMontoBsStr(tasaUsada > 0 ? usdToBs(capped, tasaUsada).toFixed(2) : '')
                     } else {
                       setSafMonto(0)
+                      setSafMontoBsStr('')
                     }
                   }}
                   className="rounded border-blue-300"
@@ -789,27 +830,30 @@ export function CobroModal({
               </label>
               {safSeleccionado && (
                 <div className="flex items-center gap-1.5">
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    max={safDisponibleDecimal.toNumber()}
-                    value={safMonto || ''}
-                    onChange={(e) => {
-                      // Parseo defensivo: un input type="number" a mitad de edicion
-                      // (ej. "1.") puede llegar como string no valida para Decimal.
-                      let ingresado: string | number = e.target.value || 0
-                      try {
-                        new Decimal(ingresado)
-                      } catch {
-                        ingresado = 0
-                      }
-                      setSafMonto(clampearSafMonto(ingresado, safDisponibleDecimal))
-                    }}
-                    placeholder="0.00"
-                    className="h-7 w-24 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  />
-                  <span className="text-xs text-blue-700">USD</span>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      max={Decimal.min(safDisponibleDecimal, totalEfectivoUsd).toNumber()}
+                      value={safMonto || ''}
+                      onChange={(e) => handleSafMontoUsdChange(e.target.value)}
+                      placeholder="0.00"
+                      className="h-7 w-20 text-xs [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                    <span className="text-xs text-blue-700">USD</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      type="text"
+                      inputMode="decimal"
+                      value={safMontoBsStr}
+                      onChange={(e) => handleSafMontoBsChange(e.target.value)}
+                      placeholder="0.00"
+                      className="h-7 w-20 text-xs"
+                    />
+                    <span className="text-xs text-blue-700">Bs</span>
+                  </div>
                 </div>
               )}
             </div>
