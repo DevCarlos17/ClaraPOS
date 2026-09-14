@@ -67,7 +67,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
   const { user } = useCurrentUser()
   const { depositos: depositosActivos } = useDepositosVentaActivos()
 
-  const [motivo, setMotivo] = useState('Anulacion total de factura')
+  const [motivo, setMotivo] = useState('')
   const [loading, setLoading] = useState(false)
   const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
   const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL'>('TOTAL')
@@ -82,7 +82,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
   useEffect(() => {
     if (isOpen) {
       dialogRef.current?.showModal()
-      setMotivo('Anulacion total de factura')
+      setMotivo('')
       setDepositoElegidoId(null)
       setTipoNc('TOTAL')
       setOrigenReverso('CREDITO_A_FAVOR')
