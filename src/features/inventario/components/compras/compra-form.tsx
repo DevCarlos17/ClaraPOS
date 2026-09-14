@@ -90,6 +90,13 @@ interface LineaUI {
   precio_especial_usd: string   // PVP nivel 3 actual en USD ('0' si no existe)
   margen_actual: string         // margen % nivel 1 (derivado de costo/pvp vigentes)
 
+  // Flag pasivo de "usa tasa paralela" (criterio ESTRICTO: solo
+  // tasa_paralela_ref != null, nunca comparacion de costos). Solo para
+  // mostrar el badge informativo en la linea seleccionada — no participa
+  // en ningun computo de esta compra.
+  tasa_paralela_ref: string | null
+  costo_factura_usd: string | null
+
   // Control de edición multi-nivel: estado por nivel (poblado cuando hay cambio de
   // costo, o cuando el usuario abre la edición manual sin cambio de costo). Vacío
   // ([]) = sin decisión pendiente ni edición activa para esta línea.
@@ -633,6 +640,8 @@ export function CompraForm({ onClose }: CompraFormProps) {
         precio_especial_usd: producto.precio_especial_usd ?? '0',
         margen_actual: margenActual,
         pvp_niveles: [],
+        tasa_paralela_ref: producto.tasa_paralela_ref,
+        costo_factura_usd: producto.costo_factura_usd,
       },
     ])
     setBusqueda('')
@@ -1684,7 +1693,12 @@ export function CompraForm({ onClose }: CompraFormProps) {
                     // lo que valdra en inventario y "Factura" lo que se precargara al agregar.
                     const contable = parseFloat(p.costo_usd) || 0
                     const factura = p.costo_factura_usd != null ? parseFloat(p.costo_factura_usd) : contable
-                    const esParalela = p.tasa_paralela_ref != null && Math.abs(contable - factura) > 0.0001
+                    // Criterio ESTRICTO (unificado con el resto de superficies):
+                    // el flag depende SOLO de tasa_paralela_ref != null, nunca de
+                    // comparar costos (un producto puede tener tasa paralela con
+                    // costo_factura_usd == costo_usd en algun momento y sigue
+                    // debiendo mostrarse como tal).
+                    const esParalela = p.tasa_paralela_ref != null && p.tasa_paralela_ref.trim() !== ''
                     return (
                       <li key={p.id}>
                         <button
@@ -1789,6 +1803,14 @@ export function CompraForm({ onClose }: CompraFormProps) {
                           {/* Producto */}
                           <td className="px-2 py-2 text-foreground max-w-[180px]">
                             <span className="truncate block">{linea.nombre}</span>
+                            {linea.tasa_paralela_ref != null && linea.tasa_paralela_ref.trim() !== '' && (
+                              <span
+                                title="Este producto usa tasa paralela (tasa_paralela_ref persistida)"
+                                className="mt-0.5 inline-flex items-center rounded-full bg-amber-50 px-1.5 py-0.5 text-[9px] font-medium text-amber-700 ring-1 ring-amber-600/20 ring-inset dark:bg-amber-950 dark:text-amber-400"
+                              >
+                                Tasa paralela
+                              </span>
+                            )}
                           </td>
 
                           {/* Unidad */}

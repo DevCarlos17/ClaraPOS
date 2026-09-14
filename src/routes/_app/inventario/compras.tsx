@@ -12,7 +12,10 @@ export const Route = createFileRoute('/_app/inventario/compras')({
 function ComprasPage() {
   return (
     <RequirePermission permission={PERMISSIONS.INVENTORY_ADJUST} fallback={<AccessDeniedPage />}>
-      <div className="space-y-6">
+      {/* Altura acotada al viewport restante (TopBar h-16 + padding vertical
+          de <main>) para que CompraList controle su propio scroll interno en
+          vez de hacer crecer la pagina completa (mismo patron que cxc/cxp). */}
+      <div className="flex h-[calc(100vh-6.5rem)] min-h-0 flex-col gap-6">
         <PageHeader titulo="Facturas de Compra" descripcion="Registro y seguimiento de facturas de compra a proveedores" />
         <CompraList />
       </div>
