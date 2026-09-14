@@ -203,6 +203,14 @@ export interface FiltroNotasCredito {
    * en la busqueda. `nc.tipo` deja de ser filtrable desde esta pestaña.
    */
   busqueda?: string
+  /**
+   * Filtro por cliente (cliente-detalle-pantalla, PR1 — puramente aditivo).
+   * Cuando esta presente, agrega `AND nc.cliente_id = ?` al `WHERE`, despues
+   * del rango de fecha y antes de la clausula de `busqueda`. Cuando es
+   * `undefined` (todos los llamadores actuales de `NotasCreditoTab`), el
+   * SQL y los `params` son identicos byte-a-byte al comportamiento previo.
+   */
+  clienteId?: string
 }
 
 /**
@@ -225,6 +233,11 @@ export function buildNotasCreditoFiltro(f: FiltroNotasCredito): SqlFiltroResult 
      WHERE nc.empresa_id = ?
        AND datetime(nc.fecha) >= datetime(? || 'T00:00:00${VE_OFFSET}')
        AND datetime(nc.fecha) <= datetime(? || 'T23:59:59${VE_OFFSET}')`
+
+  if (f.clienteId) {
+    sql += `\n       AND nc.cliente_id = ?`
+    params.push(f.clienteId)
+  }
 
   const busqueda = f.busqueda?.trim()
   if (busqueda) {
