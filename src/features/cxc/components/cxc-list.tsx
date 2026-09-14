@@ -15,6 +15,7 @@ import {
 } from '../hooks/use-cxc'
 import { CxcClienteDetalle } from './cxc-cliente-detalle'
 import { CxcReportesGeneral } from './cxc-reportes-general'
+import { useMobile } from '@/hooks/use-mobile'
 
 // ─── KPI Card ─────────────────────────────────────────────────
 
@@ -77,6 +78,7 @@ export function CxcList() {
   const { tasaValor } = useTasaActual()
   const [clienteSeleccionado, setClienteSeleccionado] = useState<ClienteConDeuda | null>(null)
   const [filtroSAF, setFiltroSAF] = useState(false)
+  const isMobile = useMobile()
 
   const isSearching = searchQuery.trim().length >= 2
   const clientesBase = isSearching ? searchResults : allClientes
@@ -335,11 +337,14 @@ export function CxcList() {
         </div>
       </div>
 
-      {/* Modal de detalle: SOLO mobile (md:hidden). En desktop el detalle se
-          muestra inline en el panel derecho de arriba, nunca en este modal
-          (overlay y contenido ocultos via md:hidden en ambos). */}
+      {/* Modal de detalle: SOLO mobile. En desktop el detalle se muestra inline
+          en el panel derecho de arriba, nunca en este modal. El `open` DEBE
+          condicionarse por viewport (isMobile): ocultar solo via md:hidden deja
+          el Dialog de Radix abierto en desktop, y su DismissableLayer interpreta
+          cualquier clic de la pagina como "clic afuera", deseleccionando al
+          cliente. Ver bugfix deselect-desktop CxC. */}
       <Dialog
-        open={!!clienteActual}
+        open={isMobile && !!clienteActual}
         onOpenChange={(open) => { if (!open) setClienteSeleccionado(null) }}
       >
         <DialogContent
