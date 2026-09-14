@@ -117,6 +117,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
 
     expect(screen.queryByTestId('mock-pin-dialog')).not.toBeInTheDocument()
 
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -127,6 +128,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -191,6 +193,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -206,6 +209,17 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
   })
 
+  it('el motivo es obligatorio: "Confirmar Anulacion" esta deshabilitado hasta escribir un motivo', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeDisabled()
+
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
+
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeEnabled()
+  })
+
   it('"Credito a favor" es la unica opcion seleccionable y esta activa por defecto', () => {
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
@@ -219,6 +233,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
     await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -261,6 +276,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
 
     expect(screen.queryByRole('button', { name: /Cambiar deposito/i })).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox'), 'dep-2')
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -271,6 +287,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -282,6 +299,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const onClose = vi.fn()
     render(<CrearNcrModal isOpen onClose={onClose} factura={baseFactura()} />)
 
+    await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
