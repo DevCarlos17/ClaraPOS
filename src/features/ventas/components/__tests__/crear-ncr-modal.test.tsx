@@ -123,7 +123,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(screen.queryByTestId('mock-pin-dialog')).not.toBeInTheDocument()
   })
 
-  it('confirmar TOTAL emite directo con entryPoint TRADICIONAL, modalidad AJUSTE_CXC y tipo TOTAL', async () => {
+  it('confirmar TOTAL emite directo con entryPoint TRADICIONAL, modalidad SALDO_FAVOR y tipo TOTAL', async () => {
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
@@ -133,7 +133,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
       venta_id: 'venta-1',
       entryPoint: 'TRADICIONAL',
-      modalidad: 'AJUSTE_CXC',
+      modalidad: 'SALDO_FAVOR',
       tipo: 'TOTAL',
     })
     expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringContaining('NCR-000001'))
@@ -171,7 +171,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
       venta_id: 'venta-1',
       entryPoint: 'TRADICIONAL',
-      modalidad: 'AJUSTE_CXC',
+      modalidad: 'SALDO_FAVOR',
       tipo: 'PARCIAL',
       lineas: [{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }],
     })
@@ -214,7 +214,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(creditoAFavor).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('emision siempre resulta en modalidad AJUSTE_CXC sin importar el estado del selector', async () => {
+  it('emision con "Credito a favor" seleccionado (unico estado alcanzable) resulta en modalidad SALDO_FAVOR', async () => {
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
@@ -222,7 +222,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
-    expect(mockedCrearNotaCredito.mock.calls[0][0].modalidad).toBe('AJUSTE_CXC')
+    expect(mockedCrearNotaCredito.mock.calls[0][0].modalidad).toBe('SALDO_FAVOR')
   })
 
   it('una factura ya reversada totalmente (gating via puedeEmitirNcAdicional) queda de solo lectura, sin ofrecer TOTAL/PARCIAL ni "Confirmar Anulacion"', () => {
