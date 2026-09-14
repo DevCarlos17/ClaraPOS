@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ArrowLeft, Phone, MapPin, Calendar } from '@phosphor-icons/react'
+import { ArrowLeft, Phone, MapPin, Calendar, MagnifyingGlass } from '@phosphor-icons/react'
 import { type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
 import { FacturasEmpresaTable } from '@/features/ventas/components/facturas-empresa-tab'
 import { ConsultaFacturaModal } from '@/features/ventas/components/consulta-factura-modal'
 import { NotasCreditoTab } from '@/features/ventas/components/notas-credito-tab'
+import { derivarEstadoPago, ESTADO_PAGO_LABEL } from '@/features/ventas/utils/notas-credito-ui'
 import type { FacturaParaAnular } from '@/features/ventas/hooks/use-notas-credito'
 import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
+import { Input } from '@/components/ui/input'
 import { startOfMonth, todayStr } from '@/lib/dates'
+import { formatDateTime } from '@/lib/format'
+import { coincideBusquedaMultiCampo } from '@/lib/search'
 
 interface ClienteDetalleProps {
   onVolver: () => void
@@ -36,6 +40,10 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
   const [tabActiva, setTabActiva] = useState<TabActiva>('facturas')
   const [prevTab, setPrevTab] = useState<TabActiva>('facturas')
+  // cliente-detalle-tablas-pestanas: busqueda CLIENT-SIDE sobre las facturas
+  // ya cargadas para el rango de fecha vigente (el rango sigue siendo el
+  // unico filtro SQL — la busqueda solo acota lo YA traido).
+  const [busquedaFacturas, setBusquedaFacturas] = useState('')
 
   useEffect(() => {
     setFechaDesde(startOfMonth())
@@ -47,6 +55,21 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
     fechaDesde,
     fechaHasta,
   })
+
+  const facturasFiltradas = facturas.filter((f) =>
+    coincideBusquedaMultiCampo(
+      [
+        f.nro_factura,
+        formatDateTime(f.fecha),
+        f.total_usd,
+        f.total_bs,
+        f.cliente_nombre,
+        f.cliente_identificacion,
+        ESTADO_PAGO_LABEL[derivarEstadoPago(f)],
+      ],
+      busquedaFacturas
+    )
+  )
 
   function handleLimpiarFiltro() {
     setFechaDesde(startOfMonth())
@@ -164,7 +187,23 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
 
                       {/* Facturas */}
                       <div>
-                        <h3 className="text-sm font-semibold mb-2">Facturas</h3>
+                        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                          <h3 className="text-sm font-semibold">Facturas</h3>
+                          {!isLoadingFacturas && facturas.length > 0 && (
+                            <div className="relative w-full max-w-xs">
+                              <MagnifyingGlass
+                                size={16}
+                                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                              />
+                              <Input
+                                value={busquedaFacturas}
+                                placeholder="Buscar..."
+                                onChange={(e) => setBusquedaFacturas(e.target.value)}
+                                className="pl-9 h-8 text-sm"
+                              />
+                            </div>
+                          )}
+                        </div>
                         {isLoadingFacturas ? (
                           <div className="space-y-2">
                             {Array.from({ length: 3 }).map((_, i) => (
@@ -177,9 +216,10 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
                           </div>
                         ) : (
                           <FacturasEmpresaTable
-                            facturas={facturas}
+                            facturas={facturasFiltradas}
                             isLoading={isLoadingFacturas}
                             mostrarAcciones={false}
+                            mostrarCliente={false}
                             onRowClick={setFacturaSeleccionada}
                           />
                         )}

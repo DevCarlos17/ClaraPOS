@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { formatUsd, formatBs } from '@/lib/currency'
-import { formatDate } from '@/lib/format'
+import { formatDateTime } from '@/lib/format'
 import { rangoMesActual } from '../utils/notas-credito-admin-filters'
 import {
   derivarEstadoPago,
@@ -139,6 +139,14 @@ export interface FacturasEmpresaTableProps {
    */
   mostrarAcciones?: boolean
   /**
+   * Controla si se muestra la columna "Cliente" (cliente-detalle-tablas-
+   * pestanas, aditivo). Default `true`: sin cambios de comportamiento para
+   * los llamadores existentes (empresa-wide, `FacturasEmpresaTab`). `false`
+   * la oculta — usado por la pantalla de detalle de cliente, donde el
+   * cliente ya es conocido por contexto (un solo cliente en juego).
+   */
+  mostrarCliente?: boolean
+  /**
    * Reimpresion de factura fiscal (PR3a, aditivo): click de fila, pasado
    * directo al `onRowClick` ya existente de `DataTable` (sin cambios en
    * `DataTable`). Omitido = sin handler, comportamiento identico a hoy.
@@ -147,8 +155,15 @@ export interface FacturasEmpresaTableProps {
 }
 
 /** Presentacional: recibe data via props, sin conocer el hook ni el estado de filtros. */
-export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrarAcciones, onRowClick }: FacturasEmpresaTableProps) {
+export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrarAcciones, mostrarCliente, onRowClick }: FacturasEmpresaTableProps) {
   const columns: ColumnDef<FacturaParaAnular>[] = [
+    {
+      accessorKey: 'fecha',
+      header: 'Fecha',
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">{formatDateTime(row.original.fecha)}</span>
+      ),
+    },
     {
       accessorKey: 'nro_factura',
       header: 'Factura',
@@ -156,23 +171,20 @@ export function FacturasEmpresaTable({ facturas, isLoading, onAplicarNc, mostrar
         <span className="font-mono font-bold text-xs">#{row.original.nro_factura}</span>
       ),
     },
-    {
-      accessorKey: 'fecha',
-      header: 'Fecha',
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">{formatDate(row.original.fecha)}</span>
-      ),
-    },
-    {
-      id: 'cliente',
-      header: 'Cliente',
-      cell: ({ row }) => (
-        <div>
-          <p className="text-sm font-medium">{row.original.cliente_nombre}</p>
-          <p className="text-xs text-muted-foreground">{row.original.cliente_identificacion}</p>
-        </div>
-      ),
-    },
+    ...(mostrarCliente !== false
+      ? [
+          {
+            id: 'cliente',
+            header: 'Cliente',
+            cell: ({ row }: { row: { original: FacturaParaAnular } }) => (
+              <div>
+                <p className="text-sm font-medium">{row.original.cliente_nombre}</p>
+                <p className="text-xs text-muted-foreground">{row.original.cliente_identificacion}</p>
+              </div>
+            ),
+          } satisfies ColumnDef<FacturaParaAnular>,
+        ]
+      : []),
     {
       accessorKey: 'total_usd',
       header: 'Total USD',
