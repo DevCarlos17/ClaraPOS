@@ -37,13 +37,26 @@ function filtrosIniciales(): FiltrosNotasCreditoState {
   return { ...rangoMesActual(), busqueda: '' }
 }
 
-export function NotasCreditoTab() {
+interface NotasCreditoTabProps {
+  /**
+   * Filtro por cliente (cliente-detalle-pantalla, PR1). Cuando esta
+   * presente, la pestaña queda ESCOPEADA a ese cliente: se oculta el input
+   * de busqueda (redundante — ya hay un solo cliente en juego) y se pasa
+   * `clienteId` al hook. Cuando se omite, el comportamiento es identico al
+   * previo (uso empresa-wide en `notas-credito-page.tsx`).
+   */
+  clienteId?: string
+}
+
+export function NotasCreditoTab({ clienteId }: NotasCreditoTabProps = {}) {
   const [filtros, setFiltros] = useState<FiltrosNotasCreditoState>(filtrosIniciales)
+  const scopedToCliente = !!clienteId
 
   const { notas, isLoading: loadingNotas } = useNotasCredito({
     fechaDesde: filtros.fechaDesde,
     fechaHasta: filtros.fechaHasta,
     busqueda: filtros.busqueda,
+    clienteId,
   })
 
   function set<K extends keyof FiltrosNotasCreditoState>(key: K, value: FiltrosNotasCreditoState[K]) {
@@ -79,24 +92,26 @@ export function NotasCreditoTab() {
               className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          <div className="flex flex-col gap-1 min-w-[240px] flex-1">
-            <label htmlFor="nc-busqueda" className="text-xs text-muted-foreground">
-              Buscar
-            </label>
-            <div className="relative">
-              <MagnifyingGlass
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                id="nc-busqueda"
-                value={filtros.busqueda}
-                placeholder="NC, cliente o RIF..."
-                onChange={(e) => set('busqueda', e.target.value)}
-                className="pl-9"
-              />
+          {!scopedToCliente && (
+            <div className="flex flex-col gap-1 min-w-[240px] flex-1">
+              <label htmlFor="nc-busqueda" className="text-xs text-muted-foreground">
+                Buscar
+              </label>
+              <div className="relative">
+                <MagnifyingGlass
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  id="nc-busqueda"
+                  value={filtros.busqueda}
+                  placeholder="NC, cliente o RIF..."
+                  onChange={(e) => set('busqueda', e.target.value)}
+                  className="pl-9"
+                />
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 

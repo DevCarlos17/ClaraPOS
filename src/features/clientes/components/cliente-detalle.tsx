@@ -1,16 +1,28 @@
 import { useEffect, useState } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import { ArrowLeft, Phone, MapPin, Calendar } from '@phosphor-icons/react'
 import { type Cliente } from '@/features/clientes/hooks/use-clientes'
 import { useFacturasEmpresa } from '@/features/ventas/hooks/use-facturas-empresa'
 import { FacturasEmpresaTable } from '@/features/ventas/components/facturas-empresa-tab'
 import { ConsultaFacturaModal } from '@/features/ventas/components/consulta-factura-modal'
+import { NotasCreditoTab } from '@/features/ventas/components/notas-credito-tab'
 import type { FacturaParaAnular } from '@/features/ventas/hooks/use-notas-credito'
+import { SegmentedTabs, tabContentVariants } from '@/components/shared/segmented-tabs'
 import { startOfMonth, todayStr } from '@/lib/dates'
 
 interface ClienteDetalleProps {
   onVolver: () => void
   cliente: Cliente
 }
+
+type TabActiva = 'facturas' | 'notas-credito'
+
+const TAB_ORDER: TabActiva[] = ['facturas', 'notas-credito']
+
+const TABS = [
+  { key: 'facturas' as const, label: 'Facturas' },
+  { key: 'notas-credito' as const, label: 'Notas de credito' },
+]
 
 // =============================================
 // ClienteDetalle
@@ -22,6 +34,8 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
   // PR3a/PR3b (reimpresion-factura-fiscal): sostiene la factura elegida por
   // click de fila; `ConsultaFacturaModal` (PR3b) la consume abajo.
   const [facturaSeleccionada, setFacturaSeleccionada] = useState<FacturaParaAnular | null>(null)
+  const [tabActiva, setTabActiva] = useState<TabActiva>('facturas')
+  const [prevTab, setPrevTab] = useState<TabActiva>('facturas')
 
   useEffect(() => {
     setFechaDesde(startOfMonth())
@@ -39,7 +53,13 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
     setFechaHasta(todayStr())
   }
 
+  function handleTabChange(key: TabActiva) {
+    setPrevTab(tabActiva)
+    setTabActiva(key)
+  }
+
   const esRangoPorDefecto = fechaDesde === startOfMonth() && fechaHasta === todayStr()
+  const direction = TAB_ORDER.indexOf(tabActiva) > TAB_ORDER.indexOf(prevTab) ? 1 : -1
 
   return (
     <>
@@ -90,63 +110,91 @@ export function ClienteDetalle({ onVolver, cliente }: ClienteDetalleProps) {
             </div>
           )}
 
-          {/* Filtro de fechas */}
-          <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-lg border bg-muted/20">
-            <Calendar size={15} className="text-muted-foreground mb-0.5" />
-            <div>
-              <label htmlFor="facturas-fecha-desde" className="block text-xs text-muted-foreground mb-1">Desde</label>
-              <input
-                id="facturas-fecha-desde"
-                type="date"
-                value={fechaDesde}
-                onChange={(e) => setFechaDesde(e.target.value)}
-                autoComplete="off"
-                className="rounded-md border border-input bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div>
-              <label htmlFor="facturas-fecha-hasta" className="block text-xs text-muted-foreground mb-1">Hasta</label>
-              <input
-                id="facturas-fecha-hasta"
-                type="date"
-                value={fechaHasta}
-                onChange={(e) => setFechaHasta(e.target.value)}
-                autoComplete="off"
-                className="rounded-md border border-input bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            {!esRangoPorDefecto && (
-              <button
-                type="button"
-                onClick={handleLimpiarFiltro}
-                className="text-xs text-muted-foreground hover:text-foreground underline mb-1.5"
-              >
-                Limpiar filtro
-              </button>
-            )}
-          </div>
+          {/* Tabs: Facturas / Notas de credito */}
+          <div className="space-y-0">
+            <SegmentedTabs tabs={TABS} active={tabActiva} onChange={handleTabChange} />
 
-          {/* Facturas */}
-          <div>
-            <h3 className="text-sm font-semibold mb-2">Facturas</h3>
-            {isLoadingFacturas ? (
-              <div className="space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="h-10 bg-muted rounded animate-pulse" />
-                ))}
-              </div>
-            ) : facturas.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground border border-dashed rounded-lg">
-                <p className="text-sm font-medium">Sin facturas</p>
-              </div>
-            ) : (
-              <FacturasEmpresaTable
-                facturas={facturas}
-                isLoading={isLoadingFacturas}
-                mostrarAcciones={false}
-                onRowClick={setFacturaSeleccionada}
-              />
-            )}
+            <div className="overflow-hidden">
+              <AnimatePresence mode="wait" custom={direction}>
+                <motion.div
+                  key={tabActiva}
+                  custom={direction}
+                  variants={tabContentVariants}
+                  initial="initial"
+                  animate="animate"
+                  exit="exit"
+                >
+                  {tabActiva === 'facturas' && (
+                    <div className="rounded-b-lg border border-t-0 p-4">
+                      {/* Filtro de fechas */}
+                      <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-lg border bg-muted/20">
+                        <Calendar size={15} className="text-muted-foreground mb-0.5" />
+                        <div>
+                          <label htmlFor="facturas-fecha-desde" className="block text-xs text-muted-foreground mb-1">Desde</label>
+                          <input
+                            id="facturas-fecha-desde"
+                            type="date"
+                            value={fechaDesde}
+                            onChange={(e) => setFechaDesde(e.target.value)}
+                            autoComplete="off"
+                            className="rounded-md border border-input bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        </div>
+                        <div>
+                          <label htmlFor="facturas-fecha-hasta" className="block text-xs text-muted-foreground mb-1">Hasta</label>
+                          <input
+                            id="facturas-fecha-hasta"
+                            type="date"
+                            value={fechaHasta}
+                            onChange={(e) => setFechaHasta(e.target.value)}
+                            autoComplete="off"
+                            className="rounded-md border border-input bg-white px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                          />
+                        </div>
+                        {!esRangoPorDefecto && (
+                          <button
+                            type="button"
+                            onClick={handleLimpiarFiltro}
+                            className="text-xs text-muted-foreground hover:text-foreground underline mb-1.5"
+                          >
+                            Limpiar filtro
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Facturas */}
+                      <div>
+                        <h3 className="text-sm font-semibold mb-2">Facturas</h3>
+                        {isLoadingFacturas ? (
+                          <div className="space-y-2">
+                            {Array.from({ length: 3 }).map((_, i) => (
+                              <div key={i} className="h-10 bg-muted rounded animate-pulse" />
+                            ))}
+                          </div>
+                        ) : facturas.length === 0 ? (
+                          <div className="text-center py-8 text-muted-foreground border border-dashed rounded-lg">
+                            <p className="text-sm font-medium">Sin facturas</p>
+                          </div>
+                        ) : (
+                          <FacturasEmpresaTable
+                            facturas={facturas}
+                            isLoading={isLoadingFacturas}
+                            mostrarAcciones={false}
+                            onRowClick={setFacturaSeleccionada}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {tabActiva === 'notas-credito' && (
+                    <div className="rounded-b-lg border border-t-0 p-4">
+                      <NotasCreditoTab clienteId={cliente.id} />
+                    </div>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </div>

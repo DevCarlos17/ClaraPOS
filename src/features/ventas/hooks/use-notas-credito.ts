@@ -226,6 +226,8 @@ export interface FiltroNotasCreditoHook {
   fechaDesde?: string
   fechaHasta?: string
   busqueda?: string
+  /** Filtro por cliente (cliente-detalle-pantalla, PR1). Ver `FiltroNotasCredito.clienteId`. */
+  clienteId?: string
 }
 
 /**
@@ -251,6 +253,7 @@ export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
       fechaDesde,
       fechaHasta,
       busqueda: filtros.busqueda,
+      clienteId: filtros.clienteId,
     })
     sql = built.sql
     params = built.params
