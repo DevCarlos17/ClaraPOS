@@ -36,12 +36,13 @@ interface CrearNcrModalProps {
 }
 
 /**
- * Origen del reverso — placeholder de "Devolver dinero"/"Credito a favor"
- * (Design §Decision 5, Spec "Selector Devolver dinero / Credito a favor
- * como placeholder"). Costura deliberada: cuando un change futuro habilite
- * sesion/tesoreria, este seam crece sin reestructurar el modal — hoy
- * "Devolver dinero" NUNCA es seleccionable y este estado NUNCA alimenta la
- * `modalidad` real de `crearNotaCredito` (siempre 'AJUSTE_CXC').
+ * Origen del reverso — "Devolver dinero"/"Credito a favor" (nc-admin-saldo-
+ * favor-real). "Credito a favor" alimenta `modalidad: 'SALDO_FAVOR'` en
+ * `crearNotaCredito`, igual que el selector equivalente de
+ * `nota-credito-pos-modal.tsx`. "Devolver dinero" (REFUND_TESORERIA) sigue
+ * sin implementar en el write core y permanece deshabilitado/"Proximamente"
+ * en la UI — este valor del union queda como costura para cuando un change
+ * futuro lo habilite, sin reestructurar el modal.
  */
 type OrigenReverso = 'DEVOLVER_DINERO' | 'CREDITO_A_FAVOR'
 
@@ -58,9 +59,12 @@ type OrigenReverso = 'DEVOLVER_DINERO' | 'CREDITO_A_FAVOR'
  * empresa (recibida por prop, no de una lista escopeada a sesion), SIN PIN
  * (la ruta ya esta gateada por `PERMISSIONS.SALES_VOID` a nivel de acceso,
  * obs #2835 — pedir PIN encima seria friccion redundante), `entryPoint:
- * 'TRADICIONAL'` y `modalidad` SIEMPRE `'AJUSTE_CXC'` — el selector "Devolver
- * dinero" es un shell visual deshabilitado, "Credito a favor" es la unica
- * opcion funcional (Design §Decision 5).
+ * 'TRADICIONAL'` y `modalidad` derivada de `origenReverso` — "Credito a
+ * favor" (unica opcion funcional hoy) produce `'SALDO_FAVOR'`, un credito
+ * real trazable en `movimientos_cuenta` (tipo='SAFC'), igual que el flujo
+ * POS. "Devolver dinero" sigue siendo un shell visual deshabilitado
+ * ("Proximamente") porque REFUND_TESORERIA aun no esta implementado en el
+ * write core (nc-admin-saldo-favor-real).
  */
 export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -156,10 +160,12 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         // la sesion de caja activa (factura potencialmente historica, ni idea
         // de que sesion este abierta ahora). Ver Regla de Oro, obs #2804.
         entryPoint: 'TRADICIONAL',
-        // Design §Decision 5: el selector "Devolver dinero"/"Credito a favor"
-        // es un placeholder — `origenReverso` NUNCA alimenta este valor,
-        // siempre AJUSTE_CXC sin importar el estado del selector.
-        modalidad: 'AJUSTE_CXC',
+        // "Credito a favor" (unica opcion seleccionable hoy) produce un
+        // saldo a favor real via el branch SALDO_FAVOR ya probado del write
+        // core (nc-admin-saldo-favor-real). "Devolver dinero" queda fuera de
+        // alcance (REFUND_TESORERIA no implementado) — el selector nunca
+        // permite alcanzarlo, pero se mapea igual por completitud del tipo.
+        modalidad: origenReverso === 'CREDITO_A_FAVOR' ? 'SALDO_FAVOR' : 'AJUSTE_CXC',
         tipo: lineasParcial ? 'PARCIAL' : 'TOTAL',
         ...(lineasParcial ? { lineas: lineasParcial } : {}),
         depositoReingresoId: depositoElegidoId ?? undefined,
@@ -248,7 +254,10 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                   )}
                 </div>
 
-                {/* Origen del reverso — placeholder (Design §Decision 5). */}
+                {/* Origen del reverso — "Credito a favor" mapea a modalidad
+                    SALDO_FAVOR real (nc-admin-saldo-favor-real). "Devolver
+                    dinero" sigue deshabilitado, REFUND_TESORERIA no
+                    implementado en el write core. */}
                 <div className="rounded-lg border p-3">
                   <p className="text-xs font-semibold text-muted-foreground mb-2">Origen del reverso</p>
                   <div className="flex gap-2">
