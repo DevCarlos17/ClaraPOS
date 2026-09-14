@@ -9,7 +9,7 @@ import {
   type Cliente,
 } from '@/features/clientes/hooks/use-clientes'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
-import { saldoEstado, SALDO_TEXT_CLASS } from '@/features/clientes/lib/saldo-estado'
+import { useDeudaFacturasClientes, useCreditoFavorClientes } from '@/features/cxc/hooks/use-deuda-cliente'
 import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { TableRowContextMenu, type ContextMenuAction } from '@/components/shared/table-row-context-menu'
 import { ClienteForm } from './cliente-form'
@@ -17,6 +17,13 @@ import { ClienteForm } from './cliente-form'
 export function ClienteList() {
   const { clientes, isLoading } = useClientes()
   const { tasaValor } = useTasaActual()
+  // Batch sobre la lista COMPLETA sin filtrar (nunca clientesFiltrados): evita
+  // re-disparar la query al tipear en el buscador. Deuda y saldo a favor son
+  // cifras independientes, nunca neteadas entre si (ver exploracion
+  // sdd/clientes-saldo-separado, mismo modelo que CxC).
+  const clienteIds = useMemo(() => clientes.map((c) => c.id), [clientes])
+  const deudaMap = useDeudaFacturasClientes(clienteIds)
+  const creditoMap = useCreditoFavorClientes(clienteIds)
   const navigate = useNavigate()
   const [formOpen, setFormOpen] = useState(false)
   const [editingCliente, setEditingCliente] = useState<Cliente | undefined>(undefined)
@@ -43,12 +50,10 @@ export function ClienteList() {
 
   const resumen = useMemo(() => {
     const activos = clientes.filter((c) => c.is_active === 1)
-    const totalSaldo = activos.reduce(
-      (sum, c) => sum + parseFloat(c.saldo_actual || '0'),
-      0
-    )
-    return { totalActivos: activos.length, totalSaldo }
-  }, [clientes])
+    const totalDeuda = activos.reduce((sum, c) => sum + (deudaMap[c.id] ?? 0), 0)
+    const totalCredito = activos.reduce((sum, c) => sum + (creditoMap[c.id] ?? 0), 0)
+    return { totalActivos: activos.length, totalDeuda, totalCredito }
+  }, [clientes, deudaMap, creditoMap])
 
   function handleNuevo() {
     setEditingCliente(undefined)
@@ -76,7 +81,9 @@ export function ClienteList() {
       setTogglingId(cliente.id)
       try {
         const tiene = await tieneMovimientos(cliente.id)
-        if (tiene && parseFloat(cliente.saldo_actual) !== 0) {
+        const deuda = deudaMap[cliente.id] ?? 0
+        const credito = creditoMap[cliente.id] ?? 0
+        if (tiene && (deuda > 0 || credito > 0)) {
           toast.error('No se puede desactivar: tiene saldo pendiente')
           return
         }
@@ -118,17 +125,27 @@ export function ClienteList() {
 
   return (
     <div className="space-y-4">
-      {/* Cards Resumen */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Cards Resumen: deuda y saldo a favor SIEMPRE separados, nunca neteados
+          en un solo numero (ver exploracion sdd/clientes-saldo-separado). */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-2xl bg-card shadow-lg p-4">
           <p className="text-sm text-muted-foreground">Clientes Activos</p>
           <p className="text-2xl font-bold text-foreground">{resumen.totalActivos}</p>
         </div>
         <div className="rounded-2xl bg-card shadow-lg p-4">
-          <p className="text-sm text-muted-foreground">Saldo Total Pendiente</p>
-          <p className="text-2xl font-bold text-foreground">{formatUsd(resumen.totalSaldo)}</p>
+          <p className="text-sm text-muted-foreground">Deuda Total</p>
+          <p className="text-2xl font-bold text-red-600">{formatUsd(resumen.totalDeuda)}</p>
           {tasaValor > 0 && (
-            <p className="text-sm text-muted-foreground">{formatBs(usdToBs(resumen.totalSaldo, tasaValor))}</p>
+            <p className="text-sm text-muted-foreground">{formatBs(usdToBs(resumen.totalDeuda, tasaValor))}</p>
+          )}
+        </div>
+        <div className="rounded-2xl bg-card shadow-lg p-4">
+          <p className="text-sm text-muted-foreground">Saldo a Favor Total</p>
+          <p className="text-2xl font-bold text-green-600">
+            {resumen.totalCredito > 0 ? `+${formatUsd(resumen.totalCredito)}` : formatUsd(0)}
+          </p>
+          {tasaValor > 0 && resumen.totalCredito > 0 && (
+            <p className="text-sm text-muted-foreground">{formatBs(usdToBs(resumen.totalCredito, tasaValor))}</p>
           )}
         </div>
       </div>
@@ -203,7 +220,10 @@ export function ClienteList() {
               </thead>
               <tbody>
                 {clientesFiltrados.map((cli) => {
-                  const saldo = cli.saldo_actual || '0'
+                  const deuda = deudaMap[cli.id] ?? 0
+                  const credito = creditoMap[cli.id] ?? 0
+                  const tieneDeuda = deuda > 0.001
+                  const tieneCredito = credito > 0.001
                   const menuItems: ContextMenuAction[] = [
                     {
                       key: 'ver-detalle',
@@ -239,8 +259,19 @@ export function ClienteList() {
                       <td className="px-4 py-3 text-right text-muted-foreground">
                         {formatUsd(cli.limite_credito_usd)}
                       </td>
-                      <td className={`px-4 py-3 text-right font-bold ${SALDO_TEXT_CLASS[saldoEstado(saldo)]}`}>
-                        {formatUsd(saldo)}
+                      <td className="px-4 py-3 text-right">
+                        {tieneDeuda && tieneCredito ? (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className="font-bold text-red-600">{formatUsd(deuda)}</span>
+                            <span className="text-xs font-semibold text-green-600">+{formatUsd(credito)}</span>
+                          </div>
+                        ) : tieneDeuda ? (
+                          <span className="font-bold text-red-600">{formatUsd(deuda)}</span>
+                        ) : tieneCredito ? (
+                          <span className="font-bold text-green-600">+{formatUsd(credito)}</span>
+                        ) : (
+                          <span className="font-bold text-muted-foreground">{formatUsd(0)}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <button
