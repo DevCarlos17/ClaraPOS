@@ -1,5 +1,5 @@
 import { Money, CreditCard, Coins, ArrowsLeftRight, HandFist } from '@phosphor-icons/react'
-import { formatUsd, formatBs } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import {
   usePagosPorMetodo,
   useCxcDelDia,
@@ -58,7 +58,7 @@ export function PagosResumen({
   }, 0)
 
   const haySaf = safTotalUsd > 0.001
-  const safBs = tasaDelDia > 0 ? safTotalUsd * tasaDelDia : 0
+  const safBs = tasaDelDia > 0 ? usdToBs(safTotalUsd, tasaDelDia).toNumber() : 0
 
   // El diferencial neto en USD necesita la tasa del día para convertir el neto en Bs
   const diferencialNetoUsdCalc = tasaDelDia > 0 ? diferencialNetoBs / tasaDelDia : diferencialNetoUsd

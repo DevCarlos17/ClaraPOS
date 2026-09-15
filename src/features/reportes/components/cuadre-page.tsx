@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { PageHeader } from '@/components/layout/page-header'
 import { useCajasActivas } from '@/features/configuracion/hooks/use-cajas'
 import { todayStr } from '@/lib/dates'
-import { formatTasa, formatUsd, formatBs } from '@/lib/currency'
+import { formatTasa, formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate, formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { cerrarSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
@@ -718,7 +718,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   <span className="text-muted-foreground">Cobros por Adelantado (SAF)</span>
                   <div className="text-right">
                     {tasaPromedio > 0 && (
-                      <div className="text-indigo-600">{formatBs(safTotalUsd * tasaPromedio)}</div>
+                      <div className="text-indigo-600">{formatBs(usdToBs(safTotalUsd, tasaPromedio))}</div>
                     )}
                     <div className="text-xs text-muted-foreground">{formatUsd(safTotalUsd)}</div>
                   </div>

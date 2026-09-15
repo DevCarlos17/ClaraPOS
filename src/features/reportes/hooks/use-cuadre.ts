@@ -1554,13 +1554,15 @@ export function useSafDiario(filters: CuadreFilters | null): SafDiarioResult {
     filters ? paramsMc : []
   )
 
-  const totalUsd = Number(
-    Number((dataAggregate?.[0] as { total_saf: number } | undefined)?.total_saf ?? 0).toFixed(2)
-  )
+  // Precision completa (sin redondeo a 2 decimales aqui): este valor se
+  // multiplica por `tasa` en los componentes consumidores (cuadre-page,
+  // pagos-resumen, saf-detalle-modal) via usdToBs(). Redondear aqui antes de
+  // esa multiplicacion causaba Bs 755 en vez de 754 (1.51*500 vs 1.508*500).
+  const totalUsd = Number((dataAggregate?.[0] as { total_saf: number } | undefined)?.total_saf ?? 0)
 
   const items: SafFacturaItem[] = (dataItems ?? []).map((row: Record<string, unknown>) => {
-    const montoSafUsd = Number(Number(row.monto ?? 0).toFixed(2))
-    const totalFacturaUsd = Number(Number(row.total_usd ?? 0).toFixed(2))
+    const montoSafUsd = Number(row.monto ?? 0)
+    const totalFacturaUsd = Number(row.total_usd ?? 0)
     const rawStr = String(row.otros_pagos_raw ?? '')
     const otrosPagos: OtroPago[] = rawStr
       ? rawStr.split('|').map((part) => {

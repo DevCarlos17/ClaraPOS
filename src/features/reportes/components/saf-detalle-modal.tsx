@@ -1,5 +1,5 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { formatUsd, formatBs } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import type { SafFacturaItem } from '../hooks/use-cuadre'
 
 interface SafDetalleModalProps {
@@ -36,7 +36,7 @@ export function SafDetalleModal({ open, onClose, items, tasaDelDia }: SafDetalle
               <tbody>
                 {items.map((item) => {
                   const tasaItem = item.tasa > 0 ? item.tasa : tasaDelDia
-                  const safBs = tasaItem > 0 ? item.montoSafUsd * tasaItem : 0
+                  const safBs = tasaItem > 0 ? usdToBs(item.montoSafUsd, tasaItem).toNumber() : 0
                   return (
                     <tr key={item.movimientoCuentaId} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="px-3 py-2 font-mono text-xs">{item.nroFactura}</td>
