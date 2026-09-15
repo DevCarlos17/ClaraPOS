@@ -28,7 +28,7 @@ import {
   useVentasDelDia,
   useCxcDelDia,
   useSafDiario,
-  useSaldoEfectivoBimonetario,
+  // useSaldoEfectivoBimonetario, // OCULTO: solo alimentaba "Total Caja Neto Esperado" (oculto)
   useCobrosViaPOS,
   useSesionApertura,
   usePagosPorMetodo,
@@ -167,12 +167,15 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
 
   // KPI data — shown after consultar
   const { totalVentasUsd, totalVentasBs, facturasCount } = useVentasDelDia(activeFilters)
-  const { cxcTotalUsd, cxcTotalBs } = useCxcDelDia(activeFilters)
+  const { cxcTotalUsd } = useCxcDelDia(activeFilters)
   const { items: safItems, totalUsd: safTotalUsd } = useSafDiario(activeFilters)
 
-  // Data for CuadreNetoEsperado
-  const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
-  const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBs, totalCobrosBsEquiv, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
+  // OCULTO (fix/cuadre-ocultar-neto-esperado): saldoContadoUsd solo alimentaba
+  // "Total Caja Neto Esperado" (ahora oculto). Se comenta el hook para no dejar
+  // la variable sin uso. Reactivar junto con esa linea.
+  // const { saldoEsperadoUsd: saldoContadoUsd } = useSaldoEfectivoBimonetario(activeFilters)
+  // totalCobrosBs quitado del destructuring: solo se usaba en el diferencialBs oculto.
+  const { totalCobrosUsd: cobrosAnterioresUsd, totalCobrosBsEquiv, porMetodo: cobrosViaPOS } = useCobrosViaPOS(activeFilters)
 
   // Cobros CxC por tipo de moneda — para el Arqueo Teórico.
   // Solo métodos EFECTIVO: las transferencias no afectan el efectivo físico en caja.
@@ -239,33 +242,29 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     (m) => m.origen === 'VUELTO'
   )
 
-  // Diferencial cambiario por redondeo (mismo calculo que PagosResumen)
-  const totalCobradoBs = todosMetodos.reduce((s, m) =>
-    s + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs), 0
-  )
-  const diferencialBs = totalesFiscales.totalFacturadoBs + totalCobrosBs - totalCobradoBs - cxcTotalBs
-  const diferencialCambiarioUsd = tasaPromedio > 0
-    ? Number((diferencialBs / tasaPromedio).toFixed(2))
-    : 0
-  // Fondo apertura en Bs. nativos convertido a USD equivalente (para el total neto USD)
-  const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
   // "Total Contado" = facturas emitidas originalmente como CONTADO (tipo='CONTADO').
   // Usa el tipo original de la factura en lugar de la fórmula totalFacturado - cxcPendiente,
   // que distorsionaba el resultado cuando una factura crédito se cobraba en la misma sesión.
   const totalContadoUsd = contadoUsd
   const totalContadoBs  = contadoBs
 
-  // totalNeto incluye: efectivo USD esperado (apertura_usd + ventas + movimientos)
-  //                  + Bs. nativos de apertura convertidos a USD
-  //                  + cobros anteriores CxC
-  //                  + diferencial cambiario
-  const totalNeto = saldoContadoUsd + fondoAperturaBsEnUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
-  // Para display en Bs.: sumar los Bs. nativos de apertura directamente (sin re-convertir)
-  // Cuando hay tasa: convierte el track USD a Bs y suma los Bs nativos de apertura
-  // Sin tasa: muestra solo los Bs nativos de apertura (sin conversión)
-  const totalNetoBs = tasaPromedio > 0
-    ? (saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd) * tasaPromedio + fondoAperturaBs
-    : fondoAperturaBs
+  // OCULTO (fix/cuadre-ocultar-neto-esperado): calculo de "Diferencial Cambiario" y
+  // "Total Caja Neto Esperado". Sus lineas de UI se ocultaron (ver JSX mas abajo).
+  // Se comenta el calculo tambien para no dejar variables sin usar. Reactivar junto
+  // con el JSX; ademas corregir diferencialBs para restar el SAF (no-efectivo) antes
+  // de reactivar — ver engram sdd/cuadre-neto-esperado-saf/explore.
+  // const totalCobradoBs = todosMetodos.reduce((s, m) =>
+  //   s + (m.moneda === 'BS' ? m.totalOriginal : m.totalBs), 0
+  // )
+  // const diferencialBs = totalesFiscales.totalFacturadoBs + totalCobrosBs - totalCobradoBs - cxcTotalBs
+  // const diferencialCambiarioUsd = tasaPromedio > 0
+  //   ? Number((diferencialBs / tasaPromedio).toFixed(2))
+  //   : 0
+  // const fondoAperturaBsEnUsd = tasaPromedio > 0 ? Number((fondoAperturaBs / tasaPromedio).toFixed(2)) : 0
+  // const totalNeto = saldoContadoUsd + fondoAperturaBsEnUsd + cobrosAnterioresUsd + diferencialCambiarioUsd
+  // const totalNetoBs = tasaPromedio > 0
+  //   ? (saldoContadoUsd + cobrosAnterioresUsd + diferencialCambiarioUsd) * tasaPromedio + fondoAperturaBs
+  //   : fondoAperturaBs
 
   // Determine if exactly one ABIERTA session is selected (enables finalizar cuadre)
   const sesionAbiertaId = useMemo(() => {
@@ -744,8 +743,18 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 )
               })()}
 
-              {/* Diferencial Cambiario */}
-              <div className="flex justify-between text-sm">
+              {/* OCULTO (fix/cuadre-ocultar-neto-esperado): "Diferencial Cambiario" y
+                  "Total Caja Neto Esperado" se ocultan por decision de negocio.
+                  - "Total Caja Neto Esperado": diseno simplificado superado por la card
+                    de "Conteo Fisico por Metodo" (sistema vs. fisico por metodo, con
+                    faltantes) — no aporta nada que esa card no tenga.
+                  - "Diferencial Cambiario": reservado para cuando se permita recibir una
+                    venta a una tasa distinta a la que el sistema calcula los precios;
+                    hasta entonces no aplica. Ademas su formula (diferencialBs) no resta el
+                    SAF y sobrestima el efectivo esperado con credito no-efectivo (ver
+                    engram sdd/cuadre-neto-esperado-saf/explore). Reactivar requiere
+                    corregir esa formula. Calculo asociado tambien comentado mas arriba. */}
+              {/* <div className="flex justify-between text-sm">
                 <span className="text-muted-foreground">Diferencial Cambiario</span>
                 <div className="text-right">
                   {tasaPromedio > 0 && (
@@ -759,7 +768,6 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 </div>
               </div>
 
-              {/* Separador + Total Neto Esperado */}
               <div className="border-t pt-3">
                 <div className="flex justify-between items-start">
                   <span className="text-sm font-semibold">Total Caja Neto Esperado</span>
@@ -774,7 +782,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                     )}
                   </div>
                 </div>
-              </div>
+              </div> */}
             </div>
 
             {/* RIGHT COLUMN — Métodos de pago */}
