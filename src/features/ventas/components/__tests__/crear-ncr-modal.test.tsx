@@ -23,6 +23,25 @@ vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
   SupervisorPinDialog: ({ isOpen, titulo }: { isOpen: boolean; titulo?: string }) =>
     isOpen ? <div data-testid="mock-pin-dialog">{titulo ?? 'PIN de supervisor'}</div> : null,
 }))
+// Slice 6 (nc-refund-tesoreria, wiring): mockeamos el mini-formulario aislado
+// (ya probado end-to-end en refund-tesoreria-form.test.tsx) para verificar
+// SOLO el wiring del modal — mismo criterio que el mock de SupervisorPinDialog.
+vi.mock('../refund-tesoreria-form', () => ({
+  RefundTesoreriaForm: ({
+    onConfirm,
+  }: {
+    onConfirm: (lineas: { destino: string; cuentaId: string; montoEnMonedaCuenta: string }[]) => void
+  }) => (
+    <div data-testid="mock-refund-tesoreria-form">
+      <button
+        type="button"
+        onClick={() => onConfirm([{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' }])}
+      >
+        Confirmar reembolso (mock)
+      </button>
+    </div>
+  ),
+}))
 
 vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({
   crearNotaCredito: vi.fn(),
@@ -200,13 +219,57 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(mockedCrearNotaCredito.mock.calls[0][0]).not.toHaveProperty('sesionCajaActivaId')
   })
 
-  it('"Devolver dinero" esta deshabilitada, muestra indicacion de "Proximamente" y nunca dispara crearNotaCredito', async () => {
+  it('Scenario "Devolver dinero habilitada revela sub-opciones": esta habilitada y revela "Tesoreria" (activa) y "Sesion de caja activa" (deshabilitada, "Proximamente")', async () => {
+    const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
     const devolverDinero = screen.getByRole('button', { name: /Devolver dinero/i })
-    expect(devolverDinero).toBeDisabled()
+    expect(devolverDinero).toBeEnabled()
+
+    await user.click(devolverDinero)
+
+    expect(screen.getByRole('button', { name: /^Tesoreria$/i })).toBeEnabled()
+    const sesionCaja = screen.getByRole('button', { name: /Sesion de caja activa/i })
+    expect(sesionCaja).toBeDisabled()
     expect(screen.getByText(/Proximamente/i)).toBeInTheDocument()
-    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('Scenario "Sesión de caja activa permanece deshabilitada": intentar seleccionarla no cambia nada, sigue sin responder', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+    await user.click(screen.getByRole('button', { name: /Sesion de caja activa/i }))
+
+    expect(screen.queryByTestId('mock-refund-tesoreria-form')).not.toBeInTheDocument()
+  })
+
+  it('Scenario "Seleccionar Tesorería revela el mini-formulario": monta RefundTesoreriaForm', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+    await user.click(screen.getByRole('button', { name: /^Tesoreria$/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toBeInTheDocument()
+  })
+
+  it('Scenario "Emisión vía Tesorería invoca REFUND_TESORERIA": confirmar el mini-formulario invoca crearNotaCredito con modalidad REFUND_TESORERIA y egresoParams como array', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+    await user.click(screen.getByRole('button', { name: /^Tesoreria$/i }))
+    await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      venta_id: 'venta-1',
+      entryPoint: 'TRADICIONAL',
+      modalidad: 'REFUND_TESORERIA',
+      egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' }],
+    })
+    expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringContaining('NCR-000001'))
   })
 
   it('el motivo es obligatorio: "Confirmar Anulacion" esta deshabilitado hasta escribir un motivo', async () => {

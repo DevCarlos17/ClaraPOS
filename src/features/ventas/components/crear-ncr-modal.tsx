@@ -5,6 +5,7 @@ import {
   useReversosFactura,
   type FacturaParaAnular,
   type LineaNcSeleccionada,
+  type EgresoTesoreriaLinea,
 } from '../hooks/use-notas-credito'
 import {
   puedeEmitirNcAdicional,
@@ -17,6 +18,7 @@ import { type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export
 import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factura'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
+import { RefundTesoreriaForm } from './refund-tesoreria-form'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -37,14 +39,18 @@ interface CrearNcrModalProps {
 
 /**
  * Origen del reverso — "Devolver dinero"/"Credito a favor" (nc-admin-saldo-
- * favor-real). "Credito a favor" alimenta `modalidad: 'SALDO_FAVOR'` en
- * `crearNotaCredito`, igual que el selector equivalente de
- * `nota-credito-pos-modal.tsx`. "Devolver dinero" (REFUND_TESORERIA) sigue
- * sin implementar en el write core y permanece deshabilitado/"Proximamente"
- * en la UI — este valor del union queda como costura para cuando un change
- * futuro lo habilite, sin reestructurar el modal.
+ * favor-real, extendido por nc-refund-tesoreria). "Credito a favor" alimenta
+ * `modalidad: 'SALDO_FAVOR'` en `crearNotaCredito`, igual que el selector
+ * equivalente de `nota-credito-pos-modal.tsx` — SIN cambios respecto al
+ * comportamiento existente. "Devolver dinero" revela dos sub-opciones:
+ * "Tesoreria" (activa, `modalidad: 'REFUND_TESORERIA'`, ver
+ * `SubOpcionDevolverDinero`) y "Sesion de caja activa" (deshabilitada,
+ * "Proximamente").
  */
 type OrigenReverso = 'DEVOLVER_DINERO' | 'CREDITO_A_FAVOR'
+
+/** Sub-opcion de "Devolver dinero" (nc-refund-tesoreria, Spec notas-credito-admin). Solo `'TESORERIA'` esta implementada — `'SESION_CAJA'` permanece deshabilitada en la UI ("Proximamente"), nunca se llega a setear. */
+type SubOpcionDevolverDinero = 'TESORERIA' | null
 
 /**
  * Modal delgado de la ruta administrativa "Facturas emitidas" (Slice D,
@@ -76,6 +82,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
   const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
   const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL'>('TOTAL')
   const [origenReverso, setOrigenReverso] = useState<OrigenReverso>('CREDITO_A_FAVOR')
+  const [subOpcionDevolver, setSubOpcionDevolver] = useState<SubOpcionDevolverDinero>(null)
 
   const ventaId = isOpen ? factura?.id ?? null : null
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(ventaId)
@@ -90,6 +97,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
       setDepositoElegidoId(null)
       setTipoNc('TOTAL')
       setOrigenReverso('CREDITO_A_FAVOR')
+      setSubOpcionDevolver(null)
     } else {
       dialogRef.current?.close()
     }
@@ -146,6 +154,43 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
       }),
     [detalle, reversos]
   )
+
+  // Monto disponible para reembolsar via Tesoreria (nc-refund-tesoreria):
+  // remanente de la NC neto de Step A — misma formula que `crearNotaCredito`
+  // (totalUsdNc menos lo aplicado a la deuda pendiente de la factura). Solo
+  // se calcula para tipo TOTAL (unico caso wireado a REFUND_TESORERIA en
+  // este change; PARCIAL usa su propio flujo de `SeleccionLineasNc`).
+  const montoDisponibleParaRefund = useMemo(() => {
+    if (!factura) return 0
+    const totalUsdNc = Number(factura.total_usd)
+    const saldoPendVenta = Number(factura.saldo_pend_usd)
+    const montoAplicadoAPendiente = Math.min(saldoPendVenta, totalUsdNc)
+    return Math.max(0, totalUsdNc - montoAplicadoAPendiente)
+  }, [factura])
+
+  async function emitirNcRefund(lineas: EgresoTesoreriaLinea[]) {
+    if (!factura || !user?.empresa_id) return
+    setLoading(true)
+    try {
+      const result = await crearNotaCredito({
+        venta_id: factura.id,
+        motivo: motivo.trim() || 'Anulacion desde modulo administrativo',
+        usuario_id: user.id,
+        empresa_id: user.empresa_id,
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        tipo: 'TOTAL',
+        egresoParams: lineas,
+        depositoReingresoId: depositoElegidoId ?? undefined,
+      })
+      toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
+      onClose()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   async function emitirNc(lineasParcial?: LineaNcSeleccionada[]) {
     if (!factura || !user?.empresa_id) return
@@ -255,17 +300,21 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                 </div>
 
                 {/* Origen del reverso — "Credito a favor" mapea a modalidad
-                    SALDO_FAVOR real (nc-admin-saldo-favor-real). "Devolver
-                    dinero" sigue deshabilitado, REFUND_TESORERIA no
-                    implementado en el write core. */}
+                    SALDO_FAVOR real (nc-admin-saldo-favor-real), sin
+                    cambios. "Devolver dinero" revela dos sub-opciones
+                    (nc-refund-tesoreria): "Tesoreria" (activa,
+                    REFUND_TESORERIA) y "Sesion de caja activa"
+                    (deshabilitada, "Proximamente"). */}
                 <div className="rounded-lg border p-3">
                   <p className="text-xs font-semibold text-muted-foreground mb-2">Origen del reverso</p>
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      disabled
-                      title="Proximamente"
-                      className="flex-1 px-3 py-1.5 text-sm rounded-md border opacity-50 cursor-not-allowed"
+                      onClick={() => setOrigenReverso('DEVOLVER_DINERO')}
+                      aria-pressed={origenReverso === 'DEVOLVER_DINERO'}
+                      className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                        origenReverso === 'DEVOLVER_DINERO' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
+                      }`}
                     >
                       Devolver dinero
                     </button>
@@ -273,14 +322,41 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                       type="button"
                       onClick={() => setOrigenReverso('CREDITO_A_FAVOR')}
                       aria-pressed={origenReverso === 'CREDITO_A_FAVOR'}
-                      className="flex-1 px-3 py-1.5 text-sm rounded-md border border-primary bg-muted font-medium"
+                      className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+                        origenReverso === 'CREDITO_A_FAVOR' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
+                      }`}
                     >
                       Credito a favor
                     </button>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1.5">
-                    "Devolver dinero" estara disponible en una entrega futura (Proximamente).
-                  </p>
+
+                  {origenReverso === 'DEVOLVER_DINERO' && (
+                    <>
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={() => setSubOpcionDevolver('TESORERIA')}
+                          aria-pressed={subOpcionDevolver === 'TESORERIA'}
+                          className={`flex-1 px-3 py-1.5 text-xs rounded-md border transition-colors ${
+                            subOpcionDevolver === 'TESORERIA' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
+                          }`}
+                        >
+                          Tesoreria
+                        </button>
+                        <button
+                          type="button"
+                          disabled
+                          title="Proximamente"
+                          className="flex-1 px-3 py-1.5 text-xs rounded-md border opacity-50 cursor-not-allowed"
+                        >
+                          Sesion de caja activa
+                        </button>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1.5">
+                        "Sesion de caja activa" estara disponible en una entrega futura (Proximamente).
+                      </p>
+                    </>
+                  )}
                 </div>
 
                 {/* Deposito de reingreso — libre, SIN PIN (obs #2835, la
@@ -328,6 +404,13 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     onConfirm={(lineas) => void emitirNc(lineas)}
                     loading={loading}
                   />
+                ) : origenReverso === 'DEVOLVER_DINERO' && subOpcionDevolver === 'TESORERIA' ? (
+                  <RefundTesoreriaForm
+                    montoDisponibleUsd={montoDisponibleParaRefund}
+                    tasaHistorica={Number(factura.tasa)}
+                    onConfirm={(lineas) => void emitirNcRefund(lineas)}
+                    loading={loading}
+                  />
                 ) : (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
                     <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
@@ -355,7 +438,9 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
             >
               {puedeEmitirNc ? 'Cancelar' : 'Cerrar'}
             </button>
-            {puedeEmitirNc && tipoNc === 'TOTAL' && (
+            {puedeEmitirNc &&
+              tipoNc === 'TOTAL' &&
+              !(origenReverso === 'DEVOLVER_DINERO' && subOpcionDevolver === 'TESORERIA') && (
               <button
                 onClick={() => void emitirNc()}
                 disabled={loading || !motivo.trim()}
