@@ -3,6 +3,7 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import Decimal from 'decimal.js'
+import type { Transaction } from '@powersync/common'
 import { toStorageString, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
@@ -21,6 +22,7 @@ import {
   buildNotasCreditoFiltro,
   rangoMesActual,
 } from '@/features/ventas/utils/notas-credito-admin-filters'
+import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -223,6 +225,101 @@ export interface CrearNotaCreditoResult {
   nroNcr: string
 }
 
+// ─── Motor REFUND_TESORERIA (Design §e/§Data Flow, "tesoreria no sabe que ─
+// ─── es una NC") ──────────────────────────────────────────────────────────
+
+/**
+ * Lee saldo_actual + moneda de una cuenta de tesoreria (banco o caja fuerte)
+ * DENTRO de la transaccion existente. Puramente de lectura — usado dos
+ * veces por linea: (1) para convertir a USD y validar el tope ANTES de
+ * escribir cualquier registro, (2) dentro de `escribirEgresoTesoreriaEnTx`
+ * para el guard de saldo + el egreso real. `tesoreria-agnostico`: no importa
+ * nada de `ventas`, solo lee las tablas genericas de tesoreria.
+ */
+async function leerCuentaTesoreriaEnTx(
+  tx: Transaction,
+  linea: EgresoTesoreriaLinea,
+  empresa_id: string
+): Promise<{ saldoAnt: Decimal; esCuentaBs: boolean }> {
+  const tabla = linea.destino === 'BANCO' ? 'bancos_empresa' : 'caja_fuerte'
+  const cuentaResult = await tx.execute(
+    `SELECT saldo_actual, moneda_id FROM ${tabla} WHERE id = ? AND empresa_id = ?`,
+    [linea.cuentaId, empresa_id]
+  )
+  if (!cuentaResult.rows || cuentaResult.rows.length === 0) {
+    throw new Error(`Cuenta de tesoreria no encontrada: ${linea.cuentaId}`)
+  }
+  const cuenta = cuentaResult.rows.item(0) as { saldo_actual: string; moneda_id: string }
+
+  const monedaResult = await tx.execute('SELECT codigo_iso FROM monedas WHERE id = ?', [cuenta.moneda_id])
+  const monedaCodigo =
+    monedaResult.rows && monedaResult.rows.length > 0
+      ? (monedaResult.rows.item(0) as { codigo_iso: string }).codigo_iso
+      : 'USD'
+
+  return { saldoAnt: new Decimal(cuenta.saldo_actual), esCuentaBs: monedaCodigo === 'VES' }
+}
+
+/**
+ * Escribe UNA linea de egreso real de tesoreria por reembolso de NC (Design
+ * §Data Flow): SELECT saldo → [guard SOLO caja fuerte, Spec "Guard de saldo
+ * suficiente en caja fuerte" — bancos NO estan sujetos a este guard, fuera
+ * de alcance] → INSERT en `movimientos_bancarios`/`mov_caja_fuerte` con
+ * `origen='REEMBOLSO_NCR'`, `doc_origen_id=ncrId`,
+ * `doc_origen_tipo='NOTA_CREDITO'`, `validado=0` (pendiente de conciliacion,
+ * mismo patron `validado`/`reversado` existente) → UPDATE saldo. El monto
+ * persistido es SIEMPRE el monto NATIVO de la cuenta (nunca el convertido a
+ * USD) — igual que cualquier otro movimiento de tesoreria del archivo.
+ */
+async function escribirEgresoTesoreriaEnTx(
+  tx: Transaction,
+  linea: EgresoTesoreriaLinea,
+  ncrId: string,
+  nroNcr: string,
+  empresa_id: string,
+  usuario_id: string,
+  now: string
+): Promise<void> {
+  const { saldoAnt } = await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)
+  const montoNativo = new Decimal(linea.montoEnMonedaCuenta)
+
+  if (linea.destino === 'CAJA_FUERTE' && montoNativo.gt(saldoAnt)) {
+    throw new Error(
+      `Saldo insuficiente en caja fuerte. Disponible: ${saldoAnt.toFixed(2)}, solicitado: ${montoNativo.toFixed(2)}`
+    )
+  }
+
+  const saldoNuevo = saldoAnt.minus(montoNativo)
+  const tabla = linea.destino === 'BANCO' ? 'bancos_empresa' : 'caja_fuerte'
+  const tablaMov = linea.destino === 'BANCO' ? 'movimientos_bancarios' : 'mov_caja_fuerte'
+  const colCuentaId = linea.destino === 'BANCO' ? 'banco_empresa_id' : 'caja_fuerte_id'
+
+  await tx.execute(
+    `INSERT INTO ${tablaMov} (id, empresa_id, ${colCuentaId}, tipo, origen, monto, saldo_anterior, saldo_nuevo, doc_origen_id, doc_origen_tipo, referencia, descripcion, validado, reversado, fecha, created_at, created_by)
+     VALUES (?, ?, ?, 'EGRESO', 'REEMBOLSO_NCR', ?, ?, ?, ?, 'NOTA_CREDITO', ?, ?, 0, 0, ?, ?, ?)`,
+    [
+      uuidv4(),
+      empresa_id,
+      linea.cuentaId,
+      toStorageString(montoNativo),
+      toStorageString(saldoAnt),
+      toStorageString(saldoNuevo),
+      ncrId,
+      `NCR-${nroNcr}`,
+      `Reembolso NCR ${nroNcr}`,
+      now,
+      now,
+      usuario_id,
+    ]
+  )
+
+  await tx.execute(`UPDATE ${tabla} SET saldo_actual = ?, updated_at = ? WHERE id = ?`, [
+    toStorageString(saldoNuevo),
+    now,
+    linea.cuentaId,
+  ])
+}
+
 // ─── Listado de NCR ─────────────────────────────────────────
 
 /**
@@ -385,13 +482,6 @@ export async function crearNotaCredito(
   // 0b. Gate anti-fraude (Design §3 paso 0b): se evalua ANTES de abrir la
   // transaccion — sin tocar la DB. Ver `assertGateAntiFraudeNoDesembolso`.
   assertGateAntiFraudeNoDesembolso(modalidad, egresoParams)
-
-  // REFUND_TESORERIA esta validado por el tipo pero se implementa recien en
-  // Slice 6 (Design §5, "no requiere schema nuevo" pero SI logica nueva que
-  // aun no existe en este slice).
-  if (modalidad === 'REFUND_TESORERIA') {
-    throw new Error('REFUND_TESORERIA aun no esta implementado (ver Slice 6)')
-  }
 
   let ncrId = ''
   let nroNcr = ''
@@ -1030,6 +1120,93 @@ export async function crearNotaCredito(
           now,
           venta.cliente_id,
         ])
+      } else if (modalidad === 'REFUND_TESORERIA') {
+        // REFUND_TESORERIA (nc-refund-tesoreria, Design §Data Flow): parte
+        // `remanenteALiquidar` en dos — N egresos reales de tesoreria
+        // (banco/caja fuerte) + el sobrante reusa LITERAL el bloque SAFC de
+        // arriba (misma forma que SALDO_FAVOR/COMPENSACION_VENTA) con un
+        // monto menor. Tesoreria no sabe que es una NC: se escribe con
+        // `doc_origen_id`/`doc_origen_tipo` genericos, sin que
+        // `movimientos_bancarios`/`mov_caja_fuerte` importen nada de
+        // `ventas`.
+
+        // Spec "Array no vacío requerido cuando hay reembolso real": no
+        // puede haber una NC REFUND_TESORERIA con monto a reembolsar > 0
+        // sin al menos una linea de egreso.
+        if (!egresoParams || egresoParams.length === 0) {
+          throw new Error(
+            'REFUND_TESORERIA requiere al menos una linea de egreso de tesoreria cuando hay un monto a reembolsar'
+          )
+        }
+
+        // Guard de tope (Spec "Tope — el reembolso no puede exceder el
+        // monto de la NC"): convertir cada linea a USD a la tasa_historica
+        // de la NC (Spec "Conversion a tasa historica") y validar la suma
+        // ANTES de escribir cualquier registro — si excede, toda la NC se
+        // rechaza (rollback automatico de `db.writeTransaction`, ninguna
+        // linea llega a escribirse).
+        const lineasUsd: Decimal[] = []
+        for (const linea of egresoParams) {
+          const { esCuentaBs } = await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)
+          lineasUsd.push(nativoAUsd(linea.montoEnMonedaCuenta, esCuentaBs, venta.tasa))
+        }
+
+        const { remanenteSafc, excedeTope } = calcularRemanenteRefund(remanenteALiquidar, lineasUsd)
+        if (excedeTope) {
+          throw new Error(
+            'El monto a reembolsar excede el saldo disponible de la nota de credito'
+          )
+        }
+
+        // Escribir cada linea en el orden del array (Design §d "sin
+        // prioridad entre cuentas — se escribe en el orden del array").
+        for (const linea of egresoParams) {
+          await escribirEgresoTesoreriaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+        }
+
+        // Remanente no reembolsado por tesoreria -> SAFC (Spec "Remanente
+        // no reembolsado pasa a SAFC"), reusando LITERAL el mismo bloque de
+        // arriba pero con `remanenteSafc` en vez de `remanenteALiquidar`.
+        if (remanenteSafc.gt('0.01')) {
+          const clienteRefundSafcResult = await tx.execute(
+            'SELECT saldo_actual FROM clientes WHERE id = ?',
+            [venta.cliente_id]
+          )
+          if (!clienteRefundSafcResult.rows || clienteRefundSafcResult.rows.length === 0) {
+            throw new Error('Cliente no encontrado')
+          }
+          const saldoActualRefundSafc = new Decimal(
+            (clienteRefundSafcResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+          )
+          const saldoNuevoRefundSafc = saldoActualRefundSafc.minus(remanenteSafc)
+
+          await tx.execute(
+            `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo)
+             VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              venta.cliente_id,
+              `SAF-NCR-${nroNcr}`,
+              toStorageString(remanenteSafc),
+              toStorageString(saldoActualRefundSafc),
+              toStorageString(saldoNuevoRefundSafc),
+              `Saldo a favor generado por ${nroNcr} (${modalidad}) - Factura ${venta.nro_factura}`,
+              venta_id,
+              now,
+              empresa_id,
+              now,
+              usuario_id,
+              ncrId,
+              'NOTA_CREDITO',
+            ]
+          )
+
+          await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+            toStorageString(saldoNuevoRefundSafc),
+            now,
+            venta.cliente_id,
+          ])
+        }
       }
     }
 
