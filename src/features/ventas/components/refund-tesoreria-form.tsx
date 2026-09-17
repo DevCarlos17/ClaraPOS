@@ -4,6 +4,8 @@ import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs, type DecimalInput } from '@/lib/currency'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
+import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { formatSesionId } from '@/lib/format'
 import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
 
@@ -15,11 +17,24 @@ import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
  * de `notas-credito-refund.ts`, y entrega el resultado al llamador via
  * `onConfirm(lineas: EgresoTesoreriaLinea[])` — la escritura real vive
  * exclusivamente en `crearNotaCredito` (motor, Slice 4).
+ *
+ * UI restructurada a dos selects DEPENDIENTES por linea (Origen -> Cuenta):
+ * "Origen" ofrece "Tesoreria" (unica opcion habilitada) y una opcion
+ * deshabilitada ("Proximamente") por cada sesion de caja ACTIVA de la
+ * empresa (`useSesionesActivas()`, solo-lectura — CERO logica nueva de
+ * sesiones, ver Regla de Oro). "Cuenta" depende del Origen elegido: con
+ * Tesoreria lista bancos + cajas fuertes combinados (misma fuente
+ * `useCuentasTesoreria()` de siempre, ya no se filtra por tipo de antemano
+ * — el `destino` del egreso ahora se DERIVA del `tipo` de la cuenta
+ * elegida). El branch de Sesion nunca se alcanza hoy (deshabilitada), pero
+ * queda el seam para wirearlo despues sin reestructurar de nuevo.
  */
+
+type OrigenEgreso = 'TESORERIA'
 
 interface LineaFormState {
   key: string
-  destino: 'BANCO' | 'CAJA_FUERTE'
+  origen: OrigenEgreso
   cuentaId: string
   montoNativo: string
 }
@@ -50,12 +65,16 @@ export function RefundTesoreriaForm({
   loading = false,
 }: RefundTesoreriaFormProps) {
   const { cuentas } = useCuentasTesoreria()
+  const { sesiones: sesionesActivas } = useSesionesActivas()
   const [lineas, setLineas] = useState<LineaFormState[]>([
-    { key: nuevaLineaKey(), destino: 'BANCO', cuentaId: '', montoNativo: '' },
+    { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '' },
   ])
 
   function agregarLinea() {
-    setLineas((prev) => [...prev, { key: nuevaLineaKey(), destino: 'BANCO', cuentaId: '', montoNativo: '' }])
+    setLineas((prev) => [
+      ...prev,
+      { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '' },
+    ])
   }
 
   function quitarLinea(key: string) {
@@ -85,7 +104,9 @@ export function RefundTesoreriaForm({
   function handleConfirm() {
     if (!puedeConfirmar) return
     const egresoParams: EgresoTesoreriaLinea[] = lineas.map((l) => ({
-      destino: l.destino,
+      // `destino` se deriva de la cuenta elegida (Select 2), no de un select
+      // separado — la cuenta YA sabe si es BANCO o CAJA_FUERTE.
+      destino: cuentaPorId(l.cuentaId)?.tipo ?? 'BANCO',
       cuentaId: l.cuentaId,
       montoEnMonedaCuenta: l.montoNativo,
     }))
@@ -95,23 +116,26 @@ export function RefundTesoreriaForm({
   return (
     <div className="space-y-3">
       {lineas.map((linea) => {
-        const cuentasFiltradas = cuentas.filter((c) => c.tipo === linea.destino)
         return (
           <div key={linea.key} className="rounded-lg border p-3 space-y-2">
             <div className="flex gap-2 items-center">
               <NativeSelect
-                aria-label="Destino de la cuenta"
-                value={linea.destino}
+                aria-label="Origen del reembolso"
+                value={linea.origen}
                 onChange={(e) =>
                   actualizarLinea(linea.key, {
-                    destino: e.target.value as 'BANCO' | 'CAJA_FUERTE',
+                    origen: e.target.value as OrigenEgreso,
                     cuentaId: '',
                   })
                 }
                 className="flex-1"
               >
-                <option value="BANCO">Banco</option>
-                <option value="CAJA_FUERTE">Caja fuerte</option>
+                <option value="TESORERIA">Tesoreria</option>
+                {sesionesActivas.map((s) => (
+                  <option key={s.id} value={`SESION:${s.id}`} disabled>
+                    {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)} (Proximamente)
+                  </option>
+                ))}
               </NativeSelect>
               {lineas.length > 1 && (
                 <button
@@ -131,11 +155,15 @@ export function RefundTesoreriaForm({
               onChange={(e) => actualizarLinea(linea.key, { cuentaId: e.target.value })}
             >
               <option value="">Seleccionar cuenta...</option>
-              {cuentasFiltradas.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nombre} — {formatEnMonedaCuenta(c.saldo_actual, c.moneda_codigo)} disponible
-                </option>
-              ))}
+              {linea.origen === 'TESORERIA' &&
+                cuentas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nombre} — {formatEnMonedaCuenta(c.saldo_actual, c.moneda_codigo)} disponible
+                  </option>
+                ))}
+              {/* TODO(nc-refund-tesoreria): cuando la Sesion de caja deje de
+                  estar deshabilitada en Select 1, agregar aqui el branch que
+                  liste las cuentas propias de esa sesion. */}
             </NativeSelect>
 
             <input
