@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import Decimal from 'decimal.js'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
@@ -37,6 +37,8 @@ interface LineaFormState {
   origen: OrigenEgreso
   cuentaId: string
   montoNativo: string
+  /** Nota LIBRE y OPCIONAL de esta linea (nro. de transferencia, serial de billete, etc.) — NUNCA bloquea `puedeConfirmar` (UX rework, nc-refund-tesoreria). */
+  referencia: string
 }
 
 export interface RefundTesoreriaFormProps {
@@ -46,6 +48,14 @@ export interface RefundTesoreriaFormProps {
   tasaHistorica: number
   onConfirm: (lineas: EgresoTesoreriaLinea[]) => void
   loading?: boolean
+  /**
+   * Slot de composicion (UX rework, nc-refund-tesoreria): renderizado entre
+   * "+ Agregar cuenta" y el resumen "Pendiente por reembolsar" — el modal
+   * llamador lo usa para intercalar el campo "Motivo" en esa posicion
+   * exacta SIN que este componente conozca nada de notas de credito
+   * (sigue aislado, cero acoplamiento con el motor).
+   */
+  motivoSlot?: ReactNode
 }
 
 let contadorLinea = 0
@@ -63,17 +73,18 @@ export function RefundTesoreriaForm({
   tasaHistorica,
   onConfirm,
   loading = false,
+  motivoSlot,
 }: RefundTesoreriaFormProps) {
   const { cuentas } = useCuentasTesoreria()
   const { sesiones: sesionesActivas } = useSesionesActivas()
   const [lineas, setLineas] = useState<LineaFormState[]>([
-    { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '' },
+    { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '', referencia: '' },
   ])
 
   function agregarLinea() {
     setLineas((prev) => [
       ...prev,
-      { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '' },
+      { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '', referencia: '' },
     ])
   }
 
@@ -109,6 +120,9 @@ export function RefundTesoreriaForm({
       destino: cuentaPorId(l.cuentaId)?.tipo ?? 'BANCO',
       cuentaId: l.cuentaId,
       montoEnMonedaCuenta: l.montoNativo,
+      // Referencia libre por linea (UX rework) — NUNCA bloquea `puedeConfirmar`
+      // (ver arriba), se omite del payload cuando el usuario la deja vacia.
+      referencia: l.referencia.trim() || undefined,
     }))
     onConfirm(egresoParams)
   }
@@ -116,64 +130,110 @@ export function RefundTesoreriaForm({
   return (
     <div className="space-y-3">
       {lineas.map((linea) => {
+        // Grupo visualmente delimitado (borde + fondo) por linea — en
+        // desktop (`sm:`) los 4 controles + el boton de quitar comparten UNA
+        // fila via grid-template-columns explicito; en mobile el grid cae a
+        // `grid-cols-1` y cada control se apila con su propia etiqueta
+        // asociada (`htmlFor`/`id`), sin ambiguedad de a que cuenta
+        // pertenece cada Monto/Referencia (Design "responsive per-line
+        // grouping", consistente con el patron ya usado en
+        // `compra-form.tsx` — `grid-cols-1 sm:grid-cols-[...]`, sin
+        // container queries: el ancho del formulario ya sigue el viewport
+        // via el `max-w-2xl` del dialog padre).
         return (
-          <div key={linea.key} className="rounded-lg border p-3 space-y-2">
-            <div className="flex gap-2 items-center">
-              <NativeSelect
-                aria-label="Origen del reembolso"
-                value={linea.origen}
-                onChange={(e) =>
-                  actualizarLinea(linea.key, {
-                    origen: e.target.value as OrigenEgreso,
-                    cuentaId: '',
-                  })
-                }
-                className="flex-1"
-              >
-                <option value="TESORERIA">Tesoreria</option>
-                {sesionesActivas.map((s) => (
-                  <option key={s.id} value={`SESION:${s.id}`} disabled>
-                    {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)} (Proximamente)
-                  </option>
-                ))}
-              </NativeSelect>
+          <div
+            key={linea.key}
+            className="rounded-lg border border-border bg-muted/20 p-3"
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_110px_1fr_auto] gap-2 sm:items-end">
+              <div>
+                <label htmlFor={`origen-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+                  Origen
+                </label>
+                <NativeSelect
+                  id={`origen-${linea.key}`}
+                  aria-label="Origen del reembolso"
+                  value={linea.origen}
+                  onChange={(e) =>
+                    actualizarLinea(linea.key, {
+                      origen: e.target.value as OrigenEgreso,
+                      cuentaId: '',
+                    })
+                  }
+                >
+                  <option value="TESORERIA">Tesoreria</option>
+                  {sesionesActivas.map((s) => (
+                    <option key={s.id} value={`SESION:${s.id}`} disabled>
+                      {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)} (Proximamente)
+                    </option>
+                  ))}
+                </NativeSelect>
+              </div>
+
+              <div>
+                <label htmlFor={`cuenta-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+                  Cuenta de tesoreria
+                </label>
+                <NativeSelect
+                  id={`cuenta-${linea.key}`}
+                  aria-label="Cuenta de tesoreria"
+                  value={linea.cuentaId}
+                  onChange={(e) => actualizarLinea(linea.key, { cuentaId: e.target.value })}
+                >
+                  <option value="">Seleccionar cuenta...</option>
+                  {linea.origen === 'TESORERIA' &&
+                    cuentas.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nombre} — {formatEnMonedaCuenta(c.saldo_actual, c.moneda_codigo)} disponible
+                      </option>
+                    ))}
+                  {/* TODO(nc-refund-tesoreria): cuando la Sesion de caja deje de
+                      estar deshabilitada en Select 1, agregar aqui el branch que
+                      liste las cuentas propias de esa sesion. */}
+                </NativeSelect>
+              </div>
+
+              <div>
+                <label htmlFor={`monto-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+                  Monto
+                </label>
+                <input
+                  id={`monto-${linea.key}`}
+                  type="number"
+                  aria-label="Monto"
+                  placeholder="0.00"
+                  value={linea.montoNativo}
+                  onChange={(e) => actualizarLinea(linea.key, { montoNativo: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+
+              <div>
+                <label htmlFor={`referencia-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+                  Referencia <span className="font-normal">(opcional)</span>
+                </label>
+                <input
+                  id={`referencia-${linea.key}`}
+                  type="text"
+                  aria-label="Referencia"
+                  placeholder="N° de transferencia, serial..."
+                  value={linea.referencia}
+                  onChange={(e) => actualizarLinea(linea.key, { referencia: e.target.value })}
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </div>
+
               {lineas.length > 1 && (
                 <button
                   type="button"
                   aria-label="Quitar cuenta"
                   onClick={() => quitarLinea(linea.key)}
-                  className="shrink-0 p-1.5 rounded-md hover:bg-muted text-muted-foreground"
+                  className="shrink-0 p-1.5 rounded-md hover:bg-muted text-muted-foreground justify-self-start sm:justify-self-center"
                 >
                   <Trash size={14} />
                 </button>
               )}
             </div>
-
-            <NativeSelect
-              aria-label="Cuenta de tesoreria"
-              value={linea.cuentaId}
-              onChange={(e) => actualizarLinea(linea.key, { cuentaId: e.target.value })}
-            >
-              <option value="">Seleccionar cuenta...</option>
-              {linea.origen === 'TESORERIA' &&
-                cuentas.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nombre} — {formatEnMonedaCuenta(c.saldo_actual, c.moneda_codigo)} disponible
-                  </option>
-                ))}
-              {/* TODO(nc-refund-tesoreria): cuando la Sesion de caja deje de
-                  estar deshabilitada en Select 1, agregar aqui el branch que
-                  liste las cuentas propias de esa sesion. */}
-            </NativeSelect>
-
-            <input
-              type="number"
-              aria-label="Monto"
-              placeholder="Monto en la moneda de la cuenta"
-              value={linea.montoNativo}
-              onChange={(e) => actualizarLinea(linea.key, { montoNativo: e.target.value })}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
           </div>
         )
       })}
@@ -185,6 +245,8 @@ export function RefundTesoreriaForm({
       >
         <Plus size={12} /> Agregar cuenta
       </button>
+
+      {motivoSlot}
 
       <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-2 text-sm">
         <span className="text-muted-foreground">Pendiente por reembolsar:</span>

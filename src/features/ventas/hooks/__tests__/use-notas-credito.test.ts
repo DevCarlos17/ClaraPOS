@@ -896,6 +896,44 @@ describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real d
     expect(egresoInsert!.sql).toContain("'NOTA_CREDITO'") // doc_origen_tipo (literal en el SQL, no bindeado)
   })
 
+  it('Scenario "Referencia libre por linea" (UX rework, nc-refund-tesoreria): persiste la referencia opcional del usuario en la columna `referencia` ya existente — NULL cuando la linea la omite, nunca bloquea ni afecta doc_origen_id/doc_origen_tipo', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '100.00', total_bs: '4000.00' },
+        {
+          cuentasTesoreria: {
+            'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' },
+            'caja-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' },
+          },
+        }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [
+          { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00', referencia: 'TRF-00123' },
+          { destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '20.00' },
+        ],
+      })
+    )
+
+    const egresoBanco = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoBanco).toBeDefined()
+    expect(egresoBanco!.params).toContain('TRF-00123')
+
+    const egresoCaja = calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))
+    expect(egresoCaja).toBeDefined()
+    expect(egresoCaja!.params).toContain(null) // sin referencia -> null, mismo criterio que use-traspasos.ts
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    const ncrId = ncrInsert!.params[0] as string
+    expect(egresoBanco!.params).toContain(ncrId) // doc_origen_id intacto, referencia NO lo reemplaza
+    expect(egresoBanco!.sql).toContain("'NOTA_CREDITO'") // doc_origen_tipo intacto
+  })
+
   it('Scenario "Refund excede saldo de caja fuerte": rechaza ANTES de escribir el egreso', async () => {
     const calls = mockCrearNcrTx(
       fixturesRefund(

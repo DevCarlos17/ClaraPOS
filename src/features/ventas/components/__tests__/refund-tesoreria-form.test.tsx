@@ -157,7 +157,89 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     await user.click(boton)
 
     expect(onConfirm).toHaveBeenCalledWith([
-      { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '60' },
+      { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '60', referencia: undefined },
     ])
+  })
+
+  describe('Campo "Referencia" opcional por linea (UX rework, nc-refund-tesoreria)', () => {
+    it('cada linea expone un campo de texto "Referencia" con etiqueta asociada, distinto del Monto', () => {
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      const referencia = screen.getByLabelText(/^Referencia/i)
+      expect(referencia).toBeInTheDocument()
+      expect(referencia).toHaveAttribute('type', 'text')
+    })
+
+    it('dejar la Referencia vacia NO bloquea "Confirmar reembolso" (es opcional)', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '60')
+
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+      await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+
+      expect(onConfirm).toHaveBeenCalledWith([
+        expect.objectContaining({ referencia: undefined }),
+      ])
+    })
+
+    it('escribir una Referencia la emite en la linea correspondiente de EgresoTesoreriaLinea al confirmar', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '60')
+      await user.type(screen.getByLabelText(/^Referencia/i), 'TRF-00123')
+
+      await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+
+      expect(onConfirm).toHaveBeenCalledWith([
+        { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '60', referencia: 'TRF-00123' },
+      ])
+    })
+
+    it('con dos lineas, cada Referencia y Monto se asocia SOLO a su propia cuenta (sin cruzar valores)', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={200} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.click(screen.getByRole('button', { name: /Agregar cuenta/i }))
+
+      const cuentaSelects = screen.getAllByLabelText(/cuenta de tesoreria/i)
+      const montoInputs = screen.getAllByLabelText(/^monto$/i)
+      const referenciaInputs = screen.getAllByLabelText(/^Referencia/i)
+
+      await user.selectOptions(cuentaSelects[0]!, 'banco-usd-1')
+      await user.type(montoInputs[0]!, '30')
+      await user.type(referenciaInputs[0]!, 'REF-A')
+
+      await user.selectOptions(cuentaSelects[1]!, 'caja-1')
+      await user.type(montoInputs[1]!, '20')
+      await user.type(referenciaInputs[1]!, 'REF-B')
+
+      await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+
+      expect(onConfirm).toHaveBeenCalledWith([
+        { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '30', referencia: 'REF-A' },
+        { destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '20', referencia: 'REF-B' },
+      ])
+    })
+  })
+
+  it('renderiza un `motivoSlot` opcional entre "+ Agregar cuenta" y "Pendiente por reembolsar"', () => {
+    render(
+      <RefundTesoreriaForm
+        montoDisponibleUsd={100}
+        tasaHistorica={40}
+        onConfirm={vi.fn()}
+        motivoSlot={<div data-testid="motivo-slot">Motivo aqui</div>}
+      />
+    )
+
+    expect(screen.getByTestId('motivo-slot')).toBeInTheDocument()
   })
 })

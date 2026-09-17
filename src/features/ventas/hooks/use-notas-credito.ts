@@ -122,6 +122,16 @@ export interface EgresoTesoreriaLinea {
   destino: 'BANCO' | 'CAJA_FUERTE'
   cuentaId: string
   montoEnMonedaCuenta: string
+  /**
+   * Nota LIBRE y OPCIONAL por linea (nc-refund-tesoreria, UX rework):
+   * numero de transferencia, serial de un billete, o cualquier
+   * observacion sobre ESE egreso puntual. Persiste en la columna
+   * `referencia` YA EXISTENTE de `movimientos_bancarios`/`mov_caja_fuerte`
+   * (sin migracion). Cuando se omite, se escribe `null` — mismo criterio
+   * que `use-traspasos.ts` (`params.referencia ?? null`), NUNCA bloquea la
+   * confirmacion.
+   */
+  referencia?: string
 }
 
 /** Array de lineas de egreso — reemplaza `EgresoCajaParams` (objeto unico). Solo lo consume el gate y la rama `REFUND_TESORERIA` de Step B — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
@@ -270,6 +280,10 @@ async function leerCuentaTesoreriaEnTx(
  * mismo patron `validado`/`reversado` existente) → UPDATE saldo. El monto
  * persistido es SIEMPRE el monto NATIVO de la cuenta (nunca el convertido a
  * USD) — igual que cualquier otro movimiento de tesoreria del archivo.
+ * `referencia` (nc-refund-tesoreria, UX rework) persiste la nota LIBRE y
+ * OPCIONAL de `linea.referencia` (o `null` si se omite) — el linkeo con la
+ * NC sigue viviendo exclusivamente en `doc_origen_id`/`doc_origen_tipo`,
+ * NUNCA en esta columna.
  */
 async function escribirEgresoTesoreriaEnTx(
   tx: Transaction,
@@ -305,7 +319,7 @@ async function escribirEgresoTesoreriaEnTx(
       toStorageString(saldoAnt),
       toStorageString(saldoNuevo),
       ncrId,
-      `NCR-${nroNcr}`,
+      linea.referencia?.trim() || null,
       `Reembolso NCR ${nroNcr}`,
       now,
       now,

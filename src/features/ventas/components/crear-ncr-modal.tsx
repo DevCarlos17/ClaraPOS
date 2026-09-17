@@ -39,18 +39,16 @@ interface CrearNcrModalProps {
 
 /**
  * Origen del reverso — "Devolver dinero"/"Credito a favor" (nc-admin-saldo-
- * favor-real, extendido por nc-refund-tesoreria). "Credito a favor" alimenta
- * `modalidad: 'SALDO_FAVOR'` en `crearNotaCredito`, igual que el selector
- * equivalente de `nota-credito-pos-modal.tsx` — SIN cambios respecto al
- * comportamiento existente. "Devolver dinero" revela dos sub-opciones:
- * "Tesoreria" (activa, `modalidad: 'REFUND_TESORERIA'`, ver
- * `SubOpcionDevolverDinero`) y "Sesion de caja activa" (deshabilitada,
- * "Proximamente").
+ * favor-real, extendido por nc-refund-tesoreria, UX rework). "Credito a
+ * favor" alimenta `modalidad: 'SALDO_FAVOR'` en `crearNotaCredito`, igual
+ * que el selector equivalente de `nota-credito-pos-modal.tsx` — SIN cambios
+ * respecto al comportamiento existente. "Devolver dinero" revela
+ * `RefundTesoreriaForm` directamente — la jerarquia YA NO tiene una segunda
+ * fila fija de botones "Tesoreria"/"Sesion de caja activa" a nivel de modal:
+ * el PRIMER select de `RefundTesoreriaForm` ES esa eleccion (Tesoreria
+ * habilitada, sesiones activas deshabilitadas "Proximamente").
  */
 type OrigenReverso = 'DEVOLVER_DINERO' | 'CREDITO_A_FAVOR'
-
-/** Sub-opcion de "Devolver dinero" (nc-refund-tesoreria, Spec notas-credito-admin). Solo `'TESORERIA'` esta implementada — `'SESION_CAJA'` permanece deshabilitada en la UI ("Proximamente"), nunca se llega a setear. */
-type SubOpcionDevolverDinero = 'TESORERIA' | null
 
 /**
  * Modal delgado de la ruta administrativa "Facturas emitidas" (Slice D,
@@ -66,11 +64,21 @@ type SubOpcionDevolverDinero = 'TESORERIA' | null
  * (la ruta ya esta gateada por `PERMISSIONS.SALES_VOID` a nivel de acceso,
  * obs #2835 — pedir PIN encima seria friccion redundante), `entryPoint:
  * 'TRADICIONAL'` y `modalidad` derivada de `origenReverso` — "Credito a
- * favor" (unica opcion funcional hoy) produce `'SALDO_FAVOR'`, un credito
- * real trazable en `movimientos_cuenta` (tipo='SAFC'), igual que el flujo
- * POS. "Devolver dinero" sigue siendo un shell visual deshabilitado
- * ("Proximamente") porque REFUND_TESORERIA aun no esta implementado en el
- * write core (nc-admin-saldo-favor-real).
+ * favor" produce `'SALDO_FAVOR'` (credito real trazable en
+ * `movimientos_cuenta`, tipo='SAFC') y "Devolver dinero" produce
+ * `'REFUND_TESORERIA'` (egreso real de tesoreria, `RefundTesoreriaForm`).
+ *
+ * UX rework (nc-refund-tesoreria): CERO preseleccion — `tipoNc` y
+ * `origenReverso` arrancan en `null`, el usuario debe elegir ambos
+ * explicitamente antes de que se muestre cualquier contenido accionable
+ * (SeleccionLineasNc / RefundTesoreriaForm / aviso de irreversibilidad) o el
+ * boton de confirmacion. Esto cierra un gap real: con el default viejo
+ * (`CREDITO_A_FAVOR`), un usuario podia elegir "Parcial" sin tocar nunca
+ * "Origen del reverso" y `emitirNc` igual computaba una `modalidad` (antes
+ * SALDO_FAVOR por el default, ahora — sin gating — caeria en el branch
+ * `AJUSTE_CXC` fuera de alcance). Se resuelve NO renderizando
+ * `SeleccionLineasNc`/el resto del contenido hasta que `origenReverso` este
+ * explicitamente elegido (ver JSX), nunca asumiendo un default silencioso.
  */
 export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
@@ -80,9 +88,10 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
   const [motivo, setMotivo] = useState('')
   const [loading, setLoading] = useState(false)
   const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
-  const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL'>('TOTAL')
-  const [origenReverso, setOrigenReverso] = useState<OrigenReverso>('CREDITO_A_FAVOR')
-  const [subOpcionDevolver, setSubOpcionDevolver] = useState<SubOpcionDevolverDinero>(null)
+  // UX rework (nc-refund-tesoreria): SIN preseleccion — el usuario debe
+  // elegir tipo Y origen explicitamente (ver comentario del componente).
+  const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL' | null>(null)
+  const [origenReverso, setOrigenReverso] = useState<OrigenReverso | null>(null)
 
   const ventaId = isOpen ? factura?.id ?? null : null
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(ventaId)
@@ -95,9 +104,8 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
       dialogRef.current?.showModal()
       setMotivo('')
       setDepositoElegidoId(null)
-      setTipoNc('TOTAL')
-      setOrigenReverso('CREDITO_A_FAVOR')
-      setSubOpcionDevolver(null)
+      setTipoNc(null)
+      setOrigenReverso(null)
     } else {
       dialogRef.current?.close()
     }
@@ -205,11 +213,15 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         // la sesion de caja activa (factura potencialmente historica, ni idea
         // de que sesion este abierta ahora). Ver Regla de Oro, obs #2804.
         entryPoint: 'TRADICIONAL',
-        // "Credito a favor" (unica opcion seleccionable hoy) produce un
-        // saldo a favor real via el branch SALDO_FAVOR ya probado del write
-        // core (nc-admin-saldo-favor-real). "Devolver dinero" queda fuera de
-        // alcance (REFUND_TESORERIA no implementado) — el selector nunca
-        // permite alcanzarlo, pero se mapea igual por completitud del tipo.
+        // `emitirNc` solo se llama para PARCIAL (via SeleccionLineasNc,
+        // gateada a `origenReverso` no-null en el JSX) o para TOTAL +
+        // "Credito a favor" (footer). "Credito a favor" produce un saldo a
+        // favor real via el branch SALDO_FAVOR ya probado del write core
+        // (nc-admin-saldo-favor-real). "Devolver dinero" + PARCIAL queda
+        // fuera de alcance (REFUND_TESORERIA solo esta wireado para TOTAL,
+        // via `emitirNcRefund`) — se mapea a AJUSTE_CXC por completitud del
+        // tipo, aunque este branch no tiene UI que lo alcance hoy (TOTAL +
+        // Devolver dinero usa `emitirNcRefund`, nunca `emitirNc`).
         modalidad: origenReverso === 'CREDITO_A_FAVOR' ? 'SALDO_FAVOR' : 'AJUSTE_CXC',
         tipo: lineasParcial ? 'PARCIAL' : 'TOTAL',
         ...(lineasParcial ? { lineas: lineasParcial } : {}),
@@ -263,9 +275,31 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
               </div>
             ) : (
               <>
-                {/* Tipo de NC (Design §Decision 6: selector duplicado, sin
-                    extraerse a componente compartido — mismo criterio que la
-                    Decision 2 de este mismo change). */}
+                {/* 1. Deposito de reingreso — libre, SIN PIN (obs #2835, la
+                    pantalla Tradicional dedicada ya esta protegida a nivel de
+                    ACCESO — pedir PIN encima seria friccion redundante). */}
+                <div className="rounded-lg border p-3">
+                  <p className="text-xs font-semibold text-muted-foreground mb-2">
+                    Deposito de reingreso de stock
+                  </p>
+                  <NativeSelect
+                    value={depositoElegidoId ?? ''}
+                    onChange={(e) => setDepositoElegidoId(e.target.value || null)}
+                    className="text-sm"
+                  >
+                    <option value="">Seleccionar deposito...</option>
+                    {depositosActivos.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.nombre}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </div>
+
+                {/* 2. Tipo de NC — SIN preseleccion (Design §Decision 6:
+                    selector duplicado, sin extraerse a componente
+                    compartido — mismo criterio que la Decision 2 de este
+                    mismo change). */}
                 <div className="rounded-lg border p-3">
                   <p className="text-xs font-semibold text-muted-foreground mb-2">Tipo de nota de credito</p>
                   <div className="flex gap-2">
@@ -299,12 +333,13 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                   )}
                 </div>
 
-                {/* Origen del reverso — "Credito a favor" mapea a modalidad
-                    SALDO_FAVOR real (nc-admin-saldo-favor-real), sin
-                    cambios. "Devolver dinero" revela dos sub-opciones
-                    (nc-refund-tesoreria): "Tesoreria" (activa,
-                    REFUND_TESORERIA) y "Sesion de caja activa"
-                    (deshabilitada, "Proximamente"). */}
+                {/* 3. Origen del reverso — SIN preseleccion. "Credito a
+                    favor" mapea a modalidad SALDO_FAVOR real
+                    (nc-admin-saldo-favor-real), sin cambios. "Devolver
+                    dinero" revela `RefundTesoreriaForm` directamente — ya NO
+                    hay una segunda fila fija de botones aqui (UX rework,
+                    nc-refund-tesoreria): el primer select del propio
+                    formulario ES esa eleccion Tesoreria/Sesion. */}
                 <div className="rounded-lg border p-3">
                   <p className="text-xs font-semibold text-muted-foreground mb-2">Origen del reverso</p>
                   <div className="flex gap-2">
@@ -329,70 +364,35 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                       Credito a favor
                     </button>
                   </div>
-
-                  {origenReverso === 'DEVOLVER_DINERO' && (
-                    <>
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          type="button"
-                          onClick={() => setSubOpcionDevolver('TESORERIA')}
-                          aria-pressed={subOpcionDevolver === 'TESORERIA'}
-                          className={`flex-1 px-3 py-1.5 text-xs rounded-md border transition-colors ${
-                            subOpcionDevolver === 'TESORERIA' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                          }`}
-                        >
-                          Tesoreria
-                        </button>
-                        <button
-                          type="button"
-                          disabled
-                          title="Proximamente"
-                          className="flex-1 px-3 py-1.5 text-xs rounded-md border opacity-50 cursor-not-allowed"
-                        >
-                          Sesion de caja activa
-                        </button>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1.5">
-                        "Sesion de caja activa" estara disponible en una entrega futura (Proximamente).
-                      </p>
-                    </>
-                  )}
                 </div>
 
-                {/* Deposito de reingreso — libre, SIN PIN (obs #2835, la
-                    pantalla Tradicional dedicada ya esta protegida a nivel de
-                    ACCESO — pedir PIN encima seria friccion redundante). */}
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs font-semibold text-muted-foreground mb-2">
-                    Deposito de reingreso de stock
-                  </p>
-                  <NativeSelect
-                    value={depositoElegidoId ?? ''}
-                    onChange={(e) => setDepositoElegidoId(e.target.value || null)}
-                    className="text-sm"
-                  >
-                    <option value="">Seleccionar deposito...</option>
-                    {depositosActivos.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.nombre}
-                      </option>
-                    ))}
-                  </NativeSelect>
-                </div>
+                {/* 6. Motivo — cuando el flujo activo es "Devolver dinero"
+                    (TOTAL), se intercala DENTRO de `RefundTesoreriaForm` via
+                    `motivoSlot` (entre "+ Agregar cuenta" y "Pendiente por
+                    reembolsar", orden exacto pedido en el rework). En
+                    cualquier otro flujo (PARCIAL, Credito a favor, o
+                    todavia sin elegir) se muestra aqui, justo despues de
+                    Origen del reverso. */}
+                {!(tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO') && (
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
+                    <input
+                      type="text"
+                      value={motivo}
+                      onChange={(e) => setMotivo(e.target.value)}
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="Motivo de la anulacion..."
+                    />
+                  </div>
+                )}
 
-                {/* Motivo */}
-                <div>
-                  <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
-                  <input
-                    type="text"
-                    value={motivo}
-                    onChange={(e) => setMotivo(e.target.value)}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                    placeholder="Motivo de la anulacion..."
-                  />
-                </div>
-
-                {tipoNc === 'PARCIAL' ? (
+                {/* Contenido especifico del flujo — gateado por AMBAS
+                    elecciones explicitas (tipoNc Y origenReverso). Sin esto,
+                    "Parcial" sin tocar "Origen del reverso" podia confirmar
+                    con una `modalidad` nunca elegida por el usuario (ver
+                    comentario del componente) — bug real destapado al
+                    quitar el default viejo, corregido aqui, no ignorado. */}
+                {tipoNc === 'PARCIAL' && origenReverso ? (
                   <SeleccionLineasNc
                     key={factura.id}
                     lineas={lineasParaNc}
@@ -404,14 +404,26 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     onConfirm={(lineas) => void emitirNc(lineas)}
                     loading={loading}
                   />
-                ) : origenReverso === 'DEVOLVER_DINERO' && subOpcionDevolver === 'TESORERIA' ? (
+                ) : tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO' ? (
                   <RefundTesoreriaForm
                     montoDisponibleUsd={montoDisponibleParaRefund}
                     tasaHistorica={Number(factura.tasa)}
                     onConfirm={(lineas) => void emitirNcRefund(lineas)}
                     loading={loading}
+                    motivoSlot={
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
+                        <input
+                          type="text"
+                          value={motivo}
+                          onChange={(e) => setMotivo(e.target.value)}
+                          className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          placeholder="Motivo de la anulacion..."
+                        />
+                      </div>
+                    }
                   />
-                ) : (
+                ) : tipoNc === 'TOTAL' && origenReverso === 'CREDITO_A_FAVOR' ? (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
                     <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                     <div className="text-sm text-red-700">
@@ -422,7 +434,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                       </p>
                     </div>
                   </div>
-                )}
+                ) : null}
               </>
             )}
           </div>
@@ -438,9 +450,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
             >
               {puedeEmitirNc ? 'Cancelar' : 'Cerrar'}
             </button>
-            {puedeEmitirNc &&
-              tipoNc === 'TOTAL' &&
-              !(origenReverso === 'DEVOLVER_DINERO' && subOpcionDevolver === 'TESORERIA') && (
+            {puedeEmitirNc && tipoNc === 'TOTAL' && origenReverso === 'CREDITO_A_FAVOR' && (
               <button
                 onClick={() => void emitirNc()}
                 disabled={loading || !motivo.trim()}
