@@ -654,32 +654,48 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
 
   describe('gate anti-fraude — funcion pura (nivel de funcion, no UI)', () => {
     it.each(['SALDO_FAVOR', 'AJUSTE_CXC', 'COMPENSACION_VENTA'] as const)(
-      'rechaza egresoParams cuando la modalidad es %s (no-efectivo)',
+      'rechaza egresoParams (array no vacio) cuando la modalidad es %s (no-efectivo)',
       (modalidad) => {
         expect(() =>
-          assertGateAntiFraudeNoDesembolso(modalidad, { metodoCobroId: 'm', monto: 30 })
+          assertGateAntiFraudeNoDesembolso(modalidad, [
+            { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' },
+          ])
         ).toThrow(/no-desembolso/i)
       }
     )
 
-    it('permite egresoParams cuando la modalidad es EFECTIVO_REAL', () => {
+    it('permite egresoParams (array no vacio) cuando la modalidad es EFECTIVO_REAL', () => {
       expect(() =>
-        assertGateAntiFraudeNoDesembolso('EFECTIVO_REAL', { metodoCobroId: 'm', monto: 30 })
+        assertGateAntiFraudeNoDesembolso('EFECTIVO_REAL', [
+          { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' },
+        ])
       ).not.toThrow()
     })
 
-    it('permite egresoParams cuando la modalidad es REFUND_TESORERIA', () => {
+    it('permite egresoParams (array no vacio) cuando la modalidad es REFUND_TESORERIA', () => {
       expect(() =>
-        assertGateAntiFraudeNoDesembolso('REFUND_TESORERIA', { metodoCobroId: 'm', monto: 30 })
+        assertGateAntiFraudeNoDesembolso('REFUND_TESORERIA', [
+          { destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '30.00' },
+        ])
       ).not.toThrow()
     })
 
     it('no rechaza una modalidad no-efectivo SIN egresoParams (flujo normal)', () => {
       expect(() => assertGateAntiFraudeNoDesembolso('SALDO_FAVOR', undefined)).not.toThrow()
     })
+
+    it('Scenario "Array vacío no dispara el gate": modalidad no-efectivo + egresoParams=[] NO se rechaza — [] es truthy pero se trata como "sin egreso" (gotcha fix, Design §a)', () => {
+      expect(() => assertGateAntiFraudeNoDesembolso('SALDO_FAVOR', [])).not.toThrow()
+      expect(() => assertGateAntiFraudeNoDesembolso('AJUSTE_CXC', [])).not.toThrow()
+      expect(() => assertGateAntiFraudeNoDesembolso('COMPENSACION_VENTA', [])).not.toThrow()
+    })
+
+    it('Scenario "Array vacío no dispara el gate" en REFUND_TESORERIA: egresoParams=[] no se rechaza como desembolso indebido', () => {
+      expect(() => assertGateAntiFraudeNoDesembolso('REFUND_TESORERIA', [])).not.toThrow()
+    })
   })
 
-  it('crearNotaCredito: el gate rechaza ANTES de abrir la transaccion — llamada directa (bypass de UI) con modalidad SALDO_FAVOR + egresoParams forzado', async () => {
+  it('crearNotaCredito: el gate rechaza ANTES de abrir la transaccion — llamada directa (bypass de UI) con modalidad SALDO_FAVOR + egresoParams forzado (array no vacio)', async () => {
     mockCrearNcrTx(fixturesModalidad())
 
     await expect(
@@ -688,7 +704,7 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
           entryPoint: 'POS',
           sesionCajaActivaId: 'sesion-activa-1',
           modalidad: 'SALDO_FAVOR',
-          egresoParams: { metodoCobroId: 'metodo-efectivo', monto: 30 },
+          egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' }],
         })
       )
     ).rejects.toThrow(/no-desembolso/i)

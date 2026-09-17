@@ -104,11 +104,26 @@ export function esModalidadNoDesembolso(modalidad: LiquidacionModalidad): boolea
   return (MODALIDADES_NO_DESEMBOLSO as readonly string[]).includes(modalidad)
 }
 
-/** Parametro que representaria un intento explicito de forzar una salida de caja. Solo lo consume el gate — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
-export interface EgresoCajaParams {
-  metodoCobroId: string
-  monto: number
+/**
+ * Linea de egreso de tesoreria (banco o caja fuerte) para la modalidad
+ * `REFUND_TESORERIA` (nc-refund-tesoreria, Design §a). Reemplaza
+ * `EgresoCajaParams` (objeto unico) — desde el dia 1 el llamador construye
+ * un ARRAY, incluso para un solo destino. `montoEnMonedaCuenta` es string
+ * (mismo criterio que `toStorageString`): el monto se ingresa en la moneda
+ * NATIVA de la cuenta elegida, nunca en USD. SIN campo `moneda` explicito —
+ * la moneda de cada linea se resuelve server-side desde la cuenta real
+ * (`bancos_empresa.moneda_id`/`caja_fuerte.moneda_id`), igual que
+ * `_esBancoBS` en `use-cxc.ts`/`use-cxp.ts` — evita que un valor de UI
+ * desincronizado con la cuenta produzca una conversion incorrecta.
+ */
+export interface EgresoTesoreriaLinea {
+  destino: 'BANCO' | 'CAJA_FUERTE'
+  cuentaId: string
+  montoEnMonedaCuenta: string
 }
+
+/** Array de lineas de egreso — reemplaza `EgresoCajaParams` (objeto unico). Solo lo consume el gate y la rama `REFUND_TESORERIA` de Step B — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
+export type EgresoParams = EgresoTesoreriaLinea[]
 
 /**
  * Gate anti-fraude de "comprobante de no-desembolso" (Design §3 paso 0b,
@@ -118,12 +133,19 @@ export interface EgresoCajaParams {
  * caja. Se evalua ANTES de abrir la transaccion (ni siquiera toca la DB):
  * una llamada directa a `crearNotaCredito` que bypasee la UI cae en el
  * mismo chequeo.
+ *
+ * `egresoParams` ahora es un ARRAY (Design §a) — el chequeo usa
+ * `Array.isArray(egresoParams) && egresoParams.length > 0`, NUNCA solo
+ * `egresoParams &&`, porque `[]` es truthy en JS: un array vacio se trata
+ * como "sin egreso" (Spec Scenario "Array vacío no dispara el gate"), no
+ * como un intento indebido de desembolso.
  */
 export function assertGateAntiFraudeNoDesembolso(
   modalidad: LiquidacionModalidad,
-  egresoParams: EgresoCajaParams | undefined
+  egresoParams: EgresoParams | undefined
 ): void {
-  if (egresoParams && esModalidadNoDesembolso(modalidad)) {
+  const hayEgresoSolicitado = Array.isArray(egresoParams) && egresoParams.length > 0
+  if (hayEgresoSolicitado && esModalidadNoDesembolso(modalidad)) {
     throw new Error(
       `Comprobante de no-desembolso violado: la modalidad '${modalidad}' no admite una salida de efectivo/tarjeta. El bloqueo se aplica a nivel de funcion, no de UI.`
     )
@@ -156,14 +178,14 @@ export interface CrearNotaCreditoParams {
   /** Modalidad de liquidacion elegida (Slice 3, obligatoria). */
   modalidad: LiquidacionModalidad
   /**
-   * Defensa en profundidad / prueba directa del gate anti-fraude: NUNCA se
-   * envia en el flujo normal junto a una modalidad no-efectivo. El egreso
-   * real de la Regla de Oro (EFECTIVO_REAL) se calcula internamente a partir
-   * de `entryPoint`/`sesionCajaActivaId`/`venta.sesion_caja_id` — este
-   * parametro NO lo dispara, solo existe para que el gate tenga algo
-   * explicito que rechazar.
+   * Array de lineas de egreso de tesoreria (Design §a) — consumido por la
+   * rama `REFUND_TESORERIA` de Step B (Slice 4) y por el gate anti-fraude.
+   * NUNCA se envia en el flujo normal junto a una modalidad no-efectivo. El
+   * egreso real de la Regla de Oro (EFECTIVO_REAL) se calcula internamente a
+   * partir de `entryPoint`/`sesionCajaActivaId`/`venta.sesion_caja_id` — este
+   * parametro no la dispara.
    */
-  egresoParams?: EgresoCajaParams
+  egresoParams?: EgresoParams
   /**
    * Tipo de NC (Slice 4b, Design §3/§Interfaces). Default `'TOTAL'` cuando
    * se omite — preserva el comportamiento previo a este slice byte-a-byte
