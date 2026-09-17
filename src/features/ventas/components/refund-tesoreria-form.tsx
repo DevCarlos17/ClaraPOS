@@ -2,7 +2,7 @@ import { useState } from 'react'
 import Decimal from 'decimal.js'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
-import { formatUsd, formatBs } from '@/lib/currency'
+import { formatUsd, formatBs, type DecimalInput } from '@/lib/currency'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
 import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
@@ -39,7 +39,7 @@ function nuevaLineaKey(): string {
   return `linea-${contadorLinea}`
 }
 
-function formatEnMonedaCuenta(monto: Decimal.Value, monedaCodigo: string): string {
+function formatEnMonedaCuenta(monto: DecimalInput, monedaCodigo: string): string {
   return monedaCodigo === 'VES' ? formatBs(monto) : formatUsd(monto)
 }
 
