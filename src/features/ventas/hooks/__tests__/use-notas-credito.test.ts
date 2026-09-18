@@ -793,6 +793,9 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
     )
     expect(ajusteInsert).toBeDefined()
     expect(ajusteInsert!.params).toContain('30.00000000')
+    // BUGFIX (Part 2): tasa_pago = venta.tasa ('40') persistido en el INSERT AJUSTE_CXC
+    expect(ajusteInsert!.sql).toContain('tasa_pago')
+    expect(ajusteInsert!.params).toContain('40.00000000')
 
     const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro'))
     expect(egresoInsert).toBeUndefined()
@@ -1056,6 +1059,11 @@ describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real d
     const ncrId = ncrInsert!.params[0] as string
     expect(safcInsert!.params).toContain(ncrId)
     expect(safcInsert!.params).toContain('NOTA_CREDITO')
+    // BUGFIX (Part 2): tasa_pago = venta.tasa ('40') persistido en el SAFC
+    // remanente de REFUND_TESORERIA. '40.00000000' ya aparece arriba como
+    // el monto SAFC (coincidencia numerica del fixture) — confirmar via SQL
+    // que la columna tasa_pago esta presente en el INSERT.
+    expect(safcInsert!.sql).toContain('tasa_pago')
   })
 
   it('Scenario "Sin impacto en sesión POS activa": sesion POS activa + REFUND_TESORERIA -> CERO escritura en movimientos_metodo_cobro (Regla de Oro solo dispara con EFECTIVO_REAL)', async () => {
@@ -1555,6 +1563,11 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     )
     expect(stepAInsert).toBeDefined()
     expect(stepAInsert!.params).toContain('10.00000000')
+    // BUGFIX (Part 2, sdd/nc-refund-tesoreria/bug-evolucion-bs): el INSERT
+    // ahora persiste tasa_pago = venta.tasa (tasa historica de la factura),
+    // igual que el patron PAG/REV de use-cxc.ts.
+    expect(stepAInsert!.sql).toContain('tasa_pago')
+    expect(stepAInsert!.params).toContain('40.00000000')
 
     // Step B: liquida el remanente (23.20 - 10.00 = 13.20) via SALDO_FAVOR (SAFC)
     const safcInsert = calls.find(
@@ -1562,6 +1575,8 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     )
     expect(safcInsert).toBeDefined()
     expect(safcInsert!.params).toContain('13.20000000')
+    expect(safcInsert!.sql).toContain('tasa_pago')
+    expect(safcInsert!.params).toContain('40.00000000')
 
     // saldo_pend_usd de la factura queda en 0 (10.00 - 23.20 topeado en 0), sin marcar ANULADA
     const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))

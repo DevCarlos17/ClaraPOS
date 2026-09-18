@@ -38,19 +38,38 @@ function toTipoImpuestoLinea(val: string): TipoImpuestoLinea {
  * hay una "tasa correcta" unica cuando cada fila tiene su propia tasa
  * historica, y mostrar un solo monto agregado es preferible a listar cada
  * SAFC por separado (fuera del alcance de este slice).
+ *
+ * `tasaHistorica` (= `venta.tasa`, tasa de la factura al momento de su
+ * emision) es el FALLBACK cuando `tasa_pago` de la fila es `null`. Las filas
+ * NCR/SAFC escritas por `crearNotaCredito` antes de este fix nunca
+ * persistieron `tasa_pago` (bug diagnosticado en
+ * `sdd/nc-refund-tesoreria/bug-evolucion-bs`) y `movimientos_cuenta` es
+ * inmutable (regla #2 CLAUDE.md) — sin este fallback, esas filas historicas
+ * seguirian mostrando Bs. 0,00 para siempre.
  */
-function reducirSaldoAFavorGenerado(rows: EvolucionFacturaRow[]): ReciboEvolucionMovimientoInput | null {
+function reducirSaldoAFavorGenerado(
+  rows: EvolucionFacturaRow[],
+  tasaHistorica: string
+): ReciboEvolucionMovimientoInput | null {
   if (rows.length === 0) return null
   if (rows.length === 1) {
-    return { fecha: rows[0].fecha, monto: rows[0].monto, tasaPago: rows[0].tasa_pago }
+    return { fecha: rows[0].fecha, monto: rows[0].monto, tasaPago: rows[0].tasa_pago ?? tasaHistorica }
   }
   const montoTotal = rows.reduce((acc, r) => acc.plus(r.monto), new Decimal(0))
   const masReciente = rows[rows.length - 1]
-  return { fecha: masReciente.fecha, monto: montoTotal.toString(), tasaPago: masReciente.tasa_pago }
+  return {
+    fecha: masReciente.fecha,
+    monto: montoTotal.toString(),
+    tasaPago: masReciente.tasa_pago ?? tasaHistorica,
+  }
 }
 
-function mapEvolucionMovimiento(row: EvolucionFacturaRow): ReciboEvolucionMovimientoInput {
-  return { fecha: row.fecha, monto: row.monto, tasaPago: row.tasa_pago }
+/** Mismo fallback de `tasaHistorica` que `reducirSaldoAFavorGenerado` — ver su doc. */
+function mapEvolucionMovimiento(
+  row: EvolucionFacturaRow,
+  tasaHistorica: string
+): ReciboEvolucionMovimientoInput {
+  return { fecha: row.fecha, monto: row.monto, tasaPago: row.tasa_pago ?? tasaHistorica }
 }
 
 /**
@@ -142,9 +161,12 @@ export function useReciboDesdeFactura(
       totalUsd: r.montoUsd,
       totalBs: r.montoBs,
     })),
-    abonos: abonos.map(mapEvolucionMovimiento),
-    reversosPago: reversosPago.map(mapEvolucionMovimiento),
-    saldoAFavorGenerado: reducirSaldoAFavorGenerado(saldoAFavor),
+    // SIEMPRE la tasa historica de la factura (venta.tasa) como fallback —
+    // nunca la tasa vigente del sistema (mismo criterio que `tasa` en
+    // buildReciboDataDesdeFacturaGuardada`, linea ~84 arriba).
+    abonos: abonos.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
+    reversosPago: reversosPago.map((r) => mapEvolucionMovimiento(r, venta.tasa)),
+    saldoAFavorGenerado: reducirSaldoAFavorGenerado(saldoAFavor, venta.tasa),
   }
 
   const recibo = buildReciboDataDesdeFacturaGuardada(

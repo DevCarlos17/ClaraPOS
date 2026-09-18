@@ -476,4 +476,47 @@ describe('useReciboDesdeFactura', () => {
     expect(result.current.recibo?.evolucion?.saldoAFavorGeneradoUsd).toBe(5)
     expect(result.current.recibo?.evolucion?.saldoAFavorGeneradoBs).toBe(250)
   })
+
+  it('BUGFIX (obs sdd/nc-refund-tesoreria/bug-evolucion-bs): SAFC con tasa_pago NULL cae a la tasa HISTORICA de la factura, no a Bs. 0,00', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        // Filas NCR/SAFC escritas por crearNotaCredito antes del fix de
+        // persistencia nunca guardaron tasa_pago — este es el caso real
+        // reportado (NCR-000026), no un fixture artificial.
+        saldoAFavor: [baseEvolucionRow({ tipo: 'SAFC', monto: '1.00', tasa_pago: null, fecha: '2026-08-17' })],
+      })
+    )
+
+    // baseFactura().tasa === '40.0000' (tasa historica de la factura, NUNCA la tasa vigente del sistema)
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion?.saldoAFavorGeneradoUsd).toBe(1)
+    expect(result.current.recibo?.evolucion?.saldoAFavorGeneradoBs).toBe(40) // NUNCA 0
+  })
+
+  it('BUGFIX: abonos/reversosPago con tasa_pago NULL tambien caen a la tasa historica de la factura (mismo fallback, consistente)', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
+    mockedUseEvolucionFactura.mockReturnValue(
+      baseEvolucion({
+        abonos: [baseEvolucionRow({ tipo: 'PAG', monto: '5.00', tasa_pago: null, fecha: '2026-08-15' })],
+        reversosPago: [baseEvolucionRow({ tipo: 'REV', monto: '2.00', tasa_pago: null, fecha: '2026-08-16' })],
+      })
+    )
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion?.abonos).toEqual([
+      { fecha: '2026-08-15', montoUsd: 5, montoBs: 200 },
+    ])
+    expect(result.current.recibo?.evolucion?.reversosPago).toEqual([
+      { fecha: '2026-08-16', montoUsd: 2, montoBs: 80 },
+    ])
+  })
 })

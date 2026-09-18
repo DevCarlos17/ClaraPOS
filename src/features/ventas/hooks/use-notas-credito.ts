@@ -935,8 +935,8 @@ export async function crearNotaCredito(
 
       const movCuentaId = uuidv4()
       await tx.execute(
-        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
-         VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, tasa_pago)
+         VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movCuentaId,
           venta.cliente_id,
@@ -949,6 +949,7 @@ export async function crearNotaCredito(
           now,
           empresa_id,
           now,
+          toStorageString(venta.tasa),
         ]
       )
 
@@ -1070,8 +1071,8 @@ export async function crearNotaCredito(
         const saldoNuevoSafc = saldoActualSafc.minus(remanenteALiquidar)
 
         await tx.execute(
-          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo)
-           VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo, tasa_pago)
+           VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             uuidv4(),
             venta.cliente_id,
@@ -1087,6 +1088,7 @@ export async function crearNotaCredito(
             usuario_id,
             ncrId,
             'NOTA_CREDITO',
+            toStorageString(venta.tasa),
           ]
         )
 
@@ -1112,8 +1114,8 @@ export async function crearNotaCredito(
         const saldoNuevoAjuste = Decimal.max(new Decimal(0), saldoActualAjuste.minus(remanenteALiquidar))
 
         await tx.execute(
-          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
-           VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, tasa_pago)
+           VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             uuidv4(),
             venta.cliente_id,
@@ -1126,6 +1128,7 @@ export async function crearNotaCredito(
             now,
             empresa_id,
             now,
+            toStorageString(venta.tasa),
           ]
         )
 
@@ -1195,8 +1198,8 @@ export async function crearNotaCredito(
           const saldoNuevoRefundSafc = saldoActualRefundSafc.minus(remanenteSafc)
 
           await tx.execute(
-            `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo)
-             VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo, tasa_pago)
+             VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               uuidv4(),
               venta.cliente_id,
@@ -1212,6 +1215,7 @@ export async function crearNotaCredito(
               usuario_id,
               ncrId,
               'NOTA_CREDITO',
+              toStorageString(venta.tasa),
             ]
           )
 
