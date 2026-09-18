@@ -1309,6 +1309,43 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     expect(ncrInsert!.params).toContain('6.40000000')
   })
 
+  // Regresion (engram sdd/nc-refund-tesoreria/bug-double-count, migracion
+  // 0094_fix_nota_credito_sum_self_count.sql): guarda del lado JS del
+  // invariante que el trigger Postgres `validate_nota_credito_insert`
+  // protege server-side. Vitest NO puede ejecutar triggers de Postgres
+  // (mismo gap ya documentado en openspec/changes/saldo-a-favor-fix/design.md
+  // y en la propia migracion 0094), asi que esto NO reemplaza la
+  // verificacion SQL manual descrita en el comentario "INVARIANTE SQL" de
+  // esa migracion — solo prueba que `crearNotaCredito` nunca genera, del
+  // lado del cliente, la condicion que dispararia el doble conteo (dos
+  // INSERTs para la misma NC, o un total_usd que ya viene duplicado).
+  it('TOTAL: inserta EXACTAMENTE UNA fila notas_credito con total_usd === venta.total_usd (guarda JS del invariante que protege el trigger Postgres contra doble conteo en reintentos de PowerSync)', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '2.60',
+        total_bs: '104.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: ventaDetDosLineas,
+      productos: productosDosLineas,
+      inventarioStock: { 'prod-A::dep-B': '10.000', 'prod-B::dep-B': '5.000' },
+    })
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'AJUSTE_CXC' }))
+
+    const ncrInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    expect(ncrInserts).toHaveLength(1)
+    expect(ncrInserts[0]!.params).toContain('2.60')
+    expect(ncrInserts[0]!.params.filter((p) => p === '2.60')).toHaveLength(1)
+  })
+
   it('PARCIAL: escribe notas_credito_det + Kardex SOLO para la linea/cantidad seleccionada, tipo=PARCIAL, y el header usa la suma de lineas (no venta.total_usd completo)', async () => {
     const calls = mockCrearNcrTx({
       venta: {
