@@ -410,6 +410,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     tasaHistorica={Number(factura.tasa)}
                     onConfirm={(lineas) => void emitirNcRefund(lineas)}
                     loading={loading}
+                    portalContainer={dialogRef.current}
                     motivoSlot={
                       <div>
                         <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>

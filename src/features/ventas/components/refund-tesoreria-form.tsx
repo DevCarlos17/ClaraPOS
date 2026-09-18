@@ -2,12 +2,22 @@ import { useState, type ReactNode } from 'react'
 import Decimal from 'decimal.js'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
-import { formatUsd, formatBs, type DecimalInput } from '@/lib/currency'
+import { formatUsd, formatBs, usdToBs, type DecimalInput } from '@/lib/currency'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
 import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
 import { formatSesionId } from '@/lib/format'
 import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 
 /**
  * Sub-formulario AISLADO de "Devolver dinero -> Tesorería" (nc-refund-
@@ -56,7 +66,24 @@ export interface RefundTesoreriaFormProps {
    * (sigue aislado, cero acoplamiento con el motor).
    */
   motivoSlot?: ReactNode
+  /**
+   * Contenedor del portal del `AlertDialog` de confirmacion de saldo a favor
+   * (UX rework, nc-refund-tesoreria) — mismo patron que `portalContainer` en
+   * `consulta-factura-modal.tsx`/`nota-credito-pos-modal.tsx`: el llamador
+   * (`crear-ncr-modal.tsx`) pasa su `dialogRef.current` (el `<dialog>` nativo
+   * que ya tiene abierto via `showModal()`) para que el portal de Radix
+   * renderice DENTRO de la top layer del navegador — si portalizara al
+   * `document.body` por default quedaria tapado por el `<dialog>` nativo.
+   */
+  portalContainer?: HTMLElement | null
 }
+
+/** Mismo patron que `noSpinner` en `gasto-form.tsx`/`producto-form.tsx`/`nivel-precio-form.tsx` (Tailwind arbitrary variants, sin CSS global) — oculta las flechas nativas del input `type="number"` en Chrome/Safari/Firefox. */
+const noSpinner =
+  '[appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none'
+
+/** Tolerancia de redondeo (mismo criterio que `TOLERANCIA` en `notas-credito-refund.ts`/el motor `use-notas-credito.ts`): un remanente por debajo de este umbral no dispara el gate de confirmacion extra porque el motor tampoco escribiria un SAFC real para ese monto. */
+const TOLERANCIA_SAFC = '0.01'
 
 let contadorLinea = 0
 function nuevaLineaKey(): string {
@@ -74,12 +101,15 @@ export function RefundTesoreriaForm({
   onConfirm,
   loading = false,
   motivoSlot,
+  portalContainer,
 }: RefundTesoreriaFormProps) {
   const { cuentas } = useCuentasTesoreria()
   const { sesiones: sesionesActivas } = useSesionesActivas()
   const [lineas, setLineas] = useState<LineaFormState[]>([
     { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '', referencia: '' },
   ])
+  /** Gate de confirmacion extra (UX rework, nc-refund-tesoreria): se abre SOLO cuando confirmar dejaria un remanente > `TOLERANCIA_SAFC` como saldo a favor — un reembolso completo (remanente 0) nunca lo muestra. */
+  const [mostrarConfirmSafc, setMostrarConfirmSafc] = useState(false)
 
   function agregarLinea() {
     setLineas((prev) => [
@@ -108,6 +138,10 @@ export function RefundTesoreriaForm({
   })
 
   const { sumaUsd, remanenteSafc, excedeTope } = calcularRemanenteRefund(montoDisponibleUsd, lineasUsd)
+  /** Equivalente en Bs del pendiente, SIEMPRE a `tasaHistorica` (`notas_credito.tasa_historica`) — nunca a la tasa vigente del sistema (Spec "Conversion a tasa historica"). */
+  const remanenteSafcBs = usdToBs(remanenteSafc, tasaHistorica)
+  /** true cuando confirmar dejaria un remanente real (por encima de la tolerancia de redondeo) como SAFC — dispara el gate de confirmacion extra (UX rework, nc-refund-tesoreria). Espeja el mismo umbral que usa el motor (`use-notas-credito.ts`) para decidir si escribe el movimiento SAFC. */
+  const hayRemanenteSafc = remanenteSafc.gt(TOLERANCIA_SAFC)
 
   const lineasCompletas = lineas.every((l) => l.cuentaId && l.montoNativo && parseFloat(l.montoNativo) > 0)
   const puedeConfirmar = !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0)
@@ -125,6 +159,22 @@ export function RefundTesoreriaForm({
       referencia: l.referencia.trim() || undefined,
     }))
     onConfirm(egresoParams)
+  }
+
+  /** Handler del boton principal (UX rework, nc-refund-tesoreria): con remanente real, ABRE el gate de confirmacion extra en vez de confirmar directo — un reembolso completo (`hayRemanenteSafc === false`) sigue confirmando de una sola vez, sin dialogo adicional. */
+  function handleConfirmClick() {
+    if (!puedeConfirmar) return
+    if (hayRemanenteSafc) {
+      setMostrarConfirmSafc(true)
+      return
+    }
+    handleConfirm()
+  }
+
+  /** Confirmacion desde el AlertDialog de saldo a favor — ejecuta la MISMA `handleConfirm()` del boton principal (cero logica de escritura duplicada) y cierra el gate. */
+  function handleConfirmarConSafc() {
+    handleConfirm()
+    setMostrarConfirmSafc(false)
   }
 
   return (
@@ -200,11 +250,12 @@ export function RefundTesoreriaForm({
                 <input
                   id={`monto-${linea.key}`}
                   type="number"
+                  inputMode="decimal"
                   aria-label="Monto"
                   placeholder="0.00"
                   value={linea.montoNativo}
                   onChange={(e) => actualizarLinea(linea.key, { montoNativo: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${noSpinner}`}
                 />
               </div>
 
@@ -250,7 +301,10 @@ export function RefundTesoreriaForm({
 
       <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-2 text-sm">
         <span className="text-muted-foreground">Pendiente por reembolsar:</span>
-        <span className="font-semibold">{formatUsd(remanenteSafc)}</span>
+        {/* Bs SIEMPRE a `tasaHistorica` (UX rework, nc-refund-tesoreria) — nunca a la tasa vigente. */}
+        <span className="font-semibold">
+          {formatUsd(remanenteSafc)} / {formatBs(remanenteSafcBs)}
+        </span>
       </div>
 
       {excedeTope && (
@@ -262,11 +316,41 @@ export function RefundTesoreriaForm({
       <button
         type="button"
         disabled={!puedeConfirmar}
-        onClick={handleConfirm}
+        onClick={handleConfirmClick}
         className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
-        {loading ? 'Procesando...' : 'Confirmar reembolso'}
+        {loading
+          ? 'Procesando...'
+          : hayRemanenteSafc
+            ? `Confirmar reembolso (queda ${formatUsd(remanenteSafc)} como saldo a favor)`
+            : 'Confirmar reembolso'}
       </button>
+
+      {/* Gate de confirmacion extra (UX rework, nc-refund-tesoreria, opcion
+          A): SOLO se monta cuando queda un remanente real — un reembolso
+          completo confirma directo desde el boton principal, sin este
+          dialogo. `container` apunta al `<dialog>` nativo del modal padre
+          (mismo patron que `AlertDialogContent container={dialogRef.current}`
+          en `producto-form.tsx`) para que el portal de Radix no quede tapado
+          por la top layer del `<dialog>`. La escritura real NO cambia: este
+          dialogo solo decide CUANDO se llama a `handleConfirm()` (que emite
+          el mismo `EgresoTesoreriaLinea[]` de siempre) — el reparto
+          egreso/SAFC lo sigue calculando exclusivamente el motor. */}
+      <AlertDialog open={mostrarConfirmSafc}>
+        <AlertDialogContent container={portalContainer ?? undefined}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Quedará saldo a favor del cliente</AlertDialogTitle>
+            <AlertDialogDescription>
+              Quedará {formatUsd(remanenteSafc)} ({formatBs(remanenteSafcBs)} a tasa histórica) como saldo a
+              favor del cliente. Esta parte de la nota de crédito NO se reembolsa por tesorería.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setMostrarConfirmSafc(false)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmarConSafc}>Confirmar de todas formas</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

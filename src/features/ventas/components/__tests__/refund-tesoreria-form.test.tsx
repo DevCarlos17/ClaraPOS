@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RefundTesoreriaForm } from '../refund-tesoreria-form'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
@@ -130,7 +130,7 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
     await user.type(screen.getByLabelText(/monto/i), '60')
 
-    expect(screen.getByText(/40\.00/)).toBeInTheDocument()
+    expect(screen.getByText(/\$40\.00 \/ Bs/)).toBeInTheDocument()
   })
 
   it('submit deshabilitado cuando la suma de lineas excede el monto disponible de la NC', async () => {
@@ -144,7 +144,7 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     expect(screen.getByText(/excede/i)).toBeInTheDocument()
   })
 
-  it('confirmar con datos validos invoca onConfirm con un array EgresoTesoreriaLinea', async () => {
+  it('confirmar con datos validos invoca onConfirm con un array EgresoTesoreriaLinea (via el gate de saldo a favor, porque 60 de 100 deja remanente)', async () => {
     const user = userEvent.setup()
     const onConfirm = vi.fn()
     render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
@@ -155,6 +155,7 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     const boton = screen.getByRole('button', { name: /Confirmar/i })
     expect(boton).not.toBeDisabled()
     await user.click(boton)
+    await user.click(screen.getByRole('button', { name: /Confirmar de todas formas/i }))
 
     expect(onConfirm).toHaveBeenCalledWith([
       { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '60', referencia: undefined },
@@ -180,6 +181,7 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
 
       expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
       await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+      await user.click(screen.getByRole('button', { name: /Confirmar de todas formas/i }))
 
       expect(onConfirm).toHaveBeenCalledWith([
         expect.objectContaining({ referencia: undefined }),
@@ -196,6 +198,7 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       await user.type(screen.getByLabelText(/^Referencia/i), 'TRF-00123')
 
       await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+      await user.click(screen.getByRole('button', { name: /Confirmar de todas formas/i }))
 
       expect(onConfirm).toHaveBeenCalledWith([
         { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '60', referencia: 'TRF-00123' },
@@ -221,7 +224,9 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       await user.type(montoInputs[1]!, '20')
       await user.type(referenciaInputs[1]!, 'REF-B')
 
+      // 30 + 20 = 50 de 200 disponibles -> deja remanente -> pasa por el gate
       await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+      await user.click(screen.getByRole('button', { name: /Confirmar de todas formas/i }))
 
       expect(onConfirm).toHaveBeenCalledWith([
         { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '30', referencia: 'REF-A' },
@@ -241,5 +246,119 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     )
 
     expect(screen.getByTestId('motivo-slot')).toBeInTheDocument()
+  })
+
+  describe('UX rework (nc-refund-tesoreria): sin spinners, Bs en pendiente y gate de confirmacion de saldo a favor', () => {
+    it('el input de Monto no muestra las flechas de spinner nativas del navegador (mismo patron [appearance:textfield] que el resto del codebase)', () => {
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      expect(montoInput).toHaveClass('[appearance:textfield]')
+      expect(montoInput).toHaveClass('[&::-webkit-outer-spin-button]:appearance-none')
+      expect(montoInput).toHaveClass('[&::-webkit-inner-spin-button]:appearance-none')
+    })
+
+    it('"Pendiente por reembolsar" muestra tambien el equivalente en Bs, convertido a la tasa HISTORICA de la NC (no la tasa vigente)', () => {
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      // 100 USD pendiente * tasaHistorica 40 = 4000 Bs
+      expect(screen.getByText(/\$100\.00 \/ Bs\. 4\.000,00/)).toBeInTheDocument()
+    })
+
+    it('el equivalente en Bs de "Pendiente por reembolsar" se recalcula en vivo a medida que se llenan lineas', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '60')
+
+      // Pendiente 40 USD * tasaHistorica 40 = 1600 Bs
+      expect(screen.getByText(/\$40\.00 \/ Bs\. 1\.600,00/)).toBeInTheDocument()
+    })
+
+    it('el boton de confirmar usa el label normal "Confirmar reembolso" cuando el reembolso cubre el 100% (remanente 0)', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '100')
+
+      expect(screen.getByRole('button', { name: /^Confirmar reembolso$/i })).toBeInTheDocument()
+    })
+
+    it('el boton de confirmar indica el remanente que quedara como saldo a favor cuando el reembolso es parcial', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '60')
+
+      expect(
+        screen.getByRole('button', { name: /Confirmar reembolso \(queda \$40\.00 como saldo a favor\)/i })
+      ).toBeInTheDocument()
+    })
+
+    it('con reembolso completo (remanente 0), Confirmar invoca onConfirm DIRECTAMENTE — sin dialogo adicional de saldo a favor', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '100')
+
+      await user.click(screen.getByRole('button', { name: /^Confirmar reembolso$/i }))
+
+      expect(onConfirm).toHaveBeenCalledTimes(1)
+      expect(screen.queryByText(/saldo a favor del cliente/i)).not.toBeInTheDocument()
+    })
+
+    it('con remanente > 0, clickear Confirmar abre un dialogo de confirmacion de saldo a favor y NO llama onConfirm todavia', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '60')
+
+      await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(queda/i }))
+
+      expect(onConfirm).not.toHaveBeenCalled()
+      const dialog = screen.getByRole('alertdialog')
+      expect(within(dialog).getByText(/Quedará saldo a favor del cliente/i)).toBeInTheDocument()
+      // Menciona el monto en USD y en Bs a tasa historica
+      expect(within(dialog).getByText(/\$40\.00/)).toBeInTheDocument()
+      expect(within(dialog).getByText(/Bs\. 1\.600,00/)).toBeInTheDocument()
+    })
+
+    it('cancelar el dialogo de saldo a favor cierra el dialogo sin invocar onConfirm', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '60')
+      await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(queda/i }))
+
+      await user.click(screen.getByRole('button', { name: /^Cancelar$/i }))
+
+      expect(onConfirm).not.toHaveBeenCalled()
+      expect(screen.queryByText(/Quedará saldo a favor del cliente/i)).not.toBeInTheDocument()
+    })
+
+    it('confirmar el dialogo de saldo a favor invoca onConfirm con el mismo array EgresoTesoreriaLinea de siempre', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/monto/i), '60')
+      await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(queda/i }))
+
+      await user.click(screen.getByRole('button', { name: /Confirmar de todas formas/i }))
+
+      expect(onConfirm).toHaveBeenCalledWith([
+        { destino: 'BANCO', cuentaId: 'banco-usd-1', montoEnMonedaCuenta: '60', referencia: undefined },
+      ])
+    })
   })
 })
