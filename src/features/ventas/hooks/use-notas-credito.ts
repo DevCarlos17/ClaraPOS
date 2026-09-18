@@ -448,6 +448,96 @@ export function useReversosFactura(ventaId: string | null, empresaId: string) {
   return { reversos: (data ?? []) as ReversoFacturaRow[], isLoading }
 }
 
+// ─── Reembolsos de tesoreria por NC (Enhancement B, nc-refund-tesoreria) ────
+
+export interface ReembolsoTesoreriaFacturaRow {
+  notaCreditoId: string
+  cuentaNombre: string
+  /** `monedas.codigo_iso` de la cuenta (`'VES'` => `montoNativo` esta en Bs; cualquier otro valor se trata como USD). */
+  monedaCodigo: string
+  /** Monto NATIVO de la cuenta (nunca convertido) — mismo criterio que `movimientos_bancarios.monto`/`mov_caja_fuerte.monto`. */
+  montoNativo: string
+  referencia: string | null
+}
+
+interface ReembolsoTesoreriaFacturaRawRow {
+  nota_credito_id: string
+  cuenta_nombre: string
+  moneda_codigo: string
+  monto_nativo: string
+  referencia: string | null
+}
+
+function mapReembolsoTesoreriaFacturaRow(r: ReembolsoTesoreriaFacturaRawRow): ReembolsoTesoreriaFacturaRow {
+  return {
+    notaCreditoId: r.nota_credito_id,
+    cuentaNombre: r.cuenta_nombre,
+    monedaCodigo: r.moneda_codigo,
+    montoNativo: r.monto_nativo,
+    referencia: r.referencia,
+  }
+}
+
+/**
+ * Egresos reales de tesoreria (banco o caja fuerte) que reembolsaron NC(s)
+ * de esta factura via modalidad REFUND_TESORERIA (Enhancement B de
+ * nc-refund-tesoreria — "que metodo se uso para reembolsar", mostrado en la
+ * seccion Evolucion del modal Consulta de Factura). PURE READ, patron
+ * UNION-en-memoria (mismo criterio que `usePendingCounts`,
+ * `use-cuentas-tesoreria.ts`): dos queries separadas (bancos/caja fuerte),
+ * cada una con JOIN a `notas_credito` (para escopear por `venta_id`) y a la
+ * tabla de la cuenta (para el nombre a mostrar, mismo `nombre`/`nombre_banco`
+ * que ya usa `useCuentasTesoreria`/`RefundTesoreriaForm` — sin prefijo de
+ * tipo, se reusa tal cual) + `monedas` (para decidir Bs vs USD en el
+ * render). `empresa_id` es OBLIGATORIO en AMBAS queries (regla #11) — el
+ * JOIN a `notas_credito` (tambien filtrado por `empresa_id`) NO sustituye
+ * el filtro directo sobre `movimientos_bancarios.empresa_id`/
+ * `mov_caja_fuerte.empresa_id`. READ-ONLY: no toca `escribirEgresoTesoreriaEnTx`
+ * ni ningun otro codigo de escritura.
+ */
+export function useReembolsosTesoreriaFactura(
+  ventaId: string | null,
+  empresaId: string
+): { reembolsos: ReembolsoTesoreriaFacturaRow[]; isLoading: boolean } {
+  const { data: bancosData, isLoading: loadingBancos } = useQuery(
+    ventaId && empresaId
+      ? `SELECT mb.doc_origen_id AS nota_credito_id, mb.monto AS monto_nativo, mb.referencia,
+           b.nombre_banco AS cuenta_nombre, COALESCE(mon.codigo_iso, 'USD') AS moneda_codigo
+         FROM movimientos_bancarios mb
+         JOIN notas_credito nc ON nc.id = mb.doc_origen_id
+         JOIN bancos_empresa b ON b.id = mb.banco_empresa_id
+         LEFT JOIN monedas mon ON mon.id = b.moneda_id
+         WHERE mb.origen = 'REEMBOLSO_NCR' AND mb.doc_origen_tipo = 'NOTA_CREDITO'
+           AND mb.empresa_id = ? AND nc.venta_id = ? AND nc.empresa_id = ?
+         ORDER BY mb.created_at ASC`
+      : '',
+    ventaId && empresaId ? [empresaId, ventaId, empresaId] : []
+  )
+
+  const { data: cajasData, isLoading: loadingCajas } = useQuery(
+    ventaId && empresaId
+      ? `SELECT mcf.doc_origen_id AS nota_credito_id, mcf.monto AS monto_nativo, mcf.referencia,
+           cf.nombre AS cuenta_nombre, COALESCE(mon.codigo_iso, 'USD') AS moneda_codigo
+         FROM mov_caja_fuerte mcf
+         JOIN notas_credito nc ON nc.id = mcf.doc_origen_id
+         JOIN caja_fuerte cf ON cf.id = mcf.caja_fuerte_id
+         LEFT JOIN monedas mon ON mon.id = cf.moneda_id
+         WHERE mcf.origen = 'REEMBOLSO_NCR' AND mcf.doc_origen_tipo = 'NOTA_CREDITO'
+           AND mcf.empresa_id = ? AND nc.venta_id = ? AND nc.empresa_id = ?
+         ORDER BY mcf.created_at ASC`
+      : '',
+    ventaId && empresaId ? [empresaId, ventaId, empresaId] : []
+  )
+
+  const bancos = ((bancosData ?? []) as ReembolsoTesoreriaFacturaRawRow[]).map(mapReembolsoTesoreriaFacturaRow)
+  const cajas = ((cajasData ?? []) as ReembolsoTesoreriaFacturaRawRow[]).map(mapReembolsoTesoreriaFacturaRow)
+
+  return {
+    reembolsos: [...bancos, ...cajas],
+    isLoading: loadingBancos || loadingCajas,
+  }
+}
+
 // ─── Detalle de factura (articulos + pagos) ─────────────────
 // La consulta de lineas (ventas_det + productos) vive en el hook canonico
 // de `use-cxc.ts` — aca solo se agrega la consulta de pagos, propia de este

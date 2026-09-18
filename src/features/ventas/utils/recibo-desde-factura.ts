@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js'
+import { usdToBs } from '@/lib/currency'
 import {
   buildReciboData,
   type MonedaPresentacion,
@@ -6,6 +7,7 @@ import {
   type TipoImpuestoLinea,
   type ReciboEvolucionInput,
   type ReciboEvolucionMovimientoInput,
+  type ReciboEvolucionReversoMetodoInput,
 } from './factura-export'
 import {
   useDetalleFactura,
@@ -18,7 +20,13 @@ import {
 import { useCompany, parseEmpresaConfig, type Company } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { agruparReversosPorNc } from './notas-credito-ui'
-import { useReversosFactura, type FacturaParaAnular } from '../hooks/use-notas-credito'
+import { nativoAUsd } from './notas-credito-refund'
+import {
+  useReversosFactura,
+  useReembolsosTesoreriaFactura,
+  type FacturaParaAnular,
+  type ReembolsoTesoreriaFacturaRow,
+} from '../hooks/use-notas-credito'
 
 /**
  * Mismo mapeo que `venta-exitosa-modal.tsx`/`nota-credito-pos-modal.tsx`/
@@ -61,6 +69,31 @@ function reducirSaldoAFavorGenerado(
     fecha: masReciente.fecha,
     monto: montoTotal.toString(),
     tasaPago: masReciente.tasa_pago ?? tasaHistorica,
+  }
+}
+
+/**
+ * Enhancement B (nc-refund-tesoreria): convierte una fila cruda de
+ * `useReembolsosTesoreriaFactura` (monto NATIVO de la cuenta + su moneda) a
+ * `ReciboEvolucionReversoMetodoInput` (USD+Bs ya calculados), usando
+ * SIEMPRE `venta.tasa` (tasa historica de la factura) — nunca la tasa
+ * vigente del sistema, mismo criterio que el resto de este archivo. Reusa
+ * `nativoAUsd` (misma funcion pura que `RefundTesoreriaForm`/el motor de
+ * `crearNotaCredito` usan para el calculo en vivo/la revalidacion server-
+ * side) para no introducir una tercera formula de conversion.
+ */
+function mapReembolsoMetodo(
+  row: ReembolsoTesoreriaFacturaRow,
+  tasaHistorica: string
+): ReciboEvolucionReversoMetodoInput {
+  const esCuentaBs = row.monedaCodigo === 'VES'
+  const montoUsd = nativoAUsd(row.montoNativo, esCuentaBs, tasaHistorica)
+  const montoBs = esCuentaBs ? new Decimal(row.montoNativo) : usdToBs(montoUsd, tasaHistorica)
+  return {
+    cuentaNombre: row.cuentaNombre,
+    montoUsd: montoUsd.toString(),
+    montoBs: montoBs.toString(),
+    referencia: row.referencia,
   }
 }
 
@@ -140,12 +173,13 @@ export function useReciboDesdeFactura(
     saldoAFavor,
     isLoading: loadingEvolucion,
   } = useEvolucionFactura(ventaId, empresaId)
+  const { reembolsos, isLoading: loadingReembolsos } = useReembolsosTesoreriaFactura(ventaId, empresaId)
 
   if (!venta) {
     return { recibo: null, isLoading: false }
   }
 
-  if (loadingDetalle || loadingPagos || loadingCompany || loadingReversos || loadingEvolucion) {
+  if (loadingDetalle || loadingPagos || loadingCompany || loadingReversos || loadingEvolucion || loadingReembolsos) {
     return { recibo: null, isLoading: true }
   }
 
@@ -160,6 +194,11 @@ export function useReciboDesdeFactura(
       fecha: r.fecha,
       totalUsd: r.montoUsd,
       totalBs: r.montoBs,
+      // Enhancement B (nc-refund-tesoreria): metodos de tesoreria usados
+      // para reembolsar ESTA NC especifica (cruzado por notaCreditoId).
+      metodosReembolso: reembolsos
+        .filter((e) => e.notaCreditoId === r.notaCreditoId)
+        .map((e) => mapReembolsoMetodo(e, venta.tasa)),
     })),
     // SIEMPRE la tasa historica de la factura (venta.tasa) como fallback —
     // nunca la tasa vigente del sistema (mismo criterio que `tasa` en

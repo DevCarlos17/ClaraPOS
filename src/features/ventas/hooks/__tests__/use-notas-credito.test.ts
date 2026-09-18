@@ -49,6 +49,7 @@ import {
   crearNotaCredito,
   assertGateAntiFraudeNoDesembolso,
   useReversosFactura,
+  useReembolsosTesoreriaFactura,
   useNotasCredito,
   type CrearNotaCreditoParams,
 } from '../use-notas-credito'
@@ -1652,6 +1653,116 @@ describe('useReversosFactura (F1 QA fix: historial de NC aplicadas a una factura
     expect(sql).toContain('nc.total_usd')
     expect(sql).toContain('nc.total_bs')
     expect(result.current.reversos[0]).toMatchObject({ total_usd: '150.00000000', total_bs: '5460.00000000' })
+  })
+})
+
+describe('useReembolsosTesoreriaFactura (Enhancement B, nc-refund-tesoreria): egresos de tesoreria que reembolsaron NC(s) de una factura, UNION-en-memoria bancos+caja fuerte, empresa_id-scoped', () => {
+  beforeEach(() => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+  })
+
+  it('sin ventaId: ambas queries (bancos/caja fuerte) con sql vacio, reembolsos vacio', () => {
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura(null, 'emp-1'))
+
+    expect(result.current.reembolsos).toEqual([])
+    expect(mockedUseQuery).toHaveBeenNthCalledWith(1, '', [])
+    expect(mockedUseQuery).toHaveBeenNthCalledWith(2, '', [])
+  })
+
+  it('con ventaId + empresaId: ambas queries filtran por empresa_id en la tabla de movimiento Y en el JOIN a notas_credito, escopeadas por venta_id', () => {
+    renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    const [sqlBancos, paramsBancos] = mockedUseQuery.mock.calls[0]!
+    expect(sqlBancos).toContain('movimientos_bancarios')
+    expect(sqlBancos).toContain("origen = 'REEMBOLSO_NCR'")
+    expect(sqlBancos).toContain('mb.empresa_id = ?')
+    expect(sqlBancos).toContain('nc.empresa_id = ?')
+    expect(sqlBancos).toContain('nc.venta_id = ?')
+    expect(paramsBancos).toEqual(['emp-1', 'venta-1', 'emp-1'])
+
+    const [sqlCajas, paramsCajas] = mockedUseQuery.mock.calls[1]!
+    expect(sqlCajas).toContain('mov_caja_fuerte')
+    expect(sqlCajas).toContain("origen = 'REEMBOLSO_NCR'")
+    expect(sqlCajas).toContain('mcf.empresa_id = ?')
+    expect(sqlCajas).toContain('nc.empresa_id = ?')
+    expect(sqlCajas).toContain('nc.venta_id = ?')
+    expect(paramsCajas).toEqual(['emp-1', 'venta-1', 'emp-1'])
+  })
+
+  it('mapea filas de banco al shape ReembolsoTesoreriaFacturaRow (notaCreditoId, cuentaNombre, monedaCodigo, montoNativo, referencia)', () => {
+    mockedUseQuery.mockImplementation((sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('movimientos_bancarios')) {
+        return {
+          data: [
+            {
+              nota_credito_id: 'nc-1',
+              monto_nativo: '400.00000000',
+              referencia: 'serial A12345',
+              cuenta_nombre: 'Efectivo Bs',
+              moneda_codigo: 'VES',
+            },
+          ],
+          isLoading: false,
+        } as never
+      }
+      return { data: [], isLoading: false } as never
+    })
+
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    expect(result.current.reembolsos).toEqual([
+      {
+        notaCreditoId: 'nc-1',
+        cuentaNombre: 'Efectivo Bs',
+        monedaCodigo: 'VES',
+        montoNativo: '400.00000000',
+        referencia: 'serial A12345',
+      },
+    ])
+  })
+
+  it('combina (UNION en memoria) filas de bancos Y caja fuerte en un solo arreglo, en ese orden', () => {
+    mockedUseQuery.mockImplementation((sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('movimientos_bancarios')) {
+        return {
+          data: [
+            { nota_credito_id: 'nc-1', monto_nativo: '3.00', referencia: null, cuenta_nombre: 'Banco ABC', moneda_codigo: 'USD' },
+          ],
+          isLoading: false,
+        } as never
+      }
+      if (typeof sql === 'string' && sql.includes('mov_caja_fuerte')) {
+        return {
+          data: [
+            {
+              nota_credito_id: 'nc-1',
+              monto_nativo: '99.00',
+              referencia: null,
+              cuenta_nombre: 'Caja Fuerte Principal',
+              moneda_codigo: 'USD',
+            },
+          ],
+          isLoading: false,
+        } as never
+      }
+      return { data: [], isLoading: false } as never
+    })
+
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    expect(result.current.reembolsos).toHaveLength(2)
+    expect(result.current.reembolsos.map((r) => r.cuentaNombre)).toEqual(['Banco ABC', 'Caja Fuerte Principal'])
+  })
+
+  it('isLoading es true si CUALQUIERA de las dos queries (bancos/caja fuerte) esta cargando', () => {
+    mockedUseQuery.mockImplementation((sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('mov_caja_fuerte')) return { data: [], isLoading: true } as never
+      return { data: [], isLoading: false } as never
+    })
+
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    expect(result.current.isLoading).toBe(true)
   })
 })
 

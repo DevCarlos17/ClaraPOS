@@ -6,7 +6,12 @@ import {
 import { useDetalleFactura, usePagosFactura, type EvolucionFacturaRow } from '@/features/cxc/hooks/use-cxc'
 import { useEvolucionFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
-import { useReversosFactura, type ReversoFacturaRow } from '../../hooks/use-notas-credito'
+import {
+  useReversosFactura,
+  useReembolsosTesoreriaFactura,
+  type ReversoFacturaRow,
+  type ReembolsoTesoreriaFacturaRow,
+} from '../../hooks/use-notas-credito'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import type { FacturaParaAnular } from '../../hooks/use-notas-credito'
 import type { DetalleFacturaCxc, PagoFacturaCxc } from '@/features/cxc/hooks/use-cxc'
@@ -35,7 +40,7 @@ vi.mock('@/features/configuracion/hooks/use-company', async (importOriginal) => 
 
 vi.mock('../../hooks/use-notas-credito', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../hooks/use-notas-credito')>()
-  return { ...actual, useReversosFactura: vi.fn() }
+  return { ...actual, useReversosFactura: vi.fn(), useReembolsosTesoreriaFactura: vi.fn() }
 })
 
 vi.mock('@/core/hooks/use-current-user', () => ({ useCurrentUser: vi.fn() }))
@@ -45,6 +50,7 @@ const mockedUsePagosFactura = vi.mocked(usePagosFactura)
 const mockedUseCompany = vi.mocked(useCompany)
 const mockedUseEvolucionFactura = vi.mocked(useEvolucionFactura)
 const mockedUseReversosFactura = vi.mocked(useReversosFactura)
+const mockedUseReembolsosTesoreriaFactura = vi.mocked(useReembolsosTesoreriaFactura)
 const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 
 function baseEvolucion(overrides: Partial<ReturnType<typeof useEvolucionFactura>> = {}): ReturnType<typeof useEvolucionFactura> {
@@ -68,6 +74,17 @@ function baseReversoRow(overrides: Partial<ReversoFacturaRow> = {}): ReversoFact
     cantidad: '1',
     total_usd: '10.00',
     total_bs: '400.00',
+    ...overrides,
+  }
+}
+
+function baseReembolsoRow(overrides: Partial<ReembolsoTesoreriaFacturaRow> = {}): ReembolsoTesoreriaFacturaRow {
+  return {
+    notaCreditoId: 'nc-1',
+    cuentaNombre: 'Efectivo Bs',
+    monedaCodigo: 'VES',
+    montoNativo: '20.00',
+    referencia: 'serial A12345',
     ...overrides,
   }
 }
@@ -294,6 +311,7 @@ describe('useReciboDesdeFactura', () => {
     })
     mockedUseReversosFactura.mockReturnValue({ reversos: [], isLoading: false })
     mockedUseEvolucionFactura.mockReturnValue(baseEvolucion())
+    mockedUseReembolsosTesoreriaFactura.mockReturnValue({ reembolsos: [], isLoading: false })
   })
 
   it('venta === null retorna { recibo: null, isLoading: false } sin consultar company/detalle en estado loading', () => {
@@ -398,6 +416,18 @@ describe('useReciboDesdeFactura', () => {
 
     expect(mockedUseReversosFactura).toHaveBeenCalledWith('venta-1', 'emp-42')
     expect(mockedUseEvolucionFactura).toHaveBeenCalledWith('venta-1', 'emp-42')
+    expect(mockedUseReembolsosTesoreriaFactura).toHaveBeenCalledWith('venta-1', 'emp-42')
+  })
+
+  it('Enhancement B: useReembolsosTesoreriaFactura cargando produce isLoading:true', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReembolsosTesoreriaFactura.mockReturnValue({ reembolsos: [], isLoading: true })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current).toEqual({ recibo: null, isLoading: true })
   })
 
   it('useReversosFactura cargando produce isLoading:true (PR4, agregacion extendida)', () => {
@@ -448,7 +478,16 @@ describe('useReciboDesdeFactura', () => {
     const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
 
     expect(result.current.recibo?.evolucion).toEqual({
-      reversos: [{ nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', montoUsd: 10, montoBs: 400 }],
+      reversos: [
+        {
+          nroNcr: 'NCR-000001',
+          tipo: 'PARCIAL',
+          fecha: '2026-08-14T10:00:00.000-04:00',
+          montoUsd: 10,
+          montoBs: 400,
+          metodosReembolso: [],
+        },
+      ],
       abonos: [{ fecha: '2026-08-15', montoUsd: 10, montoBs: 400 }],
       reversosPago: [{ fecha: '2026-08-16', montoUsd: 3, montoBs: 120 }],
       saldoAFavorGeneradoUsd: 2,
@@ -518,5 +557,63 @@ describe('useReciboDesdeFactura', () => {
     expect(result.current.recibo?.evolucion?.reversosPago).toEqual([
       { fecha: '2026-08-16', montoUsd: 2, montoBs: 80 },
     ])
+  })
+
+  it('Enhancement B (nc-refund-tesoreria): reembolsos de tesoreria se agrupan bajo su NC correspondiente (cruzado por notaCreditoId), convertidos a tasa_historica de la factura', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReversosFactura.mockReturnValue({
+      reversos: [baseReversoRow({ nota_credito_id: 'nc-1', nro_ncr: 'NCR-000001' })],
+      isLoading: false,
+    })
+    mockedUseReembolsosTesoreriaFactura.mockReturnValue({
+      reembolsos: [
+        baseReembolsoRow({
+          notaCreditoId: 'nc-1',
+          cuentaNombre: 'Efectivo Bs',
+          monedaCodigo: 'VES',
+          montoNativo: '400.00',
+          referencia: 'serial A12345',
+        }),
+        baseReembolsoRow({
+          notaCreditoId: 'nc-1',
+          cuentaNombre: 'Banco ABC',
+          monedaCodigo: 'USD',
+          montoNativo: '3.00',
+          referencia: null,
+        }),
+        // Pertenece a OTRA NC — nunca debe aparecer bajo nc-1.
+        baseReembolsoRow({
+          notaCreditoId: 'nc-2',
+          cuentaNombre: 'Caja Fuerte Principal',
+          monedaCodigo: 'USD',
+          montoNativo: '99.00',
+          referencia: null,
+        }),
+      ],
+      isLoading: false,
+    })
+
+    // baseFactura().tasa === '40.0000' — usada para convertir, NUNCA la tasa vigente.
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion?.reversos).toHaveLength(1)
+    expect(result.current.recibo?.evolucion?.reversos[0].metodosReembolso).toEqual([
+      { cuentaNombre: 'Efectivo Bs', montoUsd: 10, montoBs: 400, referencia: 'serial A12345' },
+      { cuentaNombre: 'Banco ABC', montoUsd: 3, montoBs: 120, referencia: null },
+    ])
+  })
+
+  it('Enhancement B: NC sin reembolsos de tesoreria (p.ej. modalidad SALDO_FAVOR/AJUSTE_CXC) produce metodosReembolso: [] para esa NC', () => {
+    mockedUseDetalleFactura.mockReturnValue({ detalle: [], isLoading: false })
+    mockedUsePagosFactura.mockReturnValue({ pagos: [], isLoading: false })
+    mockedUseCompany.mockReturnValue({ company: baseCompany(), isLoading: false })
+    mockedUseReversosFactura.mockReturnValue({ reversos: [baseReversoRow()], isLoading: false })
+    mockedUseReembolsosTesoreriaFactura.mockReturnValue({ reembolsos: [], isLoading: false })
+
+    const { result } = renderHook(() => useReciboDesdeFactura(baseFactura()))
+
+    expect(result.current.recibo?.evolucion?.reversos[0].metodosReembolso).toEqual([])
   })
 })
