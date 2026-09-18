@@ -4,7 +4,9 @@
 
 Ruta administrativa de "Facturas emitidas" (`/ventas/facturas-emitidas`): consulta empresa-wide de facturas y notas de crédito (sin depender de sesión de caja) más generación de NC reutilizando el motor `crearNotaCredito` (entryPoint `TRADICIONAL` + modalidad `AJUSTE_CXC`). Complementa `notas-credito-pos` (alcance de sesión activa, con PIN); no la modifica ni la reemplaza.
 
-**Diferido a un change futuro (NO cubierto aquí, no debe marcarse como gap):** cableado de cuadre de caja (NC del día, ventas netas, métodos de pago en devoluciones, tabla de NC de sesión), comportamiento real de "Devolver dinero" (sesión/tesorería), `REFUND_TESORERIA`, badge "vía administración", impresión/compartir NC, modal de consulta de detalle de factura (textos de reverso enriquecidos: "reversada con NC XX" / "reversa factura XX"). Persistencia de flag `entry_point`/`via_administracion` en schema también diferida.
+**Diferido a un change futuro (NO cubierto aquí, no debe marcarse como gap):** cableado de cuadre de caja (NC del día, ventas netas, métodos de pago en devoluciones, tabla de NC de sesión), sub-opción "Sesión de caja activa" para "Devolver dinero" (permanece deshabilitada — `nc-refund-tesoreria` solo habilitó la sub-opción "Tesorería"), reembolso vía tesorería registrado como nueva CxC cuando excede el monto de la NC ("excedente como nueva CxC"), regla de sobregiro bancario (por usuario o por cuenta) para egresos de tesorería, badge "vía administración", impresión/compartir NC. Persistencia de flag `entry_point`/`via_administracion` en schema también diferida.
+
+**Resuelto por `nc-refund-tesoreria`:** el comportamiento real de "Devolver dinero" → sub-opción "Tesorería" (modalidad `REFUND_TESORERIA`) — ver requisito "Selector 'Devolver dinero' / 'Crédito a favor' — con sub-opciones de tesorería" más abajo. El modal de consulta de detalle de factura (`ConsultaFacturaModal`) y su sección de evolución (textos de reverso, abonos, saldo a favor) fueron resueltos por un change posterior (`consulta-factura-evolucion`) y extendidos por `nc-refund-tesoreria` para mostrar también qué cuenta(s) de tesorería pagaron cada reembolso.
 
 ## Requirements
 
@@ -184,9 +186,11 @@ El sistema MUST permitir reversar **cualquier factura de la empresa** (no solo d
 - WHEN se inspeccionan los registros creados
 - THEN existen movimientos de kardex y de CxC, pero ningún registro de sesión de caja, caja fuerte o método de cobro
 
-### Requirement: Selector "Devolver dinero" / "Crédito a favor" como placeholder
+### Requirement: Selector "Devolver dinero" / "Crédito a favor" — con sub-opciones de tesorería
 
-El modal MUST mostrar un selector con dos opciones: "Devolver dinero" y "Crédito a favor". "Devolver dinero" MUST estar visible pero deshabilitada (no seleccionable), con indicación de que llega en una entrega futura ("Próximamente"). Solo "Crédito a favor" MUST ser seleccionable, y su confirmación siempre MUST resultar en el camino `AJUSTE_CXC` descrito arriba.
+El modal MUST mostrar un selector con dos opciones: "Devolver dinero" y "Crédito a favor". "Devolver dinero" MUST estar habilitada (solo entry point `TRADICIONAL`). Al seleccionarla, el modal MUST revelar dos sub-opciones: "Tesorería" (seleccionable) y "Sesión de caja activa" (visible pero deshabilitada, con indicación "Próximamente"). Seleccionar "Tesorería" MUST revelar el mini-formulario de cuenta(s)/monto (selector de cuenta con saldo disponible + monto en moneda de la cuenta + referencia opcional por línea + cálculo en vivo de pendiente por reembolsar). "Crédito a favor" MUST seguir resultando siempre en `SALDO_FAVOR` (mapeo pre-existente sin cambios — ver nota de desviación abajo); confirmar la emisión con "Tesorería" seleccionada y datos válidos MUST invocar `crearNotaCredito` con modalidad `REFUND_TESORERIA`.
+
+> **Nota de desviación (documentada en `nc-refund-tesoreria`, ver `verify-report.md`)**: el delta original de este change pedía que "Crédito a favor" resultara en `AJUSTE_CXC`. El código y los tests pre-existentes (no tocados por este change) siempre mapearon "Crédito a favor" a `SALDO_FAVOR`; ese comportamiento se preservó deliberadamente porque cambiarlo era ortogonal a `REFUND_TESORERIA` y no tenía tests que lo respaldaran. Se dejó como está y se flageó para el autor del spec — si `AJUSTE_CXC` era realmente la intención, requiere su propio change dedicado.
 
 #### Scenario: Ambas opciones visibles
 
@@ -194,17 +198,45 @@ El modal MUST mostrar un selector con dos opciones: "Devolver dinero" y "Crédit
 - WHEN el usuario observa el selector de origen de reverso
 - THEN ve "Devolver dinero" y "Crédito a favor"
 
-#### Scenario: "Devolver dinero" deshabilitada
+#### Scenario: Devolver dinero habilitada revela sub-opciones
 
 - GIVEN el selector visible
-- WHEN el usuario intenta seleccionar "Devolver dinero"
-- THEN la opción no responde (deshabilitada) y muestra una indicación de "próximamente"
+- WHEN el usuario selecciona "Devolver dinero"
+- THEN se revelan las sub-opciones "Tesorería" (activa) y "Sesión de caja activa" (deshabilitada, "Próximamente")
 
-#### Scenario: Emisión siempre vía "Crédito a favor"
+#### Scenario: Sesión de caja activa permanece deshabilitada
 
-- GIVEN "Crédito a favor" como única opción seleccionable
+- GIVEN las sub-opciones visibles
+- WHEN el usuario intenta seleccionar "Sesión de caja activa"
+- THEN la opción no responde y muestra "Próximamente"
+
+#### Scenario: Seleccionar Tesorería revela el mini-formulario
+
+- GIVEN "Devolver dinero" seleccionada
+- WHEN el usuario selecciona la sub-opción "Tesorería"
+- THEN se revela el selector de cuenta(s) banco/caja fuerte con saldo disponible, el campo de monto en la moneda de la cuenta y el cálculo en vivo de "pendiente por reembolsar"
+
+#### Scenario: Emisión vía Crédito a favor sigue siendo SALDO_FAVOR
+
+- GIVEN "Crédito a favor" seleccionada
 - WHEN el usuario confirma la emisión
-- THEN la NC se genera vía `AJUSTE_CXC`, igual que el requirement de generación de NC
+- THEN la NC se genera vía `SALDO_FAVOR`, sin cambios respecto al comportamiento existente
+
+#### Scenario: Emisión vía Tesorería invoca REFUND_TESORERIA
+
+- GIVEN "Devolver dinero" → "Tesorería" con cuenta(s) y monto(s) válidos, sin exceder el monto de la NC
+- WHEN el usuario confirma la emisión
+- THEN se invoca `crearNotaCredito` con modalidad `REFUND_TESORERIA` y `egresoParams` construido como array desde el mini-formulario
+
+### Requirement: Saldo disponible visible en el selector de cuenta de tesorería
+
+El selector de cuenta(s) de la sub-opción "Tesorería" MUST mostrar, junto a cada banco/caja fuerte listado, su saldo disponible actual (reusando `useCuentasTesoreria()`), en la moneda nativa de la cuenta.
+
+#### Scenario: Selector muestra saldo por cuenta
+
+- GIVEN el mini-formulario de Tesorería abierto
+- WHEN el usuario abre el selector de cuenta
+- THEN cada opción de banco/caja fuerte muestra su saldo disponible actual junto al nombre, en su moneda nativa
 
 ### Requirement: Aislamiento multi-tenant en consultas nuevas
 

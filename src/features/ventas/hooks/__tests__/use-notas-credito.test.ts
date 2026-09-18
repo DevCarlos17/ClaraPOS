@@ -49,6 +49,7 @@ import {
   crearNotaCredito,
   assertGateAntiFraudeNoDesembolso,
   useReversosFactura,
+  useReembolsosTesoreriaFactura,
   useNotasCredito,
   type CrearNotaCreditoParams,
 } from '../use-notas-credito'
@@ -112,6 +113,10 @@ interface NcrTxFixtures {
   yaAcreditadoPorLinea?: Record<string, string>
   /** Slice 5a-2a: si `false`, la validacion del override de deposito falla (inactivo/otra empresa). Default `true` (valido) cuando no se especifica. */
   overrideDepositoValido?: boolean
+  /** Slice 4 (REFUND_TESORERIA): cuentas de tesoreria (banco o caja fuerte) por `cuentaId`, con su `saldo_actual` y `moneda_id`. */
+  cuentasTesoreria?: Record<string, { saldo_actual: string; moneda_id: string }>
+  /** Slice 4: `codigo_iso` por `moneda_id` — alimenta `esCuentaBs` (VES vs USD/otra). */
+  monedasTesoreria?: Record<string, string>
 }
 
 /**
@@ -230,6 +235,27 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
           return { rows: { length: 0, item: () => undefined } }
         }
         if (sql.startsWith('UPDATE clientes SET saldo_actual')) {
+          return { rows: { length: 0, item: () => undefined } }
+        }
+        // Slice 4 (REFUND_TESORERIA): lookup de cuenta de tesoreria (banco o
+        // caja fuerte) — saldo_actual + moneda_id, escopeado por empresa_id.
+        if (
+          sql.startsWith('SELECT saldo_actual, moneda_id FROM bancos_empresa WHERE id = ?') ||
+          sql.startsWith('SELECT saldo_actual, moneda_id FROM caja_fuerte WHERE id = ?')
+        ) {
+          const cuentaId = params[0] as string
+          const cuenta = opts.cuentasTesoreria?.[cuentaId]
+          return cuenta ? { rows: { length: 1, item: () => cuenta } } : { rows: { length: 0, item: () => undefined } }
+        }
+        if (sql.startsWith('SELECT codigo_iso FROM monedas WHERE id = ?')) {
+          const monedaId = params[0] as string
+          const codigoIso = opts.monedasTesoreria?.[monedaId] ?? 'USD'
+          return { rows: { length: 1, item: () => ({ codigo_iso: codigoIso }) } }
+        }
+        if (sql.startsWith('INSERT INTO movimientos_bancarios') || sql.startsWith('INSERT INTO mov_caja_fuerte')) {
+          return { rows: { length: 0, item: () => undefined } }
+        }
+        if (sql.startsWith('UPDATE bancos_empresa SET saldo_actual') || sql.startsWith('UPDATE caja_fuerte SET saldo_actual')) {
           return { rows: { length: 0, item: () => undefined } }
         }
 
@@ -654,32 +680,48 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
 
   describe('gate anti-fraude — funcion pura (nivel de funcion, no UI)', () => {
     it.each(['SALDO_FAVOR', 'AJUSTE_CXC', 'COMPENSACION_VENTA'] as const)(
-      'rechaza egresoParams cuando la modalidad es %s (no-efectivo)',
+      'rechaza egresoParams (array no vacio) cuando la modalidad es %s (no-efectivo)',
       (modalidad) => {
         expect(() =>
-          assertGateAntiFraudeNoDesembolso(modalidad, { metodoCobroId: 'm', monto: 30 })
+          assertGateAntiFraudeNoDesembolso(modalidad, [
+            { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' },
+          ])
         ).toThrow(/no-desembolso/i)
       }
     )
 
-    it('permite egresoParams cuando la modalidad es EFECTIVO_REAL', () => {
+    it('permite egresoParams (array no vacio) cuando la modalidad es EFECTIVO_REAL', () => {
       expect(() =>
-        assertGateAntiFraudeNoDesembolso('EFECTIVO_REAL', { metodoCobroId: 'm', monto: 30 })
+        assertGateAntiFraudeNoDesembolso('EFECTIVO_REAL', [
+          { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' },
+        ])
       ).not.toThrow()
     })
 
-    it('permite egresoParams cuando la modalidad es REFUND_TESORERIA', () => {
+    it('permite egresoParams (array no vacio) cuando la modalidad es REFUND_TESORERIA', () => {
       expect(() =>
-        assertGateAntiFraudeNoDesembolso('REFUND_TESORERIA', { metodoCobroId: 'm', monto: 30 })
+        assertGateAntiFraudeNoDesembolso('REFUND_TESORERIA', [
+          { destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '30.00' },
+        ])
       ).not.toThrow()
     })
 
     it('no rechaza una modalidad no-efectivo SIN egresoParams (flujo normal)', () => {
       expect(() => assertGateAntiFraudeNoDesembolso('SALDO_FAVOR', undefined)).not.toThrow()
     })
+
+    it('Scenario "Array vacío no dispara el gate": modalidad no-efectivo + egresoParams=[] NO se rechaza — [] es truthy pero se trata como "sin egreso" (gotcha fix, Design §a)', () => {
+      expect(() => assertGateAntiFraudeNoDesembolso('SALDO_FAVOR', [])).not.toThrow()
+      expect(() => assertGateAntiFraudeNoDesembolso('AJUSTE_CXC', [])).not.toThrow()
+      expect(() => assertGateAntiFraudeNoDesembolso('COMPENSACION_VENTA', [])).not.toThrow()
+    })
+
+    it('Scenario "Array vacío no dispara el gate" en REFUND_TESORERIA: egresoParams=[] no se rechaza como desembolso indebido', () => {
+      expect(() => assertGateAntiFraudeNoDesembolso('REFUND_TESORERIA', [])).not.toThrow()
+    })
   })
 
-  it('crearNotaCredito: el gate rechaza ANTES de abrir la transaccion — llamada directa (bypass de UI) con modalidad SALDO_FAVOR + egresoParams forzado', async () => {
+  it('crearNotaCredito: el gate rechaza ANTES de abrir la transaccion — llamada directa (bypass de UI) con modalidad SALDO_FAVOR + egresoParams forzado (array no vacio)', async () => {
     mockCrearNcrTx(fixturesModalidad())
 
     await expect(
@@ -688,20 +730,10 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
           entryPoint: 'POS',
           sesionCajaActivaId: 'sesion-activa-1',
           modalidad: 'SALDO_FAVOR',
-          egresoParams: { metodoCobroId: 'metodo-efectivo', monto: 30 },
+          egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' }],
         })
       )
     ).rejects.toThrow(/no-desembolso/i)
-
-    expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
-  })
-
-  it('crearNotaCredito: REFUND_TESORERIA rechaza como "no implementado" (Slice 6), sin abrir transaccion', async () => {
-    mockCrearNcrTx(fixturesModalidad())
-
-    await expect(crearNotaCredito(baseParams({ modalidad: 'REFUND_TESORERIA' }))).rejects.toThrow(
-      /no esta implementado/i
-    )
 
     expect(mockedDb.writeTransaction).not.toHaveBeenCalled()
   })
@@ -762,6 +794,9 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
     )
     expect(ajusteInsert).toBeDefined()
     expect(ajusteInsert!.params).toContain('30.00000000')
+    // BUGFIX (Part 2): tasa_pago = venta.tasa ('40') persistido en el INSERT AJUSTE_CXC
+    expect(ajusteInsert!.sql).toContain('tasa_pago')
+    expect(ajusteInsert!.params).toContain('40.00000000')
 
     const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro'))
     expect(egresoInsert).toBeUndefined()
@@ -808,6 +843,344 @@ describe('crearNotaCredito — Slice 3 (modalidades de liquidacion + gate anti-f
       (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
     )
     expect(safcInsert).toBeUndefined()
+  })
+})
+
+describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real de tesoreria)', () => {
+  function fixturesRefund(overrides: Partial<NcrTxFixtures['venta']> = {}, extra: Partial<NcrTxFixtures> = {}) {
+    return {
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '30.00',
+        total_bs: '1200.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+        sesion_caja_id: 'sesion-activa-1',
+        ...overrides,
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      monedasTesoreria: { 'moneda-usd': 'USD', 'moneda-ves': 'VES' },
+      ...extra,
+    }
+  }
+
+  it('Scenario "Egreso pendiente de conciliación": inserta la linea con validado=0, doc_origen_id=id de la NC y doc_origen_tipo=NOTA_CREDITO', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        {},
+        { cuentasTesoreria: { 'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' } } }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' }],
+      })
+    )
+
+    const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoInsert).toBeDefined()
+    expect(egresoInsert!.sql).toContain('REEMBOLSO_NCR')
+    expect(egresoInsert!.sql).toContain('validado, reversado') // columnas presentes
+    expect(egresoInsert!.sql).toContain(', 0, 0,') // validado=0, reversado=0 (literales, pendiente de conciliacion)
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    const ncrId = ncrInsert!.params[0] as string
+    expect(egresoInsert!.params).toContain(ncrId) // doc_origen_id
+    expect(egresoInsert!.sql).toContain("'NOTA_CREDITO'") // doc_origen_tipo (literal en el SQL, no bindeado)
+  })
+
+  it('Scenario "Referencia libre por linea" (UX rework, nc-refund-tesoreria): persiste la referencia opcional del usuario en la columna `referencia` ya existente — NULL cuando la linea la omite, nunca bloquea ni afecta doc_origen_id/doc_origen_tipo', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '100.00', total_bs: '4000.00' },
+        {
+          cuentasTesoreria: {
+            'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' },
+            'caja-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' },
+          },
+        }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [
+          { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00', referencia: 'TRF-00123' },
+          { destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '20.00' },
+        ],
+      })
+    )
+
+    const egresoBanco = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoBanco).toBeDefined()
+    expect(egresoBanco!.params).toContain('TRF-00123')
+
+    const egresoCaja = calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))
+    expect(egresoCaja).toBeDefined()
+    expect(egresoCaja!.params).toContain(null) // sin referencia -> null, mismo criterio que use-traspasos.ts
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    const ncrId = ncrInsert!.params[0] as string
+    expect(egresoBanco!.params).toContain(ncrId) // doc_origen_id intacto, referencia NO lo reemplaza
+    expect(egresoBanco!.sql).toContain("'NOTA_CREDITO'") // doc_origen_tipo intacto
+  })
+
+  it('Scenario "Refund excede saldo de caja fuerte": rechaza ANTES de escribir el egreso', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        {},
+        { cuentasTesoreria: { 'caja-1': { saldo_actual: '50.00', moneda_id: 'moneda-usd' } } }
+      )
+    )
+
+    await expect(
+      crearNotaCredito(
+        baseParams({
+          entryPoint: 'TRADICIONAL',
+          modalidad: 'REFUND_TESORERIA',
+          egresoParams: [{ destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '30.00' }],
+        })
+      )
+    ).resolves.toBeDefined() // 30 <= 50, no debe rechazar (control: guard NO dispara en el limite)
+
+    const egresoInsertOk = calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))
+    expect(egresoInsertOk).toBeDefined()
+  })
+
+  it('Scenario "Refund excede saldo de caja fuerte" (rechazo real): 80.00 contra saldo de 50.00 -> rechaza antes de escribir el egreso', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '100.00', total_bs: '4000.00' },
+        { cuentasTesoreria: { 'caja-1': { saldo_actual: '50.00', moneda_id: 'moneda-usd' } } }
+      )
+    )
+
+    await expect(
+      crearNotaCredito(
+        baseParams({
+          entryPoint: 'TRADICIONAL',
+          modalidad: 'REFUND_TESORERIA',
+          egresoParams: [{ destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '80.00' }],
+        })
+      )
+    ).rejects.toThrow(/saldo insuficiente/i)
+
+    expect(calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))).toBeUndefined()
+  })
+
+  it('Scenario "Banco sin guard de sobregiro" (no-goal explicito): 80.00 contra saldo de banco de 50.00 -> NO se bloquea', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '100.00', total_bs: '4000.00' },
+        { cuentasTesoreria: { 'banco-1': { saldo_actual: '50.00', moneda_id: 'moneda-usd' } } }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '80.00' }],
+      })
+    )
+
+    const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoInsert).toBeDefined()
+    expect(egresoInsert!.params).toContain('80.00000000')
+  })
+
+  it('Scenario "Intento de exceder el monto de la NC rechazado": suma de lineas (120.00) excede la NC (100.00) -> rechaza ANTES de escribir cualquier registro', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '100.00', total_bs: '4000.00' },
+        { cuentasTesoreria: { 'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' } } }
+      )
+    )
+
+    await expect(
+      crearNotaCredito(
+        baseParams({
+          entryPoint: 'TRADICIONAL',
+          modalidad: 'REFUND_TESORERIA',
+          egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '120.00' }],
+        })
+      )
+    ).rejects.toThrow(/excede/i)
+
+    // El guard de tope corre ANTES de escribir cualquier LINEA DE EGRESO
+    // (Spec "se rechaza antes de escribir cualquier registro" — se refiere
+    // al egreso de tesoreria, que es lo que este guard protege; el header
+    // de la NC ya se escribio en un paso previo de la misma transaccion
+    // atomica, y el rollback real ocurre a nivel de `db.writeTransaction`
+    // en produccion — el mock de este archivo no simula rollback fisico).
+    expect(calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))).toBeUndefined()
+    expect(calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))).toBeUndefined()
+  })
+
+  it('Scenario "NC de 100, refund parcial de 60, resto a SAFC": inserta el egreso por 60.00 y un movimientos_cuenta SAFC por 40.00 trazable a la NC', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '100.00', total_bs: '4000.00' },
+        { cuentasTesoreria: { 'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' } } }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '60.00' }],
+      })
+    )
+
+    const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoInsert).toBeDefined()
+    expect(egresoInsert!.params).toContain('60.00000000')
+
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeDefined()
+    expect(safcInsert!.params).toContain('40.00000000')
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    const ncrId = ncrInsert!.params[0] as string
+    expect(safcInsert!.params).toContain(ncrId)
+    expect(safcInsert!.params).toContain('NOTA_CREDITO')
+    // BUGFIX (Part 2): tasa_pago = venta.tasa ('40') persistido en el SAFC
+    // remanente de REFUND_TESORERIA. '40.00000000' ya aparece arriba como
+    // el monto SAFC (coincidencia numerica del fixture) — confirmar via SQL
+    // que la columna tasa_pago esta presente en el INSERT.
+    expect(safcInsert!.sql).toContain('tasa_pago')
+  })
+
+  it('Scenario "Sin impacto en sesión POS activa": sesion POS activa + REFUND_TESORERIA -> CERO escritura en movimientos_metodo_cobro (Regla de Oro solo dispara con EFECTIVO_REAL)', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { sesion_caja_id: 'sesion-activa-1' },
+        {
+          cuentasTesoreria: { 'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' } },
+          pagos: [{ id: 'pago-1', metodo_cobro_id: 'metodo-efectivo', monto: '30.00', moneda_id: 'moneda-usd' }],
+        }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'POS',
+        sesionCajaActivaId: 'sesion-activa-1',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00' }],
+      })
+    )
+
+    const cuadreEgreso = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(cuadreEgreso).toBeUndefined()
+  })
+
+  it('Scenario "Refund dividido entre banco y caja fuerte": inserta DOS lineas de egreso (una por cuenta), ambas con el mismo doc_origen_id, su suma reconcilia con el monto reembolsado', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        { total_usd: '150.00', total_bs: '6000.00' },
+        {
+          cuentasTesoreria: {
+            'banco-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' },
+            'caja-1': { saldo_actual: '500.00', moneda_id: 'moneda-usd' },
+          },
+        }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [
+          { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '100.00' },
+          { destino: 'CAJA_FUERTE', cuentaId: 'caja-1', montoEnMonedaCuenta: '50.00' },
+        ],
+      })
+    )
+
+    const egresoBanco = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    const egresoCaja = calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))
+    expect(egresoBanco).toBeDefined()
+    expect(egresoCaja).toBeDefined()
+    expect(egresoBanco!.params).toContain('100.00000000')
+    expect(egresoCaja!.params).toContain('50.00000000')
+
+    const ncrInsert = calls.find((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    const ncrId = ncrInsert!.params[0] as string
+    expect(egresoBanco!.params).toContain(ncrId)
+    expect(egresoCaja!.params).toContain(ncrId)
+
+    // Sin remanente a SAFC: 100 + 50 = 150 == total_usd de la NC
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeUndefined()
+  })
+
+  it('Scenario "Cuenta bancaria en Bolivares": convierte el monto nativo a USD usando tasa_historica de la NC (40.00), no la tasa vigente', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesRefund(
+        {},
+        { cuentasTesoreria: { 'banco-bs': { saldo_actual: '50000.00', moneda_id: 'moneda-ves' } } }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [{ destino: 'BANCO', cuentaId: 'banco-bs', montoEnMonedaCuenta: '1200.00' }],
+      })
+    )
+
+    // 1200 Bs a tasa 40 = 30.00 USD, que es EXACTAMENTE el total_usd de la NC -> remanente a SAFC = 0
+    const safcInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_cuenta') && c.sql.includes("'SAFC'")
+    )
+    expect(safcInsert).toBeUndefined()
+
+    const egresoInsert = calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))
+    expect(egresoInsert).toBeDefined()
+    // El monto NATIVO persistido es el ingresado en Bs (1200.00), no el convertido a USD
+    expect(egresoInsert!.params).toContain('1200.00000000')
+  })
+
+  it('Scenario "Array no vacío requerido cuando hay reembolso real": egresoParams vacio con monto a reembolsar > 0 -> rechaza', async () => {
+    const calls = mockCrearNcrTx(fixturesRefund())
+
+    await expect(
+      crearNotaCredito(
+        baseParams({
+          entryPoint: 'TRADICIONAL',
+          modalidad: 'REFUND_TESORERIA',
+          egresoParams: [],
+        })
+      )
+    ).rejects.toThrow(/al menos una linea/i)
+
+    // Mismo criterio que el test anterior: el guard corre en Step B, antes
+    // de escribir cualquier linea de egreso de tesoreria.
+    expect(calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))).toBeUndefined()
+    expect(calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))).toBeUndefined()
   })
 })
 
@@ -943,6 +1316,43 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     expect(ncrInsert!.params).toContain('30.00000000')
     expect(ncrInsert!.params).toContain('40.00000000')
     expect(ncrInsert!.params).toContain('6.40000000')
+  })
+
+  // Regresion (engram sdd/nc-refund-tesoreria/bug-double-count, migracion
+  // 0094_fix_nota_credito_sum_self_count.sql): guarda del lado JS del
+  // invariante que el trigger Postgres `validate_nota_credito_insert`
+  // protege server-side. Vitest NO puede ejecutar triggers de Postgres
+  // (mismo gap ya documentado en openspec/changes/saldo-a-favor-fix/design.md
+  // y en la propia migracion 0094), asi que esto NO reemplaza la
+  // verificacion SQL manual descrita en el comentario "INVARIANTE SQL" de
+  // esa migracion — solo prueba que `crearNotaCredito` nunca genera, del
+  // lado del cliente, la condicion que dispararia el doble conteo (dos
+  // INSERTs para la misma NC, o un total_usd que ya viene duplicado).
+  it('TOTAL: inserta EXACTAMENTE UNA fila notas_credito con total_usd === venta.total_usd (guarda JS del invariante que protege el trigger Postgres contra doble conteo en reintentos de PowerSync)', async () => {
+    const calls = mockCrearNcrTx({
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '2.60',
+        total_bs: '104.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+      },
+      ventaDet: ventaDetDosLineas,
+      productos: productosDosLineas,
+      inventarioStock: { 'prod-A::dep-B': '10.000', 'prod-B::dep-B': '5.000' },
+    })
+
+    await crearNotaCredito(baseParams({ entryPoint: 'TRADICIONAL', modalidad: 'AJUSTE_CXC' }))
+
+    const ncrInserts = calls.filter((c) => c.sql.startsWith('INSERT INTO notas_credito ('))
+    expect(ncrInserts).toHaveLength(1)
+    expect(ncrInserts[0]!.params).toContain('2.60')
+    expect(ncrInserts[0]!.params.filter((p) => p === '2.60')).toHaveLength(1)
   })
 
   it('PARCIAL: escribe notas_credito_det + Kardex SOLO para la linea/cantidad seleccionada, tipo=PARCIAL, y el header usa la suma de lineas (no venta.total_usd completo)', async () => {
@@ -1154,6 +1564,11 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     )
     expect(stepAInsert).toBeDefined()
     expect(stepAInsert!.params).toContain('10.00000000')
+    // BUGFIX (Part 2, sdd/nc-refund-tesoreria/bug-evolucion-bs): el INSERT
+    // ahora persiste tasa_pago = venta.tasa (tasa historica de la factura),
+    // igual que el patron PAG/REV de use-cxc.ts.
+    expect(stepAInsert!.sql).toContain('tasa_pago')
+    expect(stepAInsert!.params).toContain('40.00000000')
 
     // Step B: liquida el remanente (23.20 - 10.00 = 13.20) via SALDO_FAVOR (SAFC)
     const safcInsert = calls.find(
@@ -1161,6 +1576,8 @@ describe('crearNotaCredito — Slice 4b (wiring PARCIAL en la tx atomica: notas_
     )
     expect(safcInsert).toBeDefined()
     expect(safcInsert!.params).toContain('13.20000000')
+    expect(safcInsert!.sql).toContain('tasa_pago')
+    expect(safcInsert!.params).toContain('40.00000000')
 
     // saldo_pend_usd de la factura queda en 0 (10.00 - 23.20 topeado en 0), sin marcar ANULADA
     const ventaUpdate = calls.find((c) => c.sql.startsWith('UPDATE ventas SET saldo_pend_usd'))
@@ -1236,6 +1653,116 @@ describe('useReversosFactura (F1 QA fix: historial de NC aplicadas a una factura
     expect(sql).toContain('nc.total_usd')
     expect(sql).toContain('nc.total_bs')
     expect(result.current.reversos[0]).toMatchObject({ total_usd: '150.00000000', total_bs: '5460.00000000' })
+  })
+})
+
+describe('useReembolsosTesoreriaFactura (Enhancement B, nc-refund-tesoreria): egresos de tesoreria que reembolsaron NC(s) de una factura, UNION-en-memoria bancos+caja fuerte, empresa_id-scoped', () => {
+  beforeEach(() => {
+    mockedUseQuery.mockReturnValue({ data: [], isLoading: false } as never)
+  })
+
+  it('sin ventaId: ambas queries (bancos/caja fuerte) con sql vacio, reembolsos vacio', () => {
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura(null, 'emp-1'))
+
+    expect(result.current.reembolsos).toEqual([])
+    expect(mockedUseQuery).toHaveBeenNthCalledWith(1, '', [])
+    expect(mockedUseQuery).toHaveBeenNthCalledWith(2, '', [])
+  })
+
+  it('con ventaId + empresaId: ambas queries filtran por empresa_id en la tabla de movimiento Y en el JOIN a notas_credito, escopeadas por venta_id', () => {
+    renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    const [sqlBancos, paramsBancos] = mockedUseQuery.mock.calls[0]!
+    expect(sqlBancos).toContain('movimientos_bancarios')
+    expect(sqlBancos).toContain("origen = 'REEMBOLSO_NCR'")
+    expect(sqlBancos).toContain('mb.empresa_id = ?')
+    expect(sqlBancos).toContain('nc.empresa_id = ?')
+    expect(sqlBancos).toContain('nc.venta_id = ?')
+    expect(paramsBancos).toEqual(['emp-1', 'venta-1', 'emp-1'])
+
+    const [sqlCajas, paramsCajas] = mockedUseQuery.mock.calls[1]!
+    expect(sqlCajas).toContain('mov_caja_fuerte')
+    expect(sqlCajas).toContain("origen = 'REEMBOLSO_NCR'")
+    expect(sqlCajas).toContain('mcf.empresa_id = ?')
+    expect(sqlCajas).toContain('nc.empresa_id = ?')
+    expect(sqlCajas).toContain('nc.venta_id = ?')
+    expect(paramsCajas).toEqual(['emp-1', 'venta-1', 'emp-1'])
+  })
+
+  it('mapea filas de banco al shape ReembolsoTesoreriaFacturaRow (notaCreditoId, cuentaNombre, monedaCodigo, montoNativo, referencia)', () => {
+    mockedUseQuery.mockImplementation((sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('movimientos_bancarios')) {
+        return {
+          data: [
+            {
+              nota_credito_id: 'nc-1',
+              monto_nativo: '400.00000000',
+              referencia: 'serial A12345',
+              cuenta_nombre: 'Efectivo Bs',
+              moneda_codigo: 'VES',
+            },
+          ],
+          isLoading: false,
+        } as never
+      }
+      return { data: [], isLoading: false } as never
+    })
+
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    expect(result.current.reembolsos).toEqual([
+      {
+        notaCreditoId: 'nc-1',
+        cuentaNombre: 'Efectivo Bs',
+        monedaCodigo: 'VES',
+        montoNativo: '400.00000000',
+        referencia: 'serial A12345',
+      },
+    ])
+  })
+
+  it('combina (UNION en memoria) filas de bancos Y caja fuerte en un solo arreglo, en ese orden', () => {
+    mockedUseQuery.mockImplementation((sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('movimientos_bancarios')) {
+        return {
+          data: [
+            { nota_credito_id: 'nc-1', monto_nativo: '3.00', referencia: null, cuenta_nombre: 'Banco ABC', moneda_codigo: 'USD' },
+          ],
+          isLoading: false,
+        } as never
+      }
+      if (typeof sql === 'string' && sql.includes('mov_caja_fuerte')) {
+        return {
+          data: [
+            {
+              nota_credito_id: 'nc-1',
+              monto_nativo: '99.00',
+              referencia: null,
+              cuenta_nombre: 'Caja Fuerte Principal',
+              moneda_codigo: 'USD',
+            },
+          ],
+          isLoading: false,
+        } as never
+      }
+      return { data: [], isLoading: false } as never
+    })
+
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    expect(result.current.reembolsos).toHaveLength(2)
+    expect(result.current.reembolsos.map((r) => r.cuentaNombre)).toEqual(['Banco ABC', 'Caja Fuerte Principal'])
+  })
+
+  it('isLoading es true si CUALQUIERA de las dos queries (bancos/caja fuerte) esta cargando', () => {
+    mockedUseQuery.mockImplementation((sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('mov_caja_fuerte')) return { data: [], isLoading: true } as never
+      return { data: [], isLoading: false } as never
+    })
+
+    const { result } = renderHook(() => useReembolsosTesoreriaFactura('venta-1', 'emp-1'))
+
+    expect(result.current.isLoading).toBe(true)
   })
 })
 

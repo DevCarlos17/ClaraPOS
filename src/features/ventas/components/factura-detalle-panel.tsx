@@ -5,6 +5,7 @@ import {
   formatMontoPago,
   sumarAbonos,
   formatMontoBimonetario,
+  REVERSO_TIPO_LABEL,
   type ReciboData,
 } from '../utils/factura-export'
 import type { BadgeReverso, ReversoAplicado } from '../utils/notas-credito-ui'
@@ -188,9 +189,50 @@ export function FacturaDetallePanel({
       */}
 
       {recibo.evolucion && (
-        <div className="space-y-1 rounded-lg border border-slate-200 bg-card p-3 text-sm">
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-card p-3 text-sm">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evolucion</p>
-          {construirLineasEvolucion(recibo.evolucion, recibo.monedaPresentacion).map((fila) => (
+
+          {/*
+            Enhancement B (nc-refund-tesoreria): cada reverso NC se renderiza
+            aqui a mano (en vez de via `construirLineasEvolucion`) para poder
+            anidar debajo sus `metodosReembolso` (que metodo(s) de tesoreria
+            reembolsaron esa NC). El resto de filas (abonos/reversosPago/
+            saldoAFavorGenerado) sigue viniendo de `construirLineasEvolucion`
+            — MISMA fuente pura que texto/PDF/PNG — pasandole `reversos: []`
+            para que esa funcion solo aporte las filas restantes (ninguna
+            formula de formato se duplica).
+          */}
+          {recibo.evolucion.reversos.map((reverso) => (
+            <div key={reverso.nroNcr} className="space-y-1">
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span>
+                  {reverso.nroNcr} ({REVERSO_TIPO_LABEL[reverso.tipo]})
+                </span>
+                <span className="tabular-nums">
+                  {formatMontoBimonetario(reverso.montoUsd, reverso.montoBs, recibo.monedaPresentacion)}
+                </span>
+              </div>
+              {reverso.metodosReembolso.length > 0 && (
+                <div className="space-y-1 border-l-2 border-slate-200 pl-3">
+                  {reverso.metodosReembolso.map((metodo, i) => (
+                    <div key={`${reverso.nroNcr}-${i}`} className="space-y-0.5">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span>Reembolso: Tesorería · {metodo.cuentaNombre}</span>
+                        <span className="tabular-nums">
+                          {formatMontoBimonetario(metodo.montoUsd, metodo.montoBs, recibo.monedaPresentacion)}
+                        </span>
+                      </div>
+                      {metodo.referencia && (
+                        <p className="text-[11px] text-muted-foreground/70">Ref: {metodo.referencia}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+
+          {construirLineasEvolucion({ ...recibo.evolucion, reversos: [] }, recibo.monedaPresentacion).map((fila) => (
             <div
               key={fila.label}
               className={`flex items-center justify-between ${fila.bold ? 'font-bold' : 'text-muted-foreground'}`}

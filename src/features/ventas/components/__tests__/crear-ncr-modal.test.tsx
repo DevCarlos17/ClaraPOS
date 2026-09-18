@@ -18,10 +18,46 @@ import { toast } from 'sonner'
  * POS/ADMIN. Mockeamos `SupervisorPinDialog` para detectar sin ambiguedad si
  * el componente todavia intenta abrir un dialogo de PIN — no debe existir
  * ninguna referencia a el en este modal (a diferencia de POS).
+ *
+ * UX rework (nc-refund-tesoreria): jerarquia de "Origen del reverso" a UN
+ * solo nivel (ya NO hay una segunda fila fija de botones
+ * Tesoreria/Sesion — eso vive DENTRO de `RefundTesoreriaForm`, ya probado
+ * end-to-end en refund-tesoreria-form.test.tsx) y CERO preseleccion
+ * (Total/Parcial y Devolver dinero/Credito a favor arrancan sin elegir).
+ * Estos tests reflejan ese comportamiento — cada uno que antes confiaba en
+ * un default ahora elige explicitamente tipo Y origen antes de confirmar.
  */
 vi.mock('@/components/ui/supervisor-pin-dialog', () => ({
   SupervisorPinDialog: ({ isOpen, titulo }: { isOpen: boolean; titulo?: string }) =>
     isOpen ? <div data-testid="mock-pin-dialog">{titulo ?? 'PIN de supervisor'}</div> : null,
+}))
+// Slice 6 (nc-refund-tesoreria, wiring): mockeamos el mini-formulario aislado
+// (ya probado end-to-end en refund-tesoreria-form.test.tsx) para verificar
+// SOLO el wiring del modal — mismo criterio que el mock de SupervisorPinDialog.
+// El mock tambien renderiza `motivoSlot` (si se provee) para probar que el
+// modal intercala el campo Motivo DENTRO del formulario cuando corresponde.
+vi.mock('../refund-tesoreria-form', () => ({
+  RefundTesoreriaForm: ({
+    onConfirm,
+    motivoSlot,
+  }: {
+    onConfirm: (lineas: { destino: string; cuentaId: string; montoEnMonedaCuenta: string; referencia?: string }[]) => void
+    motivoSlot?: React.ReactNode
+  }) => (
+    <div data-testid="mock-refund-tesoreria-form">
+      {motivoSlot}
+      <button
+        type="button"
+        onClick={() =>
+          onConfirm([
+            { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00', referencia: 'TRF-999' },
+          ])
+        }
+      >
+        Confirmar reembolso (mock)
+      </button>
+    </div>
+  ),
 }))
 
 vi.mock('@/features/ventas/hooks/use-notas-credito', () => ({
@@ -105,6 +141,12 @@ function setup() {
   mockedCrearNotaCredito.mockResolvedValue({ ncrId: 'ncr-1', nroNcr: 'NCR-000001' })
 }
 
+/** Helper: llega al estado "TOTAL + Credito a favor" (unico camino que revela el footer "Confirmar Anulacion"). */
+async function elegirTotalCreditoAFavor(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Total' }))
+  await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+}
+
 describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cualquier factura', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -117,6 +159,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
 
     expect(screen.queryByTestId('mock-pin-dialog')).not.toBeInTheDocument()
 
+    await elegirTotalCreditoAFavor(user)
     await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -128,6 +171,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
+    await elegirTotalCreditoAFavor(user)
     await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -148,12 +192,13 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(screen.getByRole('button', { name: 'Parcial' })).toBeInTheDocument()
   })
 
-  it('elegir Parcial reemplaza el footer TOTAL por SeleccionLineasNc y NO llama crearNotaCredito todavia', async () => {
+  it('elegir Parcial + un origen reemplaza el footer TOTAL por SeleccionLineasNc y NO llama crearNotaCredito todavia', async () => {
     const user = userEvent.setup()
     mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
 
     expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
@@ -166,6 +211,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
     await user.type(screen.getByRole('spinbutton'), '2')
     await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
 
@@ -185,6 +231,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
 
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
 
     expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeDisabled()
   })
@@ -193,6 +240,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
+    await elegirTotalCreditoAFavor(user)
     await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -200,18 +248,61 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(mockedCrearNotaCredito.mock.calls[0][0]).not.toHaveProperty('sesionCajaActivaId')
   })
 
-  it('"Devolver dinero" esta deshabilitada, muestra indicacion de "Proximamente" y nunca dispara crearNotaCredito', async () => {
-    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
-
-    const devolverDinero = screen.getByRole('button', { name: /Devolver dinero/i })
-    expect(devolverDinero).toBeDisabled()
-    expect(screen.getByText(/Proximamente/i)).toBeInTheDocument()
-    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
-  })
-
-  it('el motivo es obligatorio: "Confirmar Anulacion" esta deshabilitado hasta escribir un motivo', async () => {
+  it('Scenario "Jerarquia a un solo nivel": elegir "Devolver dinero" (con TOTAL) revela `RefundTesoreriaForm` DIRECTAMENTE — ya no hay una fila fija de botones Tesoreria/Sesion en el modal', async () => {
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    expect(screen.queryByTestId('mock-refund-tesoreria-form')).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toBeInTheDocument()
+    // La antigua fila fija "Tesoreria"/"Sesion de caja activa" a nivel de
+    // modal ya no existe — esa eleccion vive DENTRO del formulario mockeado.
+    expect(screen.queryByRole('button', { name: /^Tesoreria$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Sesion de caja activa/i })).not.toBeInTheDocument()
+  })
+
+  it('Scenario "Emisión vía Tesorería invoca REFUND_TESORERIA": confirmar el mini-formulario invoca crearNotaCredito con modalidad REFUND_TESORERIA y egresoParams como array (incluida la referencia opcional threadeada sin cambios)', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+    await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i }))
+
+    await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
+    expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
+      venta_id: 'venta-1',
+      entryPoint: 'TRADICIONAL',
+      modalidad: 'REFUND_TESORERIA',
+      egresoParams: [
+        { destino: 'BANCO', cuentaId: 'banco-1', montoEnMonedaCuenta: '30.00', referencia: 'TRF-999' },
+      ],
+    })
+    expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringContaining('NCR-000001'))
+  })
+
+  it('Scenario "Motivo intercalado dentro del formulario de reembolso": con Devolver dinero, el campo Motivo se renderiza DENTRO de `RefundTesoreriaForm` (via motivoSlot), no aparte', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: /Devolver dinero/i }))
+
+    const form = screen.getByTestId('mock-refund-tesoreria-form')
+    const motivoInput = screen.getByPlaceholderText(/Motivo de la anulacion/i)
+    expect(form).toContainElement(motivoInput)
+  })
+
+  it('el motivo es obligatorio: "Confirmar Anulacion" esta deshabilitado hasta escribir un motivo (una vez tipo y origen elegidos)', async () => {
+    const user = userEvent.setup()
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+
+    await elegirTotalCreditoAFavor(user)
 
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeDisabled()
 
@@ -220,19 +311,46 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeEnabled()
   })
 
-  it('"Credito a favor" es la unica opcion seleccionable y esta activa por defecto', () => {
-    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+  describe('Scenario "Sin preseleccion" (UX rework, nc-refund-tesoreria)', () => {
+    it('Total/Parcial: ningun boton arranca presionado', () => {
+      render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
-    const creditoAFavor = screen.getByRole('button', { name: /Credito a favor/i })
-    expect(creditoAFavor).toBeEnabled()
-    expect(creditoAFavor).toHaveAttribute('aria-pressed', 'true')
+      expect(screen.getByRole('button', { name: 'Total' })).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByRole('button', { name: 'Parcial' })).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    it('Devolver dinero/Credito a favor: ningun boton arranca presionado', () => {
+      render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+      expect(screen.getByRole('button', { name: /Devolver dinero/i })).toHaveAttribute('aria-pressed', 'false')
+      expect(screen.getByRole('button', { name: /Credito a favor/i })).toHaveAttribute('aria-pressed', 'false')
+    })
+
+    it('sin elegir tipo ni origen, no existe ningun boton de confirmacion final visible (ni Anulacion ni Parcial ni el mini-formulario de reembolso)', () => {
+      render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+      expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
+      expect(screen.queryByTestId('mock-refund-tesoreria-form')).not.toBeInTheDocument()
+    })
+
+    it('eligiendo solo "Parcial" sin tocar "Origen del reverso", SeleccionLineasNc NO se muestra todavia (evita computar una modalidad nunca elegida)', async () => {
+      const user = userEvent.setup()
+      mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+      render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+      await user.click(screen.getByRole('button', { name: 'Parcial' }))
+
+      expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
+      expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+    })
   })
 
-  it('emision con "Credito a favor" seleccionado (unico estado alcanzable) resulta en modalidad SALDO_FAVOR', async () => {
+  it('emision con "Credito a favor" explicitamente elegido resulta en modalidad SALDO_FAVOR', async () => {
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
-    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+    await elegirTotalCreditoAFavor(user)
     await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -267,7 +385,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
     expect(screen.queryByRole('button', { name: 'Total' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Parcial' })).toBeInTheDocument()
   })
 
   it('el selector de deposito esta desbloqueado desde el inicio, sin boton "Cambiar deposito", y su eleccion se threadea a depositoReingresoId', async () => {
@@ -276,6 +394,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
 
     expect(screen.queryByRole('button', { name: /Cambiar deposito/i })).not.toBeInTheDocument()
     await user.selectOptions(screen.getByRole('combobox'), 'dep-2')
+    await elegirTotalCreditoAFavor(user)
     await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -287,6 +406,7 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const user = userEvent.setup()
     render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
+    await elegirTotalCreditoAFavor(user)
     await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
@@ -294,11 +414,22 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     expect(mockedCrearNotaCredito.mock.calls[0][0].depositoReingresoId).toBeUndefined()
   })
 
+  it('Scenario "Reorden del layout": el bloque "Deposito de reingreso de stock" aparece ANTES que "Tipo de nota de credito" en el DOM', () => {
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    const deposito = screen.getByText(/Deposito de reingreso de stock/i)
+    const tipoNc = screen.getByText(/Tipo de nota de credito/i)
+    expect(
+      deposito.compareDocumentPosition(tipoNc) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
   it('al confirmar exitosamente, cierra el modal (onClose)', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()
     render(<CrearNcrModal isOpen onClose={onClose} factura={baseFactura()} />)
 
+    await elegirTotalCreditoAFavor(user)
     await user.type(screen.getByPlaceholderText(/Motivo de la anulacion/i), 'Motivo de prueba')
     await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
 
