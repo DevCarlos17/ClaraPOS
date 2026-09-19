@@ -8,6 +8,8 @@ import {
   type Cliente,
 } from '@/features/clientes/hooks/use-clientes'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useDeudaFacturasCliente } from '@/features/cxc/hooks/use-deuda-cliente'
+import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { formatUsd } from '@/lib/currency'
 
 interface ClienteFormProps {
@@ -20,6 +22,10 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
   const dialogRef = useRef<HTMLDialogElement>(null)
   const isEditing = !!cliente
   const { user } = useCurrentUser()
+  // Deuda y saldo a favor son cifras independientes, nunca neteadas entre si
+  // (mismo modelo que CxC — ver exploracion sdd/clientes-saldo-separado).
+  const { deudaFacturasUsd } = useDeudaFacturasCliente(cliente?.id ?? null)
+  const { disponible: creditoFavorUsd } = useSaldoAFavor(cliente?.id ?? null)
 
   const [identificacion, setIdentificacion] = useState('')
   const [nombre, setNombre] = useState('')
@@ -238,13 +244,21 @@ export function ClienteForm({ isOpen, onClose, cliente }: ClienteFormProps) {
             </div>
           )}
 
-          {/* Saldo Actual (read-only en edicion) */}
+          {/* Deuda / Saldo a favor (read-only en edicion, SIEMPRE separados) */}
           {isEditing && cliente && (
-            <div className="rounded-md bg-gray-50 p-3">
-              <span className="text-sm text-gray-500">Saldo Actual: </span>
-              <span className={`text-sm font-semibold ${parseFloat(cliente.saldo_actual) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                {formatUsd(cliente.saldo_actual)}
-              </span>
+            <div className="rounded-md bg-gray-50 p-3 space-y-1">
+              <div>
+                <span className="text-sm text-gray-500">Deuda: </span>
+                <span className={`text-sm font-semibold ${deudaFacturasUsd > 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                  {formatUsd(deudaFacturasUsd)}
+                </span>
+              </div>
+              <div>
+                <span className="text-sm text-gray-500">Saldo a favor: </span>
+                <span className={`text-sm font-semibold ${creditoFavorUsd > 0 ? 'text-green-600' : 'text-gray-500'}`}>
+                  {creditoFavorUsd > 0 ? `+${formatUsd(creditoFavorUsd)}` : formatUsd(0)}
+                </span>
+              </div>
               <p className="text-xs text-gray-400 mt-1">
                 El saldo solo se modifica via movimientos de cuenta
               </p>

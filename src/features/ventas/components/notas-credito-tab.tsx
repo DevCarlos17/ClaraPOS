@@ -3,6 +3,7 @@ import { FileX, MagnifyingGlass } from '@phosphor-icons/react'
 import { Input } from '@/components/ui/input'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { formatDateTime } from '@/lib/format'
+import { coincideBusquedaMultiCampo } from '@/lib/search'
 import { useNotasCredito } from '../hooks/use-notas-credito'
 import { rangoMesActual } from '../utils/notas-credito-admin-filters'
 
@@ -37,14 +38,40 @@ function filtrosIniciales(): FiltrosNotasCreditoState {
   return { ...rangoMesActual(), busqueda: '' }
 }
 
-export function NotasCreditoTab() {
+interface NotasCreditoTabProps {
+  /**
+   * Filtro por cliente (cliente-detalle-pantalla, PR1). Cuando esta
+   * presente, la pestaña queda ESCOPEADA a ese cliente: se oculta el input
+   * de busqueda (redundante — ya hay un solo cliente en juego) y se pasa
+   * `clienteId` al hook. Cuando se omite, el comportamiento es identico al
+   * previo (uso empresa-wide en `notas-credito-page.tsx`).
+   */
+  clienteId?: string
+}
+
+export function NotasCreditoTab({ clienteId }: NotasCreditoTabProps = {}) {
   const [filtros, setFiltros] = useState<FiltrosNotasCreditoState>(filtrosIniciales)
+  const scopedToCliente = !!clienteId
+  // cliente-detalle-tablas-pestanas: busqueda CLIENT-SIDE, solo usada cuando
+  // `scopedToCliente` — el rango de fecha sigue siendo el unico filtro SQL
+  // en ese caso (busqueda SQL de `filtros.busqueda` queda sin uso/oculta).
+  const [busquedaLocal, setBusquedaLocal] = useState('')
 
   const { notas, isLoading: loadingNotas } = useNotasCredito({
     fechaDesde: filtros.fechaDesde,
     fechaHasta: filtros.fechaHasta,
     busqueda: filtros.busqueda,
+    clienteId,
   })
+
+  const notasFiltradas = scopedToCliente
+    ? notas.filter((n) =>
+        coincideBusquedaMultiCampo(
+          [n.nro_ncr, n.nro_factura, n.total_usd, n.total_bs, formatDateTime(n.fecha), n.motivo],
+          busquedaLocal
+        )
+      )
+    : notas
 
   function set<K extends keyof FiltrosNotasCreditoState>(key: K, value: FiltrosNotasCreditoState[K]) {
     setFiltros((prev) => ({ ...prev, [key]: value }))
@@ -79,24 +106,45 @@ export function NotasCreditoTab() {
               className="rounded-md border border-input px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
             />
           </div>
-          <div className="flex flex-col gap-1 min-w-[240px] flex-1">
-            <label htmlFor="nc-busqueda" className="text-xs text-muted-foreground">
-              Buscar
-            </label>
-            <div className="relative">
-              <MagnifyingGlass
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-              />
-              <Input
-                id="nc-busqueda"
-                value={filtros.busqueda}
-                placeholder="NC, cliente o RIF..."
-                onChange={(e) => set('busqueda', e.target.value)}
-                className="pl-9"
-              />
+          {scopedToCliente ? (
+            <div className="flex flex-col gap-1 min-w-[240px] flex-1">
+              <label htmlFor="nc-busqueda-local" className="text-xs text-muted-foreground">
+                Buscar
+              </label>
+              <div className="relative">
+                <MagnifyingGlass
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  id="nc-busqueda-local"
+                  value={busquedaLocal}
+                  placeholder="NCR, factura, monto o motivo..."
+                  onChange={(e) => setBusquedaLocal(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col gap-1 min-w-[240px] flex-1">
+              <label htmlFor="nc-busqueda" className="text-xs text-muted-foreground">
+                Buscar
+              </label>
+              <div className="relative">
+                <MagnifyingGlass
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  id="nc-busqueda"
+                  value={filtros.busqueda}
+                  placeholder="NC, cliente o RIF..."
+                  onChange={(e) => set('busqueda', e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -118,35 +166,46 @@ export function NotasCreditoTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
+                  <th className="text-left px-4 py-3 font-medium">Fecha</th>
                   <th className="text-left px-4 py-3 font-medium">Nro NCR</th>
                   <th className="text-left px-4 py-3 font-medium">Factura</th>
-                  <th className="text-left px-4 py-3 font-medium">Cliente</th>
+                  {!scopedToCliente && <th className="text-left px-4 py-3 font-medium">Cliente</th>}
                   <th className="text-right px-4 py-3 font-medium">Monto USD</th>
                   <th className="text-right px-4 py-3 font-medium">Monto Bs</th>
-                  <th className="text-left px-4 py-3 font-medium">Fecha</th>
                   <th className="text-left px-4 py-3 font-medium">Motivo</th>
                 </tr>
               </thead>
               <tbody>
-                {notas.map((n) => (
-                  <tr key={n.id} className="border-b border-muted hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-3 font-mono font-bold text-xs">{n.nro_ncr}</td>
-                    <td className="px-4 py-3 font-mono text-xs">#{n.nro_factura}</td>
-                    <td className="px-4 py-3 text-sm">{n.cliente_nombre}</td>
-                    <td className="px-4 py-3 text-right font-bold">
-                      {formatUsd(n.total_usd)}
-                    </td>
-                    <td className="px-4 py-3 text-right text-muted-foreground">
-                      {formatBs(n.total_bs)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                      {formatDateTime(n.fecha)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground truncate max-w-[200px]">
-                      {n.motivo}
+                {notasFiltradas.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={scopedToCliente ? 6 : 7}
+                      className="text-center py-8 text-muted-foreground"
+                    >
+                      No hay notas de credito que coincidan con la busqueda
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  notasFiltradas.map((n) => (
+                    <tr key={n.id} className="border-b border-muted hover:bg-muted/30 transition-colors">
+                      <td className="px-4 py-3 text-xs text-muted-foreground">
+                        {formatDateTime(n.fecha)}
+                      </td>
+                      <td className="px-4 py-3 font-mono font-bold text-xs">{n.nro_ncr}</td>
+                      <td className="px-4 py-3 font-mono text-xs">#{n.nro_factura}</td>
+                      {!scopedToCliente && <td className="px-4 py-3 text-sm">{n.cliente_nombre}</td>}
+                      <td className="px-4 py-3 text-right font-bold">
+                        {formatUsd(n.total_usd)}
+                      </td>
+                      <td className="px-4 py-3 text-right text-muted-foreground">
+                        {formatBs(n.total_bs)}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground truncate max-w-[200px]">
+                        {n.motivo}
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>

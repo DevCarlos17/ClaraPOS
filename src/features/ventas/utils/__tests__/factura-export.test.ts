@@ -1169,12 +1169,50 @@ describe('buildReciboEvolucion (PR4)', () => {
 
     expect(resultado).toBeDefined()
     expect(resultado?.reversos).toEqual([
-      { nroNcr: 'NCR-000001', tipo: 'PARCIAL', fecha: '2026-08-14T10:00:00.000-04:00', montoUsd: 10, montoBs: 405 },
+      {
+        nroNcr: 'NCR-000001',
+        tipo: 'PARCIAL',
+        fecha: '2026-08-14T10:00:00.000-04:00',
+        montoUsd: 10,
+        montoBs: 405,
+        metodosReembolso: [],
+      },
     ])
     expect(resultado?.abonos).toEqual([])
     expect(resultado?.reversosPago).toEqual([])
     expect(resultado?.saldoAFavorGeneradoUsd).toBeNull()
     expect(resultado?.saldoAFavorGeneradoBs).toBeNull()
+  })
+
+  it('Enhancement B (nc-refund-tesoreria): metodosReembolso ausente en el input produce metodosReembolso: [] en el reverso (byte-identical para NCs sin reembolso via tesoreria)', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [{ nroNcr: 'NCR-000004', tipo: 'TOTAL', fecha: '2026-08-14', totalUsd: 10, totalBs: 400 }],
+    })
+
+    expect(resultado?.reversos[0].metodosReembolso).toEqual([])
+  })
+
+  it('Enhancement B: metodosReembolso presente se mapea con montoUsd/montoBs desde el input (ya convertidos por el llamador) y referencia pass-through', () => {
+    const resultado = buildReciboEvolucion({
+      reversos: [
+        {
+          nroNcr: 'NCR-000005',
+          tipo: 'TOTAL',
+          fecha: '2026-08-14',
+          totalUsd: 15,
+          totalBs: 600,
+          metodosReembolso: [
+            { cuentaNombre: 'Efectivo Bs', montoUsd: 10, montoBs: 400, referencia: 'serial A12345' },
+            { cuentaNombre: 'Banco ABC', montoUsd: 5, montoBs: 200, referencia: null },
+          ],
+        },
+      ],
+    })
+
+    expect(resultado?.reversos[0].metodosReembolso).toEqual([
+      { cuentaNombre: 'Efectivo Bs', montoUsd: 10, montoBs: 400, referencia: 'serial A12345' },
+      { cuentaNombre: 'Banco ABC', montoUsd: 5, montoBs: 200, referencia: null },
+    ])
   })
 
   it('un tipo distinto de TOTAL/PARCIAL cae a PARCIAL (normalizacion defensiva)', () => {
@@ -1228,7 +1266,9 @@ describe('buildReciboEvolucion (PR4)', () => {
     })
 
     expect(resultado).toEqual({
-      reversos: [{ nroNcr: 'NCR-000003', tipo: 'TOTAL', fecha: '2026-08-18', montoUsd: 30, montoBs: 1200 }],
+      reversos: [
+        { nroNcr: 'NCR-000003', tipo: 'TOTAL', fecha: '2026-08-18', montoUsd: 30, montoBs: 1200, metodosReembolso: [] },
+      ],
       abonos: [{ fecha: '2026-08-19', montoUsd: 10, montoBs: 400 }],
       reversosPago: [{ fecha: '2026-08-20', montoUsd: 3, montoBs: 120 }],
       saldoAFavorGeneradoUsd: 2,

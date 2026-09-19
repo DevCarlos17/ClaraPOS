@@ -411,3 +411,121 @@ describe('FacturaDetallePanel — PR6 (seccion Evolucion, consistente con texto/
     expect(screen.queryByText(/Notas de credito aplicadas/i)).not.toBeInTheDocument()
   })
 })
+
+// ─── Enhancement B (nc-refund-tesoreria): muestra que metodo(s) de tesoreria
+// reembolsaron cada NC, anidados debajo de su fila NCR en Evolucion. READ+
+// RENDER puro — `recibo.evolucion.reversos[].metodosReembolso` ya viene
+// armado por `useReciboDesdeFactura`/`buildReciboEvolucion`. ────
+
+describe('FacturaDetallePanel — Enhancement B (metodos de reembolso de tesoreria en Evolucion)', () => {
+  it('NC sin metodosReembolso (modalidad SALDO_FAVOR/AJUSTE_CXC, o [] por defecto): NO muestra ninguna fila "Reembolso: Tesoreria"', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo({
+          evolucion: {
+            reversos: [{ nroNcr: 'NCR-000020', tipo: 'PARCIAL', fecha: '2026-01-05', totalUsd: 5, totalBs: 200 }],
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('NCR-000020 (Reverso Parcial)')).toBeInTheDocument()
+    expect(screen.queryByText(/Reembolso: Tesorer/i)).not.toBeInTheDocument()
+  })
+
+  it('NC con metodosReembolso: muestra una fila "Reembolso: Tesoreria · {cuenta}" por cada egreso, con su monto Bs/USD, anidada bajo la fila de esa NC', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo({
+          evolucion: {
+            reversos: [
+              {
+                nroNcr: 'NCR-000021',
+                tipo: 'TOTAL',
+                fecha: '2026-01-05',
+                totalUsd: 15,
+                totalBs: 600,
+                metodosReembolso: [
+                  { cuentaNombre: 'Efectivo Bs', montoUsd: 12.5, montoBs: 500, referencia: 'serial A12345' },
+                  { cuentaNombre: 'Banco ABC', montoUsd: 2.5, montoBs: 100, referencia: null },
+                ],
+              },
+            ],
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('Reembolso: Tesorería · Efectivo Bs')).toBeInTheDocument()
+    const filaEfectivo = screen.getByText('Reembolso: Tesorería · Efectivo Bs').closest('div') as HTMLElement
+    expect(within(filaEfectivo).getByText(formatMontoBimonetario(12.5, 500, 'USD'))).toBeInTheDocument()
+
+    expect(screen.getByText('Reembolso: Tesorería · Banco ABC')).toBeInTheDocument()
+    const filaBanco = screen.getByText('Reembolso: Tesorería · Banco ABC').closest('div') as HTMLElement
+    expect(within(filaBanco).getByText(formatMontoBimonetario(2.5, 100, 'USD'))).toBeInTheDocument()
+  })
+
+  it('linea con referencia: muestra la sub-fila "Ref: {referencia}"; linea sin referencia (null): NO renderiza ninguna sub-fila Ref vacia', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo({
+          evolucion: {
+            reversos: [
+              {
+                nroNcr: 'NCR-000022',
+                tipo: 'TOTAL',
+                fecha: '2026-01-05',
+                totalUsd: 15,
+                totalBs: 600,
+                metodosReembolso: [
+                  { cuentaNombre: 'Efectivo Bs', montoUsd: 12.5, montoBs: 500, referencia: 'serial A12345' },
+                  { cuentaNombre: 'Banco ABC', montoUsd: 2.5, montoBs: 100, referencia: null },
+                ],
+              },
+            ],
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('Ref: serial A12345')).toBeInTheDocument()
+    // Solo UNA fila Ref (la de "Banco ABC", sin referencia, no genera ninguna).
+    expect(screen.getAllByText(/^Ref:/)).toHaveLength(1)
+  })
+
+  it('multiples NCs con reembolsos: cada una muestra su propio grupo de filas "Reembolso: Tesoreria", sin mezclarse entre NCs', () => {
+    render(
+      <FacturaDetallePanel
+        recibo={baseRecibo({
+          evolucion: {
+            reversos: [
+              {
+                nroNcr: 'NCR-000023',
+                tipo: 'PARCIAL',
+                fecha: '2026-01-05',
+                totalUsd: 10,
+                totalBs: 400,
+                metodosReembolso: [{ cuentaNombre: 'Efectivo Bs', montoUsd: 10, montoBs: 400, referencia: null }],
+              },
+              {
+                nroNcr: 'NCR-000024',
+                tipo: 'TOTAL',
+                fecha: '2026-01-06',
+                totalUsd: 20,
+                totalBs: 800,
+                metodosReembolso: [
+                  { cuentaNombre: 'Caja Fuerte Principal', montoUsd: 20, montoBs: 800, referencia: null },
+                ],
+              },
+            ],
+          },
+        })}
+      />
+    )
+
+    expect(screen.getByText('NCR-000023 (Reverso Parcial)')).toBeInTheDocument()
+    expect(screen.getByText('NCR-000024 (Reverso Total)')).toBeInTheDocument()
+    expect(screen.getByText('Reembolso: Tesorería · Efectivo Bs')).toBeInTheDocument()
+    expect(screen.getByText('Reembolso: Tesorería · Caja Fuerte Principal')).toBeInTheDocument()
+  })
+})

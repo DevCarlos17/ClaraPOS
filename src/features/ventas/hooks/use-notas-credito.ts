@@ -3,6 +3,7 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { v4 as uuidv4 } from 'uuid'
 import Decimal from 'decimal.js'
+import type { Transaction } from '@powersync/common'
 import { toStorageString, usdToBs } from '@/lib/currency'
 import { localNow } from '@/lib/dates'
 import { cargarMapaCuentas } from '@/features/contabilidad/hooks/use-cuentas-config'
@@ -21,6 +22,7 @@ import {
   buildNotasCreditoFiltro,
   rangoMesActual,
 } from '@/features/ventas/utils/notas-credito-admin-filters'
+import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
 
 // ─── Interfaces ─────────────────────────────────────────────
 
@@ -104,11 +106,36 @@ export function esModalidadNoDesembolso(modalidad: LiquidacionModalidad): boolea
   return (MODALIDADES_NO_DESEMBOLSO as readonly string[]).includes(modalidad)
 }
 
-/** Parametro que representaria un intento explicito de forzar una salida de caja. Solo lo consume el gate — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
-export interface EgresoCajaParams {
-  metodoCobroId: string
-  monto: number
+/**
+ * Linea de egreso de tesoreria (banco o caja fuerte) para la modalidad
+ * `REFUND_TESORERIA` (nc-refund-tesoreria, Design §a). Reemplaza
+ * `EgresoCajaParams` (objeto unico) — desde el dia 1 el llamador construye
+ * un ARRAY, incluso para un solo destino. `montoEnMonedaCuenta` es string
+ * (mismo criterio que `toStorageString`): el monto se ingresa en la moneda
+ * NATIVA de la cuenta elegida, nunca en USD. SIN campo `moneda` explicito —
+ * la moneda de cada linea se resuelve server-side desde la cuenta real
+ * (`bancos_empresa.moneda_id`/`caja_fuerte.moneda_id`), igual que
+ * `_esBancoBS` en `use-cxc.ts`/`use-cxp.ts` — evita que un valor de UI
+ * desincronizado con la cuenta produzca una conversion incorrecta.
+ */
+export interface EgresoTesoreriaLinea {
+  destino: 'BANCO' | 'CAJA_FUERTE'
+  cuentaId: string
+  montoEnMonedaCuenta: string
+  /**
+   * Nota LIBRE y OPCIONAL por linea (nc-refund-tesoreria, UX rework):
+   * numero de transferencia, serial de un billete, o cualquier
+   * observacion sobre ESE egreso puntual. Persiste en la columna
+   * `referencia` YA EXISTENTE de `movimientos_bancarios`/`mov_caja_fuerte`
+   * (sin migracion). Cuando se omite, se escribe `null` — mismo criterio
+   * que `use-traspasos.ts` (`params.referencia ?? null`), NUNCA bloquea la
+   * confirmacion.
+   */
+  referencia?: string
 }
+
+/** Array de lineas de egreso — reemplaza `EgresoCajaParams` (objeto unico). Solo lo consume el gate y la rama `REFUND_TESORERIA` de Step B — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
+export type EgresoParams = EgresoTesoreriaLinea[]
 
 /**
  * Gate anti-fraude de "comprobante de no-desembolso" (Design §3 paso 0b,
@@ -118,12 +145,19 @@ export interface EgresoCajaParams {
  * caja. Se evalua ANTES de abrir la transaccion (ni siquiera toca la DB):
  * una llamada directa a `crearNotaCredito` que bypasee la UI cae en el
  * mismo chequeo.
+ *
+ * `egresoParams` ahora es un ARRAY (Design §a) — el chequeo usa
+ * `Array.isArray(egresoParams) && egresoParams.length > 0`, NUNCA solo
+ * `egresoParams &&`, porque `[]` es truthy en JS: un array vacio se trata
+ * como "sin egreso" (Spec Scenario "Array vacío no dispara el gate"), no
+ * como un intento indebido de desembolso.
  */
 export function assertGateAntiFraudeNoDesembolso(
   modalidad: LiquidacionModalidad,
-  egresoParams: EgresoCajaParams | undefined
+  egresoParams: EgresoParams | undefined
 ): void {
-  if (egresoParams && esModalidadNoDesembolso(modalidad)) {
+  const hayEgresoSolicitado = Array.isArray(egresoParams) && egresoParams.length > 0
+  if (hayEgresoSolicitado && esModalidadNoDesembolso(modalidad)) {
     throw new Error(
       `Comprobante de no-desembolso violado: la modalidad '${modalidad}' no admite una salida de efectivo/tarjeta. El bloqueo se aplica a nivel de funcion, no de UI.`
     )
@@ -156,14 +190,14 @@ export interface CrearNotaCreditoParams {
   /** Modalidad de liquidacion elegida (Slice 3, obligatoria). */
   modalidad: LiquidacionModalidad
   /**
-   * Defensa en profundidad / prueba directa del gate anti-fraude: NUNCA se
-   * envia en el flujo normal junto a una modalidad no-efectivo. El egreso
-   * real de la Regla de Oro (EFECTIVO_REAL) se calcula internamente a partir
-   * de `entryPoint`/`sesionCajaActivaId`/`venta.sesion_caja_id` — este
-   * parametro NO lo dispara, solo existe para que el gate tenga algo
-   * explicito que rechazar.
+   * Array de lineas de egreso de tesoreria (Design §a) — consumido por la
+   * rama `REFUND_TESORERIA` de Step B (Slice 4) y por el gate anti-fraude.
+   * NUNCA se envia en el flujo normal junto a una modalidad no-efectivo. El
+   * egreso real de la Regla de Oro (EFECTIVO_REAL) se calcula internamente a
+   * partir de `entryPoint`/`sesionCajaActivaId`/`venta.sesion_caja_id` — este
+   * parametro no la dispara.
    */
-  egresoParams?: EgresoCajaParams
+  egresoParams?: EgresoParams
   /**
    * Tipo de NC (Slice 4b, Design §3/§Interfaces). Default `'TOTAL'` cuando
    * se omite — preserva el comportamiento previo a este slice byte-a-byte
@@ -201,6 +235,105 @@ export interface CrearNotaCreditoResult {
   nroNcr: string
 }
 
+// ─── Motor REFUND_TESORERIA (Design §e/§Data Flow, "tesoreria no sabe que ─
+// ─── es una NC") ──────────────────────────────────────────────────────────
+
+/**
+ * Lee saldo_actual + moneda de una cuenta de tesoreria (banco o caja fuerte)
+ * DENTRO de la transaccion existente. Puramente de lectura — usado dos
+ * veces por linea: (1) para convertir a USD y validar el tope ANTES de
+ * escribir cualquier registro, (2) dentro de `escribirEgresoTesoreriaEnTx`
+ * para el guard de saldo + el egreso real. `tesoreria-agnostico`: no importa
+ * nada de `ventas`, solo lee las tablas genericas de tesoreria.
+ */
+async function leerCuentaTesoreriaEnTx(
+  tx: Transaction,
+  linea: EgresoTesoreriaLinea,
+  empresa_id: string
+): Promise<{ saldoAnt: Decimal; esCuentaBs: boolean }> {
+  const tabla = linea.destino === 'BANCO' ? 'bancos_empresa' : 'caja_fuerte'
+  const cuentaResult = await tx.execute(
+    `SELECT saldo_actual, moneda_id FROM ${tabla} WHERE id = ? AND empresa_id = ?`,
+    [linea.cuentaId, empresa_id]
+  )
+  if (!cuentaResult.rows || cuentaResult.rows.length === 0) {
+    throw new Error(`Cuenta de tesoreria no encontrada: ${linea.cuentaId}`)
+  }
+  const cuenta = cuentaResult.rows.item(0) as { saldo_actual: string; moneda_id: string }
+
+  const monedaResult = await tx.execute('SELECT codigo_iso FROM monedas WHERE id = ?', [cuenta.moneda_id])
+  const monedaCodigo =
+    monedaResult.rows && monedaResult.rows.length > 0
+      ? (monedaResult.rows.item(0) as { codigo_iso: string }).codigo_iso
+      : 'USD'
+
+  return { saldoAnt: new Decimal(cuenta.saldo_actual), esCuentaBs: monedaCodigo === 'VES' }
+}
+
+/**
+ * Escribe UNA linea de egreso real de tesoreria por reembolso de NC (Design
+ * §Data Flow): SELECT saldo → [guard SOLO caja fuerte, Spec "Guard de saldo
+ * suficiente en caja fuerte" — bancos NO estan sujetos a este guard, fuera
+ * de alcance] → INSERT en `movimientos_bancarios`/`mov_caja_fuerte` con
+ * `origen='REEMBOLSO_NCR'`, `doc_origen_id=ncrId`,
+ * `doc_origen_tipo='NOTA_CREDITO'`, `validado=0` (pendiente de conciliacion,
+ * mismo patron `validado`/`reversado` existente) → UPDATE saldo. El monto
+ * persistido es SIEMPRE el monto NATIVO de la cuenta (nunca el convertido a
+ * USD) — igual que cualquier otro movimiento de tesoreria del archivo.
+ * `referencia` (nc-refund-tesoreria, UX rework) persiste la nota LIBRE y
+ * OPCIONAL de `linea.referencia` (o `null` si se omite) — el linkeo con la
+ * NC sigue viviendo exclusivamente en `doc_origen_id`/`doc_origen_tipo`,
+ * NUNCA en esta columna.
+ */
+async function escribirEgresoTesoreriaEnTx(
+  tx: Transaction,
+  linea: EgresoTesoreriaLinea,
+  ncrId: string,
+  nroNcr: string,
+  empresa_id: string,
+  usuario_id: string,
+  now: string
+): Promise<void> {
+  const { saldoAnt } = await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)
+  const montoNativo = new Decimal(linea.montoEnMonedaCuenta)
+
+  if (linea.destino === 'CAJA_FUERTE' && montoNativo.gt(saldoAnt)) {
+    throw new Error(
+      `Saldo insuficiente en caja fuerte. Disponible: ${saldoAnt.toFixed(2)}, solicitado: ${montoNativo.toFixed(2)}`
+    )
+  }
+
+  const saldoNuevo = saldoAnt.minus(montoNativo)
+  const tabla = linea.destino === 'BANCO' ? 'bancos_empresa' : 'caja_fuerte'
+  const tablaMov = linea.destino === 'BANCO' ? 'movimientos_bancarios' : 'mov_caja_fuerte'
+  const colCuentaId = linea.destino === 'BANCO' ? 'banco_empresa_id' : 'caja_fuerte_id'
+
+  await tx.execute(
+    `INSERT INTO ${tablaMov} (id, empresa_id, ${colCuentaId}, tipo, origen, monto, saldo_anterior, saldo_nuevo, doc_origen_id, doc_origen_tipo, referencia, descripcion, validado, reversado, fecha, created_at, created_by)
+     VALUES (?, ?, ?, 'EGRESO', 'REEMBOLSO_NCR', ?, ?, ?, ?, 'NOTA_CREDITO', ?, ?, 0, 0, ?, ?, ?)`,
+    [
+      uuidv4(),
+      empresa_id,
+      linea.cuentaId,
+      toStorageString(montoNativo),
+      toStorageString(saldoAnt),
+      toStorageString(saldoNuevo),
+      ncrId,
+      linea.referencia?.trim() || null,
+      `Reembolso NCR ${nroNcr}`,
+      now,
+      now,
+      usuario_id,
+    ]
+  )
+
+  await tx.execute(`UPDATE ${tabla} SET saldo_actual = ?, updated_at = ? WHERE id = ?`, [
+    toStorageString(saldoNuevo),
+    now,
+    linea.cuentaId,
+  ])
+}
+
 // ─── Listado de NCR ─────────────────────────────────────────
 
 /**
@@ -226,6 +359,8 @@ export interface FiltroNotasCreditoHook {
   fechaDesde?: string
   fechaHasta?: string
   busqueda?: string
+  /** Filtro por cliente (cliente-detalle-pantalla, PR1). Ver `FiltroNotasCredito.clienteId`. */
+  clienteId?: string
 }
 
 /**
@@ -251,6 +386,7 @@ export function useNotasCredito(filtros?: FiltroNotasCreditoHook) {
       fechaDesde,
       fechaHasta,
       busqueda: filtros.busqueda,
+      clienteId: filtros.clienteId,
     })
     sql = built.sql
     params = built.params
@@ -312,6 +448,96 @@ export function useReversosFactura(ventaId: string | null, empresaId: string) {
   return { reversos: (data ?? []) as ReversoFacturaRow[], isLoading }
 }
 
+// ─── Reembolsos de tesoreria por NC (Enhancement B, nc-refund-tesoreria) ────
+
+export interface ReembolsoTesoreriaFacturaRow {
+  notaCreditoId: string
+  cuentaNombre: string
+  /** `monedas.codigo_iso` de la cuenta (`'VES'` => `montoNativo` esta en Bs; cualquier otro valor se trata como USD). */
+  monedaCodigo: string
+  /** Monto NATIVO de la cuenta (nunca convertido) — mismo criterio que `movimientos_bancarios.monto`/`mov_caja_fuerte.monto`. */
+  montoNativo: string
+  referencia: string | null
+}
+
+interface ReembolsoTesoreriaFacturaRawRow {
+  nota_credito_id: string
+  cuenta_nombre: string
+  moneda_codigo: string
+  monto_nativo: string
+  referencia: string | null
+}
+
+function mapReembolsoTesoreriaFacturaRow(r: ReembolsoTesoreriaFacturaRawRow): ReembolsoTesoreriaFacturaRow {
+  return {
+    notaCreditoId: r.nota_credito_id,
+    cuentaNombre: r.cuenta_nombre,
+    monedaCodigo: r.moneda_codigo,
+    montoNativo: r.monto_nativo,
+    referencia: r.referencia,
+  }
+}
+
+/**
+ * Egresos reales de tesoreria (banco o caja fuerte) que reembolsaron NC(s)
+ * de esta factura via modalidad REFUND_TESORERIA (Enhancement B de
+ * nc-refund-tesoreria — "que metodo se uso para reembolsar", mostrado en la
+ * seccion Evolucion del modal Consulta de Factura). PURE READ, patron
+ * UNION-en-memoria (mismo criterio que `usePendingCounts`,
+ * `use-cuentas-tesoreria.ts`): dos queries separadas (bancos/caja fuerte),
+ * cada una con JOIN a `notas_credito` (para escopear por `venta_id`) y a la
+ * tabla de la cuenta (para el nombre a mostrar, mismo `nombre`/`nombre_banco`
+ * que ya usa `useCuentasTesoreria`/`RefundTesoreriaForm` — sin prefijo de
+ * tipo, se reusa tal cual) + `monedas` (para decidir Bs vs USD en el
+ * render). `empresa_id` es OBLIGATORIO en AMBAS queries (regla #11) — el
+ * JOIN a `notas_credito` (tambien filtrado por `empresa_id`) NO sustituye
+ * el filtro directo sobre `movimientos_bancarios.empresa_id`/
+ * `mov_caja_fuerte.empresa_id`. READ-ONLY: no toca `escribirEgresoTesoreriaEnTx`
+ * ni ningun otro codigo de escritura.
+ */
+export function useReembolsosTesoreriaFactura(
+  ventaId: string | null,
+  empresaId: string
+): { reembolsos: ReembolsoTesoreriaFacturaRow[]; isLoading: boolean } {
+  const { data: bancosData, isLoading: loadingBancos } = useQuery(
+    ventaId && empresaId
+      ? `SELECT mb.doc_origen_id AS nota_credito_id, mb.monto AS monto_nativo, mb.referencia,
+           b.nombre_banco AS cuenta_nombre, COALESCE(mon.codigo_iso, 'USD') AS moneda_codigo
+         FROM movimientos_bancarios mb
+         JOIN notas_credito nc ON nc.id = mb.doc_origen_id
+         JOIN bancos_empresa b ON b.id = mb.banco_empresa_id
+         LEFT JOIN monedas mon ON mon.id = b.moneda_id
+         WHERE mb.origen = 'REEMBOLSO_NCR' AND mb.doc_origen_tipo = 'NOTA_CREDITO'
+           AND mb.empresa_id = ? AND nc.venta_id = ? AND nc.empresa_id = ?
+         ORDER BY mb.created_at ASC`
+      : '',
+    ventaId && empresaId ? [empresaId, ventaId, empresaId] : []
+  )
+
+  const { data: cajasData, isLoading: loadingCajas } = useQuery(
+    ventaId && empresaId
+      ? `SELECT mcf.doc_origen_id AS nota_credito_id, mcf.monto AS monto_nativo, mcf.referencia,
+           cf.nombre AS cuenta_nombre, COALESCE(mon.codigo_iso, 'USD') AS moneda_codigo
+         FROM mov_caja_fuerte mcf
+         JOIN notas_credito nc ON nc.id = mcf.doc_origen_id
+         JOIN caja_fuerte cf ON cf.id = mcf.caja_fuerte_id
+         LEFT JOIN monedas mon ON mon.id = cf.moneda_id
+         WHERE mcf.origen = 'REEMBOLSO_NCR' AND mcf.doc_origen_tipo = 'NOTA_CREDITO'
+           AND mcf.empresa_id = ? AND nc.venta_id = ? AND nc.empresa_id = ?
+         ORDER BY mcf.created_at ASC`
+      : '',
+    ventaId && empresaId ? [empresaId, ventaId, empresaId] : []
+  )
+
+  const bancos = ((bancosData ?? []) as ReembolsoTesoreriaFacturaRawRow[]).map(mapReembolsoTesoreriaFacturaRow)
+  const cajas = ((cajasData ?? []) as ReembolsoTesoreriaFacturaRawRow[]).map(mapReembolsoTesoreriaFacturaRow)
+
+  return {
+    reembolsos: [...bancos, ...cajas],
+    isLoading: loadingBancos || loadingCajas,
+  }
+}
+
 // ─── Detalle de factura (articulos + pagos) ─────────────────
 // La consulta de lineas (ventas_det + productos) vive en el hook canonico
 // de `use-cxc.ts` — aca solo se agrega la consulta de pagos, propia de este
@@ -360,13 +586,6 @@ export async function crearNotaCredito(
   // 0b. Gate anti-fraude (Design §3 paso 0b): se evalua ANTES de abrir la
   // transaccion — sin tocar la DB. Ver `assertGateAntiFraudeNoDesembolso`.
   assertGateAntiFraudeNoDesembolso(modalidad, egresoParams)
-
-  // REFUND_TESORERIA esta validado por el tipo pero se implementa recien en
-  // Slice 6 (Design §5, "no requiere schema nuevo" pero SI logica nueva que
-  // aun no existe en este slice).
-  if (modalidad === 'REFUND_TESORERIA') {
-    throw new Error('REFUND_TESORERIA aun no esta implementado (ver Slice 6)')
-  }
 
   let ncrId = ''
   let nroNcr = ''
@@ -806,8 +1025,8 @@ export async function crearNotaCredito(
 
       const movCuentaId = uuidv4()
       await tx.execute(
-        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
-         VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, tasa_pago)
+         VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           movCuentaId,
           venta.cliente_id,
@@ -820,6 +1039,7 @@ export async function crearNotaCredito(
           now,
           empresa_id,
           now,
+          toStorageString(venta.tasa),
         ]
       )
 
@@ -941,8 +1161,8 @@ export async function crearNotaCredito(
         const saldoNuevoSafc = saldoActualSafc.minus(remanenteALiquidar)
 
         await tx.execute(
-          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo)
-           VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo, tasa_pago)
+           VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             uuidv4(),
             venta.cliente_id,
@@ -958,6 +1178,7 @@ export async function crearNotaCredito(
             usuario_id,
             ncrId,
             'NOTA_CREDITO',
+            toStorageString(venta.tasa),
           ]
         )
 
@@ -983,8 +1204,8 @@ export async function crearNotaCredito(
         const saldoNuevoAjuste = Decimal.max(new Decimal(0), saldoActualAjuste.minus(remanenteALiquidar))
 
         await tx.execute(
-          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at)
-           VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, tasa_pago)
+           VALUES (?, ?, 'NCR', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             uuidv4(),
             venta.cliente_id,
@@ -997,6 +1218,7 @@ export async function crearNotaCredito(
             now,
             empresa_id,
             now,
+            toStorageString(venta.tasa),
           ]
         )
 
@@ -1005,6 +1227,94 @@ export async function crearNotaCredito(
           now,
           venta.cliente_id,
         ])
+      } else if (modalidad === 'REFUND_TESORERIA') {
+        // REFUND_TESORERIA (nc-refund-tesoreria, Design §Data Flow): parte
+        // `remanenteALiquidar` en dos — N egresos reales de tesoreria
+        // (banco/caja fuerte) + el sobrante reusa LITERAL el bloque SAFC de
+        // arriba (misma forma que SALDO_FAVOR/COMPENSACION_VENTA) con un
+        // monto menor. Tesoreria no sabe que es una NC: se escribe con
+        // `doc_origen_id`/`doc_origen_tipo` genericos, sin que
+        // `movimientos_bancarios`/`mov_caja_fuerte` importen nada de
+        // `ventas`.
+
+        // Spec "Array no vacío requerido cuando hay reembolso real": no
+        // puede haber una NC REFUND_TESORERIA con monto a reembolsar > 0
+        // sin al menos una linea de egreso.
+        if (!egresoParams || egresoParams.length === 0) {
+          throw new Error(
+            'REFUND_TESORERIA requiere al menos una linea de egreso de tesoreria cuando hay un monto a reembolsar'
+          )
+        }
+
+        // Guard de tope (Spec "Tope — el reembolso no puede exceder el
+        // monto de la NC"): convertir cada linea a USD a la tasa_historica
+        // de la NC (Spec "Conversion a tasa historica") y validar la suma
+        // ANTES de escribir cualquier registro — si excede, toda la NC se
+        // rechaza (rollback automatico de `db.writeTransaction`, ninguna
+        // linea llega a escribirse).
+        const lineasUsd: Decimal[] = []
+        for (const linea of egresoParams) {
+          const { esCuentaBs } = await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)
+          lineasUsd.push(nativoAUsd(linea.montoEnMonedaCuenta, esCuentaBs, venta.tasa))
+        }
+
+        const { remanenteSafc, excedeTope } = calcularRemanenteRefund(remanenteALiquidar, lineasUsd)
+        if (excedeTope) {
+          throw new Error(
+            'El monto a reembolsar excede el saldo disponible de la nota de credito'
+          )
+        }
+
+        // Escribir cada linea en el orden del array (Design §d "sin
+        // prioridad entre cuentas — se escribe en el orden del array").
+        for (const linea of egresoParams) {
+          await escribirEgresoTesoreriaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+        }
+
+        // Remanente no reembolsado por tesoreria -> SAFC (Spec "Remanente
+        // no reembolsado pasa a SAFC"), reusando LITERAL el mismo bloque de
+        // arriba pero con `remanenteSafc` en vez de `remanenteALiquidar`.
+        if (remanenteSafc.gt('0.01')) {
+          const clienteRefundSafcResult = await tx.execute(
+            'SELECT saldo_actual FROM clientes WHERE id = ?',
+            [venta.cliente_id]
+          )
+          if (!clienteRefundSafcResult.rows || clienteRefundSafcResult.rows.length === 0) {
+            throw new Error('Cliente no encontrado')
+          }
+          const saldoActualRefundSafc = new Decimal(
+            (clienteRefundSafcResult.rows.item(0) as { saldo_actual: string }).saldo_actual || '0'
+          )
+          const saldoNuevoRefundSafc = saldoActualRefundSafc.minus(remanenteSafc)
+
+          await tx.execute(
+            `INSERT INTO movimientos_cuenta (id, cliente_id, tipo, referencia, monto, saldo_anterior, saldo_nuevo, observacion, venta_id, fecha, empresa_id, created_at, created_by, doc_origen_id, doc_origen_tipo, tasa_pago)
+             VALUES (?, ?, 'SAFC', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              uuidv4(),
+              venta.cliente_id,
+              `SAF-NCR-${nroNcr}`,
+              toStorageString(remanenteSafc),
+              toStorageString(saldoActualRefundSafc),
+              toStorageString(saldoNuevoRefundSafc),
+              `Saldo a favor generado por ${nroNcr} (${modalidad}) - Factura ${venta.nro_factura}`,
+              venta_id,
+              now,
+              empresa_id,
+              now,
+              usuario_id,
+              ncrId,
+              'NOTA_CREDITO',
+              toStorageString(venta.tasa),
+            ]
+          )
+
+          await tx.execute('UPDATE clientes SET saldo_actual = ?, updated_at = ? WHERE id = ?', [
+            toStorageString(saldoNuevoRefundSafc),
+            now,
+            venta.cliente_id,
+          ])
+        }
       }
     }
 

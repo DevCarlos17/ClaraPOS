@@ -11,9 +11,17 @@ export interface CuadreArqueoTeoricoProps {
   ingresosEfectivoBsNativo: number // ingresos manuales en efectivo Bs nativos
   egresosUsd: number              // total egresos USD (retiros + vueltos + avances) — para el calculo
   egresosBsNativo: number         // total egresos Bs nativos — para el calculo
-  /** Solo retiros manuales (EGRESO_MANUAL + EGRESO_TESORERIA + AVANCE + PRESTAMO). Display. */
+  /** Solo retiros manuales (EGRESO_MANUAL + EGRESO_TESORERIA + AVANCE + PRESTAMO + PAGO_PROVEEDOR). Display. */
   retirosManualesUsd: number
   retirosManualesBsNativo: number
+  /**
+   * Reembolsos de efectivo por Nota de Credito (origen='NCR', ya separado de
+   * retirosManuales* por `splitEgresosArqueo`). Display en linea propia "Devoluciones
+   * (NC)", distinta de "Retiros". No afecta el calculo: `egresosUsd`/`egresosBsNativo`
+   * siguen siendo el total agregado que ya incluia este monto.
+   */
+  devolucionesNcUsd?: number
+  devolucionesNcBsNativo?: number
   /** Vueltos entregados a clientes. Display. */
   vueltosUsd: number
   vueltosBsNativo: number
@@ -35,6 +43,8 @@ export function CuadreArqueoTeorico({
   egresosBsNativo,
   retirosManualesUsd,
   retirosManualesBsNativo,
+  devolucionesNcUsd = 0,
+  devolucionesNcBsNativo = 0,
   vueltosUsd,
   vueltosBsNativo,
   tasaCambio,
@@ -55,6 +65,7 @@ export function CuadreArqueoTeorico({
   const ventasEfectivoBs       = usdToBs(ventasEfectivoUsd,     tasaCambio).toNumber()
   const ingresosEfectivoBs     = usdToBs(ingresosEfectivoUsd,   tasaCambio).toNumber()
   const retirosManualesUsdBs   = usdToBs(retirosManualesUsd,    tasaCambio).toNumber()
+  const devolucionesNcUsdBs    = usdToBs(devolucionesNcUsd,     tasaCambio).toNumber()
   const vueltosUsdBs           = usdToBs(vueltosUsd,            tasaCambio).toNumber()
 
   return (
@@ -228,6 +239,48 @@ export function CuadreArqueoTeorico({
               {tasaCambio > 0 && (
                 <p className="text-xs text-muted-foreground tabular-nums">
                   {formatUsd(ingresosEfectivoBsNativo / tasaCambio)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Devoluciones (NC) USD — reembolsos de efectivo por Nota de Credito, separados de Retiros */}
+        {devolucionesNcUsd > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-red-500">−</span>
+              <span className="text-muted-foreground">
+                Devoluciones (NC){devolucionesNcBsNativo > 0.001 ? ' ($)' : ''}
+              </span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
+                {formatUsd(devolucionesNcUsd)}
+              </span>
+              {tasaCambio > 0 && devolucionesNcUsdBs > 0.001 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatBs(devolucionesNcUsdBs)}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Devoluciones (NC) Bs nativos */}
+        {devolucionesNcBsNativo > 0.001 && (
+          <div className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              <span className="w-4 text-center font-mono text-xs text-red-500">−</span>
+              <span className="text-muted-foreground">Devoluciones (NC) (Bs.)</span>
+            </div>
+            <div className="text-right">
+              <span className="font-medium tabular-nums text-red-600 dark:text-red-400">
+                {formatBs(devolucionesNcBsNativo)}
+              </span>
+              {tasaCambio > 0 && (
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {formatUsd(devolucionesNcBsNativo / tasaCambio)}
                 </p>
               )}
             </div>

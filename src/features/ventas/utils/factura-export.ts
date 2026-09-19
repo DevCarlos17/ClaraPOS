@@ -89,12 +89,30 @@ export interface ReciboData {
 // (openspec/changes/consulta-factura-evolucion)
 // =============================================
 
+/**
+ * Un metodo de tesoreria (banco o caja fuerte) usado para reembolsar una NC
+ * via modalidad REFUND_TESORERIA (nc-refund-tesoreria Enhancement B —
+ * "que metodo(s) se usaron para el reembolso"). `montoUsd`/`montoBs` YA
+ * vienen convertidos por el llamador (mismo criterio que `totalUsd`/
+ * `totalBs` de `ReciboEvolucionReverso` — la conversion nativo->USD/Bs usa
+ * `tasa_historica` de la NC, nunca la tasa vigente).
+ */
+export interface ReciboEvolucionReversoMetodo {
+  cuentaNombre: string
+  montoUsd: number
+  montoBs: number
+  /** Nota libre de la linea de egreso (nro. de transferencia, serial, etc.) — `null` cuando no se registro. */
+  referencia: string | null
+}
+
 export interface ReciboEvolucionReverso {
   nroNcr: string
   tipo: 'TOTAL' | 'PARCIAL'
   fecha: string
   montoUsd: number
   montoBs: number
+  /** Vacio cuando la NC no tuvo egresos de tesoreria (SALDO_FAVOR/AJUSTE_CXC/COMPENSACION_VENTA, o modalidad sin reembolso real). */
+  metodosReembolso: ReciboEvolucionReversoMetodo[]
 }
 
 export interface ReciboEvolucionMovimiento {
@@ -111,12 +129,22 @@ export interface ReciboEvolucion {
   saldoAFavorGeneradoBs: number | null
 }
 
+export interface ReciboEvolucionReversoMetodoInput {
+  cuentaNombre: string
+  /** Ya convertido a USD por el llamador (a `tasa_historica` de la NC) — mismo criterio que `totalUsd`. */
+  montoUsd: DecimalInput
+  montoBs: DecimalInput
+  referencia: string | null
+}
+
 export interface ReciboEvolucionReversoInput {
   nroNcr: string
   tipo: string
   fecha: string
   totalUsd: DecimalInput
   totalBs: DecimalInput
+  /** Enhancement B (nc-refund-tesoreria). Omitido/vacio => `metodosReembolso` queda `[]` (byte-identical al comportamiento previo para NCs sin reembolso via tesoreria). */
+  metodosReembolso?: ReciboEvolucionReversoMetodoInput[]
 }
 
 export interface ReciboEvolucionMovimientoInput {
@@ -271,6 +299,12 @@ export function buildReciboEvolucion(input?: ReciboEvolucionInput): ReciboEvoluc
       fecha: r.fecha,
       montoUsd: toD(r.totalUsd).toNumber(),
       montoBs: toD(r.totalBs).toNumber(),
+      metodosReembolso: (r.metodosReembolso ?? []).map((m) => ({
+        cuentaNombre: m.cuentaNombre,
+        montoUsd: toD(m.montoUsd).toNumber(),
+        montoBs: toD(m.montoBs).toNumber(),
+        referencia: m.referencia,
+      })),
     })),
     abonos: abonos.map(mapReciboEvolucionMovimiento),
     reversosPago: reversosPago.map(mapReciboEvolucionMovimiento),
@@ -529,7 +563,7 @@ interface FilaEvolucion {
   bold: boolean
 }
 
-const REVERSO_TIPO_LABEL: Record<'TOTAL' | 'PARCIAL', string> = {
+export const REVERSO_TIPO_LABEL: Record<'TOTAL' | 'PARCIAL', string> = {
   TOTAL: 'Reverso Total',
   PARCIAL: 'Reverso Parcial',
 }
