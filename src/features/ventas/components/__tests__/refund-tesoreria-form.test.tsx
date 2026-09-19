@@ -190,8 +190,12 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       expect(montoInput).toHaveAttribute('aria-invalid', 'true')
       expect(screen.getByText(/excede el saldo disponible de la cuenta de tesoreria/i)).toBeInTheDocument()
 
-      const montoContainer = montoInput.parentElement as HTMLElement
-      expect(within(montoContainer).getByText(/excede el saldo disponible de la cuenta de tesoreria/i)).toBeInTheDocument()
+      // El mensaje vive en una fila de ancho completo debajo de los campos
+      // de ESTA linea (Ajuste post-QA screenshot), no pegado al input de
+      // Monto — se verifica que ambos comparten el contenedor de la linea
+      // (el `<div>` con borde que agrupa Origen/Cuenta/Monto/Referencia).
+      const lineaContainer = montoInput.closest('.rounded-lg.border') as HTMLElement
+      expect(within(lineaContainer).getByText(/excede el saldo disponible de la cuenta de tesoreria/i)).toBeInTheDocument()
     })
   })
 
@@ -298,8 +302,11 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       expect(montoInput).toHaveAttribute('aria-invalid', 'true')
       expect(screen.getByText(/excede el pendiente por reembolsar/i)).toBeInTheDocument()
 
-      const montoContainer = montoInput.parentElement as HTMLElement
-      expect(within(montoContainer).getByText(/excede el pendiente por reembolsar/i)).toBeInTheDocument()
+      // El mensaje vive en una fila de ancho completo debajo de los campos
+      // de ESTA linea (Ajuste post-QA screenshot), no pegado al input de
+      // Monto — se verifica que ambos comparten el contenedor de la linea.
+      const lineaContainer = montoInput.closest('.rounded-lg.border') as HTMLElement
+      expect(within(lineaContainer).getByText(/excede el pendiente por reembolsar/i)).toBeInTheDocument()
     })
   })
 
@@ -587,8 +594,12 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
           expect(montoInput).toHaveAttribute('aria-invalid', 'true')
           expect(screen.getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
 
-          const montoContainer = montoInput.parentElement as HTMLElement
-          expect(within(montoContainer).getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
+          // El mensaje vive en una fila de ancho completo debajo de los
+          // campos de ESTA linea (Ajuste post-QA screenshot), no pegado al
+          // input de Monto — se verifica que ambos comparten el contenedor
+          // de la linea.
+          const lineaContainer = montoInput.closest('.rounded-lg.border') as HTMLElement
+          expect(within(lineaContainer).getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
         })
       })
     })

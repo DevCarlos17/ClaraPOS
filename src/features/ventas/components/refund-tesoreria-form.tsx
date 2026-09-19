@@ -568,27 +568,6 @@ function LineaEgresoRefund({
             onChange={(e) => onActualizar({ montoNativo: e.target.value })}
             className={`w-full rounded-md border ${excedeAlgunTope ? 'border-destructive' : 'border-input'} bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${noSpinner}`}
           />
-          {/* Ajuste UX post-QA #2 (revertido de "Opcion A" a input LIBRE): el
-              campo Monto acepta CUALQUIER valor tecleado, nunca rechaza el
-              keystroke ni clampea en silencio — este mensaje pegado al input
-              de ESTA linea (posicion fijada en el Ajuste #2 original) es el
-              UNICO mecanismo que comunica el estado invalido cuando el monto
-              excede su tope; junto con `aria-invalid` y `puedeConfirmar`
-              (arriba) forman el contrato completo: input libre + mensaje
-              rojo + boton deshabilitado, sin bloquear el tipeo. Prioriza el
-              motivo "pendiente" sobre "disponible del origen" si ambos
-              aplican a la vez (evita mostrar 2 mensajes apilados por la
-              misma linea). */}
-          {excedePendiente && (
-            <p className="mt-1 text-xs text-destructive">El monto ingresado excede el pendiente por reembolsar.</p>
-          )}
-          {!excedePendiente && excedeDisponibleOrigen && (
-            <p className="mt-1 text-xs text-destructive">
-              {esSesion
-                ? 'El monto ingresado excede el saldo disponible de la sesion de caja elegida.'
-                : 'El monto ingresado excede el saldo disponible de la cuenta de tesoreria elegida.'}
-            </p>
-          )}
         </div>
 
         <div>
@@ -617,6 +596,33 @@ function LineaEgresoRefund({
           </button>
         )}
       </div>
+
+      {/* Ajuste UX (post-QA screenshot, nc-admin-saldo-disponible-sesion):
+          el mensaje vive FUERA del grid de campos, como fila propia de
+          ancho completo debajo de Origen/Cuenta/Monto/Referencia de ESTA
+          linea — evitaba quedar apretado dentro de la columna angosta de
+          Monto (110px). Al ser un sibling de bloque fuera del `grid`, ocupa
+          naturalmente el 100% del ancho del contenedor de la linea sin
+          necesitar `col-span` (no hay necesidad de que el mensaje participe
+          del grid-template-columns). El campo Monto acepta CUALQUIER valor
+          tecleado, nunca rechaza el keystroke ni clampea en silencio — este
+          mensaje es el UNICO mecanismo que comunica el estado invalido
+          cuando el monto excede su tope; junto con `aria-invalid` y
+          `puedeConfirmar` (arriba) forman el contrato completo: input libre
+          + mensaje rojo + boton deshabilitado, sin bloquear el tipeo.
+          Prioriza el motivo "pendiente" sobre "disponible del origen" si
+          ambos aplican a la vez (evita mostrar 2 mensajes apilados por la
+          misma linea). */}
+      {excedePendiente && (
+        <p className="mt-2 text-xs text-destructive">El monto ingresado excede el pendiente por reembolsar.</p>
+      )}
+      {!excedePendiente && excedeDisponibleOrigen && (
+        <p className="mt-2 text-xs text-destructive">
+          {esSesion
+            ? 'El monto ingresado excede el saldo disponible de la sesion de caja elegida.'
+            : 'El monto ingresado excede el saldo disponible de la cuenta de tesoreria elegida.'}
+        </p>
+      )}
     </div>
   )
 }
