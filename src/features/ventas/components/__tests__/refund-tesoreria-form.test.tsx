@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { RefundTesoreriaForm } from '../refund-tesoreria-form'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
 import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 
 /**
  * Slice 5 (nc-refund-tesoreria, tasks.md Phase 5): mini-formulario AISLADO,
@@ -11,12 +12,15 @@ import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
  * (mockeado aqui) para listar banco/caja fuerte con saldo disponible.
  *
  * Restructuracion UI a dos selects dependientes (Origen -> Cuenta): Select 1
- * ("Origen") ofrece "Tesoreria" (unica opcion habilitada) y una opcion
- * deshabilitada por cada sesion de caja ACTIVA (reusa `useSesionesActivas()`,
- * mockeado aqui, en modo solo-lectura — ninguna logica nueva de sesiones).
- * Select 2 ("Cuenta") sigue siendo la MISMA fuente `useCuentasTesoreria()`,
- * ahora sin el filtro previo por tipo BANCO/CAJA_FUERTE (el `destino` del
- * egreso se deriva de `cuenta.tipo` en vez de seleccionarse por separado).
+ * ("Origen") ofrece "Tesoreria" (unica opcion habilitada) y una opcion por
+ * cada sesion de caja ACTIVA (reusa `useSesionesActivas()`, mockeado aqui,
+ * en modo solo-lectura — ninguna logica nueva de sesiones). Select 2
+ * ("Cuenta") sigue siendo la MISMA fuente `useCuentasTesoreria()` para
+ * Origen=Tesoreria (banco/caja fuerte combinados, `destino` derivado de
+ * `cuenta.tipo`); para Origen=Sesion, lista "Efectivo USD"/"Efectivo Bs"
+ * desde `useMetodosPagoActivos()` filtrado `tipo==='EFECTIVO'` (Slice 3,
+ * nc-cuadre-sesion-fase2, Design §1/§Interfaces) — mismo patron que
+ * INGRESO_MANUAL/EGRESO_MANUAL/AVANCE/PRESTAMO.
  */
 vi.mock('@/features/tesoreria/hooks/use-cuentas-tesoreria', () => ({
   useCuentasTesoreria: vi.fn(),
@@ -24,9 +28,17 @@ vi.mock('@/features/tesoreria/hooks/use-cuentas-tesoreria', () => ({
 vi.mock('@/features/caja/hooks/use-sesiones-caja', () => ({
   useSesionesActivas: vi.fn(),
 }))
+vi.mock('@/features/configuracion/hooks/use-payment-methods', () => ({
+  useMetodosPagoActivos: vi.fn(),
+}))
 
 const mockedUseCuentasTesoreria = vi.mocked(useCuentasTesoreria)
 const mockedUseSesionesActivas = vi.mocked(useSesionesActivas)
+const mockedUseMetodosPagoActivos = vi.mocked(useMetodosPagoActivos)
+
+function metodoEfectivo(id: string, moneda: 'USD' | 'BS') {
+  return { id, tipo: 'EFECTIVO', moneda, is_active: 1 } as never
+}
 
 function cuentasFixture() {
   return {
@@ -65,6 +77,10 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     vi.clearAllMocks()
     mockedUseCuentasTesoreria.mockReturnValue(cuentasFixture())
     mockedUseSesionesActivas.mockReturnValue({ sesiones: [], isLoading: false })
+    mockedUseMetodosPagoActivos.mockReturnValue({
+      metodos: [metodoEfectivo('efectivo-usd-1', 'USD'), metodoEfectivo('efectivo-bs-1', 'BS')],
+      isLoading: false,
+    })
   })
 
   it('Scenario "Selector muestra saldo por cuenta": cada opcion de cuenta muestra su saldo disponible junto al nombre', () => {
@@ -76,7 +92,7 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     expect(cuentaSelect).toHaveTextContent('500.00')
   })
 
-  it('Scenario "Select Origen habilita Tesoreria y deshabilita sesiones activas": Tesoreria es seleccionable, cada sesion activa aparece deshabilitada con indicacion "Proximamente"', () => {
+  it('Scenario "Select Origen habilita Tesoreria y Sesion de caja activa, ambas seleccionables" (Slice 3, nc-cuadre-sesion-fase2): ninguna opcion queda deshabilitada ni dice "Proximamente"', () => {
     mockedUseSesionesActivas.mockReturnValue({
       sesiones: [{ id: 'sesion-1', caja_nombre: 'Caja Principal' } as never],
       isLoading: false,
@@ -89,8 +105,9 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     const opcionTesoreria = screen.getByRole('option', { name: /^Tesoreria$/i })
     expect(opcionTesoreria).toBeEnabled()
 
-    const opcionSesion = screen.getByRole('option', { name: /Caja Principal.*Proximamente/i })
-    expect(opcionSesion).toBeDisabled()
+    const opcionSesion = screen.getByRole('option', { name: /Caja Principal/i })
+    expect(opcionSesion).toBeEnabled()
+    expect(opcionSesion).not.toHaveTextContent(/Proximamente/i)
   })
 
   it('Scenario "Sin sesiones activas": Select Origen solo ofrece Tesoreria, sin opciones de sesion', () => {
@@ -246,6 +263,123 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     )
 
     expect(screen.getByTestId('motivo-slot')).toBeInTheDocument()
+  })
+
+  describe('Sesion de caja activa (Slice 3, nc-cuadre-sesion-fase2): habilitada, resuelve metodo EFECTIVO por moneda', () => {
+    beforeEach(() => {
+      mockedUseSesionesActivas.mockReturnValue({
+        sesiones: [{ id: 'sesion-1', caja_nombre: 'Caja Principal' } as never],
+        isLoading: false,
+      })
+    })
+
+    it('elegir "Sesion de caja activa" en Origen muestra "Efectivo USD"/"Efectivo Bs" en Cuenta, solo para metodos EFECTIVO activos', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+
+      const cuentaSelect = screen.getAllByRole('combobox')[1]!
+      expect(cuentaSelect).toHaveTextContent('Efectivo USD')
+      expect(cuentaSelect).toHaveTextContent('Efectivo Bs')
+    })
+
+    it('sin metodo EFECTIVO en una moneda, esa opcion no se renderiza en Cuenta', async () => {
+      mockedUseMetodosPagoActivos.mockReturnValue({
+        metodos: [metodoEfectivo('efectivo-usd-1', 'USD')],
+        isLoading: false,
+      })
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+
+      const cuentaSelect = screen.getAllByRole('combobox')[1]!
+      expect(cuentaSelect).toHaveTextContent('Efectivo USD')
+      expect(cuentaSelect).not.toHaveTextContent('Efectivo Bs')
+    })
+
+    it('confirmar con Origen=Sesion y Cuenta=Efectivo USD invoca onConfirm con una linea destino SESION_CAJA', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+      await user.type(screen.getByLabelText(/^monto$/i), '100')
+
+      await user.click(screen.getByRole('button', { name: /^Confirmar reembolso$/i }))
+
+      expect(onConfirm).toHaveBeenCalledWith([
+        {
+          destino: 'SESION_CAJA',
+          sesionCajaId: 'sesion-1',
+          metodoCobroId: 'efectivo-usd-1',
+          moneda: 'USD',
+          montoEnMonedaCuenta: '100',
+          referencia: undefined,
+        },
+      ])
+    })
+
+    it('confirmar con Cuenta=Efectivo Bs resuelve moneda BS (no se toma de cuentaPorId, que solo conoce cuentas de tesoreria)', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-bs-1')
+      // 4000 Bs / tasaHistorica 40 = 100 USD -> cubre el 100%, remanente 0
+      await user.type(screen.getByLabelText(/^monto$/i), '4000')
+
+      await user.click(screen.getByRole('button', { name: /^Confirmar reembolso$/i }))
+
+      expect(onConfirm).toHaveBeenCalledWith([
+        {
+          destino: 'SESION_CAJA',
+          sesionCajaId: 'sesion-1',
+          metodoCobroId: 'efectivo-bs-1',
+          moneda: 'BS',
+          montoEnMonedaCuenta: '4000',
+          referencia: undefined,
+        },
+      ])
+    })
+
+    it('cambiar Origen de vuelta a Tesoreria despues de elegir Sesion resetea la Cuenta (no arrastra un metodoCobroId invalido)', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+
+      await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'TESORERIA')
+
+      const cuentaSelect = screen.getAllByRole('combobox')[1]!
+      expect(cuentaSelect).toHaveValue('')
+    })
+
+    it('Scenario spec "Sesion pasa a cerrada entre seleccion y confirmacion": si la sesion elegida deja de estar ABIERTA, Confirmar se deshabilita y onConfirm nunca se invoca', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      const { rerender } = render(
+        <RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />
+      )
+
+      await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+      await user.type(screen.getByLabelText(/^monto$/i), '100')
+      expect(screen.getByRole('button', { name: /^Confirmar reembolso$/i })).not.toBeDisabled()
+
+      // La sesion pasa a CERRADA: la query reactiva de useSesionesActivas ya no la incluye.
+      mockedUseSesionesActivas.mockReturnValue({ sesiones: [], isLoading: false })
+      rerender(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={onConfirm} />)
+
+      const boton = screen.getByRole('button', { name: /Confirmar/i })
+      expect(boton).toBeDisabled()
+      await user.click(boton)
+      expect(onConfirm).not.toHaveBeenCalled()
+    })
   })
 
   describe('UX rework (nc-refund-tesoreria): sin spinners, Bs en pendiente y gate de confirmacion de saldo a favor', () => {
