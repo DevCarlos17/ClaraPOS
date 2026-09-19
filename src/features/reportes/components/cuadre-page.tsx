@@ -15,6 +15,7 @@ import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
 import { CuadreMetodoModal } from './cuadre-metodo-modal'
 import { CuadreTotalesFiscales } from './cuadre-totales-fiscales'
+import { CuadreDevolucionesNeto } from './cuadre-devoluciones-neto'
 import { CuadreConteoFisico } from './cuadre-conteo-fisico'
 import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
@@ -34,6 +35,7 @@ import {
   usePagosPorMetodo,
   useMovimientosManualesDia,
   useTotalesFiscales,
+  useIvaPorAlicuotaNC,
   useVentasFinancieras,
   useMovimientosEfectivoCaja,
   useCobranzasCxCCaja,
@@ -191,6 +193,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { metodos: todosMetodos } = usePagosPorMetodo(activeFilters)
   const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
+  // Reutiliza el mismo hook que Card 1 (useIvaPorAlicuotaNC) para el total
+  // global de Notas de Credito de la sesion — no es una query divergente.
+  const { totalNcrTotalUsd: totalNcrSesionUsd, totalNcrTotalBs: totalNcrSesionBs } = useIvaPorAlicuotaNC(activeFilters)
   const { contadoUsd, contadoBs, creditoUsd, creditoBs } = useResumenTiposVenta(activeFilters)
   const { propinaBs, propinaUsd } = usePropinasDelDia(activeFilters)
   const { anticipoUsd, anticipoBsNativo } = useAnticiposDelDia(activeFilters)
@@ -742,6 +747,18 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                   </div>
                 )
               })()}
+
+              <div className="border-t pt-2" />
+
+              {/* Notas de Credito (Devoluciones) — linea unica global + Neto de sesion.
+                  Reutiliza useIvaPorAlicuotaNC (mismo hook que Card 1), a tasa HISTORICA
+                  de cada NC. Ver engram sdd/nc-cuadre/card2-diseno. */}
+              <CuadreDevolucionesNeto
+                totalFacturadoUsd={totalesFiscales.totalVentasUsd + totalesFiscales.totalIgtfUsd}
+                totalFacturadoBs={totalesFiscales.totalVentasBs + totalesFiscales.totalIgtfBs}
+                totalNcrUsd={totalNcrSesionUsd}
+                totalNcrBs={totalNcrSesionBs}
+              />
 
               {/* OCULTO (fix/cuadre-ocultar-neto-esperado): "Diferencial Cambiario" y
                   "Total Caja Neto Esperado" se ocultan por decision de negocio.

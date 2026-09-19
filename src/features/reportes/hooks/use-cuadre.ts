@@ -1218,6 +1218,78 @@ export function useIvaPorAlicuota(filters: CuadreFilters | null) {
   return { alicuotas: items, isLoading }
 }
 
+// ─── IVA por Alicuota — Notas de Credito (Devoluciones) ─────
+// Espejo estructural de useIvaPorAlicuota, sobre notas_credito_det JOIN
+// notas_credito. Escopeado POR SESION via buildCuadreWhere(filters, empresaId, 'nc')
+// (notas_credito SI tiene sesion_caja_id propio, a diferencia de ventas_det).
+// Montos SIEMPRE a la tasa HISTORICA de cada NC — subtotal_bs/total_bs ya
+// vienen persistidos a esa tasa desde la creacion de la NC, nunca se
+// recalculan aqui con una tasa "actual"/promedio.
+
+export function useIvaPorAlicuotaNC(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'nc') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    `SELECT
+       CAST(ncd.impuesto_pct AS REAL) as impuesto_pct,
+       COALESCE(SUM(CAST(ncd.subtotal_usd AS REAL)), 0) as base_usd,
+       COALESCE(SUM(CAST(ncd.subtotal_bs AS REAL)), 0) as base_bs,
+       COALESCE(SUM(CAST(ncd.subtotal_usd AS REAL) * CAST(ncd.impuesto_pct AS REAL) / 100), 0) as monto_iva,
+       COALESCE(SUM(CAST(ncd.subtotal_bs AS REAL) * CAST(ncd.impuesto_pct AS REAL) / 100), 0) as monto_iva_bs
+     FROM notas_credito_det ncd
+     JOIN notas_credito nc ON ncd.nota_credito_id = nc.id
+     WHERE ${where}
+       AND ncd.tipo_impuesto != 'Exento'
+       AND CAST(ncd.impuesto_pct AS REAL) > 0
+     GROUP BY ncd.impuesto_pct
+     ORDER BY ncd.impuesto_pct DESC`,
+    params
+  )
+
+  const alicuotas: IvaAlicuota[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    impuestoPct: Number(row.impuesto_pct ?? 0),
+    baseUsd: Number(Number(row.base_usd ?? 0).toFixed(2)),
+    baseBs: Number(Number(row.base_bs ?? 0).toFixed(2)),
+    montoIvaUsd: Number(Number(row.monto_iva ?? 0).toFixed(2)),
+    montoIvaBs: Number(Number(row.monto_iva_bs ?? 0).toFixed(2)),
+  }))
+
+  // Exento + total global de NC — agregado a nivel de header (mismo patron
+  // que el exento de useTotalesFiscales), reutiliza el mismo where/params
+  // ('nc' es el alias tanto del JOIN de arriba como del FROM de abajo).
+  const { data: dataHeader, isLoading: loadingHeader } = useQuery(
+    `SELECT
+       COALESCE(SUM(CAST(total_exento_usd AS REAL)), 0) as total_exento,
+       COALESCE(SUM(CAST(total_exento_usd AS REAL) * CAST(tasa_historica AS REAL)), 0) as total_exento_bs,
+       COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_nc,
+       COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_nc_bs
+     FROM notas_credito nc
+     WHERE ${where}`,
+    params
+  )
+
+  const headerRow = (dataHeader?.[0] ?? {}) as {
+    total_exento: number
+    total_exento_bs: number
+    total_nc: number
+    total_nc_bs: number
+  }
+
+  return {
+    alicuotas,
+    totalNcrExentoUsd: Number(Number(headerRow.total_exento ?? 0).toFixed(2)),
+    totalNcrExentoBs: Number(Number(headerRow.total_exento_bs ?? 0).toFixed(2)),
+    totalNcrTotalUsd: Number(Number(headerRow.total_nc ?? 0).toFixed(2)),
+    totalNcrTotalBs: Number(Number(headerRow.total_nc_bs ?? 0).toFixed(2)),
+    isLoading: isLoading || loadingHeader,
+  }
+}
+
 // ─── Pagos Detalle Completo ────────────────────────────────
 
 export interface PagoDetalleCompleto {
