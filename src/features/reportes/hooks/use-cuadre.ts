@@ -1266,6 +1266,8 @@ export function useIvaPorAlicuotaNC(filters: CuadreFilters | null) {
     `SELECT
        COALESCE(SUM(CAST(total_exento_usd AS REAL)), 0) as total_exento,
        COALESCE(SUM(CAST(total_exento_usd AS REAL) * CAST(tasa_historica AS REAL)), 0) as total_exento_bs,
+       COALESCE(SUM(CAST(total_base_usd AS REAL)), 0) as total_base,
+       COALESCE(SUM(CAST(total_base_usd AS REAL) * CAST(tasa_historica AS REAL)), 0) as total_base_bs,
        COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_nc,
        COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_nc_bs
      FROM notas_credito nc
@@ -1276,6 +1278,8 @@ export function useIvaPorAlicuotaNC(filters: CuadreFilters | null) {
   const headerRow = (dataHeader?.[0] ?? {}) as {
     total_exento: number
     total_exento_bs: number
+    total_base: number
+    total_base_bs: number
     total_nc: number
     total_nc_bs: number
   }
@@ -1284,6 +1288,8 @@ export function useIvaPorAlicuotaNC(filters: CuadreFilters | null) {
     alicuotas,
     totalNcrExentoUsd: Number(Number(headerRow.total_exento ?? 0).toFixed(2)),
     totalNcrExentoBs: Number(Number(headerRow.total_exento_bs ?? 0).toFixed(2)),
+    totalNcrBaseUsd: Number(Number(headerRow.total_base ?? 0).toFixed(2)),
+    totalNcrBaseBs: Number(Number(headerRow.total_base_bs ?? 0).toFixed(2)),
     totalNcrTotalUsd: Number(Number(headerRow.total_nc ?? 0).toFixed(2)),
     totalNcrTotalBs: Number(Number(headerRow.total_nc_bs ?? 0).toFixed(2)),
     isLoading: isLoading || loadingHeader,

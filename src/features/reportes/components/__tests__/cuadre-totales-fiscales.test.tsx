@@ -1,10 +1,14 @@
-// CuadreTotalesFiscales (Card 1 "Resumen Fiscal") — bloque nuevo "Notas de
-// Credito (Devoluciones)" espejo dinamico del bloque de Ventas (una fila
-// Base+IVA por alicuota real presente + Exento condicional), mas fila
-// full-width "TOTAL FACTURADO NETO" = Ventas - Devoluciones. Ver engram
-// sdd/nc-cuadre/card1-diseno. Mock pattern: mockea los 3 hooks de
-// '../../hooks/use-cuadre' directamente (mismo patron que
-// ventas-consultas-modal.test.tsx para componentes de reportes).
+// CuadreTotalesFiscales (Card 1 "Resumen Fiscal") — grilla UNIFICADA y
+// alineada por concepto: cada fila fiscal (Subtotal, Exento, Base+IVA por
+// alicuota, Total) muestra el valor de Ventas y el valor de Devoluciones (NC)
+// EN LA MISMA fila, en vez de dos listas independientes que podian
+// desalinearse cuando las alicuotas de cada lado no coincidian. La logica de
+// union/orden/celdas-vacias vive en la funcion pura `buildFilasAlineadas`
+// (ver cuadre-totales-fiscales-model.test.ts) — este archivo prueba el
+// WIRING: que el componente arma el input correcto para esa funcion y pinta
+// el resultado (labels, valores Ventas SIN cambios, celdas vacias con "—").
+// Ver engram sdd/nc-cuadre/card1-diseno. Mock pattern: mockea los 3 hooks de
+// '../../hooks/use-cuadre' directamente (mismo patron que antes).
 vi.mock('../../hooks/use-cuadre', () => ({
   useTotalesFiscales: vi.fn(),
   useIvaPorAlicuota: vi.fn(),
@@ -42,6 +46,8 @@ function setup(opts: {
   alicuotasNc?: Array<{ impuestoPct: number; baseUsd: number; baseBs: number; montoIvaUsd: number; montoIvaBs: number }>
   totalNcrExentoUsd?: number
   totalNcrExentoBs?: number
+  totalNcrBaseUsd?: number
+  totalNcrBaseBs?: number
   totalNcrTotalUsd?: number
   totalNcrTotalBs?: number
 }) {
@@ -57,27 +63,25 @@ function setup(opts: {
     alicuotas: opts.alicuotasNc ?? [],
     totalNcrExentoUsd: opts.totalNcrExentoUsd ?? 0,
     totalNcrExentoBs: opts.totalNcrExentoBs ?? 0,
+    totalNcrBaseUsd: opts.totalNcrBaseUsd ?? 0,
+    totalNcrBaseBs: opts.totalNcrBaseBs ?? 0,
     totalNcrTotalUsd: opts.totalNcrTotalUsd ?? 0,
     totalNcrTotalBs: opts.totalNcrTotalBs ?? 0,
     isLoading: false,
-  })
+  } as never)
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
 })
 
-/** Scopes queries to the Devoluciones (NC) column — avoids collisions with
- * identical labels (e.g. "Base imponible 16%") that can also appear in the
- * Ventas column when both share an aliquot. */
-function getDevolucionesColumn(): HTMLElement {
-  const heading = screen.getByText('Notas de Crédito (Devoluciones)')
-  return heading.parentElement as HTMLElement
-}
-
-describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 1)', () => {
-  it('renderiza una fila Base+IVA por CADA alicuota de NC presente (16% y 8% simultaneas)', () => {
+describe('CuadreTotalesFiscales — grilla unificada por concepto (nc-cuadre-sesion, Card 1)', () => {
+  it('renderiza una fila Base+IVA por CADA alicuota de NC presente (16% y 8% simultaneas), alineada con Ventas', () => {
     setup({
+      alicuotasVentas: [
+        { impuestoPct: 16, baseUsd: 150, baseBs: 6300, montoIvaUsd: 24, montoIvaBs: 1008 },
+        { impuestoPct: 8, baseUsd: 50, baseBs: 2100, montoIvaUsd: 4, montoIvaBs: 168 },
+      ],
       alicuotasNc: [
         { impuestoPct: 16, baseUsd: 100, baseBs: 4200, montoIvaUsd: 16, montoIvaBs: 672 },
         { impuestoPct: 8, baseUsd: 20, baseBs: 840, montoIvaUsd: 1.6, montoIvaBs: 67.2 },
@@ -88,15 +92,18 @@ describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 
 
     render(<CuadreTotalesFiscales filters={filters} />)
 
-    const col = getDevolucionesColumn()
-    expect(within(col).getByText('Base imponible 16%', { exact: false })).toBeInTheDocument()
-    expect(within(col).getByText('IVA 16%', { exact: false })).toBeInTheDocument()
-    expect(within(col).getByText('Base imponible 8%', { exact: false })).toBeInTheDocument()
-    expect(within(col).getByText('IVA 8%', { exact: false })).toBeInTheDocument()
+    expect(screen.getAllByText('Base imponible 16%', { exact: false })).toHaveLength(2)
+    expect(screen.getAllByText('IVA 16%', { exact: false })).toHaveLength(2)
+    expect(screen.getAllByText('Base imponible 8%', { exact: false })).toHaveLength(2)
+    expect(screen.getAllByText('IVA 8%', { exact: false })).toHaveLength(2)
   })
 
-  it('triangulacion: solo alicuota 8% en NC (sin 16%) — prueba group-by dinamico real, no hardcodeado', () => {
+  it('triangulacion: solo alicuota 8% en NC (Ventas tiene 16% y 8%) — la fila 16% deja la celda NC vacia ("—")', () => {
     setup({
+      alicuotasVentas: [
+        { impuestoPct: 16, baseUsd: 150, baseBs: 6300, montoIvaUsd: 24, montoIvaBs: 1008 },
+        { impuestoPct: 8, baseUsd: 50, baseBs: 2100, montoIvaUsd: 4, montoIvaBs: 168 },
+      ],
       alicuotasNc: [{ impuestoPct: 8, baseUsd: 20, baseBs: 840, montoIvaUsd: 1.6, montoIvaBs: 67.2 }],
       totalNcrTotalUsd: 21.6,
       totalNcrTotalBs: 907.2,
@@ -104,13 +111,15 @@ describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 
 
     render(<CuadreTotalesFiscales filters={filters} />)
 
-    const col = getDevolucionesColumn()
-    expect(within(col).getByText('Base imponible 8%', { exact: false })).toBeInTheDocument()
-    expect(within(col).queryByText('Base imponible 16%', { exact: false })).not.toBeInTheDocument()
+    // Fila "Base imponible 16%" existe una sola vez (solo del lado Ventas) —
+    // la celda de Devoluciones para esa fila es un "—", no un segundo label.
+    expect(screen.getAllByText('Base imponible 16%', { exact: false })).toHaveLength(1)
+    expect(screen.getAllByText('Base imponible 8%', { exact: false })).toHaveLength(2)
   })
 
-  it('fila Exento de NC es condicional: NO aparece cuando totalNcrExentoUsd es 0', () => {
+  it('fila Exento: NO aparece cuando NINGUN lado tiene monto exento > 0', () => {
     setup({
+      totales: { totalExentoUsd: 0 },
       alicuotasNc: [{ impuestoPct: 16, baseUsd: 100, baseBs: 4200, montoIvaUsd: 16, montoIvaBs: 672 }],
       totalNcrExentoUsd: 0,
       totalNcrTotalUsd: 116,
@@ -119,13 +128,12 @@ describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 
 
     render(<CuadreTotalesFiscales filters={filters} />)
 
-    // La unica fila "Exento" visible debe ser la de Ventas (totalExentoUsd=0 en
-    // este fixture tambien, asi que no deberia haber NINGUNA fila Exento)
     expect(screen.queryByText('Exento', { exact: true })).not.toBeInTheDocument()
   })
 
-  it('fila Exento de NC aparece cuando totalNcrExentoUsd > 0', () => {
+  it('fila Exento aparece cuando SOLO Devoluciones tiene exento > 0 — celda Ventas queda vacia ("—")', () => {
     setup({
+      totales: { totalExentoUsd: 0 },
       alicuotasNc: [{ impuestoPct: 16, baseUsd: 100, baseBs: 4200, montoIvaUsd: 16, montoIvaBs: 672 }],
       totalNcrExentoUsd: 50,
       totalNcrExentoBs: 2100,
@@ -135,7 +143,27 @@ describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 
 
     render(<CuadreTotalesFiscales filters={filters} />)
 
-    expect(screen.getByText('Exento', { exact: true })).toBeInTheDocument()
+    // Solo una fila "Exento" (una sola aparicion del label) porque el lado
+    // Ventas esta vacio para ese concepto.
+    expect(screen.getAllByText('Exento', { exact: true })).toHaveLength(1)
+  })
+
+  it('Subtotal (antes de impuestos): Devoluciones = base NC + exento NC (nuevo campo totalNcrBaseUsd)', () => {
+    setup({
+      totales: { totalExentoUsd: 0, baseImponibleUsd: 200, baseImponibleBs: 8400, totalDescuentoUsd: 0 },
+      alicuotasNc: [{ impuestoPct: 16, baseUsd: 100, baseBs: 4200, montoIvaUsd: 16, montoIvaBs: 672 }],
+      totalNcrExentoUsd: 30, totalNcrExentoBs: 1260,
+      totalNcrBaseUsd: 100, totalNcrBaseBs: 4200,
+      totalNcrTotalUsd: 146, totalNcrTotalBs: 6132,
+    })
+
+    render(<CuadreTotalesFiscales filters={filters} />)
+
+    const subtotalLabels = screen.getAllByText('Subtotal (antes de impuestos)', { exact: false })
+    expect(subtotalLabels).toHaveLength(2)
+    // Fila Devoluciones del subtotal = 100 (base NC) + 30 (exento NC) = 130
+    const ncSubtotalRow = subtotalLabels[1].closest('div')
+    expect(within(ncSubtotalRow as HTMLElement).getByText('$130.00', { exact: false })).toBeInTheDocument()
   })
 
   it('TOTAL FACTURADO NETO = Ventas (totalVentasUsd) - Devoluciones (totalNcrTotalUsd), formateado en USD y Bs', () => {
@@ -148,16 +176,13 @@ describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 
 
     render(<CuadreTotalesFiscales filters={filters} />)
 
-    // Scope a la fila del Neto (por label) para no chocar con otros $ iguales
-    // en la columna Ventas — evita falsos positivos por coincidencia numerica.
     const netoLabel = screen.getByText('TOTAL FACTURADO NETO', { exact: false })
     const netoRow = netoLabel.parentElement as HTMLElement
-    // Neto USD = 232 - 32 = 200 -> $200.00; Neto Bs = 9744 - 1344 = 8400 -> Bs. 8.400,00
     expect(within(netoRow).getByText('$200.00', { exact: false })).toBeInTheDocument()
     expect(within(netoRow).getByText(/Bs\.\s*8\.400,00/)).toBeInTheDocument()
   })
 
-  it('el campo Ventas "Total facturado" (totalVentasUsd) NO cambia por agregar el bloque de NC — cero ripple', () => {
+  it('el campo Ventas "Total facturado" (totalVentasUsd) NO cambia por el bloque de NC — cero ripple en el calculo', () => {
     setup({
       totales: { totalVentasUsd: 232, totalVentasBs: 9744 },
       alicuotasNc: [{ impuestoPct: 16, baseUsd: 100, baseBs: 4200, montoIvaUsd: 16, montoIvaBs: 672 }],
@@ -167,14 +192,32 @@ describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 
 
     render(<CuadreTotalesFiscales filters={filters} />)
 
-    // "Total facturado" (fila Ventas, destacada) sigue mostrando el valor CRUDO
-    // de totalVentasUsd/Bs sin restar NC — el neteo solo ocurre en la fila NETO.
     expect(screen.getByText('Total facturado', { exact: true })).toBeInTheDocument()
     expect(screen.getByText('$232.00', { exact: false })).toBeInTheDocument()
+    expect(screen.getByText('Total Notas de Crédito', { exact: true })).toBeInTheDocument()
   })
 
-  it('orden en el DOM: Ventas -> Devoluciones -> Neto (apilado, sin depender de clases CSS)', () => {
+  it('fila total: Devoluciones queda vacia ("—", sin label "Total Notas de Credito") cuando NO hay devoluciones en la sesion', () => {
     setup({
+      totales: { totalVentasUsd: 232, totalVentasBs: 9744 },
+      alicuotasNc: [],
+      totalNcrTotalUsd: 0,
+      totalNcrTotalBs: 0,
+    })
+
+    render(<CuadreTotalesFiscales filters={filters} />)
+
+    expect(screen.getByText('Total facturado', { exact: true })).toBeInTheDocument()
+    expect(screen.queryByText('Total Notas de Crédito', { exact: true })).not.toBeInTheDocument()
+  })
+
+  it('orden en el DOM: Subtotal -> Exento -> alicuotas ascendente -> Total (grilla unica, no dos columnas independientes)', () => {
+    setup({
+      totales: { totalExentoUsd: 40, totalExentoBs: 1680 },
+      alicuotasVentas: [
+        { impuestoPct: 16, baseUsd: 150, baseBs: 6300, montoIvaUsd: 24, montoIvaBs: 1008 },
+        { impuestoPct: 8, baseUsd: 50, baseBs: 2100, montoIvaUsd: 4, montoIvaBs: 168 },
+      ],
       alicuotasNc: [{ impuestoPct: 16, baseUsd: 100, baseBs: 4200, montoIvaUsd: 16, montoIvaBs: 672 }],
       totalNcrTotalUsd: 116,
       totalNcrTotalBs: 4872,
@@ -183,12 +226,18 @@ describe('CuadreTotalesFiscales — bloque Devoluciones (nc-cuadre-sesion, Card 
     render(<CuadreTotalesFiscales filters={filters} />)
 
     const text = document.body.textContent ?? ''
-    const idxVentasTotal = text.indexOf('Total facturado')
-    const idxDevoluciones = text.indexOf('Notas de Crédito (Devoluciones)')
+    const idxSubtotal = text.indexOf('Subtotal (antes de impuestos)')
+    const idxExento = text.indexOf('Exento')
+    const idxBase8 = text.indexOf('Base imponible 8%')
+    const idxBase16 = text.indexOf('Base imponible 16%')
+    const idxTotal = text.indexOf('Total facturado')
     const idxNeto = text.indexOf('TOTAL FACTURADO NETO')
 
-    expect(idxVentasTotal).toBeGreaterThan(-1)
-    expect(idxDevoluciones).toBeGreaterThan(idxVentasTotal)
-    expect(idxNeto).toBeGreaterThan(idxDevoluciones)
+    expect(idxSubtotal).toBeGreaterThan(-1)
+    expect(idxExento).toBeGreaterThan(idxSubtotal)
+    expect(idxBase8).toBeGreaterThan(idxExento)
+    expect(idxBase16).toBeGreaterThan(idxBase8)
+    expect(idxTotal).toBeGreaterThan(idxBase16)
+    expect(idxNeto).toBeGreaterThan(idxTotal)
   })
 })

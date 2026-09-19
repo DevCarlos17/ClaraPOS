@@ -146,6 +146,37 @@ describe('useIvaPorAlicuotaNC — Card 1 Resumen Fiscal, bloque Devoluciones (nc
     expect(result.current.totalNcrExentoBs).toBe(0)
   })
 
+  it('totalNcrBaseUsd/Bs: agregado de base imponible NC (nuevo campo) — insumo para el subtotal antes de impuestos de Devoluciones', () => {
+    const filters: CuadreFilters = { fecha: '2026-09-18', cajaId: 'caja-1', sesionCajaIds: ['sesion-1'] }
+    setup({
+      alicuotas: [{ impuesto_pct: 16, base_usd: 100, base_bs: 4200, monto_iva: 16, monto_iva_bs: 672 }],
+      header: { total_exento: 0, total_exento_bs: 0, total_nc: 116, total_nc_bs: 4872, total_base: 100, total_base_bs: 4200 },
+    })
+
+    const { result } = renderHook(() => useIvaPorAlicuotaNC(filters))
+
+    expect(result.current.totalNcrBaseUsd).toBe(100)
+    expect(result.current.totalNcrBaseBs).toBe(4200)
+  })
+
+  it('triangulacion totalNcrBaseUsd/Bs: monto distinto (base+exento distintos de 0 y del total) — prueba que no es un alias de otro campo', () => {
+    const filters: CuadreFilters = { fecha: '2026-09-18', cajaId: 'caja-1', sesionCajaIds: ['sesion-1'] }
+    setup({
+      alicuotas: [{ impuesto_pct: 8, base_usd: 30, base_bs: 1260, monto_iva: 2.4, monto_iva_bs: 100.8 }],
+      header: { total_exento: 50, total_exento_bs: 2100, total_nc: 82.4, total_nc_bs: 3460.8, total_base: 30, total_base_bs: 1260 },
+    })
+
+    const { result } = renderHook(() => useIvaPorAlicuotaNC(filters))
+
+    expect(result.current.totalNcrBaseUsd).toBe(30)
+    expect(result.current.totalNcrBaseBs).toBe(1260)
+
+    const headerCall = mockedUseQuery.mock.calls.find(
+      ([sql]) => (sql as string).includes('FROM notas_credito') && !(sql as string).includes('FROM notas_credito_det')
+    )
+    expect(headerCall?.[0]).toContain('total_base_usd')
+  })
+
   it('totalNcrTotalUsd/Bs: total global de NC de la sesion (para el Neto de Card 1 y Card 2)', () => {
     const filters: CuadreFilters = { fecha: '2026-09-18', cajaId: 'caja-1', sesionCajaIds: ['sesion-1'] }
     setup({

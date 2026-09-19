@@ -1,6 +1,6 @@
-import { Fragment } from 'react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { useTotalesFiscales, useIvaPorAlicuota, useIvaPorAlicuotaNC, type CuadreFilters } from '../hooks/use-cuadre'
+import { buildFilasAlineadas, type CeldaConcepto } from './cuadre-totales-fiscales-model'
 
 interface CuadreTotalesFiscalesProps {
   filters: CuadreFilters
@@ -31,6 +31,20 @@ function Row({ label, usd, bs, destacado = false, negativo = false }: {
   )
 }
 
+/** Celda de una columna (Ventas | Devoluciones) dentro de una fila alineada.
+ * Si el concepto no existe de ese lado, pinta el dash de "sin dato" (mismo
+ * patron usado en el resto de la app: `—` + `text-muted-foreground`). */
+function CeldaAlineada({ celda }: { celda: CeldaConcepto | null }) {
+  if (!celda) {
+    return (
+      <div className="flex items-center justify-between py-1.5 px-2 rounded">
+        <span className="text-sm text-muted-foreground/50">—</span>
+      </div>
+    )
+  }
+  return <Row label={celda.label} usd={celda.usd} bs={celda.bs} negativo={celda.negativo} destacado={celda.destacado} />
+}
+
 export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
   const { totales, isLoading } = useTotalesFiscales(filters)
   const { alicuotas, isLoading: loadingAlicuotas } = useIvaPorAlicuota(filters)
@@ -38,6 +52,8 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
     alicuotas: alicuotasNc,
     totalNcrExentoUsd,
     totalNcrExentoBs,
+    totalNcrBaseUsd,
+    totalNcrBaseBs,
     totalNcrTotalUsd,
     totalNcrTotalBs,
     isLoading: loadingNc,
@@ -47,17 +63,49 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
   const hayDevoluciones = totalNcrTotalUsd > 0.001
 
   // Bruto comercial = base + exento + descuento (valor antes de cualquier reducción ni impuesto)
+  // — cálculo SIN CAMBIOS (ver engram sdd/nc-cuadre/subtotal-antes-impuestos).
   const totalAntesImpuestosUsd = totales.baseImponibleUsd + totales.totalExentoUsd + totales.totalDescuentoUsd
   const totalAntesImpuestosBs  = totales.baseImponibleBs  + totales.totalExentoBs  + totales.totalDescuentoBs
 
-  // Sub total = base + exento (neto de descuento, antes de IVA)
+  // Sub total = base + exento (neto de descuento, antes de IVA) — sin cambios.
   const subTotalUsd = totales.baseImponibleUsd + totales.totalExentoUsd
   const subTotalBs  = totales.baseImponibleBs  + totales.totalExentoBs
+
+  // Subtotal antes de impuestos del lado Devoluciones = base NC + exento NC
+  // (totalNcrBaseUsd es el campo nuevo agregado a useIvaPorAlicuotaNC).
+  const ncSubtotalUsd = totalNcrBaseUsd + totalNcrExentoUsd
+  const ncSubtotalBs  = totalNcrBaseBs  + totalNcrExentoBs
 
   // Total facturado NETO = Ventas (totalVentasUsd/Bs) - Devoluciones de esta sesión
   // (totalNcrTotalUsd/Bs, a la tasa HISTÓRICA de cada NC — ver useIvaPorAlicuotaNC).
   const totalVentasNetasUsd = totales.totalVentasUsd - totalNcrTotalUsd
   const totalVentasNetasBs  = totales.totalVentasBs  - totalNcrTotalBs
+
+  const filas = buildFilasAlineadas({
+    totalAntesImpuestosUsd,
+    totalAntesImpuestosBs,
+    hayDescuento,
+    totalDescuentoUsd: totales.totalDescuentoUsd,
+    totalDescuentoBs: totales.totalDescuentoBs,
+    subTotalUsd,
+    subTotalBs,
+    totalExentoVentasUsd: totales.totalExentoUsd,
+    totalExentoVentasBs: totales.totalExentoBs,
+    alicuotasVentas: alicuotas,
+    totalVentasUsd: totales.totalVentasUsd,
+    totalVentasBs: totales.totalVentasBs,
+    totalIgtfUsd: totales.totalIgtfUsd,
+    totalIgtfBs: totales.totalIgtfBs,
+
+    hayDevoluciones,
+    ncSubtotalUsd,
+    ncSubtotalBs,
+    totalNcrExentoUsd,
+    totalNcrExentoBs,
+    alicuotasNc,
+    totalNcrTotalUsd,
+    totalNcrTotalBs,
+  })
 
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
@@ -71,146 +119,27 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-4">
+          {/* ── Cabecera de columnas (Ventas | Devoluciones) — solo desktop ── */}
+          <div className="hidden lg:grid lg:grid-cols-2 gap-x-6 px-2">
+            <span className="text-xs font-semibold text-muted-foreground">Ventas</span>
+            <span className="text-xs font-semibold text-muted-foreground">Notas de Crédito (Devoluciones)</span>
+          </div>
 
-            {/* ── Columna Ventas (sin cambios de cálculo) ─────────── */}
-            <div className="space-y-0.5">
-
-              {/* 1. Total facturado antes de impuestos */}
-              <Row
-                label="Total facturado (antes de impuestos)"
-                usd={totalAntesImpuestosUsd}
-                bs={totalAntesImpuestosBs}
-              />
-
-              {/* 2. Descuentos comerciales — solo si hay */}
-              {hayDescuento && (
-                <Row
-                  label="Descuentos comerciales"
-                  usd={totales.totalDescuentoUsd}
-                  bs={totales.totalDescuentoBs}
-                  negativo
-                />
-              )}
-
-              {/* 3. Sub total — solo cuando hay descuento (evita repetir el mismo número) */}
-              {hayDescuento && (
-                <Row
-                  label="Sub total"
-                  usd={subTotalUsd}
-                  bs={subTotalBs}
-                  destacado
-                />
-              )}
-
-              <div className="my-1 border-t" />
-
-              {/* 4. Exento — solo si hay artículos exentos */}
-              {totales.totalExentoUsd > 0.001 && (
-                <Row
-                  label="Exento"
-                  usd={totales.totalExentoUsd}
-                  bs={totales.totalExentoBs}
-                />
-              )}
-
-              {/* 5+6. Base imponible e IVA por alícuota — dinámico */}
-              {alicuotas.map((a) => (
-                <Fragment key={a.impuestoPct}>
-                  <Row
-                    label={`Base imponible ${a.impuestoPct}%`}
-                    usd={a.baseUsd}
-                    bs={a.baseBs}
-                  />
-                  <Row
-                    label={`IVA ${a.impuestoPct}%`}
-                    usd={a.montoIvaUsd}
-                    bs={a.montoIvaBs}
-                  />
-                </Fragment>
-              ))}
-
-              <div className="my-1 border-t" />
-
-              {/* 7. Total facturado final */}
-              <Row
-                label="Total facturado"
-                usd={totales.totalVentasUsd}
-                bs={totales.totalVentasBs}
-                destacado
-              />
-
-              {/* IGTF — solo si aplica */}
-              {totales.totalIgtfUsd > 0.001 && (
-                <>
-                  <Row
-                    label="IGTF"
-                    usd={totales.totalIgtfUsd}
-                    bs={totales.totalIgtfBs}
-                  />
-                  <div className="my-1 border-t" />
-                  <Row
-                    label="Total General (c/IGTF)"
-                    usd={totales.totalVentasUsd + totales.totalIgtfUsd}
-                    bs={totales.totalVentasBs + totales.totalIgtfBs}
-                    destacado
-                  />
-                </>
-              )}
-            </div>
-
-            {/* ── Columna Devoluciones (Notas de Crédito) — dinámico ── */}
-            <div className="space-y-0.5">
-              <h4 className="text-xs font-semibold text-muted-foreground mb-1">
-                Notas de Crédito (Devoluciones)
-              </h4>
-
-              {hayDevoluciones ? (
-                <>
-                  {/* Exento de NC — solo si hay */}
-                  {totalNcrExentoUsd > 0.001 && (
-                    <Row
-                      label="Exento"
-                      usd={totalNcrExentoUsd}
-                      bs={totalNcrExentoBs}
-                      negativo
-                    />
-                  )}
-
-                  {/* Base imponible e IVA por alícuota — dinámico, mismas alícuotas que Ventas */}
-                  {alicuotasNc.map((a) => (
-                    <Fragment key={a.impuestoPct}>
-                      <Row
-                        label={`Base imponible ${a.impuestoPct}%`}
-                        usd={a.baseUsd}
-                        bs={a.baseBs}
-                        negativo
-                      />
-                      <Row
-                        label={`IVA ${a.impuestoPct}%`}
-                        usd={a.montoIvaUsd}
-                        bs={a.montoIvaBs}
-                        negativo
-                      />
-                    </Fragment>
-                  ))}
-
-                  <div className="my-1 border-t" />
-
-                  <Row
-                    label="Total Notas de Crédito"
-                    usd={totalNcrTotalUsd}
-                    bs={totalNcrTotalBs}
-                    negativo
-                    destacado
-                  />
-                </>
-              ) : (
-                <p className="text-sm text-muted-foreground py-1.5 px-2">
-                  Sin notas de crédito en esta sesión
-                </p>
-              )}
-            </div>
+          {/* ── Grilla unificada: una fila por concepto fiscal, Ventas y ──
+              Devoluciones alineados en la MISMA fila (union dinámica de
+              conceptos — ver buildFilasAlineadas). En mobile cada fila
+              colapsa a 1 columna, quedando Ventas y Devoluciones apilados
+              pero agrupados dentro del mismo bloque con separador. */}
+          <div className="space-y-0.5">
+            {filas.map((fila) => (
+              <div
+                key={fila.key}
+                className="grid grid-cols-1 lg:grid-cols-2 gap-x-6 gap-y-0.5 border-b border-border/40 pb-1 lg:border-b-0 lg:pb-0 last:border-0"
+              >
+                <CeldaAlineada celda={fila.ventas} />
+                <CeldaAlineada celda={fila.devoluciones} />
+              </div>
+            ))}
           </div>
 
           {/* ── Total facturado NETO — full-width, resultado de restar ── */}
