@@ -101,7 +101,7 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
 
   it('Scenario "Select Origen habilita Tesoreria y Sesion de caja activa, ambas seleccionables" (Slice 3, nc-cuadre-sesion-fase2): ninguna opcion queda deshabilitada ni dice "Proximamente"', () => {
     mockedUseSesionesActivas.mockReturnValue({
-      sesiones: [{ id: 'sesion-1', caja_nombre: 'Caja Principal' } as never],
+      sesiones: [{ id: 'sesion-1', caja_nombre: 'Caja Principal', usuario_apertura_nombre: null } as never],
       isLoading: false,
     })
     render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
@@ -115,6 +115,30 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     const opcionSesion = screen.getByRole('option', { name: /Caja Principal/i })
     expect(opcionSesion).toBeEnabled()
     expect(opcionSesion).not.toHaveTextContent(/Proximamente/i)
+  })
+
+  describe('Ajuste UX post-QA #1 (nc-admin-saldo-disponible-sesion): el nombre del usuario abre-sesion en el label de "Origen"', () => {
+    it('con usuario_apertura_nombre resuelto, la opcion de sesion lo incluye junto a caja/id', () => {
+      mockedUseSesionesActivas.mockReturnValue({
+        sesiones: [
+          { id: 'sesion-1', caja_nombre: 'Caja Principal', usuario_apertura_nombre: 'Maria Perez' } as never,
+        ],
+        isLoading: false,
+      })
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      expect(screen.getByRole('option', { name: /Caja Principal — Maria Perez/i })).toBeInTheDocument()
+    })
+
+    it('sin usuario_apertura_nombre (null, ej. usuario eliminado), la opcion NO deja un guion colgante', () => {
+      mockedUseSesionesActivas.mockReturnValue({
+        sesiones: [{ id: 'sesion-1', caja_nombre: 'Caja Principal', usuario_apertura_nombre: null } as never],
+        isLoading: false,
+      })
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      expect(screen.getByRole('option', { name: /^Sesion Caja Principal$/i })).toBeInTheDocument()
+    })
   })
 
   it('Scenario "Sin sesiones activas": Select Origen solo ofrece Tesoreria, sin opciones de sesion', () => {
@@ -132,6 +156,43 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     expect(cuentaSelect).toHaveTextContent('500.00')
     expect(cuentaSelect).toHaveTextContent('Caja Fuerte Principal')
     expect(cuentaSelect).toHaveTextContent('200.00')
+  })
+
+  describe('Ajuste UX post-QA #3 (Opcion A): tope de saldo disponible de CUENTA DE TESORERIA (antes sin validar)', () => {
+    it('escribir hasta el saldo de la cuenta se permite; un digito extra que lo superaria se rechaza', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      await user.type(montoInput, '500') // saldo_actual de banco-usd-1 = 500.00
+      expect(montoInput).toHaveValue(500)
+
+      await user.type(montoInput, '1')
+      expect(montoInput).toHaveValue(500) // rechaza el digito extra, nunca llega a 5001
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+    })
+
+    it('safety net: cambiar de Cuenta (a una con MENOS saldo) DESPUES de escribir un monto ya valido bloquea Confirmar y muestra el mensaje de cuenta de tesoreria, sin clampear el valor', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      const cuentaSelect = screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!
+      await user.selectOptions(cuentaSelect, 'banco-usd-1') // saldo_actual = 500.00
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      await user.type(montoInput, '300')
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+
+      await user.selectOptions(cuentaSelect, 'caja-1') // saldo_actual = 200.00 < 300 ya escrito
+
+      expect(montoInput).toHaveValue(300) // no se clampea el valor ya escrito
+      expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+      expect(montoInput).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText(/excede el saldo disponible de la cuenta de tesoreria/i)).toBeInTheDocument()
+
+      const montoContainer = montoInput.parentElement as HTMLElement
+      expect(within(montoContainer).getByText(/excede el saldo disponible de la cuenta de tesoreria/i)).toBeInTheDocument()
+    })
   })
 
   it('"+ Agregar cuenta" agrega una segunda linea de egreso al formulario', async () => {
@@ -157,15 +218,42 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     expect(screen.getByText(/\$40\.00 \/ Bs/)).toBeInTheDocument()
   })
 
-  it('submit deshabilitado cuando la suma de lineas excede el monto disponible de la NC', async () => {
-    const user = userEvent.setup()
-    render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+  describe('Ajuste UX post-QA #3 (Opcion A): tope de pendiente de la NC via rechazo de keystroke, no clamping', () => {
+    it('el input de Monto rechaza cualquier digito adicional que superaria el pendiente de la NC, quedando SIEMPRE en el ultimo valor valido', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
 
-    await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
-    await user.type(screen.getByLabelText(/monto/i), '150')
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      await user.type(montoInput, '100')
+      expect(montoInput).toHaveValue(100)
 
-    expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
-    expect(screen.getByText(/excede/i)).toBeInTheDocument()
+      await user.type(montoInput, '5')
+      expect(montoInput).toHaveValue(100) // el digito extra se rechaza, nunca llega a 1005
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+    })
+
+    it('safety net: si el pendiente de la NC baja (prop montoDisponibleUsd cambia) DESPUES de escribir un monto ya valido, Confirmar se bloquea y el mensaje aparece pegado al input — SIN clampear el valor ya escrito', async () => {
+      const user = userEvent.setup()
+      const { rerender } = render(
+        <RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />
+      )
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      await user.type(montoInput, '80')
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+
+      rerender(<RefundTesoreriaForm montoDisponibleUsd={50} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      expect(montoInput).toHaveValue(80) // no se clampea el valor ya escrito
+      expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+      expect(montoInput).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText(/excede el pendiente por reembolsar/i)).toBeInTheDocument()
+
+      const montoContainer = montoInput.parentElement as HTMLElement
+      expect(within(montoContainer).getByText(/excede el pendiente por reembolsar/i)).toBeInTheDocument()
+    })
   })
 
   it('confirmar con datos validos invoca onConfirm con un array EgresoTesoreriaLinea (via el gate de saldo a favor, porque 60 de 100 deja remanente)', async () => {
@@ -404,32 +492,58 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
         expect(cuentaSelect).toHaveTextContent('Efectivo Bs — Bs. 500,00 disponible')
       })
 
-      it('Scenario "Tope de saldo disponible": un monto MAYOR al saldo de la sesion deshabilita "Confirmar" y muestra el mensaje de exceso', async () => {
+      it('bajar el monto al limite exacto del saldo de sesion (monto === saldo) mantiene "Confirmar" habilitado (tope no-estricto)', async () => {
         const user = userEvent.setup()
         render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
 
         await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
         await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
-        await user.type(screen.getByLabelText(/^monto$/i), '600')
-
-        expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
-        expect(screen.getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
-      })
-
-      it('bajar el monto al limite exacto del saldo de sesion (monto === saldo) rehabilita "Confirmar"', async () => {
-        const user = userEvent.setup()
-        render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
-
-        await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
-        await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
-        await user.type(screen.getByLabelText(/^monto$/i), '600')
-        expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
-
-        await user.clear(screen.getByLabelText(/^monto$/i))
         await user.type(screen.getByLabelText(/^monto$/i), '500')
 
         expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
         expect(screen.queryByText(/excede el saldo disponible de la sesion/i)).not.toBeInTheDocument()
+      })
+
+      describe('Ajuste UX post-QA #3 (Opcion A): tope de saldo de sesion via rechazo de keystroke, no clamping', () => {
+        it('escribir hasta el saldo de sesion se permite; un digito extra que lo superaria se rechaza — Confirmar sigue habilitado en el tope exacto', async () => {
+          const user = userEvent.setup()
+          render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+          await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+          await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+          const montoInput = screen.getByLabelText(/^monto$/i)
+          await user.type(montoInput, '500')
+          expect(montoInput).toHaveValue(500)
+          expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+
+          await user.type(montoInput, '1')
+          expect(montoInput).toHaveValue(500) // rechaza el digito extra, nunca llega a 5001
+          expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+        })
+
+        it('safety net: si el saldo de sesion BAJA (query reactiva) DESPUES de escribir un monto ya valido, Confirmar se bloquea y el mensaje aparece pegado al input — SIN clampear el valor ya escrito', async () => {
+          const user = userEvent.setup()
+          const { rerender } = render(
+            <RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />
+          )
+
+          await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+          await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+          const montoInput = screen.getByLabelText(/^monto$/i)
+          await user.type(montoInput, '300')
+          expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+
+          mockedUseSaldoSesionCaja.mockReturnValue({ saldoUsd: 200, saldoBs: 200, isLoading: false })
+          rerender(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+          expect(montoInput).toHaveValue(300) // no se clampea el valor ya escrito
+          expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+          expect(montoInput).toHaveAttribute('aria-invalid', 'true')
+          expect(screen.getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
+
+          const montoContainer = montoInput.parentElement as HTMLElement
+          expect(within(montoContainer).getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
+        })
       })
     })
   })

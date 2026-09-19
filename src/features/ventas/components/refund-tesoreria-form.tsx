@@ -7,7 +7,15 @@ import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-teso
 import { useSesionesActivas, useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatSesionId } from '@/lib/format'
-import { nativoAUsd, calcularRemanenteRefund, excedeSaldoDisponible } from '@/features/ventas/utils/notas-credito-refund'
+import {
+  nativoAUsd,
+  calcularRemanenteRefund,
+  excedeSaldoDisponible,
+  pendienteRestanteLineaUsd,
+  usdACapNativo,
+  capMontoLinea,
+  permiteIngresoMonto,
+} from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
 import {
   AlertDialog,
@@ -111,6 +119,19 @@ function formatEnMonedaCuenta(monto: DecimalInput, monedaCodigo: string): string
   return monedaCodigo === 'VES' ? formatBs(monto) : formatUsd(monto)
 }
 
+/**
+ * Label de la opcion de sesion en el select "Origen" (Ajuste UX post-QA #1,
+ * nc-admin-saldo-disponible-sesion): incluye el nombre del usuario que abrio
+ * la sesion (`usuario_apertura_nombre`, ya resuelto por `useSesionesActivas`
+ * via JOIN a usuarios — cero query nueva) para desambiguar entre varias
+ * sesiones de la MISMA caja. `null` (usuario eliminado o sin resolver) cae
+ * al label previo sin guion colgante.
+ */
+function formatSesionOrigenLabel(s: ReturnType<typeof useSesionesActivas>['sesiones'][number]): string {
+  const base = s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)
+  return s.usuario_apertura_nombre ? `${base} — ${s.usuario_apertura_nombre}` : base
+}
+
 export function RefundTesoreriaForm({
   montoDisponibleUsd,
   tasaHistorica,
@@ -127,8 +148,16 @@ export function RefundTesoreriaForm({
   ])
   /** Gate de confirmacion extra (UX rework, nc-refund-tesoreria): se abre SOLO cuando confirmar dejaria un remanente > `TOLERANCIA_SAFC` como saldo a favor — un reembolso completo (remanente 0) nunca lo muestra. */
   const [mostrarConfirmSafc, setMostrarConfirmSafc] = useState(false)
-  /** Reportado por cada `LineaEgresoRefund` via `onExcedeSaldoSesionChange` (nc-admin-saldo-disponible-sesion, Design "Lift-state del guard vía callback + useEffect en el hijo") — el padre no puede calcular esto inline porque el saldo de sesion vive en un hook que solo el hijo puede invocar (Rules of Hooks). */
-  const [excedePorLinea, setExcedePorLinea] = useState<Record<string, boolean>>({})
+  /**
+   * Reportado por cada `LineaEgresoRefund` via `onExcedeTopeChange`
+   * (nc-admin-saldo-disponible-sesion, Design "Lift-state del guard vía
+   * callback + useEffect en el hijo"; ampliado en Ajuste UX post-QA #3 para
+   * cubrir TAMBIEN el tope de saldo de cuenta de Tesoreria y el tope de
+   * pendiente de la NC POR LINEA, no solo el saldo de sesion) — el padre no
+   * puede calcular el saldo de sesion inline porque vive en un hook que solo
+   * el hijo puede invocar (Rules of Hooks).
+   */
+  const [excedeTopePorLinea, setExcedeTopePorLinea] = useState<Record<string, boolean>>({})
 
   /** Metodos EFECTIVO activos por moneda (Design §1) — el `value` de cada opcion "Efectivo USD"/"Efectivo Bs" ES este `id`. Si no existe un metodo EFECTIVO activo para una moneda, esa opcion simplemente no se renderiza (mismo patron defensivo que INGRESO_MANUAL/EGRESO_MANUAL/AVANCE/PRESTAMO). */
   const efectivoUsd = metodosPago.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
@@ -154,8 +183,8 @@ export function RefundTesoreriaForm({
   }
 
   /** Guard de no-op (mismo patron que `rerender-functional-setstate`) — evita que el `useEffect` del hijo dispare un loop de renders cuando el valor reportado no cambio. */
-  const handleExcedeSaldoSesionChange = useCallback((key: string, excede: boolean) => {
-    setExcedePorLinea((prev) => (prev[key] === excede ? prev : { ...prev, [key]: excede }))
+  const handleExcedeTopeChange = useCallback((key: string, excede: boolean) => {
+    setExcedeTopePorLinea((prev) => (prev[key] === excede ? prev : { ...prev, [key]: excede }))
   }, [])
 
   const lineasUsd: Decimal[] = lineas.map((l) => {
@@ -186,10 +215,24 @@ export function RefundTesoreriaForm({
   })
 
   const lineasCompletas = lineas.every((l) => l.cuentaId && l.montoNativo && parseFloat(l.montoNativo) > 0)
-  /** true si CUALQUIER linea de Origen=Sesion excede el saldo de efectivo disponible de su sesion (nc-admin-saldo-disponible-sesion) — reportado por cada `LineaEgresoRefund` via `onExcedeSaldoSesionChange`. */
-  const excedeSaldoSesion = lineas.some((l) => excedePorLinea[l.key])
+  /**
+   * true si CUALQUIER linea excede su tope efectivo — pendiente de la NC
+   * POR LINEA o saldo disponible del origen elegido (sesion o cuenta de
+   * Tesoreria) — reportado por cada `LineaEgresoRefund` via
+   * `onExcedeTopeChange` (Ajuste UX post-QA #3: el tipeo ya queda
+   * bloqueado por `permiteIngresoMonto` en el hijo; esto es el safety net
+   * de gating que cubre estados alcanzados por edicion de OTROS campos,
+   * ej. cambiar de Cuenta o de otra linea DESPUES de escribir un monto ya
+   * valido).
+   */
+  const excedeAlgunTopePorLinea = lineas.some((l) => excedeTopePorLinea[l.key])
   const puedeConfirmar =
-    !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0) && !haySesionYaNoActiva && !excedeSaldoSesion
+    !loading &&
+    lineasCompletas &&
+    !excedeTope &&
+    sumaUsd.gt(0) &&
+    !haySesionYaNoActiva &&
+    !excedeAlgunTopePorLinea
 
   function handleConfirm() {
     if (!puedeConfirmar) return
@@ -239,20 +282,31 @@ export function RefundTesoreriaForm({
 
   return (
     <div className="space-y-3">
-      {lineas.map((linea) => (
-        <LineaEgresoRefund
-          key={linea.key}
-          linea={linea}
-          cuentas={cuentas}
-          sesionesActivas={sesionesActivas}
-          efectivoUsd={efectivoUsd}
-          efectivoBs={efectivoBs}
-          puedeQuitar={lineas.length > 1}
-          onActualizar={(patch) => actualizarLinea(linea.key, patch)}
-          onQuitar={() => quitarLinea(linea.key)}
-          onExcedeSaldoSesionChange={handleExcedeSaldoSesionChange}
-        />
-      ))}
+      {lineas.map((linea, idx) => {
+        // Ajuste UX post-QA #3 (Opcion A): pendiente restante de la NC para
+        // ESTA linea especifica = tope total menos lo que YA consumen las
+        // OTRAS lineas (nunca la suma total, que descontaria tambien el
+        // aporte propio de esta linea). Se recalcula en cada render —
+        // agregar/editar cualquier otra linea desplaza este tope en vivo.
+        const propiaUsd = lineasUsd[idx] ?? new Decimal(0)
+        const pendienteRestanteUsd = pendienteRestanteLineaUsd(montoDisponibleUsd, sumaUsd.minus(propiaUsd))
+        return (
+          <LineaEgresoRefund
+            key={linea.key}
+            linea={linea}
+            cuentas={cuentas}
+            sesionesActivas={sesionesActivas}
+            efectivoUsd={efectivoUsd}
+            efectivoBs={efectivoBs}
+            puedeQuitar={lineas.length > 1}
+            tasaHistorica={tasaHistorica}
+            pendienteRestanteUsd={pendienteRestanteUsd}
+            onActualizar={(patch) => actualizarLinea(linea.key, patch)}
+            onQuitar={() => quitarLinea(linea.key)}
+            onExcedeTopeChange={handleExcedeTopeChange}
+          />
+        )
+      })}
 
       <button
         type="button"
@@ -272,21 +326,16 @@ export function RefundTesoreriaForm({
         </span>
       </div>
 
-      {excedeTope && (
-        <p className="text-xs text-destructive">
-          El monto ingresado excede el saldo disponible de la nota de credito.
-        </p>
-      )}
+      {/* Ajuste UX post-QA #2: los mensajes de "excede pendiente"/"excede
+          saldo disponible del origen" se movieron a CADA linea, pegados al
+          input Monto que corresponde (ver `LineaEgresoRefund` mas abajo) —
+          `excedeTope` (NC-level, agregado) y `excedeAlgunTopePorLinea`
+          (por-linea) siguen gateando `puedeConfirmar` arriba, solo cambio
+          DONDE se muestra el texto explicativo. */}
 
       {haySesionYaNoActiva && (
         <p className="text-xs text-destructive">
           La sesion de caja elegida ya no esta activa. Selecciona otra sesion para continuar.
-        </p>
-      )}
-
-      {excedeSaldoSesion && (
-        <p className="text-xs text-destructive">
-          El monto ingresado excede el saldo disponible de la sesion de caja elegida.
         </p>
       )}
 
@@ -339,9 +388,14 @@ interface LineaEgresoRefundProps {
   efectivoUsd: ReturnType<typeof useMetodosPagoActivos>['metodos'][number] | undefined
   efectivoBs: ReturnType<typeof useMetodosPagoActivos>['metodos'][number] | undefined
   puedeQuitar: boolean
+  /** `notas_credito.tasa_historica` (Ajuste UX post-QA #3) — necesaria para convertir `pendienteRestanteUsd` (USD) a la moneda NATIVA de esta linea. */
+  tasaHistorica: number
+  /** Pendiente restante de la NC (USD) disponible para ESTA linea especifica, ya neto de lo que consumen las OTRAS lineas (Ajuste UX post-QA #3) — computado por el padre via `pendienteRestanteLineaUsd`. */
+  pendienteRestanteUsd: Decimal
   onActualizar: (patch: Partial<LineaFormState>) => void
   onQuitar: () => void
-  onExcedeSaldoSesionChange: (key: string, excede: boolean) => void
+  /** Reporta si ESTA linea excede su tope efectivo (pendiente de la NC o saldo disponible del origen) — Ajuste UX post-QA #3, ampliado desde `onExcedeSaldoSesionChange` para cubrir tambien cuentas de Tesoreria. */
+  onExcedeTopeChange: (key: string, excede: boolean) => void
 }
 
 /**
@@ -363,9 +417,11 @@ function LineaEgresoRefund({
   efectivoUsd,
   efectivoBs,
   puedeQuitar,
+  tasaHistorica,
+  pendienteRestanteUsd,
   onActualizar,
   onQuitar,
-  onExcedeSaldoSesionChange,
+  onExcedeTopeChange,
 }: LineaEgresoRefundProps) {
   // Argumento condicional a un hook llamado incondicionalmente — valido
   // para Rules of Hooks (Design "Bloqueo arquitectonico"). Con
@@ -375,18 +431,43 @@ function LineaEgresoRefund({
     esOrigenSesion(linea.origen) ? sesionIdDeOrigen(linea.origen) : undefined
   )
 
+  const esSesion = esOrigenSesion(linea.origen)
+  const cuenta = !esSesion ? cuentas.find((c) => c.id === linea.cuentaId) : undefined
+
+  // Moneda NATIVA de esta linea, para convertir el tope de USD (pendiente
+  // de la NC) a esa moneda (Ajuste UX post-QA #3) — mismo criterio que el
+  // resto del archivo: Sesion usa `linea.moneda` (eleccion explicita del
+  // usuario), Tesoreria usa `cuenta.moneda_codigo`.
+  const esNativaBs = esSesion ? linea.moneda === 'BS' : cuenta?.moneda_codigo === 'VES'
+
+  // Saldo disponible del origen elegido, en la moneda NATIVA de la linea.
+  // `null` = origen todavia sin resolver un saldo conocido (Tesoreria sin
+  // Cuenta elegida, o saldo de sesion aun en `isLoading`) — en ese caso
+  // `capMontoLinea` usa SOLO el pendiente, sin bloquear por un origen que ni
+  // siquiera se eligio (Ajuste UX post-QA #3, Opcion A).
+  const disponibleNativo: Decimal | null = esSesion
+    ? isLoadingSaldo
+      ? null
+      : new Decimal(linea.moneda === 'BS' ? saldoBs : saldoUsd)
+    : cuenta
+      ? new Decimal(cuenta.saldo_actual)
+      : null
+
+  const pendienteNativo = usdACapNativo(pendienteRestanteUsd, esNativaBs, tasaHistorica)
+  const capNativo = capMontoLinea(pendienteNativo, disponibleNativo)
+
   // VALIDATE gatea sobre `isLoading` (Design "Guard de validacion NO gatea
   // por isLoading, salvo la comparacion en si") — evita un falso positivo
   // de "excede" mientras `saldoUsd`/`saldoBs` transitan por 0 al montar el
   // hook. El DISPLAY del label (abajo) NO gatea, es cosmetico.
-  const excede =
-    esOrigenSesion(linea.origen) &&
-    !isLoadingSaldo &&
-    excedeSaldoDisponible(linea.montoNativo || '0', linea.moneda === 'BS' ? saldoBs : saldoUsd)
+  const excedePendiente = !!linea.montoNativo && excedeSaldoDisponible(linea.montoNativo, pendienteNativo)
+  const excedeDisponibleOrigen =
+    !!linea.montoNativo && disponibleNativo !== null && excedeSaldoDisponible(linea.montoNativo, disponibleNativo)
+  const excedeAlgunTope = excedePendiente || excedeDisponibleOrigen
 
   useEffect(() => {
-    onExcedeSaldoSesionChange(linea.key, excede)
-  }, [linea.key, excede, onExcedeSaldoSesionChange])
+    onExcedeTopeChange(linea.key, excedeAlgunTope)
+  }, [linea.key, excedeAlgunTope, onExcedeTopeChange])
 
   return (
     // Grupo visualmente delimitado (borde + fondo) por linea — en
@@ -424,7 +505,7 @@ function LineaEgresoRefund({
             <option value="TESORERIA">Tesoreria</option>
             {sesionesActivas.map((s) => (
               <option key={s.id} value={`SESION:${s.id}`}>
-                {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)}
+                {formatSesionOrigenLabel(s)}
               </option>
             ))}
           </NativeSelect>
@@ -480,11 +561,46 @@ function LineaEgresoRefund({
             type="number"
             inputMode="decimal"
             aria-label="Monto"
+            aria-invalid={excedeAlgunTope}
             placeholder="0.00"
             value={linea.montoNativo}
-            onChange={(e) => onActualizar({ montoNativo: e.target.value })}
-            className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${noSpinner}`}
+            onChange={(e) => {
+              const nuevoValor = e.target.value
+              if (!permiteIngresoMonto(nuevoValor, capNativo)) {
+                // Ajuste UX post-QA #3 (Opcion A, confirmada por el
+                // usuario): RECHAZA el keystroke que dejaria el campo por
+                // ENCIMA del tope — nunca clampea/reemplaza en silencio. El
+                // navegador YA mutó `e.target.value` de forma nativa antes
+                // de llegar a este handler; si no actualizamos state React
+                // no vuelve a renderizar este input controlado, asi que hay
+                // que forzar el reset explicito al ultimo valor valido para
+                // que el DOM no quede desincronizado del state.
+                e.target.value = linea.montoNativo
+                return
+              }
+              onActualizar({ montoNativo: nuevoValor })
+            }}
+            className={`w-full rounded-md border ${excedeAlgunTope ? 'border-destructive' : 'border-input'} bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${noSpinner}`}
           />
+          {/* Ajuste UX post-QA #2: mensaje de exceso pegado al input Monto
+              de ESTA linea (antes vivia al final del formulario, lejos del
+              campo al que se referia) — `permiteIngresoMonto` ya previene
+              llegar a este estado por tipeo directo; este texto es el
+              safety net para cuando el tope se reduce por OTRO campo (otra
+              linea, cambio de Cuenta/Origen) DESPUES de escribir un monto
+              ya valido. Prioriza el motivo "pendiente" sobre "disponible
+              del origen" si ambos aplican a la vez (evita mostrar 2
+              mensajes apilados por la misma linea). */}
+          {excedePendiente && (
+            <p className="mt-1 text-xs text-destructive">El monto ingresado excede el pendiente por reembolsar.</p>
+          )}
+          {!excedePendiente && excedeDisponibleOrigen && (
+            <p className="mt-1 text-xs text-destructive">
+              {esSesion
+                ? 'El monto ingresado excede el saldo disponible de la sesion de caja elegida.'
+                : 'El monto ingresado excede el saldo disponible de la cuenta de tesoreria elegida.'}
+            </p>
+          )}
         </div>
 
         <div>
