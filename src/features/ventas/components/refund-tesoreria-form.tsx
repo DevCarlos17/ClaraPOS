@@ -1,13 +1,13 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, type ReactNode } from 'react'
 import Decimal from 'decimal.js'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs, usdToBs, type DecimalInput } from '@/lib/currency'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
-import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { useSesionesActivas, useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatSesionId } from '@/lib/format'
-import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
+import { nativoAUsd, calcularRemanenteRefund, excedeSaldoDisponible } from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
 import {
   AlertDialog,
@@ -127,6 +127,8 @@ export function RefundTesoreriaForm({
   ])
   /** Gate de confirmacion extra (UX rework, nc-refund-tesoreria): se abre SOLO cuando confirmar dejaria un remanente > `TOLERANCIA_SAFC` como saldo a favor — un reembolso completo (remanente 0) nunca lo muestra. */
   const [mostrarConfirmSafc, setMostrarConfirmSafc] = useState(false)
+  /** Reportado por cada `LineaEgresoRefund` via `onExcedeSaldoSesionChange` (nc-admin-saldo-disponible-sesion, Design "Lift-state del guard vía callback + useEffect en el hijo") — el padre no puede calcular esto inline porque el saldo de sesion vive en un hook que solo el hijo puede invocar (Rules of Hooks). */
+  const [excedePorLinea, setExcedePorLinea] = useState<Record<string, boolean>>({})
 
   /** Metodos EFECTIVO activos por moneda (Design §1) — el `value` de cada opcion "Efectivo USD"/"Efectivo Bs" ES este `id`. Si no existe un metodo EFECTIVO activo para una moneda, esa opcion simplemente no se renderiza (mismo patron defensivo que INGRESO_MANUAL/EGRESO_MANUAL/AVANCE/PRESTAMO). */
   const efectivoUsd = metodosPago.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
@@ -150,6 +152,11 @@ export function RefundTesoreriaForm({
   function cuentaPorId(cuentaId: string) {
     return cuentas.find((c) => c.id === cuentaId)
   }
+
+  /** Guard de no-op (mismo patron que `rerender-functional-setstate`) — evita que el `useEffect` del hijo dispare un loop de renders cuando el valor reportado no cambio. */
+  const handleExcedeSaldoSesionChange = useCallback((key: string, excede: boolean) => {
+    setExcedePorLinea((prev) => (prev[key] === excede ? prev : { ...prev, [key]: excede }))
+  }, [])
 
   const lineasUsd: Decimal[] = lineas.map((l) => {
     if (esOrigenSesion(l.origen)) {
@@ -179,7 +186,10 @@ export function RefundTesoreriaForm({
   })
 
   const lineasCompletas = lineas.every((l) => l.cuentaId && l.montoNativo && parseFloat(l.montoNativo) > 0)
-  const puedeConfirmar = !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0) && !haySesionYaNoActiva
+  /** true si CUALQUIER linea de Origen=Sesion excede el saldo de efectivo disponible de su sesion (nc-admin-saldo-disponible-sesion) — reportado por cada `LineaEgresoRefund` via `onExcedeSaldoSesionChange`. */
+  const excedeSaldoSesion = lineas.some((l) => excedePorLinea[l.key])
+  const puedeConfirmar =
+    !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0) && !haySesionYaNoActiva && !excedeSaldoSesion
 
   function handleConfirm() {
     if (!puedeConfirmar) return
@@ -240,7 +250,7 @@ export function RefundTesoreriaForm({
           puedeQuitar={lineas.length > 1}
           onActualizar={(patch) => actualizarLinea(linea.key, patch)}
           onQuitar={() => quitarLinea(linea.key)}
-          onExcedeSaldoSesionChange={() => {}}
+          onExcedeSaldoSesionChange={handleExcedeSaldoSesionChange}
         />
       ))}
 
@@ -271,6 +281,12 @@ export function RefundTesoreriaForm({
       {haySesionYaNoActiva && (
         <p className="text-xs text-destructive">
           La sesion de caja elegida ya no esta activa. Selecciona otra sesion para continuar.
+        </p>
+      )}
+
+      {excedeSaldoSesion && (
+        <p className="text-xs text-destructive">
+          El monto ingresado excede el saldo disponible de la sesion de caja elegida.
         </p>
       )}
 
@@ -351,6 +367,27 @@ function LineaEgresoRefund({
   onQuitar,
   onExcedeSaldoSesionChange,
 }: LineaEgresoRefundProps) {
+  // Argumento condicional a un hook llamado incondicionalmente — valido
+  // para Rules of Hooks (Design "Bloqueo arquitectonico"). Con
+  // Origen=Tesoreria, `sesionCajaId` es `undefined` y el hook devuelve
+  // saldo 0 sin disparar queries (`useSaldoSesionCaja`, id vacio).
+  const { saldoUsd, saldoBs, isLoading: isLoadingSaldo } = useSaldoSesionCaja(
+    esOrigenSesion(linea.origen) ? sesionIdDeOrigen(linea.origen) : undefined
+  )
+
+  // VALIDATE gatea sobre `isLoading` (Design "Guard de validacion NO gatea
+  // por isLoading, salvo la comparacion en si") — evita un falso positivo
+  // de "excede" mientras `saldoUsd`/`saldoBs` transitan por 0 al montar el
+  // hook. El DISPLAY del label (abajo) NO gatea, es cosmetico.
+  const excede =
+    esOrigenSesion(linea.origen) &&
+    !isLoadingSaldo &&
+    excedeSaldoDisponible(linea.montoNativo || '0', linea.moneda === 'BS' ? saldoBs : saldoUsd)
+
+  useEffect(() => {
+    onExcedeSaldoSesionChange(linea.key, excede)
+  }, [linea.key, excede, onExcedeSaldoSesionChange])
+
   return (
     // Grupo visualmente delimitado (borde + fondo) por linea — en
     // desktop (`sm:`) los 4 controles + el boton de quitar comparten UNA
@@ -423,8 +460,12 @@ function LineaEgresoRefund({
               ))}
             {esOrigenSesion(linea.origen) && (
               <>
-                {efectivoUsd && <option value={efectivoUsd.id}>Efectivo USD</option>}
-                {efectivoBs && <option value={efectivoBs.id}>Efectivo Bs</option>}
+                {efectivoUsd && (
+                  <option value={efectivoUsd.id}>Efectivo USD — {formatUsd(saldoUsd)} disponible</option>
+                )}
+                {efectivoBs && (
+                  <option value={efectivoBs.id}>Efectivo Bs — {formatBs(saldoBs)} disponible</option>
+                )}
               </>
             )}
           </NativeSelect>

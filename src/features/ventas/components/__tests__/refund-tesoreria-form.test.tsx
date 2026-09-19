@@ -387,6 +387,51 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       await user.click(boton)
       expect(onConfirm).not.toHaveBeenCalled()
     })
+
+    describe('Saldo disponible de sesion (nc-admin-saldo-disponible-sesion): label con saldo + tope de validacion', () => {
+      beforeEach(() => {
+        mockedUseSaldoSesionCaja.mockReturnValue({ saldoUsd: 500, saldoBs: 500, isLoading: false })
+      })
+
+      it('Scenario "Saldo disponible visible": la opcion "Efectivo USD"/"Efectivo Bs" muestra el saldo de la sesion + "disponible" (espejo de Tesoreria)', async () => {
+        const user = userEvent.setup()
+        render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+        await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+
+        const cuentaSelect = screen.getAllByRole('combobox')[1]!
+        expect(cuentaSelect).toHaveTextContent('Efectivo USD — $500.00 disponible')
+        expect(cuentaSelect).toHaveTextContent('Efectivo Bs — Bs. 500,00 disponible')
+      })
+
+      it('Scenario "Tope de saldo disponible": un monto MAYOR al saldo de la sesion deshabilita "Confirmar" y muestra el mensaje de exceso', async () => {
+        const user = userEvent.setup()
+        render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+        await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+        await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+        await user.type(screen.getByLabelText(/^monto$/i), '600')
+
+        expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+        expect(screen.getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
+      })
+
+      it('bajar el monto al limite exacto del saldo de sesion (monto === saldo) rehabilita "Confirmar"', async () => {
+        const user = userEvent.setup()
+        render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+        await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+        await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+        await user.type(screen.getByLabelText(/^monto$/i), '600')
+        expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+
+        await user.clear(screen.getByLabelText(/^monto$/i))
+        await user.type(screen.getByLabelText(/^monto$/i), '500')
+
+        expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+        expect(screen.queryByText(/excede el saldo disponible de la sesion/i)).not.toBeInTheDocument()
+      })
+    })
   })
 
   describe('UX rework (nc-refund-tesoreria): sin spinners, Bs en pendiente y gate de confirmacion de saldo a favor', () => {
