@@ -1,4 +1,5 @@
 import { formatUsd, formatBs } from '@/lib/currency'
+import { useMobile } from '@/hooks/use-mobile'
 import { useTotalesFiscales, useIvaPorAlicuota, useIvaPorAlicuotaNC, type CuadreFilters } from '../hooks/use-cuadre'
 import { buildFilasAlineadas, type CeldaConcepto } from './cuadre-totales-fiscales-model'
 
@@ -46,6 +47,11 @@ function CeldaAlineada({ celda }: { celda: CeldaConcepto | null }) {
 }
 
 export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
+  // Breakpoint 1024 alineado con el `lg:` de Tailwind usado en la grilla
+  // desktop de abajo (NO el default 768 del hook) — evita un hueco entre
+  // 768-1023px donde la grilla desktop colapsaria a 1 col pero seguiria
+  // intercalando Ventas/NC concepto-a-concepto (el bug original).
+  const isMobile = useMobile(1024)
   const { totales, isLoading } = useTotalesFiscales(filters)
   const { alicuotas, isLoading: loadingAlicuotas } = useIvaPorAlicuota(filters)
   const {
@@ -107,6 +113,18 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
     totalNcrTotalBs,
   })
 
+  // Bloques MOBILE: derivados de la MISMA grilla alineada `filas` (cero
+  // duplicacion de logica de calculo/union de conceptos). Cada bloque toma
+  // SOLO las celdas no-nulas de su lado — un concepto que no existe de ese
+  // lado (ej. Exento solo en Ventas) queda afuera del bloque, SIN placeholder
+  // "—" (ese placeholder es exclusivo de la grilla alineada de desktop).
+  const filasVentasMobile = filas
+    .filter((fila) => fila.ventas !== null)
+    .map((fila) => ({ key: fila.key, celda: fila.ventas as CeldaConcepto }))
+  const filasDevolucionesMobile = filas
+    .filter((fila) => fila.devoluciones !== null)
+    .map((fila) => ({ key: fila.key, celda: fila.devoluciones as CeldaConcepto }))
+
   return (
     <div className="rounded-2xl bg-card shadow-lg p-5">
       <h3 className="text-sm font-semibold mb-4">Resumen Fiscal</h3>
@@ -117,9 +135,45 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
             <div key={i} className="h-8 bg-muted rounded animate-pulse" />
           ))}
         </div>
+      ) : isMobile ? (
+        <div className="space-y-5">
+          {/* ── MOBILE: bloques COMPLETOS apilados (Ventas entero, luego ──
+              Devoluciones entero) en vez de intercalar concepto-a-concepto.
+              Cada bloque solo trae sus PROPIOS conceptos reales — sin
+              placeholder "—" (eso es exclusivo de la grilla alineada de
+              desktop, donde hace falta para mantener la alineacion). */}
+          <div role="group" aria-label="Ventas" className="space-y-0.5">
+            <span className="text-xs font-semibold text-muted-foreground block px-2 mb-1">Ventas</span>
+            {filasVentasMobile.map(({ key, celda }) => (
+              <Row key={key} label={celda.label} usd={celda.usd} bs={celda.bs} negativo={celda.negativo} destacado={celda.destacado} />
+            ))}
+          </div>
+
+          {filasDevolucionesMobile.length > 0 && (
+            <div role="group" aria-label="Notas de Crédito (Devoluciones)" className="space-y-0.5 border-t border-border/40 pt-4">
+              <span className="text-xs font-semibold text-muted-foreground block px-2 mb-1">Notas de Crédito (Devoluciones)</span>
+              {filasDevolucionesMobile.map(({ key, celda }) => (
+                <Row key={key} label={celda.label} usd={celda.usd} bs={celda.bs} negativo={celda.negativo} destacado={celda.destacado} />
+              ))}
+            </div>
+          )}
+
+          {/* ── Total facturado NETO — full-width, resultado de restar ── */}
+          <div className="border-t pt-3">
+            <Row
+              label="TOTAL FACTURADO NETO"
+              usd={totalVentasNetasUsd}
+              bs={totalVentasNetasBs}
+              destacado
+            />
+          </div>
+        </div>
       ) : (
         <div className="space-y-4">
-          {/* ── Cabecera de columnas (Ventas | Devoluciones) — solo desktop ── */}
+          {/* ── DESKTOP: sin cambios (ver engram sdd/nc-cuadre/apply-progress). ──
+              Clases responsive (hidden lg:, lg:grid-cols-2, etc.) se dejan
+              intactas tal cual estaban aunque isMobile ya filtro el ancho —
+              cero riesgo de drift visual, cero diff innecesario. */}
           <div className="hidden lg:grid lg:grid-cols-2 gap-x-6 px-2">
             <span className="text-xs font-semibold text-muted-foreground">Ventas</span>
             <span className="text-xs font-semibold text-muted-foreground">Notas de Crédito (Devoluciones)</span>
@@ -127,9 +181,7 @@ export function CuadreTotalesFiscales({ filters }: CuadreTotalesFiscalesProps) {
 
           {/* ── Grilla unificada: una fila por concepto fiscal, Ventas y ──
               Devoluciones alineados en la MISMA fila (union dinámica de
-              conceptos — ver buildFilasAlineadas). En mobile cada fila
-              colapsa a 1 columna, quedando Ventas y Devoluciones apilados
-              pero agrupados dentro del mismo bloque con separador. */}
+              conceptos — ver buildFilasAlineadas). */}
           <div className="space-y-0.5">
             {filas.map((fila) => (
               <div
