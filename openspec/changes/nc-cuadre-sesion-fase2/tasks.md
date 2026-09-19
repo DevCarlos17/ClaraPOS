@@ -42,11 +42,11 @@ Inicio: tracker. Fin: `escribirEgresoSesionCajaEnTx` tipado + testeado, sin call
 
 Inicio: independiente de Slice 1. Fin: las 3 estrategias tratan `origen='NCR'` cross-sesión igual. Verificación: `yarn test:run src/features/caja/hooks/__tests__/use-sesiones-caja.test.ts`. Rollback: revert; sin efecto visible hasta Slice 3.
 
-- [ ] 2.1 RED — Crear `use-sesiones-caja.test.ts` (no existe): fixture `movimientos_metodo_cobro` `origen='NCR'` en sesión destino (pago original en OTRA sesión). Tests que fallan: `cerrarSesionCaja` resta el NCR del total (`montoSistemaUsdFromDB`); `sesiones_caja_detalle` refleja el mismo monto; `useSaldoSesionCaja` resta el NCR de `saldoUsdD`/`saldoBsD`.
-- [ ] 2.2 GREEN — L749-750 y L777-778 (`movsManualUsdResult`/`movsManualBsResult`): agregar `'NCR'` a `IN (...)`. El `else` genérico (L764) ya acumula como egreso.
-- [ ] 2.3 GREEN — L855-856 (`movsManualPorMetodoResult`): agregar `'NCR'` a `IN (...)`.
-- [ ] 2.4 GREEN — `useSaldoSesionCaja` L232-233: agregar `'NCR'` al WHERE; extraer `movsMap.get('NCR')` (patrón L259-264) y restarlo en `saldoUsdD`/`saldoBsD` (L271-293).
-- [ ] 2.5 REFACTOR — Confirmar con el test existente de `useSaldoEfectivoBimonetario` (`use-cuadre.ts`, sin cambios) que las 3 estrategias convergen en el fixture cross-sesión.
+- [x] 2.1 RED — Crear `use-sesiones-caja.test.ts` (no existe): fixture `movimientos_metodo_cobro` `origen='NCR'` en sesión destino (pago original en OTRA sesión). Tests que fallan: `cerrarSesionCaja` resta el NCR del total (`montoSistemaUsdFromDB`); `sesiones_caja_detalle` refleja el mismo monto; `useSaldoSesionCaja` resta el NCR de `saldoUsdD`/`saldoBsD`.
+- [x] 2.2 GREEN — L749-750 y L777-778 (`movsManualUsdResult`/`movsManualBsResult`): agregar `'NCR'` a `IN (...)`. El `else` genérico (L764) ya acumula como egreso.
+- [x] 2.3 GREEN — L855-856 (`movsManualPorMetodoResult`): agregar `'NCR'` a `IN (...)`.
+- [x] 2.4 GREEN — `useSaldoSesionCaja` L232-233: agregar `'NCR'` al WHERE; extraer `movsMap.get('NCR')` (patrón L259-264) y restarlo en `saldoUsdD`/`saldoBsD` (L271-293).
+- [x] 2.5 REFACTOR — Confirmar con el test existente de `useSaldoEfectivoBimonetario` (`use-cuadre.ts`, sin cambios) que las 3 estrategias convergen en el fixture cross-sesión.
 
 ## Slice 3 — UI (`refund-tesoreria-form.tsx`)
 
