@@ -21,7 +21,8 @@ import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
 import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
-import { splitEgresosArqueo } from './cuadre-arqueo-teorico-model'
+import { splitEgresosArqueo, ORIGENES_DEVOLUCION_NC } from './cuadre-arqueo-teorico-model'
+import { esSalidaCaja, resolverConceptoSalida } from './cuadre-salidas-caja-model'
 import { DiferencialCambiarioModal } from './diferencial-cambiario-modal'
 import { AbsorcionModal } from './absorcion-modal'
 import {
@@ -245,9 +246,11 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const ingresosDetalle = movsEfectivoDetalle.filter(
     (m) => m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'
   )
-  const egresosDetalle = movsEfectivoDetalle.filter(
-    (m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA' || m.origen === 'PAGO_PROVEEDOR'
-  )
+  // esSalidaCaja incluye aditivamente los origenes de devolucion de NC
+  // (ORIGENES_DEVOLUCION_NC, hoy 'NCR') junto a los origenes preexistentes — antes
+  // esos egresos quedaban excluidos de esta tabla aunque SI se sumaban al total de
+  // "Devoluciones (NC)" del Arqueo Teorico (bug "Regla de Oro invisible").
+  const egresosDetalle = movsEfectivoDetalle.filter(esSalidaCaja)
   const vueltosDetalle = movsEfectivoDetalle.filter(
     (m) => m.origen === 'VUELTO'
   )
@@ -1260,12 +1263,13 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
         <tbody>
           {items.map((m) => {
             const hora = m.fecha ? formatHora(m.fecha) || '—' : '—'
-            const label = m.concepto ?? m.destinatario ?? m.metodo_nombre
+            const label = resolverConceptoSalida(m)
             const monto = m.metodo_moneda === 'BS'
               ? formatBs(parseFloat(m.monto))
               : formatUsd(parseFloat(m.monto))
                     const isTesoreria = m.origen === 'INGRESO_TESORERIA' || m.origen === 'EGRESO_TESORERIA'
                     const isCxP = m.origen === 'PAGO_PROVEEDOR'
+                    const isDevolucionNc = (ORIGENES_DEVOLUCION_NC as readonly string[]).includes(m.origen)
                     return (
                       <tr key={m.id} className="border-b last:border-0 hover:bg-muted/20">
                         <td className="px-4 py-2.5">
@@ -1278,6 +1282,11 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
                             {isCxP && (
                               <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-orange-100 text-orange-700 font-medium">
                                 CxP
+                              </span>
+                            )}
+                            {isDevolucionNc && (
+                              <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-red-100 text-red-700 font-medium">
+                                NC
                               </span>
                             )}
                             <span className="truncate max-w-[180px]">{label}</span>
