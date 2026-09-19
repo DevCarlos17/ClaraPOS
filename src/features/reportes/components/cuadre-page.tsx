@@ -21,6 +21,7 @@ import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
 import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
+import { splitEgresosArqueo } from './cuadre-arqueo-teorico-model'
 import { DiferencialCambiarioModal } from './diferencial-cambiario-modal'
 import { AbsorcionModal } from './absorcion-modal'
 import {
@@ -226,15 +227,19 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.mov_tipo === 'EGRESO')
     .reduce((s, m) => s + m.total, 0)
 
-  // Separación vueltos vs retiros para el Arqueo Teórico (display)
-  const vueltosEfectivoUsd = movManualesCaja
-    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.origen === 'VUELTO')
-    .reduce((s, m) => s + m.total, 0)
-  const vueltosEfectivoBsNativo = movManualesCaja
-    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.origen === 'VUELTO')
-    .reduce((s, m) => s + m.total, 0)
-  const retirosManualesUsd      = egresosEfectivoUsd      - vueltosEfectivoUsd
-  const retirosManualesBsNativo = egresosEfectivoBsNativo - vueltosEfectivoBsNativo
+  // Separación Devoluciones (NC) vs Vueltos vs Retiros para el Arqueo Teórico (display).
+  // Clasifica por origen del egreso (splitEgresosArqueo), no por punto de entrada — asi
+  // una futura devolucion de NC via modulo administrativo tambien cae en "Devoluciones"
+  // sin tocar este calculo. El total agregado (egresosEfectivoUsd/Bs, usado en la formula
+  // del Total Teorico) no cambia: solo se re-etiqueta como se presenta el desglose.
+  const {
+    retirosUsd: retirosManualesUsd,
+    retirosBsNativo: retirosManualesBsNativo,
+    devolucionesNcUsd,
+    devolucionesNcBsNativo,
+    vueltosUsd: vueltosEfectivoUsd,
+    vueltosBsNativo: vueltosEfectivoBsNativo,
+  } = splitEgresosArqueo(movManualesCaja)
 
   // Detalle de movimientos manuales para tablas opcionales
   const ingresosDetalle = movsEfectivoDetalle.filter(
@@ -840,6 +845,8 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               egresosBsNativo={egresosEfectivoBsNativo}
               retirosManualesUsd={retirosManualesUsd}
               retirosManualesBsNativo={retirosManualesBsNativo}
+              devolucionesNcUsd={devolucionesNcUsd}
+              devolucionesNcBsNativo={devolucionesNcBsNativo}
               vueltosUsd={vueltosEfectivoUsd}
               vueltosBsNativo={vueltosEfectivoBsNativo}
               tasaCambio={tasaPromedio}
