@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RefundTesoreriaForm } from '../refund-tesoreria-form'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
-import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { useSesionesActivas, useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 
 /**
@@ -27,6 +27,7 @@ vi.mock('@/features/tesoreria/hooks/use-cuentas-tesoreria', () => ({
 }))
 vi.mock('@/features/caja/hooks/use-sesiones-caja', () => ({
   useSesionesActivas: vi.fn(),
+  useSaldoSesionCaja: vi.fn(),
 }))
 vi.mock('@/features/configuracion/hooks/use-payment-methods', () => ({
   useMetodosPagoActivos: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('@/features/configuracion/hooks/use-payment-methods', () => ({
 const mockedUseCuentasTesoreria = vi.mocked(useCuentasTesoreria)
 const mockedUseSesionesActivas = vi.mocked(useSesionesActivas)
 const mockedUseMetodosPagoActivos = vi.mocked(useMetodosPagoActivos)
+const mockedUseSaldoSesionCaja = vi.mocked(useSaldoSesionCaja)
 
 function metodoEfectivo(id: string, moneda: 'USD' | 'BS') {
   return { id, tipo: 'EFECTIVO', moneda, is_active: 1 } as never
@@ -81,6 +83,11 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       metodos: [metodoEfectivo('efectivo-usd-1', 'USD'), metodoEfectivo('efectivo-bs-1', 'BS')],
       isLoading: false,
     })
+    // Default ALTO (no 0): los tests existentes de "Sesion de caja activa"
+    // ya escriben montos como '100'/'4000' en lineas de Sesion — un default
+    // de 0 los rompe con el guard de excedeSaldoDisponible (Phase 3) antes
+    // de que esos tests siquiera lleguen a ejecutarse (tasks.md 2.1).
+    mockedUseSaldoSesionCaja.mockReturnValue({ saldoUsd: 999999, saldoBs: 999999, isLoading: false })
   })
 
   it('Scenario "Selector muestra saldo por cuenta": cada opcion de cuenta muestra su saldo disponible junto al nombre', () => {
