@@ -118,21 +118,46 @@ export function esModalidadNoDesembolso(modalidad: LiquidacionModalidad): boolea
  * `_esBancoBS` en `use-cxc.ts`/`use-cxp.ts` — evita que un valor de UI
  * desincronizado con la cuenta produzca una conversion incorrecta.
  */
-export interface EgresoTesoreriaLinea {
-  destino: 'BANCO' | 'CAJA_FUERTE'
-  cuentaId: string
-  montoEnMonedaCuenta: string
-  /**
-   * Nota LIBRE y OPCIONAL por linea (nc-refund-tesoreria, UX rework):
-   * numero de transferencia, serial de un billete, o cualquier
-   * observacion sobre ESE egreso puntual. Persiste en la columna
-   * `referencia` YA EXISTENTE de `movimientos_bancarios`/`mov_caja_fuerte`
-   * (sin migracion). Cuando se omite, se escribe `null` — mismo criterio
-   * que `use-traspasos.ts` (`params.referencia ?? null`), NUNCA bloquea la
-   * confirmacion.
-   */
-  referencia?: string
-}
+/**
+ * Union discriminada por `destino` (nc-cuadre-sesion-fase2, Design
+ * §Interfaces). `'BANCO' | 'CAJA_FUERTE'` preserva la variante original
+ * (nc-refund-tesoreria): la cuenta real determina la moneda server-side
+ * (`leerCuentaTesoreriaEnTx`). `'SESION_CAJA'` es el tercer destino (Fase
+ * 2, egreso real de NC admin hacia una sesion de caja ACTIVA elegida por
+ * quien liquida): NO hay cuenta de tesoreria que resolver — `moneda` la
+ * elige explicitamente el usuario (no hay pago 1:1 que la derive, Design
+ * §1) y `metodoCobroId` es el metodo EFECTIVO ya resuelto para esa moneda
+ * (`useMetodosPagoActivos()`, mismo patron que
+ * INGRESO_MANUAL/EGRESO_MANUAL/AVANCE/PRESTAMO).
+ */
+export type EgresoTesoreriaLinea =
+  | {
+      destino: 'BANCO' | 'CAJA_FUERTE'
+      cuentaId: string
+      montoEnMonedaCuenta: string
+      /**
+       * Nota LIBRE y OPCIONAL por linea (nc-refund-tesoreria, UX rework):
+       * numero de transferencia, serial de un billete, o cualquier
+       * observacion sobre ESE egreso puntual. Persiste en la columna
+       * `referencia` YA EXISTENTE de `movimientos_bancarios`/`mov_caja_fuerte`
+       * (sin migracion). Cuando se omite, se escribe `null` — mismo criterio
+       * que `use-traspasos.ts` (`params.referencia ?? null`), NUNCA bloquea la
+       * confirmacion.
+       */
+      referencia?: string
+    }
+  | {
+      destino: 'SESION_CAJA'
+      /** FK a `sesiones_caja.id` — la sesion ACTIVA elegida por el admin (`useSesionesActivas()`), NO necesariamente `venta.sesion_caja_id` (cross-session permitido, Design §Decision 3 / explore.md §5.4). */
+      sesionCajaId: string
+      /** Metodo EFECTIVO resuelto para `moneda` — el `value` de la opcion de UI ES este id (Design §1), nunca un selector manual. */
+      metodoCobroId: string
+      /** Moneda NATIVA elegida para esta linea — determina que metodo EFECTIVO se resolvio y como se interpreta `montoEnMonedaCuenta` (sin conversion server-side, a diferencia de BANCO/CAJA_FUERTE). */
+      moneda: 'USD' | 'BS'
+      montoEnMonedaCuenta: string
+      /** Igual criterio que la variante BANCO/CAJA_FUERTE — nota libre y opcional, `null` si se omite. */
+      referencia?: string
+    }
 
 /** Array de lineas de egreso — reemplaza `EgresoCajaParams` (objeto unico). Solo lo consume el gate y la rama `REFUND_TESORERIA` de Step B — nunca dispara el egreso real de la Regla de Oro (ese se calcula internamente, ver `aplicaReglaDeOro`). */
 export type EgresoParams = EgresoTesoreriaLinea[]
@@ -248,7 +273,7 @@ export interface CrearNotaCreditoResult {
  */
 async function leerCuentaTesoreriaEnTx(
   tx: Transaction,
-  linea: EgresoTesoreriaLinea,
+  linea: Extract<EgresoTesoreriaLinea, { destino: 'BANCO' | 'CAJA_FUERTE' }>,
   empresa_id: string
 ): Promise<{ saldoAnt: Decimal; esCuentaBs: boolean }> {
   const tabla = linea.destino === 'BANCO' ? 'bancos_empresa' : 'caja_fuerte'
@@ -287,7 +312,7 @@ async function leerCuentaTesoreriaEnTx(
  */
 async function escribirEgresoTesoreriaEnTx(
   tx: Transaction,
-  linea: EgresoTesoreriaLinea,
+  linea: Extract<EgresoTesoreriaLinea, { destino: 'BANCO' | 'CAJA_FUERTE' }>,
   ncrId: string,
   nroNcr: string,
   empresa_id: string,
@@ -332,6 +357,77 @@ async function escribirEgresoTesoreriaEnTx(
     now,
     linea.cuentaId,
   ])
+}
+
+/**
+ * Escribe UNA linea de egreso real hacia una SESION DE CAJA activa, elegida
+ * libremente por quien liquida la NC (nc-cuadre-sesion-fase2, Design §3/§
+ * Interfaces) — tercer destino de `EgresoTesoreriaLinea`, paralelo a
+ * `escribirEgresoTesoreriaEnTx` pero hacia `movimientos_metodo_cobro` en vez
+ * de `movimientos_bancarios`/`mov_caja_fuerte`. Mismo INSERT que la Regla de
+ * Oro POS (`saldo_anterior=0, saldo_nuevo=0`, `origen='NCR'`, ya presente en
+ * el CHECK desde la migracion 0091 — Design §Decision 2, sin migracion
+ * nueva) pero con `sesion_caja_id` = la sesion ELEGIDA (`linea.sesionCajaId`),
+ * NUNCA `venta.sesion_caja_id` — el admin puede targetear una sesion
+ * distinta a la de la venta original (cross-session, Design §Decision 3 /
+ * explore.md §5.4).
+ *
+ * Guard de sesion ABIERTA (espejo del trigger Postgres `migrations/0041`,
+ * AUSENTE en SQLite/PowerSync local, explore.md §5): `SELECT status`
+ * ANTES del INSERT, en la MISMA transaccion — si la sesion no existe o no
+ * esta `'ABIERTA'`, lanza y el `db.writeTransaction` que envuelve toda la
+ * NC hace rollback automatico (ningun registro de esta NC llega a
+ * persistir, ni siquiera el header ya escrito en un paso previo).
+ *
+ * Sin guard de saldo suficiente en la sesion destino (decision explicita,
+ * Design §Interfaces / Open Questions): paridad con el UNICO precedente
+ * real de escritura NCR en `movimientos_metodo_cobro` (Regla de Oro POS),
+ * que tampoco lo valida — a diferencia de `EGRESO_MANUAL`, que si lo hace.
+ */
+async function escribirEgresoSesionCajaEnTx(
+  tx: Transaction,
+  linea: Extract<EgresoTesoreriaLinea, { destino: 'SESION_CAJA' }>,
+  ncrId: string,
+  nroNcr: string,
+  empresa_id: string,
+  usuario_id: string,
+  now: string
+): Promise<void> {
+  const sesionResult = await tx.execute(
+    'SELECT status FROM sesiones_caja WHERE id = ? AND empresa_id = ?',
+    [linea.sesionCajaId, empresa_id]
+  )
+  if (!sesionResult.rows || sesionResult.rows.length === 0) {
+    throw new Error(`Sesion de caja no encontrada: ${linea.sesionCajaId}`)
+  }
+  const sesion = sesionResult.rows.item(0) as { status: string }
+  if (sesion.status !== 'ABIERTA') {
+    throw new Error(
+      `La sesion de caja elegida no esta ABIERTA (status actual: ${sesion.status}). No se puede registrar el egreso.`
+    )
+  }
+
+  const montoNativo = new Decimal(linea.montoEnMonedaCuenta)
+
+  await tx.execute(
+    `INSERT INTO movimientos_metodo_cobro
+       (id, empresa_id, metodo_cobro_id, tipo, origen, monto, saldo_anterior, saldo_nuevo,
+        doc_origen_id, doc_origen_ref, concepto, sesion_caja_id, fecha, created_at, created_by)
+     VALUES (?, ?, ?, 'EGRESO', 'NCR', ?, 0, 0, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      uuidv4(),
+      empresa_id,
+      linea.metodoCobroId,
+      toStorageString(montoNativo),
+      ncrId,
+      `NCR-${nroNcr}`,
+      `Devolucion NCR ${nroNcr} - Reembolso a sesion de caja`,
+      linea.sesionCajaId,
+      now,
+      now,
+      usuario_id,
+    ]
+  )
 }
 
 // ─── Listado de NCR ─────────────────────────────────────────
@@ -1252,9 +1348,16 @@ export async function crearNotaCredito(
         // ANTES de escribir cualquier registro — si excede, toda la NC se
         // rechaza (rollback automatico de `db.writeTransaction`, ninguna
         // linea llega a escribirse).
+        // Dispatcher de moneda (nc-cuadre-sesion-fase2, Design §Interfaces):
+        // `SESION_CAJA` no toca la DB para resolver la moneda — el admin ya
+        // la eligio explicitamente en la linea (`linea.moneda`); el resto
+        // (`BANCO`/`CAJA_FUERTE`) sigue leyendo la cuenta real, sin cambios.
         const lineasUsd: Decimal[] = []
         for (const linea of egresoParams) {
-          const { esCuentaBs } = await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)
+          const esCuentaBs =
+            linea.destino === 'SESION_CAJA'
+              ? linea.moneda === 'BS'
+              : (await leerCuentaTesoreriaEnTx(tx, linea, empresa_id)).esCuentaBs
           lineasUsd.push(nativoAUsd(linea.montoEnMonedaCuenta, esCuentaBs, venta.tasa))
         }
 
@@ -1267,8 +1370,16 @@ export async function crearNotaCredito(
 
         // Escribir cada linea en el orden del array (Design §d "sin
         // prioridad entre cuentas — se escribe en el orden del array").
+        // Dispatcher de escritura (nc-cuadre-sesion-fase2): `SESION_CAJA`
+        // despacha a `escribirEgresoSesionCajaEnTx` (guard ABIERTA + INSERT
+        // en `movimientos_metodo_cobro`); `BANCO`/`CAJA_FUERTE` preserva el
+        // camino existente sin cambios.
         for (const linea of egresoParams) {
-          await escribirEgresoTesoreriaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+          if (linea.destino === 'SESION_CAJA') {
+            await escribirEgresoSesionCajaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+          } else {
+            await escribirEgresoTesoreriaEnTx(tx, linea, ncrId, nroNcr, empresa_id, usuario_id, now)
+          }
         }
 
         // Remanente no reembolsado por tesoreria -> SAFC (Spec "Remanente
