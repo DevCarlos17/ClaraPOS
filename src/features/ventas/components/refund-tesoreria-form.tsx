@@ -445,11 +445,15 @@ function LineaEgresoRefund({
   // Cuenta elegida, o saldo de sesion aun en `isLoading`) — en ese caso
   // `capMontoLinea` usa SOLO el pendiente, sin bloquear por un origen que ni
   // siquiera se eligio (Ajuste UX post-QA #3, Opcion A).
+  // Tesoreria: SOLO el efectivo (CAJA_FUERTE) tiene tope — no puede quedar
+  // negativo (es fisico). Los BANCOS se permiten sobregirar, asi que NO se
+  // capan (disponibleNativo = null). Regla de negocio: "los bancos se podran
+  // sobregirar y el efectivo no".
   const disponibleNativo: Decimal | null = esSesion
     ? isLoadingSaldo
       ? null
       : new Decimal(linea.moneda === 'BS' ? saldoBs : saldoUsd)
-    : cuenta
+    : cuenta && cuenta.tipo === 'CAJA_FUERTE'
       ? new Decimal(cuenta.saldo_actual)
       : null
 

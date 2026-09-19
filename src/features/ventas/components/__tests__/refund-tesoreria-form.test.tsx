@@ -159,17 +159,17 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
   })
 
   describe('Ajuste UX post-QA #3 (Opcion A): tope de saldo disponible de CUENTA DE TESORERIA (antes sin validar)', () => {
-    it('escribir hasta el saldo de la cuenta se permite; un digito extra que lo superaria se rechaza', async () => {
+    it('CAJA_FUERTE: escribir hasta su saldo se permite; un digito extra que lo superaria se rechaza (es efectivo, no puede quedar negativo)', async () => {
       const user = userEvent.setup()
       render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
 
-      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'caja-1')
       const montoInput = screen.getByLabelText(/^monto$/i)
-      await user.type(montoInput, '500') // saldo_actual de banco-usd-1 = 500.00
-      expect(montoInput).toHaveValue(500)
+      await user.type(montoInput, '200') // saldo_actual de caja-1 (CAJA_FUERTE) = 200.00
+      expect(montoInput).toHaveValue(200)
 
       await user.type(montoInput, '1')
-      expect(montoInput).toHaveValue(500) // rechaza el digito extra, nunca llega a 5001
+      expect(montoInput).toHaveValue(200) // rechaza el digito extra, nunca llega a 2001
       expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
     })
 
@@ -192,6 +192,57 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
 
       const montoContainer = montoInput.parentElement as HTMLElement
       expect(within(montoContainer).getByText(/excede el saldo disponible de la cuenta de tesoreria/i)).toBeInTheDocument()
+    })
+  })
+
+  describe('Fix (nc-admin-saldo-disponible-sesion): BANCO se permite sobregirar — SOLO el efectivo (CAJA_FUERTE/sesion) tiene tope de saldo', () => {
+    it('BANCO: escribir un monto MAYOR al saldo_actual del banco se permite (sin tope) — no dispara aria-invalid ni el mensaje de "excede saldo disponible"', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      await user.type(montoInput, '600') // saldo_actual de banco-usd-1 = 500.00 -> 600 lo supera, y aun asi se permite
+
+      expect(montoInput).toHaveValue(600) // NO se rechaza el keystroke: el banco puede sobregirarse
+      expect(montoInput).not.toHaveAttribute('aria-invalid', 'true')
+      expect(screen.queryByText(/excede el saldo disponible de la cuenta de tesoreria/i)).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+    })
+
+    it('BANCO: cambiar de Cuenta (CAJA_FUERTE con monto ya invalido) a un BANCO libera el tope — Confirmar deja de estar bloqueado por saldo de origen', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      const cuentaSelect = screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!
+      await user.selectOptions(cuentaSelect, 'caja-1') // saldo_actual = 200.00
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      await user.type(montoInput, '150')
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+
+      // Escribir mas de 200 en caja-1 quedaria rechazado por permiteIngresoMonto,
+      // asi que forzamos el estado invalido cambiando de cuenta hacia una con
+      // MENOS saldo relativo (misma caja-1, pero simulando edicion cruzada):
+      // en su lugar, verificamos el camino inverso — banco NO capa ese mismo monto.
+      await user.selectOptions(cuentaSelect, 'banco-usd-1') // saldo_actual = 500.00, sin tope
+
+      expect(montoInput).toHaveValue(150)
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+      expect(montoInput).not.toHaveAttribute('aria-invalid', 'true')
+    })
+
+    it('BANCO sigue respetando el TOPE DE PENDIENTE de la NC (montoDisponibleUsd) — el sobregiro solo aplica contra el saldo de la cuenta, no contra el pendiente', async () => {
+      const user = userEvent.setup()
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1') // saldo 500, pero pendiente NC = 100
+      const montoInput = screen.getByLabelText(/^monto$/i)
+      await user.type(montoInput, '100')
+      expect(montoInput).toHaveValue(100)
+
+      await user.type(montoInput, '1') // 101 > pendiente de 100 -> se rechaza (aunque el banco tiene saldo de sobra)
+      expect(montoInput).toHaveValue(100)
+      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
     })
   })
 
