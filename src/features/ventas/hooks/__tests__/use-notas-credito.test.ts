@@ -117,6 +117,13 @@ interface NcrTxFixtures {
   cuentasTesoreria?: Record<string, { saldo_actual: string; moneda_id: string }>
   /** Slice 4: `codigo_iso` por `moneda_id` — alimenta `esCuentaBs` (VES vs USD/otra). */
   monedasTesoreria?: Record<string, string>
+  /**
+   * Slice 1 (nc-cuadre-sesion-fase2): sesiones de caja por `id`, fuente del
+   * guard inline de `escribirEgresoSesionCajaEnTx`
+   * (`SELECT status FROM sesiones_caja WHERE id = ? AND empresa_id = ?`).
+   * Ausencia de entrada para un id => sesion "no encontrada".
+   */
+  sesionesCaja?: Record<string, { status: string; empresa_id: string }>
 }
 
 /**
@@ -251,6 +258,14 @@ function mockCrearNcrTx(opts: NcrTxFixtures) {
           const monedaId = params[0] as string
           const codigoIso = opts.monedasTesoreria?.[monedaId] ?? 'USD'
           return { rows: { length: 1, item: () => ({ codigo_iso: codigoIso }) } }
+        }
+        // Slice 1 (nc-cuadre-sesion-fase2): guard de sesion ABIERTA inline de
+        // `escribirEgresoSesionCajaEnTx`, ANTES del INSERT en
+        // `movimientos_metodo_cobro`.
+        if (sql.startsWith('SELECT status FROM sesiones_caja WHERE id = ? AND empresa_id = ?')) {
+          const sesionId = params[0] as string
+          const sesion = opts.sesionesCaja?.[sesionId]
+          return sesion ? { rows: { length: 1, item: () => sesion } } : { rows: { length: 0, item: () => undefined } }
         }
         if (sql.startsWith('INSERT INTO movimientos_bancarios') || sql.startsWith('INSERT INTO mov_caja_fuerte')) {
           return { rows: { length: 0, item: () => undefined } }
@@ -1181,6 +1196,146 @@ describe('crearNotaCredito — Slice 4 (REFUND_TESORERIA: motor de egreso real d
     // de escribir cualquier linea de egreso de tesoreria.
     expect(calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_bancarios'))).toBeUndefined()
     expect(calls.find((c) => c.sql.startsWith('INSERT INTO mov_caja_fuerte'))).toBeUndefined()
+  })
+})
+
+describe('crearNotaCredito — Slice 1 (nc-cuadre-sesion-fase2: destino SESION_CAJA, egreso real a sesion de caja activa)', () => {
+  function fixturesSesionCaja(overrides: Partial<NcrTxFixtures['venta']> = {}, extra: Partial<NcrTxFixtures> = {}) {
+    return {
+      venta: {
+        id: 'venta-1',
+        cliente_id: 'cliente-1',
+        nro_factura: 'C01-000001',
+        tasa: '40',
+        total_usd: '30.00',
+        total_bs: '1200.00',
+        saldo_pend_usd: '0.00',
+        tipo: 'CONTADO',
+        status: 'ACTIVA',
+        deposito_id: 'dep-B',
+        sesion_caja_id: 'sesion-venta-A',
+        ...overrides,
+      },
+      ventaDet: [{ producto_id: 'prod-1', cantidad: '3.000', lote_id: null }],
+      productos: { 'prod-1': { tipo: 'P', stock: '20.000', nombre: 'Producto 1' } },
+      inventarioStock: { 'prod-1::dep-B': '10.000' },
+      clienteSaldoActual: '0.00',
+      sesionesCaja: { 'sesion-destino-B': { status: 'ABIERTA', empresa_id: 'emp-1' } },
+      ...extra,
+    }
+  }
+
+  it('Scenario "Egreso real a sesion elegida": inserta en movimientos_metodo_cobro con origen=NCR y sesion_caja_id de la LINEA elegida (no venta.sesion_caja_id)', async () => {
+    const calls = mockCrearNcrTx(fixturesSesionCaja())
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [
+          {
+            destino: 'SESION_CAJA',
+            sesionCajaId: 'sesion-destino-B',
+            metodoCobroId: 'metodo-efectivo-usd',
+            moneda: 'USD',
+            montoEnMonedaCuenta: '30.00',
+          },
+        ],
+      })
+    )
+
+    const egresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(egresoInsert).toBeDefined()
+    expect(egresoInsert!.params).toContain('metodo-efectivo-usd')
+    expect(egresoInsert!.params).toContain('sesion-destino-B')
+    expect(egresoInsert!.params).not.toContain('sesion-venta-A')
+  })
+
+  it('Scenario "Guard sesion inexistente": la sesion elegida no existe -> rechaza y no escribe el egreso', async () => {
+    const calls = mockCrearNcrTx(fixturesSesionCaja({}, { sesionesCaja: {} }))
+
+    await expect(
+      crearNotaCredito(
+        baseParams({
+          entryPoint: 'TRADICIONAL',
+          modalidad: 'REFUND_TESORERIA',
+          egresoParams: [
+            {
+              destino: 'SESION_CAJA',
+              sesionCajaId: 'sesion-inexistente',
+              metodoCobroId: 'metodo-efectivo-usd',
+              moneda: 'USD',
+              montoEnMonedaCuenta: '30.00',
+            },
+          ],
+        })
+      )
+    ).rejects.toThrow(/sesion de caja no encontrada/i)
+
+    expect(
+      calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'"))
+    ).toBeUndefined()
+  })
+
+  it('Scenario "Guard sesion no ABIERTA": la sesion elegida esta CERRADA -> rechaza y no escribe el egreso', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesSesionCaja({}, { sesionesCaja: { 'sesion-destino-B': { status: 'CERRADA', empresa_id: 'emp-1' } } })
+    )
+
+    await expect(
+      crearNotaCredito(
+        baseParams({
+          entryPoint: 'TRADICIONAL',
+          modalidad: 'REFUND_TESORERIA',
+          egresoParams: [
+            {
+              destino: 'SESION_CAJA',
+              sesionCajaId: 'sesion-destino-B',
+              metodoCobroId: 'metodo-efectivo-usd',
+              moneda: 'USD',
+              montoEnMonedaCuenta: '30.00',
+            },
+          ],
+        })
+      )
+    ).rejects.toThrow(/ABIERTA/i)
+
+    expect(
+      calls.find((c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'"))
+    ).toBeUndefined()
+  })
+
+  it('Scenario "Cross-session": la venta pertenece a la sesion A pero el admin elige la sesion B como destino -> escribe igual', async () => {
+    const calls = mockCrearNcrTx(
+      fixturesSesionCaja(
+        { sesion_caja_id: 'sesion-venta-A' },
+        { sesionesCaja: { 'sesion-destino-B': { status: 'ABIERTA', empresa_id: 'emp-1' } } }
+      )
+    )
+
+    await crearNotaCredito(
+      baseParams({
+        entryPoint: 'TRADICIONAL',
+        modalidad: 'REFUND_TESORERIA',
+        egresoParams: [
+          {
+            destino: 'SESION_CAJA',
+            sesionCajaId: 'sesion-destino-B',
+            metodoCobroId: 'metodo-efectivo-usd',
+            moneda: 'USD',
+            montoEnMonedaCuenta: '30.00',
+          },
+        ],
+      })
+    )
+
+    const egresoInsert = calls.find(
+      (c) => c.sql.startsWith('INSERT INTO movimientos_metodo_cobro') && c.sql.includes("'NCR'")
+    )
+    expect(egresoInsert).toBeDefined()
+    expect(egresoInsert!.params).toContain('sesion-destino-B')
   })
 })
 
