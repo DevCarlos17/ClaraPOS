@@ -1,7 +1,7 @@
 # Apply Progress: NC en Cuadre — Fase 2 (egreso real de NC admin a sesión activa)
 
 **Mode**: Strict TDD
-**Batch**: 2 (Slice 2 sobre progreso previo de Slice 1 — mergeado, nada se pierde)
+**Batch**: 3 (Slice 3 sobre progreso previo de Slices 1+2 — mergeado, nada se pierde). Change COMPLETO: 17/17 tareas.
 
 ## Slice 1 — Motor (`use-notas-credito.ts`) — COMPLETO
 
@@ -73,15 +73,42 @@ Ninguna — las 4 ediciones coinciden con `design.md` §2/§Data Flow línea por
 
 **Nota de bug detectado y corregido durante GREEN**: la primera pasada de la edición 2.4 introdujo una coma sobrante después del backtick de cierre en la rama truthy del ternario de `movsData` (`` `...GROUP BY mmc.origen`, `` en vez de `` `...GROUP BY mmc.origen` ``), rompiendo el parseo de esbuild (`Expected ":" but found ","`). Detectado inmediatamente por el propio test run (no llegó a GREEN falso) y corregido antes de continuar — no afecta el resultado final ni los demás archivos.
 
-## Slice 3 — UI (`refund-tesoreria-form.tsx`) — PENDIENTE
+## Slice 3 — UI (`refund-tesoreria-form.tsx`) — COMPLETO
 
-- [ ] 3.1 RED — Mockear `useMetodosPagoActivos`; casos: opción de sesión habilitada, "Cuenta" muestra Efectivo USD/Bs, `onConfirm` recibe `{destino:'SESION_CAJA', ...}`, ausencia de método EFECTIVO oculta la opción.
-- [ ] 3.2 GREEN — Importar y llamar `useMetodosPagoActivos`.
-- [ ] 3.3 GREEN — Extender `OrigenEgreso`/`LineaFormState`.
-- [ ] 3.4 GREEN — Habilitar la opción "Sesión de caja activa" en el select "Origen".
-- [ ] 3.5 GREEN — Select "Cuenta": branch Efectivo USD/Bs para origen-sesión.
-- [ ] 3.6 GREEN — `lineasUsd`/`handleConfirm`: resolver `esCuentaBs`/`destino`/`sesionCajaId`/`metodoCobroId` desde el discriminador.
-- [ ] 3.7 REFACTOR — Confirmar regresión cero en líneas `TESORERIA`.
+- [x] 3.1 RED — Mockeado `useMetodosPagoActivos` (`@/features/configuracion/hooks/use-payment-methods`) en el test. 7 tests nuevos + 1 test existente reescrito (la opción de sesión pasó de "deshabilitada/Proximamente" a habilitada, cambiando la aserción de `toBeDisabled()` a `toBeEnabled()`): opción de sesión ya no `disabled`; "Cuenta" muestra "Efectivo USD"/"Efectivo Bs" solo para métodos EFECTIVO activos; ausencia de un método EFECTIVO en una moneda oculta esa opción; `onConfirm` recibe `{destino:'SESION_CAJA', sesionCajaId, metodoCobroId, moneda, montoEnMonedaCuenta, referencia}` para USD y para BS; cambiar Origen de vuelta a Tesoreria resetea Cuenta/moneda; guard extra (ver 3.6) de sesión que deja de estar ABIERTA entre selección y confirmación.
+- [x] 3.2 GREEN — Importado y llamado `useMetodosPagoActivos()` junto a `useCuentasTesoreria()`/`useSesionesActivas()`.
+- [x] 3.3 GREEN — `OrigenEgreso` extendido a `'TESORERIA' | \`SESION:${string}\`` (helpers `esOrigenSesion`/`sesionIdDeOrigen` type-guard); `LineaFormState` gana `moneda?: 'USD' | 'BS'` — se fija explícitamente desde la opción de "Cuenta" elegida (nunca derivada de `cuentaPorId`, que solo conoce cuentas de tesorería).
+- [x] 3.4 GREEN — Select "Origen": quitado `disabled`/"(Proximamente)" de las opciones de sesión — ahora ambas opciones (Tesorería y cada sesión ABIERTA) son seleccionables.
+- [x] 3.5 GREEN — Select "Cuenta": nuevo branch para origen-sesión con opciones "Efectivo USD"/"Efectivo Bs" desde `metodosPago.find(tipo==='EFECTIVO' && moneda===...)`; `value` de cada opción ES el `metodo_cobro_id` resuelto (cero selector adicional, Design §1). Reemplazado el `TODO` de Slice 5.
+- [x] 3.6 GREEN — `lineasUsd`/`handleConfirm` resuelven `destino:'SESION_CAJA'`/`sesionCajaId`/`metodoCobroId`/`moneda` desde el discriminador cuando `esOrigenSesion(l.origen)`; moneda tomada de `l.moneda` (selección), nunca de `cuentaPorId`. Además: guard de UI `haySesionYaNoActiva` (Spec `notas-credito-admin` Scenario "Sesión pasa a cerrada entre selección y confirmación") — si la sesión elegida deja de estar en `sesionesActivas` (query reactiva) antes de confirmar, `puedeConfirmar` pasa a `false` y se muestra un mensaje de error, sin invocar `onConfirm`.
+- [x] 3.7 REFACTOR — Confirmado por los tests ya existentes de la variante `TESORERIA` (sin cambios, 22 tests originales siguen pasando byte-a-byte): el payload `{destino:'BANCO'|'CAJA_FUERTE', cuentaId, montoEnMonedaCuenta, referencia}` es idéntico al de antes de este batch.
+
+### TDD Cycle Evidence (Slice 3)
+
+| Task | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|------|-----------|-------|------------|-----|-------|-------------|----------|
+| 3.1–3.6 | `src/features/ventas/components/__tests__/refund-tesoreria-form.test.tsx` | Unit (React Testing Library) | ✅ 22/22 (baseline pre-cambio) | ✅ Escrito — 6/6 tests nuevos/reescritos fallaron por la razón correcta (opción de sesión seguía `disabled`, "Cuenta" no ofrecía Efectivo, `Value "..." not found in options`) | ✅ 27/27 tras implementar la unión `OrigenEgreso`, `LineaFormState.moneda` y los dos selects | ✅ 5 casos: Efectivo USD, Efectivo Bs, ausencia de un método oculta la opción, reset de Cuenta al cambiar Origen, guard de sesión cerrada (test adicional, no listado en tasks.md pero requerido por Spec Scenario "Sesión pasa a cerrada...") | ✅ Sin duplicación nueva; el discriminador reusa el mismo patrón `if (esOrigenSesion(...))` en los 3 puntos (`lineasUsd`, `handleConfirm`, `onChange` de Cuenta) |
+
+**Nota de tipo (TS2345, capturado antes de considerar GREEN real)**: la primera versión de `haySesionYaNoActiva` narrowaba `l.origen` con `esOrigenSesion(l.origen) && !sesionesActivas.some(...)` en una sola expresión — TypeScript pierde la narrow del predicado del `some()` externo al referenciar `l.origen` de nuevo DENTRO de un closure anidado (`.some((s) => ...)`). Corregido extrayendo `sesionIdDeOrigen(l.origen)` a una constante inmediatamente después de un `if (!esOrigenSesion(...)) return false` (early return), antes de entrar al closure anidado — mismo principio que ya aplica el resto del archivo (nunca leer una propiedad narrowed dentro de un callback anidado sin capturarla antes en una constante).
+
+### Test Summary (Slice 3)
+- **Total tests nuevos/reescritos**: 7 (6 nuevos + 1 reescrito de "disabled" a "enabled")
+- **Total tests del archivo**: 28/28 (era 22/22 antes del batch)
+- **Total suite completa**: 1613/1616 (3 fallos preexistentes, no relacionados — mismos PowerSync worker flakes en `cliente-detalle.test.tsx`/`cxc-list.test.tsx`/`cxc-cliente-detalle.test.tsx` que en Slices 1 y 2; el conteo total sube de 1610 a 1616 exactamente por los 6 tests netos nuevos de este batch)
+- **Layers usados**: Unit/Component (React Testing Library) (7)
+- **Approval tests**: 1 — el test "Select Origen habilita Tesoreria y deshabilita sesiones activas" existente se reescribió a "habilita Tesoreria y Sesion de caja activa, ambas seleccionables" porque el comportamiento SI cambió deliberadamente (era el propósito del slice)
+- **Pure functions creadas**: 2 — `esOrigenSesion` (type guard) y `sesionIdDeOrigen`, ambas sin dependencias de estado ni DB
+
+### Deviations from Design (Slice 3)
+Ninguna respecto a `design.md` §1/§Interfaces/§Data Flow. Una adición no listada explícitamente en `tasks.md` pero exigida por la Spec delta `notas-credito-admin` (Scenario "Sesión pasa a cerrada entre selección y confirmación", MUST): guard `haySesionYaNoActiva` en el componente — si la sesión elegida deja de aparecer en `useSesionesActivas()` (query reactiva PowerSync) antes de que el usuario confirme, `puedeConfirmar` se vuelve `false` y se muestra un mensaje de error, sin permitir invocar `onConfirm`/escribir nada. Se implementó porque es un requisito MUST de la spec activa de este mismo change, no una extensión de alcance.
+
+### Files Changed (Slice 3)
+| File | Action | What Was Done |
+|------|--------|----------------|
+| `src/features/ventas/components/refund-tesoreria-form.tsx` | Modified | Opción "Sesión de caja activa" habilitada (quitado `disabled`/"Proximamente"); `useMetodosPagoActivos()` importado y llamado; `OrigenEgreso` extendido a unión con `SESION:${string}` + helpers `esOrigenSesion`/`sesionIdDeOrigen`; `LineaFormState.moneda` nuevo; select "Cuenta" con branch Efectivo USD/Bs para origen-sesión; `lineasUsd`/`handleConfirm` resuelven el discriminador `SESION_CAJA`; guard `haySesionYaNoActiva` + mensaje de error |
+| `src/features/ventas/components/__tests__/refund-tesoreria-form.test.tsx` | Modified | Mock de `useMetodosPagoActivos`; 1 test reescrito (disabled→enabled); 7 tests nuevos (Efectivo USD, Efectivo Bs, método ausente oculta opción, reset Cuenta al cambiar Origen, guard sesión cerrada) |
+
+**Nota de tamaño**: diff de Slice 3 ~140 líneas producción + ~150 líneas test ≈ 290 líneas, dentro/ligeramente por encima del estimado ~100-150 de `tasks.md`/`design.md` (el guard `haySesionYaNoActiva`, no presupuestado explícitamente en el estimado original, explica la diferencia — está justificado por un MUST de la spec, ver arriba). No se tocó `use-notas-credito.ts` ni `use-sesiones-caja.ts` (Slices 1 y 2, fuera de alcance de este batch) ni `crear-ncr-modal.tsx` (confirmado sin cambios — ya reenvía `egresoParams` sin inspeccionar su contenido).
 
 ## Status
-10/17 tareas completas (Slice 1 y 2 de 3). Listo para sdd-verify de Slices 1-2 o para continuar con Slice 3 (UI, `refund-tesoreria-form.tsx`) en un batch separado — depende del tipo `EgresoTesoreriaLinea` de Slice 1 (ya disponible en esta rama).
+17/17 tareas completas — Slices 1, 2 y 3 del change `nc-cuadre-sesion-fase2` COMPLETO. Listo para `sdd-verify` de todo el change.
