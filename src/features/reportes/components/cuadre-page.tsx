@@ -15,11 +15,14 @@ import { AuditModal } from './audit-modal'
 import { CxcModal } from './cxc-modal'
 import { CuadreMetodoModal } from './cuadre-metodo-modal'
 import { CuadreTotalesFiscales } from './cuadre-totales-fiscales'
+import { CuadreDevolucionesNeto } from './cuadre-devoluciones-neto'
 import { CuadreConteoFisico } from './cuadre-conteo-fisico'
 import { CuadreDetallePagos } from './cuadre-detalle-pagos'
 import { CuadreDetalleFacturas } from './cuadre-detalle-facturas'
 import { CuadreImprimir } from './cuadre-imprimir'
 import { CuadreArqueoTeorico } from './cuadre-arqueo-teorico'
+import { splitEgresosArqueo, ORIGENES_DEVOLUCION_NC } from './cuadre-arqueo-teorico-model'
+import { esSalidaCaja, resolverConceptoSalida } from './cuadre-salidas-caja-model'
 import { DiferencialCambiarioModal } from './diferencial-cambiario-modal'
 import { AbsorcionModal } from './absorcion-modal'
 import {
@@ -34,6 +37,7 @@ import {
   usePagosPorMetodo,
   useMovimientosManualesDia,
   useTotalesFiscales,
+  useIvaPorAlicuotaNC,
   useVentasFinancieras,
   useMovimientosEfectivoCaja,
   useCobranzasCxCCaja,
@@ -191,6 +195,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { metodos: todosMetodos } = usePagosPorMetodo(activeFilters)
   const { movimientos: movManualesCaja } = useMovimientosManualesDia(activeFilters)
   const { totales: totalesFiscales } = useTotalesFiscales(activeFilters)
+  // Reutiliza el mismo hook que Card 1 (useIvaPorAlicuotaNC) para el total
+  // global de Notas de Credito de la sesion — no es una query divergente.
+  const { totalNcrTotalUsd: totalNcrSesionUsd, totalNcrTotalBs: totalNcrSesionBs } = useIvaPorAlicuotaNC(activeFilters)
   const { contadoUsd, contadoBs, creditoUsd, creditoBs } = useResumenTiposVenta(activeFilters)
   const { propinaBs, propinaUsd } = usePropinasDelDia(activeFilters)
   const { anticipoUsd, anticipoBsNativo } = useAnticiposDelDia(activeFilters)
@@ -221,23 +228,29 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
     .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.mov_tipo === 'EGRESO')
     .reduce((s, m) => s + m.total, 0)
 
-  // Separación vueltos vs retiros para el Arqueo Teórico (display)
-  const vueltosEfectivoUsd = movManualesCaja
-    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda !== 'BS' && m.origen === 'VUELTO')
-    .reduce((s, m) => s + m.total, 0)
-  const vueltosEfectivoBsNativo = movManualesCaja
-    .filter((m) => m.metodo_tipo === 'EFECTIVO' && m.metodo_moneda === 'BS' && m.origen === 'VUELTO')
-    .reduce((s, m) => s + m.total, 0)
-  const retirosManualesUsd      = egresosEfectivoUsd      - vueltosEfectivoUsd
-  const retirosManualesBsNativo = egresosEfectivoBsNativo - vueltosEfectivoBsNativo
+  // Separación Devoluciones (NC) vs Vueltos vs Retiros para el Arqueo Teórico (display).
+  // Clasifica por origen del egreso (splitEgresosArqueo), no por punto de entrada — asi
+  // una futura devolucion de NC via modulo administrativo tambien cae en "Devoluciones"
+  // sin tocar este calculo. El total agregado (egresosEfectivoUsd/Bs, usado en la formula
+  // del Total Teorico) no cambia: solo se re-etiqueta como se presenta el desglose.
+  const {
+    retirosUsd: retirosManualesUsd,
+    retirosBsNativo: retirosManualesBsNativo,
+    devolucionesNcUsd,
+    devolucionesNcBsNativo,
+    vueltosUsd: vueltosEfectivoUsd,
+    vueltosBsNativo: vueltosEfectivoBsNativo,
+  } = splitEgresosArqueo(movManualesCaja)
 
   // Detalle de movimientos manuales para tablas opcionales
   const ingresosDetalle = movsEfectivoDetalle.filter(
     (m) => m.origen === 'INGRESO_MANUAL' || m.origen === 'INGRESO_TESORERIA'
   )
-  const egresosDetalle = movsEfectivoDetalle.filter(
-    (m) => m.origen === 'EGRESO_MANUAL' || m.origen === 'EGRESO_TESORERIA' || m.origen === 'PAGO_PROVEEDOR'
-  )
+  // esSalidaCaja incluye aditivamente los origenes de devolucion de NC
+  // (ORIGENES_DEVOLUCION_NC, hoy 'NCR') junto a los origenes preexistentes — antes
+  // esos egresos quedaban excluidos de esta tabla aunque SI se sumaban al total de
+  // "Devoluciones (NC)" del Arqueo Teorico (bug "Regla de Oro invisible").
+  const egresosDetalle = movsEfectivoDetalle.filter(esSalidaCaja)
   const vueltosDetalle = movsEfectivoDetalle.filter(
     (m) => m.origen === 'VUELTO'
   )
@@ -743,6 +756,18 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
                 )
               })()}
 
+              <div className="border-t pt-2" />
+
+              {/* Notas de Credito (Devoluciones) — linea unica global + Neto de sesion.
+                  Reutiliza useIvaPorAlicuotaNC (mismo hook que Card 1), a tasa HISTORICA
+                  de cada NC. Ver engram sdd/nc-cuadre/card2-diseno. */}
+              <CuadreDevolucionesNeto
+                totalFacturadoUsd={totalesFiscales.totalVentasUsd + totalesFiscales.totalIgtfUsd}
+                totalFacturadoBs={totalesFiscales.totalVentasBs + totalesFiscales.totalIgtfBs}
+                totalNcrUsd={totalNcrSesionUsd}
+                totalNcrBs={totalNcrSesionBs}
+              />
+
               {/* OCULTO (fix/cuadre-ocultar-neto-esperado): "Diferencial Cambiario" y
                   "Total Caja Neto Esperado" se ocultan por decision de negocio.
                   - "Total Caja Neto Esperado": diseno simplificado superado por la card
@@ -823,6 +848,8 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
               egresosBsNativo={egresosEfectivoBsNativo}
               retirosManualesUsd={retirosManualesUsd}
               retirosManualesBsNativo={retirosManualesBsNativo}
+              devolucionesNcUsd={devolucionesNcUsd}
+              devolucionesNcBsNativo={devolucionesNcBsNativo}
               vueltosUsd={vueltosEfectivoUsd}
               vueltosBsNativo={vueltosEfectivoBsNativo}
               tasaCambio={tasaPromedio}
@@ -1236,12 +1263,13 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
         <tbody>
           {items.map((m) => {
             const hora = m.fecha ? formatHora(m.fecha) || '—' : '—'
-            const label = m.concepto ?? m.destinatario ?? m.metodo_nombre
+            const label = resolverConceptoSalida(m)
             const monto = m.metodo_moneda === 'BS'
               ? formatBs(parseFloat(m.monto))
               : formatUsd(parseFloat(m.monto))
                     const isTesoreria = m.origen === 'INGRESO_TESORERIA' || m.origen === 'EGRESO_TESORERIA'
                     const isCxP = m.origen === 'PAGO_PROVEEDOR'
+                    const isDevolucionNc = (ORIGENES_DEVOLUCION_NC as readonly string[]).includes(m.origen)
                     return (
                       <tr key={m.id} className="border-b last:border-0 hover:bg-muted/20">
                         <td className="px-4 py-2.5">
@@ -1254,6 +1282,11 @@ function MovimientosManualesTable({ items }: { items: MovimientoEfectivoDetalle[
                             {isCxP && (
                               <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-orange-100 text-orange-700 font-medium">
                                 CxP
+                              </span>
+                            )}
+                            {isDevolucionNc && (
+                              <span className="shrink-0 inline-flex items-center rounded px-1 py-0.5 text-[10px] bg-red-100 text-red-700 font-medium">
+                                NC
                               </span>
                             )}
                             <span className="truncate max-w-[180px]">{label}</span>

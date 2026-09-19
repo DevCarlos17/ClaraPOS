@@ -1218,6 +1218,84 @@ export function useIvaPorAlicuota(filters: CuadreFilters | null) {
   return { alicuotas: items, isLoading }
 }
 
+// ─── IVA por Alicuota — Notas de Credito (Devoluciones) ─────
+// Espejo estructural de useIvaPorAlicuota, sobre notas_credito_det JOIN
+// notas_credito. Escopeado POR SESION via buildCuadreWhere(filters, empresaId, 'nc')
+// (notas_credito SI tiene sesion_caja_id propio, a diferencia de ventas_det).
+// Montos SIEMPRE a la tasa HISTORICA de cada NC — subtotal_bs/total_bs ya
+// vienen persistidos a esa tasa desde la creacion de la NC, nunca se
+// recalculan aqui con una tasa "actual"/promedio.
+
+export function useIvaPorAlicuotaNC(filters: CuadreFilters | null) {
+  const { user } = useCurrentUser()
+  const empresaId = user?.empresa_id ?? ''
+  const [where, params] = useMemo(
+    () => filters ? buildCuadreWhere(filters, empresaId, 'nc') : ['1=0', [] as unknown[]],
+    [filters, empresaId]
+  )
+
+  const { data, isLoading } = useQuery(
+    `SELECT
+       CAST(ncd.impuesto_pct AS REAL) as impuesto_pct,
+       COALESCE(SUM(CAST(ncd.subtotal_usd AS REAL)), 0) as base_usd,
+       COALESCE(SUM(CAST(ncd.subtotal_bs AS REAL)), 0) as base_bs,
+       COALESCE(SUM(CAST(ncd.subtotal_usd AS REAL) * CAST(ncd.impuesto_pct AS REAL) / 100), 0) as monto_iva,
+       COALESCE(SUM(CAST(ncd.subtotal_bs AS REAL) * CAST(ncd.impuesto_pct AS REAL) / 100), 0) as monto_iva_bs
+     FROM notas_credito_det ncd
+     JOIN notas_credito nc ON ncd.nota_credito_id = nc.id
+     WHERE ${where}
+       AND ncd.tipo_impuesto != 'Exento'
+       AND CAST(ncd.impuesto_pct AS REAL) > 0
+     GROUP BY ncd.impuesto_pct
+     ORDER BY ncd.impuesto_pct DESC`,
+    params
+  )
+
+  const alicuotas: IvaAlicuota[] = (data ?? []).map((row: Record<string, unknown>) => ({
+    impuestoPct: Number(row.impuesto_pct ?? 0),
+    baseUsd: Number(Number(row.base_usd ?? 0).toFixed(2)),
+    baseBs: Number(Number(row.base_bs ?? 0).toFixed(2)),
+    montoIvaUsd: Number(Number(row.monto_iva ?? 0).toFixed(2)),
+    montoIvaBs: Number(Number(row.monto_iva_bs ?? 0).toFixed(2)),
+  }))
+
+  // Exento + total global de NC — agregado a nivel de header (mismo patron
+  // que el exento de useTotalesFiscales), reutiliza el mismo where/params
+  // ('nc' es el alias tanto del JOIN de arriba como del FROM de abajo).
+  const { data: dataHeader, isLoading: loadingHeader } = useQuery(
+    `SELECT
+       COALESCE(SUM(CAST(total_exento_usd AS REAL)), 0) as total_exento,
+       COALESCE(SUM(CAST(total_exento_usd AS REAL) * CAST(tasa_historica AS REAL)), 0) as total_exento_bs,
+       COALESCE(SUM(CAST(total_base_usd AS REAL)), 0) as total_base,
+       COALESCE(SUM(CAST(total_base_usd AS REAL) * CAST(tasa_historica AS REAL)), 0) as total_base_bs,
+       COALESCE(SUM(CAST(total_usd AS REAL)), 0) as total_nc,
+       COALESCE(SUM(CAST(total_bs AS REAL)), 0) as total_nc_bs
+     FROM notas_credito nc
+     WHERE ${where}`,
+    params
+  )
+
+  const headerRow = (dataHeader?.[0] ?? {}) as {
+    total_exento: number
+    total_exento_bs: number
+    total_base: number
+    total_base_bs: number
+    total_nc: number
+    total_nc_bs: number
+  }
+
+  return {
+    alicuotas,
+    totalNcrExentoUsd: Number(Number(headerRow.total_exento ?? 0).toFixed(2)),
+    totalNcrExentoBs: Number(Number(headerRow.total_exento_bs ?? 0).toFixed(2)),
+    totalNcrBaseUsd: Number(Number(headerRow.total_base ?? 0).toFixed(2)),
+    totalNcrBaseBs: Number(Number(headerRow.total_base_bs ?? 0).toFixed(2)),
+    totalNcrTotalUsd: Number(Number(headerRow.total_nc ?? 0).toFixed(2)),
+    totalNcrTotalBs: Number(Number(headerRow.total_nc_bs ?? 0).toFixed(2)),
+    isLoading: isLoading || loadingHeader,
+  }
+}
+
 // ─── Pagos Detalle Completo ────────────────────────────────
 
 export interface PagoDetalleCompleto {
@@ -1431,6 +1509,7 @@ export interface MovimientoEfectivoDetalle {
   concepto: string | null
   fecha: string
   destinatario: string | null
+  nro_ncr: string | null
 }
 
 export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
@@ -1446,11 +1525,14 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
            mc.nombre as metodo_nombre,
            CASE WHEN mon.codigo_iso = 'VES' THEN 'BS'
                 ELSE COALESCE(mon.codigo_iso, 'USD') END as metodo_moneda,
-           ud.nombre as destinatario
+           ud.nombre as destinatario,
+           nc.nro_ncr as nro_ncr
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          LEFT JOIN monedas mon ON mc.moneda_id = mon.id
          LEFT JOIN usuarios ud ON mmc.destinatario_id = ud.id
+         LEFT JOIN notas_credito nc
+           ON mmc.origen = 'NCR' AND mmc.doc_origen_id = nc.id AND nc.empresa_id = mmc.empresa_id
          WHERE mmc.empresa_id = ?
            AND mmc.sesion_caja_id IN (${placeholders})
            AND mc.tipo = 'EFECTIVO'
@@ -1469,6 +1551,7 @@ export function useMovimientosEfectivoCaja(filters: CuadreFilters | null) {
     concepto: row.concepto ? String(row.concepto) : null,
     fecha: String(row.fecha ?? ''),
     destinatario: row.destinatario ? String(row.destinatario) : null,
+    nro_ncr: row.nro_ncr ? String(row.nro_ncr) : null,
   }))
 
   return { movimientos: items, isLoading }
