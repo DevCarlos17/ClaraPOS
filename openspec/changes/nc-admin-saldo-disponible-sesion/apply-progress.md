@@ -206,3 +206,58 @@ disponible (sesion y Tesoreria) — cero duplicacion de logica de comparacion.
 - `yarn test:run` (suite completa): 1645/1648 passed. 3 failed = MISMOS flakes conocidos de PowerSync worker (`cliente-detalle.test.tsx`, `cxc-cliente-detalle.test.tsx`, `cxc-list.test.tsx` — `ReferenceError: Worker is not defined`), no relacionados con este batch.
 - `yarn type-check:test`: cero errores en los 6 archivos de este batch. Los 3 errores restantes (`producto-form-aviso-borrador.test.tsx`, `producto-form-edit-open-mask.test.tsx`, `use-pwa-update.ts`) son los MISMOS preexistentes ya documentados en el apply original (confirmados en `develop`).
 - `yarn build`/`yarn deploy`: NO ejecutados (fuera de alcance de este batch, por instruccion explicita).
+
+## Revert post-QA: Opcion A (rechazo de keystroke) -> input LIBRE (mensaje rojo + boton deshabilitado)
+
+El usuario probo el Ajuste UX post-QA #3 ("Opcion A", commits `e7a327a`/`2f2d364`/`2295afd`)
+en uso real y reporto un bug: al RECHAZAR el keystroke que superaria el tope, el campo Monto
+NUNCA llegaba a un valor invalido — por lo tanto el mensaje rojo de validacion ("excede el
+pendiente"/"excede el saldo disponible") jamas se mostraba, porque el estado que lo dispara
+era inalcanzable por tipeo directo. Se revirtio esa decision: el input vuelve a ser LIBRE
+(acepta cualquier valor tecleado), y el contrato de validacion pasa a ser 100% mensaje +
+`aria-invalid` + boton "Confirmar" deshabilitado — sin bloquear ni clampear el tipeo en ningun
+caso.
+
+**Que se removio**: `permiteIngresoMonto`/`capMontoLinea` (`notas-credito-refund.ts`) y el
+gating del `onChange` del input Monto en `LineaEgresoRefund` (`refund-tesoreria-form.tsx`) que
+las invocaba. Ambas funciones quedaron sin ningun otro caller en el codebase tras la
+extraccion del gating, asi que se eliminaron junto con sus 12 tests unitarios (en vez de
+dejarlas como codigo exportado sin cobertura).
+
+**Que se mantuvo intacto**: el mensaje rojo pegado al input (Ajuste #2), `aria-invalid`,
+`puedeConfirmar`/`excedeAlgunTopePorLinea` como gate real de "Confirmar", el fix de
+sobregiro de bancos (solo efectivo/CAJA_FUERTE tiene tope de saldo), los Ajustes 1/2
+(nombre de usuario en Origen, posicion del mensaje) y `esNativaBs`.
+
+### Deuda: unificar comportamiento de inputs con validacion de limites
+
+Esta decision (input LIBRE + mensaje rojo + boton deshabilitado, CERO rechazo de keystroke,
+CERO clamping silencioso) deberia ser el patron UNICO en toda la app para cualquier input que
+valide contra un limite (montos, cantidades de stock, etc.) — hoy coexisten distintos
+criterios segun el modulo/campo, lo cual es inconsistente para el usuario final (a veces el
+campo "no deja escribir" y en otros lados "se pone rojo pero deja escribir"). Unificar esto es
+trabajo de seguimiento, FUERA del alcance de este change (`nc-admin-saldo-disponible-sesion`)
+— no se toca ningun otro modulo en este apply.
+
+### TDD Cycle Evidence (revert)
+
+| Ajuste | Test File | Layer | Safety Net | RED | GREEN | TRIANGULATE | REFACTOR |
+|--------|-----------|-------|------------|-----|-------|-------------|----------|
+| Revert Opcion A | `refund-tesoreria-form.test.tsx` | Integration (RTL, userEvent) | ✅ 40/40 (baseline) | ✅ 4 tests reescritos (aserciones de rechazo -> aserciones de aceptacion+aria-invalid+mensaje+disabled) | ✅ 40/40 passed | ✅ Cubre CAJA_FUERTE, BANCO (pendiente), sesion — 3 origenes distintos | ➖ None needed |
+| Revert Opcion A (utils) | `notas-credito-refund.test.ts` | Unit | ✅ 30/30 (baseline) | N/A (solo eliminacion de codigo muerto + sus tests) | ✅ 18/18 passed | ➖ N/A | ➖ None needed |
+
+### Files Changed (Revert)
+
+| File | Action | What Was Done |
+|------|--------|----------------|
+| `src/features/ventas/utils/notas-credito-refund.ts` | Modified | -25 lineas. Elimina `capMontoLinea`/`permiteIngresoMonto` (sin otros callers tras el revert del gating). |
+| `src/features/ventas/utils/__tests__/notas-credito-refund.test.ts` | Modified | -49 lineas. Elimina los 12 tests de las 2 funciones removidas. |
+| `src/features/ventas/components/refund-tesoreria-form.tsx` | Modified | Elimina el import y el gating del `onChange` del input Monto (vuelve a `onActualizar({ montoNativo: e.target.value })` libre); actualiza comentarios que describian "Opcion A"/rechazo de keystroke. |
+| `src/features/ventas/components/__tests__/refund-tesoreria-form.test.tsx` | Modified | Reescribe 4 tests que asertaban rechazo de keystroke para que ahora aserten aceptacion del valor + `aria-invalid` + mensaje + boton deshabilitado; limpia comentario obsoleto. |
+
+### Verification (Revert)
+
+- `yarn test:run` (archivos de este batch): 40/40 (`refund-tesoreria-form.test.tsx`) + 18/18 (`notas-credito-refund.test.ts`) = 58/58 passed.
+- `yarn test:run` (suite completa): 1636/1639 passed. 3 failed = MISMOS flakes conocidos de PowerSync worker (`cliente-detalle.test.tsx`, `cxc-cliente-detalle.test.tsx`, `cxc-list.test.tsx` — `ReferenceError: Worker is not defined`), no relacionados con este batch.
+- `yarn type-check:test`: cero errores nuevos en los 4 archivos de este batch. Los 3 errores restantes (`producto-form-aviso-borrador.test.tsx`, `producto-form-edit-open-mask.test.tsx`, `use-pwa-update.ts`) son los MISMOS preexistentes ya documentados arriba.
+- `yarn build`/`yarn deploy`: NO ejecutados (fuera de alcance, por instruccion explicita).

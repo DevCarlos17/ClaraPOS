@@ -13,8 +13,6 @@ import {
   excedeSaldoDisponible,
   pendienteRestanteLineaUsd,
   usdACapNativo,
-  capMontoLinea,
-  permiteIngresoMonto,
 } from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
 import {
@@ -219,11 +217,11 @@ export function RefundTesoreriaForm({
    * true si CUALQUIER linea excede su tope efectivo — pendiente de la NC
    * POR LINEA o saldo disponible del origen elegido (sesion o cuenta de
    * Tesoreria) — reportado por cada `LineaEgresoRefund` via
-   * `onExcedeTopeChange` (Ajuste UX post-QA #3: el tipeo ya queda
-   * bloqueado por `permiteIngresoMonto` en el hijo; esto es el safety net
-   * de gating que cubre estados alcanzados por edicion de OTROS campos,
-   * ej. cambiar de Cuenta o de otra linea DESPUES de escribir un monto ya
-   * valido).
+   * `onExcedeTopeChange` (Ajuste UX post-QA #3, revertido a input LIBRE: el
+   * campo Monto acepta cualquier valor, este flag es el UNICO gate real que
+   * deshabilita `puedeConfirmar` cuando algun monto queda por encima de su
+   * tope — el mensaje rojo pegado al input de cada linea explica el motivo,
+   * ver `LineaEgresoRefund` mas abajo).
    */
   const excedeAlgunTopePorLinea = lineas.some((l) => excedeTopePorLinea[l.key])
   const puedeConfirmar =
@@ -443,8 +441,8 @@ function LineaEgresoRefund({
   // Saldo disponible del origen elegido, en la moneda NATIVA de la linea.
   // `null` = origen todavia sin resolver un saldo conocido (Tesoreria sin
   // Cuenta elegida, o saldo de sesion aun en `isLoading`) — en ese caso
-  // `capMontoLinea` usa SOLO el pendiente, sin bloquear por un origen que ni
-  // siquiera se eligio (Ajuste UX post-QA #3, Opcion A).
+  // el guard de abajo no compara contra un origen que ni siquiera se
+  // eligio.
   // Tesoreria: SOLO el efectivo (CAJA_FUERTE) tiene tope — no puede quedar
   // negativo (es fisico). Los BANCOS se permiten sobregirar, asi que NO se
   // capan (disponibleNativo = null). Regla de negocio: "los bancos se podran
@@ -458,7 +456,6 @@ function LineaEgresoRefund({
       : null
 
   const pendienteNativo = usdACapNativo(pendienteRestanteUsd, esNativaBs, tasaHistorica)
-  const capNativo = capMontoLinea(pendienteNativo, disponibleNativo)
 
   // VALIDATE gatea sobre `isLoading` (Design "Guard de validacion NO gatea
   // por isLoading, salvo la comparacion en si") — evita un falso positivo
@@ -568,33 +565,20 @@ function LineaEgresoRefund({
             aria-invalid={excedeAlgunTope}
             placeholder="0.00"
             value={linea.montoNativo}
-            onChange={(e) => {
-              const nuevoValor = e.target.value
-              if (!permiteIngresoMonto(nuevoValor, capNativo)) {
-                // Ajuste UX post-QA #3 (Opcion A, confirmada por el
-                // usuario): RECHAZA el keystroke que dejaria el campo por
-                // ENCIMA del tope — nunca clampea/reemplaza en silencio. El
-                // navegador YA mutó `e.target.value` de forma nativa antes
-                // de llegar a este handler; si no actualizamos state React
-                // no vuelve a renderizar este input controlado, asi que hay
-                // que forzar el reset explicito al ultimo valor valido para
-                // que el DOM no quede desincronizado del state.
-                e.target.value = linea.montoNativo
-                return
-              }
-              onActualizar({ montoNativo: nuevoValor })
-            }}
+            onChange={(e) => onActualizar({ montoNativo: e.target.value })}
             className={`w-full rounded-md border ${excedeAlgunTope ? 'border-destructive' : 'border-input'} bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${noSpinner}`}
           />
-          {/* Ajuste UX post-QA #2: mensaje de exceso pegado al input Monto
-              de ESTA linea (antes vivia al final del formulario, lejos del
-              campo al que se referia) — `permiteIngresoMonto` ya previene
-              llegar a este estado por tipeo directo; este texto es el
-              safety net para cuando el tope se reduce por OTRO campo (otra
-              linea, cambio de Cuenta/Origen) DESPUES de escribir un monto
-              ya valido. Prioriza el motivo "pendiente" sobre "disponible
-              del origen" si ambos aplican a la vez (evita mostrar 2
-              mensajes apilados por la misma linea). */}
+          {/* Ajuste UX post-QA #2 (revertido de "Opcion A" a input LIBRE): el
+              campo Monto acepta CUALQUIER valor tecleado, nunca rechaza el
+              keystroke ni clampea en silencio — este mensaje pegado al input
+              de ESTA linea (posicion fijada en el Ajuste #2 original) es el
+              UNICO mecanismo que comunica el estado invalido cuando el monto
+              excede su tope; junto con `aria-invalid` y `puedeConfirmar`
+              (arriba) forman el contrato completo: input libre + mensaje
+              rojo + boton deshabilitado, sin bloquear el tipeo. Prioriza el
+              motivo "pendiente" sobre "disponible del origen" si ambos
+              aplican a la vez (evita mostrar 2 mensajes apilados por la
+              misma linea). */}
           {excedePendiente && (
             <p className="mt-1 text-xs text-destructive">El monto ingresado excede el pendiente por reembolsar.</p>
           )}

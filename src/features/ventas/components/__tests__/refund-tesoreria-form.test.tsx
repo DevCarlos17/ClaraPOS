@@ -158,19 +158,19 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     expect(cuentaSelect).toHaveTextContent('200.00')
   })
 
-  describe('Ajuste UX post-QA #3 (Opcion A): tope de saldo disponible de CUENTA DE TESORERIA (antes sin validar)', () => {
-    it('CAJA_FUERTE: escribir hasta su saldo se permite; un digito extra que lo superaria se rechaza (es efectivo, no puede quedar negativo)', async () => {
+  describe('Ajuste UX post-QA #3 (Opcion A, revertido): tope de saldo disponible de CUENTA DE TESORERIA (antes sin validar)', () => {
+    it('CAJA_FUERTE: escribir un monto que supera su saldo SE ACEPTA en el input, pero marca aria-invalid, muestra el mensaje y deshabilita Confirmar (es efectivo, no puede quedar negativo)', async () => {
       const user = userEvent.setup()
       render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
 
       await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'caja-1')
       const montoInput = screen.getByLabelText(/^monto$/i)
-      await user.type(montoInput, '200') // saldo_actual de caja-1 (CAJA_FUERTE) = 200.00
-      expect(montoInput).toHaveValue(200)
+      await user.type(montoInput, '250') // saldo_actual de caja-1 (CAJA_FUERTE) = 200.00, pendiente NC = 1000
 
-      await user.type(montoInput, '1')
-      expect(montoInput).toHaveValue(200) // rechaza el digito extra, nunca llega a 2001
-      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+      expect(montoInput).toHaveValue(250) // el input NO rechaza el tecleo, aunque supera el saldo
+      expect(montoInput).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText(/excede el saldo disponible de la cuenta de tesoreria/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
     })
 
     it('safety net: cambiar de Cuenta (a una con MENOS saldo) DESPUES de escribir un monto ya valido bloquea Confirmar y muestra el mensaje de cuenta de tesoreria, sin clampear el valor', async () => {
@@ -220,10 +220,6 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       await user.type(montoInput, '150')
       expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
 
-      // Escribir mas de 200 en caja-1 quedaria rechazado por permiteIngresoMonto,
-      // asi que forzamos el estado invalido cambiando de cuenta hacia una con
-      // MENOS saldo relativo (misma caja-1, pero simulando edicion cruzada):
-      // en su lugar, verificamos el camino inverso — banco NO capa ese mismo monto.
       await user.selectOptions(cuentaSelect, 'banco-usd-1') // saldo_actual = 500.00, sin tope
 
       expect(montoInput).toHaveValue(150)
@@ -237,12 +233,12 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
 
       await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1') // saldo 500, pero pendiente NC = 100
       const montoInput = screen.getByLabelText(/^monto$/i)
-      await user.type(montoInput, '100')
-      expect(montoInput).toHaveValue(100)
+      await user.type(montoInput, '101') // 101 > pendiente de 100 (aunque el banco tiene saldo de sobra)
 
-      await user.type(montoInput, '1') // 101 > pendiente de 100 -> se rechaza (aunque el banco tiene saldo de sobra)
-      expect(montoInput).toHaveValue(100)
-      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+      expect(montoInput).toHaveValue(101) // el input NO rechaza el tecleo
+      expect(montoInput).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText(/excede el pendiente por reembolsar/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
     })
   })
 
@@ -269,19 +265,19 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     expect(screen.getByText(/\$40\.00 \/ Bs/)).toBeInTheDocument()
   })
 
-  describe('Ajuste UX post-QA #3 (Opcion A): tope de pendiente de la NC via rechazo de keystroke, no clamping', () => {
-    it('el input de Monto rechaza cualquier digito adicional que superaria el pendiente de la NC, quedando SIEMPRE en el ultimo valor valido', async () => {
+  describe('Ajuste UX post-QA #3 (revertido): tope de pendiente de la NC via mensaje + boton deshabilitado, input LIBRE (sin rechazo de keystroke)', () => {
+    it('el input de Monto ACEPTA un valor que supera el pendiente de la NC — el estado invalido se muestra via aria-invalid + mensaje, y Confirmar se deshabilita', async () => {
       const user = userEvent.setup()
       render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
 
       await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
       const montoInput = screen.getByLabelText(/^monto$/i)
-      await user.type(montoInput, '100')
-      expect(montoInput).toHaveValue(100)
+      await user.type(montoInput, '105')
 
-      await user.type(montoInput, '5')
-      expect(montoInput).toHaveValue(100) // el digito extra se rechaza, nunca llega a 1005
-      expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+      expect(montoInput).toHaveValue(105) // el input NO rechaza el tecleo, aunque supera el pendiente de 100
+      expect(montoInput).toHaveAttribute('aria-invalid', 'true')
+      expect(screen.getByText(/excede el pendiente por reembolsar/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
     })
 
     it('safety net: si el pendiente de la NC baja (prop montoDisponibleUsd cambia) DESPUES de escribir un monto ya valido, Confirmar se bloquea y el mensaje aparece pegado al input — SIN clampear el valor ya escrito', async () => {
@@ -555,21 +551,20 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
         expect(screen.queryByText(/excede el saldo disponible de la sesion/i)).not.toBeInTheDocument()
       })
 
-      describe('Ajuste UX post-QA #3 (Opcion A): tope de saldo de sesion via rechazo de keystroke, no clamping', () => {
-        it('escribir hasta el saldo de sesion se permite; un digito extra que lo superaria se rechaza — Confirmar sigue habilitado en el tope exacto', async () => {
+      describe('Ajuste UX post-QA #3 (revertido): tope de saldo de sesion via mensaje + boton deshabilitado, input LIBRE (sin rechazo de keystroke)', () => {
+        it('escribir un monto que supera el saldo de sesion SE ACEPTA en el input, pero marca aria-invalid + mensaje y deshabilita Confirmar', async () => {
           const user = userEvent.setup()
           render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
 
           await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
           await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
           const montoInput = screen.getByLabelText(/^monto$/i)
-          await user.type(montoInput, '500')
-          expect(montoInput).toHaveValue(500)
-          expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+          await user.type(montoInput, '501') // saldo de sesion = 500
 
-          await user.type(montoInput, '1')
-          expect(montoInput).toHaveValue(500) // rechaza el digito extra, nunca llega a 5001
-          expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+          expect(montoInput).toHaveValue(501) // el input NO rechaza el tecleo
+          expect(montoInput).toHaveAttribute('aria-invalid', 'true')
+          expect(screen.getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
+          expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
         })
 
         it('safety net: si el saldo de sesion BAJA (query reactiva) DESPUES de escribir un monto ya valido, Confirmar se bloquea y el mensaje aparece pegado al input — SIN clampear el valor ya escrito', async () => {
