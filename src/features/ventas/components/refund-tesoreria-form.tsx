@@ -5,6 +5,7 @@ import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs, usdToBs, type DecimalInput } from '@/lib/currency'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
 import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatSesionId } from '@/lib/format'
 import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
@@ -29,23 +30,38 @@ import {
  * exclusivamente en `crearNotaCredito` (motor, Slice 4).
  *
  * UI restructurada a dos selects DEPENDIENTES por linea (Origen -> Cuenta):
- * "Origen" ofrece "Tesoreria" (unica opcion habilitada) y una opcion
- * deshabilitada ("Proximamente") por cada sesion de caja ACTIVA de la
- * empresa (`useSesionesActivas()`, solo-lectura — CERO logica nueva de
- * sesiones, ver Regla de Oro). "Cuenta" depende del Origen elegido: con
- * Tesoreria lista bancos + cajas fuertes combinados (misma fuente
- * `useCuentasTesoreria()` de siempre, ya no se filtra por tipo de antemano
- * — el `destino` del egreso ahora se DERIVA del `tipo` de la cuenta
- * elegida). El branch de Sesion nunca se alcanza hoy (deshabilitada), pero
- * queda el seam para wirearlo despues sin reestructurar de nuevo.
+ * "Origen" ofrece "Tesoreria" y una opcion por cada sesion de caja ACTIVA de
+ * la empresa (`useSesionesActivas()`, solo-lectura — CERO logica nueva de
+ * sesiones, ver Regla de Oro), AMBAS habilitadas (Slice 3,
+ * nc-cuadre-sesion-fase2 — la opcion de sesion ya no es "Proximamente").
+ * "Cuenta" depende del Origen elegido: con Tesoreria lista bancos + cajas
+ * fuertes combinados (misma fuente `useCuentasTesoreria()` de siempre, el
+ * `destino` del egreso se DERIVA del `tipo` de la cuenta elegida); con una
+ * Sesion elegida, lista "Efectivo USD"/"Efectivo Bs" desde
+ * `useMetodosPagoActivos()` filtrado `tipo==='EFECTIVO'` (Design §1) — el
+ * `value` de cada opcion ES el `metodo_cobro_id` resuelto, cero selector
+ * adicional. La moneda de esa linea se guarda explicitamente en
+ * `LineaFormState.moneda` a partir de la opcion elegida (no se puede derivar
+ * de `cuentaPorId`, que solo conoce cuentas de tesoreria).
  */
 
-type OrigenEgreso = 'TESORERIA'
+type OrigenEgreso = 'TESORERIA' | `SESION:${string}`
+
+function esOrigenSesion(origen: OrigenEgreso): origen is `SESION:${string}` {
+  return origen.startsWith('SESION:')
+}
+
+function sesionIdDeOrigen(origen: `SESION:${string}`): string {
+  return origen.slice('SESION:'.length)
+}
 
 interface LineaFormState {
   key: string
   origen: OrigenEgreso
+  /** Con Origen=Tesoreria: id de la cuenta de tesoreria. Con Origen=Sesion: id del metodo EFECTIVO elegido (`metodo_cobro_id`). */
   cuentaId: string
+  /** Moneda NATIVA elegida para lineas de Sesion (Design §1) — se fija desde la opcion de "Cuenta" elegida, nunca desde `cuentaPorId`. `undefined` para lineas de Tesoreria (la moneda la determina la cuenta). */
+  moneda?: 'USD' | 'BS'
   montoNativo: string
   /** Nota LIBRE y OPCIONAL de esta linea (nro. de transferencia, serial de billete, etc.) — NUNCA bloquea `puedeConfirmar` (UX rework, nc-refund-tesoreria). */
   referencia: string
@@ -105,11 +121,16 @@ export function RefundTesoreriaForm({
 }: RefundTesoreriaFormProps) {
   const { cuentas } = useCuentasTesoreria()
   const { sesiones: sesionesActivas } = useSesionesActivas()
+  const { metodos: metodosPago } = useMetodosPagoActivos()
   const [lineas, setLineas] = useState<LineaFormState[]>([
     { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '', referencia: '' },
   ])
   /** Gate de confirmacion extra (UX rework, nc-refund-tesoreria): se abre SOLO cuando confirmar dejaria un remanente > `TOLERANCIA_SAFC` como saldo a favor — un reembolso completo (remanente 0) nunca lo muestra. */
   const [mostrarConfirmSafc, setMostrarConfirmSafc] = useState(false)
+
+  /** Metodos EFECTIVO activos por moneda (Design §1) — el `value` de cada opcion "Efectivo USD"/"Efectivo Bs" ES este `id`. Si no existe un metodo EFECTIVO activo para una moneda, esa opcion simplemente no se renderiza (mismo patron defensivo que INGRESO_MANUAL/EGRESO_MANUAL/AVANCE/PRESTAMO). */
+  const efectivoUsd = metodosPago.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
+  const efectivoBs = metodosPago.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'BS')
 
   function agregarLinea() {
     setLineas((prev) => [
@@ -131,6 +152,13 @@ export function RefundTesoreriaForm({
   }
 
   const lineasUsd: Decimal[] = lineas.map((l) => {
+    if (esOrigenSesion(l.origen)) {
+      // Moneda desde la SELECCION del usuario (LineaFormState.moneda), NUNCA
+      // desde `cuentaPorId` — esa funcion solo conoce cuentas de tesoreria,
+      // no metodos de cobro (Design §1).
+      if (!l.cuentaId || !l.montoNativo || !l.moneda) return new Decimal(0)
+      return nativoAUsd(l.montoNativo, l.moneda === 'BS', tasaHistorica)
+    }
     const cuenta = cuentaPorId(l.cuentaId)
     if (!cuenta || !l.montoNativo) return new Decimal(0)
     const esCuentaBs = cuenta.moneda_codigo === 'VES'
@@ -143,21 +171,43 @@ export function RefundTesoreriaForm({
   /** true cuando confirmar dejaria un remanente real (por encima de la tolerancia de redondeo) como SAFC — dispara el gate de confirmacion extra (UX rework, nc-refund-tesoreria). Espeja el mismo umbral que usa el motor (`use-notas-credito.ts`) para decidir si escribe el movimiento SAFC. */
   const hayRemanenteSafc = remanenteSafc.gt(TOLERANCIA_SAFC)
 
+  /** Guard client-side de Spec Scenario "Sesion pasa a cerrada entre seleccion y confirmacion" (notas-credito-admin): `sesionesActivas` es una query reactiva — si la sesion elegida deja de estar ABIERTA, desaparece de este array en el siguiente render SIN que el usuario haya tocado nada. Se rechaza aqui, antes de que `handleConfirm` pueda emitir la linea (que a su vez dispararia el guard duplicado del motor, `escribirEgresoSesionCajaEnTx` — esta es la capa de UI, ver Design §3). */
+  const haySesionYaNoActiva = lineas.some((l) => {
+    if (!esOrigenSesion(l.origen)) return false
+    const sesionId = sesionIdDeOrigen(l.origen)
+    return !sesionesActivas.some((s) => s.id === sesionId)
+  })
+
   const lineasCompletas = lineas.every((l) => l.cuentaId && l.montoNativo && parseFloat(l.montoNativo) > 0)
-  const puedeConfirmar = !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0)
+  const puedeConfirmar = !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0) && !haySesionYaNoActiva
 
   function handleConfirm() {
     if (!puedeConfirmar) return
-    const egresoParams: EgresoTesoreriaLinea[] = lineas.map((l) => ({
-      // `destino` se deriva de la cuenta elegida (Select 2), no de un select
-      // separado — la cuenta YA sabe si es BANCO o CAJA_FUERTE.
-      destino: cuentaPorId(l.cuentaId)?.tipo ?? 'BANCO',
-      cuentaId: l.cuentaId,
-      montoEnMonedaCuenta: l.montoNativo,
-      // Referencia libre por linea (UX rework) — NUNCA bloquea `puedeConfirmar`
-      // (ver arriba), se omite del payload cuando el usuario la deja vacia.
-      referencia: l.referencia.trim() || undefined,
-    }))
+    const egresoParams: EgresoTesoreriaLinea[] = lineas.map((l) => {
+      const referencia = l.referencia.trim() || undefined
+      if (esOrigenSesion(l.origen)) {
+        return {
+          destino: 'SESION_CAJA',
+          sesionCajaId: sesionIdDeOrigen(l.origen),
+          // El `value` de la opcion de Cuenta YA ES el metodo_cobro_id
+          // resuelto (Design §1) — cero selector adicional.
+          metodoCobroId: l.cuentaId,
+          moneda: l.moneda ?? 'USD',
+          montoEnMonedaCuenta: l.montoNativo,
+          referencia,
+        }
+      }
+      return {
+        // `destino` se deriva de la cuenta elegida (Select 2), no de un select
+        // separado — la cuenta YA sabe si es BANCO o CAJA_FUERTE.
+        destino: cuentaPorId(l.cuentaId)?.tipo ?? 'BANCO',
+        cuentaId: l.cuentaId,
+        montoEnMonedaCuenta: l.montoNativo,
+        // Referencia libre por linea (UX rework) — NUNCA bloquea `puedeConfirmar`
+        // (ver arriba), se omite del payload cuando el usuario la deja vacia.
+        referencia,
+      }
+    })
     onConfirm(egresoParams)
   }
 
@@ -207,14 +257,19 @@ export function RefundTesoreriaForm({
                   onChange={(e) =>
                     actualizarLinea(linea.key, {
                       origen: e.target.value as OrigenEgreso,
+                      // Cambiar de Origen invalida la Cuenta elegida (un
+                      // metodo_cobro_id de Sesion no es una cuentaId de
+                      // Tesoreria, y viceversa) — nunca arrastrar un valor
+                      // incompatible con el nuevo Origen.
                       cuentaId: '',
+                      moneda: undefined,
                     })
                   }
                 >
                   <option value="TESORERIA">Tesoreria</option>
                   {sesionesActivas.map((s) => (
-                    <option key={s.id} value={`SESION:${s.id}`} disabled>
-                      {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)} (Proximamente)
+                    <option key={s.id} value={`SESION:${s.id}`}>
+                      {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)}
                     </option>
                   ))}
                 </NativeSelect>
@@ -228,7 +283,18 @@ export function RefundTesoreriaForm({
                   id={`cuenta-${linea.key}`}
                   aria-label="Cuenta de tesoreria"
                   value={linea.cuentaId}
-                  onChange={(e) => actualizarLinea(linea.key, { cuentaId: e.target.value })}
+                  onChange={(e) => {
+                    const cuentaId = e.target.value
+                    if (esOrigenSesion(linea.origen)) {
+                      // La moneda se fija desde CUAL opcion se eligio (id de
+                      // `efectivoUsd`/`efectivoBs`), no desde `cuentaPorId`
+                      // (Design §1) — ese id nunca existe en `cuentas`.
+                      const moneda = cuentaId === efectivoBs?.id ? 'BS' : 'USD'
+                      actualizarLinea(linea.key, { cuentaId, moneda })
+                    } else {
+                      actualizarLinea(linea.key, { cuentaId })
+                    }
+                  }}
                 >
                   <option value="">Seleccionar cuenta...</option>
                   {linea.origen === 'TESORERIA' &&
@@ -237,9 +303,12 @@ export function RefundTesoreriaForm({
                         {c.nombre} — {formatEnMonedaCuenta(c.saldo_actual, c.moneda_codigo)} disponible
                       </option>
                     ))}
-                  {/* TODO(nc-refund-tesoreria): cuando la Sesion de caja deje de
-                      estar deshabilitada en Select 1, agregar aqui el branch que
-                      liste las cuentas propias de esa sesion. */}
+                  {esOrigenSesion(linea.origen) && (
+                    <>
+                      {efectivoUsd && <option value={efectivoUsd.id}>Efectivo USD</option>}
+                      {efectivoBs && <option value={efectivoBs.id}>Efectivo Bs</option>}
+                    </>
+                  )}
                 </NativeSelect>
               </div>
 
@@ -310,6 +379,12 @@ export function RefundTesoreriaForm({
       {excedeTope && (
         <p className="text-xs text-destructive">
           El monto ingresado excede el saldo disponible de la nota de credito.
+        </p>
+      )}
+
+      {haySesionYaNoActiva && (
+        <p className="text-xs text-destructive">
+          La sesion de caja elegida ya no esta activa. Selecciona otra sesion para continuar.
         </p>
       )}
 
