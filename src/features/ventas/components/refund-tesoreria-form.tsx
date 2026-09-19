@@ -1,13 +1,13 @@
-import { useState, type ReactNode } from 'react'
+import { useState, useCallback, useEffect, type ReactNode } from 'react'
 import Decimal from 'decimal.js'
 import { Plus, Trash } from '@phosphor-icons/react'
 import { NativeSelect } from '@/components/ui/native-select'
 import { formatUsd, formatBs, usdToBs, type DecimalInput } from '@/lib/currency'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
-import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { useSesionesActivas, useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 import { formatSesionId } from '@/lib/format'
-import { nativoAUsd, calcularRemanenteRefund } from '@/features/ventas/utils/notas-credito-refund'
+import { nativoAUsd, calcularRemanenteRefund, excedeSaldoDisponible } from '@/features/ventas/utils/notas-credito-refund'
 import type { EgresoTesoreriaLinea } from '../hooks/use-notas-credito'
 import {
   AlertDialog,
@@ -127,6 +127,8 @@ export function RefundTesoreriaForm({
   ])
   /** Gate de confirmacion extra (UX rework, nc-refund-tesoreria): se abre SOLO cuando confirmar dejaria un remanente > `TOLERANCIA_SAFC` como saldo a favor — un reembolso completo (remanente 0) nunca lo muestra. */
   const [mostrarConfirmSafc, setMostrarConfirmSafc] = useState(false)
+  /** Reportado por cada `LineaEgresoRefund` via `onExcedeSaldoSesionChange` (nc-admin-saldo-disponible-sesion, Design "Lift-state del guard vía callback + useEffect en el hijo") — el padre no puede calcular esto inline porque el saldo de sesion vive en un hook que solo el hijo puede invocar (Rules of Hooks). */
+  const [excedePorLinea, setExcedePorLinea] = useState<Record<string, boolean>>({})
 
   /** Metodos EFECTIVO activos por moneda (Design §1) — el `value` de cada opcion "Efectivo USD"/"Efectivo Bs" ES este `id`. Si no existe un metodo EFECTIVO activo para una moneda, esa opcion simplemente no se renderiza (mismo patron defensivo que INGRESO_MANUAL/EGRESO_MANUAL/AVANCE/PRESTAMO). */
   const efectivoUsd = metodosPago.find((m) => m.tipo === 'EFECTIVO' && m.moneda === 'USD')
@@ -150,6 +152,11 @@ export function RefundTesoreriaForm({
   function cuentaPorId(cuentaId: string) {
     return cuentas.find((c) => c.id === cuentaId)
   }
+
+  /** Guard de no-op (mismo patron que `rerender-functional-setstate`) — evita que el `useEffect` del hijo dispare un loop de renders cuando el valor reportado no cambio. */
+  const handleExcedeSaldoSesionChange = useCallback((key: string, excede: boolean) => {
+    setExcedePorLinea((prev) => (prev[key] === excede ? prev : { ...prev, [key]: excede }))
+  }, [])
 
   const lineasUsd: Decimal[] = lineas.map((l) => {
     if (esOrigenSesion(l.origen)) {
@@ -179,7 +186,10 @@ export function RefundTesoreriaForm({
   })
 
   const lineasCompletas = lineas.every((l) => l.cuentaId && l.montoNativo && parseFloat(l.montoNativo) > 0)
-  const puedeConfirmar = !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0) && !haySesionYaNoActiva
+  /** true si CUALQUIER linea de Origen=Sesion excede el saldo de efectivo disponible de su sesion (nc-admin-saldo-disponible-sesion) — reportado por cada `LineaEgresoRefund` via `onExcedeSaldoSesionChange`. */
+  const excedeSaldoSesion = lineas.some((l) => excedePorLinea[l.key])
+  const puedeConfirmar =
+    !loading && lineasCompletas && !excedeTope && sumaUsd.gt(0) && !haySesionYaNoActiva && !excedeSaldoSesion
 
   function handleConfirm() {
     if (!puedeConfirmar) return
@@ -229,134 +239,20 @@ export function RefundTesoreriaForm({
 
   return (
     <div className="space-y-3">
-      {lineas.map((linea) => {
-        // Grupo visualmente delimitado (borde + fondo) por linea — en
-        // desktop (`sm:`) los 4 controles + el boton de quitar comparten UNA
-        // fila via grid-template-columns explicito; en mobile el grid cae a
-        // `grid-cols-1` y cada control se apila con su propia etiqueta
-        // asociada (`htmlFor`/`id`), sin ambiguedad de a que cuenta
-        // pertenece cada Monto/Referencia (Design "responsive per-line
-        // grouping", consistente con el patron ya usado en
-        // `compra-form.tsx` — `grid-cols-1 sm:grid-cols-[...]`, sin
-        // container queries: el ancho del formulario ya sigue el viewport
-        // via el `max-w-2xl` del dialog padre).
-        return (
-          <div
-            key={linea.key}
-            className="rounded-lg border border-border bg-muted/20 p-3"
-          >
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_110px_1fr_auto] gap-2 sm:items-end">
-              <div>
-                <label htmlFor={`origen-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
-                  Origen
-                </label>
-                <NativeSelect
-                  id={`origen-${linea.key}`}
-                  aria-label="Origen del reembolso"
-                  value={linea.origen}
-                  onChange={(e) =>
-                    actualizarLinea(linea.key, {
-                      origen: e.target.value as OrigenEgreso,
-                      // Cambiar de Origen invalida la Cuenta elegida (un
-                      // metodo_cobro_id de Sesion no es una cuentaId de
-                      // Tesoreria, y viceversa) — nunca arrastrar un valor
-                      // incompatible con el nuevo Origen.
-                      cuentaId: '',
-                      moneda: undefined,
-                    })
-                  }
-                >
-                  <option value="TESORERIA">Tesoreria</option>
-                  {sesionesActivas.map((s) => (
-                    <option key={s.id} value={`SESION:${s.id}`}>
-                      {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)}
-                    </option>
-                  ))}
-                </NativeSelect>
-              </div>
-
-              <div>
-                <label htmlFor={`cuenta-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
-                  Cuenta de tesoreria
-                </label>
-                <NativeSelect
-                  id={`cuenta-${linea.key}`}
-                  aria-label="Cuenta de tesoreria"
-                  value={linea.cuentaId}
-                  onChange={(e) => {
-                    const cuentaId = e.target.value
-                    if (esOrigenSesion(linea.origen)) {
-                      // La moneda se fija desde CUAL opcion se eligio (id de
-                      // `efectivoUsd`/`efectivoBs`), no desde `cuentaPorId`
-                      // (Design §1) — ese id nunca existe en `cuentas`.
-                      const moneda = cuentaId === efectivoBs?.id ? 'BS' : 'USD'
-                      actualizarLinea(linea.key, { cuentaId, moneda })
-                    } else {
-                      actualizarLinea(linea.key, { cuentaId })
-                    }
-                  }}
-                >
-                  <option value="">Seleccionar cuenta...</option>
-                  {linea.origen === 'TESORERIA' &&
-                    cuentas.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.nombre} — {formatEnMonedaCuenta(c.saldo_actual, c.moneda_codigo)} disponible
-                      </option>
-                    ))}
-                  {esOrigenSesion(linea.origen) && (
-                    <>
-                      {efectivoUsd && <option value={efectivoUsd.id}>Efectivo USD</option>}
-                      {efectivoBs && <option value={efectivoBs.id}>Efectivo Bs</option>}
-                    </>
-                  )}
-                </NativeSelect>
-              </div>
-
-              <div>
-                <label htmlFor={`monto-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
-                  Monto
-                </label>
-                <input
-                  id={`monto-${linea.key}`}
-                  type="number"
-                  inputMode="decimal"
-                  aria-label="Monto"
-                  placeholder="0.00"
-                  value={linea.montoNativo}
-                  onChange={(e) => actualizarLinea(linea.key, { montoNativo: e.target.value })}
-                  className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${noSpinner}`}
-                />
-              </div>
-
-              <div>
-                <label htmlFor={`referencia-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
-                  Referencia <span className="font-normal">(opcional)</span>
-                </label>
-                <input
-                  id={`referencia-${linea.key}`}
-                  type="text"
-                  aria-label="Referencia"
-                  placeholder="N° de transferencia, serial..."
-                  value={linea.referencia}
-                  onChange={(e) => actualizarLinea(linea.key, { referencia: e.target.value })}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </div>
-
-              {lineas.length > 1 && (
-                <button
-                  type="button"
-                  aria-label="Quitar cuenta"
-                  onClick={() => quitarLinea(linea.key)}
-                  className="shrink-0 p-1.5 rounded-md hover:bg-muted text-muted-foreground justify-self-start sm:justify-self-center"
-                >
-                  <Trash size={14} />
-                </button>
-              )}
-            </div>
-          </div>
-        )
-      })}
+      {lineas.map((linea) => (
+        <LineaEgresoRefund
+          key={linea.key}
+          linea={linea}
+          cuentas={cuentas}
+          sesionesActivas={sesionesActivas}
+          efectivoUsd={efectivoUsd}
+          efectivoBs={efectivoBs}
+          puedeQuitar={lineas.length > 1}
+          onActualizar={(patch) => actualizarLinea(linea.key, patch)}
+          onQuitar={() => quitarLinea(linea.key)}
+          onExcedeSaldoSesionChange={handleExcedeSaldoSesionChange}
+        />
+      ))}
 
       <button
         type="button"
@@ -385,6 +281,12 @@ export function RefundTesoreriaForm({
       {haySesionYaNoActiva && (
         <p className="text-xs text-destructive">
           La sesion de caja elegida ya no esta activa. Selecciona otra sesion para continuar.
+        </p>
+      )}
+
+      {excedeSaldoSesion && (
+        <p className="text-xs text-destructive">
+          El monto ingresado excede el saldo disponible de la sesion de caja elegida.
         </p>
       )}
 
@@ -426,6 +328,191 @@ export function RefundTesoreriaForm({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+}
+
+interface LineaEgresoRefundProps {
+  linea: LineaFormState
+  cuentas: ReturnType<typeof useCuentasTesoreria>['cuentas']
+  sesionesActivas: ReturnType<typeof useSesionesActivas>['sesiones']
+  efectivoUsd: ReturnType<typeof useMetodosPagoActivos>['metodos'][number] | undefined
+  efectivoBs: ReturnType<typeof useMetodosPagoActivos>['metodos'][number] | undefined
+  puedeQuitar: boolean
+  onActualizar: (patch: Partial<LineaFormState>) => void
+  onQuitar: () => void
+  onExcedeSaldoSesionChange: (key: string, excede: boolean) => void
+}
+
+/**
+ * Extraida de `lineas.map(...)` inline (nc-admin-saldo-disponible-sesion,
+ * Design "Bloqueo arquitectonico") — vivir INLINE dentro del `.map` del
+ * padre impedia llamar `useSaldoSesionCaja(sesionCajaId)` ahi (Rules of
+ * Hooks: un `sesionCajaId` que varia por iteracion). Componente de nivel de
+ * modulo (no exportado fuera del archivo), definido fuera del render del
+ * padre (`rerender-no-inline-components`, vercel-react-best-practices). El
+ * padre sigue dueño de `lineas` (state) y de toda la logica de agregacion
+ * (`calcularRemanenteRefund`, `handleConfirm*`, `puedeConfirmar`) — este
+ * componente NO conoce `onConfirm`, `montoDisponibleUsd`, `tasaHistorica` ni
+ * el resto de las lineas (Design "extraccion quirurgica").
+ */
+function LineaEgresoRefund({
+  linea,
+  cuentas,
+  sesionesActivas,
+  efectivoUsd,
+  efectivoBs,
+  puedeQuitar,
+  onActualizar,
+  onQuitar,
+  onExcedeSaldoSesionChange,
+}: LineaEgresoRefundProps) {
+  // Argumento condicional a un hook llamado incondicionalmente — valido
+  // para Rules of Hooks (Design "Bloqueo arquitectonico"). Con
+  // Origen=Tesoreria, `sesionCajaId` es `undefined` y el hook devuelve
+  // saldo 0 sin disparar queries (`useSaldoSesionCaja`, id vacio).
+  const { saldoUsd, saldoBs, isLoading: isLoadingSaldo } = useSaldoSesionCaja(
+    esOrigenSesion(linea.origen) ? sesionIdDeOrigen(linea.origen) : undefined
+  )
+
+  // VALIDATE gatea sobre `isLoading` (Design "Guard de validacion NO gatea
+  // por isLoading, salvo la comparacion en si") — evita un falso positivo
+  // de "excede" mientras `saldoUsd`/`saldoBs` transitan por 0 al montar el
+  // hook. El DISPLAY del label (abajo) NO gatea, es cosmetico.
+  const excede =
+    esOrigenSesion(linea.origen) &&
+    !isLoadingSaldo &&
+    excedeSaldoDisponible(linea.montoNativo || '0', linea.moneda === 'BS' ? saldoBs : saldoUsd)
+
+  useEffect(() => {
+    onExcedeSaldoSesionChange(linea.key, excede)
+  }, [linea.key, excede, onExcedeSaldoSesionChange])
+
+  return (
+    // Grupo visualmente delimitado (borde + fondo) por linea — en
+    // desktop (`sm:`) los 4 controles + el boton de quitar comparten UNA
+    // fila via grid-template-columns explicito; en mobile el grid cae a
+    // `grid-cols-1` y cada control se apila con su propia etiqueta
+    // asociada (`htmlFor`/`id`), sin ambiguedad de a que cuenta
+    // pertenece cada Monto/Referencia (Design "responsive per-line
+    // grouping", consistente con el patron ya usado en
+    // `compra-form.tsx` — `grid-cols-1 sm:grid-cols-[...]`, sin
+    // container queries: el ancho del formulario ya sigue el viewport
+    // via el `max-w-2xl` del dialog padre).
+    <div className="rounded-lg border border-border bg-muted/20 p-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_110px_1fr_auto] gap-2 sm:items-end">
+        <div>
+          <label htmlFor={`origen-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+            Origen
+          </label>
+          <NativeSelect
+            id={`origen-${linea.key}`}
+            aria-label="Origen del reembolso"
+            value={linea.origen}
+            onChange={(e) =>
+              onActualizar({
+                origen: e.target.value as OrigenEgreso,
+                // Cambiar de Origen invalida la Cuenta elegida (un
+                // metodo_cobro_id de Sesion no es una cuentaId de
+                // Tesoreria, y viceversa) — nunca arrastrar un valor
+                // incompatible con el nuevo Origen.
+                cuentaId: '',
+                moneda: undefined,
+              })
+            }
+          >
+            <option value="TESORERIA">Tesoreria</option>
+            {sesionesActivas.map((s) => (
+              <option key={s.id} value={`SESION:${s.id}`}>
+                {s.caja_nombre ? `Sesion ${s.caja_nombre}` : formatSesionId(s.id)}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+
+        <div>
+          <label htmlFor={`cuenta-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+            Cuenta de tesoreria
+          </label>
+          <NativeSelect
+            id={`cuenta-${linea.key}`}
+            aria-label="Cuenta de tesoreria"
+            value={linea.cuentaId}
+            onChange={(e) => {
+              const cuentaId = e.target.value
+              if (esOrigenSesion(linea.origen)) {
+                // La moneda se fija desde CUAL opcion se eligio (id de
+                // `efectivoUsd`/`efectivoBs`), no desde `cuentaPorId`
+                // (Design §1) — ese id nunca existe en `cuentas`.
+                const moneda = cuentaId === efectivoBs?.id ? 'BS' : 'USD'
+                onActualizar({ cuentaId, moneda })
+              } else {
+                onActualizar({ cuentaId })
+              }
+            }}
+          >
+            <option value="">Seleccionar cuenta...</option>
+            {linea.origen === 'TESORERIA' &&
+              cuentas.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nombre} — {formatEnMonedaCuenta(c.saldo_actual, c.moneda_codigo)} disponible
+                </option>
+              ))}
+            {esOrigenSesion(linea.origen) && (
+              <>
+                {efectivoUsd && (
+                  <option value={efectivoUsd.id}>Efectivo USD — {formatUsd(saldoUsd)} disponible</option>
+                )}
+                {efectivoBs && (
+                  <option value={efectivoBs.id}>Efectivo Bs — {formatBs(saldoBs)} disponible</option>
+                )}
+              </>
+            )}
+          </NativeSelect>
+        </div>
+
+        <div>
+          <label htmlFor={`monto-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+            Monto
+          </label>
+          <input
+            id={`monto-${linea.key}`}
+            type="number"
+            inputMode="decimal"
+            aria-label="Monto"
+            placeholder="0.00"
+            value={linea.montoNativo}
+            onChange={(e) => onActualizar({ montoNativo: e.target.value })}
+            className={`w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${noSpinner}`}
+          />
+        </div>
+
+        <div>
+          <label htmlFor={`referencia-${linea.key}`} className="block text-xs font-medium text-muted-foreground mb-1">
+            Referencia <span className="font-normal">(opcional)</span>
+          </label>
+          <input
+            id={`referencia-${linea.key}`}
+            type="text"
+            aria-label="Referencia"
+            placeholder="N° de transferencia, serial..."
+            value={linea.referencia}
+            onChange={(e) => onActualizar({ referencia: e.target.value })}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+
+        {puedeQuitar && (
+          <button
+            type="button"
+            aria-label="Quitar cuenta"
+            onClick={onQuitar}
+            className="shrink-0 p-1.5 rounded-md hover:bg-muted text-muted-foreground justify-self-start sm:justify-self-center"
+          >
+            <Trash size={14} />
+          </button>
+        )}
+      </div>
     </div>
   )
 }

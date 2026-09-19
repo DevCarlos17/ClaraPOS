@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RefundTesoreriaForm } from '../refund-tesoreria-form'
 import { useCuentasTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
-import { useSesionesActivas } from '@/features/caja/hooks/use-sesiones-caja'
+import { useSesionesActivas, useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { useMetodosPagoActivos } from '@/features/configuracion/hooks/use-payment-methods'
 
 /**
@@ -27,6 +27,7 @@ vi.mock('@/features/tesoreria/hooks/use-cuentas-tesoreria', () => ({
 }))
 vi.mock('@/features/caja/hooks/use-sesiones-caja', () => ({
   useSesionesActivas: vi.fn(),
+  useSaldoSesionCaja: vi.fn(),
 }))
 vi.mock('@/features/configuracion/hooks/use-payment-methods', () => ({
   useMetodosPagoActivos: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock('@/features/configuracion/hooks/use-payment-methods', () => ({
 const mockedUseCuentasTesoreria = vi.mocked(useCuentasTesoreria)
 const mockedUseSesionesActivas = vi.mocked(useSesionesActivas)
 const mockedUseMetodosPagoActivos = vi.mocked(useMetodosPagoActivos)
+const mockedUseSaldoSesionCaja = vi.mocked(useSaldoSesionCaja)
 
 function metodoEfectivo(id: string, moneda: 'USD' | 'BS') {
   return { id, tipo: 'EFECTIVO', moneda, is_active: 1 } as never
@@ -81,6 +83,11 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       metodos: [metodoEfectivo('efectivo-usd-1', 'USD'), metodoEfectivo('efectivo-bs-1', 'BS')],
       isLoading: false,
     })
+    // Default ALTO (no 0): los tests existentes de "Sesion de caja activa"
+    // ya escriben montos como '100'/'4000' en lineas de Sesion — un default
+    // de 0 los rompe con el guard de excedeSaldoDisponible (Phase 3) antes
+    // de que esos tests siquiera lleguen a ejecutarse (tasks.md 2.1).
+    mockedUseSaldoSesionCaja.mockReturnValue({ saldoUsd: 999999, saldoBs: 999999, isLoading: false })
   })
 
   it('Scenario "Selector muestra saldo por cuenta": cada opcion de cuenta muestra su saldo disponible junto al nombre', () => {
@@ -379,6 +386,51 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       expect(boton).toBeDisabled()
       await user.click(boton)
       expect(onConfirm).not.toHaveBeenCalled()
+    })
+
+    describe('Saldo disponible de sesion (nc-admin-saldo-disponible-sesion): label con saldo + tope de validacion', () => {
+      beforeEach(() => {
+        mockedUseSaldoSesionCaja.mockReturnValue({ saldoUsd: 500, saldoBs: 500, isLoading: false })
+      })
+
+      it('Scenario "Saldo disponible visible": la opcion "Efectivo USD"/"Efectivo Bs" muestra el saldo de la sesion + "disponible" (espejo de Tesoreria)', async () => {
+        const user = userEvent.setup()
+        render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+        await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+
+        const cuentaSelect = screen.getAllByRole('combobox')[1]!
+        expect(cuentaSelect).toHaveTextContent('Efectivo USD — $500.00 disponible')
+        expect(cuentaSelect).toHaveTextContent('Efectivo Bs — Bs. 500,00 disponible')
+      })
+
+      it('Scenario "Tope de saldo disponible": un monto MAYOR al saldo de la sesion deshabilita "Confirmar" y muestra el mensaje de exceso', async () => {
+        const user = userEvent.setup()
+        render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+        await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+        await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+        await user.type(screen.getByLabelText(/^monto$/i), '600')
+
+        expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+        expect(screen.getByText(/excede el saldo disponible de la sesion/i)).toBeInTheDocument()
+      })
+
+      it('bajar el monto al limite exacto del saldo de sesion (monto === saldo) rehabilita "Confirmar"', async () => {
+        const user = userEvent.setup()
+        render(<RefundTesoreriaForm montoDisponibleUsd={1000} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+        await user.selectOptions(screen.getAllByLabelText(/origen del reembolso/i)[0]!, 'SESION:sesion-1')
+        await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'efectivo-usd-1')
+        await user.type(screen.getByLabelText(/^monto$/i), '600')
+        expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+
+        await user.clear(screen.getByLabelText(/^monto$/i))
+        await user.type(screen.getByLabelText(/^monto$/i), '500')
+
+        expect(screen.getByRole('button', { name: /Confirmar/i })).not.toBeDisabled()
+        expect(screen.queryByText(/excede el saldo disponible de la sesion/i)).not.toBeInTheDocument()
+      })
     })
   })
 

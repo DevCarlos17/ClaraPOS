@@ -57,3 +57,15 @@ export function calcularRemanenteRefund(
 
   return { sumaUsd, remanenteSafc, excedeTope }
 }
+
+/**
+ * Tope de saldo disponible POR MONEDA (nc-admin-saldo-disponible-sesion,
+ * Design §Interfaces): `true` si `montoNativo` excede `saldoDisponible`,
+ * comparando SIEMPRE en la MISMA moneda (nunca number vs number, siempre
+ * via Decimal para preservar precision hasta 8 decimales, Regla de Oro
+ * CLAUDE.md #10). Tope NO-estricto: monto === saldo disponible no excede
+ * (permite usar el 100% del saldo).
+ */
+export function excedeSaldoDisponible(montoNativo: DecimalInput, saldoDisponible: DecimalInput): boolean {
+  return new Decimal(montoNativo).greaterThan(new Decimal(saldoDisponible))
+}

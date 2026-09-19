@@ -1,5 +1,5 @@
 import Decimal from 'decimal.js'
-import { nativoAUsd, calcularRemanenteRefund } from '../notas-credito-refund'
+import { nativoAUsd, calcularRemanenteRefund, excedeSaldoDisponible } from '../notas-credito-refund'
 
 /**
  * Modulo PURO (sin DB, sin React) — Slice 2 de nc-refund-tesoreria.
@@ -61,5 +61,23 @@ describe('calcularRemanenteRefund — tope + remanente a SAFC (Design §d)', () 
     expect(r.sumaUsd.toFixed(2)).toBe('0.00')
     expect(r.remanenteSafc.toFixed(2)).toBe('100.00')
     expect(r.excedeTope).toBe(false)
+  })
+})
+
+describe('excedeSaldoDisponible — tope de saldo disponible por moneda (Design §Interfaces)', () => {
+  it('monto mayor al saldo disponible -> true (excede)', () => {
+    expect(excedeSaldoDisponible('150', '100')).toBe(true)
+  })
+
+  it('monto igual al saldo disponible -> false (tope no-estricto, permite usar el 100%)', () => {
+    expect(excedeSaldoDisponible('100', '100')).toBe(false)
+  })
+
+  it('monto por debajo del saldo disponible -> false', () => {
+    expect(excedeSaldoDisponible('60', '100')).toBe(false)
+  })
+
+  it('precision con strings de mas de 2 decimales: 100.123456 > 100.123455 -> true', () => {
+    expect(excedeSaldoDisponible('100.123456', '100.123455')).toBe(true)
   })
 })
