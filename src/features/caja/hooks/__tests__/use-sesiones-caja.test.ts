@@ -21,11 +21,13 @@ import type { Transaction } from '@powersync/common'
 import { renderHook } from '@testing-library/react'
 import { useQuery } from '@powersync/react'
 import { db } from '@/core/db/powersync/db'
+import { useCurrentUser } from '@/core/hooks/use-current-user'
 import Decimal from 'decimal.js'
-import { cerrarSesionCaja, useSaldoSesionCaja } from '../use-sesiones-caja'
+import { cerrarSesionCaja, useSaldoSesionCaja, useSesionesActivas } from '../use-sesiones-caja'
 
 const mockedDb = vi.mocked(db, true)
 const mockedUseQuery = vi.mocked(useQuery)
+const mockedUseCurrentUser = vi.mocked(useCurrentUser)
 
 interface Call {
   sql: string
@@ -260,5 +262,39 @@ describe('useSaldoSesionCaja — Slice 2 (nc-cuadre-sesion-fase2: whitelist NCR 
 
     const movsCall = mockedUseQuery.mock.calls.find(([sql]) => (sql as string).includes('FROM movimientos_metodo_cobro mmc'))
     expect(movsCall?.[0]).toContain("'NCR'")
+  })
+})
+
+describe('useSesionesActivas — Ajuste UX post-QA #1 (nc-admin-saldo-disponible-sesion): nombre del usuario que abrio la sesion', () => {
+  it('la query de sesiones activas hace JOIN a usuarios y expone usuario_apertura_nombre en cada sesion', () => {
+    mockedUseCurrentUser.mockReturnValue({
+      user: { id: 'user-1', empresa_id: 'empresa-1' },
+      loading: false,
+    } as never)
+    mockedUseQuery.mockImplementation(((sql: string) => {
+      if (sql.includes('FROM sesiones_caja')) {
+        return {
+          data: [
+            {
+              id: 'sesion-1',
+              caja_id: 'caja-1',
+              usuario_apertura_id: 'user-1',
+              usuario_apertura_nombre: 'Maria Perez',
+            },
+          ],
+          isLoading: false,
+        }
+      }
+      if (sql.includes('FROM cajas')) {
+        return { data: [{ id: 'caja-1', nombre: 'Caja 1' }], isLoading: false }
+      }
+      return { data: [], isLoading: false }
+    }) as unknown as typeof useQuery)
+
+    const { result } = renderHook(() => useSesionesActivas())
+
+    const sesionesCall = mockedUseQuery.mock.calls.find(([sql]) => (sql as string).includes('FROM sesiones_caja'))
+    expect(sesionesCall?.[0]).toContain('JOIN usuarios')
+    expect(result.current.sesiones[0]?.usuario_apertura_nombre).toBe('Maria Perez')
   })
 })

@@ -72,6 +72,8 @@ export interface CerrarSesionParams {
 
 export interface SesionCajaConNombre extends SesionCaja {
   caja_nombre: string | null
+  /** Nombre del usuario que abrio la sesion (Ajuste UX post-QA #1, nc-admin-saldo-disponible-sesion) — `null` si `usuarios.nombre` no resuelve (usuario eliminado, LEFT JOIN). */
+  usuario_apertura_nombre: string | null
 }
 
 // ─── Hooks de lectura ────────────────────────────────────────
@@ -84,8 +86,16 @@ export function useSesionesActivas() {
   const { user } = useCurrentUser()
   const empresaId = user?.empresa_id ?? ''
 
+  // Ajuste UX post-QA #1 (nc-admin-saldo-disponible-sesion): JOIN a usuarios
+  // para resolver el nombre de quien abrio la sesion (columna extra sobre la
+  // MISMA query existente, mismo patron que `cajero_nombre` en
+  // `useSesionesCajaHistorial` — cero query nueva).
   const { data: sesionesData, isLoading } = useQuery(
-    `SELECT * FROM sesiones_caja WHERE empresa_id = ? AND status = 'ABIERTA' ORDER BY fecha_apertura ASC`,
+    `SELECT s.*, u.nombre as usuario_apertura_nombre
+     FROM sesiones_caja s
+     LEFT JOIN usuarios u ON u.id = s.usuario_apertura_id
+     WHERE s.empresa_id = ? AND s.status = 'ABIERTA'
+     ORDER BY s.fecha_apertura ASC`,
     [empresaId]
   )
 
@@ -98,7 +108,9 @@ export function useSesionesActivas() {
     ((cajasData ?? []) as { id: string; nombre: string }[]).map((c) => [c.id, c.nombre])
   )
 
-  const sesiones: SesionCajaConNombre[] = ((sesionesData ?? []) as SesionCaja[]).map((s) => ({
+  const sesiones: SesionCajaConNombre[] = (
+    (sesionesData ?? []) as (SesionCaja & { usuario_apertura_nombre: string | null })[]
+  ).map((s) => ({
     ...s,
     caja_nombre: cajaMap.get(s.caja_id) ?? null,
   }))
