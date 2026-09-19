@@ -230,7 +230,7 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
          WHERE mmc.sesion_caja_id = ?
            AND mc.tipo = 'EFECTIVO'
            AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO',
-                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
+                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA', 'NCR')
          GROUP BY mmc.origen`
       : '',
     id ? [id] : []
@@ -267,6 +267,12 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   const ingTesoBs       = movsMap.get('INGRESO_TESORERIA')?.bs  ?? new Decimal(0)
   const egrTesoreriaUsd = movsMap.get('EGRESO_TESORERIA')?.usd  ?? new Decimal(0)
   const egrTesoBs       = movsMap.get('EGRESO_TESORERIA')?.bs   ?? new Decimal(0)
+  // nc-cuadre-sesion-fase2 (Slice 2): egreso real de NC administrativa a esta
+  // sesion (destino elegido por el admin, cross-sesion respecto al pago
+  // original). A diferencia de los demas orígenes de este bloque, no tiene
+  // variable dedicada previa — hay que extraerla explicitamente del mapa.
+  const egrNcrUsd        = movsMap.get('NCR')?.usd              ?? new Decimal(0)
+  const egrNcrBs         = movsMap.get('NCR')?.bs               ?? new Decimal(0)
 
   const saldoUsdD = Decimal.max(
     new Decimal(0),
@@ -278,6 +284,7 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
       .minus(avancesUsd)
       .minus(prestamosUsd)
       .minus(egrTesoreriaUsd)
+      .minus(egrNcrUsd)
   )
 
   const saldoBsD = Decimal.max(
@@ -290,6 +297,7 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
       .minus(avancesBs)
       .minus(prestamosBs)
       .minus(egrTesoBs)
+      .minus(egrNcrBs)
   )
 
   return { saldoUsd: saldoUsdD.toNumber(), saldoBs: saldoBsD.toNumber(), isLoading: l1 || l2 || l3 }
@@ -747,7 +755,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
        JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE mmc.sesion_caja_id = ?
          AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
-                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
+                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA', 'NCR')
          AND mo.codigo_iso = 'USD'
        GROUP BY mmc.origen`,
       [id]
@@ -775,7 +783,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
        JOIN monedas mo ON mc.moneda_id = mo.id
        WHERE mmc.sesion_caja_id = ?
          AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
-                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
+                            'INGRESO_TESORERIA', 'EGRESO_TESORERIA', 'NCR')
          AND mo.codigo_iso = 'VES'
        GROUP BY mmc.origen`,
       [id]
@@ -853,7 +861,7 @@ export async function cerrarSesionCaja(id: string, params: CerrarSesionParams): 
        FROM movimientos_metodo_cobro
        WHERE sesion_caja_id = ?
          AND origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO', 'VUELTO',
-                       'INGRESO_TESORERIA', 'EGRESO_TESORERIA')
+                       'INGRESO_TESORERIA', 'EGRESO_TESORERIA', 'NCR')
        GROUP BY metodo_cobro_id`,
       [id]
     )
