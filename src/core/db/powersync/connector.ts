@@ -625,9 +625,10 @@ export class SupabaseConnector
         }
 
         if (result.error) {
-          // DEBUG temporal (bug PIN Tesoreria NC POS): log expandido para ops sobre `pagos`.
-          // Desanida code/message/details/hint como strings planos para que la consola
-          // no los colapse como [Object], y muestra el opData completo del reverso.
+          // `pagos` es una tabla financiera critica (reversos, saldo a favor): ante un
+          // fallo de upload conviene registrar el error expandido. Desanida
+          // code/message/details/hint como strings planos para que la consola no los
+          // colapse como [Object], y adjunta el opData completo de la operacion.
           if (op.table === 'pagos') {
             console.error(
               '⬆️ [upload pagos] FALLO — op:', op.op,
