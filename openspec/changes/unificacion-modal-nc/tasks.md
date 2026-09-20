@@ -39,23 +39,25 @@ New: `tipo-nc-selector.tsx` (~45L), `__tests__/tipo-nc-selector.test.tsx` (~55L)
 
 ---
 
-## Slice 2 — Reorden depósito (POS) + `SeleccionLineasNc` D4 (ambos) + `origenPendiente`
+## Slice 2 — Reorden `SeleccionLineasNc` (D4, ambos modales) — COMPLETO (alcance reducido)
 
-**Inicio**: depende de Slice 1. **Fin**: orden coincide con specs `notas-credito-pos`/`notas-credito-admin` (artículos a devolver justo debajo de Total/Parcial; depósito antes de Total/Parcial en POS). **Rollback**: revertir 3 archivos; prop `origenPendiente` es opcional/default `false`, segura.
+**Inicio**: depende de Slice 1. **Fin**: en ambos modales, el bloque "artículos a devolver" (`SeleccionLineasNc`, rama PARCIAL) se renderiza inmediatamente debajo de `TipoNcSelector`, en vez de al final. **Rollback**: revertir 2 archivos de componente + 2 de test.
 
-- [ ] 2.1 RED — `components/__tests__/seleccion-lineas-nc.test.tsx`: con `origenPendiente=true`, botón confirmar deshabilitado + mensaje inline "Debes elegir el origen del reverso primero".
-- [ ] 2.2 GREEN — `seleccion-lineas-nc.tsx`: agregar prop `origenPendiente?: boolean` (mismo patrón que `depositoInvalido`), bloquea `puedeConfirmar` + mensaje. (~+15L)
-- [ ] 2.3 RED — `crear-ncr-modal.test.tsx`: "artículos a devolver" se renderiza inmediatamente debajo de Total/Parcial y ANTES de "Origen del reverso" (spec `notas-credito-admin` scenario); elegir Parcial sin Origen bloquea confirmar.
-- [ ] 2.4 GREEN — `crear-ncr-modal.tsx`: mover bloque `SeleccionLineasNc` (hoy `:395-406`) a justo después de `<TipoNcSelector/>`, antes del bloque Origen (`:343-367`); gate pasa de `tipoNc === 'PARCIAL' && origenReverso` a `tipoNc === 'PARCIAL'`; pasar `origenPendiente={origenReverso === null}`.
-- [ ] 2.5 RED — `nota-credito-pos-modal.test.tsx`: depósito de reingreso se renderiza ANTES de Total/Parcial (spec `notas-credito-pos` scenario "Depósito aparece antes..."); "artículos a devolver" aparece inmediatamente debajo de Total/Parcial (scenario "Artículos a devolver aparecen debajo...").
-- [ ] 2.6 GREEN — `nota-credito-pos-modal.tsx`: mover bloque Depósito (hoy `:618-654`) a ANTES de `<TipoNcSelector/>` (hoy `:563-596`); mover bloque `SeleccionLineasNc` (hoy `:667-685`) a justo después de `<TipoNcSelector/>`, antes de Modalidad (`:598-616`)/Motivo (`:656-665`). Sin `origenPendiente` aún (POS todavía usa `modalidad` con default — llega en Slice 3).
-- [ ] 2.7 Verify — `yarn test:run seleccion-lineas-nc`, `yarn test:run crear-ncr-modal`, `yarn test:run nota-credito-pos-modal`.
+**Nota de alcance (decisión de ejecución, no de `sdd-tasks`)**: este batch de apply implementó SOLO el reorden puro de `SeleccionLineasNc` en ambos modales, sin tocar el gate existente (`tipoNc === 'PARCIAL' && origenReverso` en admin se preserva intacto) y SIN mover el bloque Depósito en POS ni agregar la prop `origenPendiente`. Esas dos piezas (2.1/2.2 `origenPendiente` en `seleccion-lineas-nc.tsx`, y el reorden del bloque Depósito en POS de 2.6) quedan **pendientes** — se resolverán junto con Slice 3 (donde POS gana `origenReverso` y el modelo Origen/Modalidad cambia de raíz) para evitar tocar la UI de Origen dos veces.
 
-Modified: `seleccion-lineas-nc.tsx` (~+15L), `seleccion-lineas-nc.test.tsx` (~+25L), `crear-ncr-modal.tsx` (~±35L movimiento+gate), `crear-ncr-modal.test.tsx` (~+20L), `nota-credito-pos-modal.tsx` (~±60L, dos movimientos), `nota-credito-pos-modal.test.tsx` (~+30L).
+- [x] 2.3/2.4 (admin) — `crear-ncr-modal.tsx`: bloque `SeleccionLineasNc` movido a justo después de `<TipoNcSelector/>`, antes del bloque "Origen del reverso". Gate SIN cambios (`tipoNc === 'PARCIAL' && origenReverso`). Test nuevo de orden (`compareDocumentPosition`) agregado a `crear-ncr-modal.test.tsx`, confirmado RED contra el código viejo (stash) antes de GREEN.
+- [x] 2.5/2.6 (POS, alcance reducido) — `nota-credito-pos-modal.tsx`: bloque `SeleccionLineasNc` movido a justo después de `<TipoNcSelector/>`, antes de "Modalidad de liquidacion"/Depósito/Motivo. Depósito NO se movió (permanece en su posición original, fuera de este batch). Gate sin cambios (`tipoNc === 'PARCIAL'`). Test nuevo de orden agregado a `nota-credito-pos-modal.test.tsx`, confirmado RED contra el código viejo antes de GREEN.
+- [x] 2.7 Verify — `yarn test:run crear-ncr-modal` (23/23), `yarn test:run nota-credito-pos-modal` (65/65). Full suite `yarn test:run`: 1642/1645 (3 fallas = flakes PowerSync preexistentes, no relacionados).
+- [ ] 2.1/2.2 — DIFERIDO a Slice 3: prop `origenPendiente?: boolean` en `seleccion-lineas-nc.tsx`.
+- [ ] 2.6b — DIFERIDO a Slice 3: mover bloque Depósito (POS) a ANTES de `<TipoNcSelector/>`.
+
+Modified (este batch): `crear-ncr-modal.tsx` (+23/-21L), `crear-ncr-modal.test.tsx` (+15L), `nota-credito-pos-modal.tsx` (+26/-21L), `nota-credito-pos-modal.test.tsx` (+16L). Total ~81L netas.
 
 ---
 
 ## Slice 3 — `OrigenReversoSelector` + `resolverModalidadDesdeOrigen`; POS gana Origen (Riesgo alto — D2)
+
+**Nota de alcance heredada de Slice 2**: este slice también debe cubrir lo diferido: (a) prop `origenPendiente?: boolean` en `seleccion-lineas-nc.tsx` + gate en admin pasando de `tipoNc === 'PARCIAL' && origenReverso` a `tipoNc === 'PARCIAL'` (bloqueando confirmar via `origenPendiente` en vez de no-renderizar); (b) en POS, mover el bloque Depósito a ANTES de `<TipoNcSelector/>` y pasar `origenPendiente={origenReverso === null}` a su `SeleccionLineasNc`. Natural aquí porque ambos dependen de que POS ya tenga `origenReverso` (que este slice introduce).
 
 **Inicio**: depende de Slice 2. **Fin**: ambos modales comparten el modelo `origenReverso`; POS pierde el select "Modalidad de liquidación" como fuente de verdad de UI (constante `MODALIDADES_POS` se limpia recién en Slice 5). `TOTAL+DEVOLVER_DINERO` en POS queda temporalmente en estado neutro (transicional, sin confirmar) hasta Slice 4 — comportamiento esperado y documentado, no un bug. **Rollback**: revertir los 3 archivos de código + su parte de tests; POS vuelve al select Modalidad.
 

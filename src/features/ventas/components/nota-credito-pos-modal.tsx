@@ -563,6 +563,28 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   <div className="space-y-4 px-4 pb-4">
                     <TipoNcSelector tipoNc={tipoNc} onChange={setTipoNc} puedeTotal={puedeTotal} />
 
+                    {tipoNc === 'PARCIAL' ? (
+                      // Articulos a devolver (PARCIAL) — Slice 2 (D4) de
+                      // unificacion-modal-nc: se muestra justo debajo de
+                      // Total/Parcial. Reorden de posicion unicamente; la
+                      // propia SeleccionLineasNc trae su boton de confirmar,
+                      // gateado por la misma validacion de
+                      // `derivarLineasNcParcial` (tope facturado, es_decimal,
+                      // cantidad negativa, al menos una linea).
+                      <SeleccionLineasNc
+                        key={`${facturaId}-${emisionGen}`}
+                        lineas={lineasParaNc}
+                        factura={{
+                          total_usd: Number(factura.total_usd),
+                          total_bs: Number(factura.total_bs),
+                          tasa: Number(factura.tasa),
+                        }}
+                        onConfirm={handleConfirmarParcialClick}
+                        loading={loading}
+                        depositoInvalido={depositoInvalido}
+                      />
+                    ) : null}
+
                     <div className="rounded-lg border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-2">
                         Modalidad de liquidacion
@@ -632,26 +654,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       />
                     </div>
 
-                    {tipoNc === 'PARCIAL' ? (
-                      // PARCIAL (Slice 3b, Design §Decision 7): reemplaza el
-                      // warning/footer generico de TOTAL — la propia
-                      // SeleccionLineasNc trae su boton de confirmar,
-                      // gateado por la misma validacion de
-                      // `derivarLineasNcParcial` (tope facturado, es_decimal,
-                      // cantidad negativa, al menos una linea).
-                      <SeleccionLineasNc
-                        key={`${facturaId}-${emisionGen}`}
-                        lineas={lineasParaNc}
-                        factura={{
-                          total_usd: Number(factura.total_usd),
-                          total_bs: Number(factura.total_bs),
-                          tasa: Number(factura.tasa),
-                        }}
-                        onConfirm={handleConfirmarParcialClick}
-                        loading={loading}
-                        depositoInvalido={depositoInvalido}
-                      />
-                    ) : tipoNc === 'TOTAL' ? (
+                    {tipoNc === 'TOTAL' ? (
                       // Item 6 (ajustes-qa-nota-credito-pos-modal): la
                       // confirmacion de TOTAL ya NO vive en el pie del modal
                       // (mismo slot fisico que el boton de revelar, hazard de
@@ -678,7 +681,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           {loading ? 'Procesando...' : 'Confirmar Anulacion'}
                         </button>
                       </div>
-                    ) : (
+                    ) : tipoNc === null ? (
                       // Item 5: sin tipo elegido todavia -> estado neutro,
                       // sin alerta ni boton de confirmacion de ningun tipo
                       // (Spec: "Sin seleccion, MUST mostrarse un estado
@@ -686,7 +689,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       <p className="text-sm text-muted-foreground text-center py-2">
                         Selecciona Total o Parcial para continuar.
                       </p>
-                    )}
+                    ) : null}
                   </div>
                 )}
               </div>

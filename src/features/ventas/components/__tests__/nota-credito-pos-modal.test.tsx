@@ -1243,6 +1243,22 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
   })
 
+  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc): eligiendo Parcial, SeleccionLineasNc se renderiza ANTES que "Modalidad de liquidacion" en el DOM', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+
+    const seleccionLineas = screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })
+    const modalidad = screen.getByText(/Modalidad de liquidacion/i)
+    expect(
+      seleccionLineas.compareDocumentPosition(modalidad) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
   it('con permiso: PARCIAL completo ingresando cantidad y confirmando invoca crearNotaCredito con tipo=PARCIAL y las lineas mapeadas', async () => {
     setup({ hasPermission: true })
     mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })

@@ -424,6 +424,21 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     ).toBeTruthy()
   })
 
+  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc): con Parcial + un origen elegidos, SeleccionLineasNc se renderiza ANTES que "Origen del reverso" en el DOM', async () => {
+    const user = userEvent.setup()
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+
+    const seleccionLineas = screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })
+    const origen = screen.getByText(/Origen del reverso/i)
+    expect(
+      seleccionLineas.compareDocumentPosition(origen) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
   it('al confirmar exitosamente, cierra el modal (onClose)', async () => {
     const user = userEvent.setup()
     const onClose = vi.fn()

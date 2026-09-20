@@ -302,6 +302,25 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     `TipoNcSelector`, presentacional puro). */}
                 <TipoNcSelector tipoNc={tipoNc} onChange={setTipoNc} puedeTotal={puedeTotal} />
 
+                {/* Articulos a devolver (PARCIAL) — Slice 2 (D4) de
+                    unificacion-modal-nc: se muestra justo debajo de
+                    Total/Parcial, antes de Origen del reverso. Reorden de
+                    posicion unicamente; el gate (tipoNc Y origenReverso)
+                    no cambia. */}
+                {tipoNc === 'PARCIAL' && origenReverso ? (
+                  <SeleccionLineasNc
+                    key={factura.id}
+                    lineas={lineasParaNc}
+                    factura={{
+                      total_usd: Number(factura.total_usd),
+                      total_bs: Number(factura.total_bs),
+                      tasa: Number(factura.tasa),
+                    }}
+                    onConfirm={(lineas) => void emitirNc(lineas)}
+                    loading={loading}
+                  />
+                ) : null}
+
                 {/* 3. Origen del reverso — SIN preseleccion. "Credito a
                     favor" mapea a modalidad SALDO_FAVOR real
                     (nc-admin-saldo-favor-real), sin cambios. "Devolver
@@ -355,25 +374,12 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                   </div>
                 )}
 
-                {/* Contenido especifico del flujo — gateado por AMBAS
-                    elecciones explicitas (tipoNc Y origenReverso). Sin esto,
-                    "Parcial" sin tocar "Origen del reverso" podia confirmar
-                    con una `modalidad` nunca elegida por el usuario (ver
-                    comentario del componente) — bug real destapado al
-                    quitar el default viejo, corregido aqui, no ignorado. */}
-                {tipoNc === 'PARCIAL' && origenReverso ? (
-                  <SeleccionLineasNc
-                    key={factura.id}
-                    lineas={lineasParaNc}
-                    factura={{
-                      total_usd: Number(factura.total_usd),
-                      total_bs: Number(factura.total_bs),
-                      tasa: Number(factura.tasa),
-                    }}
-                    onConfirm={(lineas) => void emitirNc(lineas)}
-                    loading={loading}
-                  />
-                ) : tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO' ? (
+                {/* Contenido especifico del flujo TOTAL — gateado por
+                    origenReverso. El bloque PARCIAL (SeleccionLineasNc) se
+                    movio justo debajo de TipoNcSelector (Slice 2, D4 de
+                    unificacion-modal-nc); mismo gate `tipoNc === 'PARCIAL'
+                    && origenReverso`, solo cambia la posicion en el DOM. */}
+                {tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO' ? (
                   <RefundTesoreriaForm
                     montoDisponibleUsd={montoDisponibleParaRefund}
                     tasaHistorica={Number(factura.tasa)}
