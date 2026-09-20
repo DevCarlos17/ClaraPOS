@@ -625,6 +625,20 @@ export class SupabaseConnector
         }
 
         if (result.error) {
+          // DEBUG temporal (bug PIN Tesoreria NC POS): log expandido para ops sobre `pagos`.
+          // Desanida code/message/details/hint como strings planos para que la consola
+          // no los colapse como [Object], y muestra el opData completo del reverso.
+          if (op.table === 'pagos') {
+            console.error(
+              '⬆️ [upload pagos] FALLO — op:', op.op,
+              '| id:', op.id,
+              '\n  code:', result.error.code,
+              '\n  message:', result.error.message,
+              '\n  details:', result.error.details,
+              '\n  hint:', result.error.hint,
+              '\n  opData:', JSON.stringify(op.opData, null, 2)
+            )
+          }
           console.error('[PowerSync upload] Supabase error', {
             table: op.table,
             op: op.op,
