@@ -19,6 +19,7 @@ import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factu
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
 import { RefundTesoreriaForm } from './refund-tesoreria-form'
+import { TipoNcSelector } from './tipo-nc-selector'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -296,42 +297,10 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                   </NativeSelect>
                 </div>
 
-                {/* 2. Tipo de NC — SIN preseleccion (Design §Decision 6:
-                    selector duplicado, sin extraerse a componente
-                    compartido — mismo criterio que la Decision 2 de este
-                    mismo change). */}
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs font-semibold text-muted-foreground mb-2">Tipo de nota de credito</p>
-                  <div className="flex gap-2">
-                    {puedeTotal && (
-                      <button
-                        type="button"
-                        onClick={() => setTipoNc('TOTAL')}
-                        aria-pressed={tipoNc === 'TOTAL'}
-                        className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                          tipoNc === 'TOTAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                        }`}
-                      >
-                        Total
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setTipoNc('PARCIAL')}
-                      aria-pressed={tipoNc === 'PARCIAL'}
-                      className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                        tipoNc === 'PARCIAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                      }`}
-                    >
-                      Parcial
-                    </button>
-                  </div>
-                  {!puedeTotal && (
-                    <p className="text-xs text-orange-600 mt-1.5">
-                      Esta factura ya tiene una NC parcial aplicada — solo se puede reversar el remanente por linea.
-                    </p>
-                  )}
-                </div>
+                {/* 2. Tipo de NC — SIN preseleccion (Design §D1, Slice 1 de
+                    unificacion-modal-nc: extraido a componente compartido
+                    `TipoNcSelector`, presentacional puro). */}
+                <TipoNcSelector tipoNc={tipoNc} onChange={setTipoNc} puedeTotal={puedeTotal} />
 
                 {/* 3. Origen del reverso — SIN preseleccion. "Credito a
                     favor" mapea a modalidad SALDO_FAVOR real
