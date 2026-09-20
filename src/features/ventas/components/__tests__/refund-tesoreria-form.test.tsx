@@ -605,6 +605,77 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
     })
   })
 
+  describe('Restriccion de origenes (Slice 4, unificacion-modal-nc, Design D5): restringirOrigenASesionId + mostrarOrigenTesoreria', () => {
+    beforeEach(() => {
+      mockedUseSesionesActivas.mockReturnValue({
+        sesiones: [
+          { id: 'sesion-1', caja_nombre: 'Caja Principal', usuario_apertura_nombre: null } as never,
+          { id: 'sesion-2', caja_nombre: 'Caja Secundaria', usuario_apertura_nombre: null } as never,
+        ],
+        isLoading: false,
+      })
+    })
+
+    it('con restringirOrigenASesionId, el select Origen SOLO ofrece esa sesion + Tesoreria (mostrarOrigenTesoreria=true default)', () => {
+      render(
+        <RefundTesoreriaForm
+          montoDisponibleUsd={100}
+          tasaHistorica={40}
+          onConfirm={vi.fn()}
+          restringirOrigenASesionId="sesion-1"
+        />
+      )
+
+      const origenSelect = screen.getAllByRole('combobox')[0]!
+      const opciones = within(origenSelect).getAllByRole('option')
+      expect(opciones).toHaveLength(2)
+      expect(screen.getByRole('option', { name: /^Tesoreria$/i })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: /Caja Principal/i })).toBeInTheDocument()
+      expect(screen.queryByRole('option', { name: /Caja Secundaria/i })).not.toBeInTheDocument()
+    })
+
+    it('con mostrarOrigenTesoreria=false, la opcion Tesoreria NO aparece en el select Origen', () => {
+      render(
+        <RefundTesoreriaForm
+          montoDisponibleUsd={100}
+          tasaHistorica={40}
+          onConfirm={vi.fn()}
+          restringirOrigenASesionId="sesion-1"
+          mostrarOrigenTesoreria={false}
+        />
+      )
+
+      const origenSelect = screen.getAllByRole('combobox')[0]!
+      const opciones = within(origenSelect).getAllByRole('option')
+      expect(opciones).toHaveLength(1)
+      expect(screen.queryByRole('option', { name: /^Tesoreria$/i })).not.toBeInTheDocument()
+      expect(screen.getByRole('option', { name: /Caja Principal/i })).toBeInTheDocument()
+    })
+
+    it('con restringirOrigenASesionId, la linea nueva por defecto usa SESION:<id> en vez de TESORERIA', () => {
+      render(
+        <RefundTesoreriaForm
+          montoDisponibleUsd={100}
+          tasaHistorica={40}
+          onConfirm={vi.fn()}
+          restringirOrigenASesionId="sesion-1"
+        />
+      )
+
+      const origenSelect = screen.getAllByRole('combobox')[0]!
+      expect(origenSelect).toHaveValue('SESION:sesion-1')
+    })
+
+    it('modo admin (sin props de restriccion) sigue ofreciendo Tesoreria + TODAS las sesiones activas, con TESORERIA como default — sin cambios', () => {
+      render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)
+
+      const origenSelect = screen.getAllByRole('combobox')[0]!
+      expect(origenSelect).toHaveValue('TESORERIA')
+      const opciones = within(origenSelect).getAllByRole('option')
+      expect(opciones).toHaveLength(3) // Tesoreria + sesion-1 + sesion-2
+    })
+  })
+
   describe('UX rework (nc-refund-tesoreria): sin spinners, Bs en pendiente y gate de confirmacion de saldo a favor', () => {
     it('el input de Monto no muestra las flechas de spinner nativas del navegador (mismo patron [appearance:textfield] que el resto del codebase)', () => {
       render(<RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} />)

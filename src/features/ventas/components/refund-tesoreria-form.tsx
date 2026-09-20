@@ -61,6 +61,11 @@ function sesionIdDeOrigen(origen: `SESION:${string}`): string {
   return origen.slice('SESION:'.length)
 }
 
+/** Origen por defecto de una linea nueva (Slice 4, Design §D5) — `TESORERIA` en modo admin (sin restriccion), `SESION:${id}` cuando el llamador restringe a una sola sesion (POS). */
+function origenInicial(restringirOrigenASesionId?: string): OrigenEgreso {
+  return restringirOrigenASesionId ? `SESION:${restringirOrigenASesionId}` : 'TESORERIA'
+}
+
 interface LineaFormState {
   key: string
   origen: OrigenEgreso
@@ -98,6 +103,25 @@ export interface RefundTesoreriaFormProps {
    * `document.body` por default quedaria tapado por el `<dialog>` nativo.
    */
   portalContainer?: HTMLElement | null
+  /**
+   * Restringe el select "Origen" a UNA sola sesion de caja (Slice 4,
+   * unificacion-modal-nc, Design §D5) — pensado para POS: el cajero solo
+   * puede reembolsar directo desde SU PROPIA sesion activa, nunca desde
+   * cualquier otra sesion abierta de la empresa. `undefined` (default,
+   * modo admin) preserva el comportamiento actual: TODAS las sesiones
+   * activas + Tesoreria, sin restriccion. Cuando esta presente, tambien
+   * cambia el origen por defecto de una linea nueva de `'TESORERIA'` a
+   * `SESION:${restringirOrigenASesionId}`.
+   */
+  restringirOrigenASesionId?: string
+  /**
+   * Oculta la opcion "Tesoreria" del select Origen cuando es `false` (Slice
+   * 4, Design §D5) — en POS arranca en `false` hasta que un supervisor
+   * autorice via PIN C (`tesoreriaAutorizada`), habilitandola. Default
+   * `true`: preserva el comportamiento admin actual (Tesoreria siempre
+   * disponible, sin gate).
+   */
+  mostrarOrigenTesoreria?: boolean
 }
 
 /** Mismo patron que `noSpinner` en `gasto-form.tsx`/`producto-form.tsx`/`nivel-precio-form.tsx` (Tailwind arbitrary variants, sin CSS global) — oculta las flechas nativas del input `type="number"` en Chrome/Safari/Firefox. */
@@ -137,13 +161,19 @@ export function RefundTesoreriaForm({
   loading = false,
   motivoSlot,
   portalContainer,
+  restringirOrigenASesionId,
+  mostrarOrigenTesoreria = true,
 }: RefundTesoreriaFormProps) {
   const { cuentas } = useCuentasTesoreria()
   const { sesiones: sesionesActivas } = useSesionesActivas()
   const { metodos: metodosPago } = useMetodosPagoActivos()
   const [lineas, setLineas] = useState<LineaFormState[]>([
-    { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '', referencia: '' },
+    { key: nuevaLineaKey(), origen: origenInicial(restringirOrigenASesionId), cuentaId: '', montoNativo: '', referencia: '' },
   ])
+  /** Opciones de sesion ofrecidas en el select Origen (Slice 4, Design §D5) — filtradas a UNA sola sesion cuando el llamador restringe (POS); sin restriccion, TODAS las sesiones activas (modo admin, sin cambios). El guard `haySesionYaNoActiva` de mas abajo sigue usando `sesionesActivas` SIN filtrar — una sesion restringida que sigue activa nunca debe dispararlo. */
+  const sesionesParaSelector = restringirOrigenASesionId
+    ? sesionesActivas.filter((s) => s.id === restringirOrigenASesionId)
+    : sesionesActivas
   /** Gate de confirmacion extra (UX rework, nc-refund-tesoreria): se abre SOLO cuando confirmar dejaria un remanente > `TOLERANCIA_SAFC` como saldo a favor — un reembolso completo (remanente 0) nunca lo muestra. */
   const [mostrarConfirmSafc, setMostrarConfirmSafc] = useState(false)
   /**
@@ -164,7 +194,7 @@ export function RefundTesoreriaForm({
   function agregarLinea() {
     setLineas((prev) => [
       ...prev,
-      { key: nuevaLineaKey(), origen: 'TESORERIA', cuentaId: '', montoNativo: '', referencia: '' },
+      { key: nuevaLineaKey(), origen: origenInicial(restringirOrigenASesionId), cuentaId: '', montoNativo: '', referencia: '' },
     ])
   }
 
@@ -293,7 +323,8 @@ export function RefundTesoreriaForm({
             key={linea.key}
             linea={linea}
             cuentas={cuentas}
-            sesionesActivas={sesionesActivas}
+            sesionesActivas={sesionesParaSelector}
+            mostrarTesoreria={mostrarOrigenTesoreria}
             efectivoUsd={efectivoUsd}
             efectivoBs={efectivoBs}
             puedeQuitar={lineas.length > 1}
@@ -371,7 +402,7 @@ export function RefundTesoreriaForm({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setMostrarConfirmSafc(false)}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmarConSafc}>Confirmar de todas formas</AlertDialogAction>
+            <AlertDialogAction disabled={loading} onClick={handleConfirmarConSafc}>Confirmar de todas formas</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -383,6 +414,8 @@ interface LineaEgresoRefundProps {
   linea: LineaFormState
   cuentas: ReturnType<typeof useCuentasTesoreria>['cuentas']
   sesionesActivas: ReturnType<typeof useSesionesActivas>['sesiones']
+  /** `false` oculta la opcion "Tesoreria" del select Origen (Slice 4, Design §D5) — ver `RefundTesoreriaFormProps.mostrarOrigenTesoreria`. */
+  mostrarTesoreria: boolean
   efectivoUsd: ReturnType<typeof useMetodosPagoActivos>['metodos'][number] | undefined
   efectivoBs: ReturnType<typeof useMetodosPagoActivos>['metodos'][number] | undefined
   puedeQuitar: boolean
@@ -412,6 +445,7 @@ function LineaEgresoRefund({
   linea,
   cuentas,
   sesionesActivas,
+  mostrarTesoreria,
   efectivoUsd,
   efectivoBs,
   puedeQuitar,
@@ -503,7 +537,7 @@ function LineaEgresoRefund({
               })
             }
           >
-            <option value="TESORERIA">Tesoreria</option>
+            {mostrarTesoreria && <option value="TESORERIA">Tesoreria</option>}
             {sesionesActivas.map((s) => (
               <option key={s.id} value={`SESION:${s.id}`}>
                 {formatSesionOrigenLabel(s)}
