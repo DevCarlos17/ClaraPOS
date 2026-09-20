@@ -178,6 +178,18 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // re-enviar por accidente la MISMA cantidad ya acreditada (double-submit).
   // Cambiar el `key` fuerza un remount limpio tras cada emision exitosa.
   const [emisionGen, setEmisionGen] = useState(0)
+  // QA fix (unificacion-modal-nc, Fix 2): el boton "Confirmar Nota de
+  // Credito Parcial" ya NO vive dentro de `SeleccionLineasNc` en este modal
+  // (queda oculto via `mostrarBotonConfirmar={false}`) — se renderiza en la
+  // seccion final del modal, misma posicion fija que "Confirmar Anulacion"
+  // (TOTAL), para que el boton de confirmar nunca "salte" de lugar segun el
+  // tipo elegido. `SeleccionLineasNc` sigue siendo la UNICA fuente de la
+  // logica de habilitado/deshabilitado — este estado solo espeja su ultimo
+  // calculo (`puedeConfirmar`) y expone el mismo trigger (`confirmar`).
+  const [estadoParcialConfirm, setEstadoParcialConfirm] = useState<{
+    puedeConfirmar: boolean
+    confirmar: () => void
+  } | null>(null)
   // Reveal-gate de la seccion NC (Slice C, Spec notas-credito-pos:
   // "Reveal-gate de la seccion de emision de NC"). Al seleccionar una
   // factura solo se muestra el detalle + pie de 3 acciones (Volver,
@@ -563,6 +575,35 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                   <div className="space-y-4 px-4 pb-4">
                     <TipoNcSelector tipoNc={tipoNc} onChange={setTipoNc} puedeTotal={puedeTotal} />
 
+                    {tipoNc === 'PARCIAL' ? (
+                      // Articulos a devolver (PARCIAL) — Slice 2 (D4) de
+                      // unificacion-modal-nc: se muestra justo debajo de
+                      // Total/Parcial. Reorden de posicion unicamente. QA
+                      // fix (Fix 2): el boton de confirmar interno de
+                      // `SeleccionLineasNc` se oculta aqui
+                      // (`mostrarBotonConfirmar={false}`) — se renderiza
+                      // en la seccion final del modal (mas abajo), misma
+                      // posicion fija que TOTAL. La validacion
+                      // (`derivarLineasNcParcial`: tope facturado,
+                      // es_decimal, cantidad negativa, al menos una linea)
+                      // sigue calculada ENTERAMENTE dentro del componente,
+                      // solo se expone via `onEstadoConfirmarChange`.
+                      <SeleccionLineasNc
+                        key={`${facturaId}-${emisionGen}`}
+                        lineas={lineasParaNc}
+                        factura={{
+                          total_usd: Number(factura.total_usd),
+                          total_bs: Number(factura.total_bs),
+                          tasa: Number(factura.tasa),
+                        }}
+                        onConfirm={handleConfirmarParcialClick}
+                        loading={loading}
+                        depositoInvalido={depositoInvalido}
+                        mostrarBotonConfirmar={false}
+                        onEstadoConfirmarChange={setEstadoParcialConfirm}
+                      />
+                    ) : null}
+
                     <div className="rounded-lg border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-2">
                         Modalidad de liquidacion
@@ -632,33 +673,17 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       />
                     </div>
 
-                    {tipoNc === 'PARCIAL' ? (
-                      // PARCIAL (Slice 3b, Design §Decision 7): reemplaza el
-                      // warning/footer generico de TOTAL — la propia
-                      // SeleccionLineasNc trae su boton de confirmar,
-                      // gateado por la misma validacion de
-                      // `derivarLineasNcParcial` (tope facturado, es_decimal,
-                      // cantidad negativa, al menos una linea).
-                      <SeleccionLineasNc
-                        key={`${facturaId}-${emisionGen}`}
-                        lineas={lineasParaNc}
-                        factura={{
-                          total_usd: Number(factura.total_usd),
-                          total_bs: Number(factura.total_bs),
-                          tasa: Number(factura.tasa),
-                        }}
-                        onConfirm={handleConfirmarParcialClick}
-                        loading={loading}
-                        depositoInvalido={depositoInvalido}
-                      />
-                    ) : tipoNc === 'TOTAL' ? (
+                    {tipoNc === 'TOTAL' ? (
                       // Item 6 (ajustes-qa-nota-credito-pos-modal): la
                       // confirmacion de TOTAL ya NO vive en el pie del modal
                       // (mismo slot fisico que el boton de revelar, hazard de
                       // doble-click) — ahora es un boton DEDICADO dentro de
-                      // la seccion, mismo lugar que el boton propio de
-                      // `SeleccionLineasNc` para PARCIAL. Reusa
-                      // `handleConfirmarClick` sin alterar su logica.
+                      // la seccion final. QA fix (Fix 2): esta MISMA
+                      // posicion (tras Modalidad/Deposito/Motivo) es ahora
+                      // FIJA para ambos tipos — ver la rama PARCIAL debajo,
+                      // que ya no depende de `SeleccionLineasNc` para su
+                      // boton. Reusa `handleConfirmarClick` sin alterar su
+                      // logica.
                       <div className="space-y-3">
                         <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
                           <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
@@ -678,6 +703,24 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           {loading ? 'Procesando...' : 'Confirmar Anulacion'}
                         </button>
                       </div>
+                    ) : tipoNc === 'PARCIAL' ? (
+                      // QA fix (Fix 2, unificacion-modal-nc): boton FIJO en
+                      // la misma posicion que TOTAL (seccion final, tras
+                      // Modalidad/Deposito/Motivo) — antes vivia DENTRO de
+                      // `SeleccionLineasNc`, justo debajo de la tabla de
+                      // articulos (arriba de Modalidad), lo que hacia que
+                      // el boton "saltara" de lugar segun Total/Parcial.
+                      // `estadoParcialConfirm` espeja el mismo
+                      // `puedeConfirmar`/`onConfirm` que antes disparaba el
+                      // boton interno — CERO cambio de logica.
+                      <button
+                        type="button"
+                        onClick={() => estadoParcialConfirm?.confirmar()}
+                        disabled={!estadoParcialConfirm?.puedeConfirmar}
+                        className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {loading ? 'Procesando...' : 'Confirmar Nota de Credito Parcial'}
+                      </button>
                     ) : (
                       // Item 5: sin tipo elegido todavia -> estado neutro,
                       // sin alerta ni boton de confirmacion de ningun tipo
