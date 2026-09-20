@@ -402,7 +402,7 @@ export function RefundTesoreriaForm({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setMostrarConfirmSafc(false)}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmarConSafc}>Confirmar de todas formas</AlertDialogAction>
+            <AlertDialogAction disabled={loading} onClick={handleConfirmarConSafc}>Confirmar de todas formas</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
