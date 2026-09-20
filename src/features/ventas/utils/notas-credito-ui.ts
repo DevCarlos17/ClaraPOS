@@ -483,6 +483,34 @@ export function filaFacturaAtenuada(f: { tiene_reverso_total?: number }): boolea
   return f.tiene_reverso_total === 1
 }
 
+// =============================================
+// resolverModalidadDesdeOrigen — Slice 3 (unificacion-modal-nc, Design §D2)
+// =============================================
+
+/**
+ * Origen del reverso — "Devolver dinero"/"Credito a favor" (compartido
+ * entre `crear-ncr-modal.tsx` y `nota-credito-pos-modal.tsx` via
+ * `OrigenReversoSelector`). Tipo movido aqui (capa pura) para que ambos
+ * consumidores — el componente de presentacion y esta misma funcion —
+ * importen la MISMA definicion, sin duplicarla.
+ */
+export type OrigenReverso = 'DEVOLVER_DINERO' | 'CREDITO_A_FAVOR'
+
+/**
+ * Mapeo Origen del reverso -> modalidad para el camino NO-refund (Design
+ * §D2), copiado VERBATIM del ternario que ya existia en
+ * `crear-ncr-modal.tsx:230` (antes de esta extraccion). `TOTAL +
+ * DEVOLVER_DINERO` NUNCA pasa por esta funcion — sigue hardcodeado a
+ * `'REFUND_TESORERIA'` en `emitirNcRefund` (admin) / diferido a Slice 4
+ * (POS). El fallback `AJUSTE_CXC` para `DEVOLVER_DINERO` es intencional:
+ * cubre `PARCIAL + DEVOLVER_DINERO`, alcanzable en admin (sin UI dedicada,
+ * riesgo preservado a proposito) y ahora tambien en POS (combinacion real
+ * elegible, ver Nota resuelta de `tasks.md` — NO requiere logica especial).
+ */
+export function resolverModalidadDesdeOrigen(origenReverso: OrigenReverso): 'SALDO_FAVOR' | 'AJUSTE_CXC' {
+  return origenReverso === 'CREDITO_A_FAVOR' ? 'SALDO_FAVOR' : 'AJUSTE_CXC'
+}
+
 export function agruparReversosPorNc(rows: ReversoFacturaRowInput[]): ReversoAplicado[] {
   const porId = new Map<string, ReversoAplicado>()
   for (const row of rows) {

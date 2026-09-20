@@ -11,6 +11,7 @@ import {
   calcularBadgesReversoPorVenta,
   resolverBadgesFactura,
   filaFacturaAtenuada,
+  resolverModalidadDesdeOrigen,
 } from '../notas-credito-ui'
 
 // ─── derivarEstadoPago (Design §Decision 4 — tabla de verdad Contado/Credito/Abonada) ────────
@@ -511,5 +512,17 @@ describe('filaFacturaAtenuada (Slice E.5: fila 100% reversada se atenua en la ta
 
   it('tiene_reverso_total ausente (undefined) -> false, nunca revienta', () => {
     expect(filaFacturaAtenuada({})).toBe(false)
+  })
+})
+
+// ─── resolverModalidadDesdeOrigen (Slice 3 unificacion-modal-nc, D2 — copia verbatim de crear-ncr-modal.tsx:230) ────────
+
+describe('resolverModalidadDesdeOrigen (Design §D2: mapeo Origen del reverso -> modalidad, camino NO-refund)', () => {
+  it('CREDITO_A_FAVOR -> SALDO_FAVOR', () => {
+    expect(resolverModalidadDesdeOrigen('CREDITO_A_FAVOR')).toBe('SALDO_FAVOR')
+  })
+
+  it('DEVOLVER_DINERO -> AJUSTE_CXC (fallback verbatim — riesgo preservado a proposito, ver Nota resuelta en tasks.md)', () => {
+    expect(resolverModalidadDesdeOrigen('DEVOLVER_DINERO')).toBe('AJUSTE_CXC')
   })
 })

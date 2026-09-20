@@ -35,8 +35,22 @@ QA del usuario sobre Slice 2 detecto 2 cosas; se corrigieron sobre la rama PR2:
 
 Verificado por lectura de codigo + test liviano `seleccion-lineas-nc.test.tsx` 12/12. Los 2 modales pesados NO se re-corrieron (collect ~80s por WASM/PowerSync, ver deuda architecture/test-collect-lento-powersync) -> QA visual en navegador.
 
+## Slice 3 — POS gana "Origen del reverso" + mapeo compartido — COMPLETO
+
+- **Rama**: `feat/unificacion-modal-nc-pr3-origen` (desde tracker con S1+S2).
+- **Qué**:
+  1. `origen-reverso-selector.tsx` (nuevo) — componente presentacional de los 2 botones Devolver dinero / Credito a favor, consumido por AMBOS modales (admin L336, POS L669).
+  2. `resolverModalidadDesdeOrigen` (nuevo, en notas-credito-ui.ts:510) — funcion pura, mapeo VERBATIM: CREDITO_A_FAVOR->SALDO_FAVOR, else AJUSTE_CXC. TOTAL+DEVOLVER_DINERO->REFUND_TESORERIA sigue hardcodeado aparte.
+  3. POS cableado a OrigenReversoSelector + resolverModalidadDesdeOrigen (reemplaza conceptualmente el select "Modalidad de liquidacion", que se remueve del todo en Slice 5).
+  4. Bloque Deposito en POS movido antes de TipoNcSelector (orden: deposito -> Total/Parcial -> (Parcial) articulos -> Origen del reverso).
+- **INVARIANTE entryPoint VERIFICADO**: POS sigue emitiendo entryPoint:'POS' (L341), admin 'TRADICIONAL' (L183/L210). Sin inferencia ni default en los componentes compartidos.
+- **Estado TRANSICIONAL** (esperado, documentado): en POS, "Devolver dinero" AUN no confirma (solo Credito a favor). El RefundTesoreriaForm restringido + PIN C llegan en Slice 4. Mergear S3/S4 cerca.
+- **Tests**: 63/63 livianos (resolverModalidadDesdeOrigen + OrigenReversoSelector, 8s). Los 2 modales pesados NO re-corridos (collect ~80s WASM, deuda #3900) -> verificado por lectura + QA navegador.
+
 ## Pendiente
 
-- **Slice 3**: compartir seccion NC-info al POS (Devolver dinero/Credito a favor + OrigenReversoSelector + resolverModalidadDesdeOrigen) [ALTO riesgo]. `origenPendiente` ya agregado en este fix. Falta mover el bloque Deposito en POS a antes de `TipoNcSelector`.
+- **Slice 4**: RefundTesoreriaForm al POS con restriccion de origen (sesion propia + Tesoreria PIN C) [ALTO riesgo]. Conecta "Devolver dinero" del POS (hoy transicional).
+- **Slice 5**: cleanup (remover select "Modalidad de liquidacion" del POS).
+- DEUDA #3900: mockear PowerSync en setup de Vitest para bajar el collect de ~80s (atacar antes de Slice 4).
 - **Slice 4**: RefundTesoreriaForm al POS con restriccion de origen (sesion propia + Tesoreria PIN C) [ALTO riesgo].
 - **Slice 5**: cleanup (remover select "Modalidad de liquidacion" del POS).

@@ -212,9 +212,21 @@ async function revelarSeccionNc(user: ReturnType<typeof userEvent.setup>) {
  * TOTAL como default: ahora deben elegirlo explicitamente antes de esperar
  * la UI de confirmacion de TOTAL (que Item 6 ademas reubico DENTRO de la
  * seccion, ya no en el pie del modal).
+ *
+ * Slice 3 (unificacion-modal-nc, Design §D2): tras elegir Total, el bloque
+ * de confirmacion (aviso irreversible + "Confirmar Anulacion") queda
+ * gateado ADEMAS a `origenReverso === 'CREDITO_A_FAVOR'` — el select
+ * "Modalidad de liquidacion" desaparecio (reemplazado por
+ * `OrigenReversoSelector`) y "Devolver dinero" queda transicional hasta
+ * Slice 4. Este helper elige tambien "Credito a favor" para llegar al
+ * mismo estado "listo para confirmar" que antes daba TOTAL por si solo
+ * (equivalente mas cercano al viejo default EFECTIVO_REAL, ahora
+ * SALDO_FAVOR) — los tests que necesiten el estado intermedio
+ * "Total sin origen" lo arman a mano sin usar este helper.
  */
 async function elegirTotal(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole('button', { name: 'Total' }))
+  await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
 }
 
 describe('NotaCreditoPosModal — Ajustes QA (ajustes-qa-nota-credito-pos-modal, Items 1/2/3)', () => {
@@ -272,7 +284,7 @@ describe('NotaCreditoPosModal — Slice C (reveal-gate de la seccion NC, Spec no
     await seleccionarPrimeraFactura()
 
     expect(screen.queryByText('Tipo de nota de credito')).not.toBeInTheDocument()
-    expect(screen.queryByText('Modalidad de liquidacion')).not.toBeInTheDocument()
+    expect(screen.queryByText('Origen del reverso')).not.toBeInTheDocument()
     expect(screen.queryByText('Deposito de reingreso de stock')).not.toBeInTheDocument()
     expect(screen.queryByPlaceholderText(/Motivo de la anulacion/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Esta accion es irreversible/i)).not.toBeInTheDocument()
@@ -462,7 +474,11 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
       venta_id: 'venta-1',
       entryPoint: 'POS',
       sesionCajaActivaId: 'sesion-1',
-      modalidad: 'EFECTIVO_REAL',
+      // Slice 3 (unificacion-modal-nc, Design §D2): EFECTIVO_REAL ya no es
+      // alcanzable via UI POS (select "Modalidad de liquidacion" eliminado)
+      // — "Credito a favor" (elegido por `elegirTotal`) mapea a SALDO_FAVOR
+      // via `resolverModalidadDesdeOrigen`, misma funcion pura que admin.
+      modalidad: 'SALDO_FAVOR',
     })
     expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringContaining('NCR-000001'))
   })
@@ -484,7 +500,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
   })
 
-  it('EFECTIVO_REAL reachable via caller POS real: entryPoint POS + sesion activa + modalidad EFECTIVO_REAL (dispara la Regla de Oro dentro de crearNotaCredito)', async () => {
+  it('Slice 3 (unificacion-modal-nc, Design §D2 — reemplaza el test "EFECTIVO_REAL reachable"): entryPoint POS + sesion activa + modalidad SALDO_FAVOR via "Credito a favor" (EFECTIVO_REAL ya no es alcanzable desde la UI POS, el select "Modalidad de liquidacion" fue eliminado — ver Design §D2)', async () => {
     setup({ hasPermission: true })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
@@ -496,25 +512,39 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
       entryPoint: 'POS',
-      modalidad: 'EFECTIVO_REAL',
+      sesionCajaActivaId: 'sesion-1',
+      modalidad: 'SALDO_FAVOR',
     })
     expect(mockedCrearNotaCredito.mock.calls[0][0].tipo).toBeUndefined()
   })
 
-  it('REGRESION obs #2814 reachable via caller POS real: SALDO_FAVOR (no-efectivo) se pasa correctamente a crearNotaCredito (la Regla de Oro no dispara dentro de la funcion)', async () => {
+  it('REGRESION obs #2814 reachable via caller POS real (repurposed Slice 3, Design §D2 "riesgo preservado a proposito"): PARCIAL + "Devolver dinero" produce modalidad AJUSTE_CXC (fallback de resolverModalidadDesdeOrigen, combinacion resuelta en tasks.md sin logica especial)', async () => {
     setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+          precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+      ],
+      isLoading: false,
+    })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
 
     const user = await seleccionarPrimeraFactura()
     await revelarSeccionNc(user)
-    await elegirTotal(user)
-    await user.selectOptions(screen.getByRole('combobox'), 'SALDO_FAVOR')
-    await user.click(screen.getByRole('button', { name: /Confirmar Anulacion/i }))
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+    await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
       entryPoint: 'POS',
-      modalidad: 'SALDO_FAVOR',
+      tipo: 'PARCIAL',
+      modalidad: 'AJUSTE_CXC',
     })
   })
 
@@ -545,7 +575,11 @@ describe('NotaCreditoPosModal — Slice 5a-2b (PIN B, override de deposito, SEPA
     await revelarSeccionNc(user)
 
     expect(screen.getByText(/Automatico/i)).toBeInTheDocument()
-    expect(screen.queryByRole('combobox', { name: '' })).toBeInTheDocument() // solo el combobox de modalidad
+    // Slice 3 (unificacion-modal-nc, Design §D2): el select "Modalidad de
+    // liquidacion" fue eliminado (reemplazado por `OrigenReversoSelector`,
+    // botones, no combobox) — sin autorizar PIN B, NINGUN combobox esta
+    // presente todavia (el select de deposito solo aparece autorizado).
+    expect(screen.queryAllByRole('combobox')).toHaveLength(0)
     expect(screen.queryByText('Deposito Secundario')).not.toBeInTheDocument()
   })
 
@@ -1243,7 +1277,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
   })
 
-  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc): eligiendo Parcial, la tabla de SeleccionLineasNc se renderiza ANTES que "Modalidad de liquidacion" en el DOM', async () => {
+  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc; target actualizado en Slice 3 — el select "Modalidad de liquidacion" fue reemplazado por "Origen del reverso"): eligiendo Parcial, la tabla de SeleccionLineasNc se renderiza ANTES que "Origen del reverso" en el DOM', async () => {
     setup({ hasPermission: true })
     mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
@@ -1257,9 +1291,9 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     // ver test dedicado mas abajo) — el anclaje de posicion pasa a ser la
     // tabla de articulos en si.
     const tablaArticulos = screen.getByRole('table')
-    const modalidad = screen.getByText(/Modalidad de liquidacion/i)
+    const origenReverso = screen.getByText('Origen del reverso')
     expect(
-      tablaArticulos.compareDocumentPosition(modalidad) & Node.DOCUMENT_POSITION_FOLLOWING
+      tablaArticulos.compareDocumentPosition(origenReverso) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
   })
 
@@ -1284,7 +1318,10 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
 
     // Cambiar a Total: el mismo slot fisico (seccion final) ahora muestra
     // "Confirmar Anulacion" en vez de "Confirmar Nota de Credito Parcial".
+    // Slice 3: el bloque TOTAL exige ADEMAS "Credito a favor" (ver
+    // `elegirTotal`) — sin elegir origen quedaria en el estado transicional.
     await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
     const confirmarTotal = screen.getByRole('button', { name: /Confirmar Anulacion/i })
     expect(
       motivo.compareDocumentPosition(confirmarTotal) & Node.DOCUMENT_POSITION_FOLLOWING
@@ -1300,6 +1337,8 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '2')
+    // Slice 3 (unificacion-modal-nc): Confirmar exige Origen elegido (origenPendiente).
+    await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
     await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
@@ -1320,6 +1359,8 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '1')
+    // Slice 3 (unificacion-modal-nc): Confirmar exige Origen elegido (origenPendiente).
+    await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
     await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
 
     expect(screen.getByTestId('mock-pin-dialog')).toBeInTheDocument()
@@ -1346,6 +1387,105 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0].tipo).toBeUndefined()
     expect(mockedCrearNotaCredito.mock.calls[0][0].lineas).toBeUndefined()
+  })
+})
+
+/**
+ * Slice 3 (unificacion-modal-nc, Design §D1/D2/D4, Spec notas-credito-pos:
+ * "Orden del flujo tras revelar la seccion de NC en POS" y "Gestion de
+ * vueltos en POS — Devolver dinero y Credito a favor"). POS adopta el
+ * mismo modelo `origenReverso` de `crear-ncr-modal.tsx`: el select
+ * "Modalidad de liquidacion" desaparece, reemplazado por
+ * `OrigenReversoSelector` (compartido). "Devolver dinero" (TOTAL) queda
+ * transicional en este slice — Slice 4 conecta `RefundTesoreriaForm`
+ * restringido + PIN C.
+ */
+describe('NotaCreditoPosModal — Slice 3 (Origen del reverso reemplaza Modalidad de liquidacion, Design §D1/D2)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('Requirement "Orden del flujo": el deposito de reingreso aparece ANTES que los botones Total/Parcial en el DOM', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+
+    const deposito = screen.getByText('Deposito de reingreso de stock')
+    const total = screen.getByRole('button', { name: 'Total' })
+    expect(deposito.compareDocumentPosition(total) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('tras elegir Total o Parcial, ofrece "Devolver dinero" y "Credito a favor" (mismas opciones que admin) en vez del select "Modalidad de liquidacion"', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+
+    expect(screen.getByRole('button', { name: 'Devolver dinero' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Credito a favor' })).toBeInTheDocument()
+    expect(screen.queryByText('Modalidad de liquidacion')).not.toBeInTheDocument()
+    // Sin preseleccion — ninguno de los dos botones arranca activo.
+    expect(screen.getByRole('button', { name: 'Devolver dinero' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Credito a favor' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('TOTAL + "Devolver dinero" queda en estado transicional (sin "Confirmar Anulacion", sin aviso irreversible) — comportamiento esperado hasta Slice 4, NO un bug', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+
+    expect(screen.queryByRole('button', { name: /Confirmar Anulacion/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Esta accion es irreversible/i)).not.toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('TOTAL + "Credito a favor" SI revela el aviso irreversible y "Confirmar Anulacion" (unico origen accionable en este slice)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
+
+    expect(screen.getByText(/Esta accion es irreversible/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Confirmar Anulacion/i })).toBeInTheDocument()
+  })
+
+  it('PARCIAL: con cantidad valida pero SIN elegir Origen del reverso, "Confirmar Nota de Credito Parcial" permanece deshabilitado (origenPendiente); tras elegir Origen se habilita', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({
+      detalle: [
+        {
+          id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+          precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+          producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+          tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+        },
+      ],
+      isLoading: false,
+    })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+
+    expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeDisabled()
+    expect(screen.getByText(/Debes elegir el origen del reverso antes de confirmar/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
+
+    expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeDisabled()
   })
 })
 
@@ -1449,6 +1589,8 @@ describe('NotaCreditoPosModal — Slice 5g.5 (behavior F: el modal permanece abi
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '2')
     expect(screen.getByRole('spinbutton')).toHaveValue(2)
+    // Slice 3 (unificacion-modal-nc): Confirmar exige Origen elegido (origenPendiente).
+    await user.click(screen.getByRole('button', { name: 'Credito a favor' }))
 
     await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
