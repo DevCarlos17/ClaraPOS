@@ -7,6 +7,7 @@ import {
   useReversosFactura,
   type FacturaParaAnular,
   type LineaNcSeleccionada,
+  type EgresoTesoreriaLinea,
 } from '../hooks/use-notas-credito'
 import { useFacturasSesionActiva, useBadgesReversoSesion } from '../hooks/use-facturas-sesion-activa'
 import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
@@ -31,6 +32,7 @@ import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
 import { ConsultaFacturaModal } from './consulta-factura-modal'
 import { TipoNcSelector } from './tipo-nc-selector'
 import { OrigenReversoSelector } from './origen-reverso-selector'
+import { RefundTesoreriaForm } from './refund-tesoreria-form'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -143,6 +145,14 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const [showPinDeposito, setShowPinDeposito] = useState(false)
   const [pinDepositoAutorizado, setPinDepositoAutorizado] = useState(false)
   const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
+  // PIN C (Tesoreria, Slice 4 unificacion-modal-nc, Design §D3) — TERCER gate
+  // independiente de PIN A/PIN B: autoriza UNICAMENTE que "Tesoreria" aparezca
+  // como origen elegible dentro de `RefundTesoreriaForm` restringido
+  // (`mostrarOrigenTesoreria`); nunca autoriza emitir la NC (PIN A) ni cambiar
+  // el deposito de reingreso (PIN B) — 3 flags, 3 significados, sin estado
+  // compartido, mismo patron que PIN A/PIN B.
+  const [showPinTesoreria, setShowPinTesoreria] = useState(false)
+  const [tesoreriaAutorizada, setTesoreriaAutorizada] = useState(false)
   // Eleccion TOTAL/PARCIAL (Slice 3b, Spec notas-credito-pos: "Seleccion de
   // tipo de nota de credito"). Ajustes QA (ajustes-qa-nota-credito-pos-modal,
   // Item 5): NINGUN tipo se preselecciona (ni siquiera para facturas con
@@ -219,6 +229,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     setDepositoElegidoId(null)
     setAccionPendiente(null)
     setLineasParcialPendientes(null)
+    // PIN C (Slice 4) — mismos 3 puntos de reset que PIN A/PIN B (Design
+    // §D3: "tesoreriaAutorizada se resetea en los mismos 3 puntos que
+    // resetAutorizacionesPin()").
+    setShowPinTesoreria(false)
+    setTesoreriaAutorizada(false)
   }
 
   useEffect(() => {
@@ -295,6 +310,19 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     return buildReciboDataDesdeFacturaGuardada(factura, detalle, pagosFactura, company)
   }, [factura, detalle, pagosFactura, company])
 
+  // Monto disponible para reembolsar via Tesoreria/Sesion (Slice 4,
+  // unificacion-modal-nc) — MISMA formula que `crear-ncr-modal.tsx`
+  // (remanente de la NC neto de Step A: total menos lo ya aplicado a la
+  // deuda pendiente de la factura). Solo TOTAL llega a `RefundTesoreriaForm`
+  // en este change (PARCIAL usa su propio flujo de `SeleccionLineasNc`).
+  const montoDisponibleParaRefund = useMemo(() => {
+    if (!factura) return 0
+    const totalUsdNc = Number(factura.total_usd)
+    const saldoPendVenta = Number(factura.saldo_pend_usd)
+    const montoAplicadoAPendiente = Math.min(saldoPendVenta, totalUsdNc)
+    return Math.max(0, totalUsdNc - montoAplicadoAPendiente)
+  }, [factura])
+
   // Lineas candidatas a NC PARCIAL (Slice 3b, Design §Decision 7) — mismo
   // `detalle` de `useDetalleFactura` ya usado para el panel de detalle,
   // mapeado al contrato de presentacion de `SeleccionLineasNc`.
@@ -370,6 +398,50 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       // `crearNotaCredito` hace commit, SIN invalidacion manual. Lo que SI
       // hay que resetear explicitamente es el estado transitorio de ESTA
       // accion, que antes limpiaba `onClose()` via el efecto de `isOpen`:
+      resetAutorizacionesPin()
+      setMotivo('')
+      setOrigenReverso(null)
+      setEmisionGen((gen) => gen + 1)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
+   * TOTAL + "Devolver dinero" via Tesoreria/Sesion propia (Slice 4,
+   * unificacion-modal-nc, Design §D3/D5) — mirror de
+   * `crear-ncr-modal.tsx:emitirNcRefund` (mismo `modalidad:'REFUND_TESORERIA'`
+   * hardcodeado, `tipo:'TOTAL'`, `egresoParams: lineas`), pero con
+   * `entryPoint:'POS'`/`sesionCajaActivaId: sesion.id` (Regla de Oro, obs
+   * #2804 — igual que `emitirNc` de arriba) y el MISMO comportamiento
+   * post-exito que `emitirNc` (Behavior F, Slice 5g.5): el modal NO se
+   * cierra, solo resetea el estado transitorio de esta emision.
+   * `depositoReingresoId` sigue el MISMO gate PIN B que `emitirNc` — PIN C
+   * (Tesoreria) es independiente y nunca autoriza el override de deposito.
+   */
+  async function emitirNcRefund(lineas: EgresoTesoreriaLinea[]) {
+    if (!factura || !user?.empresa_id || !sesion) return
+    setLoading(true)
+    try {
+      const result = await crearNotaCredito({
+        venta_id: factura.id,
+        motivo: motivo.trim() || 'Anulacion desde POS',
+        usuario_id: user.id,
+        empresa_id: user.empresa_id,
+        entryPoint: 'POS',
+        sesionCajaActivaId: sesion.id,
+        modalidad: 'REFUND_TESORERIA',
+        tipo: 'TOTAL',
+        egresoParams: lineas,
+        depositoReingresoId:
+          resolverDepositoOverride({
+            pinOverrideAutorizado: pinDepositoAutorizado,
+            depositoElegidoId,
+          }) ?? undefined,
+      })
+      toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       resetAutorizacionesPin()
       setMotivo('')
       setOrigenReverso(null)
@@ -662,10 +734,8 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         (`OrigenReversoSelector`). "Credito a favor" mapea a
                         SALDO_FAVOR via `resolverModalidadDesdeOrigen`
                         (misma funcion pura que admin). "Devolver dinero"
-                        queda en estado TRANSICIONAL en este slice — el
-                        formulario de Tesoreria restringido + PIN C llegan
-                        en Slice 4 (D3/D5); por ahora no ofrece ninguna
-                        accion de confirmacion (ver footer mas abajo). */}
+                        revela `RefundTesoreriaForm` restringido + link de
+                        PIN C (Slice 4, D3/D5 — ver footer mas abajo). */}
                     <OrigenReversoSelector value={origenReverso} onChange={setOrigenReverso} />
 
                     <div>
@@ -685,11 +755,8 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       // (mismo slot fisico que el boton de revelar, hazard de
                       // doble-click) — ahora es un boton DEDICADO dentro de
                       // la seccion final. Slice 3: este bloque queda
-                      // gateado ADEMAS a `origenReverso === 'CREDITO_A_FAVOR'`
-                      // — "Devolver dinero" (TOTAL) queda transicional (ver
-                      // rama siguiente) hasta que Slice 4 conecte
-                      // `RefundTesoreriaForm` restringido + PIN C. Reusa
-                      // `handleConfirmarClick` sin alterar su logica.
+                      // gateado ADEMAS a `origenReverso === 'CREDITO_A_FAVOR'`.
+                      // Reusa `handleConfirmarClick` sin alterar su logica.
                       <div className="space-y-3">
                         <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
                           <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
@@ -708,6 +775,37 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         >
                           {loading ? 'Procesando...' : 'Confirmar Anulacion'}
                         </button>
+                      </div>
+                    ) : tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO' ? (
+                      // Slice 4 (unificacion-modal-nc, Design §D3/D5): cierra
+                      // el gap transicional de Slice 3 — "Devolver dinero"
+                      // ahora ofrece `RefundTesoreriaForm` restringido a la
+                      // SESION PROPIA del cajero (`restringirOrigenASesionId`,
+                      // nunca cualquier otra sesion abierta de la empresa).
+                      // "Tesoreria" arranca OCULTA (`mostrarOrigenTesoreria={
+                      // tesoreriaAutorizada}`, default `false` hasta PIN C) —
+                      // el link de abajo la habilita tras autorizar. PIN C
+                      // NUNCA autoriza emitir la NC (PIN A) ni cambiar el
+                      // deposito (PIN B): 3 gates independientes (Design §D3).
+                      <div className="space-y-2">
+                        <RefundTesoreriaForm
+                          montoDisponibleUsd={montoDisponibleParaRefund}
+                          tasaHistorica={Number(factura.tasa)}
+                          onConfirm={(lineas) => void emitirNcRefund(lineas)}
+                          loading={loading}
+                          portalContainer={dialogRef.current}
+                          restringirOrigenASesionId={sesion.id}
+                          mostrarOrigenTesoreria={tesoreriaAutorizada}
+                        />
+                        {!tesoreriaAutorizada && (
+                          <button
+                            type="button"
+                            onClick={() => setShowPinTesoreria(true)}
+                            className="text-xs text-primary hover:underline"
+                          >
+                            Usar Tesoreria (requiere PIN)
+                          </button>
+                        )}
                       </div>
                     ) : tipoNc === 'PARCIAL' ? (
                       // QA fix (Fix 2, unificacion-modal-nc): boton FIJO en
@@ -729,15 +827,13 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         {loading ? 'Procesando...' : 'Confirmar Nota de Credito Parcial'}
                       </button>
                     ) : tipoNc === 'TOTAL' ? (
-                      // Slice 3 (unificacion-modal-nc): TOTAL elegido pero
-                      // sin "Credito a favor" (sin origen aun, o
-                      // "Devolver dinero" elegido) — estado TRANSICIONAL
-                      // documentado (tasks.md Slice 3, no es un bug):
-                      // "Devolver dinero" en POS llega recien en Slice 4
-                      // (RefundTesoreriaForm restringido + PIN C).
+                      // Slice 4 (unificacion-modal-nc): TOTAL elegido pero
+                      // AUN sin origen del reverso — ambos origenes
+                      // ("Devolver dinero", "Credito a favor") ya tienen su
+                      // propia rama accionable arriba; este catch-all solo
+                      // se alcanza con `origenReverso === null`.
                       <p className="text-sm text-muted-foreground text-center py-2">
-                        Devolver dinero desde POS aun no esta disponible (proximo slice) — elige
-                        &quot;Credito a favor&quot; para continuar, o Parcial.
+                        Selecciona un origen del reverso para continuar.
                       </p>
                     ) : (
                       // Item 5: sin tipo elegido todavia -> estado neutro,
@@ -848,6 +944,19 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         onAuthorized={() => setPinDepositoAutorizado(true)}
         titulo="Cambiar deposito de reingreso"
         mensaje="Cambiar el deposito de reingreso requiere autorizacion de un supervisor."
+        requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
+      />
+
+      {/* PIN C (Slice 4, unificacion-modal-nc, Design §D3) — TERCER gate,
+          independiente de PIN A (emision) y PIN B (deposito): autoriza
+          UNICAMENTE que "Tesoreria" aparezca como origen elegible dentro de
+          `RefundTesoreriaForm` restringido, mismo patron que PIN B. */}
+      <SupervisorPinDialog
+        isOpen={showPinTesoreria}
+        onClose={() => setShowPinTesoreria(false)}
+        onAuthorized={() => setTesoreriaAutorizada(true)}
+        titulo="Usar Tesoreria para el reembolso"
+        mensaje="Usar una cuenta de Tesoreria para este reembolso requiere autorizacion de un supervisor."
         requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
       />
 
