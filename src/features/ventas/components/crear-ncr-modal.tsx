@@ -12,7 +12,9 @@ import {
   puedeElegirTipoTotal,
   calcularReversoPorLinea,
   agruparReversosPorNc,
+  resolverModalidadDesdeOrigen,
   type BadgeReverso,
+  type OrigenReverso,
 } from '../utils/notas-credito-ui'
 import { type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
 import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factura'
@@ -20,6 +22,7 @@ import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
 import { RefundTesoreriaForm } from './refund-tesoreria-form'
 import { TipoNcSelector } from './tipo-nc-selector'
+import { OrigenReversoSelector } from './origen-reverso-selector'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -37,19 +40,6 @@ interface CrearNcrModalProps {
   onClose: () => void
   factura: FacturaParaAnular | null
 }
-
-/**
- * Origen del reverso — "Devolver dinero"/"Credito a favor" (nc-admin-saldo-
- * favor-real, extendido por nc-refund-tesoreria, UX rework). "Credito a
- * favor" alimenta `modalidad: 'SALDO_FAVOR'` en `crearNotaCredito`, igual
- * que el selector equivalente de `nota-credito-pos-modal.tsx` — SIN cambios
- * respecto al comportamiento existente. "Devolver dinero" revela
- * `RefundTesoreriaForm` directamente — la jerarquia YA NO tiene una segunda
- * fila fija de botones "Tesoreria"/"Sesion de caja activa" a nivel de modal:
- * el PRIMER select de `RefundTesoreriaForm` ES esa eleccion (Tesoreria
- * habilitada, sesiones activas deshabilitadas "Proximamente").
- */
-type OrigenReverso = 'DEVOLVER_DINERO' | 'CREDITO_A_FAVOR'
 
 /**
  * Modal delgado de la ruta administrativa "Facturas emitidas" (Slice D,
@@ -226,8 +216,11 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         // fuera de alcance (REFUND_TESORERIA solo esta wireado para TOTAL,
         // via `emitirNcRefund`) — se mapea a AJUSTE_CXC por completitud del
         // tipo, aunque este branch no tiene UI que lo alcance hoy (TOTAL +
-        // Devolver dinero usa `emitirNcRefund`, nunca `emitirNc`).
-        modalidad: origenReverso === 'CREDITO_A_FAVOR' ? 'SALDO_FAVOR' : 'AJUSTE_CXC',
+        // Devolver dinero usa `emitirNcRefund`, nunca `emitirNc`). Extraido
+        // a `resolverModalidadDesdeOrigen` (Slice 3, unificacion-modal-nc,
+        // Design §D2) — copia verbatim del ternario original, mismo
+        // consumidor nuevo: `nota-credito-pos-modal.tsx`.
+        modalidad: resolverModalidadDesdeOrigen(origenReverso!),
         tipo: lineasParcial ? 'PARCIAL' : 'TOTAL',
         ...(lineasParcial ? { lineas: lineasParcial } : {}),
         depositoReingresoId: depositoElegidoId ?? undefined,
@@ -337,32 +330,10 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     dinero" revela `RefundTesoreriaForm` directamente — ya NO
                     hay una segunda fila fija de botones aqui (UX rework,
                     nc-refund-tesoreria): el primer select del propio
-                    formulario ES esa eleccion Tesoreria/Sesion. */}
-                <div className="rounded-lg border p-3">
-                  <p className="text-xs font-semibold text-muted-foreground mb-2">Origen del reverso</p>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setOrigenReverso('DEVOLVER_DINERO')}
-                      aria-pressed={origenReverso === 'DEVOLVER_DINERO'}
-                      className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                        origenReverso === 'DEVOLVER_DINERO' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                      }`}
-                    >
-                      Devolver dinero
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOrigenReverso('CREDITO_A_FAVOR')}
-                      aria-pressed={origenReverso === 'CREDITO_A_FAVOR'}
-                      className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                        origenReverso === 'CREDITO_A_FAVOR' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                      }`}
-                    >
-                      Credito a favor
-                    </button>
-                  </div>
-                </div>
+                    formulario ES esa eleccion Tesoreria/Sesion. Extraido a
+                    `OrigenReversoSelector` (Slice 3, unificacion-modal-nc,
+                    Design §D1) — nuevo consumidor: `nota-credito-pos-modal.tsx`. */}
+                <OrigenReversoSelector value={origenReverso} onChange={setOrigenReverso} />
 
                 {/* 6. Motivo — cuando el flujo activo es "Devolver dinero"
                     (TOTAL), se intercala DENTRO de `RefundTesoreriaForm` via
