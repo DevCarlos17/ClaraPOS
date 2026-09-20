@@ -1243,7 +1243,7 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
   })
 
-  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc): eligiendo Parcial, SeleccionLineasNc se renderiza ANTES que "Modalidad de liquidacion" en el DOM', async () => {
+  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc): eligiendo Parcial, la tabla de SeleccionLineasNc se renderiza ANTES que "Modalidad de liquidacion" en el DOM', async () => {
     setup({ hasPermission: true })
     mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
     render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
@@ -1252,10 +1252,42 @@ describe('NotaCreditoPosModal — Slice 3b (eleccion TOTAL/PARCIAL, wiring compl
     await revelarSeccionNc(user)
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
 
-    const seleccionLineas = screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })
+    // QA fix (Fix 2): el boton de confirmar ya NO vive dentro de
+    // `SeleccionLineasNc` en este modal (se movio a la seccion final,
+    // ver test dedicado mas abajo) — el anclaje de posicion pasa a ser la
+    // tabla de articulos en si.
+    const tablaArticulos = screen.getByRole('table')
     const modalidad = screen.getByText(/Modalidad de liquidacion/i)
     expect(
-      seleccionLineas.compareDocumentPosition(modalidad) & Node.DOCUMENT_POSITION_FOLLOWING
+      tablaArticulos.compareDocumentPosition(modalidad) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it('QA fix (Fix 2, unificacion-modal-nc): el boton "Confirmar Nota de Credito Parcial" se renderiza en la seccion FINAL del modal (despues de Modalidad/Deposito/Motivo), en la MISMA posicion que "Confirmar Anulacion" para TOTAL — ya no "salta" de lugar segun el tipo', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+
+    const motivo = screen.getByPlaceholderText(/Motivo de la anulacion/i)
+    const confirmarParcial = screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })
+    expect(
+      motivo.compareDocumentPosition(confirmarParcial) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+
+    // Exactamente UN boton de confirmar visible — no queda un boton
+    // "fantasma" dentro de SeleccionLineasNc ademas del externo.
+    expect(screen.getAllByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toHaveLength(1)
+
+    // Cambiar a Total: el mismo slot fisico (seccion final) ahora muestra
+    // "Confirmar Anulacion" en vez de "Confirmar Nota de Credito Parcial".
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    const confirmarTotal = screen.getByRole('button', { name: /Confirmar Anulacion/i })
+    expect(
+      motivo.compareDocumentPosition(confirmarTotal) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
   })
 

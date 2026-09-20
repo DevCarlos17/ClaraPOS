@@ -26,8 +26,17 @@ Chain: feature-branch-chain, slice a slice. Tracker: `feat/unificacion-modal-nc`
 - **Verificacion**: `yarn test:run` completo → 1642/1645 (3 fallas = flakes preexistentes de PowerSync, `Worker is not defined`, no relacionados con este cambio). `yarn type-check:test` sin errores en los 4 archivos tocados (hay 3 errores preexistentes en `producto-form-*.test.tsx` y `use-pwa-update.ts`, no relacionados).
 - **Archivos**: `crear-ncr-modal.tsx` (+23/-21L), `crear-ncr-modal.test.tsx` (+15L), `nota-credito-pos-modal.tsx` (+26/-21L), `nota-credito-pos-modal.test.tsx` (+16L). ~81L netas.
 
+## Fix QA Slice 2/3 (adelantado desde Slice 3) — COMPLETO
+
+QA del usuario sobre Slice 2 detecto 2 cosas; se corrigieron sobre la rama PR2:
+
+1. **Gate de articulos a devolver** (BUG): en admin, `SeleccionLineasNc` dependia de `tipoNc==='PARCIAL' && origenReverso` -> no se mostraba hasta elegir vuelto/credito. Corregido: ahora se muestra apenas `tipoNc==='PARCIAL'` (regla: Total/Parcial es inventario, independiente del vuelto). Se agrego prop `origenPendiente` a `seleccion-lineas-nc.tsx` (L57/88/139/287): muestra los articulos pero bloquea Confirmar (`puedeConfirmar` incluye `!origenPendiente`) hasta elegir origen. POS no regresiona (ya mostraba bien).
+2. **Boton Confirmar POS fijo**: se ocultaba el boton interno de SeleccionLineasNc (`mostrarBotonConfirmar={false}`) y se expone estado al padre (`onEstadoConfirmarChange`) que lo renderiza en la seccion FINAL del modal, misma posicion en Total y Parcial (antes "saltaba"). Cero cambio de logica de `puedeConfirmar`.
+
+Verificado por lectura de codigo + test liviano `seleccion-lineas-nc.test.tsx` 12/12. Los 2 modales pesados NO se re-corrieron (collect ~80s por WASM/PowerSync, ver deuda architecture/test-collect-lento-powersync) -> QA visual en navegador.
+
 ## Pendiente
 
-- **Slice 3**: compartir seccion NC-info al POS (Devolver dinero/Credito a favor + OrigenReversoSelector + resolverModalidadDesdeOrigen) [ALTO riesgo]. Hereda de Slice 2: agregar `origenPendiente` a `seleccion-lineas-nc.tsx` + gate admin a `tipoNc === 'PARCIAL'` solo, y mover el bloque Deposito en POS a antes de `TipoNcSelector`.
+- **Slice 3**: compartir seccion NC-info al POS (Devolver dinero/Credito a favor + OrigenReversoSelector + resolverModalidadDesdeOrigen) [ALTO riesgo]. `origenPendiente` ya agregado en este fix. Falta mover el bloque Deposito en POS a antes de `TipoNcSelector`.
 - **Slice 4**: RefundTesoreriaForm al POS con restriccion de origen (sesion propia + Tesoreria PIN C) [ALTO riesgo].
 - **Slice 5**: cleanup (remover select "Modalidad de liquidacion" del POS).
