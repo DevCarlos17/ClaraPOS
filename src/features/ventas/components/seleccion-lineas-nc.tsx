@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import type { LineaNcSeleccionada } from '../hooks/use-notas-credito'
@@ -44,6 +44,31 @@ interface SeleccionLineasNcProps {
    * cantidades ya sean validas.
    */
   depositoInvalido?: boolean
+  /**
+   * QA fix (unificacion-modal-nc, Slice 3 adelantado — Design §D4): true
+   * cuando el llamador todavia no eligio el origen del reverso (Devolver
+   * dinero/Credito a favor). Total/Parcial es una decision de INVENTARIO,
+   * independiente de la gestion del vuelto — por eso esta seccion se
+   * muestra apenas se elige Parcial, sin esperar el origen. Este prop NO
+   * oculta la seccion: mismo patron que `depositoInvalido`, bloquea
+   * `puedeConfirmar` + muestra un mensaje inline para impedir confirmar
+   * antes de que el origen este elegido.
+   */
+  origenPendiente?: boolean
+  /**
+   * QA fix (unificacion-modal-nc, Fix 2 posicion boton POS): default
+   * `true` preserva el boton "Confirmar Nota de Credito Parcial" interno
+   * (comportamiento existente, usado por el modal admin). Cuando el
+   * llamador necesita fijar el boton en una posicion DISTINTA del modal
+   * (POS, seccion final, consistente con TOTAL), pasa `false` para ocultar
+   * el boton interno y usa `onEstadoConfirmarChange` para recibir
+   * `{ puedeConfirmar, confirmar }` y renderizar su propio trigger externo.
+   * La logica de habilitado/deshabilitado NUNCA se duplica — sigue
+   * calculada aqui, solo se expone hacia afuera.
+   */
+  mostrarBotonConfirmar?: boolean
+  /** Ver `mostrarBotonConfirmar`. */
+  onEstadoConfirmarChange?: (estado: { puedeConfirmar: boolean; confirmar: () => void }) => void
 }
 
 /**
@@ -60,6 +85,9 @@ export function SeleccionLineasNc({
   onConfirm,
   loading = false,
   depositoInvalido = false,
+  origenPendiente = false,
+  mostrarBotonConfirmar = true,
+  onEstadoConfirmarChange,
 }: SeleccionLineasNcProps) {
   const [cantidades, setCantidades] = useState<Record<string, number>>({})
   // F6 QA fix (Slice 5c): estado de error POR LINEA cuando el usuario intenta
@@ -108,7 +136,18 @@ export function SeleccionLineasNc({
     })),
   })
 
-  const puedeConfirmar = !loading && errores.length === 0 && !depositoInvalido
+  const puedeConfirmar = !loading && errores.length === 0 && !depositoInvalido && !origenPendiente
+
+  // QA fix (unificacion-modal-nc, Fix 2): expone `puedeConfirmar` + un
+  // trigger `confirmar()` hacia el llamador — el UNICO consumidor hoy es
+  // `nota-credito-pos-modal.tsx`, que oculta el boton interno
+  // (`mostrarBotonConfirmar={false}`) y renderiza su propio boton en la
+  // seccion final del modal. `onConfirm(lineasValidas)` es exactamente la
+  // misma invocacion que dispara el boton interno mas abajo.
+  useEffect(() => {
+    onEstadoConfirmarChange?.({ puedeConfirmar, confirmar: () => onConfirm(lineasValidas) })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [puedeConfirmar, lineasValidas])
 
   return (
     <div className="space-y-3">
@@ -245,6 +284,10 @@ export function SeleccionLineasNc({
         <p className="text-xs text-destructive">Debes seleccionar el deposito de reingreso.</p>
       )}
 
+      {origenPendiente && (
+        <p className="text-xs text-destructive">Debes elegir el origen del reverso antes de confirmar.</p>
+      )}
+
       <div className="flex items-center justify-between rounded-lg border bg-muted/30 p-2 text-sm">
         <span className="text-muted-foreground">Total a devolver:</span>
         <span className="font-semibold">
@@ -252,14 +295,16 @@ export function SeleccionLineasNc({
         </span>
       </div>
 
-      <button
-        type="button"
-        disabled={!puedeConfirmar}
-        onClick={() => onConfirm(lineasValidas)}
-        className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        {loading ? 'Procesando...' : 'Confirmar Nota de Credito Parcial'}
-      </button>
+      {mostrarBotonConfirmar && (
+        <button
+          type="button"
+          disabled={!puedeConfirmar}
+          onClick={() => onConfirm(lineasValidas)}
+          className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? 'Procesando...' : 'Confirmar Nota de Credito Parcial'}
+        </button>
+      )}
     </div>
   )
 }

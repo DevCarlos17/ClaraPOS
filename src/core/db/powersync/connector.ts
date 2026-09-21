@@ -625,6 +625,21 @@ export class SupabaseConnector
         }
 
         if (result.error) {
+          // `pagos` es una tabla financiera critica (reversos, saldo a favor): ante un
+          // fallo de upload conviene registrar el error expandido. Desanida
+          // code/message/details/hint como strings planos para que la consola no los
+          // colapse como [Object], y adjunta el opData completo de la operacion.
+          if (op.table === 'pagos') {
+            console.error(
+              '⬆️ [upload pagos] FALLO — op:', op.op,
+              '| id:', op.id,
+              '\n  code:', result.error.code,
+              '\n  message:', result.error.message,
+              '\n  details:', result.error.details,
+              '\n  hint:', result.error.hint,
+              '\n  opData:', JSON.stringify(op.opData, null, 2)
+            )
+          }
           console.error('[PowerSync upload] Supabase error', {
             table: op.table,
             op: op.op,

@@ -334,15 +334,20 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
       expect(screen.queryByTestId('mock-refund-tesoreria-form')).not.toBeInTheDocument()
     })
 
-    it('eligiendo solo "Parcial" sin tocar "Origen del reverso", SeleccionLineasNc NO se muestra todavia (evita computar una modalidad nunca elegida)', async () => {
+    it('QA fix (unificacion-modal-nc): eligiendo solo "Parcial" sin tocar "Origen del reverso", SeleccionLineasNc SI se muestra (Total/Parcial es decision de inventario, independiente del vuelto) pero el boton Confirmar permanece deshabilitado hasta elegir el origen (origenPendiente)', async () => {
       const user = userEvent.setup()
       mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
       render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
 
       await user.click(screen.getByRole('button', { name: 'Parcial' }))
 
-      expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
-      expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+      expect(screen.getByRole('spinbutton')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).toBeDisabled()
+      expect(screen.getByText(/Debes elegir el origen del reverso antes de confirmar/i)).toBeInTheDocument()
+
+      await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+
+      expect(screen.queryByText(/Debes elegir el origen del reverso antes de confirmar/i)).not.toBeInTheDocument()
     })
   })
 
@@ -421,6 +426,21 @@ describe('CrearNcrModal (ruta administrativa, Slice D) — sin PIN, reversa cual
     const tipoNc = screen.getByText(/Tipo de nota de credito/i)
     expect(
       deposito.compareDocumentPosition(tipoNc) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
+  })
+
+  it('Scenario "Articulos a devolver" (Slice 2, D4 de unificacion-modal-nc): con Parcial + un origen elegidos, SeleccionLineasNc se renderiza ANTES que "Origen del reverso" en el DOM', async () => {
+    const user = userEvent.setup()
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<CrearNcrModal isOpen onClose={() => {}} factura={baseFactura()} />)
+
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: /Credito a favor/i }))
+
+    const seleccionLineas = screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i })
+    const origen = screen.getByText(/Origen del reverso/i)
+    expect(
+      seleccionLineas.compareDocumentPosition(origen) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
   })
 

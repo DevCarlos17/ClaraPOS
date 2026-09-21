@@ -5,9 +5,9 @@ import { formatDateTime } from '@/lib/format'
 import {
   crearNotaCredito,
   useReversosFactura,
-  type LiquidacionModalidad,
   type FacturaParaAnular,
   type LineaNcSeleccionada,
+  type EgresoTesoreriaLinea,
 } from '../hooks/use-notas-credito'
 import { useFacturasSesionActiva, useBadgesReversoSesion } from '../hooks/use-facturas-sesion-activa'
 import { resolverDepositoOverride } from '../utils/notas-credito-pin-gating'
@@ -20,14 +20,19 @@ import {
   calcularReversoPorLinea,
   agruparReversosPorNc,
   resolverBadgesFactura,
+  resolverModalidadDesdeOrigen,
   type EstadoPago,
   type BadgeReverso,
+  type OrigenReverso,
 } from '../utils/notas-credito-ui'
 import { type ReciboData, type TipoImpuestoLinea } from '../utils/factura-export'
 import { buildReciboDataDesdeFacturaGuardada } from '../utils/recibo-desde-factura'
 import { FacturaDetallePanel } from './factura-detalle-panel'
 import { SeleccionLineasNc, type LineaSeleccionNc } from './seleccion-lineas-nc'
 import { ConsultaFacturaModal } from './consulta-factura-modal'
+import { TipoNcSelector } from './tipo-nc-selector'
+import { OrigenReversoSelector } from './origen-reverso-selector'
+import { RefundTesoreriaForm } from './refund-tesoreria-form'
 import { useDetalleFactura, usePagosFactura } from '@/features/cxc/hooks/use-cxc'
 import { useCompany } from '@/features/configuracion/hooks/use-company'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
@@ -50,18 +55,6 @@ interface NotaCreditoPosModalProps {
   /** Sesion de caja actualmente abierta del cajero — null bloquea el flujo (sin sesion, sin NC-POS). */
   sesion: SesionCaja | null
 }
-
-/**
- * Modalidades ofrecidas desde el POS-express (Slice 5a-2a). `REFUND_TESORERIA`
- * queda deliberadamente excluida — Design/tasks (Slice 6, task 6.3) la
- * reserva SOLO al modulo Tradicional, nunca al POS.
- */
-const MODALIDADES_POS: { value: LiquidacionModalidad; label: string }[] = [
-  { value: 'EFECTIVO_REAL', label: 'Efectivo / tarjeta (afecta el cuadre de esta sesion)' },
-  { value: 'SALDO_FAVOR', label: 'Saldo a favor del cliente' },
-  { value: 'AJUSTE_CXC', label: 'Ajuste de cuentas por cobrar' },
-  { value: 'COMPENSACION_VENTA', label: 'Compensar con una venta nueva' },
-]
 
 /**
  * F2 QA fix (Slice 5c, parche visual pendiente de rediseno futuro): cada
@@ -145,7 +138,6 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
 
   const [facturaId, setFacturaId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [modalidad, setModalidad] = useState<LiquidacionModalidad>('EFECTIVO_REAL')
   const [motivo, setMotivo] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPin, setShowPin] = useState(false)
@@ -153,12 +145,27 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   const [showPinDeposito, setShowPinDeposito] = useState(false)
   const [pinDepositoAutorizado, setPinDepositoAutorizado] = useState(false)
   const [depositoElegidoId, setDepositoElegidoId] = useState<string | null>(null)
+  // PIN C (Tesoreria, Slice 4 unificacion-modal-nc, Design §D3) — TERCER gate
+  // independiente de PIN A/PIN B: autoriza UNICAMENTE que "Tesoreria" aparezca
+  // como origen elegible dentro de `RefundTesoreriaForm` restringido
+  // (`mostrarOrigenTesoreria`); nunca autoriza emitir la NC (PIN A) ni cambiar
+  // el deposito de reingreso (PIN B) — 3 flags, 3 significados, sin estado
+  // compartido, mismo patron que PIN A/PIN B.
+  const [showPinTesoreria, setShowPinTesoreria] = useState(false)
+  const [tesoreriaAutorizada, setTesoreriaAutorizada] = useState(false)
   // Eleccion TOTAL/PARCIAL (Slice 3b, Spec notas-credito-pos: "Seleccion de
   // tipo de nota de credito"). Ajustes QA (ajustes-qa-nota-credito-pos-modal,
   // Item 5): NINGUN tipo se preselecciona (ni siquiera para facturas con
   // reverso parcial previo) — el usuario debe elegir Total o Parcial de
   // forma explicita antes de ver cualquier UI de confirmacion.
   const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL' | null>(null)
+  // Origen del reverso (Slice 3, unificacion-modal-nc, Design §D2) — POS
+  // adopta el MISMO modelo que `crear-ncr-modal.tsx` (reemplaza el select
+  // "Modalidad de liquidacion"). Mismo ciclo de vida que `tipoNc`: arranca
+  // en `null` (sin preseleccion, ver `OrigenReversoSelector`), se resetea al
+  // seleccionar una factura y al cerrar el modal (mismos 2 puntos que
+  // `tipoNc`, NO en "Volver" — ver comentario de `tipoNc` para el porque).
+  const [origenReverso, setOrigenReverso] = useState<OrigenReverso | null>(null)
   // Lineas PARCIAL pendientes de PIN A — solo se usan si el usuario confirmo
   // sin permiso y debe autorizar antes de que `emitirNc` se dispare de nuevo.
   const [lineasParcialPendientes, setLineasParcialPendientes] = useState<LineaNcSeleccionada[] | null>(null)
@@ -177,6 +184,18 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // re-enviar por accidente la MISMA cantidad ya acreditada (double-submit).
   // Cambiar el `key` fuerza un remount limpio tras cada emision exitosa.
   const [emisionGen, setEmisionGen] = useState(0)
+  // QA fix (unificacion-modal-nc, Fix 2): el boton "Confirmar Nota de
+  // Credito Parcial" ya NO vive dentro de `SeleccionLineasNc` en este modal
+  // (queda oculto via `mostrarBotonConfirmar={false}`) — se renderiza en la
+  // seccion final del modal, misma posicion fija que "Confirmar Anulacion"
+  // (TOTAL), para que el boton de confirmar nunca "salte" de lugar segun el
+  // tipo elegido. `SeleccionLineasNc` sigue siendo la UNICA fuente de la
+  // logica de habilitado/deshabilitado — este estado solo espeja su ultimo
+  // calculo (`puedeConfirmar`) y expone el mismo trigger (`confirmar`).
+  const [estadoParcialConfirm, setEstadoParcialConfirm] = useState<{
+    puedeConfirmar: boolean
+    confirmar: () => void
+  } | null>(null)
   // Reveal-gate de la seccion NC (Slice C, Spec notas-credito-pos:
   // "Reveal-gate de la seccion de emision de NC"). Al seleccionar una
   // factura solo se muestra el detalle + pie de 3 acciones (Volver,
@@ -210,6 +229,11 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     setDepositoElegidoId(null)
     setAccionPendiente(null)
     setLineasParcialPendientes(null)
+    // PIN C (Slice 4) — mismos 3 puntos de reset que PIN A/PIN B (Design
+    // §D3: "tesoreriaAutorizada se resetea en los mismos 3 puntos que
+    // resetAutorizacionesPin()").
+    setShowPinTesoreria(false)
+    setTesoreriaAutorizada(false)
   }
 
   useEffect(() => {
@@ -219,9 +243,9 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       dialogRef.current?.close()
       setFacturaId(null)
       setSearchQuery('')
-      setModalidad('EFECTIVO_REAL')
       setMotivo('')
       setTipoNc(null)
+      setOrigenReverso(null)
       setEmisionGen(0)
       resetAutorizacionesPin()
       setNcSectionRevealed(false)
@@ -286,6 +310,19 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     return buildReciboDataDesdeFacturaGuardada(factura, detalle, pagosFactura, company)
   }, [factura, detalle, pagosFactura, company])
 
+  // Monto disponible para reembolsar via Tesoreria/Sesion (Slice 4,
+  // unificacion-modal-nc) — MISMA formula que `crear-ncr-modal.tsx`
+  // (remanente de la NC neto de Step A: total menos lo ya aplicado a la
+  // deuda pendiente de la factura). Solo TOTAL llega a `RefundTesoreriaForm`
+  // en este change (PARCIAL usa su propio flujo de `SeleccionLineasNc`).
+  const montoDisponibleParaRefund = useMemo(() => {
+    if (!factura) return 0
+    const totalUsdNc = Number(factura.total_usd)
+    const saldoPendVenta = Number(factura.saldo_pend_usd)
+    const montoAplicadoAPendiente = Math.min(saldoPendVenta, totalUsdNc)
+    return Math.max(0, totalUsdNc - montoAplicadoAPendiente)
+  }, [factura])
+
   // Lineas candidatas a NC PARCIAL (Slice 3b, Design §Decision 7) — mismo
   // `detalle` de `useDetalleFactura` ya usado para el panel de detalle,
   // mapeado al contrato de presentacion de `SeleccionLineasNc`.
@@ -331,7 +368,13 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         // lista ya viene escopeada query-side (useFacturasSesionActiva).
         entryPoint: 'POS',
         sesionCajaActivaId: sesion.id,
-        modalidad,
+        // Slice 3 (unificacion-modal-nc, Design §D2): `modalidad` ya NO es
+        // un select independiente — se deriva de `origenReverso` con la
+        // MISMA funcion pura que `crear-ncr-modal.tsx`. `emitirNc` solo se
+        // alcanza cuando `origenReverso` ya esta elegido (TOTAL gateado a
+        // 'CREDITO_A_FAVOR' en el JSX; PARCIAL gateado via `origenPendiente`
+        // en `SeleccionLineasNc`) — el `!` es seguro por esos 2 gates de UI.
+        modalidad: resolverModalidadDesdeOrigen(origenReverso!),
         ...(lineasParcial ? { tipo: 'PARCIAL' as const, lineas: lineasParcial } : {}),
         // PIN B (Slice 5a-2b): `resolverDepositoOverride` retorna `null`
         // salvo que el segundo PIN ya haya autorizado el override Y el
@@ -357,7 +400,51 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       // accion, que antes limpiaba `onClose()` via el efecto de `isOpen`:
       resetAutorizacionesPin()
       setMotivo('')
-      setModalidad('EFECTIVO_REAL')
+      setOrigenReverso(null)
+      setEmisionGen((gen) => gen + 1)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /**
+   * TOTAL + "Devolver dinero" via Tesoreria/Sesion propia (Slice 4,
+   * unificacion-modal-nc, Design §D3/D5) — mirror de
+   * `crear-ncr-modal.tsx:emitirNcRefund` (mismo `modalidad:'REFUND_TESORERIA'`
+   * hardcodeado, `tipo:'TOTAL'`, `egresoParams: lineas`), pero con
+   * `entryPoint:'POS'`/`sesionCajaActivaId: sesion.id` (Regla de Oro, obs
+   * #2804 — igual que `emitirNc` de arriba) y el MISMO comportamiento
+   * post-exito que `emitirNc` (Behavior F, Slice 5g.5): el modal NO se
+   * cierra, solo resetea el estado transitorio de esta emision.
+   * `depositoReingresoId` sigue el MISMO gate PIN B que `emitirNc` — PIN C
+   * (Tesoreria) es independiente y nunca autoriza el override de deposito.
+   */
+  async function emitirNcRefund(lineas: EgresoTesoreriaLinea[]) {
+    if (!factura || !user?.empresa_id || !sesion) return
+    setLoading(true)
+    try {
+      const result = await crearNotaCredito({
+        venta_id: factura.id,
+        motivo: motivo.trim() || 'Anulacion desde POS',
+        usuario_id: user.id,
+        empresa_id: user.empresa_id,
+        entryPoint: 'POS',
+        sesionCajaActivaId: sesion.id,
+        modalidad: 'REFUND_TESORERIA',
+        tipo: 'TOTAL',
+        egresoParams: lineas,
+        depositoReingresoId:
+          resolverDepositoOverride({
+            pinOverrideAutorizado: pinDepositoAutorizado,
+            depositoElegidoId,
+          }) ?? undefined,
+      })
+      toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
+      resetAutorizacionesPin()
+      setMotivo('')
+      setOrigenReverso(null)
       setEmisionGen((gen) => gen + 1)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
@@ -492,6 +579,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                             // para facturas con reverso parcial previo. El
                             // usuario elige explicitamente Total o Parcial.
                             setTipoNc(null)
+                            setOrigenReverso(null)
                             // UX B QA fix: seleccionar (incluso re-seleccionar)
                             // una factura arranca un proceso de NC nuevo — la
                             // autorizacion de PIN de la factura anterior nunca
@@ -560,61 +648,12 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
 
                 {factura && puedeEmitirNc && ncSectionRevealed && (
                   <div className="space-y-4 px-4 pb-4">
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs font-semibold text-muted-foreground mb-2">
-                        Tipo de nota de credito
-                      </p>
-                      <div className="flex gap-2">
-                        {puedeTotal && (
-                          <button
-                            type="button"
-                            onClick={() => setTipoNc('TOTAL')}
-                            aria-pressed={tipoNc === 'TOTAL'}
-                            className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                              tipoNc === 'TOTAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                            }`}
-                          >
-                            Total
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => setTipoNc('PARCIAL')}
-                          aria-pressed={tipoNc === 'PARCIAL'}
-                          className={`flex-1 px-3 py-1.5 text-sm rounded-md border transition-colors ${
-                            tipoNc === 'PARCIAL' ? 'border-primary bg-muted font-medium' : 'hover:bg-muted'
-                          }`}
-                        >
-                          Parcial
-                        </button>
-                      </div>
-                      {!puedeTotal && (
-                        <p className="text-xs text-orange-600 mt-1.5">
-                          Esta factura ya tiene una NC parcial aplicada — solo se puede reversar el remanente por linea.
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs font-semibold text-muted-foreground mb-2">
-                        Modalidad de liquidacion
-                      </p>
-                      <NativeSelect
-                        value={modalidad}
-                        onChange={(e) => setModalidad(e.target.value as LiquidacionModalidad)}
-                        className="text-sm"
-                      >
-                        {MODALIDADES_POS.map((m) => (
-                          <option key={m.value} value={m.value}>{m.label}</option>
-                        ))}
-                      </NativeSelect>
-                      {modalidad === 'EFECTIVO_REAL' && (
-                        <p className="text-xs text-amber-600 mt-1.5">
-                          Esta modalidad afecta el cuadre de la sesion activa (salida real de efectivo/tarjeta).
-                        </p>
-                      )}
-                    </div>
-
+                    {/* 1. Deposito de reingreso — Slice 3 (D4, unificacion-
+                        modal-nc): movido ANTES de Total/Parcial (Spec
+                        notas-credito-pos, "Orden del flujo tras revelar la
+                        seccion de NC en POS"), mismo orden que
+                        `crear-ncr-modal.tsx`. Gate/logica de PIN B
+                        SIN cambios, solo posicion. */}
                     <div className="rounded-lg border p-3">
                       <p className="text-xs font-semibold text-muted-foreground mb-2">
                         Deposito de reingreso de stock
@@ -653,24 +692,24 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                       )}
                     </div>
 
-                    <div>
-                      <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
-                      <input
-                        type="text"
-                        value={motivo}
-                        onChange={(e) => setMotivo(e.target.value)}
-                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        placeholder="Motivo de la anulacion..."
-                      />
-                    </div>
+                    {/* 2. Tipo de NC. */}
+                    <TipoNcSelector tipoNc={tipoNc} onChange={setTipoNc} puedeTotal={puedeTotal} />
 
                     {tipoNc === 'PARCIAL' ? (
-                      // PARCIAL (Slice 3b, Design §Decision 7): reemplaza el
-                      // warning/footer generico de TOTAL — la propia
-                      // SeleccionLineasNc trae su boton de confirmar,
-                      // gateado por la misma validacion de
-                      // `derivarLineasNcParcial` (tope facturado, es_decimal,
-                      // cantidad negativa, al menos una linea).
+                      // 3. Articulos a devolver (PARCIAL) — Slice 2 (D4) de
+                      // unificacion-modal-nc: se muestra justo debajo de
+                      // Total/Parcial. QA fix (Fix 2): el boton de confirmar
+                      // interno de `SeleccionLineasNc` se oculta aqui
+                      // (`mostrarBotonConfirmar={false}`) — se renderiza en
+                      // la seccion final del modal (mas abajo), misma
+                      // posicion fija que TOTAL. La validacion
+                      // (`derivarLineasNcParcial`: tope facturado,
+                      // es_decimal, cantidad negativa, al menos una linea)
+                      // sigue calculada ENTERAMENTE dentro del componente,
+                      // solo se expone via `onEstadoConfirmarChange`.
+                      // Slice 3: `origenPendiente` bloquea Confirmar hasta
+                      // elegir Origen del reverso (mismo patron ya usado en
+                      // `crear-ncr-modal.tsx`, QA fix adelantado).
                       <SeleccionLineasNc
                         key={`${facturaId}-${emisionGen}`}
                         lineas={lineasParaNc}
@@ -682,15 +721,42 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                         onConfirm={handleConfirmarParcialClick}
                         loading={loading}
                         depositoInvalido={depositoInvalido}
+                        mostrarBotonConfirmar={false}
+                        onEstadoConfirmarChange={setEstadoParcialConfirm}
+                        origenPendiente={origenReverso === null}
                       />
-                    ) : tipoNc === 'TOTAL' ? (
+                    ) : null}
+
+                    {/* 4. Origen del reverso — Slice 3 (unificacion-modal-
+                        nc, Design §D1/D2): reemplaza el select "Modalidad
+                        de liquidacion". SIN preseleccion, mismo componente
+                        compartido que `crear-ncr-modal.tsx`
+                        (`OrigenReversoSelector`). "Credito a favor" mapea a
+                        SALDO_FAVOR via `resolverModalidadDesdeOrigen`
+                        (misma funcion pura que admin). "Devolver dinero"
+                        revela `RefundTesoreriaForm` restringido + link de
+                        PIN C (Slice 4, D3/D5 — ver footer mas abajo). */}
+                    <OrigenReversoSelector value={origenReverso} onChange={setOrigenReverso} />
+
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
+                      <input
+                        type="text"
+                        value={motivo}
+                        onChange={(e) => setMotivo(e.target.value)}
+                        className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        placeholder="Motivo de la anulacion..."
+                      />
+                    </div>
+
+                    {tipoNc === 'TOTAL' && origenReverso === 'CREDITO_A_FAVOR' ? (
                       // Item 6 (ajustes-qa-nota-credito-pos-modal): la
                       // confirmacion de TOTAL ya NO vive en el pie del modal
                       // (mismo slot fisico que el boton de revelar, hazard de
                       // doble-click) — ahora es un boton DEDICADO dentro de
-                      // la seccion, mismo lugar que el boton propio de
-                      // `SeleccionLineasNc` para PARCIAL. Reusa
-                      // `handleConfirmarClick` sin alterar su logica.
+                      // la seccion final. Slice 3: este bloque queda
+                      // gateado ADEMAS a `origenReverso === 'CREDITO_A_FAVOR'`.
+                      // Reusa `handleConfirmarClick` sin alterar su logica.
                       <div className="space-y-3">
                         <div className="bg-red-50 border border-red-200 rounded-lg p-3 flex items-start gap-2">
                           <Warning className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
@@ -710,6 +776,65 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           {loading ? 'Procesando...' : 'Confirmar Anulacion'}
                         </button>
                       </div>
+                    ) : tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO' ? (
+                      // Slice 4 (unificacion-modal-nc, Design §D3/D5): cierra
+                      // el gap transicional de Slice 3 — "Devolver dinero"
+                      // ahora ofrece `RefundTesoreriaForm` restringido a la
+                      // SESION PROPIA del cajero (`restringirOrigenASesionId`,
+                      // nunca cualquier otra sesion abierta de la empresa).
+                      // "Tesoreria" arranca OCULTA (`mostrarOrigenTesoreria={
+                      // tesoreriaAutorizada}`, default `false` hasta PIN C) —
+                      // el link de abajo la habilita tras autorizar. PIN C
+                      // NUNCA autoriza emitir la NC (PIN A) ni cambiar el
+                      // deposito (PIN B): 3 gates independientes (Design §D3).
+                      <div className="space-y-2">
+                        <RefundTesoreriaForm
+                          montoDisponibleUsd={montoDisponibleParaRefund}
+                          tasaHistorica={Number(factura.tasa)}
+                          onConfirm={(lineas) => void emitirNcRefund(lineas)}
+                          loading={loading}
+                          portalContainer={dialogRef.current}
+                          restringirOrigenASesionId={sesion.id}
+                          mostrarOrigenTesoreria={tesoreriaAutorizada}
+                        />
+                        {!tesoreriaAutorizada && (
+                          <button
+                            type="button"
+                            onClick={() => setShowPinTesoreria(true)}
+                            className="text-xs text-primary hover:underline"
+                          >
+                            Usar Tesoreria (requiere PIN)
+                          </button>
+                        )}
+                      </div>
+                    ) : tipoNc === 'PARCIAL' ? (
+                      // QA fix (Fix 2, unificacion-modal-nc): boton FIJO en
+                      // la misma posicion que TOTAL (seccion final, tras
+                      // Origen/Motivo) — antes vivia DENTRO de
+                      // `SeleccionLineasNc`, justo debajo de la tabla de
+                      // articulos, lo que hacia que el boton "saltara" de
+                      // lugar segun Total/Parcial. `estadoParcialConfirm`
+                      // espeja el mismo `puedeConfirmar`/`onConfirm` que
+                      // antes disparaba el boton interno (ahora tambien
+                      // incluye el gate `origenPendiente`, ver arriba) —
+                      // CERO cambio de logica propia de este componente.
+                      <button
+                        type="button"
+                        onClick={() => estadoParcialConfirm?.confirmar()}
+                        disabled={!estadoParcialConfirm?.puedeConfirmar}
+                        className="w-full px-4 py-2 text-sm rounded-md bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {loading ? 'Procesando...' : 'Confirmar Nota de Credito Parcial'}
+                      </button>
+                    ) : tipoNc === 'TOTAL' ? (
+                      // Slice 4 (unificacion-modal-nc): TOTAL elegido pero
+                      // AUN sin origen del reverso — ambos origenes
+                      // ("Devolver dinero", "Credito a favor") ya tienen su
+                      // propia rama accionable arriba; este catch-all solo
+                      // se alcanza con `origenReverso === null`.
+                      <p className="text-sm text-muted-foreground text-center py-2">
+                        Selecciona un origen del reverso para continuar.
+                      </p>
                     ) : (
                       // Item 5: sin tipo elegido todavia -> estado neutro,
                       // sin alerta ni boton de confirmacion de ningun tipo
@@ -819,6 +944,19 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         onAuthorized={() => setPinDepositoAutorizado(true)}
         titulo="Cambiar deposito de reingreso"
         mensaje="Cambiar el deposito de reingreso requiere autorizacion de un supervisor."
+        requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
+      />
+
+      {/* PIN C (Slice 4, unificacion-modal-nc, Design §D3) — TERCER gate,
+          independiente de PIN A (emision) y PIN B (deposito): autoriza
+          UNICAMENTE que "Tesoreria" aparezca como origen elegible dentro de
+          `RefundTesoreriaForm` restringido, mismo patron que PIN B. */}
+      <SupervisorPinDialog
+        isOpen={showPinTesoreria}
+        onClose={() => setShowPinTesoreria(false)}
+        onAuthorized={() => setTesoreriaAutorizada(true)}
+        titulo="Usar Tesoreria para el reembolso"
+        mensaje="Usar una cuenta de Tesoreria para este reembolso requiere autorizacion de un supervisor."
         requiredPermission={PERMISSIONS.SALES_NOTA_CREDITO}
       />
 
