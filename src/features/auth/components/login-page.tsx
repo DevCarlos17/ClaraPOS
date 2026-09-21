@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { Envelope, Lock, Eye, EyeSlash } from '@phosphor-icons/react'
 import { connector } from '@/core/db/powersync/connector'
 import { toast } from 'sonner'
+import { logEvento, useDebugLogStore } from '@/lib/debug-log'
 
 export function LoginPage() {
   const navigate = useNavigate()
@@ -35,10 +36,13 @@ export function LoginPage() {
     setIsLoading(true)
     try {
       await connector.login(email, password)
+      useDebugLogStore.getState().setContexto({ usuarioEmail: email, empresaId: null })
+      logEvento('LOGIN_OK', { email }, 'ok')
       toast.success('Bienvenido')
       navigate({ to: '/dashboard' })
     } catch (error: unknown) {
       const err = error as { message?: string }
+      logEvento('LOGIN_ERROR', { email, mensaje: err.message ?? null }, 'error')
       toast.error(err.message || 'Error al iniciar sesion')
     } finally {
       setIsLoading(false)

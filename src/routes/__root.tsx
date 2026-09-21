@@ -5,6 +5,7 @@ import { PWAInstallBanner } from '@/components/pwa/pwa-install-banner'
 import { PWAUpdateBanner } from '@/components/pwa/pwa-update-banner'
 import { connector } from '@/core/db/powersync/connector'
 import type { UploadFailedInfo } from '@/core/db/powersync/connector'
+import { DebugLogPanel } from '@/features/debug-log/debug-log-panel'
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -99,6 +100,7 @@ function RootComponent() {
       <Toaster position="top-right" richColors duration={1500} />
       <PWAUpdateBanner />
       <PWAInstallBanner />
+      {import.meta.env.DEV && <DebugLogPanel />}
     </>
   )
 }

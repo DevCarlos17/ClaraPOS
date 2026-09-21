@@ -29,6 +29,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useDepositosVentaActivos } from '@/features/inventario/hooks/use-depositos'
 import { NativeSelect } from '@/components/ui/native-select'
 import { toast } from 'sonner'
+import { logEvento } from '@/lib/debug-log'
 
 /** Mismo mapeo que `nota-credito-pos-modal.tsx`/`venta-exitosa-modal.tsx` (Design §Decision 5) — no una formula nueva. */
 function toTipoImpuestoLinea(val: string): TipoImpuestoLinea {
@@ -175,6 +176,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     if (!factura || !user?.empresa_id) return
     setLoading(true)
     try {
+      logEvento('NC_INICIO', { ventaId: factura.id, modalidad: 'REFUND_TESORERIA', entryPoint: 'TRADICIONAL' }, 'info')
       const result = await crearNotaCredito({
         venta_id: factura.id,
         motivo: motivo.trim() || 'Anulacion desde modulo administrativo',
@@ -186,9 +188,11 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         egresoParams: lineas,
         depositoReingresoId: depositoElegidoId ?? undefined,
       })
+      logEvento('NC_OK', { nroNcr: result.nroNcr, ncId: result.ncrId, modalidad: 'REFUND_TESORERIA' }, 'ok')
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()
     } catch (err) {
+      logEvento('NC_ERROR', { mensaje: err instanceof Error ? err.message : String(err), modalidad: 'REFUND_TESORERIA' }, 'error')
       toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
     } finally {
       setLoading(false)
@@ -199,6 +203,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     if (!factura || !user?.empresa_id) return
     setLoading(true)
     try {
+      logEvento('NC_INICIO', { ventaId: factura.id, parcial: !!lineasParcial, entryPoint: 'TRADICIONAL' }, 'info')
       const result = await crearNotaCredito({
         venta_id: factura.id,
         motivo: motivo.trim() || 'Anulacion desde modulo administrativo',
@@ -225,9 +230,11 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         ...(lineasParcial ? { lineas: lineasParcial } : {}),
         depositoReingresoId: depositoElegidoId ?? undefined,
       })
+      logEvento('NC_OK', { nroNcr: result.nroNcr, ncId: result.ncrId }, 'ok')
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       onClose()
     } catch (err) {
+      logEvento('NC_ERROR', { mensaje: err instanceof Error ? err.message : String(err) }, 'error')
       toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
     } finally {
       setLoading(false)

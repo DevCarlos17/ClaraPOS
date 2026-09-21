@@ -16,6 +16,7 @@ import { useCajasDisponibles } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { NativeSelect } from '@/components/ui/native-select'
+import { logEvento } from '@/lib/debug-log'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -79,6 +80,7 @@ function FormApertura({ onClose }: { onClose: () => void }) {
 
     setSubmitting(true)
     try {
+      logEvento('CAJA_APERTURA_INICIO', { cajaId: parsed.data.caja_id, montoUsd: parsed.data.monto_apertura_usd, montoBs: parsed.data.monto_apertura_bs }, 'info')
       await abrirSesionCaja({
         caja_id: parsed.data.caja_id,
         monto_apertura_usd: parsed.data.monto_apertura_usd,
@@ -86,11 +88,13 @@ function FormApertura({ onClose }: { onClose: () => void }) {
         usuario_id: user.id,
         empresa_id: user.empresa_id!,
       })
+      logEvento('CAJA_APERTURA_OK', { cajaId: parsed.data.caja_id }, 'ok')
       toast.success('Sesion de caja abierta exitosamente')
       resetFields()
       onClose()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
+      logEvento('CAJA_APERTURA_ERROR', { mensaje: message }, 'error')
       toast.error(message)
     } finally {
       setSubmitting(false)
@@ -478,12 +482,14 @@ function FormCierre({
 
     setSubmitting(true)
     try {
+      logEvento('CAJA_CIERRE_INICIO', { sesionId, montoFisicoUsd: parsed.data.monto_fisico_usd }, 'info')
       await cerrarSesionCaja(sesionId, {
         monto_fisico_usd: parsed.data.monto_fisico_usd,
         observaciones_cierre: parsed.data.observaciones_cierre,
         usuario_cierre_id: user.id,
         tasaDelDia: tasaValor,
       })
+      logEvento('CAJA_CIERRE_OK', { sesionId }, 'ok')
       toast.success('Sesion de caja cerrada exitosamente')
       resetFields()
       onClose()
@@ -497,6 +503,7 @@ function FormCierre({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error inesperado'
+      logEvento('CAJA_CIERRE_ERROR', { sesionId, mensaje: message }, 'error')
       toast.error(message)
     } finally {
       setSubmitting(false)

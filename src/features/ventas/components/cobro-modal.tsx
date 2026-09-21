@@ -29,6 +29,7 @@ import type { PaymentMethod } from '@/features/configuracion/hooks/use-payment-m
 import { useIgtfConfig } from '@/features/configuracion/hooks/use-igtf-config'
 import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { PERMISSIONS } from '@/core/hooks/use-permissions'
+import { logEvento } from '@/lib/debug-log'
 
 // ── Tipos para resolución de discrepancias ────────────────────────────────────
 type DiscrepancyMode =
@@ -553,6 +554,7 @@ export function CobroModal({
           ? { clienteId, montoUsd: safMonto, safOrigenRefs: [] }
           : undefined
 
+      logEvento('VENTA_INICIO', { clienteId, sesionCajaId }, 'info')
       const result = await crearVenta({
         cliente_id: clienteId,
         tipo: discrepancyMode === 'ABSORBER' ? 'CONTADO'
@@ -584,6 +586,8 @@ export function CobroModal({
         discrepancy,
         safEntry,
       })
+
+      logEvento('VENTA_OK', { ventaId: result.ventaId, nroFactura: result.nroFactura }, 'ok')
 
       if (result.safFueCapeado) {
         toast.warning(
@@ -621,6 +625,7 @@ export function CobroModal({
           : null,
       })
     } catch (error) {
+      logEvento('VENTA_ERROR', { mensaje: error instanceof Error ? error.message : String(error) }, 'error')
       toast.error(error instanceof Error ? error.message : 'Error al procesar la venta')
     } finally {
       setSubmitting(false)

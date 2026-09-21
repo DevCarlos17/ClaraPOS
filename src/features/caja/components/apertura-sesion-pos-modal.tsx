@@ -5,6 +5,7 @@ import { useCajasDisponibles } from '@/features/configuracion/hooks/use-cajas'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { abrirSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { NativeSelect } from '@/components/ui/native-select'
+import { logEvento } from '@/lib/debug-log'
 
 interface AperturaSesionPosModalProps {
   onAbierta: () => void
@@ -47,6 +48,7 @@ export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosMod
 
     setSubmitting(true)
     try {
+      logEvento('CAJA_APERTURA_INICIO', { cajaId, montoUsdNum, montoBsNum }, 'info')
       await abrirSesionCaja({
         caja_id: cajaId,
         monto_apertura_usd: montoUsdNum,
@@ -54,9 +56,11 @@ export function AperturaSesionPosModal({ onAbierta, tasa }: AperturaSesionPosMod
         usuario_id: user.id,
         empresa_id: user.empresa_id,
       })
+      logEvento('CAJA_APERTURA_OK', { cajaId, montoUsdNum, montoBsNum }, 'ok')
       toast.success('Sesion de caja abierta')
       onAbierta()
     } catch (error) {
+      logEvento('CAJA_APERTURA_ERROR', { mensaje: error instanceof Error ? error.message : String(error) }, 'error')
       toast.error(error instanceof Error ? error.message : 'Error al abrir sesion')
     } finally {
       setSubmitting(false)

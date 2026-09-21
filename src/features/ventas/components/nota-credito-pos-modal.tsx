@@ -42,6 +42,7 @@ import { SupervisorPinDialog } from '@/components/ui/supervisor-pin-dialog'
 import { NativeSelect } from '@/components/ui/native-select'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
+import { logEvento } from '@/lib/debug-log'
 import type { SesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 
 /** Mismo mapeo que `venta-exitosa-modal.tsx` (Design §Decision 5) — no una formula nueva. */
@@ -359,6 +360,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     if (!factura || !user?.empresa_id || !sesion) return
     setLoading(true)
     try {
+      logEvento('NC_INICIO', { ventaId: factura.id, sesionCajaId: sesion.id, parcial: !!lineasParcial }, 'info')
       const result = await crearNotaCredito({
         venta_id: factura.id,
         motivo: motivo.trim() || 'Anulacion desde POS',
@@ -388,6 +390,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
             depositoElegidoId,
           }) ?? undefined,
       })
+      logEvento('NC_OK', { nroNcr: result.nroNcr, ncId: result.ncrId }, 'ok')
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       // Behavior F (Slice 5g.5): el modal ya NO se cierra tras una emision
       // exitosa — permanece abierto sobre la MISMA factura (`facturaId` y
@@ -403,6 +406,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
       setOrigenReverso(null)
       setEmisionGen((gen) => gen + 1)
     } catch (err) {
+      logEvento('NC_ERROR', { mensaje: err instanceof Error ? err.message : String(err) }, 'error')
       toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
     } finally {
       setLoading(false)
@@ -425,6 +429,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
     if (!factura || !user?.empresa_id || !sesion) return
     setLoading(true)
     try {
+      logEvento('NC_INICIO', { ventaId: factura.id, sesionCajaId: sesion.id, modalidad: 'REFUND_TESORERIA' }, 'info')
       const result = await crearNotaCredito({
         venta_id: factura.id,
         motivo: motivo.trim() || 'Anulacion desde POS',
@@ -441,12 +446,14 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
             depositoElegidoId,
           }) ?? undefined,
       })
+      logEvento('NC_OK', { nroNcr: result.nroNcr, ncId: result.ncrId, modalidad: 'REFUND_TESORERIA' }, 'ok')
       toast.success(`Nota de credito ${result.nroNcr} creada exitosamente`)
       resetAutorizacionesPin()
       setMotivo('')
       setOrigenReverso(null)
       setEmisionGen((gen) => gen + 1)
     } catch (err) {
+      logEvento('NC_ERROR', { mensaje: err instanceof Error ? err.message : String(err), modalidad: 'REFUND_TESORERIA' }, 'error')
       toast.error(err instanceof Error ? err.message : 'Error al crear nota de credito')
     } finally {
       setLoading(false)
