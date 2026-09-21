@@ -11,6 +11,7 @@ import { db } from '@/core/db/powersync/db'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { todayStr, localNow } from '@/lib/dates'
 import type { CuentaTesoreria } from '@/features/tesoreria/hooks/use-cuentas-tesoreria'
+import { logEvento } from '@/lib/debug-log'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -162,6 +163,7 @@ function FormAvance({
           newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
             'No hay un metodo EFECTIVO en USD configurado'
         } else if (usd > dispUsd + 0.01) {
+          logEvento('AVANCE_GUARD_SALDO_INSUFICIENTE', { monedaFaltante: 'USD', solicitado: usd, disponible: dispUsd }, 'error')
           newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
             `Saldo insuficiente en USD. Disponible: ${formatUsd(dispUsd)}`
         }
@@ -171,6 +173,7 @@ function FormAvance({
           newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
             'No hay un metodo EFECTIVO en Bs configurado'
         } else if (bs > dispBs + 0.01) {
+          logEvento('AVANCE_GUARD_SALDO_INSUFICIENTE', { monedaFaltante: 'BS', solicitado: bs, disponible: dispBs }, 'error')
           newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
             `Saldo insuficiente en Bs. Disponible: ${formatBs(dispBs)}`
         }
@@ -259,6 +262,7 @@ function FormAvance({
       origenFondosTipo: origenFondos,
       egresosCaja,
     })
+    logEvento('AVANCE_APLICADO', { montoAvanceUsd: usd, montoAvanceBs: bs, totalCargoUsd, origenFondos }, 'ok')
 
     reset()
     onClose()

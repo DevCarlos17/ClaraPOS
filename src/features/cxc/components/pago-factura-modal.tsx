@@ -28,6 +28,7 @@ import Decimal from 'decimal.js'
 import { useSaldoAFavor } from '@/core/hooks/use-saldo-a-favor'
 import { db } from '@/core/db/powersync/db'
 import { localNow } from '@/lib/dates'
+import { logEvento } from '@/lib/debug-log'
 
 type OverpayMode = 'VUELTO' | 'SAF' | 'PROPINA' | null
 
@@ -102,6 +103,7 @@ export function PagoFacturaModal({
         setSesionActivaId(null)
         setSesionActivaHora(null)
         setDestinoCobro('TESORERIA')
+        logEvento('CXC_GUARD_SIN_SESION_CAJA', { contexto: 'pago-factura', cobroRedirigidoA: 'TESORERIA' }, 'error')
       }
     }).catch(() => { setSesionActivaId(null); setSesionActivaHora(null) })
   }, [isOpen, user?.empresa_id])
@@ -189,10 +191,12 @@ export function PagoFacturaModal({
         procesadoPor: user.id,
         tasa: microBalance?.tasa ?? tasaNum,
       })
+      logEvento('CXC_DIFERENCIAL_CAMBIARIO_OK', { ventaId: factura.id, nroFactura: factura.nro_factura, tasa: microBalance?.tasa ?? tasaNum }, 'ok')
       toast.success(`Diferencial cambiario registrado. Factura ${factura.nro_factura} saldada.`)
       onSuccess()
       handleClose()
     } catch (err) {
+      logEvento('CXC_DIFERENCIAL_CAMBIARIO_ERROR', { mensaje: err instanceof Error ? err.message : String(err), ventaId: factura.id }, 'error')
       toast.error(err instanceof Error ? err.message : 'Error al registrar diferencial cambiario')
     } finally {
       setLoadingDiferencial(false)
@@ -259,6 +263,10 @@ export function PagoFacturaModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (tasaNum <= 0) {
+      logEvento('CXC_GUARD_SIN_TASA', { fechaPago, tasaInternaNum, ventaId: factura?.id }, 'error')
+      return
+    }
     if (!canSubmit || !user?.empresa_id || !user.id) return
 
     setLoading(true)
@@ -330,6 +338,7 @@ export function PagoFacturaModal({
           const labels: string[] = []
           if (usarSaf && montoSafNum > 0) labels.push(`SAF ${formatUsd(montoSafNum)}`)
           if (montoMetodoPrestamo > 0) labels.push(formatUsd(montoUsd))
+          logEvento('CXC_PRESTAMO_ABONO_OK', { vencimientoId, montoUsd, montoSaf: usarSaf ? montoSafNum : 0, clienteId }, 'ok')
           toast.success(`Abono${labels.length ? ` (${labels.join(' + ')})` : ` de ${formatUsd(montoUsd)}`} registrado al préstamo`)
         }
       } else {
@@ -339,6 +348,7 @@ export function PagoFacturaModal({
           // Calcular monto exacto del saldo requerido en la moneda original
           const montoSaldo = moneda === 'BS' ? usdToBs(saldoRequeridoConSaf, tasaNum).toNumber() : saldoRequeridoConSaf
           const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaNum).toNumber() : excedenteUsd
+          logEvento('CXC_PAGO_OVERPAY_MODO', { overpayMode, excedenteUsd, facturaNro: factura.nro_factura }, 'info')
 
           if (overpayMode === 'SAF') {
             // Pagar solo el saldo exacto de la factura (excedente queda como crédito)
@@ -428,12 +438,17 @@ export function PagoFacturaModal({
           const labels: string[] = []
           if (usarSaf && montoSafNum > 0) labels.push(`SAF ${formatUsd(montoSafNum)}`)
           if (montoMetodo > 0) labels.push(formatUsd(montoUsd))
+          if (usarSaf && montoSafNum > 0) {
+            logEvento('SAF_APLICADO_EN_CXC', { montoSaf: montoSafNum, clienteId, ventaId: factura.id }, 'ok')
+          }
+          logEvento('CXC_PAGO_FACTURA_OK', { ventaId: factura.id, nroFactura: factura.nro_factura, montoUsd, montoSaf: usarSaf ? montoSafNum : 0 }, 'ok')
           toast.success(`Pago registrado a factura ${factura.nro_factura}${labels.length ? ` (${labels.join(' + ')})` : ''}`)
 
           // Detectar micro-saldo residual sub-centavo
           const totalAbonado = new Decimal(montoUsd).plus(new Decimal(usarSaf ? montoSafNum : 0))
           const saldoRestante = new Decimal(saldoEfectivo).minus(totalAbonado)
           if (saldoRestante.gt(new Decimal('0')) && saldoRestante.lt(new Decimal('0.01'))) {
+            logEvento('CXC_PAGO_MICRO_SALDO_RESIDUAL', { saldoUsd: saldoRestante.toNumber(), saldoBs: saldoRestante.times(tasaNum).toNumber(), tasa: tasaNum, ventaId: factura.id }, 'ok')
             setMicroBalance({
               saldoUsd: saldoRestante,
               saldoBs: saldoRestante.times(new Decimal(tasaNum)),
@@ -446,6 +461,12 @@ export function PagoFacturaModal({
       onSuccess()
       handleClose()
     } catch (err) {
+      const mensaje = err instanceof Error ? err.message : String(err)
+      if (destino === 'PRESTAMO') {
+        logEvento('CXC_PRESTAMO_ABONO_ERROR', { mensaje, clienteId }, 'error')
+      } else {
+        logEvento('CXC_PAGO_FACTURA_ERROR', { mensaje, ventaId: factura?.id }, 'error')
+      }
       toast.error(err instanceof Error ? err.message : 'Error al registrar pago')
     } finally {
       setLoading(false)

@@ -129,10 +129,11 @@ export function CobroModal({
   const glowTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => () => { if (glowTimeoutRef.current) clearTimeout(glowTimeoutRef.current) }, [])
 
-  // Congelar tasa al abrir el modal; resetear formulario de cobro
+  // Congelar tasa al abrir el modal; resetear formulario de cobro + log tasa congelada
   useEffect(() => {
     if (!isOpen) return
     tasaFrozen.current = tasa > 0 ? tasa : 1
+    logEvento('TASA_CONGELADA_AL_ABRIR_COBRO', { tasaLive: tasa, tasaFrozen: tasaFrozen.current }, 'info')
     setPagos([])
     setMetodoId('')
     setMontoStr('')
@@ -414,8 +415,10 @@ export function CobroModal({
     const resultado = evaluarPagoPendiente({ metodoId, montoStr, referencia })
     if (!resultado.blocked) return true
     if (resultado.reason === 'ABONO_SIN_AGREGAR') {
+      logEvento('VENTA_GUARD_PAGO_SIN_AGREGAR', { montoStr, metodoId }, 'error')
       toast.warning('Tenés un abono pendiente por ingresar: agregalo con + o borralo')
     } else {
+      logEvento('VENTA_GUARD_METODO_SIN_MONTO', { metodoId }, 'error')
       toast.error('Seleccionaste un método de pago pero no ingresaste ningún monto')
     }
     setGlowAddButton(true)
@@ -431,6 +434,7 @@ export function CobroModal({
     if (discrepancyMode === 'CREDITO' && clienteData) {
       const limite = new Decimal(clienteData.limite_credito_usd)
       if (limite.lte(0)) {
+        logEvento('VENTA_GUARD_CREDITO_SIN_LIMITE', { clienteId }, 'error')
         toast.error('Este cliente no tiene credito asignado. Registra un pago para facturar a contado.')
         return
       }
@@ -438,6 +442,7 @@ export function CobroModal({
       // termino de esta formula — ver design.md Decision 3 (corregida).
       const creditoDisponible = calcularDisponibleCredito(limite, deudaFacturasUsd)
       if (pendienteUsd.gt(creditoDisponible.plus('0.01'))) {
+        logEvento('VENTA_GUARD_CREDITO_EXCEDE_LIMITE', { pendienteUsd: pendienteUsd.toNumber(), creditoDisponible: creditoDisponible.toNumber() }, 'error')
         toast.error(
           `El monto a credito (${formatUsd(pendienteUsd)}) excede el credito disponible (${formatUsd(creditoDisponible)})`
         )
@@ -453,6 +458,7 @@ export function CobroModal({
       return sum.plus(p.moneda === 'BS' ? bsToUsd(p.monto, tasaUsada) : p.monto)
     }, new Decimal(0))
     if (totalAvancesUsd.gt('0.01') && totalPagadoUsd.lt(totalAvancesUsd.minus('0.01'))) {
+      logEvento('VENTA_GUARD_AVANCE_NO_CUBIERTO', { totalAvancesUsd: totalAvancesUsd.toNumber(), totalPagadoUsd: totalPagadoUsd.toNumber() }, 'error')
       toast.error(
         `El avance de efectivo debe pagarse en su totalidad. Registra un pago de al menos ${formatUsd(totalAvancesUsd)}.`
       )
@@ -461,21 +467,30 @@ export function CobroModal({
 
     // Validar resolución de discrepancia
     if (estaOverpago && discrepancyMode === null) {
+      logEvento('VENTA_GUARD_DISCREPANCIA_SIN_MODO', { tipo: 'overpago', pendienteBs: pendienteBs4.toNumber() }, 'error')
       toast.error('Selecciona cómo manejar el excedente de pago')
       return
     }
     if (!estaOverpago && pendienteBs4.gt(umbralBs) && discrepancyMode === null) {
+      logEvento('VENTA_GUARD_DISCREPANCIA_SIN_MODO', { tipo: 'faltante', pendienteBs: pendienteBs4.toNumber() }, 'error')
       toast.error('Selecciona cómo manejar el pago incompleto')
       return
     }
     // ABSORBER requiere supervisor autorizado + ID capturado
     if (discrepancyMode === 'ABSORBER' && (!supervisorAuthorized || !supervisorId)) {
+      logEvento('VENTA_GUARD_ABSORBER_SIN_SUPERVISOR', { supervisorAuthorized, supervisorId }, 'error')
       toast.error('Se requiere autorización de supervisor para absorber la diferencia')
       return
     }
     if (discrepancyMode === 'VUELTO' && splitVuelto.length > 0 && !splitVueltoValid) {
+      logEvento('VENTA_GUARD_SPLIT_VUELTO_INVALIDO', { splitVueltoSumBs: splitVueltoSumBs.toNumber(), vueltoMontoBs: vueltoMontoBs.toNumber() }, 'error')
       toast.error('La suma del vuelto asignado no coincide con el total de vuelto')
       return
+    }
+
+    // Log IGTF when applicable
+    if (igtfUsd.gt(0)) {
+      logEvento('VENTA_IGTF_APLICADO', { igtfUsd: igtfUsd.toNumber() }, 'info')
     }
 
     // Construir vueltoParam para crearVenta (TASK-006: ampliar a VueltoParam[])
@@ -535,18 +550,26 @@ export function CobroModal({
     setSubmitting(true)
     try {
       // Validar stock en servidor antes de escribir (no bloquea si offline)
-      await validarStockServidor(
-        lineas
-          .filter((l) => l.tipo === 'P')
-          .map((l) => ({
-            producto_id: l.producto_id,
-            cantidad: l.cantidad,
-            nombre: l.nombre,
-            tipo: l.tipo,
-          })),
-        empresaId,
-        depositoId,
-      )
+      try {
+        await validarStockServidor(
+          lineas
+            .filter((l) => l.tipo === 'P')
+            .map((l) => ({
+              producto_id: l.producto_id,
+              cantidad: l.cantidad,
+              nombre: l.nombre,
+              tipo: l.tipo,
+            })),
+          empresaId,
+          depositoId,
+        )
+      } catch (stockError) {
+        // validarStockServidor solo lanza en el 409 (stock insuficiente confirmado
+        // en servidor); logear incondicionalmente y re-lanzar sin alterar el flujo.
+        const msg = stockError instanceof Error ? stockError.message : String(stockError)
+        logEvento('VENTA_STOCK_SERVIDOR_409', { mensaje: msg }, 'error')
+        throw stockError
+      }
 
       // Build SAF entry if client is using their credit balance as payment method
       const safEntry: SafEntry | undefined =
@@ -590,9 +613,17 @@ export function CobroModal({
       logEvento('VENTA_OK', { ventaId: result.ventaId, nroFactura: result.nroFactura }, 'ok')
 
       if (result.safFueCapeado) {
+        logEvento('VENTA_SAF_FUE_CAPEADO', { safSolicitado: safMonto, safAplicado: result.safAplicadoUsd }, 'ok')
         toast.warning(
           'El saldo a favor disponible cambió durante el checkout: se aplicó el monto disponible en lugar del solicitado.'
         )
+      } else if (safEntry) {
+        logEvento('SAF_APLICADO_EN_VENTA', { safMonto: safEntry.montoUsd, clienteId: safEntry.clienteId }, 'ok')
+      }
+
+      // SAF_CREDITO_CREADO_OVERPAY: excedente del overpago queda como SAF
+      if (discrepancy?.mode === 'SAF') {
+        logEvento('SAF_CREDITO_CREADO_OVERPAY', { montoUsd: discrepancy.montoUsd, clienteId }, 'ok')
       }
 
       onSuccess({
@@ -946,7 +977,7 @@ export function CobroModal({
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
-                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('VUELTO') }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('VUELTO'); logEvento('VENTA_DISCREPANCIA_MODO_SELECCIONADO', { modo: 'VUELTO' }, 'info') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'VUELTO'
                         ? 'bg-blue-600 text-white border-blue-600'
@@ -959,7 +990,7 @@ export function CobroModal({
                   <button
                     type="button"
                     disabled={!clienteId}
-                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('SAF') }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('SAF'); logEvento('VENTA_DISCREPANCIA_MODO_SELECCIONADO', { modo: 'SAF' }, 'info') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'SAF'
                         ? 'bg-green-600 text-white border-green-600'
@@ -971,7 +1002,7 @@ export function CobroModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('PROPINA') }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('PROPINA'); logEvento('VENTA_DISCREPANCIA_MODO_SELECCIONADO', { modo: 'PROPINA' }, 'info') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'PROPINA'
                         ? 'bg-purple-600 text-white border-purple-600'
@@ -991,7 +1022,7 @@ export function CobroModal({
                       <button
                         type="button"
                         disabled={!tieneFaturasPendientesSAF}
-                        onClick={() => setSafSubMode('FACTURAS')}
+                        onClick={() => { setSafSubMode('FACTURAS'); logEvento('VENTA_SAF_SUBMODE_SELECCIONADO', { subMode: 'FACTURAS' }, 'info') }}
                         className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center gap-0.5 ${
                           safSubMode === 'FACTURAS'
                             ? 'bg-green-600 text-white border-green-600'
@@ -1007,7 +1038,7 @@ export function CobroModal({
                       </button>
                       <button
                         type="button"
-                        onClick={() => setSafSubMode('DIRECTO')}
+                        onClick={() => { setSafSubMode('DIRECTO'); logEvento('VENTA_SAF_SUBMODE_SELECCIONADO', { subMode: 'DIRECTO' }, 'info') }}
                         className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                           safSubMode === 'DIRECTO'
                             ? 'bg-green-600 text-white border-green-600'
@@ -1126,7 +1157,7 @@ export function CobroModal({
                 <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
-                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null) }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('CREDITO'); setSupervisorAuthorized(false); setSupervisorId(null); logEvento('VENTA_DISCREPANCIA_MODO_SELECCIONADO', { modo: 'CREDITO' }, 'info') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'CREDITO'
                         ? 'bg-orange-600 text-white border-orange-600'
@@ -1138,7 +1169,7 @@ export function CobroModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null) }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('DIFERENCIAL_FALTANTE'); setSupervisorAuthorized(false); setSupervisorId(null); logEvento('VENTA_DISCREPANCIA_MODO_SELECCIONADO', { modo: 'DIFERENCIAL_FALTANTE' }, 'info') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'DIFERENCIAL_FALTANTE'
                         ? 'bg-amber-600 text-white border-amber-600'
@@ -1150,7 +1181,7 @@ export function CobroModal({
                   </button>
                   <button
                     type="button"
-                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('ABSORBER') }}
+                    onClick={() => { if (!guardOrWarn()) return; setDiscrepancyMode('ABSORBER'); logEvento('VENTA_DISCREPANCIA_MODO_SELECCIONADO', { modo: 'ABSORBER' }, 'info') }}
                     className={`rounded border px-2 py-2 text-xs font-medium leading-tight transition-colors flex flex-col items-center gap-0.5 ${
                       discrepancyMode === 'ABSORBER'
                         ? 'bg-red-600 text-white border-red-600'
@@ -1248,6 +1279,7 @@ export function CobroModal({
             setSupervisorAuthorized(true)
             setSupervisorId(supervisorUserId)
             setShowAbsorberPinDialog(false)
+            logEvento('VENTA_ABSORBER_SUPERVISOR_OK', { supervisorId: supervisorUserId }, 'ok')
           }}
           titulo="Autorizar absorción de diferencia"
           mensaje="Ingresa el PIN de supervisor para autorizar que el negocio asuma la diferencia."

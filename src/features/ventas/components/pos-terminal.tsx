@@ -37,6 +37,7 @@ import { useCajasFuerteActivas } from '@/features/tesoreria/hooks/use-caja-fuert
 import { PrestamoModal, type PrestamoAplicado } from '@/features/caja/components/prestamo-modal'
 import { useFacturasEsperaStore, type FacturaEnEspera } from '../stores/facturas-espera-store'
 import { CobroModal } from './cobro-modal'
+import { logEvento } from '@/lib/debug-log'
 // Nota de Credito POS-express (Slice 5a-2a) — modal auto-contenido, sibling
 // del flujo de venta. Deliberadamente NO comparte estado con CobroModal ni
 // con facturas-espera-store: es un flujo lateral independiente que nunca
@@ -216,6 +217,15 @@ export function PosTerminal() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tasaLoading, sesionLoading, depositoLoading, backfillListo])
 
+  // TASA_CERO_BLOQUEA_POS — log once when the render wall activates
+  useEffect(() => {
+    if (!tasaLoading && tasaValor <= 0) {
+      logEvento('TASA_CERO_BLOQUEA_POS', { tasaValor }, 'error')
+    }
+  // Only when condition becomes true
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasaLoading, tasaValor])
+
   // --- Focus a cantidad tras agregar/incrementar producto ---
   useEffect(() => {
     const idx = pendingFocusIndexRef.current
@@ -239,6 +249,7 @@ export function PosTerminal() {
       setClienteNombre(borrador.clienteNombre === 'Sin cliente' ? '' : borrador.clienteNombre)
       setLineas(borrador.lineas)
       setCargosEspeciales(borrador.cargosEspeciales ?? [])
+      logEvento('BORRADOR_RESTAURADO', { clienteId: borrador.clienteId, lineasCount: borrador.lineas.length, cargosCount: (borrador.cargosEspeciales ?? []).length }, 'info')
       toast.info('Se restauro tu factura en proceso')
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -288,6 +299,7 @@ export function PosTerminal() {
       }
       esperaStore.agregar(factura)
       esperaStore.limpiarBorrador()
+      logEvento('ESPERA_AUTO_GUARDADO_NAVEGACION', { clienteId: clienteIdRef.current, lineasCount: lineasActuales.length, totalUsd: totalUsdFactura.toNumber() }, 'info')
       toast.info('Factura guardada en "Facturas Guardadas". Puedes recuperarla luego.')
     }
     return false // Permitir la navegacion
@@ -438,12 +450,14 @@ export function PosTerminal() {
     }
 
     esperaStore.agregar(factura)
+    logEvento('ESPERA_GUARDAR', { facturaId: factura.id, clienteId, lineasCount: lineas.length, totalUsd: totalUsd.toNumber() }, 'ok')
     resetForm()
     toast.success('Factura guardada')
   }
 
   const handleRecuperarEspera = (factura: FacturaEnEspera) => {
     if (lineas.length > 0 || cargosEspeciales.length > 0) {
+      logEvento('ESPERA_GUARDAR_RECHAZADO', { facturaId: factura.id, lineasEnCursoCount: lineas.length, cargosEnCursoCount: cargosEspeciales.length }, 'error')
       toast.error('Hay una venta en curso. Cancela o guarda primero.')
       return
     }
@@ -455,19 +469,24 @@ export function PosTerminal() {
     setClienteNombre(recuperada.clienteNombre === 'Sin cliente' ? '' : recuperada.clienteNombre)
     setLineas(recuperada.lineas)
     setCargosEspeciales(recuperada.cargosEspeciales ?? [])
+    logEvento('ESPERA_RECUPERAR', { facturaId: recuperada.id, clienteId: recuperada.clienteId, lineasCount: recuperada.lineas.length }, 'ok')
     toast.success('Factura recuperada')
   }
 
   const handleAbrirCobro = () => {
     if (!clienteId) {
+      logEvento('VENTA_GUARD_SIN_CLIENTE', null, 'error')
       toast.error('Selecciona un cliente')
       return
     }
     if (lineas.length === 0 && cargosEspeciales.length === 0) {
+      logEvento('VENTA_GUARD_CARRITO_VACIO', null, 'error')
       toast.error('Agrega al menos un producto o aplica un avance/prestamo')
       return
     }
     if (lineas.some((l) => l.cantidad <= 0)) {
+      const invalidas = lineas.filter((l) => l.cantidad <= 0).map((l) => l.nombre)
+      logEvento('VENTA_GUARD_CANTIDAD_INVALIDA', { productos: invalidas }, 'error')
       toast.error('Hay articulos con cantidad invalida')
       return
     }
@@ -479,6 +498,10 @@ export function PosTerminal() {
     )
     if (productosConStockInsuficiente.length > 0 && !canOverrideStock) {
       const nombres = productosConStockInsuficiente.map((l) => l.nombre).join(', ')
+      logEvento('VENTA_GUARD_STOCK_INSUFICIENTE_LOCAL', {
+        productosConflicto: productosConStockInsuficiente.map((l) => ({ nombre: l.nombre, stock_actual: l.stock_actual, cantidad: l.cantidad })),
+        canOverrideStock,
+      }, 'error')
       toast.error(`Stock insuficiente: ${nombres}. No tienes permiso para facturar en negativo.`)
       return
     }

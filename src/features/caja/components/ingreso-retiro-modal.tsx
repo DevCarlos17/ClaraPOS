@@ -9,6 +9,7 @@ import { useSaldoSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { formatUsd, formatBs } from '@/lib/currency'
 import { crearTraspasoSesionATesoreria } from '@/features/tesoreria/hooks/use-traspasos'
 import type { CajaFuerte } from '@/features/tesoreria/hooks/use-caja-fuerte'
+import { logEvento } from '@/lib/debug-log'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -120,10 +121,12 @@ function FormIngresoRetiro({
       }
       if (modo === 'RETIRO') {
         if (usd > 0 && usd > saldoUsd + 0.01) {
+          logEvento('CAJA_RETIRO_SALDO_INSUFICIENTE', { monedaFaltante: 'USD', solicitado: usd, disponible: saldoUsd }, 'error')
           newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
             `Saldo insuficiente en USD. Disponible: ${formatUsd(saldoUsd)}`
         }
         if (bs > 0 && bs > saldoBs + 0.01) {
+          logEvento('CAJA_RETIRO_SALDO_INSUFICIENTE', { monedaFaltante: 'BS', solicitado: bs, disponible: saldoBs }, 'error')
           newErrors.general = (newErrors.general ? newErrors.general + '. ' : '') +
             `Saldo insuficiente en Bs. Disponible: ${formatBs(saldoBs)}`
         }
@@ -166,6 +169,7 @@ function FormIngresoRetiro({
             descripcion: concepto.trim() || 'Traspaso a Tesoreria',
           })
         }
+        logEvento('CAJA_TRASPASO_TESORERIA_OK', { sesionCajaId, cajaFuerteId: cajaFuerteSeleccionada, montoUsd: parseFloat(montoUsd) || 0, montoBs: parseFloat(montoBs) || 0 }, 'ok')
         toast.success('Efectivo enviado a Tesoreria exitosamente')
       } else {
         // Flujo normal (ingreso o retiro manual)
@@ -182,11 +186,17 @@ function FormIngresoRetiro({
           empresa_id: user.empresa_id!,
           usuario_id: user.id,
         })
+        if (modo === 'INGRESO') {
+          logEvento('CAJA_INGRESO_OK', { sesionCajaId, montoUsd: usdNum, montoBs: bsNum, concepto: concepto.trim() }, 'ok')
+        } else {
+          logEvento('CAJA_RETIRO_OK', { sesionCajaId, montoUsd: usdNum, montoBs: bsNum, concepto: concepto.trim() }, 'ok')
+        }
         toast.success(`${modo === 'INGRESO' ? 'Ingreso' : 'Retiro'} registrado exitosamente`)
       }
       reset()
       onClose()
     } catch (error) {
+      logEvento(`CAJA_${modo}_ERROR`, { mensaje: error instanceof Error ? error.message : String(error) }, 'error')
       toast.error(error instanceof Error ? error.message : 'Error inesperado')
     } finally {
       setSubmitting(false)

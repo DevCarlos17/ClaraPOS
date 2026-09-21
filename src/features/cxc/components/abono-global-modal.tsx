@@ -16,6 +16,7 @@ import { useCurrentUser } from '@/core/hooks/use-current-user'
 import { db } from '@/core/db/powersync/db'
 import { todayStr } from '@/lib/dates'
 import { NativeSelect } from '@/components/ui/native-select'
+import { logEvento } from '@/lib/debug-log'
 
 type ExcessMode = 'ANTICIPO' | 'VUELTO' | 'PROPINA'
 
@@ -75,6 +76,7 @@ export function AbonoGlobalModal({
         setSesionActivaId(null)
         setSesionActivaHora(null)
         setDestinoCobro('TESORERIA')
+        logEvento('CXC_GUARD_SIN_SESION_CAJA', { contexto: 'abono-global', cobroRedirigidoA: 'TESORERIA' }, 'error')
       }
     }).catch(() => { setSesionActivaId(null); setSesionActivaHora(null) })
   }, [isOpen, user?.empresa_id])
@@ -168,6 +170,10 @@ export function AbonoGlobalModal({
   }
 
   const handleSubmit = async () => {
+    if (tasaEfectiva <= 0) {
+      logEvento('CXC_GUARD_SIN_TASA', { fechaPago, clienteId }, 'error')
+      return
+    }
     if (!canSubmit) return
 
     setSubmitting(true)
@@ -183,6 +189,7 @@ export function AbonoGlobalModal({
         // VUELTO o PROPINA: abonar solo la deuda exacta y registrar el excedente aparte
         const montoDeuda = moneda === 'BS' ? usdToBs(saldoConSaf, tasaEfectiva).toNumber() : saldoConSaf
         const montoExcedente = moneda === 'BS' ? usdToBs(excedenteUsd, tasaEfectiva).toNumber() : excedenteUsd
+        logEvento('CXC_ABONO_GLOBAL_OVERPAY', { clienteId, excedenteUsd, excessMode, montoDeuda }, 'info')
 
         const result = await registrarAbonoGlobal({
           cliente_id: clienteId,
@@ -212,6 +219,7 @@ export function AbonoGlobalModal({
         })
 
         const label = excessMode === 'VUELTO' ? 'Vuelto' : 'Propina'
+        logEvento('CXC_ABONO_GLOBAL_OK', { clienteId, montoAplicado: result.montoAplicado, facturasAfectadas: result.facturasAfectadas, excessMode }, 'ok')
         toast.success(
           `${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s). ${label}: ${formatUsd(excedenteUsd)}`
         )
@@ -231,12 +239,14 @@ export function AbonoGlobalModal({
           sesion_caja_id: destinoCobro === 'CAJA' ? sesionActivaId : null,
           ...safParams,
         })
+        logEvento('CXC_ABONO_GLOBAL_OK', { clienteId, montoAplicado: result.montoAplicado, facturasAfectadas: result.facturasAfectadas, usarSaf, montoSaf: montoSafNum }, 'ok')
         toast.success(`${formatUsd(result.montoAplicado)} aplicado a ${result.facturasAfectadas} factura(s)`)
       }
 
       onSuccess()
       onClose()
     } catch (error) {
+      logEvento('CXC_ABONO_GLOBAL_ERROR', { mensaje: error instanceof Error ? error.message : String(error), clienteId }, 'error')
       toast.error(error instanceof Error ? error.message : 'Error al registrar abono')
     } finally {
       setSubmitting(false)
