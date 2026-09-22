@@ -206,8 +206,19 @@ export function useSesionActiva() {
 
 /**
  * Calcula el saldo de efectivo disponible en la sesion activa.
- * Formula: apertura + pagos_efectivo + ingresos_manual - egresos_manual - avances - prestamos
- * Esto refleja el dinero fisico real en caja en tiempo real.
+ * Formula (nc-refund-sesion-caja-disponibilidad, correccion QA #3978):
+ * apertura + pagos_efectivo(venta_id IS NOT NULL) + ingresos_movs - egresos_movs,
+ * con movimientos_metodo_cobro filtrado por BLACKLIST `origen NOT IN
+ * ('VENTA','COBRO','PROPINA')` — replica byte-a-byte la semantica de
+ * `useSaldoEfectivoBimonetario` (src/features/reportes/hooks/use-cuadre.ts:
+ * 859-958), la formula ya probada como correcta para el cuadre de cierre de
+ * sesion, solo que aqui acotada a UNA sesion en vez de un array. Reemplaza
+ * la WHITELIST anterior (`IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE',
+ * 'PRESTAMO', 'INGRESO_TESORERIA', 'EGRESO_TESORERIA', 'NCR')`), que dejaba
+ * fuera 'VUELTO' (egreso real, use-ventas.ts:856/1388/1410) y no filtraba
+ * `venta_id IS NOT NULL` en pagos (contaba pagos CxC "anticipo" sin factura,
+ * use-cxc.ts:996, que cuadre excluye a proposito). Esto refleja el dinero
+ * fisico real en caja en tiempo real.
  */
 export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   const id = sesionCajaId ?? ''
@@ -217,33 +228,58 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
     id ? [id] : []
   )
 
-  const { data: pagosData, isLoading: l2 } = useQuery(
+  const { data: pagosUsdData, isLoading: l2a } = useQuery(
     id
-      ? `SELECT
-           COALESCE(SUM(CASE WHEN mo.codigo_iso = 'USD' THEN CAST(p.monto_usd AS REAL) ELSE 0 END), 0) AS ventas_usd,
-           COALESCE(SUM(CASE WHEN mo.codigo_iso != 'USD' THEN CAST(p.monto AS REAL) ELSE 0 END), 0) AS ventas_bs
+      ? `SELECT COALESCE(SUM(CAST(p.monto_usd AS REAL)), 0) AS total
          FROM pagos p
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
-         JOIN monedas mo ON p.moneda_id = mo.id
-         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO'`
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE p.sesion_caja_id = ?
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+           AND p.venta_id IS NOT NULL`
       : '',
     id ? [id] : []
   )
 
-  const { data: movsData, isLoading: l3 } = useQuery(
+  const { data: pagosBsData, isLoading: l2b } = useQuery(
+    id
+      ? `SELECT COALESCE(SUM(CAST(p.monto AS REAL)), 0) AS total
+         FROM pagos p
+         JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE p.sesion_caja_id = ?
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+           AND p.venta_id IS NOT NULL`
+      : '',
+    id ? [id] : []
+  )
+
+  const { data: movsUsdData, isLoading: l3a } = useQuery(
     id
       ? `SELECT
-           mmc.origen,
-           COALESCE(SUM(CASE WHEN mo.codigo_iso = 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_usd,
-           COALESCE(SUM(CASE WHEN mo.codigo_iso != 'USD' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_bs
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_ing,
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_egr
          FROM movimientos_metodo_cobro mmc
          JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
          JOIN monedas mo ON mc.moneda_id = mo.id
          WHERE mmc.sesion_caja_id = ?
-           AND mc.tipo = 'EFECTIVO'
-           AND mmc.origen IN ('INGRESO_MANUAL', 'EGRESO_MANUAL', 'AVANCE', 'PRESTAMO',
-                             'INGRESO_TESORERIA', 'EGRESO_TESORERIA', 'NCR')
-         GROUP BY mmc.origen`
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'USD'
+           AND mmc.origen NOT IN ('VENTA', 'COBRO', 'PROPINA')`
+      : '',
+    id ? [id] : []
+  )
+
+  const { data: movsBsData, isLoading: l3b } = useQuery(
+    id
+      ? `SELECT
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'INGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_ing,
+           COALESCE(SUM(CASE WHEN mmc.tipo = 'EGRESO' THEN CAST(mmc.monto AS REAL) ELSE 0 END), 0) AS total_egr
+         FROM movimientos_metodo_cobro mmc
+         JOIN metodos_cobro mc ON mmc.metodo_cobro_id = mc.id
+         JOIN monedas mo ON mc.moneda_id = mo.id
+         WHERE mmc.sesion_caja_id = ?
+           AND mc.tipo = 'EFECTIVO' AND mo.codigo_iso = 'VES'
+           AND mmc.origen NOT IN ('VENTA', 'COBRO', 'PROPINA')`
       : '',
     id ? [id] : []
   )
@@ -254,65 +290,34 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
   const aperturaUsd = new Decimal(sesion?.monto_apertura_usd ?? '0')
   const aperturaBs  = new Decimal(sesion?.monto_apertura_bs  ?? '0')
 
-  const pagosRow = (pagosData ?? [])[0] as
-    | { ventas_usd: number; ventas_bs: number }
-    | undefined
-  const ventasUsd = new Decimal(pagosRow?.ventas_usd ?? 0)
-  const ventasBs  = new Decimal(pagosRow?.ventas_bs  ?? 0)
+  const ventasUsd = new Decimal((pagosUsdData ?? [])[0]?.total ?? 0)
+  const ventasBs  = new Decimal((pagosBsData  ?? [])[0]?.total ?? 0)
 
-  type MovRow = { origen: string; total_usd: number; total_bs: number }
-  const movsMap = new Map<string, { usd: Decimal; bs: Decimal }>()
-  for (const row of (movsData ?? []) as MovRow[]) {
-    movsMap.set(row.origen, { usd: new Decimal(row.total_usd), bs: new Decimal(row.total_bs) })
-  }
-
-  const ingManualUsd    = movsMap.get('INGRESO_MANUAL')?.usd    ?? new Decimal(0)
-  const ingManualBs     = movsMap.get('INGRESO_MANUAL')?.bs     ?? new Decimal(0)
-  const egrManualUsd    = movsMap.get('EGRESO_MANUAL')?.usd     ?? new Decimal(0)
-  const egrManualBs     = movsMap.get('EGRESO_MANUAL')?.bs      ?? new Decimal(0)
-  const avancesUsd      = movsMap.get('AVANCE')?.usd            ?? new Decimal(0)
-  const avancesBs       = movsMap.get('AVANCE')?.bs             ?? new Decimal(0)
-  const prestamosUsd    = movsMap.get('PRESTAMO')?.usd          ?? new Decimal(0)
-  const prestamosBs     = movsMap.get('PRESTAMO')?.bs           ?? new Decimal(0)
-  // pos-tesoreria-integration: include POS↔Treasury transfers in session balance
-  const ingTesoreriaUsd = movsMap.get('INGRESO_TESORERIA')?.usd ?? new Decimal(0)
-  const ingTesoBs       = movsMap.get('INGRESO_TESORERIA')?.bs  ?? new Decimal(0)
-  const egrTesoreriaUsd = movsMap.get('EGRESO_TESORERIA')?.usd  ?? new Decimal(0)
-  const egrTesoBs       = movsMap.get('EGRESO_TESORERIA')?.bs   ?? new Decimal(0)
-  // nc-cuadre-sesion-fase2 (Slice 2): egreso real de NC administrativa a esta
-  // sesion (destino elegido por el admin, cross-sesion respecto al pago
-  // original). A diferencia de los demas orígenes de este bloque, no tiene
-  // variable dedicada previa — hay que extraerla explicitamente del mapa.
-  const egrNcrUsd        = movsMap.get('NCR')?.usd              ?? new Decimal(0)
-  const egrNcrBs         = movsMap.get('NCR')?.bs               ?? new Decimal(0)
+  type MovTotales = { total_ing: number; total_egr: number }
+  const movUsdRow = ((movsUsdData ?? [])[0] ?? { total_ing: 0, total_egr: 0 }) as MovTotales
+  const movBsRow  = ((movsBsData  ?? [])[0] ?? { total_ing: 0, total_egr: 0 }) as MovTotales
 
   const saldoUsdD = Decimal.max(
     new Decimal(0),
     aperturaUsd
       .plus(ventasUsd)
-      .plus(ingManualUsd)
-      .plus(ingTesoreriaUsd)
-      .minus(egrManualUsd)
-      .minus(avancesUsd)
-      .minus(prestamosUsd)
-      .minus(egrTesoreriaUsd)
-      .minus(egrNcrUsd)
+      .plus(new Decimal(movUsdRow.total_ing))
+      .minus(new Decimal(movUsdRow.total_egr))
   )
 
   const saldoBsD = Decimal.max(
     new Decimal(0),
     aperturaBs
       .plus(ventasBs)
-      .plus(ingManualBs)
-      .plus(ingTesoBs)
-      .minus(egrManualBs)
-      .minus(avancesBs)
-      .minus(prestamosBs)
-      .minus(egrTesoBs)
-      .minus(egrNcrBs)
+      .plus(new Decimal(movBsRow.total_ing))
+      .minus(new Decimal(movBsRow.total_egr))
   )
 
-  return { saldoUsd: saldoUsdD.toNumber(), saldoBs: saldoBsD.toNumber(), isLoading: l1 || l2 || l3 }
+  return {
+    saldoUsd: saldoUsdD.toNumber(),
+    saldoBs: saldoBsD.toNumber(),
+    isLoading: l1 || l2a || l2b || l3a || l3b,
+  }
 }
 
 // ─── Interface: SesionActivaDashboard ────────────────────────
