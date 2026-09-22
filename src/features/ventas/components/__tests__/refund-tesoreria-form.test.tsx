@@ -789,4 +789,50 @@ describe('RefundTesoreriaForm (Slice 5, aislado — onConfirm mockeado)', () => 
       ])
     })
   })
+
+  describe('disabledExterno (nc-parcial-devolver-dinero, PR1 — prop plumbing, sin llamador wireado todavia)', () => {
+    it('disabledExterno=true deshabilita "Confirmar" aunque el formulario este completo y valido', async () => {
+      const user = userEvent.setup()
+      render(
+        <RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} disabledExterno={true} />
+      )
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/^monto$/i), '100')
+
+      expect(screen.getByRole('button', { name: /Confirmar/i })).toBeDisabled()
+    })
+
+    it('disabledExterno=false (u omitido) no afecta el gate existente — Confirmar se habilita igual que antes', async () => {
+      const user = userEvent.setup()
+      render(
+        <RefundTesoreriaForm montoDisponibleUsd={100} tasaHistorica={40} onConfirm={vi.fn()} disabledExterno={false} />
+      )
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/^monto$/i), '100')
+
+      expect(screen.getByRole('button', { name: /^Confirmar reembolso$/i })).not.toBeDisabled()
+    })
+
+    it('disabledExterno=true impide invocar onConfirm aunque se intente clickear', async () => {
+      const user = userEvent.setup()
+      const onConfirm = vi.fn()
+      render(
+        <RefundTesoreriaForm
+          montoDisponibleUsd={100}
+          tasaHistorica={40}
+          onConfirm={onConfirm}
+          disabledExterno={true}
+        />
+      )
+
+      await user.selectOptions(screen.getAllByLabelText(/cuenta de tesoreria/i)[0]!, 'banco-usd-1')
+      await user.type(screen.getByLabelText(/^monto$/i), '100')
+
+      await user.click(screen.getByRole('button', { name: /Confirmar/i }))
+
+      expect(onConfirm).not.toHaveBeenCalled()
+    })
+  })
 })

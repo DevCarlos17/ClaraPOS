@@ -122,6 +122,16 @@ export interface RefundTesoreriaFormProps {
    * disponible, sin gate).
    */
   mostrarOrigenTesoreria?: boolean
+  /**
+   * Deshabilita "Confirmar" desde AFUERA (nc-parcial-devolver-dinero, PR1),
+   * ANDed junto al resto de `puedeConfirmar` — nunca lo reemplaza. Pensado
+   * para PARCIAL: el llamador (modal) usa esto para bloquear el reembolso
+   * mientras `SeleccionLineasNc` todavia no tiene lineas validas
+   * seleccionadas (mismo espiritu que `origenPendiente` en
+   * `SeleccionLineasNc`, pero desde el lado de `RefundTesoreriaForm`).
+   * Default `false`: preserva el comportamiento actual (TOTAL, sin cambios).
+   */
+  disabledExterno?: boolean
 }
 
 /** Mismo patron que `noSpinner` en `gasto-form.tsx`/`producto-form.tsx`/`nivel-precio-form.tsx` (Tailwind arbitrary variants, sin CSS global) — oculta las flechas nativas del input `type="number"` en Chrome/Safari/Firefox. */
@@ -163,6 +173,7 @@ export function RefundTesoreriaForm({
   portalContainer,
   restringirOrigenASesionId,
   mostrarOrigenTesoreria = true,
+  disabledExterno = false,
 }: RefundTesoreriaFormProps) {
   const { cuentas } = useCuentasTesoreria()
   const { sesiones: sesionesActivas } = useSesionesActivas()
@@ -256,6 +267,7 @@ export function RefundTesoreriaForm({
   const excedeAlgunTopePorLinea = lineas.some((l) => excedeTopePorLinea[l.key])
   const puedeConfirmar =
     !loading &&
+    !disabledExterno &&
     lineasCompletas &&
     !excedeTope &&
     sumaUsd.gt(0) &&

@@ -67,8 +67,21 @@ interface SeleccionLineasNcProps {
    * calculada aqui, solo se expone hacia afuera.
    */
   mostrarBotonConfirmar?: boolean
-  /** Ver `mostrarBotonConfirmar`. */
-  onEstadoConfirmarChange?: (estado: { puedeConfirmar: boolean; confirmar: () => void }) => void
+  /**
+   * Ver `mostrarBotonConfirmar`. Ampliado (nc-parcial-devolver-dinero, PR1,
+   * additive — sin cambio de comportamiento) con `lineasValidas` y
+   * `totalUsdPreview`: permite a un llamador que enrute "Devolver dinero" a
+   * `RefundTesoreriaForm` (PR2/PR3) conocer las lineas ya validadas y el
+   * monto de la NC PARCIAL (para `calcularMontoDisponibleRefund`) sin
+   * recalcular nada — MISMOS valores que este componente ya usa
+   * internamente para su propio boton/preview.
+   */
+  onEstadoConfirmarChange?: (estado: {
+    puedeConfirmar: boolean
+    confirmar: () => void
+    lineasValidas: LineaNcSeleccionada[]
+    totalUsdPreview: number
+  }) => void
 }
 
 /**
@@ -145,9 +158,14 @@ export function SeleccionLineasNc({
   // seccion final del modal. `onConfirm(lineasValidas)` es exactamente la
   // misma invocacion que dispara el boton interno mas abajo.
   useEffect(() => {
-    onEstadoConfirmarChange?.({ puedeConfirmar, confirmar: () => onConfirm(lineasValidas) })
+    onEstadoConfirmarChange?.({
+      puedeConfirmar,
+      confirmar: () => onConfirm(lineasValidas),
+      lineasValidas,
+      totalUsdPreview: preview.totalUsd,
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [puedeConfirmar, lineasValidas])
+  }, [puedeConfirmar, lineasValidas, preview.totalUsd])
 
   return (
     <div className="space-y-3">
