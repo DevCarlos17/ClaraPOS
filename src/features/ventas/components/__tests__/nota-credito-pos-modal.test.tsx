@@ -84,6 +84,8 @@ vi.mock('../refund-tesoreria-form', () => ({
     onConfirm,
     restringirOrigenASesionId,
     mostrarOrigenTesoreria,
+    montoDisponibleUsd,
+    disabledExterno,
   }: {
     onConfirm: (
       lineas: {
@@ -97,14 +99,25 @@ vi.mock('../refund-tesoreria-form', () => ({
     ) => void
     restringirOrigenASesionId?: string
     mostrarOrigenTesoreria?: boolean
+    // PR2 (nc-parcial-devolver-dinero): expuestos como data-attributes para
+    // asertar que el monto disponible se recalcula (PARCIAL: suma de lineas
+    // seleccionadas, no `factura.total_usd`) y que el gate `disabledExterno`
+    // bloquea "Confirmar" mientras `SeleccionLineasNc` no tiene lineas
+    // validas — sin re-montar el formulario real (ya probado end-to-end en
+    // `refund-tesoreria-form.test.tsx`).
+    montoDisponibleUsd?: number
+    disabledExterno?: boolean
   }) => (
     <div
       data-testid="mock-refund-tesoreria-form"
       data-restringir-origen-sesion-id={restringirOrigenASesionId}
       data-mostrar-origen-tesoreria={String(mostrarOrigenTesoreria)}
+      data-monto-disponible-usd={montoDisponibleUsd}
+      data-disabled-externo={String(disabledExterno)}
     >
       <button
         type="button"
+        disabled={disabledExterno}
         onClick={() =>
           onConfirm([
             {
@@ -570,7 +583,7 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     expect(mockedCrearNotaCredito.mock.calls[0][0].tipo).toBeUndefined()
   })
 
-  it('REGRESION obs #2814 reachable via caller POS real (repurposed Slice 3, Design §D2 "riesgo preservado a proposito"): PARCIAL + "Devolver dinero" produce modalidad AJUSTE_CXC (fallback de resolverModalidadDesdeOrigen, combinacion resuelta en tasks.md sin logica especial)', async () => {
+  it('FIX obs #4013/#4007 (nc-parcial-devolver-dinero, PR2): PARCIAL + "Devolver dinero" ya NO cae en el boton generico con modalidad AJUSTE_CXC — enruta a RefundTesoreriaForm con modalidad REFUND_TESORERIA y tipo PARCIAL + lineas (antes de este fix se perdia el egreso real de tesoreria/sesion; ver test dedicado de la suite PR2 mas abajo para el wiring completo)', async () => {
     setup({ hasPermission: true })
     mockedUseDetalleFactura.mockReturnValue({
       detalle: [
@@ -590,13 +603,23 @@ describe('NotaCreditoPosModal — Slice 5a-2a (entrada POS, PIN A, TOTAL only, s
     await user.click(screen.getByRole('button', { name: 'Parcial' }))
     await user.type(screen.getByRole('spinbutton'), '2')
     await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
-    await user.click(screen.getByRole('button', { name: /Confirmar Nota de Credito Parcial/i }))
+
+    // El boton generico "Confirmar Nota de Credito Parcial" ya NO aparece
+    // para esta combinacion — RefundTesoreriaForm lo reemplaza.
+    expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i }))
 
     await waitFor(() => expect(mockedCrearNotaCredito).toHaveBeenCalledTimes(1))
     expect(mockedCrearNotaCredito.mock.calls[0][0]).toMatchObject({
       entryPoint: 'POS',
       tipo: 'PARCIAL',
-      modalidad: 'AJUSTE_CXC',
+      modalidad: 'REFUND_TESORERIA',
+      lineas: [{ venta_det_id: 'vd-1', cantidadDevolver: '2.000' }],
+      egresoParams: [
+        expect.objectContaining({ destino: 'SESION_CAJA', sesionCajaId: sesionActiva.id }),
+      ],
     })
   })
 
@@ -1664,6 +1687,115 @@ describe('NotaCreditoPosModal — Slice 4 (RefundTesoreriaForm restringido + PIN
     // `origenReverso` se resetea a null tras exito (mismo patron que
     // `emitirNc`) — el catch-all "Selecciona un origen del reverso..." vuelve.
     expect(screen.getByText(/Selecciona un origen del reverso para continuar\./i)).toBeInTheDocument()
+  })
+})
+
+/**
+ * PR2 (nc-parcial-devolver-dinero, apply-progress obs #4019): "Devolver
+ * dinero" enruta a `RefundTesoreriaForm` SIN IMPORTAR `tipoNc` —
+ * `debeUsarRefundTesoreria` (PR1, capa pura) es el UNICO criterio del gate.
+ * Antes de este fix (obs #4013/#4007), PARCIAL + "Devolver dinero" caia en
+ * el boton generico "Confirmar Nota de Credito Parcial" con
+ * `modalidad:'AJUSTE_CXC'` (fallback), perdiendo el egreso real de
+ * tesoreria/sesion — ver el test renombrado "FIX obs #4013/#4007" mas
+ * arriba (Slice 5a-2a) para la caracterizacion del wiring completo de
+ * `crearNotaCredito`. Esta suite cubre el resto del contrato: que boton se
+ * renderiza, que monto disponible recibe `RefundTesoreriaForm` (suma de
+ * lineas seleccionadas, NUNCA `factura.total_usd`) y el gate
+ * `disabledExterno` mientras las lineas todavia no son validas.
+ */
+describe('NotaCreditoPosModal — PR2 (nc-parcial-devolver-dinero): PARCIAL + Devolver dinero enruta a RefundTesoreriaForm', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  function detalleUnaLinea() {
+    return [
+      {
+        id: 'vd-1', venta_id: 'venta-1', producto_id: 'p1', cantidad: '5',
+        precio_unitario_usd: '10.00', subtotal_usd: '50.00', subtotal_bs: '2000.00',
+        producto_nombre: 'Botox 50U', producto_codigo: 'P001',
+        tipo_impuesto: 'Gravable', impuesto_pct: '16', es_decimal: 0, precio_unitario_bs: '400.00',
+      },
+    ]
+  }
+
+  it('PARCIAL + "Devolver dinero" renderiza RefundTesoreriaForm en vez del boton "Confirmar Nota de Credito Parcial"', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toBeInTheDocument()
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute(
+      'data-restringir-origen-sesion-id',
+      sesionActiva.id
+    )
+    expect(screen.queryByRole('button', { name: /Confirmar Nota de Credito Parcial/i })).not.toBeInTheDocument()
+    expect(mockedCrearNotaCredito).not.toHaveBeenCalled()
+  })
+
+  it('el monto disponible pasado a RefundTesoreriaForm refleja la SUMA de las lineas seleccionadas, no el total completo de la factura', async () => {
+    setup({ hasPermission: true })
+    mockedUseFacturasSesionActiva.mockReturnValue({
+      // total_usd deliberadamente MUY por encima de lo que suman las 2
+      // unidades seleccionadas (~23.2 con 16% de IVA) — si el modal usara
+      // `factura.total_usd` en vez de la suma de lineas, esta aserción lo
+      // detectaria (regresion al bug de sobre-estimar el disponible).
+      facturas: [facturaSesion({ total_usd: '100.00', saldo_pend_usd: '0.00' })],
+      isLoading: false,
+    })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.type(screen.getByRole('spinbutton'), '2')
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+
+    // 2 unidades x $10.00 = $20.00 base + 16% IVA ($3.20) = $23.20 — MISMA
+    // formula pura que `previewMontoBsNc`/`buildReciboData` ya usan para el
+    // preview "Total a devolver" de `SeleccionLineasNc` (cero calculo
+    // paralelo). saldo_pend_usd=0 -> `calcularMontoDisponibleRefund` no
+    // resta nada, el disponible es exactamente ese preview.
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-monto-disponible-usd', '23.2')
+  })
+
+  it('sin lineas validas todavia (cantidad 0), "Confirmar reembolso" queda deshabilitado (disabledExterno); tras ingresar una cantidad valida se habilita', async () => {
+    setup({ hasPermission: true })
+    mockedUseDetalleFactura.mockReturnValue({ detalle: detalleUnaLinea(), isLoading: false })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Parcial' }))
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-disabled-externo', 'true')
+    expect(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i })).toBeDisabled()
+
+    await user.type(screen.getByRole('spinbutton'), '2')
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-disabled-externo', 'false')
+    expect(screen.getByRole('button', { name: /Confirmar reembolso \(mock\)/i })).not.toBeDisabled()
+  })
+
+  it('TOTAL + "Devolver dinero" sigue sin `disabledExterno` (caracterizacion, comportamiento preexistente sin cambios)', async () => {
+    setup({ hasPermission: true })
+    render(<NotaCreditoPosModal isOpen onClose={() => {}} sesion={sesionActiva} />)
+
+    const user = await seleccionarPrimeraFactura()
+    await revelarSeccionNc(user)
+    await user.click(screen.getByRole('button', { name: 'Total' }))
+    await user.click(screen.getByRole('button', { name: 'Devolver dinero' }))
+
+    expect(screen.getByTestId('mock-refund-tesoreria-form')).toHaveAttribute('data-disabled-externo', 'false')
   })
 })
 

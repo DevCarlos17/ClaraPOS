@@ -21,6 +21,8 @@ import {
   agruparReversosPorNc,
   resolverBadgesFactura,
   resolverModalidadDesdeOrigen,
+  debeUsarRefundTesoreria,
+  calcularMontoDisponibleRefund,
   type EstadoPago,
   type BadgeReverso,
   type OrigenReverso,
@@ -192,9 +194,18 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   // tipo elegido. `SeleccionLineasNc` sigue siendo la UNICA fuente de la
   // logica de habilitado/deshabilitado — este estado solo espeja su ultimo
   // calculo (`puedeConfirmar`) y expone el mismo trigger (`confirmar`).
+  // PR2 (nc-parcial-devolver-dinero): ampliado con `lineasValidas` +
+  // `totalUsdPreview` — ya expuestos por `SeleccionLineasNc` desde PR1 (capa
+  // pura). Alimentan `RefundTesoreriaForm` cuando PARCIAL + "Devolver
+  // dinero" enruta a el (ver `debeUsarRefundTesoreria` mas abajo): las
+  // lineas de articulos van a `emitirNcRefund` y el preview de monto a
+  // `montoDisponibleParaRefund`, SIN recalcular nada — misma fuente que ya
+  // alimenta el boton "Confirmar Nota de Credito Parcial" (Credito a favor).
   const [estadoParcialConfirm, setEstadoParcialConfirm] = useState<{
     puedeConfirmar: boolean
     confirmar: () => void
+    lineasValidas: LineaNcSeleccionada[]
+    totalUsdPreview: number
   } | null>(null)
   // Reveal-gate de la seccion NC (Slice C, Spec notas-credito-pos:
   // "Reveal-gate de la seccion de emision de NC"). Al seleccionar una
@@ -311,17 +322,20 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   }, [factura, detalle, pagosFactura, company])
 
   // Monto disponible para reembolsar via Tesoreria/Sesion (Slice 4,
-  // unificacion-modal-nc) — MISMA formula que `crear-ncr-modal.tsx`
-  // (remanente de la NC neto de Step A: total menos lo ya aplicado a la
-  // deuda pendiente de la factura). Solo TOTAL llega a `RefundTesoreriaForm`
-  // en este change (PARCIAL usa su propio flujo de `SeleccionLineasNc`).
+  // unificacion-modal-nc; ampliado en PR2, nc-parcial-devolver-dinero) —
+  // MISMA formula pura que `crear-ncr-modal.tsx` (`calcularMontoDisponibleRefund`,
+  // PR1): el monto de ESTA NC se aplica primero contra la deuda pendiente
+  // de la factura, lo que sobra queda disponible para reembolso. Para
+  // TOTAL, `totalUsdNc` es el total completo de la factura (comportamiento
+  // preexistente, sin cambios); para PARCIAL es la SUMA de solo las lineas
+  // seleccionadas (`estadoParcialConfirm.totalUsdPreview`, ya calculado por
+  // `SeleccionLineasNc` via `previewMontoBsNc` — CERO formula paralela) —
+  // nunca `factura.total_usd`, que sobre-estimaria el disponible.
   const montoDisponibleParaRefund = useMemo(() => {
     if (!factura) return 0
-    const totalUsdNc = Number(factura.total_usd)
-    const saldoPendVenta = Number(factura.saldo_pend_usd)
-    const montoAplicadoAPendiente = Math.min(saldoPendVenta, totalUsdNc)
-    return Math.max(0, totalUsdNc - montoAplicadoAPendiente)
-  }, [factura])
+    const totalUsdNc = tipoNc === 'PARCIAL' ? (estadoParcialConfirm?.totalUsdPreview ?? 0) : Number(factura.total_usd)
+    return calcularMontoDisponibleRefund(totalUsdNc, factura.saldo_pend_usd).toNumber()
+  }, [factura, tipoNc, estadoParcialConfirm])
 
   // Lineas candidatas a NC PARCIAL (Slice 3b, Design §Decision 7) — mismo
   // `detalle` de `useDetalleFactura` ya usado para el panel de detalle,
@@ -410,18 +424,24 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
   }
 
   /**
-   * TOTAL + "Devolver dinero" via Tesoreria/Sesion propia (Slice 4,
-   * unificacion-modal-nc, Design §D3/D5) — mirror de
-   * `crear-ncr-modal.tsx:emitirNcRefund` (mismo `modalidad:'REFUND_TESORERIA'`
-   * hardcodeado, `tipo:'TOTAL'`, `egresoParams: lineas`), pero con
-   * `entryPoint:'POS'`/`sesionCajaActivaId: sesion.id` (Regla de Oro, obs
-   * #2804 — igual que `emitirNc` de arriba) y el MISMO comportamiento
-   * post-exito que `emitirNc` (Behavior F, Slice 5g.5): el modal NO se
-   * cierra, solo resetea el estado transitorio de esta emision.
+   * "Devolver dinero" via Tesoreria/Sesion propia (Slice 4, unificacion-
+   * modal-nc, Design §D3/D5; ampliado en PR2, nc-parcial-devolver-dinero) —
+   * mirror de `crear-ncr-modal.tsx:emitirNcRefund` (mismo
+   * `modalidad:'REFUND_TESORERIA'` hardcodeado, `egresoParams: lineas`),
+   * pero con `entryPoint:'POS'`/`sesionCajaActivaId: sesion.id` (Regla de
+   * Oro, obs #2804 — igual que `emitirNc` de arriba) y el MISMO
+   * comportamiento post-exito que `emitirNc` (Behavior F, Slice 5g.5): el
+   * modal NO se cierra, solo resetea el estado transitorio de esta emision.
    * `depositoReingresoId` sigue el MISMO gate PIN B que `emitirNc` — PIN C
    * (Tesoreria) es independiente y nunca autoriza el override de deposito.
+   *
+   * `lineasParcial` presente (PR2) -> `tipo:'PARCIAL'` + esas lineas de
+   * articulos, MISMO contrato que `emitirNc` para PARCIAL sin refund.
+   * Ausente -> `tipo:'TOTAL'`, comportamiento preexistente byte-a-byte
+   * (bug fix obs #4013/#4007: antes de PR1/PR2, PARCIAL + "Devolver dinero"
+   * nunca llegaba aqui — se perdia el egreso real de tesoreria/sesion).
    */
-  async function emitirNcRefund(lineas: EgresoTesoreriaLinea[]) {
+  async function emitirNcRefund(lineas: EgresoTesoreriaLinea[], lineasParcial?: LineaNcSeleccionada[]) {
     if (!factura || !user?.empresa_id || !sesion) return
     setLoading(true)
     try {
@@ -433,7 +453,7 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
         entryPoint: 'POS',
         sesionCajaActivaId: sesion.id,
         modalidad: 'REFUND_TESORERIA',
-        tipo: 'TOTAL',
+        ...(lineasParcial ? { tipo: 'PARCIAL' as const, lineas: lineasParcial } : { tipo: 'TOTAL' as const }),
         egresoParams: lineas,
         depositoReingresoId:
           resolverDepositoOverride({
@@ -776,26 +796,50 @@ export function NotaCreditoPosModal({ isOpen, onClose, sesion }: NotaCreditoPosM
                           {loading ? 'Procesando...' : 'Confirmar Anulacion'}
                         </button>
                       </div>
-                    ) : tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO' ? (
-                      // Slice 4 (unificacion-modal-nc, Design §D3/D5): cierra
-                      // el gap transicional de Slice 3 — "Devolver dinero"
-                      // ahora ofrece `RefundTesoreriaForm` restringido a la
-                      // SESION PROPIA del cajero (`restringirOrigenASesionId`,
-                      // nunca cualquier otra sesion abierta de la empresa).
+                    ) : debeUsarRefundTesoreria(origenReverso) ? (
+                      // Slice 4 (unificacion-modal-nc, Design §D3/D5), AMPLIADO
+                      // en PR2 (nc-parcial-devolver-dinero): "Devolver dinero"
+                      // SIEMPRE enruta a `RefundTesoreriaForm`, sin importar
+                      // `tipoNc` — `debeUsarRefundTesoreria` (PR1, capa pura)
+                      // es el UNICO criterio de este gate. Antes del fix
+                      // (obs #4013/#4007) esta rama exigia ADEMAS
+                      // `tipoNc === 'TOTAL'`: una NC PARCIAL con "Devolver
+                      // dinero" caia al boton generico de abajo y nunca
+                      // invocaba `emitirNcRefund` (se perdia el egreso real
+                      // de tesoreria/sesion). Restringido a la SESION PROPIA
+                      // del cajero (`restringirOrigenASesionId`, nunca
+                      // cualquier otra sesion abierta de la empresa).
                       // "Tesoreria" arranca OCULTA (`mostrarOrigenTesoreria={
                       // tesoreriaAutorizada}`, default `false` hasta PIN C) —
                       // el link de abajo la habilita tras autorizar. PIN C
                       // NUNCA autoriza emitir la NC (PIN A) ni cambiar el
                       // deposito (PIN B): 3 gates independientes (Design §D3).
+                      //
+                      // PARCIAL: `montoDisponibleParaRefund` ya usa la suma
+                      // de lineas seleccionadas (ver el useMemo de arriba);
+                      // `disabledExterno` bloquea "Confirmar reembolso" hasta
+                      // que `SeleccionLineasNc` tenga lineas validas
+                      // (`estadoParcialConfirm.puedeConfirmar`, MISMO gate
+                      // que ya usaba el boton "Confirmar Nota de Credito
+                      // Parcial" para Credito a favor); al confirmar, las
+                      // lineas de articulos validadas (`lineasValidas`) viajan
+                      // a `emitirNcRefund` para que arme `tipo:'PARCIAL'` +
+                      // `lineas` junto al `egresoParams` de tesoreria.
                       <div className="space-y-2">
                         <RefundTesoreriaForm
                           montoDisponibleUsd={montoDisponibleParaRefund}
                           tasaHistorica={Number(factura.tasa)}
-                          onConfirm={(lineas) => void emitirNcRefund(lineas)}
+                          onConfirm={(lineas) =>
+                            void emitirNcRefund(
+                              lineas,
+                              tipoNc === 'PARCIAL' ? estadoParcialConfirm?.lineasValidas : undefined
+                            )
+                          }
                           loading={loading}
                           portalContainer={dialogRef.current}
                           restringirOrigenASesionId={sesion.id}
                           mostrarOrigenTesoreria={tesoreriaAutorizada}
+                          disabledExterno={tipoNc === 'PARCIAL' && !estadoParcialConfirm?.puedeConfirmar}
                         />
                         {!tesoreriaAutorizada && (
                           <button
