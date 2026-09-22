@@ -221,7 +221,14 @@ describe('useSaldoSesionCaja — Slice 2 (nc-cuadre-sesion-fase2: whitelist NCR 
         }
       }
       if (sql.includes('FROM pagos p')) {
-        return { data: [{ ventas_usd: opts.ventasUsd ?? 0, ventas_bs: opts.ventasBs ?? 0 }], isLoading: false }
+        // nc-refund-sesion-caja-disponibilidad: el mock simula el WHERE real —
+        // si la query todavia filtra `p.is_reversed = 0`, una venta reversada
+        // (is_reversed = 1) queda excluida y sus ventas_usd/ventas_bs son 0.
+        const filtraReversed = sql.includes('p.is_reversed = 0')
+        const ventas = filtraReversed
+          ? { usd: 0, bs: 0 }
+          : { usd: opts.ventasUsd ?? 0, bs: opts.ventasBs ?? 0 }
+        return { data: [{ ventas_usd: ventas.usd, ventas_bs: ventas.bs }], isLoading: false }
       }
       if (sql.includes('FROM movimientos_metodo_cobro mmc')) {
         const rows = (opts.movs ?? []).filter((r) => sql.includes(`'${r.origen}'`))
@@ -262,6 +269,32 @@ describe('useSaldoSesionCaja — Slice 2 (nc-cuadre-sesion-fase2: whitelist NCR 
 
     const movsCall = mockedUseQuery.mock.calls.find(([sql]) => (sql as string).includes('FROM movimientos_metodo_cobro mmc'))
     expect(movsCall?.[0]).toContain("'NCR'")
+  })
+
+  it('nc-refund-sesion-caja-disponibilidad: no resta dos veces el efectivo tras un reembolso NC TOTAL via Sesion de caja', () => {
+    // Repro exacta del reporte de usuario:
+    // Apertura: fondo Bs 1000, USD 10.
+    // Venta Bs 500 pagada en efectivo Bs 500 -> luego reversada por una NC TOTAL.
+    // El reintegro de esa NC se hizo "por Sesion de caja": genera un egreso NCR
+    // de Bs 500 en movimientos_metodo_cobro.
+    // La venta reversada (is_reversed = 1) queda excluida de pagosData (ventas_bs = 0),
+    // y el egreso NCR resta 500 de la apertura. Antes del fix, pagosData YA
+    // excluia la venta (ventas_bs = 0) por el filtro is_reversed = 0, mientras el
+    // egreso NCR restaba 500 de nuevo -> doble resta (1000 - 500 = 500, o peor,
+    // 0 si tambien se contaba la apertura sin la venta). El fix elimina el
+    // filtro is_reversed = 0 de pagosData: la venta reversada SI se cuenta en
+    // ventasBs, y el egreso NCR la neutraliza exactamente una vez.
+    setupSaldo({
+      aperturaUsd: '10',
+      aperturaBs: '1000',
+      ventasBs: 500,
+      movs: [{ origen: 'NCR', total_usd: 0, total_bs: 500 }],
+    })
+
+    const { result } = renderHook(() => useSaldoSesionCaja('sesion-b'))
+
+    expect(result.current.saldoBs).toBe(1000) // 1000 + 500 (venta) - 500 (NCR) = 1000, no 0 ni 500
+    expect(result.current.saldoUsd).toBe(10)
   })
 })
 

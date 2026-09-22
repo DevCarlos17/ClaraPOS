@@ -225,7 +225,7 @@ export function useSaldoSesionCaja(sesionCajaId: string | undefined) {
          FROM pagos p
          JOIN metodos_cobro mc ON p.metodo_cobro_id = mc.id
          JOIN monedas mo ON p.moneda_id = mo.id
-         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO' AND p.is_reversed = 0`
+         WHERE p.sesion_caja_id = ? AND mc.tipo = 'EFECTIVO'`
       : '',
     id ? [id] : []
   )
