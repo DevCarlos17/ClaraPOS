@@ -8,6 +8,7 @@ import { todayStr } from '@/lib/dates'
 import { formatTasa, formatUsd, formatBs, usdToBs } from '@/lib/currency'
 import { formatDate, formatDateTime, formatHora } from '@/lib/format'
 import { useCurrentUser } from '@/core/hooks/use-current-user'
+import { useTasaActual } from '@/features/configuracion/hooks/use-tasas'
 import { cerrarSesionCaja } from '@/features/caja/hooks/use-sesiones-caja'
 import { PagosResumen } from './pagos-resumen'
 import { SafDetalleModal } from './saf-detalle-modal'
@@ -168,6 +169,9 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
   const { cajas } = useCajasActivas()
   const { sesiones } = useSesionesPorCajaYFecha(cajaId, fecha)
   const { tasaPromedio, tasaCount } = useTasaDelDia(activeFilters?.fecha ?? null)
+  // Tasa VIGENTE (hoy), no la del dia reportado: la comision del cierre se causa
+  // al momento del cierre, a la tasa actual del banco (misma fuente que POS/gastos/CxC).
+  const { tasaValor: tasaActualCierre } = useTasaActual()
 
   // KPI data — shown after consultar
   const { totalVentasUsd, totalVentasBs, facturasCount } = useVentasDelDia(activeFilters)
@@ -389,7 +393,7 @@ export function CuadrePage({ initialFecha, initialCajaId, initialSesionId }: Cua
         observaciones_cierre: observacionesCierre,
         usuario_cierre_id: user.id,
         conteoFisicoPorMetodo: conteoFisicoRecord,
-        tasaDelDia: tasaPromedio,
+        tasaDelDia: tasaActualCierre,
       })
 
       // Limpiar localStorage del conteo al cerrar exitosamente
