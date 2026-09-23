@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Minus, Plus } from '@phosphor-icons/react'
 import { formatUsd, formatBs } from '@/lib/currency'
 import type { LineaNcSeleccionada } from '../hooks/use-notas-credito'
@@ -67,8 +67,21 @@ interface SeleccionLineasNcProps {
    * calculada aqui, solo se expone hacia afuera.
    */
   mostrarBotonConfirmar?: boolean
-  /** Ver `mostrarBotonConfirmar`. */
-  onEstadoConfirmarChange?: (estado: { puedeConfirmar: boolean; confirmar: () => void }) => void
+  /**
+   * Ver `mostrarBotonConfirmar`. Ampliado (nc-parcial-devolver-dinero, PR1,
+   * additive — sin cambio de comportamiento) con `lineasValidas` y
+   * `totalUsdPreview`: permite a un llamador que enrute "Devolver dinero" a
+   * `RefundTesoreriaForm` (PR2/PR3) conocer las lineas ya validadas y el
+   * monto de la NC PARCIAL (para `calcularMontoDisponibleRefund`) sin
+   * recalcular nada — MISMOS valores que este componente ya usa
+   * internamente para su propio boton/preview.
+   */
+  onEstadoConfirmarChange?: (estado: {
+    puedeConfirmar: boolean
+    confirmar: () => void
+    lineasValidas: LineaNcSeleccionada[]
+    totalUsdPreview: number
+  }) => void
 }
 
 /**
@@ -112,29 +125,54 @@ export function SeleccionLineasNc({
     setCantidades((prev) => ({ ...prev, [ventaDetId]: clamped }))
   }
 
-  const facturaLineasParaNc: LineaFacturaParaNc[] = lineas.map((l) => ({
-    venta_det_id: l.venta_det_id,
-    // El pure-function guard (`derivarLineasNcParcial`) recibe el REMANENTE
-    // como su "cantidadFacturada" — asi el tope de linea-ya-parcialmente-
-    // reversada se hace cumplir sin duplicar logica de validacion.
-    cantidadFacturada: cap(l),
-    esDecimal: l.esDecimal,
-  }))
-  const { lineas: lineasValidas, errores } = derivarLineasNcParcial(facturaLineasParaNc, cantidades)
+  // Loop fix (nc-parcial-devolver-dinero, apply): `facturaLineasParaNc`,
+  // `lineasValidas`/`errores` y `preview` se recalculaban con `.map`/objeto
+  // literal en CADA render, produciendo una referencia NUEVA aunque el
+  // contenido fuera identico. El `useEffect` de abajo depende de
+  // `lineasValidas`/`preview.totalUsd` — con referencias nuevas en cada
+  // render, el effect disparaba `onEstadoConfirmarChange` -> setState del
+  // padre -> re-render -> nueva referencia -> loop infinito (Maximum update
+  // depth exceeded). `useMemo` mantiene la MISMA referencia mientras las
+  // dependencias reales (`lineas`, `cantidades`, `factura`) no cambien —
+  // mismos valores devueltos, solo referencialmente estables.
+  const facturaLineasParaNc: LineaFacturaParaNc[] = useMemo(
+    () =>
+      lineas.map((l) => ({
+        venta_det_id: l.venta_det_id,
+        // El pure-function guard (`derivarLineasNcParcial`) recibe el REMANENTE
+        // como su "cantidadFacturada" — asi el tope de linea-ya-parcialmente-
+        // reversada se hace cumplir sin duplicar logica de validacion.
+        cantidadFacturada: cap(l),
+        esDecimal: l.esDecimal,
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lineas],
+  )
+  const { lineas: lineasValidas, errores } = useMemo(
+    () => derivarLineasNcParcial(facturaLineasParaNc, cantidades),
+    [facturaLineasParaNc, cantidades],
+  )
 
-  const lineasSeleccionadas = lineas.filter((l) => (cantidades[l.venta_det_id] ?? 0) > 0)
-  const preview = previewMontoBsNc({
-    tipo: 'PARCIAL',
-    factura,
-    lineasSeleccionadas: lineasSeleccionadas.map((l) => ({
-      codigo: l.producto_codigo,
-      nombre: l.producto_nombre,
-      cantidad: String(cantidades[l.venta_det_id] ?? 0),
-      precioUnitarioUsd: String(l.precioUnitarioUsd),
-      tipoImpuesto: l.tipoImpuesto,
-      impuestoPct: l.impuestoPct,
-    })),
-  })
+  const lineasSeleccionadas = useMemo(
+    () => lineas.filter((l) => (cantidades[l.venta_det_id] ?? 0) > 0),
+    [lineas, cantidades],
+  )
+  const preview = useMemo(
+    () =>
+      previewMontoBsNc({
+        tipo: 'PARCIAL',
+        factura,
+        lineasSeleccionadas: lineasSeleccionadas.map((l) => ({
+          codigo: l.producto_codigo,
+          nombre: l.producto_nombre,
+          cantidad: String(cantidades[l.venta_det_id] ?? 0),
+          precioUnitarioUsd: String(l.precioUnitarioUsd),
+          tipoImpuesto: l.tipoImpuesto,
+          impuestoPct: l.impuestoPct,
+        })),
+      }),
+    [lineasSeleccionadas, cantidades, factura],
+  )
 
   const puedeConfirmar = !loading && errores.length === 0 && !depositoInvalido && !origenPendiente
 
@@ -145,9 +183,14 @@ export function SeleccionLineasNc({
   // seccion final del modal. `onConfirm(lineasValidas)` es exactamente la
   // misma invocacion que dispara el boton interno mas abajo.
   useEffect(() => {
-    onEstadoConfirmarChange?.({ puedeConfirmar, confirmar: () => onConfirm(lineasValidas) })
+    onEstadoConfirmarChange?.({
+      puedeConfirmar,
+      confirmar: () => onConfirm(lineasValidas),
+      lineasValidas,
+      totalUsdPreview: preview.totalUsd,
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [puedeConfirmar, lineasValidas])
+  }, [puedeConfirmar, lineasValidas, preview.totalUsd])
 
   return (
     <div className="space-y-3">

@@ -13,6 +13,8 @@ import {
   calcularReversoPorLinea,
   agruparReversosPorNc,
   resolverModalidadDesdeOrigen,
+  debeUsarRefundTesoreria,
+  calcularMontoDisponibleRefund,
   type BadgeReverso,
   type OrigenReverso,
 } from '../utils/notas-credito-ui'
@@ -87,6 +89,19 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
   // elegir tipo Y origen explicitamente (ver comentario del componente).
   const [tipoNc, setTipoNc] = useState<'TOTAL' | 'PARCIAL' | null>(null)
   const [origenReverso, setOrigenReverso] = useState<OrigenReverso | null>(null)
+  // PR3 (nc-parcial-devolver-dinero): espeja el ultimo calculo de
+  // `SeleccionLineasNc` (via `onEstadoConfirmarChange`, PR1) — MISMO patron
+  // ya usado en `nota-credito-pos-modal.tsx` (PR2). Alimenta
+  // `RefundTesoreriaForm` cuando PARCIAL + "Devolver dinero" enruta a el
+  // (ver `debeUsarRefundTesoreria` mas abajo): las lineas de articulos van
+  // a `emitirNcRefund` y el preview de monto a `montoDisponibleParaRefund`,
+  // SIN recalcular nada.
+  const [estadoParcialConfirm, setEstadoParcialConfirm] = useState<{
+    puedeConfirmar: boolean
+    confirmar: () => void
+    lineasValidas: LineaNcSeleccionada[]
+    totalUsdPreview: number
+  } | null>(null)
 
   const ventaId = isOpen ? factura?.id ?? null : null
   const { detalle, isLoading: loadingDetalle } = useDetalleFactura(ventaId)
@@ -101,6 +116,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
       setDepositoElegidoId(null)
       setTipoNc(null)
       setOrigenReverso(null)
+      setEstadoParcialConfirm(null)
     } else {
       dialogRef.current?.close()
     }
@@ -158,20 +174,32 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
     [detalle, reversos]
   )
 
-  // Monto disponible para reembolsar via Tesoreria (nc-refund-tesoreria):
-  // remanente de la NC neto de Step A — misma formula que `crearNotaCredito`
-  // (totalUsdNc menos lo aplicado a la deuda pendiente de la factura). Solo
-  // se calcula para tipo TOTAL (unico caso wireado a REFUND_TESORERIA en
-  // este change; PARCIAL usa su propio flujo de `SeleccionLineasNc`).
+  // Monto disponible para reembolsar via Tesoreria (nc-refund-tesoreria;
+  // ampliado en PR3, nc-parcial-devolver-dinero) — MISMA formula pura que
+  // `nota-credito-pos-modal.tsx` (`calcularMontoDisponibleRefund`, PR1): el
+  // monto de esta NC se aplica primero contra la deuda pendiente de la
+  // factura, lo que sobra queda disponible para reembolso. Para TOTAL,
+  // `totalUsdNc` es el total completo de la factura (comportamiento
+  // preexistente, sin cambios); para PARCIAL es la SUMA de solo las lineas
+  // seleccionadas (`estadoParcialConfirm.totalUsdPreview`, ya calculado por
+  // `SeleccionLineasNc`) — nunca `factura.total_usd`, que sobre-estimaria
+  // el disponible.
   const montoDisponibleParaRefund = useMemo(() => {
     if (!factura) return 0
-    const totalUsdNc = Number(factura.total_usd)
-    const saldoPendVenta = Number(factura.saldo_pend_usd)
-    const montoAplicadoAPendiente = Math.min(saldoPendVenta, totalUsdNc)
-    return Math.max(0, totalUsdNc - montoAplicadoAPendiente)
-  }, [factura])
+    const totalUsdNc = tipoNc === 'PARCIAL' ? (estadoParcialConfirm?.totalUsdPreview ?? 0) : Number(factura.total_usd)
+    return calcularMontoDisponibleRefund(totalUsdNc, factura.saldo_pend_usd).toNumber()
+  }, [factura, tipoNc, estadoParcialConfirm])
 
-  async function emitirNcRefund(lineas: EgresoTesoreriaLinea[]) {
+  /**
+   * "Devolver dinero" via Tesoreria (nc-refund-tesoreria; ampliado en PR3,
+   * nc-parcial-devolver-dinero) — `lineasParcial` presente -> `tipo:'PARCIAL'`
+   * + esas lineas de articulos, MISMO contrato que `emitirNc` para PARCIAL
+   * sin refund. Ausente -> `tipo:'TOTAL'`, comportamiento preexistente
+   * byte-a-byte (bug fix obs #4013/#4007: antes de PR1/PR3, PARCIAL +
+   * "Devolver dinero" nunca llegaba aqui — se perdia el egreso real de
+   * tesoreria).
+   */
+  async function emitirNcRefund(lineas: EgresoTesoreriaLinea[], lineasParcial?: LineaNcSeleccionada[]) {
     if (!factura || !user?.empresa_id) return
     setLoading(true)
     try {
@@ -182,7 +210,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         empresa_id: user.empresa_id,
         entryPoint: 'TRADICIONAL',
         modalidad: 'REFUND_TESORERIA',
-        tipo: 'TOTAL',
+        ...(lineasParcial ? { tipo: 'PARCIAL' as const, lineas: lineasParcial } : { tipo: 'TOTAL' as const }),
         egresoParams: lineas,
         depositoReingresoId: depositoElegidoId ?? undefined,
       })
@@ -208,18 +236,21 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
         // la sesion de caja activa (factura potencialmente historica, ni idea
         // de que sesion este abierta ahora). Ver Regla de Oro, obs #2804.
         entryPoint: 'TRADICIONAL',
-        // `emitirNc` solo se llama para PARCIAL (via SeleccionLineasNc,
-        // gateada a `origenReverso` no-null en el JSX) o para TOTAL +
+        // `emitirNc` solo se llama para PARCIAL + "Credito a favor" (via
+        // SeleccionLineasNc, con su boton interno visible) o para TOTAL +
         // "Credito a favor" (footer). "Credito a favor" produce un saldo a
         // favor real via el branch SALDO_FAVOR ya probado del write core
-        // (nc-admin-saldo-favor-real). "Devolver dinero" + PARCIAL queda
-        // fuera de alcance (REFUND_TESORERIA solo esta wireado para TOTAL,
-        // via `emitirNcRefund`) — se mapea a AJUSTE_CXC por completitud del
-        // tipo, aunque este branch no tiene UI que lo alcance hoy (TOTAL +
-        // Devolver dinero usa `emitirNcRefund`, nunca `emitirNc`). Extraido
+        // (nc-admin-saldo-favor-real). PARCIAL + "Devolver dinero" ya NO
+        // pasa por aqui (fix obs #4013/#4007, PR3 de nc-parcial-devolver-
+        // dinero): `debeUsarRefundTesoreria(origenReverso)` oculta el boton
+        // interno de `SeleccionLineasNc` (`mostrarBotonConfirmar={false}`)
+        // para esa combinacion y enruta a `RefundTesoreriaForm` ->
+        // `emitirNcRefund` en su lugar — este branch (`AJUSTE_CXC` via
+        // `resolverModalidadDesdeOrigen`) es ahora genuinamente inalcanzable
+        // para `DEVOLVER_DINERO`, no solo "sin UI que lo alcance". Extraido
         // a `resolverModalidadDesdeOrigen` (Slice 3, unificacion-modal-nc,
         // Design §D2) — copia verbatim del ternario original, mismo
-        // consumidor nuevo: `nota-credito-pos-modal.tsx`.
+        // consumidor: `nota-credito-pos-modal.tsx`.
         modalidad: resolverModalidadDesdeOrigen(origenReverso!),
         tipo: lineasParcial ? 'PARCIAL' : 'TOTAL',
         ...(lineasParcial ? { lineas: lineasParcial } : {}),
@@ -310,6 +341,14 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     `origenPendiente` bloquea el boton Confirmar (no la
                     visibilidad) hasta que el origen este elegido. */}
                 {tipoNc === 'PARCIAL' ? (
+                  // PR3 (nc-parcial-devolver-dinero): cuando el origen
+                  // elegido es "Devolver dinero", el boton interno de
+                  // confirmar se oculta (`mostrarBotonConfirmar={false}`) —
+                  // la confirmacion pasa a ser el propio boton "Confirmar
+                  // reembolso" de `RefundTesoreriaForm` mas abajo (MISMO
+                  // patron que `nota-credito-pos-modal.tsx`, PR2).
+                  // "Credito a favor" (o sin origen elegido todavia) sigue
+                  // usando el boton interno sin cambios.
                   <SeleccionLineasNc
                     key={factura.id}
                     lineas={lineasParaNc}
@@ -321,6 +360,8 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     onConfirm={(lineas) => void emitirNc(lineas)}
                     loading={loading}
                     origenPendiente={origenReverso === null}
+                    mostrarBotonConfirmar={!debeUsarRefundTesoreria(origenReverso)}
+                    onEstadoConfirmarChange={setEstadoParcialConfirm}
                   />
                 ) : null}
 
@@ -342,7 +383,7 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     cualquier otro flujo (PARCIAL, Credito a favor, o
                     todavia sin elegir) se muestra aqui, justo despues de
                     Origen del reverso. */}
-                {!(tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO') && (
+                {!debeUsarRefundTesoreria(origenReverso) && (
                   <div>
                     <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
                     <input
@@ -361,13 +402,32 @@ export function CrearNcrModal({ isOpen, onClose, factura }: CrearNcrModalProps) 
                     unificacion-modal-nc); su gate es SOLO `tipoNc ===
                     'PARCIAL'` (QA fix), independiente de origenReverso —
                     ver `origenPendiente` pasado arriba. */}
-                {tipoNc === 'TOTAL' && origenReverso === 'DEVOLVER_DINERO' ? (
+                {debeUsarRefundTesoreria(origenReverso) ? (
+                  // PR3 (nc-parcial-devolver-dinero): "Devolver dinero"
+                  // SIEMPRE enruta a `RefundTesoreriaForm`, sin importar
+                  // `tipoNc` — `debeUsarRefundTesoreria` (PR1, capa pura) es
+                  // el UNICO criterio de este gate (antes exigia ADEMAS
+                  // `tipoNc === 'TOTAL'`, fix obs #4013/#4007, MISMO cambio
+                  // ya aplicado en `nota-credito-pos-modal.tsx`, PR2).
+                  // PARCIAL: `montoDisponibleParaRefund` ya usa la suma de
+                  // lineas seleccionadas (ver el useMemo de arriba);
+                  // `disabledExterno` bloquea "Confirmar reembolso" hasta
+                  // que `SeleccionLineasNc` tenga lineas validas
+                  // (`estadoParcialConfirm.puedeConfirmar`); al confirmar,
+                  // las lineas validadas (`lineasValidas`) viajan a
+                  // `emitirNcRefund` para que arme `tipo:'PARCIAL'` + `lineas`.
                   <RefundTesoreriaForm
                     montoDisponibleUsd={montoDisponibleParaRefund}
                     tasaHistorica={Number(factura.tasa)}
-                    onConfirm={(lineas) => void emitirNcRefund(lineas)}
+                    onConfirm={(lineas) =>
+                      void emitirNcRefund(
+                        lineas,
+                        tipoNc === 'PARCIAL' ? estadoParcialConfirm?.lineasValidas : undefined
+                      )
+                    }
                     loading={loading}
                     portalContainer={dialogRef.current}
+                    disabledExterno={tipoNc === 'PARCIAL' && !estadoParcialConfirm?.puedeConfirmar}
                     motivoSlot={
                       <div>
                         <label className="block text-sm font-medium mb-1">Motivo de anulacion</label>
